@@ -91,6 +91,27 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
             </Form.Group>
             <hr />
             <Form.Group>
+                <Form.Label htmlFor="bandwidth-limit-input">Bandwidth Limit</Form.Label>
+                <InputGroup className={styles.input}>
+                    <Form.Control
+                        className={!isValidBandwidthLimit(config["usenet.bandwidth-limit-mbps"]) ? styles.error : undefined}
+                        type="text"
+                        id="bandwidth-limit-input"
+                        aria-describedby="bandwidth-limit-help"
+                        placeholder="unlimited"
+                        value={config["usenet.bandwidth-limit-mbps"]}
+                        onChange={e => setNewConfig({ ...config, "usenet.bandwidth-limit-mbps": e.target.value })} />
+                    <InputGroup.Text>Mbit/s</InputGroup.Text>
+                </InputGroup>
+                <Form.Text id="bandwidth-limit-help" muted>
+                    The maximum combined rate NzbDav will use to download from your usenet provider(s), across
+                    both queue imports and webdav streaming. Leave empty for no limit. Note: 1 MB/s = 8 Mbit/s.
+                    Not sure what your connection can handle? Try a{" "}
+                    <a href="https://www.speedtest.net/" target="_blank" rel="noreferrer">speed test</a>.
+                </Form.Text>
+            </Form.Group>
+            <hr />
+            <Form.Group>
                 <Form.Check
                     className={styles.input}
                     type="checkbox"
@@ -141,6 +162,7 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.max-download-connections"] !== newConfig["usenet.max-download-connections"]
         || config["usenet.streaming-priority"] !== newConfig["usenet.streaming-priority"]
         || config["usenet.article-buffer-size"] !== newConfig["usenet.article-buffer-size"]
+        || config["usenet.bandwidth-limit-mbps"] !== newConfig["usenet.bandwidth-limit-mbps"]
         || config["webdav.show-hidden-files"] !== newConfig["webdav.show-hidden-files"]
         || config["webdav.enforce-readonly"] !== newConfig["webdav.enforce-readonly"]
         || config["webdav.preview-par2-files"] !== newConfig["webdav.preview-par2-files"]
@@ -150,7 +172,8 @@ export function isWebdavSettingsValid(newConfig: Record<string, string>) {
     return isValidUser(newConfig["webdav.user"])
         && isValidMaxDownloadConnections(newConfig["usenet.max-download-connections"])
         && isValidStreamingPriority(newConfig["usenet.streaming-priority"])
-        && isValidArticleBufferSize(newConfig["usenet.article-buffer-size"]);
+        && isValidArticleBufferSize(newConfig["usenet.article-buffer-size"])
+        && isValidBandwidthLimit(newConfig["usenet.bandwidth-limit-mbps"]);
 }
 
 function isValidUser(user: string): boolean {
@@ -170,4 +193,10 @@ function isValidStreamingPriority(value: string): boolean {
 
 function isValidArticleBufferSize(value: string): boolean {
     return isPositiveInteger(value);
+}
+
+function isValidBandwidthLimit(value: string): boolean {
+    if (value.trim() === "") return true;
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0;
 }

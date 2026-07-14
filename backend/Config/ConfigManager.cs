@@ -154,6 +154,16 @@ public class ConfigManager
         return new SemaphorePriorityOdds() { HighPriorityOdds = numericalValue };
     }
 
+    /// <summary>
+    /// The maximum combined download rate (Mbit/s) NzbDav is allowed to use across all usenet
+    /// providers, for both queue imports and webdav streaming. 0 (the default) means unlimited.
+    /// </summary>
+    public double GetBandwidthLimitMbps()
+    {
+        var stringValue = StringUtil.EmptyToNull(GetConfigValue("usenet.bandwidth-limit-mbps"));
+        return double.Parse(stringValue ?? "0", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     public bool IsEnforceReadonlyWebdavEnabled()
     {
         var defaultValue = true;
