@@ -164,6 +164,18 @@ public class ConfigManager
         return double.Parse(stringValue ?? "0", System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// When the bandwidth limit is contended by both streaming and queue downloads at the same
+    /// time, how much of it should be preferentially reserved for streaming. This is not a hard
+    /// sub-cap: unused capacity from either side remains available to the other.
+    /// </summary>
+    public SemaphorePriorityOdds GetBandwidthStreamingReserve()
+    {
+        var stringValue = StringUtil.EmptyToNull(GetConfigValue("usenet.bandwidth-streaming-reserve"));
+        var numericalValue = int.Parse(stringValue ?? "80");
+        return new SemaphorePriorityOdds() { HighPriorityOdds = numericalValue };
+    }
+
     public bool IsEnforceReadonlyWebdavEnabled()
     {
         var defaultValue = true;

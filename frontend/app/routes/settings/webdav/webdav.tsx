@@ -120,6 +120,28 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                         Current usage: {bandwidthUsage.currentMbps.toFixed(1)} / {bandwidthUsage.limitMbps.toFixed(1)} Mbit/s
                     </Form.Text>}
             </Form.Group>
+            {config["usenet.bandwidth-limit-mbps"].trim() !== "" && <>
+                <hr />
+                <Form.Group>
+                    <Form.Label htmlFor="bandwidth-streaming-reserve-input">Streaming Reserve (vs Queue)</Form.Label>
+                    <InputGroup className={styles.input}>
+                        <Form.Control
+                            className={!isValidBandwidthStreamingReserve(config["usenet.bandwidth-streaming-reserve"]) ? styles.error : undefined}
+                            type="text"
+                            id="bandwidth-streaming-reserve-input"
+                            aria-describedby="bandwidth-streaming-reserve-help"
+                            placeholder="80"
+                            value={config["usenet.bandwidth-streaming-reserve"]}
+                            onChange={e => setNewConfig({ ...config, "usenet.bandwidth-streaming-reserve": e.target.value })} />
+                        <InputGroup.Text>%</InputGroup.Text>
+                    </InputGroup>
+                    <Form.Text id="bandwidth-streaming-reserve-help" muted>
+                        When the bandwidth limit above is contended by streaming and the queue at the same time, how
+                        much of it should be preferentially reserved for streaming? Unused capacity is still shared
+                        either way - this only affects ordering while both are actively competing for bandwidth.
+                    </Form.Text>
+                </Form.Group>
+            </>}
             <hr />
             <Form.Group>
                 <Form.Check
@@ -173,6 +195,7 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.streaming-priority"] !== newConfig["usenet.streaming-priority"]
         || config["usenet.article-buffer-size"] !== newConfig["usenet.article-buffer-size"]
         || config["usenet.bandwidth-limit-mbps"] !== newConfig["usenet.bandwidth-limit-mbps"]
+        || config["usenet.bandwidth-streaming-reserve"] !== newConfig["usenet.bandwidth-streaming-reserve"]
         || config["webdav.show-hidden-files"] !== newConfig["webdav.show-hidden-files"]
         || config["webdav.enforce-readonly"] !== newConfig["webdav.enforce-readonly"]
         || config["webdav.preview-par2-files"] !== newConfig["webdav.preview-par2-files"]
@@ -183,7 +206,8 @@ export function isWebdavSettingsValid(newConfig: Record<string, string>) {
         && isValidMaxDownloadConnections(newConfig["usenet.max-download-connections"])
         && isValidStreamingPriority(newConfig["usenet.streaming-priority"])
         && isValidArticleBufferSize(newConfig["usenet.article-buffer-size"])
-        && isValidBandwidthLimit(newConfig["usenet.bandwidth-limit-mbps"]);
+        && isValidBandwidthLimit(newConfig["usenet.bandwidth-limit-mbps"])
+        && isValidBandwidthStreamingReserve(newConfig["usenet.bandwidth-streaming-reserve"]);
 }
 
 function isValidUser(user: string): boolean {
@@ -209,6 +233,12 @@ function isValidBandwidthLimit(value: string): boolean {
     if (value.trim() === "") return true;
     const num = Number(value);
     return Number.isFinite(num) && num > 0;
+}
+
+function isValidBandwidthStreamingReserve(value: string): boolean {
+    if (value.trim() === "") return false;
+    const num = Number(value);
+    return Number.isInteger(num) && num >= 0 && num <= 100;
 }
 
 function isLowBandwidthLimit(value: string): boolean {

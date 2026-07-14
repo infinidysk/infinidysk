@@ -51,16 +51,16 @@ Ziel: kleinstmögliche Änderung, die das Kernproblem löst — ein Wert in Mbit
 
 **Abnahmekriterium:** ✅ erfüllt. Ein einzelner Mbit/s-Wert in der UI deckelt die Summe aus Queue- und Streaming-Downloads, wirkt sofort, Health-Checks bleiben unbeeinflusst — und löst das ursprünglich gemeldete Ping-/Packet-Loss-Problem in der Praxis.
 
-## Phase 2 — Unterlimits / anteilige Reservierung (Idee 3 vervollständigen)
+## Phase 2 — Unterlimits / anteilige Reservierung (Idee 3 vervollständigen) — ✅ umgesetzt
 
-Baut auf Phase 1 auf, nur nötig falls Nutzer nach Phase-1-Erfahrung eine feinere Steuerung wünscht.
+1. ✅ `ConfigManager.GetBandwidthStreamingReserve()` (`backend/Config/ConfigManager.cs`) — neuer Prozent-Wert (`usenet.bandwidth-streaming-reserve`), Default 80, als `SemaphorePriorityOdds` (gleicher Typ wie bei `GetStreamingPriority()`).
+2. ✅ `TokenBucket` (`backend/Clients/Usenet/Throttling/TokenBucket.cs`) um Prioritäts-Warteschlangen erweitert: zwei `LinkedList<Waiter>` (High/Low), ein Hintergrund-Dispatcher pro Bucket, der bei Konkurrenz per Odds-Würfel entscheidet (exakt das `_accumulatedOdds`-Muster aus `PrioritizedSemaphore.Release`) — aber zusätzlich: wenn nur EINE der beiden Prioritäten gerade genug Budget für ihren Warteschlangen-Kopf hat, wird sofort diese bedient, unabhängig von den Odds. Das stellt sicher, dass ungenutzte Kapazität einer Kategorie nicht ungenutzt bleibt, sondern sofort der anderen zufließt ("Borrowing", keine harte Sub-Cap). Ist die Bucket unkontendiert (keine Warteschlangen), läuft der bisherige Fast-Path unverändert weiter — kein zusätzlicher Overhead im Normalfall.
+3. ✅ Priorität pro Aufruf wird aus `DownloadPriorityContext` gelesen (`DownloadingNntpClient.ResolvePriority`, gleicher Mechanismus wie beim bestehenden Slot-Semaphore) und über `ThrottledYencStream` bis zum `TokenBucket.ConsumeAsync`-Aufruf durchgereicht.
+4. ✅ UI: Neues Feld "Streaming Reserve (vs Queue)" in `webdav.tsx`, exakt im Stil von `streaming-priority` (Prozent-Input mit `%`-Suffix), wird nur eingeblendet, solange ein Bandbreitenlimit gesetzt ist (progressive disclosure — ohne Limit gibt es nichts zu reservieren).
 
-1. `ConfigManager.GetBandwidthStreamingReserve()` — neuer Prozent-Wert, Default z. B. 80.
-2. `BandwidthLimiter` um zwei "virtuelle" Teil-Budgets erweitern, die aus demselben physischen Bucket ziehen, gewichtet nach Reserve-Prozentsatz bei Konkurrenz — Odds-Mechanik strukturell analog zu `PrioritizedSemaphore` (Abschnitt 3.2 im Konzept), aber für Byte-Budget statt Slot-Anzahl.
-3. Priorität pro Aufruf wird — wie beim bestehenden Slot-Semaphore — aus `DownloadPriorityContext` gelesen (`cancellationToken.GetContext<DownloadPriorityContext>()`), kein neuer Kontext-Mechanismus nötig.
-4. UI: "Advanced"-Bereich unterhalb des Bandbreitenfelds mit `Streaming Reserve %`-Input, exakt im Stil von `streaming-priority`.
+**Abnahmekriterium:** ✅ Bei gleichzeitigem Queue-Import und Streaming bekommt Streaming den konfigurierten Anteil bevorzugt; ungenutztes Queue-Budget wird für Streaming nutzbar (und umgekehrt), keine Verhungerung der Queue bei Dauerstreaming. Verifiziert durch `dotnet build`/`npm run typecheck` (beide sauber) — ein echter Lasttest mit gleichzeitigem Queue+Streaming-Betrieb steht noch aus (siehe unten).
 
-**Abnahmekriterium:** Bei gleichzeitigem Queue-Import und Streaming bekommt Streaming den konfigurierten Anteil bevorzugt; ungenutztes Queue-Budget wird für Streaming nutzbar (und umgekehrt), keine Verhungerung der Queue bei Dauerstreaming.
+**Noch zu beobachten:** Die Odds-Entscheidung greift nur, wenn *beide* Prioritäten gleichzeitig genug Budget für ihren jeweiligen Warteschlangen-Kopf hätten (echte Konkurrenz). Das sollte in der Praxis (Queue-Import + Streaming gleichzeitig, Limit niedrig genug um Kontention zu erzwingen) noch gegengetestet werden, ist aber mit dem gleichen Mechanismus wie der bereits produktiv laufende `PrioritizedSemaphore` umgesetzt.
 
 ## Phase 3 — Politur (optional, nach Nutzerfeedback)
 

@@ -34,7 +34,8 @@ public class DownloadingNntpClient : WrappingNntpClient
         _configManager = configManager;
         _websocketManager = websocketManager;
         _semaphore = new PrioritizedSemaphore(maxDownloadConnections, maxDownloadConnections, streamingPriority);
-        _bandwidthLimiter = CreateBandwidthLimiter(configManager.GetBandwidthLimitMbps());
+        _bandwidthLimiter = CreateBandwidthLimiter(
+            configManager.GetBandwidthLimitMbps(), configManager.GetBandwidthStreamingReserve());
         UpdateBandwidthReporting();
         configManager.OnConfigChanged += OnConfigChanged;
     }
@@ -59,18 +60,30 @@ public class DownloadingNntpClient : WrappingNntpClient
             if (mbps > 0 && _bandwidthLimiter is not null)
                 _bandwidthLimiter.UpdateRate(MbpsToBytesPerSecond(mbps));
             else
-                _bandwidthLimiter = CreateBandwidthLimiter(mbps);
+                _bandwidthLimiter = CreateBandwidthLimiter(mbps, _configManager.GetBandwidthStreamingReserve());
             UpdateBandwidthReporting();
+        }
+
+        if (e.ChangedConfig.ContainsKey("usenet.bandwidth-streaming-reserve"))
+        {
+            var reserveOdds = _configManager.GetBandwidthStreamingReserve();
+            _bandwidthLimiter?.UpdatePriorityOdds(reserveOdds);
         }
     }
 
-    private static TokenBucket? CreateBandwidthLimiter(double mbps)
+    private static TokenBucket? CreateBandwidthLimiter(double mbps, SemaphorePriorityOdds reserveOdds)
     {
-        return mbps > 0 ? new TokenBucket(MbpsToBytesPerSecond(mbps)) : null;
+        return mbps > 0 ? new TokenBucket(MbpsToBytesPerSecond(mbps), reserveOdds) : null;
     }
 
     // decimal Mbit/s -> bytes/s, matching how ISPs advertise line speed
     private static double MbpsToBytesPerSecond(double mbps) => mbps * 1_000_000 / 8;
+
+    private static SemaphorePriority ResolvePriority(CancellationToken cancellationToken)
+    {
+        var downloadPriorityContext = cancellationToken.GetContext<DownloadPriorityContext>();
+        return downloadPriorityContext?.Priority ?? SemaphorePriority.Low;
+    }
 
     /// <summary>
     /// Starts/stops the periodic websocket report of the live download rate, so the
@@ -105,18 +118,24 @@ public class DownloadingNntpClient : WrappingNntpClient
         _websocketManager.SendMessage(WebsocketTopic.BandwidthUsage, $"{currentMbps:F2}|{limitMbps:F2}");
     }
 
-    private UsenetDecodedBodyResponse ApplyThrottle(UsenetDecodedBodyResponse response)
+    private UsenetDecodedBodyResponse ApplyThrottle(UsenetDecodedBodyResponse response, CancellationToken cancellationToken)
     {
         return _bandwidthLimiter is null
             ? response
-            : response with { Stream = new ThrottledYencStream(response.Stream, _bandwidthLimiter) };
+            : response with
+            {
+                Stream = new ThrottledYencStream(response.Stream, _bandwidthLimiter, ResolvePriority(cancellationToken))
+            };
     }
 
-    private UsenetDecodedArticleResponse ApplyThrottle(UsenetDecodedArticleResponse response)
+    private UsenetDecodedArticleResponse ApplyThrottle(UsenetDecodedArticleResponse response, CancellationToken cancellationToken)
     {
         return _bandwidthLimiter is null
             ? response
-            : response with { Stream = new ThrottledYencStream(response.Stream, _bandwidthLimiter) };
+            : response with
+            {
+                Stream = new ThrottledYencStream(response.Stream, _bandwidthLimiter, ResolvePriority(cancellationToken))
+            };
     }
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,
@@ -137,7 +156,7 @@ public class DownloadingNntpClient : WrappingNntpClient
         await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
         var response = await base.DecodedBodyAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
             .ConfigureAwait(false);
-        return ApplyThrottle(response);
+        return ApplyThrottle(response, cancellationToken);
 
         void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult)
         {
@@ -152,7 +171,7 @@ public class DownloadingNntpClient : WrappingNntpClient
         await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
         var response = await base.DecodedArticleAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
             .ConfigureAwait(false);
-        return ApplyThrottle(response);
+        return ApplyThrottle(response, cancellationToken);
 
         void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult)
         {
@@ -177,9 +196,7 @@ public class DownloadingNntpClient : WrappingNntpClient
 
     private Task AcquireExclusiveConnectionAsync(CancellationToken cancellationToken)
     {
-        var downloadPriorityContext = cancellationToken.GetContext<DownloadPriorityContext>();
-        var semaphorePriority = downloadPriorityContext?.Priority ?? SemaphorePriority.Low;
-        return _semaphore.WaitAsync(semaphorePriority, cancellationToken);
+        return _semaphore.WaitAsync(ResolvePriority(cancellationToken), cancellationToken);
     }
 
     public override async Task<UsenetExclusiveConnection> AcquireExclusiveConnectionAsync
@@ -198,7 +215,7 @@ public class DownloadingNntpClient : WrappingNntpClient
         var onConnectionReadyAgain = exclusiveConnection.OnConnectionReadyAgain;
         var response = await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, cancellationToken)
             .ConfigureAwait(false);
-        return ApplyThrottle(response);
+        return ApplyThrottle(response, cancellationToken);
     }
 
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync(SegmentId segmentId,
@@ -207,7 +224,7 @@ public class DownloadingNntpClient : WrappingNntpClient
         var onConnectionReadyAgain = exclusiveConnection.OnConnectionReadyAgain;
         var response = await base.DecodedArticleAsync(segmentId, onConnectionReadyAgain, cancellationToken)
             .ConfigureAwait(false);
-        return ApplyThrottle(response);
+        return ApplyThrottle(response, cancellationToken);
     }
 
     public override void Dispose()
