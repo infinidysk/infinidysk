@@ -64,9 +64,9 @@ Baut auf Phase 1 auf, nur nötig falls Nutzer nach Phase-1-Erfahrung eine feiner
 
 ## Phase 3 — Politur (optional, nach Nutzerfeedback)
 
-- Live-Anzeige der aktuellen Downloadrate in der UI (analog `WebsocketTopic.UsenetConnections` / `ConnectionPoolStats.cs`), damit der Nutzer das passende Limit empirisch justieren kann, ohne externe Tools zu bemühen.
-- Zusätzliches reines Lesetempo-Throttling pro Stream (siehe Konzept 5.3, zweiter Absatz) für sehr große Einzelartikel, falls Phase 0 zeigt, dass Admission Control allein noch spürbare Bursts zulässt.
-- Prüfen, ob ein Mindestwert/Warnhinweis für sehr niedrige Limits (z. B. < 2 Mbit/s) sinnvoll ist, um zu viele kleine Wartezyklen im Admission-Control-Pfad zu vermeiden (siehe Konzept, Risiko 3).
+- ✅ **Live-Anzeige der aktuellen Downloadrate.** Neuer Websocket-Topic `WebsocketTopic.BandwidthUsage` ("bwu", `backend/Websocket/WebsocketTopic.cs`), einmal pro Sekunde vom neuen `DownloadingNntpClient`-Timer befüllt (`TokenBucket.TotalBytesConsumed`-Delta über die letzte Sekunde), analog zum bestehenden `ConnectionPoolStats`-Muster. Läuft nur, solange ein Limit aktiv ist. Frontend (`webdav.tsx`, `useBandwidthUsage`-Hook) zeigt "Current usage: x.x / y.y Mbit/s" direkt unter dem Eingabefeld, sobald ein Limit gesetzt ist — der Nutzer kann den Wert so empirisch justieren, ohne Router/`iftop` zu bemühen.
+- ✅ **Warnhinweis bei sehr niedrigen Limits.** Nicht-blockierender Hinweistext (`isLowBandwidthLimit`, Schwelle < 2 Mbit/s) unter dem Feld, dass sehr niedrige Limits zu ungleichmäßigem Durchsatz führen können, weil der Token-Bucket häufiger pausieren muss. Keine harte Validierungsgrenze — der Nutzer kann trotzdem speichern.
+- Nicht umgesetzt (weiterhin nur bei Bedarf): zusätzliches reines Lesetempo-Throttling pro Stream für sehr große Einzelartikel — laut Praxistest in Phase 0 nicht nötig, da der einfache Read-Level-Ansatz das ursprüngliche Problem bereits löst.
 
 ## Nicht in diesem Umsetzungsplan enthalten
 
