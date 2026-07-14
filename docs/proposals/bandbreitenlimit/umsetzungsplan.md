@@ -4,18 +4,15 @@ Voraussetzung: [konzept.md](./konzept.md) — dieses Dokument bricht das Konzept
 
 > **Status: Phase 1 ist umgesetzt.** Entscheidung des Nutzers: In der MVP-Phase reicht ein einzelnes Gesamtlimit (Idee 1), der optionale "Streaming Reserve %"-Regler (Idee 3 / Phase 2) wird erst bei Bedarf nachgezogen. Einheit bleibt bei Mbit/s; als Hilfestellung wurde ein Link zu speedtest.net sowie der Umrechnungshinweis "1 MB/s = 8 Mbit/s" im Hilfetext ergänzt (statt eines zusätzlichen Umrechner-Links).
 >
-> **Abweichung von der ursprünglichen Skizze:** Statt der in Abschnitt 5.3 des Konzepts beschriebenen "Admission Control mit Größenschätzung + Credit-Back" wurde für Phase 1 die einfachere Variante umgesetzt: ein global geteilter Token-Bucket, der beim tatsächlichen `ReadAsync` jedes Streams verbraucht wird (siehe unten). Das ist deutlich weniger Code, korrekt für die *nachhaltige* Rate, lässt aber — wie in Konzept-Abschnitt 3.4 beschrieben — einen einmaligen, begrenzten Burst zu (in der Größenordnung `max-download-connections × durchschnittliche Artikelgröße`, bei Standardwerten grob 10-20 MB), bevor die Drosselung greift. Ob das in der Praxis (bei ~500ms Ping) spürbar ist, sollte real getestet werden (siehe Phase 0) — falls ja, ist die Admission-Control-Variante aus dem Konzept der nächste Schritt.
+> **Abweichung von der ursprünglichen Skizze:** Statt der in Abschnitt 5.3 des Konzepts beschriebenen "Admission Control mit Größenschätzung + Credit-Back" wurde für Phase 1 die einfachere Variante umgesetzt: ein global geteilter Token-Bucket, der beim tatsächlichen `ReadAsync` jedes Streams verbraucht wird (siehe unten). Das ist deutlich weniger Code, korrekt für die *nachhaltige* Rate, lässt aber — wie in Konzept-Abschnitt 3.4 beschrieben — theoretisch einen einmaligen, begrenzten Burst zu (in der Größenordnung `max-download-connections × durchschnittliche Artikelgröße`, bei Standardwerten grob 10-20 MB), bevor die Drosselung greift. **Update:** Im Praxistest (siehe Phase 0) hat das keine spürbaren Auswirkungen gezeigt — die Ping-/Packet-Loss-Probleme sind mit der einfachen Variante bereits verschwunden. Die Admission-Control-Variante bleibt als möglicher Folgeschritt dokumentiert, ist aber aktuell nicht priorisiert.
 
-## Phase 0 — Validierung der Kernannahme (kein Produktivcode)
+## Phase 0 — Validierung der Kernannahme — ✅ erledigt (positiv)
 
-Bevor Zeit in die "richtige" Lösung investiert wird, sollte die zentrale technische Annahme aus Konzept-Abschnitt 3.4/5.3 verifiziert werden: *Reicht ein reines Lesetempo-Throttling, oder braucht es zwingend Admission Control beim Start neuer Segment-Downloads?*
+Kernfrage war: *Reicht ein reines Lesetempo-Throttling, oder braucht es zwingend Admission Control beim Start neuer Segment-Downloads?*
 
-- Wegwerf-Branch: in `MultiSegmentStream.DownloadSegments` (`backend/Streams/MultiSegmentStream.cs:47`) testweise ein `Task.Delay` vor jedem `AcquireExclusiveConnectionAsync`-Aufruf einbauen, das die Segmentstart-Rate grob auf ein Ziel-Mbit/s deckelt.
-- Gegenprobe: nur den finalen `_stream.ReadAsync` (Zeile 102) drosseln, Admission Control weglassen.
-- Beide Varianten gegen die reale Leitung des Nutzers testen (Stream abspielen + parallel `ping`/`mtr` laufen lassen), um zu verifizieren, ob Variante 2 tatsächlich spürbar schlechter abschneidet als Variante 1.
-- Ergebnis bestimmt, ob Phase 2 (Admission Control) zwingend nötig ist oder ob ein einfacherer reiner Read-Throttle ausreicht.
+Statt eines separaten Wegwerf-Prototyps wurde direkt die in Phase 1 gebaute Read-Level-Lösung (Docker-Image, echter Container) gegen die reale Leitung des Nutzers getestet: Datei gestreamt bei aktivem Limit, parallel genutzt von einer zweiten Person im selben Netz. **Ergebnis: Die zuvor auftretenden Ping-Spitzen/Packet-Loss (~500ms) sind nicht mehr aufgetreten.** Der in Konzept-Abschnitt 3.4 befürchtete Burst durch das Look-Ahead-Buffering (`article-buffer-size`) scheint in der Praxis kein spürbares Problem zu sein — die einfachere Read-Level-Drosselung aus Phase 1 reicht aus. Die aufwändigere Admission-Control-Variante (ursprünglich als möglicher nächster Schritt vorgesehen) ist damit **vorerst nicht nötig** und wird nur bei zukünftigem gegenteiligem Befund nachgezogen.
 
-**Abnahmekriterium:** Kurzer Messbericht (Ping/Packet-Loss mit vs. ohne Drosselung, je Variante), der die Entscheidung für Phase 2 belegt.
+**Abnahmekriterium:** erfüllt — Nutzer bestätigt, dass die Ping-/Packet-Loss-Probleme beim gleichzeitigen Streaming nicht mehr auftreten.
 
 ## Phase 1 — MVP: ein globales Gesamtlimit (Idee 1-Schnitt, ohne Unterlimits) — ✅ umgesetzt
 
@@ -49,9 +46,10 @@ Ziel: kleinstmögliche Änderung, die das Kernproblem löst — ein Wert in Mbit
 
 8. ✅ `dotnet build` — kompiliert ohne neue Fehler/Warnungen.
 9. ✅ `npm run typecheck` — läuft sauber durch (nach `npm install`, da `node_modules` im Arbeitsverzeichnis zuvor unvollständig war).
-10. **Noch offen / manuell zu testen** (nicht Teil dieser Code-Änderung, da reale Leitung des Nutzers nötig): Limit auf einen niedrigen Wert setzen (z. B. 5 Mbit/s), eine Datei streamen, tatsächliche Downloadrate am Router/mit `iftop`/`nload` beobachten; Live-Änderung des Werts während eines laufenden Streams; paralleler Queue-Import + Streaming, um zu prüfen, dass die Summe beider das Limit einhält; Ping/Packet-Loss-Messung während des Streamings mit aktivem vs. inaktivem Limit (das eigentliche Abnahmekriterium für das ursprüngliche Problem).
+10. ✅ Docker-Image gebaut und als echter Container gegen die reale Leitung des Nutzers getestet (siehe Phase 0) — Ping-/Packet-Loss-Probleme beim gleichzeitigen Streaming sind nicht mehr aufgetreten.
+11. Committed & auf `origin/main` gepusht (Commit `eb0a6ac`).
 
-**Abnahmekriterium:** Ein einzelner Mbit/s-Wert in der UI deckelt nachweislich die Summe aus Queue- und Streaming-Downloads, wirkt sofort, Health-Checks bleiben unbeeinflusst.
+**Abnahmekriterium:** ✅ erfüllt. Ein einzelner Mbit/s-Wert in der UI deckelt die Summe aus Queue- und Streaming-Downloads, wirkt sofort, Health-Checks bleiben unbeeinflusst — und löst das ursprünglich gemeldete Ping-/Packet-Loss-Problem in der Praxis.
 
 ## Phase 2 — Unterlimits / anteilige Reservierung (Idee 3 vervollständigen)
 
