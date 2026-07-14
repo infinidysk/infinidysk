@@ -12,6 +12,7 @@ public class TokenBucket
     private double _bytesPerSecond;
     private double _availableBytes;
     private long _lastRefillTimestamp;
+    private long _totalBytesConsumed;
 
     public TokenBucket(double bytesPerSecond)
     {
@@ -19,6 +20,15 @@ public class TokenBucket
         _bytesPerSecond = bytesPerSecond;
         _availableBytes = bytesPerSecond;
         _lastRefillTimestamp = Stopwatch.GetTimestamp();
+    }
+
+    /// <summary>
+    /// Running total of bytes consumed since this bucket was created. Used to derive a
+    /// live throughput reading (by sampling the delta over a time window) for the UI.
+    /// </summary>
+    public long TotalBytesConsumed
+    {
+        get { lock (_lock) return _totalBytesConsumed; }
     }
 
     public async Task ConsumeAsync(int byteCount, CancellationToken cancellationToken)
@@ -32,6 +42,7 @@ public class TokenBucket
                 if (_availableBytes >= byteCount)
                 {
                     _availableBytes -= byteCount;
+                    _totalBytesConsumed += byteCount;
                     return;
                 }
 

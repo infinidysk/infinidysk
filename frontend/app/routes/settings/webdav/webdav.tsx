@@ -1,8 +1,9 @@
 import { Form, InputGroup } from "react-bootstrap";
 import styles from "./webdav.module.css"
-import { type Dispatch, type SetStateAction } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useState } from "react";
 import { className } from "~/utils/styling";
 import { isPositiveInteger } from "../usenet/usenet";
+import { receiveMessage } from "~/utils/websocket-util";
 
 type SabnzbdSettingsProps = {
     config: Record<string, string>
@@ -10,6 +11,7 @@ type SabnzbdSettingsProps = {
 };
 
 export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
+    const bandwidthUsage = useBandwidthUsage();
     return (
         <div className={styles.container}>
             <Form.Group>
@@ -109,6 +111,14 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     Not sure what your connection can handle? Try a{" "}
                     <a href="https://www.speedtest.net/" target="_blank" rel="noreferrer">speed test</a>.
                 </Form.Text>
+                {isLowBandwidthLimit(config["usenet.bandwidth-limit-mbps"]) &&
+                    <Form.Text className="d-block text-warning">
+                        Very low limits can make downloads feel uneven, since NzbDav has to pause frequently to stay under the cap.
+                    </Form.Text>}
+                {config["usenet.bandwidth-limit-mbps"].trim() !== "" && bandwidthUsage &&
+                    <Form.Text className="d-block">
+                        Current usage: {bandwidthUsage.currentMbps.toFixed(1)} / {bandwidthUsage.limitMbps.toFixed(1)} Mbit/s
+                    </Form.Text>}
             </Form.Group>
             <hr />
             <Form.Group>
@@ -199,4 +209,44 @@ function isValidBandwidthLimit(value: string): boolean {
     if (value.trim() === "") return true;
     const num = Number(value);
     return Number.isFinite(num) && num > 0;
+}
+
+function isLowBandwidthLimit(value: string): boolean {
+    if (value.trim() === "") return false;
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0 && num < 2;
+}
+
+type BandwidthUsage = { currentMbps: number, limitMbps: number };
+
+const bandwidthUsageTopic = { "bwu": "state" };
+
+function useBandwidthUsage(): BandwidthUsage | null {
+    const [usage, setUsage] = useState<BandwidthUsage | null>(null);
+
+    useEffect(() => {
+        let ws: WebSocket;
+        let disposed = false;
+
+        function connect() {
+            ws = new WebSocket(window.location.origin.replace(/^http/, "ws"));
+            ws.onmessage = receiveMessage((topic, message) => {
+                if (topic !== "bwu") return;
+                if (message === "off" || message === "") {
+                    setUsage(null);
+                    return;
+                }
+                const [current, limit] = message.split("|").map(Number);
+                setUsage({ currentMbps: current, limitMbps: limit });
+            });
+            ws.onopen = () => ws.send(JSON.stringify(bandwidthUsageTopic));
+            ws.onerror = () => ws.close();
+            ws.onclose = () => { if (!disposed) setTimeout(connect, 1000); };
+        }
+
+        connect();
+        return () => { disposed = true; ws?.close(); };
+    }, []);
+
+    return usage;
 }

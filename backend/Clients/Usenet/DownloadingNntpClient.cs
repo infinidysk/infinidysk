@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Clients.Usenet.Throttling;
 using NzbWebDAV.Config;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Websocket;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Clients.Usenet;
@@ -16,17 +17,25 @@ namespace NzbWebDAV.Clients.Usenet;
 /// <param name="usenetClient"></param>
 public class DownloadingNntpClient : WrappingNntpClient
 {
+    private static readonly TimeSpan BandwidthReportInterval = TimeSpan.FromSeconds(1);
+
     private readonly ConfigManager _configManager;
+    private readonly WebsocketManager _websocketManager;
     private readonly PrioritizedSemaphore _semaphore;
     private TokenBucket? _bandwidthLimiter;
+    private Timer? _bandwidthReportTimer;
+    private long _lastReportedBytes;
 
-    public DownloadingNntpClient(INntpClient usenetClient, ConfigManager configManager) : base(usenetClient)
+    public DownloadingNntpClient(INntpClient usenetClient, ConfigManager configManager,
+        WebsocketManager websocketManager) : base(usenetClient)
     {
         var maxDownloadConnections = configManager.GetMaxDownloadConnections();
         var streamingPriority = configManager.GetStreamingPriority();
         _configManager = configManager;
+        _websocketManager = websocketManager;
         _semaphore = new PrioritizedSemaphore(maxDownloadConnections, maxDownloadConnections, streamingPriority);
         _bandwidthLimiter = CreateBandwidthLimiter(configManager.GetBandwidthLimitMbps());
+        UpdateBandwidthReporting();
         configManager.OnConfigChanged += OnConfigChanged;
     }
 
@@ -51,6 +60,7 @@ public class DownloadingNntpClient : WrappingNntpClient
                 _bandwidthLimiter.UpdateRate(MbpsToBytesPerSecond(mbps));
             else
                 _bandwidthLimiter = CreateBandwidthLimiter(mbps);
+            UpdateBandwidthReporting();
         }
     }
 
@@ -61,6 +71,39 @@ public class DownloadingNntpClient : WrappingNntpClient
 
     // decimal Mbit/s -> bytes/s, matching how ISPs advertise line speed
     private static double MbpsToBytesPerSecond(double mbps) => mbps * 1_000_000 / 8;
+
+    /// <summary>
+    /// Starts/stops the periodic websocket report of the live download rate, so the
+    /// settings UI can show actual usage while the user tunes the bandwidth limit.
+    /// Only runs while a limit is configured - there's nothing for the user to tune
+    /// against otherwise.
+    /// </summary>
+    private void UpdateBandwidthReporting()
+    {
+        if (_bandwidthLimiter is null)
+        {
+            _bandwidthReportTimer?.Dispose();
+            _bandwidthReportTimer = null;
+            _websocketManager.SendMessage(WebsocketTopic.BandwidthUsage, "off");
+            return;
+        }
+
+        if (_bandwidthReportTimer is not null) return;
+        _lastReportedBytes = _bandwidthLimiter.TotalBytesConsumed;
+        _bandwidthReportTimer = new Timer(ReportBandwidthUsage, null, BandwidthReportInterval, BandwidthReportInterval);
+    }
+
+    private void ReportBandwidthUsage(object? state)
+    {
+        var limiter = _bandwidthLimiter;
+        if (limiter is null) return;
+        var totalBytes = limiter.TotalBytesConsumed;
+        var currentBytesPerSecond = (totalBytes - _lastReportedBytes) / BandwidthReportInterval.TotalSeconds;
+        _lastReportedBytes = totalBytes;
+        var limitMbps = _configManager.GetBandwidthLimitMbps();
+        var currentMbps = currentBytesPerSecond * 8 / 1_000_000;
+        _websocketManager.SendMessage(WebsocketTopic.BandwidthUsage, $"{currentMbps:F2}|{limitMbps:F2}");
+    }
 
     private UsenetDecodedBodyResponse ApplyThrottle(UsenetDecodedBodyResponse response)
     {
@@ -170,6 +213,7 @@ public class DownloadingNntpClient : WrappingNntpClient
     public override void Dispose()
     {
         _configManager.OnConfigChanged -= OnConfigChanged;
+        _bandwidthReportTimer?.Dispose();
         base.Dispose();
         GC.SuppressFinalize(this);
     }

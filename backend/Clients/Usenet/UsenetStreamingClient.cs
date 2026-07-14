@@ -28,7 +28,7 @@ public class UsenetStreamingClient : WrappingNntpClient
     )
     {
         var multiProviderClient = CreateMultiProviderClient(configManager, websocketManager);
-        return new DownloadingNntpClient(multiProviderClient, configManager);
+        return new DownloadingNntpClient(multiProviderClient, configManager, websocketManager);
     }
 
     private static MultiProviderNntpClient CreateMultiProviderClient
