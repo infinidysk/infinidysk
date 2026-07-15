@@ -119,6 +119,13 @@ public class ConfigManager
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
+    public bool IsExcludeSampleFilesEnabled()
+    {
+        var defaultValue = true;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("api.exclude-sample-files"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+    }
+
     public bool ShowHiddenWebdavFiles()
     {
         var defaultValue = false;

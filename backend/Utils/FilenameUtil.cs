@@ -11,6 +11,11 @@ public partial class FilenameUtil
     [GeneratedRegex(@"(?<rm>[\s-]*(?:(?<br>{{)|password=)(?<pw>.+)(?(br)}}))\.nzb$", RegexOptions.IgnoreCase)]
     public static partial Regex PasswordRegex { get; }
 
+    // Matches "sample" as a standalone word, e.g. "movie-sample.mkv" or "Sample" (a folder name),
+    // but not "resample.mkv" or "example.mkv". Tests: https://regex101.com/r/8n8Yqm/1
+    [GeneratedRegex(@"\bsample\b", RegexOptions.IgnoreCase)]
+    public static partial Regex SampleRegex { get; }
+
     private static readonly HashSet<string> VideoExtensions =
     [
         ".webm", ".m4v", ".3gp", ".nsv", ".ty", ".strm", ".rm", ".rmvb", ".m3u", ".ifo", ".mov", ".qt", ".divx",
@@ -30,6 +35,11 @@ public partial class FilenameUtil
     public static bool IsVideoFile(string filename)
     {
         return VideoExtensions.Contains(Path.GetExtension(filename).ToLower());
+    }
+
+    public static bool IsSampleFile(string name)
+    {
+        return SampleRegex.IsMatch(name);
     }
 
     public static bool IsRarFile(string? filename)

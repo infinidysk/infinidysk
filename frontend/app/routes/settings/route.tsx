@@ -19,6 +19,7 @@ const defaultConfig = {
     "api.categories": "",
     "api.manual-category": "uncategorized",
     "api.ensure-importable-video": "true",
+    "api.exclude-sample-files": "true",
     "api.ensure-article-existence-categories": "",
     "api.ignore-history-limit": "true",
     "api.download-file-blocklist": "*.nfo, *.par2, *.sfv, *sample.mkv",

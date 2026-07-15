@@ -186,6 +186,11 @@ public class QueueItemProcessor(
 
             // post-processing
             new RenameDuplicatesPostProcessor(dbClient).RenameDuplicates();
+
+            // exclude sample video files, or fail if the release is sample-only
+            if (configManager.IsExcludeSampleFilesEnabled())
+                new SampleFilePostProcessor(dbClient).RemoveSampleFilesOrThrow();
+
             new BlocklistedFilePostProcessor(configManager, dbClient).RemoveBlocklistedFiles();
 
             // validate video files found

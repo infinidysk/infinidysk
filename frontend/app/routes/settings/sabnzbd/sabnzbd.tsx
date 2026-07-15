@@ -195,6 +195,20 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                 <Form.Check
                     className={styles.input}
                     type="checkbox"
+                    id="exclude-sample-files-checkbox"
+                    aria-describedby="exclude-sample-files-help"
+                    label={`Exclude sample video files`}
+                    checked={config["api.exclude-sample-files"] === "true"}
+                    onChange={e => setNewConfig({ ...config, "api.exclude-sample-files": "" + e.target.checked })} />
+                <Form.Text id="exclude-sample-files-help" muted>
+                    Detects "sample" preview clips bundled in a release and excludes them when a full-length video is also present. If the release contains only a sample and no full-length video, the download is marked as `failed` so Radarr / Sonarr will search for a different release.
+                </Form.Text>
+            </Form.Group>
+            <hr />
+            <Form.Group>
+                <Form.Check
+                    className={styles.input}
+                    type="checkbox"
                     id="ensure-article-existence-checkbox"
                     aria-describedby="ensure-article-existence-help"
                     label={`Perform article health check during downloads`}
@@ -317,6 +331,7 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
         || config["api.manual-category"] !== newConfig["api.manual-category"]
         || config["rclone.mount-dir"] !== newConfig["rclone.mount-dir"]
         || config["api.ensure-importable-video"] !== newConfig["api.ensure-importable-video"]
+        || config["api.exclude-sample-files"] !== newConfig["api.exclude-sample-files"]
         || config["api.ensure-article-existence-categories"] !== newConfig["api.ensure-article-existence-categories"]
         || config["api.ignore-history-limit"] !== newConfig["api.ignore-history-limit"]
         || config["api.duplicate-nzb-behavior"] !== newConfig["api.duplicate-nzb-behavior"]
