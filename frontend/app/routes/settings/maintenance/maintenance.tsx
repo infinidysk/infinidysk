@@ -1,6 +1,7 @@
 import { Accordion, Form, InputGroup } from "react-bootstrap";
 import styles from "./maintenance.module.css"
 import { RemoveUnlinkedFiles } from "./remove-unlinked-files/remove-unlinked-files";
+import { RemoveSampleFiles } from "./remove-sample-files/remove-sample-files";
 import { ConvertStrmToSymlinks } from "./strm-to-symlinks/strm-to-symlinks";
 import { MigrateDatabaseFilesToBlobstore } from "./migrate-database-files-to-blobstore/migrate-database-files-to-blobstore";
 import type { Dispatch, SetStateAction } from "react";
@@ -100,6 +101,14 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                         </Accordion.Header>
                         <Accordion.Body className={styles.accordionBody}>
                             <RemoveUnlinkedFiles savedConfig={savedConfig} />
+                        </Accordion.Body>
+                    </Accordion.Item>
+                    <Accordion.Item className={styles.accordionItem} eventKey="remove-sample-files">
+                        <Accordion.Header className={styles.accordionHeader}>
+                            Remove Sample-Only Imports
+                        </Accordion.Header>
+                        <Accordion.Body className={styles.accordionBody}>
+                            <RemoveSampleFiles />
                         </Accordion.Body>
                     </Accordion.Item>
                     <Accordion.Item className={styles.accordionItem} eventKey="strm-to-symlinks">
