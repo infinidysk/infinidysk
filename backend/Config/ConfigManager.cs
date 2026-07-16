@@ -327,6 +327,52 @@ public class ConfigManager
         return TimeSpan.FromMinutes(totalMinutes);
     }
 
+    public bool IsPrefetchCacheEnabled()
+    {
+        var defaultValue = false;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("cache.prefetch-enabled"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+    }
+
+    /// <summary>
+    /// Directory where prefetched episodes are cached on local disk. Defaults to a
+    /// subdirectory of CONFIG_PATH so it works out of the box without requiring the
+    /// user to mount a separate volume.
+    /// </summary>
+    public string GetPrefetchCacheDir()
+    {
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("cache.dir"));
+        return configValue ?? Path.Join(DavDatabaseContext.ConfigPath, "cache");
+    }
+
+    public double GetPrefetchCacheMinFreeSpaceGb()
+    {
+        var stringValue = StringUtil.EmptyToNull(GetConfigValue("cache.min-free-space-gb"));
+        return double.Parse(stringValue ?? "10", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// The watch-progress percentage of the currently-playing episode at which
+    /// NzbDav starts prefetching the next episode into the local cache.
+    /// </summary>
+    public int GetPrefetchCacheThresholdPercent()
+    {
+        var stringValue = StringUtil.EmptyToNull(GetConfigValue("cache.prefetch-threshold-percent"));
+        return int.Parse(stringValue ?? "80");
+    }
+
+    public double GetPrefetchCacheMaxTimeHours()
+    {
+        var stringValue = StringUtil.EmptyToNull(GetConfigValue("cache.max-cache-time-hours"));
+        return double.Parse(stringValue ?? "48", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    public int GetPrefetchCacheMaxEpisodes()
+    {
+        var stringValue = StringUtil.EmptyToNull(GetConfigValue("cache.max-cache-episodes"));
+        return int.Parse(stringValue ?? "5");
+    }
+
     public class ConfigEventArgs : EventArgs
     {
         public required Dictionary<string, string> ChangedConfig { get; init; }
