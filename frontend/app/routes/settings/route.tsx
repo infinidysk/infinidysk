@@ -57,6 +57,7 @@ const defaultConfig = {
     "cache.prefetch-threshold-percent": "80",
     "cache.max-cache-time-hours": "48",
     "cache.max-cache-episodes": "5",
+    "jellyfin.webhook-token": "",
 }
 
 export async function loader({ request }: Route.LoaderArgs) {

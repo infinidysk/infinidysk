@@ -373,6 +373,17 @@ public class ConfigManager
         return int.Parse(stringValue ?? "5");
     }
 
+    /// <summary>
+    /// Shared secret embedded in the Jellyfin webhook URL (?apikey=...), kept separate
+    /// from the general `api.key` so rotating it doesn't affect Sonarr/Radarr/SAB-style
+    /// integrations. Auto-populated by a migration, same as `api.strm-key`.
+    /// </summary>
+    public string GetJellyfinWebhookToken()
+    {
+        return GetConfigValue("jellyfin.webhook-token")
+               ?? throw new InvalidOperationException("The `jellyfin.webhook-token` config does not exist.");
+    }
+
     public class ConfigEventArgs : EventArgs
     {
         public required Dictionary<string, string> ChangedConfig { get; init; }

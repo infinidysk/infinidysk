@@ -92,6 +92,7 @@ class Program
             .AddSingleton<UsenetStreamingClient>()
             .AddSingleton<QueueManager>()
             .AddSingleton<PrefetchCacheService>()
+            .AddSingleton<EpisodeResolverService>()
             .AddHostedService<HealthCheckService>()
             .AddHostedService<ArrMonitoringService>()
             .AddHostedService<BlobCleanupService>()

@@ -2,6 +2,7 @@
 # non-project files #
 #####################
 
+/captures/
 bin/
 obj/
 /packages/

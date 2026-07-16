@@ -1,6 +1,6 @@
-import { Form, InputGroup } from "react-bootstrap";
+import { Form, InputGroup, Button } from "react-bootstrap";
 import styles from "./cache.module.css"
-import { type Dispatch, type SetStateAction } from "react";
+import { type Dispatch, type SetStateAction, useState } from "react";
 import { className } from "~/utils/styling";
 import { isPositiveInteger } from "../usenet/usenet";
 
@@ -11,6 +11,15 @@ type CacheSettingsProps = {
 
 export function CacheSettings({ config, setNewConfig }: CacheSettingsProps) {
     const isEnabled = config["cache.prefetch-enabled"] === "true";
+    const [isCopied, setIsCopied] = useState(false);
+
+    const webhookUrl = getJellyfinWebhookUrl(config);
+
+    const onCopyWebhookUrl = async () => {
+        await navigator.clipboard.writeText(webhookUrl);
+        setIsCopied(true);
+        setTimeout(() => setIsCopied(false), 2000);
+    };
 
     return (
         <div className={styles.container}>
@@ -119,9 +128,37 @@ export function CacheSettings({ config, setNewConfig }: CacheSettingsProps) {
                         is evicted first once this limit is reached.
                     </Form.Text>
                 </Form.Group>
+                <hr />
+                <Form.Group>
+                    <Form.Label htmlFor="jellyfin-webhook-url-input">Jellyfin Webhook URL</Form.Label>
+                    <InputGroup className={styles.input}>
+                        <Form.Control
+                            type="text"
+                            id="jellyfin-webhook-url-input"
+                            aria-describedby="jellyfin-webhook-url-help"
+                            readOnly
+                            value={webhookUrl}
+                            onFocus={e => e.target.select()} />
+                        <Button variant="outline-secondary" onClick={onCopyWebhookUrl}>
+                            {isCopied ? "Copied!" : "Copy"}
+                        </Button>
+                    </InputGroup>
+                    <Form.Text id="jellyfin-webhook-url-help" muted>
+                        In Jellyfin: Dashboard → Plugins → Webhooks → Add Generic Destination. Paste this URL,
+                        set Notification Type to "Playback Progress", Item Type to "Episodes", and enable
+                        "Send All Properties (Ignores Template)".
+                    </Form.Text>
+                </Form.Group>
             </>}
         </div>
     );
+}
+
+function getJellyfinWebhookUrl(config: Record<string, string>): string {
+    // matches ConfigManager.GetBaseUrl()'s own default, so this stays correct even
+    // when `general.base-url` hasn't been explicitly set yet
+    const baseUrl = (config["general.base-url"] || "http://localhost:3000").replace(/\/$/, "");
+    return `${baseUrl}/api/jellyfin-webhook?apikey=${config["jellyfin.webhook-token"] ?? ""}`;
 }
 
 export function isCacheSettingsUpdated(config: Record<string, string>, newConfig: Record<string, string>) {
