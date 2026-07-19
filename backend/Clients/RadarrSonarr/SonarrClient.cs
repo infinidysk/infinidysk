@@ -19,6 +19,43 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public Task<SonarrSeries> GetSeries(int seriesId) =>
         Get<SonarrSeries>($"/series/{seriesId}");
 
+    /// <summary>
+    /// Finds a series by title. Used to resolve a Jellyfin webhook's `SeriesName` to a
+    /// Sonarr series -- Jellyfin's PlaybackProgress payload carries no series-level
+    /// external id (its Provider_* fields are episode-level), so title is the only
+    /// thing the two systems reliably share.
+    /// </summary>
+    public async Task<SonarrSeries?> FindSeriesByTitle(string title)
+    {
+        var normalizedTitle = NormalizeTitle(title);
+        var allSeries = await GetAllSeries().ConfigureAwait(false);
+        return allSeries.FirstOrDefault(x => NormalizeTitle(x.Title ?? "") == normalizedTitle);
+    }
+
+    /// <summary>
+    /// Finds the file-path of the episode immediately following (seasonNumber, episodeNumber),
+    /// skipping over any not-yet-downloaded episodes. Returns null if there is no next episode
+    /// file yet (e.g. it hasn't aired, or hasn't been grabbed).
+    /// </summary>
+    public async Task<string?> GetNextEpisodeFilePath(int seriesId, int seasonNumber, int episodeNumber)
+    {
+        var episodes = await GetAllEpisodes(seriesId).ConfigureAwait(false);
+        var nextEpisode = episodes
+            .Where(x => x.EpisodeFileId is > 0)
+            .Where(x => x.SeasonNumber > seasonNumber
+                        || (x.SeasonNumber == seasonNumber && x.EpisodeNumber > episodeNumber))
+            .OrderBy(x => x.SeasonNumber)
+            .ThenBy(x => x.EpisodeNumber)
+            .FirstOrDefault();
+        if (nextEpisode is null) return null;
+
+        var episodeFile = await GetEpisodeFile(nextEpisode.EpisodeFileId!.Value).ConfigureAwait(false);
+        return episodeFile.Path;
+    }
+
+    private static string NormalizeTitle(string title) =>
+        new string(title.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+
     public Task<SonarrEpisodeFile> GetEpisodeFile(int episodeFileId) =>
         Get<SonarrEpisodeFile>($"/episodefile/{episodeFileId}");
 
@@ -27,6 +64,9 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 
     public Task<List<SonarrEpisode>> GetEpisodesFromEpisodeFileId(int episodeFileId) =>
         Get<List<SonarrEpisode>>($"/episode?episodeFileId={episodeFileId}");
+
+    public Task<List<SonarrEpisode>> GetAllEpisodes(int seriesId) =>
+        Get<List<SonarrEpisode>>($"/episode?seriesId={seriesId}");
 
     public Task<HttpStatusCode> DeleteEpisodeFile(int episodeFileId) =>
         Delete($"/episodefile/{episodeFileId}");

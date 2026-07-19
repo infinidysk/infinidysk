@@ -41,6 +41,7 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
     public DbSet<DavCleanupItem> DavCleanupItems => Set<DavCleanupItem>();
     public DbSet<NzbName> NzbNames => Set<NzbName>();
     public DbSet<NzbBlobCleanupItem> NzbBlobCleanupItems => Set<NzbBlobCleanupItem>();
+    public DbSet<CachedEpisode> CachedEpisodes => Set<CachedEpisode>();
 
     // blob items
     public List<DavNzbFile> BlobNzbFiles = [];
@@ -500,6 +501,51 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
 
             e.Property(i => i.Id)
                 .ValueGeneratedNever();
+        });
+
+        // CachedEpisode
+        b.Entity<CachedEpisode>(e =>
+        {
+            e.ToTable("CachedEpisodes");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.DavItemId)
+                .ValueGeneratedNever()
+                .IsRequired();
+
+            e.Property(i => i.FilePath)
+                .IsRequired();
+
+            e.Property(i => i.FileSize)
+                .IsRequired();
+
+            e.Property(i => i.CachedAt)
+                .ValueGeneratedNever()
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
+
+            e.Property(i => i.LastAccessedAt)
+                .ValueGeneratedNever()
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
+
+            e.Property(i => i.Status)
+                .HasConversion<int>()
+                .IsRequired();
+
+            e.HasIndex(i => i.DavItemId)
+                .IsUnique();
+
+            e.HasIndex(i => new { i.Status, i.LastAccessedAt });
         });
     }
 

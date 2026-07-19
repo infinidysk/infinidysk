@@ -9,6 +9,7 @@ import { isArrsSettingsUpdated, isArrsSettingsValid, ArrsSettings } from "./arrs
 import { isMaintenanceSettingsUpdated, Maintenance } from "./maintenance/maintenance";
 import { isRepairsSettingsUpdated, RepairsSettings } from "./repairs/repairs";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
+import { isCacheSettingsUpdated, isCacheSettingsValid, CacheSettings } from "./cache/cache";
 import { useCallback, useState } from "react";
 import { useBlocker } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
@@ -51,6 +52,13 @@ const defaultConfig = {
     "maintenance.remove-orphaned-schedule-time": "0",
     "api.nzb-backup-enabled": "false",
     "api.nzb-backup-location": "",
+    "cache.prefetch-enabled": "false",
+    "cache.dir": "",
+    "cache.min-free-space-gb": "10",
+    "cache.prefetch-threshold-percent": "80",
+    "cache.max-cache-time-hours": "48",
+    "cache.max-cache-episodes": "5",
+    "jellyfin.webhook-token": "",
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -96,7 +104,8 @@ function Body(props: BodyProps) {
     const isRepairsUpdated = isRepairsSettingsUpdated(config, newConfig);
     const isRcloneUpdated = isRcloneSettingsUpdated(config, newConfig);
     const isMaintenanceUpdated = isMaintenanceSettingsUpdated(config, newConfig);
-    const isUpdated = iseUsenetUpdated || isSabnzbdUpdated || isWebdavUpdated || isArrsUpdated || isRepairsUpdated || isRcloneUpdated || isMaintenanceUpdated;
+    const isCacheUpdated = isCacheSettingsUpdated(config, newConfig);
+    const isUpdated = iseUsenetUpdated || isSabnzbdUpdated || isWebdavUpdated || isArrsUpdated || isRepairsUpdated || isRcloneUpdated || isMaintenanceUpdated || isCacheUpdated;
     const navigationBlocker = useNavigationBlocker(isUpdated);
 
     const usenetTitle = iseUsenetUpdated ? "✏️ Usenet" : "Usenet";
@@ -106,6 +115,7 @@ function Body(props: BodyProps) {
     const repairsTitle = isRepairsUpdated ? "✏️ Repairs" : "Repairs";
     const rcloneTitle = isRcloneUpdated ? "✏️ Rclone Server" : "Rclone Server";
     const maintenanceTitle = isMaintenanceUpdated ? "✏️ Maintenance" : "Maintenance";
+    const cacheTitle = isCacheUpdated ? "✏️ Cache" : "Cache";
 
     const saveButtonLabel = isSaving ? "Saving..."
         : !isUpdated && isSaved ? "Saved ✅"
@@ -113,6 +123,7 @@ function Body(props: BodyProps) {
         : isSabnzbdUpdated && !isSabnzbdSettingsValid(newConfig) ? "Invalid SABnzbd settings"
         : isWebdavUpdated && !isWebdavSettingsValid(newConfig) ? "Invalid WebDAV settings"
         : isArrsUpdated && !isArrsSettingsValid(newConfig) ? "Invalid Arrs settings"
+        : isCacheUpdated && !isCacheSettingsValid(newConfig) ? "Invalid Cache settings"
         : "Save";
     const saveButtonVariant = saveButtonLabel === "Save" ? "primary"
         : saveButtonLabel === "Saved ✅" ? "success"
@@ -171,6 +182,9 @@ function Body(props: BodyProps) {
                 </Tab>
                 <Tab eventKey="maintenance" title={maintenanceTitle}>
                     <Maintenance savedConfig={config} config={newConfig} setNewConfig={setNewConfig} />
+                </Tab>
+                <Tab eventKey="cache" title={cacheTitle}>
+                    <CacheSettings config={newConfig} setNewConfig={setNewConfig} />
                 </Tab>
             </Tabs>
             <hr />

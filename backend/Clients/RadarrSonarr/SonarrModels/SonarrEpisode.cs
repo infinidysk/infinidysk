@@ -18,4 +18,7 @@ public class SonarrEpisode
 
     [JsonPropertyName("title")]
     public string? Title { get; set; }
+
+    [JsonPropertyName("episodeFileId")]
+    public int? EpisodeFileId { get; set; }
 }

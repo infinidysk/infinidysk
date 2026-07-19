@@ -264,4 +264,77 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             select davItem;
         return await query.Distinct().ToListAsync(ct).ConfigureAwait(false);
     }
+
+    // prefetch cache
+    public Task<CachedEpisode?> GetCachedEpisodeAsync(Guid davItemId, CancellationToken ct = default)
+    {
+        return Ctx.CachedEpisodes.FirstOrDefaultAsync(x => x.DavItemId == davItemId, ct);
+    }
+
+    public Task<CachedEpisode?> GetCompleteCachedEpisodeAsync(Guid davItemId, CancellationToken ct = default)
+    {
+        return Ctx.CachedEpisodes
+            .FirstOrDefaultAsync(x => x.DavItemId == davItemId && x.Status == CachedEpisode.CacheStatus.Complete, ct);
+    }
+
+    public Task<int> GetCachedEpisodeCountAsync(CachedEpisode.CacheStatus status, CancellationToken ct = default)
+    {
+        return Ctx.CachedEpisodes.CountAsync(x => x.Status == status, ct);
+    }
+
+    public Task<List<CachedEpisode>> GetCachedEpisodesOrderedByAgeAsync
+    (
+        CachedEpisode.CacheStatus status,
+        CancellationToken ct = default
+    )
+    {
+        return Ctx.CachedEpisodes
+            .Where(x => x.Status == status)
+            .OrderBy(x => x.LastAccessedAt)
+            .ToListAsync(ct);
+    }
+
+    public Task<List<CachedEpisode>> GetCachedEpisodesOlderThanAsync
+    (
+        DateTimeOffset cutoff,
+        CancellationToken ct = default
+    )
+    {
+        return Ctx.CachedEpisodes
+            .Where(x => x.Status == CachedEpisode.CacheStatus.Complete && x.CachedAt < cutoff)
+            .ToListAsync(ct);
+    }
+
+    public Task<List<CachedEpisode>> GetStaleCachedEpisodesAsync
+    (
+        DateTimeOffset cutoff,
+        CancellationToken ct = default
+    )
+    {
+        return Ctx.CachedEpisodes
+            .Where(x => x.Status != CachedEpisode.CacheStatus.Complete && x.CachedAt < cutoff)
+            .ToListAsync(ct);
+    }
+
+    public async Task AddCachedEpisodeAsync(CachedEpisode cachedEpisode, CancellationToken ct = default)
+    {
+        await Ctx.CachedEpisodes.AddAsync(cachedEpisode, ct).ConfigureAwait(false);
+        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task RemoveCachedEpisodesAsync(List<Guid> ids, CancellationToken ct = default)
+    {
+        await Ctx.CachedEpisodes
+            .Where(x => ids.Contains(x.Id))
+            .ExecuteDeleteAsync(ct)
+            .ConfigureAwait(false);
+    }
+
+    public async Task TouchCachedEpisodeLastAccessedAsync(Guid davItemId, CancellationToken ct = default)
+    {
+        await Ctx.CachedEpisodes
+            .Where(x => x.DavItemId == davItemId)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.LastAccessedAt, DateTimeOffset.Now), ct)
+            .ConfigureAwait(false);
+    }
 }
