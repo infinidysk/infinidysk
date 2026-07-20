@@ -237,6 +237,8 @@ class Program
                 .AddSingleton<WardenBackupService>()
                 .AddHostedService(sp => sp.GetRequiredService<WardenBackupService>())
                 .AddSingleton<DatabaseBackupStore>()
+                .AddSingleton<NzbWebDAV.UsenetMigration.UsenetMigrationStore>()
+                .AddHostedService<NzbWebDAV.UsenetMigration.Runner.UsenetMigrationRunner>()
                 .AddSingleton<RestartService>()
                 .AddHostedService<DatabaseBackupSchedulerService>()
                 .AddSingleton<SearchExcludeSyncService>()
@@ -422,7 +424,7 @@ class Program
             pendingRestore = null;
         }
 
-        // An explicit target (design-time tooling / tests) uses the simple,
+        // An explicit target supplied by tooling or tests uses the simple,
         // single-call path. Progress tracking only covers the common upgrade
         // path where all pending migrations are applied.
         if (targetMigration is not null)
