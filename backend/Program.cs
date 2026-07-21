@@ -126,6 +126,26 @@ class Program
                     SigtermUtil.GetCancellationToken())
                 .ConfigureAwait(false);
 
+            // The stock entrypoint runs `--db-migration` (the maintenance
+            // runner) before the server starts, so this is a no-op there.
+            // Deployments that launch the backend directly (e.g. separate
+            // chart-managed containers that bypass entrypoint.sh) would
+            // otherwise never migrate the main database and fail at runtime
+            // with missing tables/columns.
+            var pendingMigrations = (await databaseContext.Database
+                .GetPendingMigrationsAsync(SigtermUtil.GetCancellationToken())
+                .ConfigureAwait(false)).ToList();
+            if (pendingMigrations.Count > 0)
+            {
+                Log.Warning(
+                    "Applying {Count} pending database migrations at startup ({First} .. {Last})",
+                    pendingMigrations.Count, pendingMigrations[0], pendingMigrations[^1]);
+                await databaseContext.Database
+                    .MigrateAsync(SigtermUtil.GetCancellationToken())
+                    .ConfigureAwait(false);
+                Log.Information("Database migrations completed");
+            }
+
             // The metrics database has its own schema and must also be current on
             // normal startup, where the operational migration runner is skipped.
             await using (var metricsBootstrap = new MetricsDbContext())
