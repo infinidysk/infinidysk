@@ -1,7 +1,7 @@
 import type { Route } from "./+types/route";
 import styles from "./route.module.css"
 import { Tabs, Tab, Button } from "react-bootstrap"
-import { backendClient } from "~/clients/backend-client.server";
+import { backendClient, type GetProviderUsageStatsResponse } from "~/clients/backend-client.server";
 import { isUsenetSettingsUpdated, UsenetSettings } from "./usenet/usenet";
 import { isSabnzbdSettingsUpdated, isSabnzbdSettingsValid, SabnzbdSettings } from "./sabnzbd/sabnzbd";
 import { isWebdavSettingsUpdated, isWebdavSettingsValid, WebdavSettings } from "./webdav/webdav";
@@ -71,9 +71,13 @@ export async function loader({ request }: Route.LoaderArgs) {
         config[item.configName] = item.configValue;
     }
 
+    // fetch the provider usage stats
+    const providerUsageStats = await backendClient.getProviderUsageStats();
+
     return {
         config: config,
         appVersion: process.env.NZBDAV_VERSION ?? "unknown",
+        providerUsageStats: providerUsageStats,
     }
 }
 
@@ -86,6 +90,7 @@ export default function Settings(props: Route.ComponentProps) {
 type BodyProps = {
     config: Record<string, string>,
     appVersion: string,
+    providerUsageStats: GetProviderUsageStatsResponse,
 };
 
 function Body(props: BodyProps) {
@@ -163,7 +168,7 @@ function Body(props: BodyProps) {
                 className={styles.tabs}
             >
                 <Tab eventKey="usenet" title={usenetTitle}>
-                    <UsenetSettings config={newConfig} setNewConfig={setNewConfig} />
+                    <UsenetSettings config={newConfig} setNewConfig={setNewConfig} providerUsageStats={props.providerUsageStats} />
                 </Tab>
                 <Tab eventKey="sabnzbd" title={sabnzbdTitle}>
                     <SabnzbdSettings config={newConfig} setNewConfig={setNewConfig} appVersion={props.appVersion} />

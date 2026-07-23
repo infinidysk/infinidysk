@@ -42,6 +42,8 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
     public DbSet<NzbName> NzbNames => Set<NzbName>();
     public DbSet<NzbBlobCleanupItem> NzbBlobCleanupItems => Set<NzbBlobCleanupItem>();
     public DbSet<CachedEpisode> CachedEpisodes => Set<CachedEpisode>();
+    public DbSet<ProviderUsageStat> ProviderUsageStats => Set<ProviderUsageStat>();
+    public DbSet<ProviderUsageStatDaily> ProviderUsageStatsDaily => Set<ProviderUsageStatDaily>();
 
     // blob items
     public List<DavNzbFile> BlobNzbFiles = [];
@@ -436,6 +438,65 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                 .IsRequired();
 
             e.Property(i => i.Count);
+        });
+
+        // ProviderUsageStats
+        b.Entity<ProviderUsageStat>(e =>
+        {
+            e.ToTable("ProviderUsageStats");
+            e.HasKey(i => i.ProviderId);
+
+            e.Property(i => i.ProviderId)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.ProviderHost)
+                .IsRequired();
+
+            e.Property(i => i.BytesDownloaded)
+                .IsRequired();
+
+            e.Property(i => i.ArticlesNotFoundCount)
+                .IsRequired();
+
+            e.Property(i => i.LastUpdatedAt)
+                .ValueGeneratedNever()
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
+        });
+
+        // ProviderUsageStatsDaily
+        b.Entity<ProviderUsageStatDaily>(e =>
+        {
+            e.ToTable("ProviderUsageStatsDaily");
+            e.HasKey(i => new { i.DateStartInclusive, i.DateEndExclusive, i.ProviderId });
+
+            e.Property(i => i.DateStartInclusive)
+                .ValueGeneratedNever()
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
+
+            e.Property(i => i.DateEndExclusive)
+                .ValueGeneratedNever()
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
+
+            e.Property(i => i.ProviderId)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.BytesDownloaded)
+                .IsRequired();
+
+            e.Property(i => i.ArticlesNotFoundCount)
+                .IsRequired();
         });
 
         // ConfigItem

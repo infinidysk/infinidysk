@@ -251,6 +251,19 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .ToListAsync(ct).ConfigureAwait(false);
     }
 
+    // provider usage stats
+    public async Task<List<ProviderUsageStatDaily>> GetProviderUsageStatsDailyAsync
+    (
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken ct = default
+    )
+    {
+        return await Ctx.ProviderUsageStatsDaily
+            .Where(d => d.DateStartInclusive >= from && d.DateStartInclusive <= to)
+            .ToListAsync(ct).ConfigureAwait(false);
+    }
+
     // completed-symlinks
     public async Task<List<DavItem>> GetCompletedSymlinkCategoryChildren(string category,
         CancellationToken ct = default)

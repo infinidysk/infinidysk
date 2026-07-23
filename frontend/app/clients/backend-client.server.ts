@@ -225,6 +225,22 @@ class BackendClient {
         const data = await response.json();
         return data;
     }
+
+    public async getProviderUsageStats(): Promise<GetProviderUsageStatsResponse> {
+        const url = process.env.BACKEND_URL + "/api/get-provider-usage-stats";
+
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await fetch(url, {
+            method: "GET",
+            headers: { "x-api-key": apiKey }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get provider usage stats: ${(await response.json()).error}`);
+        }
+        const data = await response.json();
+        return data;
+    }
 }
 
 export const backendClient = new BackendClient();
@@ -318,6 +334,27 @@ export type HealthCheckResult = {
     result: HealthResult,
     repairStatus: RepairAction,
     message: string | null
+}
+
+export type GetProviderUsageStatsResponse = {
+    totals: ProviderUsageStat[],
+    dailyBuckets: ProviderUsageStatDaily[]
+}
+
+export type ProviderUsageStat = {
+    providerId: string,
+    providerHost: string,
+    bytesDownloaded: number,
+    articlesNotFoundCount: number,
+    lastUpdatedAt: string
+}
+
+export type ProviderUsageStatDaily = {
+    dateStartInclusive: string,
+    dateEndExclusive: string,
+    providerId: string,
+    bytesDownloaded: number,
+    articlesNotFoundCount: number
 }
 
 export enum HealthResult {

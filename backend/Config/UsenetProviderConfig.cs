@@ -13,6 +13,7 @@ public class UsenetProviderConfig
 
     public class ConnectionDetails
     {
+        public Guid Id { get; set; }
         public required ProviderType Type { get; set; }
         public required string Host { get; set; }
         public required int Port { get; set; }
@@ -20,5 +21,6 @@ public class UsenetProviderConfig
         public required string User { get; set; }
         public required string Pass { get; set; }
         public required int MaxConnections { get; set; }
+        public double? MonthlyQuotaGb { get; set; }
     }
 }

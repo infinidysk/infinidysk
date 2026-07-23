@@ -1,4 +1,5 @@
 ﻿using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Clients.Usenet.Statistics;
 using NzbWebDAV.Config;
 using NzbWebDAV.Websocket;
 
@@ -6,8 +7,13 @@ namespace NzbWebDAV.Clients.Usenet;
 
 public class UsenetStreamingClient : WrappingNntpClient
 {
-    public UsenetStreamingClient(ConfigManager configManager, WebsocketManager websocketManager)
-        : base(CreateDownloadingNntpClient(configManager, websocketManager))
+    public UsenetStreamingClient
+    (
+        ConfigManager configManager,
+        WebsocketManager websocketManager,
+        ProviderUsageStatsAggregator statsAggregator
+    )
+        : base(CreateDownloadingNntpClient(configManager, websocketManager, statsAggregator))
     {
         // when config changes, create a new MultiProviderClient to use instead.
         configManager.OnConfigChanged += (_, configEventArgs) =>
@@ -16,7 +22,7 @@ public class UsenetStreamingClient : WrappingNntpClient
             if (!configEventArgs.ChangedConfig.ContainsKey("usenet.providers")) return;
 
             // update the connection-pool according to the new config
-            var newUsenetClient = CreateDownloadingNntpClient(configManager, websocketManager);
+            var newUsenetClient = CreateDownloadingNntpClient(configManager, websocketManager, statsAggregator);
             ReplaceUnderlyingClient(newUsenetClient);
         };
     }
@@ -24,17 +30,19 @@ public class UsenetStreamingClient : WrappingNntpClient
     private static DownloadingNntpClient CreateDownloadingNntpClient
     (
         ConfigManager configManager,
-        WebsocketManager websocketManager
+        WebsocketManager websocketManager,
+        ProviderUsageStatsAggregator statsAggregator
     )
     {
-        var multiProviderClient = CreateMultiProviderClient(configManager, websocketManager);
+        var multiProviderClient = CreateMultiProviderClient(configManager, websocketManager, statsAggregator);
         return new DownloadingNntpClient(multiProviderClient, configManager, websocketManager);
     }
 
     private static MultiProviderNntpClient CreateMultiProviderClient
     (
         ConfigManager configManager,
-        WebsocketManager websocketManager
+        WebsocketManager websocketManager,
+        ProviderUsageStatsAggregator statsAggregator
     )
     {
         var providerConfig = configManager.GetUsenetProviderConfig();
@@ -42,16 +50,24 @@ public class UsenetStreamingClient : WrappingNntpClient
         var providerClients = providerConfig.Providers
             .Select((provider, index) => CreateProviderClient(
                 provider,
-                connectionPoolStats.GetOnConnectionPoolChanged(index)
+                connectionPoolStats.GetOnConnectionPoolChanged(index),
+                statsAggregator
             ))
             .ToList();
+
+        statsAggregator.SetActiveProviders(providerClients
+            .Select(client => new ProviderUsageStatsAggregator.ActiveProvider(
+                client.ProviderId, client.ProviderName, client.CircuitBreaker))
+            .ToList());
+
         return new MultiProviderNntpClient(providerClients);
     }
 
     private static MultiConnectionNntpClient CreateProviderClient
     (
         UsenetProviderConfig.ConnectionDetails connectionDetails,
-        EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs> onConnectionPoolChanged
+        EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs> onConnectionPoolChanged,
+        ProviderUsageStatsAggregator statsAggregator
     )
     {
         var connectionPool = CreateNewConnectionPool(
@@ -60,7 +76,14 @@ public class UsenetStreamingClient : WrappingNntpClient
             onConnectionPoolChanged
         );
         var circuitBreaker = new ProviderCircuitBreaker(connectionDetails.Host);
-        return new MultiConnectionNntpClient(connectionPool, connectionDetails.Type, circuitBreaker, connectionDetails.Host);
+        return new MultiConnectionNntpClient(
+            connectionPool,
+            connectionDetails.Type,
+            circuitBreaker,
+            connectionDetails.Host,
+            connectionDetails.Id,
+            statsAggregator
+        );
     }
 
     private static ConnectionPool<INntpClient> CreateNewConnectionPool
