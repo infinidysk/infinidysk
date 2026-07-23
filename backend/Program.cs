@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NWebDav.Server;
@@ -124,6 +125,9 @@ class Program
                 .ExecuteSqlRawAsync(
                     "PRAGMA journal_mode = WAL;",
                     SigtermUtil.GetCancellationToken())
+                .ConfigureAwait(false);
+
+            await ClearStaleMigrationLockAsync(databaseContext, SigtermUtil.GetCancellationToken())
                 .ConfigureAwait(false);
 
             // The stock entrypoint runs `--db-migration` (the maintenance
@@ -371,6 +375,39 @@ class Program
     }
 
     /// <summary>
+    /// Clears any stale EF Core migration lock before applying migrations.
+    ///
+    /// A migration killed mid-flight (OOM, container eviction, SIGKILL, a node reboot)
+    /// leaves a committed row in EF Core's <c>__EFMigrationsLock</c> table. On the next
+    /// start, <c>SqliteHistoryRepository.AcquireDatabaseLock()</c> retries the acquire in
+    /// a <c>Thread.Sleep</c> loop with no timeout, so migration hangs forever — zero CPU,
+    /// no WAL writes, no progress — and the app never finishes starting. nzbdav only ever
+    /// applies migrations single-threaded at startup (the entrypoint runs
+    /// <c>--db-migration</c> to completion before the server, and the in-process path runs
+    /// before the host is built), so there is never a legitimate concurrent lock holder:
+    /// any pre-existing lock is stale and safe to clear.
+    /// </summary>
+    private static async Task ClearStaleMigrationLockAsync(DavDatabaseContext db, CancellationToken ct)
+    {
+        try
+        {
+            var cleared = await db.Database
+                .ExecuteSqlRawAsync("DELETE FROM \"__EFMigrationsLock\"", ct)
+                .ConfigureAwait(false);
+            if (cleared > 0)
+                Log.Warning(
+                    "Cleared {Count} stale EF migration lock row(s) left by an interrupted "
+                    + "migration; SQLite AcquireDatabaseLock would otherwise hang indefinitely",
+                    cleared);
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 1)
+        {
+            // "no such table" — __EFMigrationsLock has not been created yet on a
+            // brand-new database. Nothing to clear.
+        }
+    }
+
+    /// <summary>
     /// Exercises P/Invoke into rapidyenc. Managed failures become Log.Fatal; a hard
     /// native crash still leaves the preceding Information line as a smoking gun.
     /// </summary>
@@ -462,6 +499,7 @@ class Program
             await databaseContext.Database
                 .ExecuteSqlRawAsync("PRAGMA journal_mode = WAL;", ct)
                 .ConfigureAwait(false);
+            await ClearStaleMigrationLockAsync(databaseContext, ct).ConfigureAwait(false);
             Log.Information("Applying database migrations through {Target}", targetMigration);
             await databaseContext.Database.MigrateAsync(targetMigration, ct).ConfigureAwait(false);
             Log.Information("Database migrations completed");
@@ -527,6 +565,7 @@ class Program
             await databaseContext.Database
                 .ExecuteSqlRawAsync("PRAGMA journal_mode = WAL;", ct)
                 .ConfigureAwait(false);
+            await ClearStaleMigrationLockAsync(databaseContext, ct).ConfigureAwait(false);
 
             var pending = (await databaseContext.Database.GetPendingMigrationsAsync(ct).ConfigureAwait(false)).ToList();
             var vacuumEnabled = await IsDatabaseStartupVacuumEnabledAsync().ConfigureAwait(false);
