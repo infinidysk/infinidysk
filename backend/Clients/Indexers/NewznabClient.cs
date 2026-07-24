@@ -9,9 +9,18 @@ public class NewznabClient(
     string userAgent = "NzbDav",
     string? proxyUrl = null,
     int timeoutSeconds = 30,
-    bool skipTlsVerification = false)
+    bool skipTlsVerification = false,
+    bool useHealthProxy = false)
 {
     private static readonly XNamespace Newznab = "http://www.newznab.com/DTD/2010/feeds/attributes/";
+
+    // Health-proxy transform: when this indexer opts in (and isn't the
+    // proxy itself, and provider hosts are known), API calls target the
+    // proxy with the original indexer as `target`.
+    private readonly string? _healthProxyProviderHosts =
+        useHealthProxy ? NewznabHealthProxy.ResolveProviderHostsFor(baseUrl) : null;
+
+    private bool UseHealthProxy => _healthProxyProviderHosts is not null;
 
     private readonly Uri _apiUri = NormalizeApiUri(baseUrl);
     private readonly HttpClient _http = ProxyHttpClientPool.GetClient(proxyUrl, skipTlsVerification);
@@ -43,6 +52,33 @@ public class NewznabClient(
         }
         foreach (var kv in extraParams)
             parts.Add($"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}");
+
+        if (UseHealthProxy)
+        {
+            // Route through the health proxy: standard Newznab params stay
+            // (apikey passes through to the upstream indexer), the
+            // normalized indexer API endpoint becomes `target` (its own
+            // query params, if any, already travel in `parts` above), and
+            // results are backbone-filtered by provider_host. `t=caps` is
+            // answered by the proxy itself.
+            var target = new UriBuilder(_apiUri) { Query = "" }.Uri.ToString();
+            parts.Add($"target={Uri.EscapeDataString(target)}");
+            parts.Add($"provider_host={Uri.EscapeDataString(_healthProxyProviderHosts!)}");
+            if (NewznabHealthProxy.ShowUnknown)
+            {
+                // Both spellings are sent — proxy versions differ on which
+                // control name they read; the unused one is ignored.
+                parts.Add("showUnknown=true");
+                parts.Add("show_unknown=true");
+            }
+            var proxyUri = NewznabHealthProxy.GetProxyUri();
+            var proxyBuilder = new UriBuilder(proxyUri);
+            var existingProxyQuery = proxyBuilder.Query.TrimStart('?');
+            proxyBuilder.Query = existingProxyQuery.Length == 0
+                ? string.Join("&", parts)
+                : existingProxyQuery + "&" + string.Join("&", parts);
+            return proxyBuilder.Uri.ToString();
+        }
 
         var builder = new UriBuilder(_apiUri) { Query = string.Join("&", parts) };
         return builder.Uri.ToString();

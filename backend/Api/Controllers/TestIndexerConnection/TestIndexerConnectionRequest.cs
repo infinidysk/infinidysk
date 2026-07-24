@@ -10,6 +10,7 @@ public class TestIndexerConnectionRequest
     public string? ProxyUrl { get; init; }
     public int? TimeoutSeconds { get; init; }
     public bool SkipTlsVerification { get; init; }
+    public bool UseHealthProxy { get; init; }
 
     public TestIndexerConnectionRequest(HttpContext context)
     {
@@ -27,5 +28,8 @@ public class TestIndexerConnectionRequest
             context.Request.Form["skipTlsVerification"].FirstOrDefault(),
             out var skipTlsVerification)
             && skipTlsVerification;
+
+        UseHealthProxy = string.Equals(
+            context.Request.Form["useHealthProxy"].FirstOrDefault(), "true", StringComparison.OrdinalIgnoreCase);
     }
 }

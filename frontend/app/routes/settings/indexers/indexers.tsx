@@ -60,6 +60,7 @@ interface ConnectionDetails {
     SkipTlsVerification?: boolean;
     MaxRequestsPerMinute?: number;
     EnableStrictMatching?: boolean;
+    UseHealthProxy?: boolean;
     ProxyUrl?: string;
     TimeoutSeconds?: number;
     SearchResultLimit?: number;
@@ -870,6 +871,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
     const [hitResetTime, setHitResetTime] = useState("");
     const [enabled, setEnabled] = useState(true);
     const [strict, setStrict] = useState(false);
+    const [useHealthProxy, setUseHealthProxy] = useState(false);
     const [extraMovieCategories, setExtraMovieCategories] = useState("");
     const [extraTvCategories, setExtraTvCategories] = useState("");
     const [ignoreCategoryFilter, setIgnoreCategoryFilter] = useState(false);
@@ -918,6 +920,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
             );
             setEnabled(indexer?.Enabled ?? true);
             setStrict(indexer?.EnableStrictMatching ?? false);
+            setUseHealthProxy(indexer?.UseHealthProxy ?? false);
             setExtraMovieCategories(indexer?.ExtraMovieCategories ?? "");
             setExtraTvCategories(indexer?.ExtraTvCategories ?? "");
             setIgnoreCategoryFilter(indexer?.IgnoreCategoryFilter ?? false);
@@ -933,7 +936,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
         }
     }, [show, indexer]);
 
-    useEffect(() => { setTestState('idle'); }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, skipTlsVerification]);
+    useEffect(() => { setTestState('idle'); }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, skipTlsVerification, useHealthProxy]);
 
     const handleTest = useCallback(async () => {
         if (!url.trim() || !apiKey.trim() || apiKeyIsMasked) return;
@@ -946,13 +949,14 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
             if (proxyUrl.trim()) fd.append('proxyUrl', proxyUrl);
             if (timeoutSeconds.trim()) fd.append('timeoutSeconds', timeoutSeconds);
             fd.append('skipTlsVerification', skipTlsVerification.toString());
+            if (useHealthProxy) fd.append('useHealthProxy', 'true');
             const r = await fetch('/api/test-indexer-connection', { method: 'POST', body: fd });
             const data = await r.json();
             setTestState(data.status && data.connected ? 'success' : 'error');
         } catch {
             setTestState('error');
         }
-    }, [url, apiKey, apiKeyIsMasked, searchUserAgent, proxyUrl, timeoutSeconds, skipTlsVerification]);
+    }, [url, apiKey, apiKeyIsMasked, searchUserAgent, proxyUrl, timeoutSeconds, skipTlsVerification, useHealthProxy]);
 
     const handleSave = useCallback(() => {
         const rpm = parseInt(maxRpm || "0", 10);
@@ -994,6 +998,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
             DownloadLimit: Number.isFinite(dl) && dl > 0 ? dl : undefined,
             HitLimitResetTime: Number.isFinite(hr) && hr >= 0 && hr <= 23 ? hr : undefined,
             EnableStrictMatching: strict,
+            UseHealthProxy: useHealthProxy || undefined,
             ExtraMovieCategories: normaliseCategoryList(extraMovieCategories),
             ExtraTvCategories: normaliseCategoryList(extraTvCategories),
             IgnoreCategoryFilter: ignoreCategoryFilter || undefined,
@@ -1006,7 +1011,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                 PreferDownloaded: filterPreferDownloaded,
             },
         });
-    }, [name, url, apiKey, searchUserAgent, retrieveUserAgent, skipTlsVerification, proxyUrl, timeoutSeconds, searchResultLimit, maxRpm, hitLimit, downloadLimit, hitResetTime, enabled, strict,
+    }, [name, url, apiKey, searchUserAgent, retrieveUserAgent, skipTlsVerification, proxyUrl, timeoutSeconds, searchResultLimit, maxRpm, hitLimit, downloadLimit, hitResetTime, enabled, strict, useHealthProxy,
         extraMovieCategories, extraTvCategories, ignoreCategoryFilter,
         filterEnabled, filterSkipPassworded, filterMinGrabs, filterGrabsGraceHours,
         filterMaxAgeDaysWithoutGrabs, filterPreferDownloaded, onSave]);
@@ -1275,6 +1280,18 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                                 />
                                 <Label htmlFor="indexer-strict" className="text-sm font-normal text-base-content/80">
                                     Strict matching <span className="text-[11px] font-normal text-base-content/45">(drop results whose title doesn't match the request)</span>
+                                </Label>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    id="indexer-health-proxy"
+                                    className="checkbox checkbox-sm"
+                                    checked={useHealthProxy}
+                                    onChange={e => setUseHealthProxy(e.target.checked)}
+                                />
+                                <Label htmlFor="indexer-health-proxy" className="text-sm font-normal text-base-content/80">
+                                    Zyclops health proxy <span className="text-[11px] font-normal text-base-content/45">(search via the community NZB-health proxy; returns only releases known retrievable on your usenet providers)</span>
                                 </Label>
                             </div>
                         </div>

@@ -634,7 +634,8 @@ public class SearchProfileService(
                     searchUa,
                     proxy,
                     timeout,
-                    x.SkipTlsVerification);
+                    x.SkipTlsVerification,
+                    x.UseHealthProxy);
                 var baseQuery = ApplyIndexerCategoryOverrides(queryParams, x);
 
                 // Page through the indexer (offset += 100) until we've gathered `target` results,

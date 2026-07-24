@@ -25,7 +25,8 @@ public class TestIndexerConnectionController(NzbWebDAV.Config.ConfigManager conf
                 ua,
                 proxy,
                 timeout,
-                request.SkipTlsVerification);
+                request.SkipTlsVerification,
+                request.UseHealthProxy);
             var ok = await client.TestAsync(HttpContext.RequestAborted).ConfigureAwait(false);
             return Ok(new TestIndexerConnectionResponse { Status = true, Connected = ok });
         }

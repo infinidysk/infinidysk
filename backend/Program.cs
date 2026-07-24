@@ -148,6 +148,14 @@ class Program
                 return;
             }
 
+            // let the newznab health-proxy transform derive provider_host
+            // from this instance's enabled usenet providers (env override
+            // wins inside the resolver; reads live so provider edits apply)
+            Clients.Indexers.NewznabHealthProxy.ProviderHostsSource = () => configManager
+                .GetUsenetProviderConfig().Providers
+                .Where(p => p.Type != Models.ProviderType.Disabled)
+                .Select(p => p.Host);
+
             RunYencNativeSelfTest();
 
             // Assign stable ProviderIds (persisting if needed) before the streaming

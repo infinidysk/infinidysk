@@ -65,6 +65,10 @@ public class IndexerConfig
         public bool SkipTlsVerification { get; set; } = false;
         public int MaxRequestsPerMinute { get; set; } = 0;
         public bool EnableStrictMatching { get; set; } = false;
+        // Route this indexer's API calls through the Zyclops community NZB
+        // health proxy so only known-retrievable releases are returned.
+        // Off by default; toggled per indexer in Settings → Indexers.
+        public bool UseHealthProxy { get; set; } = false;
         // Per-indexer HTTP(S) proxy URL. Overrides the global ProxyUrl. Empty/null = inherit global.
         public string? ProxyUrl { get; set; }
         // Per-indexer HTTP timeout (seconds). Overrides the global TimeoutSeconds.
