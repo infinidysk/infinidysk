@@ -237,6 +237,16 @@ export function UsenetSettings({ config, setNewConfig, providerUsageStats }: Use
     // view
     return (
         <div className={styles.container}>
+            <div style={{
+                background: "red",
+                color: "white",
+                fontSize: "24px",
+                fontWeight: "bold",
+                padding: "16px",
+                textAlign: "center",
+            }}>
+                TEST MARKER — PROVIDER STATS BUILD IS LIVE
+            </div>
             <div className={styles.section}>
                 <div className={styles.sectionHeader}>
                     <div>Usenet Providers</div>
