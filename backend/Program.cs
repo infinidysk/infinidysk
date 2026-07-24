@@ -2,6 +2,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -310,6 +311,31 @@ class Program
             app.Map("/ws", websocketManager.HandleRoute);
             app.MapControllers();
             app.UseWebdavBasicAuthentication();
+            // RFC 4918 §9.1: a server that does not support infinite-depth
+            // PROPFIND must reject it with 403 + <propfind-finite-depth/>.
+            // NWebDav instead answers 207 with only depth-1 results, which
+            // silently lies to clients: the `webdav` npm library's deep mode
+            // (used by AIOStreams and friends) trusts the "successful" shallow
+            // listing, sees no files for releases whose video sits in a nested
+            // folder, and reports the download as empty instead of falling
+            // back to manual traversal. Returning the RFC error makes those
+            // clients throw and recover via their own recursive walk.
+            // Requests WITHOUT a Depth header keep NWebDav's existing
+            // behavior — some clients omit it while expecting a shallow
+            // answer, and rejecting them would regress working setups.
+            app.Use(async (context, next) =>
+            {
+                if (string.Equals(context.Request.Method, "PROPFIND", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(context.Request.Headers["Depth"], "infinity", StringComparison.OrdinalIgnoreCase))
+                {
+                    context.Response.StatusCode = 403;
+                    context.Response.ContentType = "application/xml; charset=utf-8";
+                    await context.Response.WriteAsync(
+                        "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:error xmlns:D=\"DAV:\"><D:propfind-finite-depth/></D:error>");
+                    return;
+                }
+                await next();
+            });
             app.UseNWebDav();
             app.Lifetime.ApplicationStopping.Register(SigtermUtil.Cancel);
             // Remap legacy host-keyed metrics rows onto ProviderIds after the app is
