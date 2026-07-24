@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet.Concurrency;
@@ -243,14 +244,29 @@ public class ConfigManager
     private void SyncPathSanitizer() =>
         PathSanitizer.SetWindowsSafePathsEnabled(IsWindowsSafePathsEnabled());
 
+    // Get-only computed properties are serialized by default and count as mapped,
+    // so JsonSerializer.Serialize output for these types round-trips unchanged.
+    private static readonly JsonSerializerOptions RejectUnknownPropertiesJsonOptions = new()
+    {
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+    };
+
+    private static readonly JsonSerializerOptions CaseInsensitiveJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
     /// <summary>
     /// Validates incoming config values, failing fast for anything that would otherwise throw
     /// deep inside a request/background task at read time (non-numeric ints, non-boolean flags,
     /// malformed JSON). Empty values are treated as "unset" and always allowed, matching the
-    /// getters' fallback-to-default behavior.
+    /// getters' fallback-to-default behavior. With <paramref name="rejectUnknownJsonProperties"/>
+    /// set, structured JSON values also reject unknown or miscased properties instead of silently
+    /// dropping them.
     /// </summary>
-    public static void ValidateConfigItems(IEnumerable<ConfigItem> configItems)
+    public static void ValidateConfigItems(IEnumerable<ConfigItem> configItems, bool rejectUnknownJsonProperties = false)
     {
+        var jsonOptions = rejectUnknownJsonProperties ? RejectUnknownPropertiesJsonOptions : null;
         foreach (var item in configItems)
         {
             var value = StringUtil.EmptyToNull(item.ConfigValue);
@@ -355,19 +371,19 @@ public class ConfigManager
                     break;
 
                 case ConfigKeys.UsenetProviders:
-                    RequireValidUsenetProviders(item.ConfigName, value);
+                    RequireValidUsenetProviders(item.ConfigName, value, jsonOptions);
                     break;
 
                 case ConfigKeys.ArrInstances:
-                    RequireJson<ArrConfig>(item.ConfigName, value);
+                    RequireJson<ArrConfig>(item.ConfigName, value, jsonOptions);
                     break;
 
                 case ConfigKeys.IndexersInstances:
-                    RequireJson<IndexerConfig>(item.ConfigName, value);
+                    RequireJson<IndexerConfig>(item.ConfigName, value, jsonOptions);
                     break;
 
                 case ConfigKeys.ProfilesInstances:
-                    RequireJson<ProfileConfig>(item.ConfigName, value);
+                    RequireJson<ProfileConfig>(item.ConfigName, value, jsonOptions);
                     break;
             }
         }
@@ -393,28 +409,61 @@ public class ConfigManager
                     $"Config value for '{key}' must be one of '{string.Join("', '", allowed)}', but was '{value}'.");
         }
 
-        static void RequireJson<T>(string key, string value)
+        static void RequireJson<T>(string key, string value, JsonSerializerOptions? options)
         {
             try
             {
-                JsonSerializer.Deserialize<T>(value);
+                JsonSerializer.Deserialize<T>(value, options);
             }
             catch (JsonException e)
             {
-                throw new ArgumentException($"Config value for '{key}' is not valid JSON: {e.Message}");
+                throw DescribeJsonFailure<T>(key, value, options, e);
             }
         }
 
-        static void RequireValidUsenetProviders(string key, string value)
+        // Parsing case-insensitively proves the payload is well formed and satisfies
+        // the type, so a strict failure can only be property naming and the path is
+        // safe to surface. One that fails both is malformed, and that message can
+        // quote part of the value.
+        static ArgumentException DescribeJsonFailure<T>(
+            string key, string value, JsonSerializerOptions? options, JsonException e)
+        {
+            if (options is null || !ParsesIgnoringCase<T>(value))
+                return new ArgumentException($"Config value for '{key}' is not valid JSON: {e.Message}");
+
+            return new ConfigUnmappedPropertyException(key, TruncatePath(e.Path));
+        }
+
+        static bool ParsesIgnoringCase<T>(string value)
+        {
+            try
+            {
+                JsonSerializer.Deserialize<T>(value, CaseInsensitiveJsonOptions);
+                return true;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        // A property name is operator-supplied text, so bound what reaches the log.
+        static string TruncatePath(string? path)
+        {
+            if (string.IsNullOrEmpty(path)) return "$";
+            return path.Length <= 120 ? path : path[..120] + "...";
+        }
+
+        static void RequireValidUsenetProviders(string key, string value, JsonSerializerOptions? options)
         {
             UsenetProviderConfig? config;
             try
             {
-                config = JsonSerializer.Deserialize<UsenetProviderConfig>(value);
+                config = JsonSerializer.Deserialize<UsenetProviderConfig>(value, options);
             }
             catch (JsonException e)
             {
-                throw new ArgumentException($"Config value for '{key}' is not valid JSON: {e.Message}");
+                throw DescribeJsonFailure<UsenetProviderConfig>(key, value, options, e);
             }
 
             if (config?.Providers is null) return;
@@ -1501,3 +1550,15 @@ internal sealed record ConfigDiagnosticSnapshot(
     string? Value,
     string Source,
     string? EnvironmentVariableName);
+
+/// <summary>
+/// A structured config value carried a property that maps to nothing on the target
+/// type. <see cref="JsonPath"/> holds property names and array indices only, never a
+/// value. It derives from <see cref="ArgumentException"/>, so widening strict
+/// validation beyond the environment overlay would put the path in API responses.
+/// </summary>
+public sealed class ConfigUnmappedPropertyException(string configName, string jsonPath)
+    : ArgumentException($"Config value for '{configName}' has an unknown or miscased property at '{jsonPath}'.")
+{
+    public string JsonPath { get; } = jsonPath;
+}

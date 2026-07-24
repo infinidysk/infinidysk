@@ -71,6 +71,8 @@ When a key is ENV-managed:
 ## Validation and restart
 
 - Unknown `NZBDAV_CONFIG__...` names, or invalid values for keys with schema validation (booleans, integers, enums such as `repair.healthcheck-depth`, and JSON blobs), abort startup with a **single-line** error that names the variable and **never** prints its value
+- Unknown or miscased properties **inside** a structured JSON value (`usenet.providers`, `arr.instances`, `indexers.instances`, `profiles.instances`) also abort startup, reporting the JSON path of the offending property (**property names only**, never values) so a typo is not silently dropped
+- Structured values are therefore **not forward compatible**: a Compose file cannot carry a property intended for a newer image, and rolling back to an image that predates a property fails startup rather than ignoring it
 - Free-form string keys (categories, paths, import strategy labels, some mode strings) are not fully schema-checked at ENV load — use the allowed values from the matching [Settings reference](index.md) page
 - Empty ENV values are ignored (same as omitting the variable); they do **not** clear a SQLite value
 - Changing ENV configuration requires a **container restart or recreate** (including after `.env` changes)
@@ -171,7 +173,7 @@ services:
 
     Multi-line `>-` YAML folds to a single line. Nested `${...}` inside JSON strings are expanded by Compose before the container starts.
 
-    Use **PascalCase** property names exactly as the Settings UI persists them (`Providers`, `Type`, `Host`, `RadarrInstances`, `Indexers`, `Profiles`, …). camelCase keys are ignored by deserialization and can produce empty or wrong configuration without a startup error.
+    Use **PascalCase** property names exactly as the Settings UI persists them (`Providers`, `Type`, `Host`, `RadarrInstances`, `Indexers`, `Profiles`, …). camelCase or misspelled keys abort startup with an error naming the JSON path of the offending property, so a typo cannot leave you with empty or partial configuration.
 
     Provider `Type` for **Pool Connections** is `1` (`0` = Disabled, `2` = BackupAndStats, `3` = BackupOnly — see [Usenet](usenet.md)). Omit `ProviderId` in ENV JSON — NzbDAV preserves matching SQLite ids by host/port/user, or assigns new ones. Pure ENV-only first installs (no matching SQLite row) get new IDs each restart until a SQLite match exists, so metrics keys may drift.
 

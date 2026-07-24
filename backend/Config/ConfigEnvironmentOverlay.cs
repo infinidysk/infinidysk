@@ -91,11 +91,21 @@ public sealed class ConfigEnvironmentOverlay
 
         // Validate one key at a time so failures name the ENV variable without
         // echoing the submitted value (ValidateConfigItems includes values).
+        // Structured values reject unknown properties here because a declarative
+        // config has nobody watching a Settings page to notice a dropped key.
         foreach (var item in items)
         {
             try
             {
-                ConfigManager.ValidateConfigItems([item]);
+                ConfigManager.ValidateConfigItems([item], rejectUnknownJsonProperties: true);
+            }
+            catch (ConfigUnmappedPropertyException e)
+            {
+                var envName = ConfigEnvMapping.ToEnvironmentVariableName(item.ConfigName)
+                              ?? item.ConfigName;
+                throw new ConfigEnvironmentException(
+                    $"Invalid configuration environment variable `{envName}`. " +
+                    $"Unknown or miscased property at `{e.JsonPath}`.");
             }
             catch (ArgumentException)
             {

@@ -111,6 +111,38 @@ public class UsenetProvidersValidationTests
         ];
     }
 
+    [Fact]
+    public void ValidateConfigItems_RejectsUnknownJsonPropertiesOnlyWhenStrict()
+    {
+        var miscased = new ConfigItem
+        {
+            ConfigName = ConfigKeys.ArrInstances,
+            ConfigValue = "{\"radarrInstances\":[]}",
+        };
+
+        // The default UI and API save path is unchanged and tolerates miscased JSON.
+        ConfigManager.ValidateConfigItems([miscased]);
+
+        var ex = Assert.Throws<ConfigUnmappedPropertyException>(() =>
+            ConfigManager.ValidateConfigItems([miscased], rejectUnknownJsonProperties: true));
+        Assert.Equal("$.radarrInstances", ex.JsonPath);
+    }
+
+    [Fact]
+    public void ValidateConfigItems_StrictStillReportsMalformedJsonAsInvalid()
+    {
+        var malformed = new ConfigItem
+        {
+            ConfigName = ConfigKeys.ArrInstances,
+            ConfigValue = "{\"RadarrInstances\": [",
+        };
+
+        // Malformed input is not a mapping problem, so it keeps the generic error.
+        var ex = Assert.Throws<ArgumentException>(() =>
+            ConfigManager.ValidateConfigItems([malformed], rejectUnknownJsonProperties: true));
+        Assert.IsNotType<ConfigUnmappedPropertyException>(ex);
+    }
+
     private static UsenetProviderConfig.ConnectionDetails MakeProvider(
         string host = "nntp.example",
         int port = 563,
