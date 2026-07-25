@@ -24,7 +24,7 @@
       <PackageReference Include="Serilog.Expressions" Version="5.0.0" />
       <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
       <PackageReference Include="NzbDav.SharpCompress" Version="0.54.0" />
-      <PackageReference Include="NzbDav.UsenetSharp" Version="3.2.0" />
+      <PackageReference Include="NzbDav.UsenetSharp" Version="3.3.0" />
       <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
     </ItemGroup>
 
