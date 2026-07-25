@@ -5,7 +5,7 @@
 Use **Symlinks — Plex** import strategy and an [rclone mount](mounting-webdav.md).
 
 1. Library folders should follow the symlinks under your media root (often via *Arr hardlink/move into `/mnt/media/...` that still points at `.ids` content).
-2. Prefer analysis settings that do not thrash the entire WebDAV tree continuously. Even with intro detection / loudness / preview thumbnails / deep analysis off, routine library scans still probe files — pair that with a conservative [rclone mount](mounting-webdav.md) (`--buffer-size=0M`, modest read-ahead).
+2. Prefer analysis settings that do not thrash the entire WebDAV tree continuously. Even with intro detection / loudness / preview thumbnails / deep analysis off, routine library scans still probe files — pair that with a conservative [rclone mount](mounting-webdav.md) (`--buffer-size=0M`, no `--vfs-read-ahead`).
 3. Disable **Empty trash automatically after every scan**. An rclone remount (for example when a compose `depends_on.restart` bounces the mount with NzbDAV) can briefly look empty; empty-trash would treat that as a mass delete.
 4. Watch Overview **Active Reads** and **Served** — unexpected sustained bandwidth often means library scans or VFS cache churn.
 

@@ -38,7 +38,7 @@ chmod 600 rclone.conf
 
 ## Sidecar Compose service
 
-The recommended mount enables rclone RC notifications so directory listings stay fresh without a very short `--dir-cache-time`. NzbDAV content is immutable after import: prefer a large VFS cache sized to disk, a long `--vfs-cache-max-age`, and modest read-ahead — large `--buffer-size` / `--vfs-read-ahead` values amplify media-server scan probes into multi‑hundred‑MB Usenet fetches per touched file.
+The recommended mount enables rclone RC notifications so directory listings stay fresh without a very short `--dir-cache-time`. NzbDAV content is immutable after import: prefer a large VFS cache sized to disk and a long `--vfs-cache-max-age`. Large `--buffer-size` or `--vfs-read-ahead` values amplify media-server scan probes into multi‑hundred‑MB Usenet fetches per touched file — leave them unset (or `0`) and rely on NzbDAV's server-side read-ahead.
 
 ```yaml
   nzbdav_rclone:
@@ -71,9 +71,8 @@ The recommended mount enables rclone RC notifications so directory listings stay
         --use-cookies
         --vfs-cache-mode=full
         --vfs-cache-max-size=50G
-        --vfs-cache-max-age=1000h
+        --vfs-cache-max-age=2160h
         --buffer-size=0M
-        --vfs-read-ahead=64M
         --vfs-read-chunk-size-limit=512M
         --no-modtime
         --no-checksum
@@ -94,7 +93,7 @@ Then **Settings → Rclone Server**: enable notifications, host `http://nzbdav_r
 
 !!! tip "Sizing the VFS cache"
 
-    Raise `--vfs-cache-max-size` to fit available disk (for example `200G`). Age-based eviction uses last access time; `--vfs-cache-max-age=off` is not valid in rclone — use a large duration such as `1000h` and let max-size do the real eviction.
+    Raise `--vfs-cache-max-size` to fit available disk (for example `200G`). Age-based eviction uses last access time; `--vfs-cache-max-age=off` is not valid in rclone — use a large duration such as `2160h` (~90 days) and let max-size do the real eviction.
 
 !!! warning "Plex and remounts"
 
@@ -108,9 +107,8 @@ Then **Settings → Rclone Server**: enable notifications, host `http://nzbdav_r
 | `--use-cookies` | Avoid re-auth on every request |
 | `--vfs-cache-mode=full` | Disk-backed read cache for smooth seeks |
 | `--buffer-size=0M` | Avoid double-caching with VFS full mode (large buffers amplify scan probes) |
-| `--vfs-read-ahead=64M` | Modest ahead-buffer for playback; NzbDAV already read-aheads server-side |
 | `--vfs-read-chunk-size-limit=512M` | Cap rclone's unbounded chunk-size doubling |
-| `--vfs-cache-max-age=1000h` | Immutable content — prefer size-based eviction over daily expiry |
+| `--vfs-cache-max-age=2160h` | Immutable content — prefer size-based eviction over daily expiry (~90 days) |
 | `--no-modtime` / `--no-checksum` | Skip irrelevant WebDAV metadata churn |
 | `--dir-cache-time=1h` | With RC notifications, listings stay fresh via `vfs/forget`; 1h is a self-heal backstop |
 | `--poll-interval=0` | Disable remote polling; RC notifications own invalidation |
@@ -137,7 +135,7 @@ Then set the same User and Password under **Settings → Rclone Server**.
 
 Overview **Served** counts decoded bytes actually written to HTTP clients — not the full size of library items that were only probed. Common amplifiers with rclone mounts:
 
-- Large `--buffer-size` or `--vfs-read-ahead` with `--vfs-cache-mode=full` (each media-server probe can download hundreds of MB)
+- Large `--buffer-size` or `--vfs-read-ahead` with `--vfs-cache-mode=full` (each media-server probe can download hundreds of MB — omit both; NzbDAV read-aheads server-side)
 - Short `--vfs-cache-max-age` (nightly scans re-fetch previously cached probes)
 - Plex / *Arr / Bazarr scans, embedded-subtitle searches, or backup tools walking the mount
 
