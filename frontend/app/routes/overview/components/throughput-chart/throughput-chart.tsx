@@ -42,22 +42,23 @@ export function ThroughputChart({
                 yPercent: (_: number) => 0,
             };
         }
-        const max = Math.max(1, ...points.map(p => p.articles));
+        const peakArticles = Math.max(0, ...points.map(p => p.articles));
+        const scaleMax = Math.max(1, peakArticles);
         const maxRate = Math.max(0, ...points.map(p => (p.bytesFetched ?? 0) / bucketSeconds));
         const xStep = points.length > 1 ? VB_W / (points.length - 1) : 0;
         const innerH = VB_H - TOP_PAD - BOT_PAD;
-        const y = (v: number) => VB_H - BOT_PAD - (v / max) * innerH;
+        const y = (v: number) => VB_H - BOT_PAD - (v / scaleMax) * innerH;
 
         const buildArticlesPath = () =>
             points.map((p, i) => `${i === 0 ? "M" : "L"}${(i * xStep).toFixed(1)},${y(p.articles).toFixed(1)}`).join(" ");
 
         const xPct = (i: number) => points.length > 1 ? (i / (points.length - 1)) * 100 : 50;
-        const yPct = (v: number) => 100 - ((v / max) * (1 - (TOP_PAD + BOT_PAD) / VB_H) * 100 + (BOT_PAD / VB_H) * 100);
+        const yPct = (v: number) => 100 - ((v / scaleMax) * (1 - (TOP_PAD + BOT_PAD) / VB_H) * 100 + (BOT_PAD / VB_H) * 100);
 
         return {
             articlesPath: buildArticlesPath(),
             errorsPath: buildSparseErrorsPath(points, xStep, y),
-            maxArticles: max,
+            maxArticles: peakArticles,
             maxNetworkRate: maxRate,
             xPercent: xPct,
             yPercent: yPct,
@@ -93,7 +94,8 @@ export function ThroughputChart({
         if (t) onMove(t.clientX, e.currentTarget);
     };
 
-    const hasData = points.length > 0 && maxArticles > 0;
+    const hasData = points.length > 0;
+    const hasArticleActivity = maxArticles > 0;
     const bucketLabel = window === "1h" || window === "24h" ? "min" : (window === "all" ? "day" : "hour");
     const hover = hoverIdx !== null ? points[hoverIdx] : null;
     const hoverNetworkRate = hover ? (hover.bytesFetched ?? 0) / bucketSeconds : 0;
@@ -142,8 +144,8 @@ export function ThroughputChart({
                                 <line x1="0" y1={(VB_H - BOT_PAD).toFixed(1)} x2={VB_W} y2={(VB_H - BOT_PAD).toFixed(1)} className={styles.gridline} />
                                 <line x1="0" y1={(VB_H / 2).toFixed(1)} x2={VB_W} y2={(VB_H / 2).toFixed(1)} className={styles.gridline} />
                                 <line x1="0" y1={TOP_PAD.toFixed(1)} x2={VB_W} y2={TOP_PAD.toFixed(1)} className={styles.gridline} />
-                                <path d={articlesPath} className={styles.lineArticles} />
-                                {totalErrors > 0 && errorsPath && <path d={errorsPath} className={styles.lineErrors} />}
+                                {hasArticleActivity && <path d={articlesPath} className={styles.lineArticles} data-series="articles" />}
+                                {totalErrors > 0 && errorsPath && <path d={errorsPath} className={styles.lineErrors} data-series="errors" />}
                             </svg>
 
                             {hover && hoverIdx !== null && (
