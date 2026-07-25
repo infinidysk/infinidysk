@@ -908,6 +908,23 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public void ClassifyException_UnexpectedResponse_ReturnsProtocol()
+    {
+        var exception = new UsenetUnexpectedResponseException("<seg@example>", "400 too much time between commands");
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+        Assert.Equal(SegmentFetch.FetchStatus.Protocol, status);
+    }
+
+    [Fact]
+    public void ClassifyException_UnexpectedResponseWrapped_StillReturnsProtocol()
+    {
+        var inner = new UsenetUnexpectedResponseException("<seg@example>", "400 idle timeout");
+        var wrapped = new InvalidOperationException("stream read failed", inner);
+        var status = MultiProviderNntpClient.ClassifyException(wrapped);
+        Assert.Equal(SegmentFetch.FetchStatus.Protocol, status);
+    }
+
+    [Fact]
     public void ClassifyException_CorruptArticleWrappedInOuterException_StillReturnsCorrupt()
     {
         // NNTP failures are often re-thrown wrapped by an outer exception; the innermost

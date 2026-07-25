@@ -9,12 +9,13 @@ export type ErrorDonutProps = {
 
 // Severity-aware palette mapped to daisyUI semantic tokens where possible.
 const COLORS: Record<string, string> = {
-    Missing: "color-mix(in srgb, var(--color-base-content) 45%, transparent)",
-    Other:   "color-mix(in srgb, var(--color-base-content) 35%, transparent)",
-    Timeout: "var(--color-warning)",
-    Corrupt: "var(--color-accent)",
-    Network: "var(--color-error)",
-    Auth:    "var(--color-info)",
+    Missing:  "color-mix(in srgb, var(--color-base-content) 45%, transparent)",
+    Other:    "color-mix(in srgb, var(--color-base-content) 35%, transparent)",
+    Timeout:  "var(--color-warning)",
+    Corrupt:  "var(--color-accent)",
+    Network:  "var(--color-error)",
+    Auth:     "var(--color-info)",
+    Protocol: "var(--color-secondary)",
 };
 const DEFAULT_COLOR = "color-mix(in srgb, var(--color-base-content) 35%, transparent)";
 
@@ -28,7 +29,7 @@ export function statusLabel(status: string): string {
     return LABELS[status] ?? status;
 }
 
-const HARD_FAILURE_STATUSES = new Set(["Timeout", "Corrupt", "Auth", "Network", "Other"]);
+const HARD_FAILURE_STATUSES = new Set(["Timeout", "Corrupt", "Auth", "Network", "Protocol", "Other"]);
 
 export function ErrorBreakdown({ errors }: ErrorDonutProps) {
     const [hover, setHover] = useState<string | null>(null);

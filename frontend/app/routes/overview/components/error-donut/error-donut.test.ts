@@ -6,11 +6,12 @@ describe("isHardFailureStatus", () => {
         expect(isHardFailureStatus("Missing")).toBe(false);
     });
 
-    it("flags Timeout, Network, Auth, Corrupt, and Other as hard failures", () => {
+    it("flags Timeout, Network, Auth, Corrupt, Protocol, and Other as hard failures", () => {
         expect(isHardFailureStatus("Timeout")).toBe(true);
         expect(isHardFailureStatus("Network")).toBe(true);
         expect(isHardFailureStatus("Auth")).toBe(true);
         expect(isHardFailureStatus("Corrupt")).toBe(true);
+        expect(isHardFailureStatus("Protocol")).toBe(true);
         expect(isHardFailureStatus("Other")).toBe(true);
     });
 });
@@ -25,6 +26,7 @@ describe("statusLabel", () => {
         expect(statusLabel("Corrupt")).toBe("Corrupt");
         expect(statusLabel("Auth")).toBe("Auth");
         expect(statusLabel("Network")).toBe("Network");
+        expect(statusLabel("Protocol")).toBe("Protocol");
         expect(statusLabel("Missing")).toBe("Missing");
     });
 });

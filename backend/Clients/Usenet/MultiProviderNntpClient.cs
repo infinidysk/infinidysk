@@ -680,9 +680,18 @@ public class MultiProviderNntpClient(
         var status = ClassifyException(exception);
         if (exception.TryGetKnownErrorMessage(out var reason))
         {
-            Log.Warning(
-                "All providers exhausted. Last error from {Provider}. Status={Status} Reason: {Reason}",
-                host, status, reason);
+            if (status == SegmentFetch.FetchStatus.Other)
+            {
+                Log.Warning(
+                    "All providers exhausted. Last error from {Provider}. Status={Status} ExceptionType={ExceptionType} Reason: {Reason}",
+                    host, status, exception.GetType().FullName, reason);
+            }
+            else
+            {
+                Log.Warning(
+                    "All providers exhausted. Last error from {Provider}. Status={Status} Reason: {Reason}",
+                    host, status, reason);
+            }
         }
         else
         {
@@ -807,6 +816,9 @@ public class MultiProviderNntpClient(
             ex.TryGetCausingException<System.Net.Sockets.SocketException>(out _) ||
             ex.TryGetCausingException<System.IO.IOException>(out _))
             return SegmentFetch.FetchStatus.Network;
+
+        if (ex.TryGetCausingException<UsenetUnexpectedResponseException>(out _))
+            return SegmentFetch.FetchStatus.Protocol;
 
         return SegmentFetch.FetchStatus.Other;
     }
