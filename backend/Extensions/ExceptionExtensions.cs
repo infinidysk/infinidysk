@@ -110,17 +110,31 @@ public static class ExceptionExtensions
     public static bool TryGetCausingException<T>(this Exception exception, out T? exceptionType) where T : Exception
     {
         ArgumentNullException.ThrowIfNull(exception);
-        var current = exception;
 
-        while (current != null)
+        // Depth-first walk so AggregateException inners are searched before
+        // falling through to InnerException (which is often just the first).
+        var stack = new Stack<Exception>();
+        stack.Push(exception);
+        while (stack.Count > 0)
         {
+            var current = stack.Pop();
             if (current is T matching)
             {
                 exceptionType = matching;
                 return true;
             }
 
-            current = current.InnerException;
+            if (current is AggregateException aggregate)
+            {
+                // Push in reverse so the first inner is examined first.
+                var inners = aggregate.InnerExceptions;
+                for (var i = inners.Count - 1; i >= 0; i--)
+                    stack.Push(inners[i]);
+            }
+            else if (current.InnerException != null)
+            {
+                stack.Push(current.InnerException);
+            }
         }
 
         exceptionType = null;

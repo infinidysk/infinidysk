@@ -233,8 +233,8 @@ public class MultiProviderNntpClient(
             catch (Exception e) when (!e.IsCancellationException(cancellationToken))
             {
                 primaryStopwatch.Stop();
-                var reason = ClassifyException(e);
-                RecordFetch(primaryProvider.MetricsKey, reason, primaryStopwatch.ElapsedMilliseconds, 0);
+                var reason = ClassifyAndRecordFailure(
+                    primaryProvider.MetricsKey, e, primaryStopwatch.ElapsedMilliseconds, 0);
                 (priorMisses ??= []).Add((primaryProvider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
             }
@@ -338,8 +338,8 @@ public class MultiProviderNntpClient(
                 catch (Exception e) when (!e.IsCancellationException(cancellationToken))
                 {
                     stopwatch.Stop();
-                    var reason = ClassifyException(e);
-                    RecordFetch(provider.MetricsKey, reason, stopwatch.ElapsedMilliseconds,
+                    var reason = ClassifyAndRecordFailure(
+                        provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
                         priorMisses?.Count ?? 0);
                     (priorMisses ??= []).Add((provider.MetricsKey, reason));
                     deferredCallback.Discard();
@@ -529,8 +529,8 @@ public class MultiProviderNntpClient(
             catch (Exception e) when (!e.IsCancellationException(cancellationToken))
             {
                 stopwatch.Stop();
-                var reason = ClassifyException(e);
-                RecordFetch(provider.MetricsKey, reason, stopwatch.ElapsedMilliseconds, attemptIndex);
+                var reason = ClassifyAndRecordFailure(
+                    provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex);
                 (priorMisses ??= []).Add((provider.MetricsKey, reason));
                 deferredCallback.Discard();
                 lastException = ExceptionDispatchInfo.Capture(e);
@@ -646,8 +646,8 @@ public class MultiProviderNntpClient(
             catch (Exception e) when (!e.IsCancellationException(cancellationToken))
             {
                 stopwatch.Stop();
-                var reason = ClassifyException(e);
-                RecordFetch(provider.MetricsKey, reason, stopwatch.ElapsedMilliseconds, attemptIndex);
+                var reason = ClassifyAndRecordFailure(
+                    provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex);
                 (priorMisses ??= new()).Add((provider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
                 lastOutcomeWasException = true;
@@ -711,6 +711,26 @@ public class MultiProviderNntpClient(
             Status = status,
             Retries = retries,
         });
+    }
+
+    /// <summary>
+    /// Classifies <paramref name="exception"/>, records the SegmentFetch row, and for residual
+    /// <see cref="SegmentFetch.FetchStatus.Other"/> logs the concrete exception type so support
+    /// packs stay diagnosable without a schema change.
+    /// </summary>
+    private SegmentFetch.FetchStatus ClassifyAndRecordFailure(
+        string metricsKey, Exception exception, long durationMs, int retries)
+    {
+        var status = ClassifyException(exception);
+        RecordFetch(metricsKey, status, durationMs, retries);
+        if (status == SegmentFetch.FetchStatus.Other)
+        {
+            Log.Debug(
+                exception,
+                "Unclassified Usenet segment fetch failure. Host={Host} ExceptionType={ExceptionType}",
+                metricsKey, exception.GetType().FullName);
+        }
+        return status;
     }
 
     private void RecordFailoverMisses(

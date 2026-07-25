@@ -936,6 +936,17 @@ public class MultiProviderNntpClientTests
         Assert.Equal(SegmentFetch.FetchStatus.Network, status);
     }
 
+    [Fact]
+    public void ClassifyException_CorruptArticleInsideAggregateException_StillReturnsCorrupt()
+    {
+        // Task/NNTP wrappers often surface AggregateException; the known cause must
+        // still be found among InnerExceptions, not only InnerException.
+        var inner = new UsenetCorruptArticleException("segment", "provider", new Exception("bad crc"));
+        var aggregate = new AggregateException("one or more errors", inner);
+        var status = MultiProviderNntpClient.ClassifyException(aggregate);
+        Assert.Equal(SegmentFetch.FetchStatus.Corrupt, status);
+    }
+
     private static MultiConnectionNntpClient CreateProvider(
         INntpClient connection,
         string host = "test",
