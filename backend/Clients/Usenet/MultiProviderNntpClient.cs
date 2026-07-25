@@ -596,7 +596,10 @@ public class MultiProviderNntpClient(
         InvokeCompletionCallback(onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
         if (lastOutcomeWasException) lastException!.Throw();
         if (lastNoArticleResult is not null) return lastNoArticleResult;
-        throw new Exception("There are no usenet providers configured.");
+        if (orderedProviders.Count == 0)
+            throw new Exception("There are no usenet providers configured.");
+        // All providers were skipped (negative cache / storage-group) without a probe.
+        throw new UsenetArticleNotFoundException(segmentId.ToString()!);
     }
 
     private async Task<T> RunFromPoolWithBackup<T>
@@ -724,6 +727,11 @@ public class MultiProviderNntpClient(
             lastException.Throw();
         }
         if (lastNoArticleResult is not null) return lastNoArticleResult;
+        if (orderedProviders.Count == 0)
+            throw new Exception("There are no usenet providers configured.");
+        // All providers were skipped (negative cache / storage-group) without a probe.
+        if (articleId is { } exhaustedId)
+            throw new UsenetArticleNotFoundException(exhaustedId.ToString()!);
         throw new Exception("There are no usenet providers configured.");
     }
 

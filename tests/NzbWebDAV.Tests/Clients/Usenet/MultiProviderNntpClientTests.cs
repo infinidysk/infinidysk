@@ -916,6 +916,46 @@ public class MultiProviderNntpClientTests
         Assert.Equal(1, primary.SingularRequests);
     }
 
+    [Fact]
+    public async Task ArticleMissCache_AllProvidersCached_ThrowsArticleNotFound()
+    {
+        var config = new ConfigManager();
+        var cache = new ArticleMissNegativeCache(config);
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("segment", "a.example", null));
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("segment", "b.example", null));
+
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primary, host: "a.example"),
+            CreateProvider(backup, host: "b.example"),
+        ], articleMissCache: cache);
+
+        var exception = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
+            client.DecodedBodyAsync("segment", CancellationToken.None));
+        Assert.Equal("segment", exception.SegmentId);
+        Assert.Equal(0, primary.SingularRequests);
+        Assert.Equal(0, backup.SingularRequests);
+
+        await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
+            client.DecodedBodyAsync("segment", _ => { }, CancellationToken.None));
+        Assert.Equal(0, primary.SingularRequests);
+        Assert.Equal(0, backup.SingularRequests);
+
+        await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
+            client.StatAsync("segment", CancellationToken.None));
+        Assert.Equal(0, primary.SingularRequests);
+        Assert.Equal(0, backup.SingularRequests);
+    }
 
     [Fact]
     public async Task CheckAllSegmentsAsync_With451AcrossProviders_ThrowsArticleNotFound()
