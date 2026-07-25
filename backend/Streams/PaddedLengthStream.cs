@@ -1,18 +1,37 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services.StreamTrace;
+using Serilog;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
 /// <summary>
-/// Caps a stream at a declared length and fills a premature shortfall with
-/// zeros so subsequent multipart data retains its expected byte offsets.
+/// Where a multipart volume sits in its file, and whether that file is encrypted.
+/// Carried into read failures and warnings so a shortfall can be told apart from
+/// ordinary end-of-part behaviour without correlating several log lines.
+/// </summary>
+public sealed record MultipartPartContext
+{
+    public required int PartNumber { get; init; }
+    public required int PartCount { get; init; }
+    public required long SeekOffsetWithinPart { get; init; }
+    public required long DeclaredVolumeLength { get; init; }
+    public required bool IsEncrypted { get; init; }
+}
+
+/// <summary>
+/// Caps a stream at a declared length. An encrypted file may pad a block-scale shortfall
+/// with zeros so the AES blocks after it stay aligned; every larger or unexplained
+/// shortfall means the volume is missing data, and the read fails rather than passing
+/// zeros off as content.
 /// </summary>
 public sealed class PaddedLengthStream(
     Stream stream,
     long length,
     string partId,
-    string? fileName = null) : FastReadOnlyNonSeekableStream
+    string? fileName = null,
+    MultipartPartContext? context = null) : FastReadOnlyNonSeekableStream
 {
     private readonly string _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
     private long _position;
@@ -22,6 +41,16 @@ public sealed class PaddedLengthStream(
 
     public override long Length => length;
     public override long Position => _position;
+
+    // An encrypted volume can end a fraction of an AES block short, and every later block
+    // depends on that alignment, so those few bytes are worth padding. Anything beyond one
+    // block is missing ciphertext: padding it decrypts to garbage the player cannot tell
+    // from content. Unencrypted files (and callers that pass no context) are always held to
+    // the declared length.
+    private const int MaxAlignmentPaddingBytes = 16;
+
+    private bool ShouldPadShortfall(long bytes) =>
+        (context?.IsEncrypted ?? false) && bytes <= MaxAlignmentPaddingBytes;
 
     public override void Flush() => stream.Flush();
 
@@ -45,7 +74,7 @@ public sealed class PaddedLengthStream(
             }
 
             _underlyingEnded = true;
-            ReportShortfall(length - _position);
+            OnShortfall(length - _position);
         }
 
         buffer.Span[..bytesToRead].Clear();
@@ -53,21 +82,43 @@ public sealed class PaddedLengthStream(
         return bytesToRead;
     }
 
-    private void ReportShortfall(long bytes)
+    private void OnShortfall(long bytes)
     {
+        if (!ShouldPadShortfall(bytes))
+            throw new IncompleteMultipartPartException(BuildShortfallMessage(bytes));
+
         if (_shortfallReported)
             return;
 
         _shortfallReported = true;
         ZeroFillLogLimiter.Write(
-            "Packed part {SegmentId} ended early while reading {FileName}. Zero-filling {Bytes} bytes to preserve multipart offsets.",
+            "Encrypted packed part {SegmentId} ended early while reading {FileName}. " +
+            "Zero-filling {Bytes} bytes to keep the following AES blocks aligned.",
             partId,
             _fileName,
-            bytes);
+            bytes,
+            context: Describe());
 
         if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
             StreamTrace.TryZeroFill(sessionId, partId, bytes);
     }
+
+    private string BuildShortfallMessage(long bytes)
+    {
+        var message =
+            $"Packed part {partId} of \"{_fileName}\" ended {bytes} bytes early " +
+            $"(delivered {_position} of {length} expected bytes). {Describe()}";
+        Log.Debug("Failing multipart read: {Reason}", message);
+        return message;
+    }
+
+    private string Describe() =>
+        context is null
+            ? "No multipart context was recorded for this part."
+            : $"Part {context.PartNumber} of {context.PartCount}, " +
+              $"declared volume length {context.DeclaredVolumeLength}, " +
+              $"read from offset {context.SeekOffsetWithinPart} within the part, " +
+              $"encrypted: {context.IsEncrypted}.";
 
     protected override void Dispose(bool disposing)
     {

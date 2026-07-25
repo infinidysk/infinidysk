@@ -1,10 +1,45 @@
 using System.Text;
+using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.Tests.Streams;
 
 public class BasicStreamTests
 {
+    [Fact]
+    public async Task DiscardExactBytesAsync_RejectsAStreamThatEndsEarly()
+    {
+        using var stream = new MemoryStream(Encoding.ASCII.GetBytes("abc"));
+
+        var failure = await Assert.ThrowsAsync<EndOfStreamException>(
+            () => stream.DiscardExactBytesAsync(5));
+
+        Assert.Contains("2 bytes before 5", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DiscardExactBytesAsync_SkipsTheRequestedPrefix()
+    {
+        using var stream = new MemoryStream(Encoding.ASCII.GetBytes("abcdefgh"));
+
+        await stream.DiscardExactBytesAsync(3);
+
+        var remaining = new byte[5];
+        Assert.Equal(5, await stream.ReadAsync(remaining));
+        Assert.Equal("defgh", Encoding.ASCII.GetString(remaining));
+    }
+
+    [Fact]
+    public async Task DiscardBytesAsync_ToleratesAStreamThatEndsEarly()
+    {
+        using var stream = new MemoryStream(Encoding.ASCII.GetBytes("abc"));
+
+        await stream.DiscardBytesAsync(5);
+
+        Assert.Equal(0, await stream.ReadAsync(new byte[1]));
+    }
+
     [Fact]
     public async Task LimitedLengthStream_StopsAtConfiguredLength()
     {
@@ -19,10 +54,11 @@ public class BasicStreamTests
     }
 
     [Fact]
-    public async Task PaddedLengthStream_FillsPrematureEofToConfiguredLength()
+    public async Task PaddedLengthStream_EncryptedPart_FillsPrematureEofToConfiguredLength()
     {
         await using var stream = new PaddedLengthStream(
-            new MemoryStream(Encoding.ASCII.GetBytes("ab")), 5, "part-1", "test.bin");
+            new MemoryStream(Encoding.ASCII.GetBytes("ab")), 5, "part-1", "test.bin",
+            EncryptedPartContext());
 
         using var destination = new MemoryStream();
         await stream.CopyToAsync(destination);
@@ -31,6 +67,56 @@ public class BasicStreamTests
         Assert.Equal(5, stream.Position);
         Assert.Equal(0, await stream.ReadAsync(new byte[1]));
     }
+
+    [Fact]
+    public async Task PaddedLengthStream_UnencryptedShortPart_FailsWithPartContext()
+    {
+        await using var stream = new PaddedLengthStream(
+            new MemoryStream(Encoding.ASCII.GetBytes("ab")), 5, "part-1", "test.bin",
+            EncryptedPartContext() with { IsEncrypted = false });
+
+        var failure = await Assert.ThrowsAsync<IncompleteMultipartPartException>(
+            () => stream.CopyToAsync(new MemoryStream()));
+
+        Assert.Contains("ended 3 bytes early", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("delivered 2 of 5 expected bytes", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Part 2 of 3", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("declared volume length 4096", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("read from offset 128", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PaddedLengthStream_EncryptedPart_FailsWhenTheShortfallExceedsAnAesBlock()
+    {
+        await using var stream = new PaddedLengthStream(
+            new MemoryStream(Encoding.ASCII.GetBytes("ab")), 1024, "part-1", "test.bin",
+            EncryptedPartContext());
+
+        var failure = await Assert.ThrowsAsync<IncompleteMultipartPartException>(
+            () => stream.CopyToAsync(new MemoryStream()));
+
+        Assert.Contains("ended 1022 bytes early", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("encrypted: True", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PaddedLengthStream_WithoutPartContext_DoesNotInventBytes()
+    {
+        await using var stream = new PaddedLengthStream(
+            new MemoryStream(Encoding.ASCII.GetBytes("ab")), 5, "part-1", "test.bin");
+
+        await Assert.ThrowsAsync<IncompleteMultipartPartException>(
+            () => stream.CopyToAsync(new MemoryStream()));
+    }
+
+    private static MultipartPartContext EncryptedPartContext() => new()
+    {
+        PartNumber = 2,
+        PartCount = 3,
+        SeekOffsetWithinPart = 128,
+        DeclaredVolumeLength = 4096,
+        IsEncrypted = true,
+    };
 
     [Theory]
     [InlineData("", 0)]
@@ -43,7 +129,8 @@ public class BasicStreamTests
             new MemoryStream(Encoding.ASCII.GetBytes(content)),
             declaredLength,
             "part-1",
-            "test.bin");
+            "test.bin",
+            EncryptedPartContext());
 
         using var destination = new MemoryStream();
         await stream.CopyToAsync(destination);
@@ -59,7 +146,8 @@ public class BasicStreamTests
         var streams = new[]
         {
             Task.FromResult<Stream>(new PaddedLengthStream(
-                new MemoryStream(Encoding.ASCII.GetBytes("ab")), 4, "part-1", "test.bin")),
+                new MemoryStream(Encoding.ASCII.GetBytes("ab")), 4, "part-1", "test.bin",
+                EncryptedPartContext())),
             Task.FromResult<Stream>(new MemoryStream(Encoding.ASCII.GetBytes("cd")))
         };
         await using var stream = new CombinedStream(streams);
