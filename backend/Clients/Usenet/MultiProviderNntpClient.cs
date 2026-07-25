@@ -171,9 +171,9 @@ public class MultiProviderNntpClient(
                     new Task<UsenetDecodedBodyResponse>[primaryBatch.Responses.Count];
                 // Admission (start-order) is separate from transfer completion so segment
                 // N+1 can begin its fallback walk after N has admitted/started, without
-                // waiting for N's body stream to finish.
+                // waiting for N's body stream to finish. Concurrent starts are bounded by
+                // _batchFallbackStartGate until each transfer's body callback fires.
                 Task previousFallbackAdmission = Task.CompletedTask;
-                using var fallbackStartGate = new SemaphoreSlim(MaxConcurrentFallbackStarts);
                 for (var index = 0; index < responses.Length; index++)
                 {
                     var fallbackAdmission = new TaskCompletionSource(
@@ -185,7 +185,6 @@ public class MultiProviderNntpClient(
                         fallbackProviders,
                         previousFallbackAdmission,
                         fallbackAdmission,
-                        fallbackStartGate,
                         coordinator,
                         cancellationToken);
                     previousFallbackAdmission = fallbackAdmission.Task;
@@ -226,7 +225,6 @@ public class MultiProviderNntpClient(
         IReadOnlyList<MultiConnectionNntpClient> fallbackProviders,
         Task previousFallbackAdmission,
         TaskCompletionSource fallbackAdmission,
-        SemaphoreSlim fallbackStartGate,
         BatchCallbackCoordinator coordinator,
         CancellationToken cancellationToken)
     {
@@ -307,7 +305,9 @@ public class MultiProviderNntpClient(
 
             await previousFallbackAdmission.WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
-            await fallbackStartGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await _batchFallbackStartGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var gateHeld = true;
+            var gateOwnedByTransfer = false;
             try
             {
                 // Admit the next segment before (or while) walking providers so N+1 is not
@@ -346,7 +346,18 @@ public class MultiProviderNntpClient(
                                 RecordFailoverMisses(priorMisses, provider.MetricsKey);
                             }
                             response = WrapProviderResponse(response, provider.MetricsKey);
-                            deferredCallback.Activate(coordinator.CompleteTransfer);
+                            gateOwnedByTransfer = true;
+                            deferredCallback.Activate(result =>
+                            {
+                                try
+                                {
+                                    coordinator.CompleteTransfer(result);
+                                }
+                                finally
+                                {
+                                    _batchFallbackStartGate.Release();
+                                }
+                            });
                         }
                         else
                         {
@@ -391,7 +402,8 @@ public class MultiProviderNntpClient(
             }
             finally
             {
-                fallbackStartGate.Release();
+                if (gateHeld && !gateOwnedByTransfer)
+                    _batchFallbackStartGate.Release();
             }
 
             lastException?.Throw();

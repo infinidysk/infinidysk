@@ -79,6 +79,26 @@ public class GetOverviewStatsProviderFilterTests
     }
 
     [Fact]
+    public void BuildProvidersFromMinutes_AvgDurationMs_UsesOkFetchesOnly()
+    {
+        var windowStart = 1_700_000_000_000L;
+        // 10 articles: 7 ok + 2 misses + 1 error. SumDurationMs is Ok-only (7 * 10 = 70).
+        var minutes = new[]
+        {
+            (windowStart, ConfiguredKey, 10L, 1000L, 2L, 1L, 0L, 70L),
+        };
+
+        var rows = GetOverviewStatsController.BuildProvidersFromMinutes(
+            minutes,
+            windowStart,
+            GetOverviewStatsRequest.OverviewWindow.Last1Hour,
+            Labels);
+
+        Assert.Single(rows);
+        Assert.Equal(10.0, rows[0].AvgDurationMs);
+    }
+
+    [Fact]
     public void BuildFailover_OmitsDeletedProvidersFromListsButKeepsAggregateTotals()
     {
         var at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
