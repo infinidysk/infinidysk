@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
@@ -149,11 +150,12 @@ public class NzbFileStreamTests
                 new[] { segmentId }.AsMemory(),
                 client,
                 articleBufferSize: 0,
-                expectedSegmentSize: 5,
+                estimatedSegmentSize: 5,
                 failFastOnFirstSegment: false,
                 usePipelinedBodyRequests: false,
                 cancellationToken: CancellationToken.None,
-                fileName: fileName);
+                fileName: fileName,
+                exactSegmentSizes: new long[] { 5 });
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var buffer = new byte[5];
@@ -195,11 +197,12 @@ public class NzbFileStreamTests
                 new[] { "missing-one", "missing-two" }.AsMemory(),
                 client,
                 articleBufferSize: articleBufferSize,
-                expectedSegmentSize: 5,
+                estimatedSegmentSize: 5,
                 failFastOnFirstSegment: false,
                 usePipelinedBodyRequests: usePipelinedBodyRequests,
                 cancellationToken: CancellationToken.None,
-                fileName: fileName);
+                fileName: fileName,
+                exactSegmentSizes: new long[] { 5, 5 });
 
             var buffer = new byte[5];
             Assert.Equal(5, await stream.ReadAsync(buffer));
@@ -225,11 +228,12 @@ public class NzbFileStreamTests
             new[] { "missing-one", "missing-two", "missing-three", "missing-four" }.AsMemory(),
             client,
             articleBufferSize: 0,
-            expectedSegmentSize: 5,
+            estimatedSegmentSize: 5,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: false,
             cancellationToken: CancellationToken.None,
-            fileName: "/content/show/dead-episode.mkv");
+            fileName: "/content/show/dead-episode.mkv",
+            exactSegmentSizes: new long[] { 5, 5, 5, 5 });
 
         var buffer = new byte[5];
         Assert.Equal(5, await stream.ReadAsync(buffer));
@@ -279,6 +283,43 @@ public class NzbFileStreamTests
                 new byte[3], 3, throwOnEndOfStream: false, cts.Token));
         // Cancellation must not trigger the slow-path fallback.
         Assert.Equal(1, client.BodyRequestCounts["two"]);
+    }
+
+    [Fact]
+    public async Task Seek_WhenIndexedSegmentEndsBeforeOffset_ThrowsAndDisposesBodies()
+    {
+        string[] segmentIds = ["short"];
+        var segments = new Dictionary<string, byte[]> { ["short"] = [1, 2, 3, 4, 5] };
+        var ranges = new Dictionary<string, LongRange> { ["short"] = new(0, 5) };
+        var openedBodies = new List<TrackingMemoryStream>();
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            ranges,
+            (_, _) =>
+            {
+                var body = new TrackingMemoryStream([1, 2]);
+                openedBodies.Add(body);
+                return body;
+            });
+        await using var stream = new NzbFileStream(
+            segmentIds,
+            fileSize: 5,
+            client,
+            articleBufferSize: 0,
+            segmentByteRanges: null,
+            usePipelinedBodyRequests: false,
+            fileName: "short.bin");
+        stream.Seek(4, SeekOrigin.Begin);
+
+        var exception = await Assert.ThrowsAsync<SeekPositionNotFoundException>(
+            async () => await stream.ReadAtLeastAsync(
+                new byte[1], 1, throwOnEndOfStream: false));
+
+        Assert.Contains("Byte position 4", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("segment 1", exception.Message, StringComparison.Ordinal);
+        Assert.NotEmpty(openedBodies);
+        Assert.All(openedBodies, body => Assert.True(body.Disposed));
     }
 
     private static FakeNntpClient CreateClient()
@@ -460,5 +501,16 @@ public class NzbFileStreamTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class TrackingMemoryStream(byte[] bytes) : MemoryStream(bytes, writable: false)
+    {
+        public bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
     }
 }

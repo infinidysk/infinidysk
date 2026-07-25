@@ -12,6 +12,26 @@ public static class StreamExtensions
 
     public static async Task DiscardBytesAsync(this Stream stream, long count, CancellationToken ct = default)
     {
+        await DiscardBytesAsync(stream, count, requireExact: false, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Discards exactly <paramref name="count"/> bytes, throwing when the stream
+    /// ends first. Use this whenever the discarded prefix positions a stream at a
+    /// requested byte offset: a partial discard leaves the stream at an offset that
+    /// does not match what the caller believes it is reading.
+    /// </summary>
+    public static async Task DiscardExactBytesAsync(this Stream stream, long count, CancellationToken ct = default)
+    {
+        await DiscardBytesAsync(stream, count, requireExact: true, ct).ConfigureAwait(false);
+    }
+
+    private static async Task DiscardBytesAsync(
+        Stream stream,
+        long count,
+        bool requireExact,
+        CancellationToken ct)
+    {
         if (count == 0) return;
         var remaining = count;
         var throwaway = ArrayPool<byte>.Shared.Rent(64 * 1024);
@@ -23,6 +43,12 @@ public static class StreamExtensions
                 var read = await stream.ReadAsync(throwaway.AsMemory(0, toRead), ct).ConfigureAwait(false);
                 if (read == 0) break;
                 remaining -= read;
+            }
+
+            if (requireExact && remaining > 0)
+            {
+                throw new EndOfStreamException(
+                    $"Stream ended {remaining} bytes before {count} bytes could be skipped.");
             }
         }
         finally

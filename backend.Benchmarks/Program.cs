@@ -3,6 +3,7 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using UsenetSharp.Models;
@@ -84,8 +85,10 @@ public class SegmentStreamBenchmarks
 {
     private const int SegmentSize = 256 * 1024;
     private BenchmarkNntpClient _client = null!;
+    private BenchmarkNntpClient _missingClient = null!;
     private string[] _segmentIds = null!;
     private LongRange[] _segmentRanges = null!;
+    private int[] _seekOffsets = null!;
 
     [Params(0, 4)]
     public int ArticleBufferSize { get; set; }
@@ -107,6 +110,15 @@ public class SegmentStreamBenchmarks
                 index * SegmentSize, (index + 1L) * SegmentSize))
             .ToArray();
         _client = new BenchmarkNntpClient(segments);
+        _missingClient = new BenchmarkNntpClient(
+            segments
+                .Where(pair => pair.Key != "segment-3")
+                .ToDictionary(pair => pair.Key, pair => pair.Value));
+        var random = new Random(42);
+        var fileSize = segments.Count * SegmentSize;
+        _seekOffsets = Enumerable.Range(0, 16)
+            .Select(_ => random.Next(fileSize - 64 * 1024))
+            .ToArray();
     }
 
     [Benchmark]
@@ -116,6 +128,42 @@ public class SegmentStreamBenchmarks
             _segmentIds,
             (long)_segmentIds.Length * SegmentSize,
             _client,
+            ArticleBufferSize,
+            _segmentRanges);
+        await stream.CopyToAsync(Stream.Null);
+    }
+
+    [Benchmark]
+    public async Task<int> RandomSeekAndRead()
+    {
+        var checksum = 0;
+        foreach (var offset in _seekOffsets)
+        {
+            await using var stream = new NzbFileStream(
+                _segmentIds,
+                (long)_segmentIds.Length * SegmentSize,
+                _client,
+                ArticleBufferSize,
+                _segmentRanges);
+            stream.Seek(offset, SeekOrigin.Begin);
+            var buffer = new byte[64 * 1024];
+            var read = await stream.ReadAtLeastAsync(
+                buffer, buffer.Length, throwOnEndOfStream: false);
+            checksum = read == 0
+                ? HashCode.Combine(checksum, 0)
+                : HashCode.Combine(checksum, read, buffer[0], buffer[read - 1]);
+        }
+
+        return checksum;
+    }
+
+    [Benchmark]
+    public async Task ReadSegmentStreamWithExactZeroFill()
+    {
+        await using var stream = new NzbFileStream(
+            _segmentIds,
+            (long)_segmentIds.Length * SegmentSize,
+            _missingClient,
             ArticleBufferSize,
             _segmentRanges);
         await stream.CopyToAsync(Stream.Null);
@@ -151,9 +199,16 @@ internal sealed class BenchmarkNntpClient(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var response = CreateResponse(segmentId);
-        onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-        return Task.FromResult(response);
+        try
+        {
+            var response = CreateResponse(segmentId);
+            onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            return Task.FromResult(response);
+        }
+        catch (Exception exception)
+        {
+            return Task.FromException<UsenetDecodedBodyResponse>(exception);
+        }
     }
 
     public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
@@ -215,13 +270,16 @@ internal sealed class BenchmarkNntpClient(
     private UsenetDecodedBodyResponse CreateResponse(SegmentId segmentId)
     {
         var key = segmentId.ToString();
+        if (!segments.TryGetValue(key, out var bytes))
+            throw new UsenetArticleNotFoundException(key, "430 No such article");
+
         return new UsenetDecodedBodyResponse
         {
             SegmentId = key,
             ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
             ResponseMessage = "222 benchmark body",
             Stream = new YencStream(new MemoryStream(
-                YencDecodeBenchmarks.EncodeYenc(segments[key]), writable: false))
+                YencDecodeBenchmarks.EncodeYenc(bytes), writable: false))
         };
     }
 }

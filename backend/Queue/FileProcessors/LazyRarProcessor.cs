@@ -153,6 +153,7 @@ public class LazyRarProcessor(
                 0,
                 Math.Max(firstFileSize, firstPartByteRange.EndExclusive)),
             FilePartByteRange = firstPartByteRange,
+            SegmentByteRanges = firstInfo.NzbFile.GetSegmentByteRanges(),
             SegmentFallbackIds = firstInfo.NzbFile.GetSegmentFallbackIds(),
         };
 

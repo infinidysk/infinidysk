@@ -29,7 +29,7 @@ public class SegmentFallbackTests
             new[] { "one", "two" }.AsMemory(),
             client,
             articleBufferSize: 4,
-            expectedSegmentSize: 5,
+            estimatedSegmentSize: 5,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: usePipelinedBodyRequests,
             cancellationToken: CancellationToken.None,
@@ -60,7 +60,7 @@ public class SegmentFallbackTests
             new[] { "missing" }.AsMemory(),
             client,
             articleBufferSize: 0,
-            expectedSegmentSize: 5,
+            estimatedSegmentSize: 5,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: false,
             cancellationToken: CancellationToken.None,
@@ -89,11 +89,12 @@ public class SegmentFallbackTests
             segmentIds.AsMemory(),
             client,
             articleBufferSize: 4,
-            expectedSegmentSize: 5,
+            estimatedSegmentSize: 5,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: usePipelinedBodyRequests,
             cancellationToken: CancellationToken.None,
-            fileName: $"dead-prefetch-{usePipelinedBodyRequests}.bin");
+            fileName: $"dead-prefetch-{usePipelinedBodyRequests}.bin",
+            exactSegmentSizes: Enumerable.Repeat(5L, segmentIds.Length).ToArray());
 
         await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
             async () => await stream.CopyToAsync(new MemoryStream()));
@@ -119,11 +120,12 @@ public class SegmentFallbackTests
             new[] { "missing-one", "good", "missing-two", "missing-three", "missing-four" }.AsMemory(),
             client,
             articleBufferSize: articleBufferSize,
-            expectedSegmentSize: 5,
+            estimatedSegmentSize: 5,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: usePipelinedBodyRequests,
             cancellationToken: CancellationToken.None,
-            fileName: $"reset-zero-fill-streak-{articleBufferSize}.bin");
+            fileName: $"reset-zero-fill-streak-{articleBufferSize}.bin",
+            exactSegmentSizes: new long[] { 5, 5, 5, 5, 5 });
 
         var buffer = new byte[5];
         Assert.Equal(5, await stream.ReadAsync(buffer));

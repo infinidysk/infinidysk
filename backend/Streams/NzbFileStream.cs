@@ -32,14 +32,30 @@ public class NzbFileStream(
             ? segmentByteRanges
             : null;
 
-    // Average yEnc-decoded size per segment in this file. Used to (a) zero-fill
-    // missing segments mid-stream so the demuxer can resync instead of the
-    // player closing on a truncated body, and (b) synthesize a probe range
-    // when SeekSegment can't fetch a missing segment's yEnc header. yEnc
-    // segments within a single NzbFile are produced uniformly except for the
-    // tail, so the average is within a few percent of any real segment.
-    private long ExpectedSegmentSize =>
+    private long[]? _exactSegmentSizes;
+
+    // Average yEnc-decoded size per segment in this file, used to guess which segment
+    // covers a byte offset (seek probes and capacity hints). It is only ever an
+    // approximation — the tail segment is shorter, so the average is off by a few bytes
+    // for every segment — and must never decide how many bytes the stream emits.
+    private long EstimatedSegmentSize =>
         fileSegmentIds.Length > 0 ? Math.Max(1, fileSize / fileSegmentIds.Length) : 0;
+
+    /// <summary>
+    /// Exact decoded size of each segment, when the import recorded per-segment byte
+    /// ranges. This is what lets a failed segment be replaced by the right number of
+    /// bytes instead of an approximation that shifts the rest of the file.
+    /// </summary>
+    private long[]? ExactSegmentSizes
+    {
+        get
+        {
+            if (_segmentByteRanges is null) return null;
+            return _exactSegmentSizes ??= _segmentByteRanges
+                .Select(range => range.Count)
+                .ToArray();
+        }
+    }
 
     public override bool CanSeek => true;
     public override long Length => fileSize;
@@ -64,7 +80,9 @@ public class NzbFileStream(
         {
             try
             {
-                await _innerStream.DiscardBytesAsync(
+                // Exact: a partial skip would leave the stream short of the position the
+                // caller seeked to, and every byte it then read would be misattributed.
+                await _innerStream.DiscardExactBytesAsync(
                     _pendingForwardDrain, cancellationToken).ConfigureAwait(false);
                 _pendingForwardDrain = 0;
             }
@@ -136,7 +154,7 @@ public class NzbFileStream(
             );
         }
 
-        var avg = ExpectedSegmentSize;
+        var avg = EstimatedSegmentSize;
         return await InterpolationSearch.Find(
             byteOffset,
             new LongRange(0, fileSegmentIds.Length),
@@ -197,8 +215,22 @@ public class NzbFileStream(
 
         var foundSegment = await SeekSegment(rangeStart, cancellationToken).ConfigureAwait(false);
         var stream = GetMultiSegmentStream(foundSegment.FoundIndex, failFastOnFirstSegment: false, cancellationToken);
-        await stream.DiscardBytesAsync(rangeStart - foundSegment.FoundByteRange.StartInclusive, cancellationToken)
-            .ConfigureAwait(false);
+        var prefix = rangeStart - foundSegment.FoundByteRange.StartInclusive;
+        try
+        {
+            await stream.DiscardExactBytesAsync(prefix, cancellationToken).ConfigureAwait(false);
+        }
+        catch (EndOfStreamException e)
+        {
+            // The segment that should contain this offset delivered fewer bytes than the
+            // index says it holds. Returning the exhausted stream would answer the range
+            // request with zeros or nothing at all, so report the seek as impossible.
+            await stream.DisposeAsync().ConfigureAwait(false);
+            throw new SeekPositionNotFoundException(
+                $"Byte position {rangeStart} of \"{fileName ?? "unknown"}\" is past the data " +
+                $"available in segment {foundSegment.FoundIndex + 1}. {e.Message}");
+        }
+
         return stream;
     }
 
@@ -206,7 +238,7 @@ public class NzbFileStream(
 
     private async Task<Stream?> TryGetSeekStreamFast(long rangeStart, CancellationToken ct)
     {
-        var avg = ExpectedSegmentSize;
+        var avg = EstimatedSegmentSize;
         if (avg <= 0 || fileSegmentIds.Length == 0) return null;
 
         var index = (int)Math.Clamp(rangeStart / avg, 0, fileSegmentIds.Length - 1);
@@ -256,7 +288,7 @@ public class NzbFileStream(
             MemoryStream head;
             try
             {
-                await body.DiscardBytesAsync(rangeStart - start, ct).ConfigureAwait(false);
+                await body.DiscardExactBytesAsync(rangeStart - start, ct).ConfigureAwait(false);
                 var tail = end - rangeStart;
                 var capacity = tail is > 0 and <= int.MaxValue ? (int)tail : 0;
                 head = new MemoryStream(capacity);
@@ -299,16 +331,21 @@ public class NzbFileStream(
         if (segmentFallbacks is { Length: > 0 } && firstSegmentIndex < segmentFallbacks.Length)
             fallbacks = segmentFallbacks[firstSegmentIndex..];
 
+        var exactSizes = ExactSegmentSizes is { } sizes
+            ? sizes.AsMemory(firstSegmentIndex)
+            : default;
+
         return MultiSegmentStream.Create(
             segmentIds,
             usenetClient,
             articleBufferSize,
-            ExpectedSegmentSize,
+            EstimatedSegmentSize,
             failFastOnFirstSegment,
             usePipelinedBodyRequests,
             cancellationToken,
             fileName,
-            segmentFallbacks: fallbacks);
+            segmentFallbacks: fallbacks,
+            exactSegmentSizes: exactSizes);
     }
 
     protected override void Dispose(bool disposing)

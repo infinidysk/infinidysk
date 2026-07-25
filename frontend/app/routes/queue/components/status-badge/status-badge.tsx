@@ -21,7 +21,7 @@ export function StatusBadge({ className, status, percentage, error }: StatusBadg
             error = "Missing articles";
 
         return (
-            <Tooltip content={error || "Upload failed"}>
+            <Tooltip content={error || "Upload failed"} className="z-50">
                 <StatusShell className="badge-error cursor-help">
                     {statusLower === "upload failed" && <Icon name="upload" className="!text-[12px]" />}
                     failed

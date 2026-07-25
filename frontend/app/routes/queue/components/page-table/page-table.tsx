@@ -9,6 +9,7 @@ import { Badge } from "~/components/ui";
 
 const desktopHeaderClass = "hidden min-[900px]:table-cell w-[120px] text-center text-xs font-semibold uppercase tracking-wide";
 const desktopCellClass = "hidden min-[900px]:table-cell max-w-[200px] min-w-0 overflow-hidden whitespace-nowrap px-1 py-3 text-center align-middle";
+const statusCellClass = "hidden min-[900px]:table-cell max-w-[200px] min-w-0 overflow-visible whitespace-nowrap px-1 py-3 text-center align-middle";
 const providerCellClass = "hidden min-[900px]:table-cell max-w-[200px] min-w-0 overflow-hidden px-1 py-3 text-center align-middle";
 
 export type PageTableProps = {
@@ -105,7 +106,7 @@ export function PageRow(props: PageRowProps) {
                     ? <ProvidersBadge providers={props.providers} />
                     : <span className="text-base-content/30 text-xs">—</span>}
             </td>
-            <td className={desktopCellClass}>
+            <td className={statusCellClass}>
                 <StatusBadge status={props.status} percentage={props.percentage} error={props.error} />
             </td>
             <td className="hidden min-[900px]:table-cell max-w-[200px] whitespace-nowrap px-1 py-3 text-center align-middle font-mono text-xs">
