@@ -87,13 +87,28 @@ public class MultiSegmentStreamPrefetchBudgetTests
     [Fact]
     public async Task GlobalCap_LimitsLeasedBytesAndThrottleUnderContention()
     {
-        // Exercise the process-wide budget under concurrent leasers. Full MultiSegmentStream
-        // producers can deadlock a paused-consumer harness when drains wait on LeaseAsync
-        // with CancellationToken.None while the channel stays empty.
+        // Deterministic contention: fill the cap, then start waiters that must throttle
+        // before concurrent workers prove leased bytes never exceed CapBytes.
         const int unit = 10_000;
         var budget = new InFlightArticleBudget(unit * 2);
         var maxObserved = 0L;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        using var held1 = await budget.LeaseAsync(unit, cts.Token);
+        using var held2 = await budget.LeaseAsync(unit, cts.Token);
+        Assert.Equal(unit * 2, budget.LeasedBytes);
+
+        var blocked = budget.LeaseAsync(unit, cts.Token).AsTask();
+        for (var i = 0; i < 50 && budget.ThrottleEvents == 0; i++)
+            await Task.Delay(10);
+        Assert.True(budget.ThrottleEvents > 0,
+            "Expected throttle events while the cap is fully held");
+        Assert.False(blocked.IsCompleted);
+
+        held1.Dispose();
+        held2.Dispose();
+        using (await blocked)
+            Assert.True(budget.LeasedBytes <= budget.CapBytes);
 
         var workers = Enumerable.Range(0, 8).Select(async _ =>
         {
@@ -118,8 +133,7 @@ public class MultiSegmentStreamPrefetchBudgetTests
         await Task.WhenAll(workers);
         Assert.Equal(0, budget.LeasedBytes);
         Assert.True(Volatile.Read(ref maxObserved) > 0);
-        Assert.True(budget.ThrottleEvents > 0,
-            "Expected throttle events under a tiny concurrent budget");
+        Assert.True(maxObserved <= budget.CapBytes);
     }
 
     [Fact]
