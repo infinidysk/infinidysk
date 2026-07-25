@@ -68,6 +68,10 @@ public class GetOverviewStatsResponse
         public long BytesFetched { get; init; }
         public long Errors { get; init; }
         public long Retries { get; init; }
+        /// <summary>
+        /// Mean duration of successful (Ok) fetches only. Includes connection-pool wait
+        /// inside the provider call; not pure wire RTT. Misses/errors are excluded.
+        /// </summary>
         public double AvgDurationMs { get; init; }
         public double ErrorRate { get; init; }
         public List<long> Spark { get; init; } = new();

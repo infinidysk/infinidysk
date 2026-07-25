@@ -23,11 +23,19 @@ public class MultiProviderNntpClient(
     MetricsWriter? metricsWriter = null,
     ProviderBytesTracker? bytesTracker = null,
     Func<bool>? cascadeEnabled = null,
+    Func<bool>? retryPrimaryOnMiss = null,
     StreamTraceBuffer? streamTrace = null,
     ActiveReadRegistry? activeReadRegistry = null,
     ArticleMissNegativeCache? articleMissCache = null
 ) : NntpClient, INntpConnectionStats
 {
+    /// <summary>
+    /// Max concurrent batch-failover BODY starts. Admission stays strictly ordered;
+    /// this only bounds how many fallback walks may be in flight at once so sequential
+    /// consumers cannot deadlock on an unbounded fan-out (see AGENTS.md).
+    /// </summary>
+    private const int MaxConcurrentFallbackStarts = 4;
+    private readonly SemaphoreSlim _batchFallbackStartGate = new(MaxConcurrentFallbackStarts);
     public int InFlightConnections => providers.Sum(p => p.InFlightConnections);
 
     public IReadOnlyList<ProviderCircuitRuntimeSnapshot> GetProviderCircuitSnapshots()
@@ -167,21 +175,25 @@ public class MultiProviderNntpClient(
                     .ToArray();
                 var responses =
                     new Task<UsenetDecodedBodyResponse>[primaryBatch.Responses.Count];
-                Task previousFallbackCompletion = Task.CompletedTask;
+                // Admission (start-order) is separate from transfer completion so segment
+                // N+1 can begin its fallback walk after N has admitted/started, without
+                // waiting for N's body stream to finish. Concurrent starts are bounded by
+                // _batchFallbackStartGate until each transfer's body callback fires.
+                Task previousFallbackAdmission = Task.CompletedTask;
                 for (var index = 0; index < responses.Length; index++)
                 {
-                    var fallbackCompletion = new TaskCompletionSource(
+                    var fallbackAdmission = new TaskCompletionSource(
                         TaskCreationOptions.RunContinuationsAsynchronously);
                     responses[index] = ResolveBatchResponseAsync(
                         primaryBatch.Responses[index],
                         segmentIds[index],
                         provider,
                         fallbackProviders,
-                        previousFallbackCompletion,
-                        fallbackCompletion,
+                        previousFallbackAdmission,
+                        fallbackAdmission,
                         coordinator,
                         cancellationToken);
-                    previousFallbackCompletion = fallbackCompletion.Task;
+                    previousFallbackAdmission = fallbackAdmission.Task;
                 }
                 return new UsenetDecodedBodyBatch { Responses = responses };
             }
@@ -217,16 +229,24 @@ public class MultiProviderNntpClient(
         SegmentId segmentId,
         MultiConnectionNntpClient primaryProvider,
         IReadOnlyList<MultiConnectionNntpClient> fallbackProviders,
-        Task previousFallbackCompletion,
-        TaskCompletionSource fallbackCompletion,
+        Task previousFallbackAdmission,
+        TaskCompletionSource fallbackAdmission,
         BatchCallbackCoordinator coordinator,
         CancellationToken cancellationToken)
     {
-        var fallbackCompletionOwnedByTransfer = false;
+        var admissionSignaled = false;
+        void SignalAdmission()
+        {
+            if (admissionSignaled) return;
+            admissionSignaled = true;
+            fallbackAdmission.TrySetResult();
+        }
+
         var primaryStopwatch = Stopwatch.StartNew();
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses = null;
-        // Fresh per article resolution. Do not mark on the initial batch 430 so the
-        // intentional primary retry below is never skipped by its own miss.
+        // Fresh per article resolution. When primary re-probe is enabled, do not mark the
+        // primary's storage group on the initial batch 430 so that re-probe is not skipped
+        // by its own miss. Cross-request negative cache may skip re-probe separately.
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
@@ -254,7 +274,9 @@ public class MultiProviderNntpClient(
                 return WrapProviderResponse(response, primaryProvider.MetricsKey);
             }
 
-            if (response != null && UsenetArticleAvailability.IsDefinitiveMissing(response))
+            var definitiveMiss = response != null &&
+                UsenetArticleAvailability.IsDefinitiveMissing(response);
+            if (definitiveMiss)
             {
                 primaryStopwatch.Stop();
                 RecordFetch(primaryProvider.MetricsKey, SegmentFetch.FetchStatus.Missing,
@@ -262,12 +284,12 @@ public class MultiProviderNntpClient(
                 (priorMisses ??= []).Add((primaryProvider.MetricsKey, SegmentFetch.FetchStatus.Missing));
             }
 
-            // Retry the primary provider once before falling back. Even a definitive miss
-            // (430 / provider 451) can be transient when a provider routes across spool nodes.
-            // Anything else (a faulted response task, or a stale connection's buffered
-            // goodbye line such as "400 idle timeout") remains a connection-level failure.
+            // Re-probe primary once on a definitive miss when enabled (default). Multi-node
+            // spool routing can return a transient 430/451 on one connection. Operators may
+            // disable via usenet.cascade.retry-primary-on-miss; connection-level failures
+            // always re-try the primary.
             //
-            // Coherence with ArticleMissNegativeCache (#639 / #637):
+            // Coherence with ArticleMissNegativeCache:
             // - Never MarkMissing the primary on this initial batch 430 — that would prime
             //   the cache and cause the intentional re-probe below to skip itself.
             // - If a prior request already cached the primary/group miss, skip the re-probe
@@ -275,9 +297,9 @@ public class MultiProviderNntpClient(
             // - MarkMissing only from definitive misses inside the retry/fallback loop below.
             IReadOnlyList<MultiConnectionNntpClient> retryProviders;
             var primaryCachedMiss = IsCachedMissing(segmentId, primaryProvider);
-            if (response != null &&
-                UsenetArticleAvailability.IsDefinitiveMissing(response) &&
-                primaryCachedMiss)
+            var reprobePrimary = !definitiveMiss
+                || (retryPrimaryOnMiss?.Invoke() != false && !primaryCachedMiss);
+            if (definitiveMiss && !reprobePrimary)
             {
                 var primaryGroup = NormalizeStorageGroup(primaryProvider.StorageGroup);
                 if (primaryGroup.Length > 0) missingGroups.Add(primaryGroup);
@@ -286,7 +308,7 @@ public class MultiProviderNntpClient(
             else
             {
                 retryProviders = [primaryProvider, .. fallbackProviders];
-                if (response == null || !UsenetArticleAvailability.IsDefinitiveMissing(response))
+                if (response == null || !definitiveMiss)
                 {
                     if (response != null)
                     {
@@ -296,102 +318,116 @@ public class MultiProviderNntpClient(
                 }
             }
 
-            await previousFallbackCompletion.WaitAsync(cancellationToken)
+            await previousFallbackAdmission.WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
-            foreach (var provider in retryProviders)
+            await _batchFallbackStartGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var gateHeld = true;
+            var gateOwnedByTransfer = false;
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var group = NormalizeStorageGroup(provider.StorageGroup);
-                if (group.Length > 0 && missingGroups.Contains(group))
+                // Admit the next segment before (or while) walking providers so N+1 is not
+                // blocked on this segment's body stream — only on ordered start + the gate.
+                SignalAdmission();
+                foreach (var provider in retryProviders)
                 {
-                    Log.Debug(
-                        "Skipping provider `{Host}` on storage group `{Group}` — " +
-                        "a sibling provider already reported the article missing.",
-                        provider.Host, group);
-                    continue;
-                }
-
-                if (IsCachedMissing(segmentId, provider))
-                {
-                    Log.Debug(
-                        "Skipping provider `{Host}` for article `{SegmentId}` — " +
-                        "cached as missing. Reason: article-miss-cache",
-                        provider.Host, segmentId);
-                    continue;
-                }
-
-                coordinator.AddTransfer();
-                var deferredCallback = new DeferredArticleBodyCallback();
-                var stopwatch = Stopwatch.StartNew();
-                try
-                {
-                    response = await provider.DecodedBodyAsync(
-                        segmentId, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
-                    stopwatch.Stop();
-                    var responseType = response.ResponseType;
-                    if (responseType == UsenetResponseType.ArticleRetrievedBodyFollows)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var group = NormalizeStorageGroup(provider.StorageGroup);
+                    if (group.Length > 0 && missingGroups.Contains(group))
                     {
-                        _usageTracker.RecordSuccess(provider.MetricsKey);
-                        RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                            stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0);
-                        if (priorMisses is { Count: > 0 })
-                        {
-                            _usageTracker.RecordFailoverSave();
-                            RecordFailoverMisses(priorMisses, provider.MetricsKey);
-                        }
-                        response = WrapProviderResponse(response, provider.MetricsKey);
-                        fallbackCompletionOwnedByTransfer = true;
-                        deferredCallback.Activate(result =>
-                        {
-                            try
-                            {
-                                coordinator.CompleteTransfer(result);
-                            }
-                            finally
-                            {
-                                fallbackCompletion.TrySetResult();
-                            }
-                        });
+                        Log.Debug(
+                            "Skipping provider `{Host}` on storage group `{Group}` — " +
+                            "a sibling provider already reported the article missing.",
+                            provider.Host, group);
+                        continue;
                     }
-                    else
+
+                    if (IsCachedMissing(segmentId, provider))
                     {
-                        RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
-                            stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0);
-                        (priorMisses ??= []).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
-                        if (UsenetArticleAvailability.IsDefinitiveMissing(response))
+                        Log.Debug(
+                            "Skipping provider `{Host}` for article `{SegmentId}` — " +
+                            "cached as missing. Reason: article-miss-cache",
+                            provider.Host, segmentId);
+                        continue;
+                    }
+
+                    coordinator.AddTransfer();
+                    var deferredCallback = new DeferredArticleBodyCallback();
+                    var stopwatch = Stopwatch.StartNew();
+                    try
+                    {
+                        response = await provider.DecodedBodyAsync(
+                            segmentId, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
+                        stopwatch.Stop();
+                        var responseType = response.ResponseType;
+                        if (responseType == UsenetResponseType.ArticleRetrievedBodyFollows)
                         {
-                            if (group.Length > 0) missingGroups.Add(group);
-                            MarkCachedMissing(segmentId, provider);
+                            _usageTracker.RecordSuccess(provider.MetricsKey);
+                            RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
+                                stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0);
+                            if (priorMisses is { Count: > 0 })
+                            {
+                                _usageTracker.RecordFailoverSave();
+                                RecordFailoverMisses(priorMisses, provider.MetricsKey);
+                            }
+                            response = WrapProviderResponse(response, provider.MetricsKey);
+                            gateOwnedByTransfer = true;
+                            deferredCallback.Activate(result =>
+                            {
+                                try
+                                {
+                                    coordinator.CompleteTransfer(result);
+                                }
+                                finally
+                                {
+                                    _batchFallbackStartGate.Release();
+                                }
+                            });
                         }
+                        else
+                        {
+                            RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
+                                stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0);
+                            (priorMisses ??= []).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
+                            if (UsenetArticleAvailability.IsDefinitiveMissing(response))
+                            {
+                                if (group.Length > 0) missingGroups.Add(group);
+                                MarkCachedMissing(segmentId, provider);
+                            }
+                            deferredCallback.Discard();
+                            coordinator.CompleteAttempt();
+                        }
+
+                        lastException = null;
+                    }
+                    catch (Exception e) when (!e.IsCancellationException(cancellationToken))
+                    {
+                        stopwatch.Stop();
+                        var reason = ClassifyAndRecordFailure(
+                            provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
+                            priorMisses?.Count ?? 0);
+                        (priorMisses ??= []).Add((provider.MetricsKey, reason));
                         deferredCallback.Discard();
                         coordinator.CompleteAttempt();
+                        lastException = ExceptionDispatchInfo.Capture(e);
+                        continue;
+                    }
+                    catch
+                    {
+                        deferredCallback.Discard();
+                        coordinator.CompleteAttempt();
+                        throw;
                     }
 
-                    lastException = null;
+                    if (response.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows)
+                    {
+                        return response;
+                    }
                 }
-                catch (Exception e) when (!e.IsCancellationException(cancellationToken))
-                {
-                    stopwatch.Stop();
-                    var reason = ClassifyAndRecordFailure(
-                        provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
-                        priorMisses?.Count ?? 0);
-                    (priorMisses ??= []).Add((provider.MetricsKey, reason));
-                    deferredCallback.Discard();
-                    coordinator.CompleteAttempt();
-                    lastException = ExceptionDispatchInfo.Capture(e);
-                    continue;
-                }
-                catch
-                {
-                    deferredCallback.Discard();
-                    coordinator.CompleteAttempt();
-                    throw;
-                }
-
-                if (response.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows)
-                {
-                    return response;
-                }
+            }
+            finally
+            {
+                if (gateHeld && !gateOwnedByTransfer)
+                    _batchFallbackStartGate.Release();
             }
 
             lastException?.Throw();
@@ -404,11 +440,7 @@ public class MultiProviderNntpClient(
         }
         finally
         {
-            if (!fallbackCompletionOwnedByTransfer)
-            {
-                fallbackCompletion.TrySetResult();
-            }
-
+            SignalAdmission();
             coordinator.CompleteDecision();
         }
     }
@@ -938,12 +970,10 @@ public class MultiProviderNntpClient(
                 ? byRecovery.ThenBy(EffectivePriority)
                 : byRecovery;
             var byUsage = prioritized.ThenByDescending(x => GetRemainingBytes(x));
-            // In pool mode, capacity must outrank learned speed. Otherwise a warmed
-            // provider can keep winning the speed tie-break after its pool is full,
-            // leaving requests queued there while peer providers remain idle.
-            var capacityBalanced = cascade
-                ? byUsage
-                : byUsage.ThenByDescending(x => x.UnreservedConnections);
+            // Prefer providers with more spare capacity. In cascade mode this is a
+            // tie-break after EffectivePriority (which already soft-scores contention);
+            // in pool mode it outranks learned speed so a full pool cannot monopolize.
+            var capacityBalanced = byUsage.ThenByDescending(x => x.UnreservedConnections);
             var ordered = capacityBalanced
                 .ThenBy(EstimatedDeliveryScore)
                 .ToList();
@@ -954,10 +984,22 @@ public class MultiProviderNntpClient(
         }
     }
 
+    /// <summary>
+    /// Cascade sort key: configured priority, plus a soft contention score while spare
+    /// capacity remains, plus a large demotion when fully saturated. Among providers that
+    /// still have spare connections, a thinly-spared primary can lose to a same-tier peer
+    /// with meaningfully more idle capacity without waiting for hard saturation.
+    /// </summary>
     private static int EffectivePriority(MultiConnectionNntpClient provider)
     {
         const int saturationDemotion = 1 << 20;
-        return provider.Priority + (provider.HasSpareConnection ? 0 : saturationDemotion);
+        if (!provider.HasSpareConnection)
+            return provider.Priority + saturationDemotion;
+
+        // Smaller UnreservedConnections => slightly worse (still << saturationDemotion).
+        var spare = Math.Clamp(provider.UnreservedConnections, 0, 1024);
+        var contention = 1024 - spare;
+        return provider.Priority + contention;
     }
 
     private double EstimatedDeliveryScore(MultiConnectionNntpClient provider)
@@ -1054,6 +1096,7 @@ public class MultiProviderNntpClient(
     {
         foreach (var provider in providers)
             provider.Dispose();
+        _batchFallbackStartGate.Dispose();
         GC.SuppressFinalize(this);
     }
 }

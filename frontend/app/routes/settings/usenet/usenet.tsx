@@ -606,6 +606,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
 
             <ManagedSetting configKeys={[
                 "usenet.cascade.enabled",
+                "usenet.cascade.retry-primary-on-miss",
                 "usenet.pipelining.enabled",
                 "usenet.pipelining.depth",
                 "usenet.article-miss-cache-ttl-seconds",
@@ -618,29 +619,44 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                         <span className="text-[10px] font-semibold uppercase tracking-wide">Global</span>
                     </div>
 
-                    <Tooltip
-                        content="Prefer providers in drag order. While off, all enabled providers share work in the pool."
-                        className="min-w-0"
-                    >
-                        <Toggle
-                            id="cascade-enabled"
-                            className="min-w-0 cursor-pointer gap-2 p-0"
-                            checked={cascadeEnabled}
-                            onChange={(e) => {
-                                const enabling = e.target.checked;
-                                const needsSeed = enabling && providerConfig.Providers.every(p => !p.Priority);
-                                const providers = needsSeed
-                                    ? providerConfig.Providers.map((p, i) => ({ ...p, Priority: i }))
-                                    : providerConfig.Providers;
-                                setNewConfig({
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                        <Tooltip
+                            content="Prefer providers in drag order. While off, all enabled providers share work in the pool. Contended primaries with little spare capacity yield to idler same-tier peers."
+                            className="min-w-0"
+                        >
+                            <Toggle
+                                id="cascade-enabled"
+                                className="min-w-0 cursor-pointer gap-2 p-0"
+                                checked={cascadeEnabled}
+                                onChange={(e) => {
+                                    const enabling = e.target.checked;
+                                    const needsSeed = enabling && providerConfig.Providers.every(p => !p.Priority);
+                                    const providers = needsSeed
+                                        ? providerConfig.Providers.map((p, i) => ({ ...p, Priority: i }))
+                                        : providerConfig.Providers;
+                                    setNewConfig({
+                                        ...config,
+                                        "usenet.cascade.enabled": enabling ? "true" : "false",
+                                        "usenet.providers": serializeProviderConfig({ ...providerConfig, Providers: providers }),
+                                    });
+                                }}
+                                label={<span className="text-sm text-base-content">Cascade routing</span>}
+                            />
+                        </Tooltip>
+                        <Tooltip content="After a clean 430/451 on the first batch attempt, try the primary once more before cascading. Helps multi-node spool routing; turn off to skip straight to backups. Skipped automatically when the article-miss cache already knows the primary is missing.">
+                            <Toggle
+                                id="cascade-retry-primary-on-miss"
+                                className={`gap-2 p-0 ${cascadeEnabled ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
+                                disabled={!cascadeEnabled}
+                                checked={(config["usenet.cascade.retry-primary-on-miss"] ?? "true") !== "false"}
+                                onChange={(e) => setNewConfig({
                                     ...config,
-                                    "usenet.cascade.enabled": enabling ? "true" : "false",
-                                    "usenet.providers": serializeProviderConfig({ ...providerConfig, Providers: providers }),
-                                });
-                            }}
-                            label={<span className="text-sm text-base-content">Cascade routing</span>}
-                        />
-                    </Tooltip>
+                                    "usenet.cascade.retry-primary-on-miss": e.target.checked ? "true" : "false",
+                                })}
+                                label={<span className="text-sm text-base-content">Re-probe primary</span>}
+                            />
+                        </Tooltip>
+                    </div>
 
                     <div className="hidden h-4 w-px shrink-0 bg-base-content/10 lg:block" aria-hidden="true" />
 
@@ -2084,6 +2100,7 @@ export function isUsenetSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.pipelining.enabled"] !== newConfig["usenet.pipelining.enabled"]
         || config["usenet.pipelining.depth"] !== newConfig["usenet.pipelining.depth"]
         || config["usenet.cascade.enabled"] !== newConfig["usenet.cascade.enabled"]
+        || config["usenet.cascade.retry-primary-on-miss"] !== newConfig["usenet.cascade.retry-primary-on-miss"]
         || config["usenet.article-miss-cache-ttl-seconds"] !== newConfig["usenet.article-miss-cache-ttl-seconds"]
         || config["usenet.article-miss-cache-max-entries"] !== newConfig["usenet.article-miss-cache-max-entries"]
 }

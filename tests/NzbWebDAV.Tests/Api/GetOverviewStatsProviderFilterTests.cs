@@ -28,8 +28,8 @@ public class GetOverviewStatsProviderFilterTests
         var windowStart = nowMs - 60_000;
         var minutes = new[]
         {
-            (windowStart, ConfiguredKey, 10L, 1000L, 0L, 0L, 100L),
-            (windowStart, DeletedKey, 50L, 5000L, 1L, 2L, 500L),
+            (windowStart, ConfiguredKey, 10L, 1000L, 0L, 0L, 0L, 100L),
+            (windowStart, DeletedKey, 50L, 5000L, 0L, 1L, 2L, 500L),
         };
 
         var rows = GetOverviewStatsController.BuildProvidersFromMinutes(
@@ -52,8 +52,8 @@ public class GetOverviewStatsProviderFilterTests
         var minute1 = windowStart + 60_000;
         var minutes = new[]
         {
-            (minute0, ConfiguredKey, 10L, 1000L, 2L, 4L, 100L),
-            (minute1, ConfiguredKey, 5L, 500L, 1L, 3L, 50L),
+            (minute0, ConfiguredKey, 10L, 1000L, 0L, 2L, 4L, 100L),
+            (minute1, ConfiguredKey, 5L, 500L, 0L, 1L, 3L, 50L),
         };
 
         var rows = GetOverviewStatsController.BuildProvidersFromMinutes(
@@ -76,6 +76,26 @@ public class GetOverviewStatsProviderFilterTests
         Assert.Equal(3, rows[0].RetrySpark[1]);
         Assert.Equal(0, rows[0].ErrorSpark[2]);
         Assert.Equal(0, rows[0].RetrySpark[2]);
+    }
+
+    [Fact]
+    public void BuildProvidersFromMinutes_AvgDurationMs_UsesOkFetchesOnly()
+    {
+        var windowStart = 1_700_000_000_000L;
+        // 10 articles: 7 ok + 2 misses + 1 error. SumDurationMs is Ok-only (7 * 10 = 70).
+        var minutes = new[]
+        {
+            (windowStart, ConfiguredKey, 10L, 1000L, 2L, 1L, 0L, 70L),
+        };
+
+        var rows = GetOverviewStatsController.BuildProvidersFromMinutes(
+            minutes,
+            windowStart,
+            GetOverviewStatsRequest.OverviewWindow.Last1Hour,
+            Labels);
+
+        Assert.Single(rows);
+        Assert.Equal(10.0, rows[0].AvgDurationMs);
     }
 
     [Fact]

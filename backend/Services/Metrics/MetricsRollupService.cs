@@ -152,7 +152,8 @@ public class MetricsRollupService(ProviderBytesTracker bytesTracker) : Backgroun
                 SUM(CASE WHEN Status NOT IN (0, 1) THEN 1 ELSE 0 END),
                 SUM(Retries),
                 SUM(CASE WHEN Status = 0 AND Retries > 0 THEN 1 ELSE 0 END),
-                SUM(DurationMs),
+                -- Ok-only durations so Overview "Avg ok ms" is not inflated by misses/errors.
+                SUM(CASE WHEN Status = 0 THEN DurationMs ELSE 0 END),
                 NULL
             FROM SegmentFetches
             WHERE At >= {0} AND At < {1}
