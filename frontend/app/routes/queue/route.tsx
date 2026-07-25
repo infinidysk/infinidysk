@@ -29,12 +29,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     const historyPage = parsePage(url.searchParams.get("hp"));
     const queuePageSize = parsePageSize(url.searchParams.get("qps"));
     const historyPageSize = parsePageSize(url.searchParams.get("hps"));
-    const queuePromise = backendClient.getQueue(queuePageSize, (queuePage - 1) * queuePageSize);
-    const historyPromise = backendClient.getHistory(historyPageSize, (historyPage - 1) * historyPageSize);
-    const configPromise = backendClient.getConfig(["api.categories", "api.manual-category"])
-    const queue = await queuePromise;
-    const history = await historyPromise;
-    const config = await configPromise;
+    const [queue, history, config] = await Promise.all([
+        backendClient.getQueue(queuePageSize, (queuePage - 1) * queuePageSize),
+        backendClient.getHistory(historyPageSize, (historyPage - 1) * historyPageSize),
+        backendClient.getConfig(["api.categories", "api.manual-category"]),
+    ]);
     const categoriesValue = config
         .find(x => x.configName === "api.categories")
         ?.configValue ?? "uncategorized,audio,software,tv,movies";

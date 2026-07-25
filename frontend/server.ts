@@ -6,8 +6,10 @@ import { shouldCompressResponse } from "./server/compression-filter.js";
 import { logger, requestLogger } from "./server/logger.js";
 import { securityHeadersMiddleware } from "./server/security-headers.js";
 import {
+  formatBackendUnavailableReason,
   isExpectedBackendUnavailableError,
   isWithinBackendStartupGrace,
+  shouldEmitThrottledBackendUnavailableLog,
 } from "./server/startup-grace.js";
 
 // Short-circuit the type-checking of the built output.
@@ -25,10 +27,13 @@ const PORT = Number.parseInt(process.env.PORT || "3000");
 // Deliberately do not hook uncaughtException: that fires for fatal errors
 // where restarting the process is the right answer.
 process.on("unhandledRejection", (reason) => {
-  if (
-    isWithinBackendStartupGrace()
-    && isExpectedBackendUnavailableError(reason)
-  ) {
+  if (isExpectedBackendUnavailableError(reason)) {
+    if (isWithinBackendStartupGrace()) return;
+    if (shouldEmitThrottledBackendUnavailableLog()) {
+      logger.warn(
+        `Backend unreachable during SSR. Reason: ${formatBackendUnavailableReason(reason)}`,
+      );
+    }
     return;
   }
   logger.error("Unhandled promise rejection:", reason);

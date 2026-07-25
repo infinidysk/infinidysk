@@ -7,15 +7,19 @@ import { isbot } from "isbot";
 import type { RenderToPipeableStreamOptions } from "react-dom/server";
 import { renderToPipeableStream } from "react-dom/server";
 import {
+  formatBackendUnavailableReason,
   isExpectedBackendUnavailableError,
   isWithinBackendStartupGrace,
+  shouldEmitThrottledBackendUnavailableLog,
 } from "../server/startup-grace";
+import { logger } from "../server/logger";
 
 export const streamTimeout = 5_000;
 
 /**
  * Quiet expected BackendUnavailableError stacks during frontend-first Docker
- * startup. Outside the grace window (or for any other error), keep default logging.
+ * startup. Outside the grace window, emit a throttled single-line warn (no stack).
+ * Unexpected errors keep default stack logging.
  */
 export const handleError: HandleErrorFunction = (error, { request }) => {
   if (request.signal.aborted) return;
@@ -25,7 +29,13 @@ export const handleError: HandleErrorFunction = (error, { request }) => {
     ? (error as { error?: unknown }).error
     : undefined;
   const unwrapped = routeError ?? error;
-  if (isWithinBackendStartupGrace() && isExpectedBackendUnavailableError(unwrapped)) {
+  if (isExpectedBackendUnavailableError(unwrapped)) {
+    if (isWithinBackendStartupGrace()) return;
+    if (shouldEmitThrottledBackendUnavailableLog()) {
+      logger.warn(
+        `Backend unreachable during SSR. Reason: ${formatBackendUnavailableReason(unwrapped)}`,
+      );
+    }
     return;
   }
   console.error(unwrapped);

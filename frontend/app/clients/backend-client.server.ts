@@ -7,10 +7,37 @@ export class WebdavDirectoryNotFoundError extends Error {
 
 /** Thrown when the backend is unreachable or still in the migration handoff. */
 export class BackendUnavailableError extends Error {
-    public constructor(message = "Backend temporarily unavailable") {
-        super(message);
+    public constructor(
+        message = "Backend temporarily unavailable",
+        public readonly code?: string,
+        options?: ErrorOptions,
+    ) {
+        super(message, options);
         this.name = "BackendUnavailableError";
     }
+}
+
+/** Walks cause/AggregateError chains for undici / Node network failure codes. */
+function extractNetworkErrorCode(error: unknown): string | undefined {
+    const candidates: unknown[] = [error];
+    if (error && typeof error === "object") {
+        const withCause = error as { cause?: unknown; errors?: unknown[] };
+        if (withCause.cause) candidates.push(withCause.cause);
+        if (Array.isArray(withCause.errors)) candidates.push(...withCause.errors);
+        // One more level: TypeError("fetch failed") → AggregateError → ECONNREFUSED
+        if (withCause.cause && typeof withCause.cause === "object") {
+            const nested = withCause.cause as { cause?: unknown; errors?: unknown[] };
+            if (nested.cause) candidates.push(nested.cause);
+            if (Array.isArray(nested.errors)) candidates.push(...nested.errors);
+        }
+    }
+
+    for (const candidate of candidates) {
+        if (!candidate || typeof candidate !== "object") continue;
+        const code = (candidate as { code?: string }).code;
+        if (typeof code === "string" && code.length > 0) return code;
+    }
+    return undefined;
 }
 
 /** Builds a FormData body from a list of [name, value] entries. */
@@ -40,7 +67,12 @@ async function call(path: string, errorPrefix: string, init?: RequestInit): Prom
         });
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        throw new BackendUnavailableError(`${errorPrefix}: ${detail}`);
+        const code = extractNetworkErrorCode(error);
+        throw new BackendUnavailableError(
+            `${errorPrefix}: ${detail}${code ? ` (${code})` : ""}`,
+            code,
+            { cause: error },
+        );
     }
 
     if (!response.ok) {
@@ -50,6 +82,7 @@ async function call(path: string, errorPrefix: string, init?: RequestInit): Prom
         if (response.status === 503 || body?.status === "migrating") {
             throw new BackendUnavailableError(
                 `${errorPrefix}: backend is starting or migrating`,
+                "MIGRATING",
             );
         }
 

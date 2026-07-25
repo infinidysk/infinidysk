@@ -219,9 +219,38 @@ describe("BackendClient", () => {
     await expect(backendClient.isOnboarding()).rejects.toBeInstanceOf(BackendUnavailableError);
   });
 
+  it("preserves the undici cause code on BackendUnavailableError", async () => {
+    const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5000"), {
+      code: "ECONNREFUSED",
+    });
+    fetchMock.mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause }));
+
+    const error = await backendClient.isOnboarding().then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(BackendUnavailableError);
+    expect(error).toMatchObject({
+      name: "BackendUnavailableError",
+      code: "ECONNREFUSED",
+      message: "Failed to fetch onboarding status: fetch failed (ECONNREFUSED)",
+    });
+  });
+
   it("throws BackendUnavailableError on 503 migrating responses", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ status: "migrating" }, 503));
 
-    await expect(backendClient.isOnboarding()).rejects.toBeInstanceOf(BackendUnavailableError);
+    const error = await backendClient.isOnboarding().then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(BackendUnavailableError);
+    expect(error).toMatchObject({
+      name: "BackendUnavailableError",
+      code: "MIGRATING",
+      message: "Failed to fetch onboarding status: backend is starting or migrating",
+    });
   });
 });
