@@ -952,6 +952,7 @@ public class MultiProviderNntpClient(
     {
         foreach (var provider in providers)
             provider.Dispose();
+        _batchFallbackStartGate.Dispose();
         GC.SuppressFinalize(this);
     }
 }
