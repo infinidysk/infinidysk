@@ -155,9 +155,9 @@ public class GetWebdavItemController(
             using var scope = providerUsageTracker.BeginScope(sessionId);
             using var metricsScope = MultiProviderNntpClient.BeginReadSessionScope(sessionId);
 
-            // Bound the entire backend wait (NNTP admission + segment delivery) for this
-            // read so a stuck provider fails the HTTP request instead of blocking until
-            // the client disconnects. See GetAndHeadHandlerPatch for the WebDAV parity path.
+            // Bound the initial backend wait (store lookup + stream open). Cleared once
+            // body copy starts — mid-stream stalls use per-segment timeouts. See
+            // GetAndHeadHandlerPatch for the WebDAV parity path.
             using var readCts = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
             readCts.CancelAfter(configManager.GetStreamingReadTimeout());
             var ct = readCts.Token;
@@ -180,6 +180,9 @@ public class GetWebdavItemController(
                     HttpContext.Connection.RemoteIpAddress?.ToString());
                 try
                 {
+                    // Body transfer can run for minutes; drop the admission/open
+                    // deadline and rely on per-segment mid-stream timeouts.
+                    readCts.CancelAfter(Timeout.InfiniteTimeSpan);
                     await CopyAndReportAsync(response, Response.Body, sessionId, effectiveStart, ct);
                     FinishRange(sessionId, ReadSession.EndReasonCode.Completed);
                 }
@@ -194,12 +197,14 @@ public class GetWebdavItemController(
                     throw;
                 }
             }
-            catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+            catch (OperationCanceledException oce) when (!HttpContext.RequestAborted.IsCancellationRequested)
             {
+                FinishRange(sessionId, ReadSession.EndReasonCode.Error, "streaming-read-timeout");
                 throw new StreamingReadTimeoutException(
                     "WebDAV /view read exceeded the " +
                     $"{configManager.GetStreamingReadTimeout().TotalSeconds:0}s streaming-read-timeout " +
-                    "while waiting for the Usenet backend.");
+                    "while waiting for the Usenet backend.",
+                    oce);
             }
         }
         catch (UnauthorizedAccessException)
@@ -300,12 +305,13 @@ public class GetWebdavItemController(
                 await using var response = await GetWebdavItem(request, ct).ConfigureAwait(false);
                 // HEAD: headers already set, body omitted
             }
-            catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+            catch (OperationCanceledException oce) when (!HttpContext.RequestAborted.IsCancellationRequested)
             {
                 throw new StreamingReadTimeoutException(
                     "WebDAV /view HEAD exceeded the " +
                     $"{configManager.GetStreamingReadTimeout().TotalSeconds:0}s streaming-read-timeout " +
-                    "while waiting for the Usenet backend.");
+                    "while waiting for the Usenet backend.",
+                    oce);
             }
         }
         catch (UnauthorizedAccessException)

@@ -82,26 +82,30 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         if (range is { Start: not null, End: not null })
             RangeContext.SetReadBudget(range.End.Value - range.Start.Value + 1);
 
-        // Bound the entire backend wait (NNTP admission + segment delivery) for this
-        // read so a stuck provider fails the HTTP request instead of blocking until
-        // the client disconnects. Every downstream await below must observe `ct`
-        // (not httpContext.RequestAborted directly) — StreamingTimeoutContext /
-        // CancellationTokenContext key by the exact token instance passed in.
+        // Bound the initial backend wait (store lookup + stream open / first segment)
+        // so a stuck provider fails the HTTP request instead of blocking until the
+        // client disconnects. Cleared once body copy starts — mid-stream stalls use
+        // the per-segment StreamingTimeoutContext, not this wall clock. Every
+        // downstream await below must observe `ct` (not httpContext.RequestAborted
+        // directly) — StreamingTimeoutContext / CancellationTokenContext key by the
+        // exact token instance passed in.
         using var readCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
         readCts.CancelAfter(_configManager.GetStreamingReadTimeout());
         var ct = readCts.Token;
 
         try
         {
-            return await HandleRequestCoreAsync(httpContext, request, response, isHeadRequest, range, copyStart, copyEnd, ct)
+            return await HandleRequestCoreAsync(
+                    httpContext, request, response, isHeadRequest, range, copyStart, copyEnd, readCts, ct)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!httpContext.RequestAborted.IsCancellationRequested)
+        catch (OperationCanceledException oce) when (!httpContext.RequestAborted.IsCancellationRequested)
         {
             throw new StreamingReadTimeoutException(
                 "WebDAV read exceeded the " +
                 $"{_configManager.GetStreamingReadTimeout().TotalSeconds:0}s streaming-read-timeout " +
-                "while waiting for the Usenet backend.");
+                "while waiting for the Usenet backend.",
+                oce);
         }
     }
 
@@ -113,6 +117,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         NWebDav.Server.Helpers.Range? range,
         long copyStart,
         long? copyEnd,
+        CancellationTokenSource readCts,
         CancellationToken ct)
     {
         // Obtain the WebDAV collection
@@ -255,6 +260,9 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     using var metricsScope = MultiProviderNntpClient.BeginReadSessionScope(sessionId);
                     try
                     {
+                        // Body transfer can run for minutes; drop the admission/open
+                        // deadline and rely on per-segment mid-stream timeouts.
+                        readCts.CancelAfter(Timeout.InfiniteTimeSpan);
                         await CopyToAsync(stream, response.Body, copyStart, copyEnd,
                             (n, pos) => _activeReadRegistry.Touch(sessionId, n, pos),
                             ct).ConfigureAwait(false);

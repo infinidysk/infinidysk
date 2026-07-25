@@ -369,7 +369,7 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                             <span className="flex items-center rounded-r border border-l-0 border-base-content/20 bg-base-200 px-2 text-sm text-base-content/80">sec</span>
                         </div>
                         <p className="text-[11px] leading-relaxed text-base-content/45" id="streaming-read-timeout-help">
-                            Total backend wait budget for one WebDAV or /view GET/range (5–120s, default 30). Covers download-semaphore admission, connection-pool wait, and segment delivery together. Distinct from the per-segment timeout above — this fails the whole read promptly when the Usenet backend cannot deliver, instead of blocking until the client disconnects.
+                            Initial backend wait budget to open a WebDAV or /view GET/range (5–120s, default 30): store lookup, download-semaphore admission, connection-pool wait, and first segment. Cleared once body bytes start flowing — mid-stream stalls use the per-segment timeout above. Fails the HTTP read promptly when the Usenet backend never starts delivering, instead of blocking until the client disconnects.
                         </p>
                     </div>
                 </ManagedSetting>
