@@ -73,6 +73,7 @@ The recommended mount enables rclone RC notifications so directory listings stay
         --vfs-cache-max-size=50G
         --vfs-cache-max-age=2160h
         --buffer-size=0M
+        --vfs-read-chunk-size=16M
         --vfs-read-chunk-size-limit=512M
         --no-modtime
         --no-checksum
@@ -107,6 +108,7 @@ Then **Settings → Rclone Server**: enable notifications, host `http://nzbdav_r
 | `--use-cookies` | Avoid re-auth on every request |
 | `--vfs-cache-mode=full` | Disk-backed read cache for smooth seeks |
 | `--buffer-size=0M` | Avoid double-caching with VFS full mode (large buffers amplify scan probes) |
+| `--vfs-read-chunk-size=16M` | Initial range size for uncached reads (smaller probes before chunk growth) |
 | `--vfs-read-chunk-size-limit=512M` | Cap rclone's unbounded chunk-size doubling |
 | `--vfs-cache-max-age=2160h` | Immutable content — prefer size-based eviction over daily expiry (~90 days) |
 | `--no-modtime` / `--no-checksum` | Skip irrelevant WebDAV metadata churn |
