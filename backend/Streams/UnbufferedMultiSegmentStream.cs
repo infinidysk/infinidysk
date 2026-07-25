@@ -2,6 +2,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services.StreamTrace;
+using Serilog;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
@@ -69,6 +70,9 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 try
                 {
                     var body = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken);
+                    await SegmentResponseValidator
+                        .ThrowOnSegmentIdMismatchAsync(segmentId, body)
+                        .ConfigureAwait(false);
                     _stream = body.Stream!;
                     _openSegmentIndex = segmentIndex;
                     _consecutiveZeroFills = 0;
@@ -197,11 +201,18 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 var body = await _usenetClient
                     .DecodedBodyAsync(fallbackId, cancellationToken)
                     .ConfigureAwait(false);
+                await SegmentResponseValidator
+                    .ThrowOnSegmentIdMismatchAsync(fallbackId, body)
+                    .ConfigureAwait(false);
                 return body.Stream!;
             }
             catch (UsenetArticleNotFoundException)
             {
                 // Try the next alternate MessageId.
+            }
+            catch (UsenetUnexpectedResponseException e)
+            {
+                Log.Debug(e, "Fallback MessageId {FallbackId} returned another article.", fallbackId);
             }
         }
 

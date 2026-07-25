@@ -120,6 +120,44 @@ public class SegmentAlignmentTests
     }
 
     [Fact]
+    public async Task UnbufferedResponseForAnotherSegment_FailsInsteadOfServingItsBytes()
+    {
+        var client = CreateClient();
+        client.IndividualResponseIdOverrides["two"] = "some-other-segment";
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "one", "two", "three" }.AsMemory(),
+            client,
+            articleBufferSize: 0,
+            estimatedSegmentSize: 6,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            cancellationToken: CancellationToken.None,
+            fileName: "unbuffered-mismatch.bin",
+            exactSegmentSizes: new long[] { 5, 7, 5 });
+
+        var failure = await Assert.ThrowsAsync<UsenetUnexpectedResponseException>(
+            () => ReadAllAsync(stream));
+
+        Assert.Contains("some-other-segment", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CorruptRetryReturningAnotherSegment_IsRejected()
+    {
+        var client = CreateClient();
+        client.BatchCorruption["two"] = 1;
+        client.IndividualResponseIdOverrides["two"] = "some-other-segment";
+
+        await using var stream = CreateStream(client, exactSizes: [5, 7, 5]);
+
+        var failure = await Assert.ThrowsAsync<UsenetUnexpectedResponseException>(
+            () => ReadAllAsync(stream));
+
+        Assert.Contains("some-other-segment", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task BatchResponsesCompletingOutOfOrder_AreStillDeliveredInOrder()
     {
         var client = CreateClient();
@@ -268,8 +306,10 @@ public class SegmentAlignmentTests
     private sealed class ScriptedNntpClient(IReadOnlyDictionary<string, byte[]> segments) : NntpClient
     {
         public Dictionary<string, int> BatchFailures { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, int> BatchCorruption { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, int> IndividualFailures { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, string> BatchResponseIdOverrides { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, string> IndividualResponseIdOverrides { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, TimeSpan> BatchDelays { get; } = new(StringComparer.Ordinal);
         public ConcurrentQueue<string> IndividualRequests { get; } = new();
 
@@ -293,7 +333,7 @@ public class SegmentAlignmentTests
             }
 
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-            return CreateResponse(key, key);
+            return CreateResponse(key, IndividualResponseIdOverrides.GetValueOrDefault(key, key));
         }
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
@@ -316,6 +356,12 @@ public class SegmentAlignmentTests
             {
                 throw new TimeoutException(
                     $"Timeout executing pipelined nntp BODY command for {key}.");
+            }
+
+            if (TakeFailure(BatchCorruption, key))
+            {
+                throw new UsenetCorruptArticleException(
+                    key, "provider-1", new InvalidDataException("yEnc crc mismatch"));
             }
 
             var reportedId = BatchResponseIdOverrides.GetValueOrDefault(key, key);

@@ -42,10 +42,15 @@ internal sealed class SegmentSizes(ReadOnlyMemory<long> exactSizes, int segmentC
     }
 
     /// <summary>
-    /// Remembers the decoded size of a segment that downloaded successfully. yEnc parts
-    /// within one file are produced at a uniform size apart from the final segment, so a
-    /// consistent observation is a sound length for a sibling segment that failed. The
-    /// final segment is excluded because its shorter size says nothing about the others.
+    /// Remembers the decoded size of a segment that downloaded successfully, for files that
+    /// have no recorded ranges to slice. Three things make this a sound stand-in rather than
+    /// a guess: a poster splits one file into uniform yEnc parts apart from the final one,
+    /// bodies are CRC-validated before they get here so a truncated article fails instead of
+    /// being observed at the wrong size, and a second observation that disagrees marks the
+    /// file non-uniform so nothing is inferred from it again. It is the same uniformity the
+    /// import relies on when it derives per-segment ranges from the first segment
+    /// (see NzbFile.GetSegmentByteRanges), applied at read time when that never happened.
+    /// The final segment is excluded because its shorter size says nothing about the others.
     /// </summary>
     public void RecordObservedSize(int segmentIndex, long size)
     {

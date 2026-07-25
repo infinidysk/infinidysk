@@ -449,29 +449,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         return null;
     }
 
-    /// <summary>
-    /// Guards against a response being paired with the wrong request. Ordering is
-    /// guaranteed by the batch protocol, so a mismatch means the stream would silently
-    /// carry another segment's bytes at this offset.
-    /// </summary>
-    private static async Task ThrowOnSegmentIdMismatchAsync(
+    private static Task ThrowOnSegmentIdMismatchAsync(
         string segmentId,
-        UsenetDecodedBodyResponse response)
-    {
-        if (!NntpClient.HasSegmentIdMismatch(
-                segmentId, response.SegmentId, response.ResponseMessage, out var actualId))
-            return;
-
-        if (response.Stream is not null)
-        {
-            try { await response.Stream.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception e) { Log.Debug(e, "Failed to dispose mismatched BODY stream"); }
-        }
-
-        throw new UsenetUnexpectedResponseException(
-            segmentId,
-            $"Response carried segment {actualId} instead of {segmentId}.");
-    }
+        UsenetDecodedBodyResponse response) =>
+        SegmentResponseValidator.ThrowOnSegmentIdMismatchAsync(segmentId, response);
 
     private async Task<Stream> RetryCorruptSegmentAsync(
         string segmentId,
@@ -495,6 +476,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                     .ConfigureAwait(false);
+                await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
                 return await DrainSegmentAsync(response.Stream!, segmentIndex, cancellationToken)
                     .ConfigureAwait(false);
             }
