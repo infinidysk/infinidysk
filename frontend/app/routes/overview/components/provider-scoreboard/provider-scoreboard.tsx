@@ -79,7 +79,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                             </td>
                                             <td>
                                                 <div className="flex flex-col gap-0.5">
-                                                    <Sparkline values={p.errorSpark ?? []} tone="error" />
+                                                    <Sparkline values={p.errorSpark ?? []} tone="error" eventsOnly />
                                                     <div className={`font-mono text-[11px] tabular-nums ${p.errorRate > 0.05 ? "text-error" : "text-base-content/60"}`}>
                                                         {formatNumber(p.errors)}
                                                         {p.errorRate > 0 && (
@@ -92,7 +92,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                             </td>
                                             <td>
                                                 <div className="flex flex-col gap-0.5">
-                                                    <Sparkline values={p.retrySpark ?? []} tone="warning" />
+                                                    <Sparkline values={p.retrySpark ?? []} tone="warning" eventsOnly />
                                                     <div className={`font-mono text-[11px] tabular-nums ${p.retries > 0 ? "text-warning" : "text-base-content/60"}`}>
                                                         {formatNumber(p.retries)}
                                                     </div>
@@ -227,12 +227,40 @@ export function OutageBuckets({ values }: { values: number[] }) {
     );
 }
 
-function Sparkline({
+type SparklineTone = "success" | "error" | "warning";
+
+function buildEventPath(values: number[], step: number, y: (value: number) => number) {
+    const parts: string[] = [];
+    for (let index = 0; index < values.length;) {
+        if (values[index] <= 0) {
+            index++;
+            continue;
+        }
+
+        const firstEventIndex = index;
+        while (index + 1 < values.length && values[index + 1] > 0) index++;
+        const lastEventIndex = index;
+        const startIndex = Math.max(0, firstEventIndex - 1);
+        const endIndex = Math.min(values.length - 1, lastEventIndex + 1);
+        for (let pointIndex = startIndex; pointIndex <= endIndex; pointIndex++) {
+            parts.push(
+                `${pointIndex === startIndex ? "M" : "L"}${(pointIndex * step).toFixed(1)},${y(values[pointIndex]).toFixed(1)}`,
+            );
+        }
+        index = lastEventIndex + 1;
+    }
+
+    return parts.join(" ");
+}
+
+export function Sparkline({
     values,
     tone = "success",
+    eventsOnly = false,
 }: {
     values: number[],
-    tone?: "success" | "error" | "warning",
+    tone?: SparklineTone,
+    eventsOnly?: boolean,
 }) {
     if (values.length === 0) return <div className="h-[22px] w-[110px] rounded-sm bg-base-content/[0.04]" />;
     const w = 110;
@@ -244,16 +272,31 @@ function Sparkline({
         .map((v, i) => `${i === 0 ? "M" : "L"}${(i * step).toFixed(1)},${y(v).toFixed(1)}`)
         .join(" ");
     const area = `${path} L${((values.length - 1) * step).toFixed(1)},${h} L0,${h} Z`;
-    const colorVar = tone === "error"
-        ? "var(--color-error)"
-        : tone === "warning"
-            ? "var(--color-warning)"
-            : "var(--color-success)";
+    const colorVar = sparklineColor(tone);
     const fill = `color-mix(in srgb, ${colorVar} 16%, transparent)`;
+    const eventPath = eventsOnly ? buildEventPath(values, step, y) : path;
     return (
         <svg viewBox={`0 0 ${w} ${h}`} className="block h-[22px] w-[110px]" preserveAspectRatio="none">
-            <path d={area} fill={fill} />
-            <path d={path} fill="none" stroke={colorVar} strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
+            {eventsOnly ? (
+                <path
+                    d={path}
+                    fill="none"
+                    stroke="var(--color-base-content)"
+                    strokeOpacity="0.12"
+                    strokeWidth="1.2"
+                    vectorEffect="non-scaling-stroke" />
+            ) : (
+                <path d={area} fill={fill} />
+            )}
+            {eventPath && (
+                <path d={eventPath} fill="none" stroke={colorVar} strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
+            )}
         </svg>
     );
+}
+
+function sparklineColor(tone: SparklineTone) {
+    if (tone === "error") return "var(--color-error)";
+    if (tone === "warning") return "var(--color-warning)";
+    return "var(--color-success)";
 }
