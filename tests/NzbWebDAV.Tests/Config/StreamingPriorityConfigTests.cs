@@ -31,6 +31,31 @@ public class StreamingPriorityConfigTests
     }
 
     [Theory]
+    [InlineData("abc", 30)]
+    [InlineData("", 30)]
+    [InlineData(null, 30)]
+    [InlineData("4", 5)]
+    [InlineData("200", 120)]
+    [InlineData("45", 45)]
+    public void GetStreamingReadTimeout_ClampsAndFallsBack(string? value, int expectedSeconds)
+    {
+        var config = new ConfigManager();
+        if (value is not null)
+        {
+            config.UpdateValues(
+            [
+                new ConfigItem
+                {
+                    ConfigName = ConfigKeys.UsenetStreamingReadTimeoutSeconds,
+                    ConfigValue = value,
+                },
+            ]);
+        }
+
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), config.GetStreamingReadTimeout());
+    }
+
+    [Theory]
     [InlineData("abc", 10L * 1024 * 1024 * 1024)]
     [InlineData("0", 1L * 1024 * 1024 * 1024)]
     [InlineData("2", 2L * 1024 * 1024 * 1024)]

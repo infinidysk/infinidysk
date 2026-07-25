@@ -279,11 +279,15 @@ public class ConfigManager
                 case ConfigKeys.QueueWorkerCount:
                 case ConfigKeys.UsenetPipeliningDepth:
                 case ConfigKeys.UsenetArticleBufferSize:
+                case ConfigKeys.UsenetInFlightArticleBudgetMb:
                 case ConfigKeys.UsenetIdleConnectionTimeoutSeconds:
+                case ConfigKeys.UsenetArticleMissCacheTtlSeconds:
+                case ConfigKeys.UsenetArticleMissCacheMaxEntries:
                 case ConfigKeys.UsenetSegmentCacheMaxGb:
                 case ConfigKeys.UsenetStreamingPriority:
                 case ConfigKeys.UsenetStreamingSegmentTimeoutSeconds:
                 case ConfigKeys.UsenetStreamingSegmentRetries:
+                case ConfigKeys.UsenetStreamingReadTimeoutSeconds:
                 case ConfigKeys.WardenQuorum:
                 case ConfigKeys.WardenMaxSourceEntries:
                 case ConfigKeys.PlayTotalBudgetSeconds:
@@ -328,6 +332,7 @@ public class ConfigManager
                 case ConfigKeys.BackupScheduleTime:
                 case ConfigKeys.BackupRetentionCount:
                 case ConfigKeys.ApiNzbBackupRetentionDays:
+                case ConfigKeys.QueueSpeedLimitKbps:
                     RequireLong(item.ConfigName, value);
                     break;
 
@@ -364,6 +369,7 @@ public class ConfigManager
                 case ConfigKeys.DbIsStartupVacuumEnabled:
                 case ConfigKeys.MaintenanceRemoveOrphanedScheduleEnabled:
                 case ConfigKeys.BackupScheduleEnabled:
+                case ConfigKeys.QueuePaused:
                     RequireBool(item.ConfigName, value);
                     break;
 
@@ -647,6 +653,29 @@ public class ConfigManager
         return Math.Clamp(value, 1, 4);
     }
 
+    /// <summary>
+    /// SAB-compatible queue pause state (<c>mode=pause</c> / <c>mode=resume</c>).
+    /// Blocks the queue coordinator from starting new downloads; items already
+    /// in progress finish naturally and WebDAV keeps serving mounted content.
+    /// </summary>
+    public bool IsSabQueuePaused()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.QueuePaused));
+        return v != null && bool.Parse(v);
+    }
+
+    /// <summary>
+    /// SAB-compatible speed limit in KB/s set via <c>mode=speedlimit</c>. 0 means
+    /// unlimited. Accepted and stored for Arr/API compatibility; actual byte/s
+    /// throttling is tracked separately (see #375).
+    /// </summary>
+    public int GetSabSpeedLimitKbps()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.QueueSpeedLimitKbps));
+        if (v == null) return 0;
+        return int.TryParse(v, out var n) ? Math.Max(0, n) : 0;
+    }
+
     public bool IsPipeliningEnabled()
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetPipeliningEnabled));
@@ -684,6 +713,20 @@ public class ConfigManager
     }
 
     /// <summary>
+    /// Host-wide cap on decoded article bytes retained in RAM across concurrent WebDAV
+    /// streams. Default 512 MiB; clamped to [64, 8192]. Distinct from
+    /// <see cref="GetArticleBufferSize"/>, which bounds per-stream segment count.
+    /// </summary>
+    public int GetInFlightArticleBudgetMb()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetInFlightArticleBudgetMb));
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 64, 8192) : 512;
+    }
+
+    public long GetInFlightArticleBudgetBytes() =>
+        (long)GetInFlightArticleBudgetMb() * 1024L * 1024L;
+
+    /// <summary>
     /// Idle timeout for pooled NNTP connections. Default 60s; clamped to [15, 300].
     /// Takes effect on the next connection-pool rebuild (provider config change or restart).
     /// </summary>
@@ -693,6 +736,30 @@ public class ConfigManager
         if (configured is null || !int.TryParse(configured, out var value))
             return 60;
         return Math.Clamp(value, 15, 300);
+    }
+
+    /// <summary>
+    /// How long a definitive per-provider (or per-storage-group) article miss stays
+    /// cached before it is re-probed. Default 300s; clamped to [30, 86400].
+    /// </summary>
+    public TimeSpan GetArticleMissCacheTtl()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetArticleMissCacheTtlSeconds));
+        if (configured is null || !int.TryParse(configured, out var seconds))
+            return TimeSpan.FromSeconds(300);
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 30, 86400));
+    }
+
+    /// <summary>
+    /// Upper bound on the number of cached article-miss entries before the oldest
+    /// are evicted. Default 10000; clamped to [100, 1000000].
+    /// </summary>
+    public int GetArticleMissCacheMaxEntries()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetArticleMissCacheMaxEntries));
+        if (configured is null || !int.TryParse(configured, out var value))
+            return 10_000;
+        return Math.Clamp(value, 100, 1_000_000);
     }
 
     public bool IsPipelinedBodyRequestsEnabled()
@@ -749,6 +816,20 @@ public class ConfigManager
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingSegmentRetries));
         return int.TryParse(v, out var n) ? Math.Clamp(n, 0, 5) : 3;
+    }
+
+    /// <summary>
+    /// Total backend-wait budget for a single WebDAV/`/view` GET or range read —
+    /// covers download-semaphore admission, the connection-pool gate, and segment
+    /// delivery together. Distinct from (and larger than) the per-segment timeout:
+    /// this bounds the whole read so a stuck provider fails the HTTP request
+    /// instead of blocking until the client disconnects.
+    /// </summary>
+    public TimeSpan GetStreamingReadTimeout()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingReadTimeoutSeconds));
+        var seconds = int.TryParse(v, out var n) ? Math.Clamp(n, 5, 120) : 30;
+        return TimeSpan.FromSeconds(seconds);
     }
 
     public bool IsEnforceReadonlyWebdavEnabled()

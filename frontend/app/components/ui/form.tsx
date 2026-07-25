@@ -75,7 +75,7 @@ export const Toggle = forwardRef<HTMLInputElement, ToggleProps>(function Toggle(
       style={style}
       className={`label ${className}`}
     >
-      <input ref={ref} id={id} type="checkbox" disabled={disabled} className="toggle" {...props} />
+      <input ref={ref} id={id} type="checkbox" disabled={disabled} className="toggle toggle-success" {...props} />
       <span>{label}</span>
     </label>
   );

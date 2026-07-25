@@ -107,6 +107,16 @@ public class ExceptionExtensionsTests
     }
 
     [Fact]
+    public void TryGetCausingException_FindsCauseInsideAggregateException()
+    {
+        var inner = new TimeoutException("Timeout reading from NNTP stream.");
+        var aggregate = new AggregateException("batch failed", new Exception("noise"), inner);
+
+        Assert.True(aggregate.TryGetCausingException<TimeoutException>(out var found));
+        Assert.Same(inner, found);
+    }
+
+    [Fact]
     public void IsTransientTransportException_RejectsAlreadyRetryable()
     {
         Assert.False(new RetryableDownloadException("already classified", new IOException("inner"))

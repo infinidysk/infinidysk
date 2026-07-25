@@ -6,6 +6,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.WebDav;
@@ -25,32 +26,35 @@ public static class DatabaseStoreItemFactory
         UsenetStreamingClient usenetClient,
         QueueManager queueManager,
         WebsocketManager websocketManager,
-        LazyRarResolver lazyRarResolver)
+        LazyRarResolver lazyRarResolver,
+        InFlightArticleBudget inFlightArticleBudget)
     {
         return davItem.SubType switch
         {
             DavItem.ItemSubType.IdsRoot =>
                 new DatabaseStoreIdsCollection(
-                    davItem.Name, "", httpContext, dbClient, usenetClient, configManager, lazyRarResolver),
+                    davItem.Name, "", httpContext, dbClient, usenetClient, configManager, lazyRarResolver,
+                    inFlightArticleBudget),
             DavItem.ItemSubType.NzbsRoot =>
                 new DatabaseStoreWatchFolder(
                     davItem, dbClient, configManager, queueManager, websocketManager),
             DavItem.ItemSubType.Directory or DavItem.ItemSubType.ContentRoot =>
                 new DatabaseStoreCollection(
                     davItem, httpContext, dbClient, configManager, usenetClient, queueManager, websocketManager,
-                    lazyRarResolver),
+                    lazyRarResolver, inFlightArticleBudget),
             DavItem.ItemSubType.SymlinkRoot =>
                 new DatabaseStoreSymlinkCollection(
                     davItem, dbClient, configManager),
             DavItem.ItemSubType.NzbFile =>
                 new DatabaseStoreNzbFile(
-                    davItem, httpContext, dbClient, usenetClient, configManager),
+                    davItem, httpContext, dbClient, usenetClient, configManager, inFlightArticleBudget),
             DavItem.ItemSubType.RarFile =>
                 new DatabaseStoreRarFile(
-                    davItem, httpContext, dbClient, usenetClient, configManager),
+                    davItem, httpContext, dbClient, usenetClient, configManager, inFlightArticleBudget),
             DavItem.ItemSubType.MultipartFile =>
                 new DatabaseStoreMultipartFile(
-                    davItem, httpContext, dbClient, usenetClient, configManager, lazyRarResolver),
+                    davItem, httpContext, dbClient, usenetClient, configManager, lazyRarResolver,
+                    inFlightArticleBudget),
             _ => throw new ArgumentException("Unrecognized directory child type.")
         };
     }

@@ -36,6 +36,9 @@ public class GetOverviewStatsResponse
         public long ArticlesPerMinute { get; init; }
         public long ErrorsPerMinute { get; init; }
         public long BytesServedPerMinute { get; init; }
+        public long InFlightArticleBytes { get; init; }
+        public long InFlightArticleBudgetBytes { get; init; }
+        public long InFlightArticleThrottleEvents { get; init; }
     }
 
     public class MetricsHealthBlock

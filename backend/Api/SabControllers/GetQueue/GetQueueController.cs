@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
@@ -16,7 +17,7 @@ public class GetQueueController(
     ProviderUsageTracker providerUsageTracker
 ) : SabApiController.BaseController(httpContext, configManager)
 {
-    private async Task<GetQueueResponse> GetQueueAsync(GetQueueRequest request)
+    internal async Task<GetQueueResponse> GetQueueAsync(GetQueueRequest request)
     {
         // Snapshot every in-progress item (primary first).
         var inProgress = queueManager.GetInProgressQueueItems();
@@ -63,7 +64,13 @@ public class GetQueueController(
             {
                 var isInProgress = inProgressById.TryGetValue(queueItem.Id, out var active);
                 var percentage = isInProgress ? active.ProgressPercentage : 0;
-                var status = isInProgress ? "Downloading" : "Queued";
+                // Arr treats slot status "Paused" (priority -2) separately from the
+                // queue-level paused flag set by mode=pause.
+                var status = isInProgress
+                    ? "Downloading"
+                    : queueItem.Priority == QueueItem.PriorityOption.Paused
+                        ? "Paused"
+                        : "Queued";
                 IReadOnlyDictionary<string, long> providerUsage =
                     GetProviderUsageForSlot(isInProgress, queueItem.Id, providerUsageTracker);
                 if (isInProgress && configuredKeys.Count > 0)
@@ -79,13 +86,16 @@ public class GetQueueController(
             .ToList();
 
         // return response
+        var speedLimitKbps = configManager.GetSabSpeedLimitKbps();
         return new GetQueueResponse()
         {
             Queue = new GetQueueResponse.QueueObject()
             {
-                Paused = false,
+                Paused = configManager.IsSabQueuePaused(),
                 Slots = slots,
                 TotalCount = totalCount,
+                SpeedLimit = speedLimitKbps.ToString(),
+                SpeedLimitAbs = speedLimitKbps.ToString(),
             }
         };
     }

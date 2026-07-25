@@ -1,7 +1,7 @@
 import { Button } from "~/components/ui/button";
-import { Spinner } from "~/components/ui/feedback";
+import { Spinner, Tooltip } from "~/components/ui/feedback";
 import { ManagedSetting, SettingsCard, SettingsIntro, SettingsPage } from "~/components/ui";
-import { Checkbox, Input } from "~/components/ui/form";
+import { Input, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
 import { isMaskedSecret } from "~/utils/config-mask";
@@ -63,19 +63,15 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                 description="Notify the rclone mount whenever WebDAV content is added or removed."
             >
             <ManagedSetting configKey="rclone.rc-enabled">
-            <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-base-content/80">
-                    <Checkbox
+            <Tooltip content="Notify your rclone mount via the RC API when files are added or removed on the WebDAV, so you can use a high dir-cache-time.">
+                <Toggle
                     id="rclone-rc-enabled-checkbox"
-                    aria-describedby="rclone-rc-enabled-help"
+                    className="cursor-pointer gap-2 p-0"
                     checked={config["rclone.rc-enabled"] === "true"}
-                    onChange={e => setNewConfig({ ...config, "rclone.rc-enabled": "" + e.target.checked })}  />
-                    <span>{`Enable Rclone RC Server Notifications`}</span>
-                </label>
-                <p className="text-[11px] leading-relaxed text-base-content/45" id="rclone-rc-enabled-help">
-                    When enabled, NzbDAV will automatically notify your rclone mount via the RC API whenever files are added or removed on the webdav. This allows setting a high dir-cache-time setting on Rclone.
-                </p>
-            </div>
+                    onChange={e => setNewConfig({ ...config, "rclone.rc-enabled": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Enable Rclone RC Server Notifications</span>}
+                />
+            </Tooltip>
             </ManagedSetting>
             </SettingsCard>
 

@@ -14,7 +14,8 @@ public class DatabaseStoreRarFile(
     HttpContext httpContext,
     DavDatabaseClient dbClient,
     UsenetStreamingClient usenetClient,
-    ConfigManager configManager
+    ConfigManager configManager,
+    InFlightArticleBudget inFlightArticleBudget
 ) : BaseStoreStreamFile(httpContext, configManager)
 {
     public DavItem DavItem => davRarFile;
@@ -52,7 +53,8 @@ public class DatabaseStoreRarFile(
             configManager.GetArticleBufferSize(),
             resolver: null,
             usePipelinedBodyRequests: configManager.IsPipelinedBodyRequestsEnabled(),
-            fileName: davRarFile.Path
+            fileName: davRarFile.Path,
+            inFlightArticleBudget: inFlightArticleBudget
         );
     }
 }

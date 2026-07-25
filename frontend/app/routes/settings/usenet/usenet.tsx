@@ -1,6 +1,5 @@
 import { type Dispatch, type SetStateAction, type ReactNode, type CSSProperties, useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { Alert, Badge, Button, HelpText, Icon, Input, Label, ManagedSetting, Modal, Select, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
-import { Checkbox } from "~/components/ui/form";
+import { Alert, Badge, Button, HelpText, Icon, Input, Label, ManagedSetting, Modal, Select, SettingsIntro, SettingsPage, Tooltip, Toggle } from "~/components/ui";
 import { subscribeWebsocketTopics, useWebsocketTopic } from "~/utils/shared-websocket";
 import { isMaskedSecret } from "~/utils/config-mask";
 import { shouldWarnCleartextCredentials } from "./cleartext-credentials";
@@ -196,6 +195,47 @@ const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
     [ProviderType.BackupOnly]: "Backup Only",
 };
 
+function providerCardTone(type: ProviderType): string {
+    if (type === ProviderType.Disabled) return "border-error bg-error/15";
+    if (type === ProviderType.BackupOnly || type === ProviderType.BackupAndStats) {
+        return "border-warning bg-base-100";
+    }
+    return "border-info bg-base-100";
+}
+
+type DisplayedProvider = { provider: ConnectionDetails; index: number };
+
+type StorageGroupPartition = {
+    ungrouped: DisplayedProvider[];
+    groups: { name: string; items: DisplayedProvider[] }[];
+};
+
+function partitionByStorageGroup(items: DisplayedProvider[]): StorageGroupPartition {
+    const ungrouped: DisplayedProvider[] = [];
+    const byName = new Map<string, DisplayedProvider[]>();
+    const order: string[] = [];
+
+    for (const item of items) {
+        const name = item.provider.StorageGroup?.trim() ?? "";
+        if (!name) {
+            ungrouped.push(item);
+            continue;
+        }
+        let bucket = byName.get(name);
+        if (!bucket) {
+            bucket = [];
+            byName.set(name, bucket);
+            order.push(name);
+        }
+        bucket.push(item);
+    }
+
+    return {
+        ungrouped,
+        groups: order.map(name => ({ name, items: byName.get(name)! })),
+    };
+}
+
 function parseProviderConfig(jsonString: string): UsenetProviderConfig {
     try {
         if (!jsonString || jsonString.trim() === "") {
@@ -281,6 +321,11 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
             return a.index - b.index;
         });
     }, [providerConfig.Providers, cascadeEnabled]);
+
+    const storagePartitions = useMemo(
+        () => partitionByStorageGroup(displayedProviders),
+        [displayedProviders],
+    );
 
     // handlers
     const handleAddProvider = useCallback(() => {
@@ -415,6 +460,159 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         return () => { disposed = true; clearInterval(id); };
     }, [showModal, providerConfig.Providers.length]);
 
+    const renderProviderCard = (provider: ConnectionDetails, index: number) => {
+        const isDisabled = provider.Type === ProviderType.Disabled;
+        return (
+            <SortableItem key={providerKey(provider)} id={providerKey(provider)} disabled={!cascadeEnabled}>
+                {({ setNodeRef, setActivatorNodeRef, attributes, listeners, style, isDragging }) => (
+                    <div
+                        ref={setNodeRef}
+                        style={style}
+                        className={`overflow-hidden rounded-lg border ${providerCardTone(provider.Type)}`}
+                    >
+                        <div className="space-y-3 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                    <div className="break-all text-sm font-semibold leading-snug text-base-content">
+                                        {cascadeEnabled && !isDisabled && (
+                                            <Badge className="badge-ghost badge-sm mr-2 align-middle">#{index + 1}</Badge>
+                                        )}
+                                        {provider.Nickname?.trim() || provider.Host}
+                                        {isDisabled && <Badge className="badge-ghost badge-sm ml-2 align-middle">Disabled</Badge>}
+                                    </div>
+                                    {provider.Nickname?.trim() && (
+                                        <div className="mt-0.5 break-all text-xs text-base-content/60">
+                                            {provider.Host}
+                                        </div>
+                                    )}
+                                    <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-base-content/50">
+                                        Port {provider.Port}
+                                    </div>
+                                </div>
+                                <div className="flex shrink-0 gap-1">
+                                    {cascadeEnabled && (
+                                        <button
+                                            type="button"
+                                            ref={setActivatorNodeRef}
+                                            className="btn btn-ghost btn-sm btn-square"
+                                            style={{ cursor: isDragging ? "grabbing" : "grab", touchAction: "none" }}
+                                            title="Drag to reorder"
+                                            aria-label="Drag to reorder"
+                                            {...attributes}
+                                            {...listeners}
+                                        >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                                <circle cx="9" cy="5" r="1.6" /><circle cx="15" cy="5" r="1.6" />
+                                                <circle cx="9" cy="12" r="1.6" /><circle cx="15" cy="12" r="1.6" />
+                                                <circle cx="9" cy="19" r="1.6" /><circle cx="15" cy="19" r="1.6" />
+                                            </svg>
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        className={`btn btn-ghost btn-sm btn-square ${isDisabled ? "text-base-content/40" : "text-success"}`}
+                                        onClick={() => handleToggleProvider(index)}
+                                        title={isDisabled ? "Enable Provider" : "Disable Provider"}
+                                        aria-pressed={!isDisabled}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                                            <line x1="12" y1="2" x2="12" y2="12" />
+                                        </svg>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm btn-square"
+                                        onClick={() => handleEditProvider(index)}
+                                        title="Edit Provider"
+                                    >
+                                        <Icon name="edit" className="!text-[14px]" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm btn-square hover:text-error"
+                                        onClick={() => handleDeleteProvider(index)}
+                                        title="Delete Provider"
+                                    >
+                                        <Icon name="delete" className="!text-[14px]" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="border-t border-base-content/10 pt-3">
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <div className="relative flex min-w-0 items-center gap-2">
+                                        <div className="text-primary">
+                                            <Icon name="person" className="!text-[18px]" />
+                                        </div>
+                                        <div className="flex min-w-0 flex-col">
+                                            <span className="text-[11px] uppercase tracking-wide text-base-content/50">Username</span>
+                                            <span className="truncate text-sm text-base-content">{provider.User}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2.5 rounded-lg border border-base-content/10 bg-base-200/40 px-2.5 py-2">
+                                        <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md bg-base-300 text-base-content/60">
+                                            <Icon name="hub" className="!text-[16px]" />
+                                        </div>
+                                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                            <span className="text-[10px] font-medium uppercase tracking-wide text-base-content/50">Connections</span>
+                                            <span className="break-all text-sm font-medium text-base-content">
+                                                {`${connections[index]?.live ?? 0} / ${provider.MaxConnections} max`}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="relative flex min-w-0 items-center gap-2">
+                                        <div className="text-primary">
+                                            <Icon name={provider.UseSsl ? "lock" : "lock_open"} className="!text-[18px]" />
+                                        </div>
+                                        <div className="flex min-w-0 flex-col">
+                                            <span className="text-[11px] uppercase tracking-wide text-base-content/50">Security</span>
+                                            <span className="truncate text-sm text-base-content">
+                                                {provider.UseSsl ? "SSL Enabled" : "No SSL"}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="relative flex min-w-0 items-center gap-2">
+                                        <div className="text-primary">
+                                            <Icon name="account_tree" className="!text-[18px]" />
+                                        </div>
+                                        <div className="flex min-w-0 flex-col">
+                                            <span className="text-[11px] uppercase tracking-wide text-base-content/50">Behavior</span>
+                                            <span className="truncate text-sm text-base-content">
+                                                {PROVIDER_TYPE_LABELS[provider.Type]}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {provider.StorageGroup?.trim() && (
+                                        <div className="relative flex min-w-0 items-center gap-2">
+                                            <div className="text-primary">
+                                                <Icon name="storage" className="!text-[18px]" />
+                                            </div>
+                                            <div className="flex min-w-0 flex-col">
+                                                <span className="text-[11px] uppercase tracking-wide text-base-content/50">Storage group</span>
+                                                <span className="truncate text-sm text-base-content">{provider.StorageGroup.trim()}</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <UsageRow
+                                    provider={provider}
+                                    usage={usage[index]}
+                                    onReset={() => handleResetUsage(index)}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </SortableItem>
+        );
+    };
+
     // view
     return (
         <SettingsPage>
@@ -422,6 +620,136 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                 Configure NNTP providers, decide whether they share load or cascade in priority order, and tune
                 pipelining for faster queue first-segment fetches.
             </SettingsIntro>
+
+            <ManagedSetting configKeys={[
+                "usenet.cascade.enabled",
+                "usenet.cascade.retry-primary-on-miss",
+                "usenet.pipelining.enabled",
+                "usenet.pipelining.depth",
+                "usenet.article-miss-cache-ttl-seconds",
+                "usenet.article-miss-cache-max-entries",
+            ]}>
+            <section className="rounded-lg border border-base-content/10 bg-base-100 px-3 py-2.5">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-6">
+                    <div className="flex shrink-0 items-center gap-1.5 text-base-content/60">
+                        <Icon name="tune" className="!text-[16px]" />
+                        <span className="text-[10px] font-semibold uppercase tracking-wide">Global</span>
+                    </div>
+
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                        <Tooltip
+                            content="Prefer providers in drag order. While off, all enabled providers share work in the pool. Contended primaries with little spare capacity yield to idler same-tier peers."
+                            className="min-w-0"
+                        >
+                            <Toggle
+                                id="cascade-enabled"
+                                className="min-w-0 cursor-pointer gap-2 p-0"
+                                checked={cascadeEnabled}
+                                onChange={(e) => {
+                                    const enabling = e.target.checked;
+                                    const needsSeed = enabling && providerConfig.Providers.every(p => !p.Priority);
+                                    const providers = needsSeed
+                                        ? providerConfig.Providers.map((p, i) => ({ ...p, Priority: i }))
+                                        : providerConfig.Providers;
+                                    setNewConfig({
+                                        ...config,
+                                        "usenet.cascade.enabled": enabling ? "true" : "false",
+                                        "usenet.providers": serializeProviderConfig({ ...providerConfig, Providers: providers }),
+                                    });
+                                }}
+                                label={<span className="text-sm text-base-content">Cascade routing</span>}
+                            />
+                        </Tooltip>
+                        <Tooltip content="After a clean 430/451 on the first batch attempt, try the primary once more before cascading. Helps multi-node spool routing; turn off to skip straight to backups. Skipped automatically when the article-miss cache already knows the primary is missing.">
+                            <Toggle
+                                id="cascade-retry-primary-on-miss"
+                                className={`gap-2 p-0 ${cascadeEnabled ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
+                                disabled={!cascadeEnabled}
+                                checked={(config["usenet.cascade.retry-primary-on-miss"] ?? "true") !== "false"}
+                                onChange={(e) => setNewConfig({
+                                    ...config,
+                                    "usenet.cascade.retry-primary-on-miss": e.target.checked ? "true" : "false",
+                                })}
+                                label={<span className="text-sm text-base-content">Re-probe primary</span>}
+                            />
+                        </Tooltip>
+                    </div>
+
+                    <div className="hidden h-4 w-px shrink-0 bg-base-content/10 lg:block" aria-hidden="true" />
+
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                        <Tooltip content="Batch first-segment BODY requests during queue imports and provider benchmarks. Speed-test a provider with Auto-tune before enabling. WebDAV streaming has its own toggle.">
+                            <Toggle
+                                id="pipelining-enabled"
+                                className="cursor-pointer gap-2 p-0"
+                                checked={config["usenet.pipelining.enabled"] === "true"}
+                                onChange={(e) => setNewConfig({
+                                    ...config,
+                                    "usenet.pipelining.enabled": e.target.checked ? "true" : "false",
+                                })}
+                                label={<span className="text-sm text-base-content">NNTP pipelining</span>}
+                            />
+                        </Tooltip>
+                        <Tooltip content="Requests kept in flight per connection (1–64). 8 is a good default. Each provider can override this.">
+                            <div className="flex items-center gap-1.5">
+                                <Label htmlFor="pipelining-depth" className="mb-0 shrink-0 text-[11px] text-base-content/50">
+                                    Depth
+                                </Label>
+                                <Input
+                                    type="text"
+                                    id="pipelining-depth"
+                                    className={`input-sm w-16 ${config["usenet.pipelining.depth"] !== undefined && config["usenet.pipelining.depth"] !== "" && !isPositiveInteger(config["usenet.pipelining.depth"]) ? "input-error" : ""}`}
+                                    placeholder="8"
+                                    value={config["usenet.pipelining.depth"] ?? ""}
+                                    onChange={(e) => setNewConfig({ ...config, "usenet.pipelining.depth": e.target.value })}
+                                />
+                            </div>
+                        </Tooltip>
+                    </div>
+
+                    <div className="hidden h-4 w-px shrink-0 bg-base-content/10 lg:block" aria-hidden="true" />
+
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                        <Tooltip content="After a provider (or storage group) reports a definitive article miss (430/451), skip re-probing that provider for the same article until the TTL expires. Default 300s (30–86400).">
+                            <div className="flex items-center gap-1.5">
+                                <Label htmlFor="article-miss-cache-ttl" className="mb-0 shrink-0 text-[11px] text-base-content/50">
+                                    Miss TTL
+                                </Label>
+                                <Input
+                                    type="text"
+                                    id="article-miss-cache-ttl"
+                                    className={`input-sm w-16 ${config["usenet.article-miss-cache-ttl-seconds"] !== undefined && config["usenet.article-miss-cache-ttl-seconds"] !== "" && !isArticleMissCacheTtl(config["usenet.article-miss-cache-ttl-seconds"]) ? "input-error" : ""}`}
+                                    placeholder="300"
+                                    value={config["usenet.article-miss-cache-ttl-seconds"] ?? ""}
+                                    onChange={(e) => setNewConfig({
+                                        ...config,
+                                        "usenet.article-miss-cache-ttl-seconds": e.target.value,
+                                    })}
+                                />
+                            </div>
+                        </Tooltip>
+                        <Tooltip content="Max negative-cache entries before oldest are evicted. Default 10000 (100–1000000).">
+                            <div className="flex items-center gap-1.5">
+                                <Label htmlFor="article-miss-cache-max" className="mb-0 shrink-0 text-[11px] text-base-content/50">
+                                    Miss max
+                                </Label>
+                                <Input
+                                    type="text"
+                                    id="article-miss-cache-max"
+                                    className={`input-sm w-20 ${config["usenet.article-miss-cache-max-entries"] !== undefined && config["usenet.article-miss-cache-max-entries"] !== "" && !isArticleMissCacheMaxEntries(config["usenet.article-miss-cache-max-entries"]) ? "input-error" : ""}`}
+                                    placeholder="10000"
+                                    value={config["usenet.article-miss-cache-max-entries"] ?? ""}
+                                    onChange={(e) => setNewConfig({
+                                        ...config,
+                                        "usenet.article-miss-cache-max-entries": e.target.value,
+                                    })}
+                                />
+                            </div>
+                        </Tooltip>
+                    </div>
+                </div>
+            </section>
+            </ManagedSetting>
 
             <ManagedSetting configKey="usenet.providers">
             <section className="space-y-3">
@@ -455,288 +783,40 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                 ) : (
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                     <SortableContext items={providerConfig.Providers.map(providerKey)} strategy={rectSortingStrategy}>
-                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                        {displayedProviders.map(({ provider, index }) => {
-                            const isDisabled = provider.Type === ProviderType.Disabled;
-                            return (
-                            <SortableItem key={providerKey(provider)} id={providerKey(provider)} disabled={!cascadeEnabled}>
-                            {({ setNodeRef, setActivatorNodeRef, attributes, listeners, style, isDragging }) => (
+                    <div className="space-y-4">
+                        {storagePartitions.ungrouped.length > 0 && (
+                            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                                {storagePartitions.ungrouped.map(({ provider, index }) =>
+                                    renderProviderCard(provider, index),
+                                )}
+                            </div>
+                        )}
+                        {storagePartitions.groups.map(({ name, items }) => (
                             <div
-                                ref={setNodeRef}
-                                style={style}
-                                className={`overflow-hidden rounded-lg border border-base-content/10 bg-base-100 ${isDisabled ? "opacity-60" : ""}`}
+                                key={name}
+                                className="space-y-3 rounded-lg border border-base-content/20 bg-base-200/20 p-3"
                             >
-                                <div className="space-y-3 p-4">
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0 flex-1">
-                                            <div className="break-all text-sm font-semibold leading-snug text-base-content">
-                                                {cascadeEnabled && !isDisabled && (
-                                                    <Badge className="badge-ghost badge-sm mr-2 align-middle">#{index + 1}</Badge>
-                                                )}
-                                                {provider.Nickname?.trim() || provider.Host}
-                                                {isDisabled && <Badge className="badge-ghost badge-sm ml-2 align-middle">Disabled</Badge>}
-                                            </div>
-                                            {provider.Nickname?.trim() && (
-                                                <div className="mt-0.5 break-all text-xs text-base-content/60">
-                                                    {provider.Host}
-                                                </div>
-                                            )}
-                                            <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-base-content/50">
-                                                Port {provider.Port}
-                                            </div>
-                                        </div>
-                                        <div className="flex shrink-0 gap-1">
-                                            {cascadeEnabled && (
-                                                <button
-                                                    type="button"
-                                                    ref={setActivatorNodeRef}
-                                                    className="btn btn-ghost btn-sm btn-square"
-                                                    style={{ cursor: isDragging ? "grabbing" : "grab", touchAction: "none" }}
-                                                    title="Drag to reorder"
-                                                    aria-label="Drag to reorder"
-                                                    {...attributes}
-                                                    {...listeners}
-                                                >
-                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                                                        <circle cx="9" cy="5" r="1.6" /><circle cx="15" cy="5" r="1.6" />
-                                                        <circle cx="9" cy="12" r="1.6" /><circle cx="15" cy="12" r="1.6" />
-                                                        <circle cx="9" cy="19" r="1.6" /><circle cx="15" cy="19" r="1.6" />
-                                                    </svg>
-                                                </button>
-                                            )}
-                                            <button
-                                                type="button"
-                                                className={`btn btn-ghost btn-sm btn-square ${isDisabled ? "text-base-content/40" : "text-success"}`}
-                                                onClick={() => handleToggleProvider(index)}
-                                                title={isDisabled ? "Enable Provider" : "Disable Provider"}
-                                                aria-pressed={!isDisabled}
-                                            >
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                    <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
-                                                    <line x1="12" y1="2" x2="12" y2="12" />
-                                                </svg>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="btn btn-ghost btn-sm btn-square"
-                                                onClick={() => handleEditProvider(index)}
-                                                title="Edit Provider"
-                                            >
-                                                <Icon name="edit" className="!text-[14px]" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="btn btn-ghost btn-sm btn-square hover:text-error"
-                                                onClick={() => handleDeleteProvider(index)}
-                                                title="Delete Provider"
-                                            >
-                                                <Icon name="delete" className="!text-[14px]" />
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <div className="border-t border-base-content/10 pt-3">
-                                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                            <div className="relative flex min-w-0 items-center gap-2">
-                                                <div className="text-primary">
-                                                    <Icon name="person" className="!text-[18px]" />
-                                                </div>
-                                                <div className="flex min-w-0 flex-col">
-                                                    <span className="text-[11px] uppercase tracking-wide text-base-content/50">Username</span>
-                                                    <span className="truncate text-sm text-base-content">{provider.User}</span>
-                                                </div>
-                                            </div>
-
-                                            <div className="flex items-center gap-2.5 rounded-lg border border-base-content/10 bg-base-200/40 px-2.5 py-2">
-                                                <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md bg-base-300 text-base-content/60">
-                                                    <Icon name="hub" className="!text-[16px]" />
-                                                </div>
-                                                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                                                    <span className="text-[10px] font-medium uppercase tracking-wide text-base-content/50">Connections</span>
-                                                    <span className="break-all text-sm font-medium text-base-content">
-                                                        {`${connections[index]?.live ?? 0} / ${provider.MaxConnections} max`}
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            <div className="relative flex min-w-0 items-center gap-2">
-                                                <div className="text-primary">
-                                                    <Icon name={provider.UseSsl ? "lock" : "lock_open"} className="!text-[18px]" />
-                                                </div>
-                                                <div className="flex min-w-0 flex-col">
-                                                    <span className="text-[11px] uppercase tracking-wide text-base-content/50">Security</span>
-                                                    <span className="truncate text-sm text-base-content">
-                                                        {provider.UseSsl ? "SSL Enabled" : "No SSL"}
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            <div className="relative flex min-w-0 items-center gap-2">
-                                                <div className="text-primary">
-                                                    <Icon name="account_tree" className="!text-[18px]" />
-                                                </div>
-                                                <div className="flex min-w-0 flex-col">
-                                                    <span className="text-[11px] uppercase tracking-wide text-base-content/50">Behavior</span>
-                                                    <span className="truncate text-sm text-base-content">
-                                                        {PROVIDER_TYPE_LABELS[provider.Type]}
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            {provider.StorageGroup?.trim() && (
-                                                <div className="relative flex min-w-0 items-center gap-2">
-                                                    <div className="text-primary">
-                                                        <Icon name="storage" className="!text-[18px]" />
-                                                    </div>
-                                                    <div className="flex min-w-0 flex-col">
-                                                        <span className="text-[11px] uppercase tracking-wide text-base-content/50">Storage group</span>
-                                                        <span className="truncate text-sm text-base-content">{provider.StorageGroup.trim()}</span>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <UsageRow
-                                            provider={provider}
-                                            usage={usage[index]}
-                                            onReset={() => handleResetUsage(index)}
-                                        />
-                                    </div>
+                                <div className="flex items-center gap-2 px-1">
+                                    <Icon name="storage" className="!text-[18px] text-base-content/60" />
+                                    <span className="text-xs font-semibold uppercase tracking-wide text-base-content/70">
+                                        {name}
+                                    </span>
+                                    <span className="badge badge-ghost badge-sm">
+                                        {items.length}{" "}
+                                        {items.length === 1 ? "provider" : "providers"}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                                    {items.map(({ provider, index }) =>
+                                        renderProviderCard(provider, index),
+                                    )}
                                 </div>
                             </div>
-                            )}
-                            </SortableItem>
-                            );
-                        })}
+                        ))}
                     </div>
                     </SortableContext>
                     </DndContext>
                 )}
-            </section>
-            </ManagedSetting>
-
-            <ManagedSetting configKeys={["usenet.cascade.enabled", "usenet.cascade.retry-primary-on-miss", "usenet.pipelining.enabled", "usenet.pipelining.depth"]}>
-            <section className="overflow-hidden rounded-lg border border-base-content/10 bg-base-100">
-                <div className="flex items-start gap-3 border-b border-base-content/10 p-4">
-                    <span className="rounded-lg bg-primary/10 p-2 text-primary">
-                        <Icon name="tune" className="!text-[20px]" />
-                    </span>
-                    <div>
-                        <h2 className="text-sm font-semibold text-base-content">Global settings</h2>
-                        <p className="mt-0.5 text-xs leading-relaxed text-base-content/50">
-                            Shared routing and pipelining options that apply across all providers.
-                        </p>
-                    </div>
-                </div>
-
-                <div className="space-y-4 p-4">
-                    <label
-                        className="flex cursor-pointer items-start gap-3 rounded-lg bg-base-200/40 p-3"
-                        htmlFor="cascade-enabled"
-                    >
-                        <Checkbox
-                            className="checkbox-primary mt-0.5 shrink-0"
-                            id="cascade-enabled"
-                            checked={cascadeEnabled}
-                            onChange={(e) => {
-                                const enabling = e.target.checked;
-                                const needsSeed = enabling && providerConfig.Providers.every(p => !p.Priority);
-                                const providers = needsSeed
-                                    ? providerConfig.Providers.map((p, i) => ({ ...p, Priority: i }))
-                                    : providerConfig.Providers;
-                                setNewConfig({
-                                    ...config,
-                                    "usenet.cascade.enabled": enabling ? "true" : "false",
-                                    "usenet.providers": serializeProviderConfig({ ...providerConfig, Providers: providers }),
-                                });
-                            }}
-                        />
-                        <span>
-                            <span className="block text-sm font-medium text-base-content">Enable cascade routing</span>
-                            <span className="mt-0.5 block text-xs leading-relaxed text-base-content/50">
-                                Prefer providers in drag order. While off, all enabled providers share work in the pool.
-                                Contended primaries with little spare capacity yield to idler same-tier peers.
-                            </span>
-                        </span>
-                    </label>
-
-                    <label
-                        className={`flex items-start gap-3 rounded-lg bg-base-200/40 p-3 ${cascadeEnabled ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
-                        htmlFor="cascade-retry-primary-on-miss"
-                    >
-                        <Checkbox
-                            className="checkbox-primary mt-0.5 shrink-0"
-                            id="cascade-retry-primary-on-miss"
-                            disabled={!cascadeEnabled}
-                            checked={(config["usenet.cascade.retry-primary-on-miss"] ?? "true") !== "false"}
-                            onChange={(e) => setNewConfig({
-                                ...config,
-                                "usenet.cascade.retry-primary-on-miss": e.target.checked ? "true" : "false",
-                            })}
-                        />
-                        <span>
-                            <span className="block text-sm font-medium text-base-content">
-                                Re-probe primary after article miss
-                            </span>
-                            <span className="mt-0.5 block text-xs leading-relaxed text-base-content/50">
-                                After a clean 430/451 on the first batch attempt, try the primary once more before
-                                cascading. Helps multi-node spool routing; turn off to skip straight to backups.
-                            </span>
-                        </span>
-                    </label>
-
-                    <div className="border-t border-base-content/10 pt-4">
-                        <Alert className="alert-soft mb-4 items-start py-3 text-sm" variant="warning">
-                            <Icon name="science" className="!text-[20px]" />
-                            <div>
-                                <p className="font-semibold">Speed-test pipelining first</p>
-                                <p className="mt-0.5 text-xs opacity-80">
-                                    Run Auto-tune connections on a provider before enabling this. It measures whether
-                                    pipelining helps on your network.
-                                </p>
-                            </div>
-                        </Alert>
-
-                        <label
-                            className="flex cursor-pointer items-start gap-3 rounded-lg bg-base-200/40 p-3"
-                            htmlFor="pipelining-enabled"
-                        >
-                            <Checkbox
-                                className="checkbox-primary mt-0.5 shrink-0"
-                                id="pipelining-enabled"
-                                checked={config["usenet.pipelining.enabled"] === "true"}
-                                onChange={(e) => setNewConfig({
-                                    ...config,
-                                    "usenet.pipelining.enabled": e.target.checked ? "true" : "false",
-                                })}
-                            />
-                            <span>
-                                <span className="block text-sm font-medium text-base-content">Enable NNTP pipelining</span>
-                                <span className="mt-0.5 block text-xs leading-relaxed text-base-content/50">
-                                    Batch first-segment BODY requests during queue imports and provider benchmarks.
-                                    Health and import existence checks continue using the connection pool. WebDAV
-                                    streaming has its own toggle under WebDAV settings.
-                                </span>
-                            </span>
-                        </label>
-
-                        <div className="mt-4 space-y-2">
-                            <Label htmlFor="pipelining-depth">Default pipeline depth</Label>
-                            <Input
-                                type="text"
-                                id="pipelining-depth"
-                                className={`w-full max-w-[10rem] ${config["usenet.pipelining.depth"] !== undefined && config["usenet.pipelining.depth"] !== "" && !isPositiveInteger(config["usenet.pipelining.depth"]) ? "input-error" : ""}`}
-                                placeholder="8"
-                                value={config["usenet.pipelining.depth"] ?? ""}
-                                onChange={(e) => setNewConfig({ ...config, "usenet.pipelining.depth": e.target.value })}
-                            />
-                            <p className="text-[11px] leading-relaxed text-base-content/45">
-                                Requests kept in flight per connection (1–64). 8 is a good default. Each provider can
-                                override this in its settings.
-                            </p>
-                        </div>
-                    </div>
-                </div>
             </section>
             </ManagedSetting>
 
@@ -1310,17 +1390,18 @@ function ProviderModal({ show, provider, onClose, onSave, onApplyPipelining, def
                 </div>
 
                 <div className="flex flex-col gap-1.5 sm:col-span-2">
-                    <label htmlFor="provider-ssl" className="flex items-center gap-2">
-                        <Checkbox
+                    <Tooltip content="Encrypt the NNTP connection. Prefer port 563 with SSL enabled; without SSL credentials are sent in cleartext.">
+                        <Toggle
                             id="provider-ssl"
+                            className="cursor-pointer gap-2 p-0"
                             checked={useSsl}
                             onChange={(e) => {
                                 setUseSsl(e.target.checked);
                                 setConnectionTested(false);
                             }}
+                            label={<span className="text-sm text-base-content">Use SSL</span>}
                         />
-                        <span className="text-sm text-base-content/80">Use SSL</span>
-                    </label>
+                    </Tooltip>
                     {shouldWarnCleartextCredentials(useSsl, user) && (
                         <Alert variant="warning" className="text-xs">
                             Credentials are sent unencrypted without SSL. Prefer port 563 with SSL enabled.
@@ -1328,17 +1409,18 @@ function ProviderModal({ show, provider, onClose, onSave, onApplyPipelining, def
                     )}
                     {useSsl && (
                         <>
-                            <label htmlFor="provider-skip-tls-verification" className="mt-2 flex items-center gap-2">
-                                <Checkbox
+                            <Tooltip content="TLS stays encrypted, but accepts an untrusted or mismatched certificate. Only enable for a provider you trust.">
+                                <Toggle
                                     id="provider-skip-tls-verification"
+                                    className="mt-2 cursor-pointer gap-2 p-0"
                                     checked={skipTlsVerification}
                                     onChange={(e) => {
                                         setSkipTlsVerification(e.target.checked);
                                         setConnectionTested(false);
                                     }}
+                                    label={<span className="text-sm text-base-content">Skip TLS certificate verification</span>}
                                 />
-                                <span className="text-sm text-base-content/80">Skip TLS certificate verification</span>
-                            </label>
+                            </Tooltip>
                             {skipTlsVerification && (
                                 <Alert variant="warning" className="text-xs">
                                     TLS remains encrypted, but this accepts an untrusted or mismatched certificate.
@@ -1546,24 +1628,26 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
                 </div>
             </div>
 
-            <label htmlFor="bench-pipe-only" className="label mt-3 cursor-pointer justify-start gap-2">
-                <input
+            <Tooltip
+                className="mt-3 block"
+                content={pipeliningOnly
+                    ? "Won't change your connection count — tests pipelining depth at the Max Connections you've set. Run idle for the cleanest read."
+                    : "When off, also sweeps connection counts. Prefer idle for the cleanest read."}
+            >
+                <Toggle
                     id="bench-pipe-only"
-                    type="checkbox"
-                    className="toggle toggle-sm"
+                    className="cursor-pointer gap-2 p-0"
                     checked={pipeliningOnly}
                     disabled={isBenchmarking}
                     onChange={(e) => setPipeliningOnly(e.target.checked)}
+                    label={<span className="text-sm text-base-content">Only tune pipelining (keep my Max Connections)</span>}
                 />
-                <span className="text-sm text-base-content/80">Only tune pipelining (keep my Max Connections)</span>
-            </label>
+            </Tooltip>
 
             <HelpText>
-                {pipeliningOnly
-                    ? "Won't change your connection count — it tests pipelining depth at the Max Connections you've set. Run it idle for the cleanest read."
-                    : (intensity === "quick"
-                        ? "Quick sizes each step to your line speed, up to the data budget (default 500 MB) — light on metered / block accounts."
-                        : "Thorough runs longer measurement windows for steadier numbers, up to the data budget (default 2 GB). Gigabit-class lines often need 10–20 GB for a full sweep.")}
+                {intensity === "quick"
+                    ? "Quick sizes each step to your line speed, up to the data budget (default 500 MB) — light on metered / block accounts."
+                    : "Thorough runs longer measurement windows for steadier numbers, up to the data budget (default 2 GB). Gigabit-class lines often need 10–20 GB for a full sweep."}
             </HelpText>
 
             {error && (
@@ -1896,9 +1980,23 @@ export function isUsenetSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.pipelining.depth"] !== newConfig["usenet.pipelining.depth"]
         || config["usenet.cascade.enabled"] !== newConfig["usenet.cascade.enabled"]
         || config["usenet.cascade.retry-primary-on-miss"] !== newConfig["usenet.cascade.retry-primary-on-miss"]
+        || config["usenet.article-miss-cache-ttl-seconds"] !== newConfig["usenet.article-miss-cache-ttl-seconds"]
+        || config["usenet.article-miss-cache-max-entries"] !== newConfig["usenet.article-miss-cache-max-entries"]
 }
 
 export function isPositiveInteger(value: string) {
     const num = Number(value);
     return Number.isInteger(num) && num > 0 && value.trim() === num.toString();
+}
+
+export function isArticleMissCacheTtl(value: string) {
+    if (!isPositiveInteger(value)) return false;
+    const num = Number(value);
+    return num >= 30 && num <= 86400;
+}
+
+export function isArticleMissCacheMaxEntries(value: string) {
+    if (!isPositiveInteger(value)) return false;
+    const num = Number(value);
+    return num >= 100 && num <= 1_000_000;
 }

@@ -7,6 +7,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.Api.Controllers.GetOverviewStats;
 
@@ -19,7 +20,8 @@ public class GetOverviewStatsController(
     MetricsWriter metricsWriter,
     ConfigManager configManager,
     IndexerHitTracker hitTracker,
-    UsenetStreamingClient usenetStreamingClient
+    UsenetStreamingClient usenetStreamingClient,
+    InFlightArticleBudget inFlightArticleBudget
 ) : BaseApiController
 {
     private const long OneMinute = 60_000;
@@ -664,6 +666,9 @@ public class GetOverviewStatsController(
             ArticlesPerMinute = articlesLastMinute,
             ErrorsPerMinute = errorsLastMinute,
             BytesServedPerMinute = liveStats.BytesServedLastMinute,
+            InFlightArticleBytes = inFlightArticleBudget.LeasedBytes,
+            InFlightArticleBudgetBytes = inFlightArticleBudget.CapBytes,
+            InFlightArticleThrottleEvents = inFlightArticleBudget.ThrottleEvents,
         };
     }
 

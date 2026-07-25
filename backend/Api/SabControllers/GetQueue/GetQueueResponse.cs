@@ -20,6 +20,20 @@ public class GetQueueResponse : SabBaseResponse
 
         [JsonPropertyName("noofslots")]
         public int TotalCount { get; set; }
+
+        // Accepted-and-stored only (see #375 for actual byte/s enforcement). SAB
+        // reports "speedlimit" as a percentage of a configured max line speed;
+        // NzbDAV has no such setting, so both fields carry the same KB/s value.
+        [JsonPropertyName("speedlimit")]
+        public string SpeedLimit { get; init; } = "0";
+
+        [JsonPropertyName("speedlimit_abs")]
+        public string SpeedLimitAbs { get; init; } = "0";
+
+        // Seconds remaining on a scheduled/timed unpause. NzbDAV's pause has no
+        // duration, so this is always "0".
+        [JsonPropertyName("pause_int")]
+        public string PauseInt { get; init; } = "0";
     }
 
     public class QueueSlot

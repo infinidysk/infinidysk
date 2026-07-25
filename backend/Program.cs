@@ -21,6 +21,7 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.SupportPack;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
 using NzbWebDAV.WebDav.Base;
@@ -189,6 +190,18 @@ class Program
                 .AddSingleton(websocketManager)
                 .AddSingleton(logBufferSink)
                 .AddSingleton(streamTraceBuffer)
+                .AddSingleton(sp =>
+                {
+                    var cfg = sp.GetRequiredService<ConfigManager>();
+                    var budget = new InFlightArticleBudget(cfg.GetInFlightArticleBudgetBytes());
+                    InFlightArticleBudget.Current = budget;
+                    cfg.OnConfigChanged += (_, args) =>
+                    {
+                        if (args.ChangedConfig.ContainsKey(ConfigKeys.UsenetInFlightArticleBudgetMb))
+                            budget.SetCapBytes(cfg.GetInFlightArticleBudgetBytes());
+                    };
+                    return budget;
+                })
                 .AddSingleton<SupportPackService>()
                 .AddSingleton<BenchmarkGate>()
                 .AddSingleton<NzbWebDAV.Services.Benchmark.BenchmarkRunControl>()
@@ -211,6 +224,7 @@ class Program
                 .AddSingleton<NzbFetchCoalescer>()
                 .AddSingleton<PlayResolutionCoalescer>()
                 .AddSingleton<CandidateNegativeCache>()
+                .AddSingleton<ArticleMissNegativeCache>()
                 .AddSingleton<WardenStore>()
                 .AddSingleton<WardenRemoteSourceService>()
                 .AddHostedService(sp => sp.GetRequiredService<WardenRemoteSourceService>())

@@ -3,7 +3,6 @@ import {
     Alert,
     Badge,
     Button,
-    Checkbox,
     HelpText,
     Icon,
     Input,
@@ -16,6 +15,8 @@ import {
     SettingsPage,
     Spinner,
     Textarea,
+    Toggle,
+    Tooltip,
     useIsAnyManaged,
 } from "~/components/ui";
 import { isMaskedSecret } from "~/utils/config-mask";
@@ -1097,14 +1098,15 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                         </div>
                         {isHttpsUrl && (
                             <div className="flex flex-col gap-1.5 sm:col-span-2">
-                                <label htmlFor="indexer-skip-tls-verification" className="flex items-center gap-2">
-                                    <Checkbox
+                                <Tooltip content="TLS stays encrypted, but accepts an untrusted or mismatched certificate. Only enable for an indexer you trust.">
+                                    <Toggle
                                         id="indexer-skip-tls-verification"
+                                        className="cursor-pointer gap-2 p-0"
                                         checked={skipTlsVerification}
                                         onChange={e => setSkipTlsVerification(e.target.checked)}
+                                        label={<span className="text-sm text-base-content">Skip TLS certificate verification</span>}
                                     />
-                                    <span className="text-sm text-base-content/80">Skip TLS certificate verification</span>
-                                </label>
+                                </Tooltip>
                                 {skipTlsVerification && (
                                     <Alert variant="warning" className="text-xs">
                                         TLS remains encrypted, but this accepts an untrusted or mismatched certificate.
@@ -1252,31 +1254,27 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                         </div>
 
                         <div className="flex flex-col gap-1.5 sm:col-span-2">
-                            <div className="flex items-center gap-2">
-                                <Checkbox
-                                                                        id="indexer-enabled"
-                                    className="checkbox"
+                            <Tooltip content="Include this indexer in search and grab requests.">
+                                <Toggle
+                                    id="indexer-enabled"
+                                    className="cursor-pointer gap-2 p-0"
                                     checked={enabled}
                                     onChange={e => setEnabled(e.target.checked)}
+                                    label={<span className="text-sm text-base-content">Enabled</span>}
                                 />
-                                <Label htmlFor="indexer-enabled" className="text-sm font-normal text-base-content/80">
-                                    Enabled
-                                </Label>
-                            </div>
+                            </Tooltip>
                         </div>
 
                         <div className="flex flex-col gap-1.5 sm:col-span-2">
-                            <div className="flex items-center gap-2">
-                                <Checkbox
-                                                                        id="indexer-strict"
-                                    className="checkbox"
+                            <Tooltip content="Drop results whose title doesn't match the request.">
+                                <Toggle
+                                    id="indexer-strict"
+                                    className="cursor-pointer gap-2 p-0"
                                     checked={strict}
                                     onChange={e => setStrict(e.target.checked)}
+                                    label={<span className="text-sm text-base-content">Strict matching</span>}
                                 />
-                                <Label htmlFor="indexer-strict" className="text-sm font-normal text-base-content/80">
-                                    Strict matching <span className="text-[11px] font-normal text-base-content/45">(drop results whose title doesn't match the request)</span>
-                                </Label>
-                            </div>
+                            </Tooltip>
                         </div>
 
                         <div className="flex flex-col gap-1.5">
@@ -1310,31 +1308,27 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                         </div>
 
                         <div className="flex flex-col gap-1.5 sm:col-span-2">
-                            <div className="flex items-center gap-2">
-                                <Checkbox
-                                                                        id="indexer-ignore-category-filter"
-                                    className="checkbox"
+                            <Tooltip content="Send no cat= param — escape hatch for indexers with fully custom category schemas.">
+                                <Toggle
+                                    id="indexer-ignore-category-filter"
+                                    className="cursor-pointer gap-2 p-0"
                                     checked={ignoreCategoryFilter}
                                     onChange={e => setIgnoreCategoryFilter(e.target.checked)}
+                                    label={<span className="text-sm text-base-content">Ignore category filter</span>}
                                 />
-                                <Label htmlFor="indexer-ignore-category-filter" className="text-sm font-normal text-base-content/80">
-                                    Ignore category filter <span className="text-[11px] font-normal text-base-content/45">(send no <code>cat=</code> param at all — escape hatch for indexers with fully custom category schemas)</span>
-                                </Label>
-                            </div>
+                            </Tooltip>
                         </div>
 
                         <div className="flex flex-col gap-1.5 sm:col-span-2">
-                            <div className="flex items-center gap-2">
-                                <Checkbox
-                                                                        id="indexer-filter-enabled"
-                                    className="checkbox"
+                            <Tooltip content="Use indexer-supplied metadata to filter and rank this indexer's results. Recommended defaults apply when enabled.">
+                                <Toggle
+                                    id="indexer-filter-enabled"
+                                    className="cursor-pointer gap-2 p-0"
                                     checked={filterEnabled}
                                     onChange={e => setFilterEnabled(e.target.checked)}
+                                    label={<span className="text-sm text-base-content">Result filtering</span>}
                                 />
-                                <Label htmlFor="indexer-filter-enabled" className="text-sm font-normal text-base-content/80">
-                                    Result filtering <span className="text-[11px] font-normal text-base-content/45">(uses indexer-supplied metadata to filter and rank this indexer's results; recommended defaults applied when enabled)</span>
-                                </Label>
-                            </div>
+                            </Tooltip>
                         </div>
 
                         {filterEnabled && (
@@ -1361,17 +1355,15 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                         {filterEnabled && filterAdvancedOpen && (
                             <>
                                 <div className="flex flex-col gap-1.5 sm:col-span-2">
-                                    <div className="flex items-center gap-2">
-                                        <Checkbox
-                                                                                        id="indexer-filter-pw"
-                                            className="checkbox"
+                                    <Tooltip content="Skip items the indexer flags as containing a passworded archive.">
+                                        <Toggle
+                                            id="indexer-filter-pw"
+                                            className="cursor-pointer gap-2 p-0"
                                             checked={filterSkipPassworded}
                                             onChange={e => setFilterSkipPassworded(e.target.checked)}
+                                            label={<span className="text-sm text-base-content">Skip password-protected releases</span>}
                                         />
-                                        <Label htmlFor="indexer-filter-pw" className="text-sm font-normal text-base-content/80">
-                                            Skip password-protected releases <span className="text-[11px] font-normal text-base-content/45">(items the indexer flags as containing a passworded archive)</span>
-                                        </Label>
-                                    </div>
+                                    </Tooltip>
                                 </div>
 
                                 <div className="flex flex-col gap-1.5">
@@ -1417,17 +1409,15 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                                 </div>
 
                                 <div className="flex flex-col gap-1.5 sm:col-span-2">
-                                    <div className="flex items-center gap-2">
-                                        <Checkbox
-                                                                                        id="indexer-filter-prefer"
-                                            className="checkbox"
+                                    <Tooltip content="Sort results by download count descending. Items without a count sort below those with one.">
+                                        <Toggle
+                                            id="indexer-filter-prefer"
+                                            className="cursor-pointer gap-2 p-0"
                                             checked={filterPreferDownloaded}
                                             onChange={e => setFilterPreferDownloaded(e.target.checked)}
+                                            label={<span className="text-sm text-base-content">Rank by download count</span>}
                                         />
-                                        <Label htmlFor="indexer-filter-prefer" className="text-sm font-normal text-base-content/80">
-                                            Rank by download count <span className="text-[11px] font-normal text-base-content/45">(sort results by number of downloads, descending; items without a download count sort below those with one)</span>
-                                        </Label>
-                                    </div>
+                                    </Tooltip>
                                 </div>
 
                                 <div className="flex flex-col gap-1.5 sm:col-span-2">

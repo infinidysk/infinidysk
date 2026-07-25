@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { Icon, NativeForm as Form, ManagedSetting, SettingsIntro, SettingsPage } from "~/components/ui";
+import { Icon, NativeForm as Form, ManagedSetting, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
 
 type WatchdogSettingsProps = {
     config: Record<string, string>
@@ -79,17 +79,20 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             >
 
             <Form.Group className="flex flex-col gap-2">
-                <Form.Check
-                    type="switch"
-                    id="play-watchdog-enabled"
-                    label="Enable failover watchdog"
-                    checked={enabled}
-                    onChange={e => set("play.watchdog-enabled", String(e.target.checked))} />
-                <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
-                    When off, a request just processes the single chosen release (legacy behavior).
-                    When on, the watchdog tries alternative releases on failure and dedupes in-flight queue items.
-                    {enabled && <> Live reports appear in the <Link to="/watchdog">Watchdog</Link> tab in the sidebar.</>}
-                </p>
+                <Tooltip content="When off, only the chosen release is tried (legacy). When on, alternatives are tried on failure and in-flight queue items are deduped.">
+                    <Form.Check
+                        type="switch"
+                        id="play-watchdog-enabled"
+                        className="cursor-pointer gap-2 p-0"
+                        label="Enable failover watchdog"
+                        checked={enabled}
+                        onChange={e => set("play.watchdog-enabled", String(e.target.checked))} />
+                </Tooltip>
+                {enabled && (
+                    <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
+                        Live reports appear in the <Link to="/watchdog">Watchdog</Link> tab.
+                    </p>
+                )}
             </Form.Group>
 
             <Form.Group className="flex flex-col gap-2">
@@ -209,19 +212,16 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             </Form.Group>
 
             <Form.Group className="flex flex-col gap-2">
-                <Form.Check
-                    type="switch"
-                    id="play-prefer-subtitles"
-                    label="Prefer releases with subtitles on failover"
-                    disabled={!enabled}
-                    checked={subtitlePreference}
-                    onChange={e => set("play.prefer-subtitles", String(e.target.checked))} />
-                <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
-                    During failover, releases that carry subtitles are tried before releases without
-                    them — and when the indexer reports languages, releases sharing a subtitle language
-                    with the one you clicked come first. Candidates are only reordered, never dropped.
-                    On by default.
-                </p>
+                <Tooltip content="On failover, try subtitle-bearing releases first; when languages are known, prefer matching subtitle language. Candidates are reordered, never dropped. On by default.">
+                    <Form.Check
+                        type="switch"
+                        id="play-prefer-subtitles"
+                        className="cursor-pointer gap-2 p-0"
+                        label="Prefer releases with subtitles on failover"
+                        disabled={!enabled}
+                        checked={subtitlePreference}
+                        onChange={e => set("play.prefer-subtitles", String(e.target.checked))} />
+                </Tooltip>
             </Form.Group>
             </SettingsCard>
 
@@ -237,17 +237,16 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             >
 
             <Form.Group className="flex flex-col gap-2">
-                <Form.Check
-                    type="switch"
-                    id="grab-stall-failover-enabled"
-                    label="Enable stall failover"
-                    disabled={!enabled}
-                    checked={stallFailoverEnabled}
-                    onChange={e => set("grab.stall-failover-enabled", String(e.target.checked))} />
-                <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
-                    When a candidate stops progressing, it is set aside and the next one is attempted.
-                    On by default.
-                </p>
+                <Tooltip content="When a candidate stops progressing, set it aside and try the next one without recording it as failed. On by default.">
+                    <Form.Check
+                        type="switch"
+                        id="grab-stall-failover-enabled"
+                        className="cursor-pointer gap-2 p-0"
+                        label="Enable stall failover"
+                        disabled={!enabled}
+                        checked={stallFailoverEnabled}
+                        onChange={e => set("grab.stall-failover-enabled", String(e.target.checked))} />
+                </Tooltip>
             </Form.Group>
 
             <Form.Group className="flex flex-col gap-2">
@@ -363,18 +362,16 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             </Form.Group>
 
             <Form.Group className="flex flex-col gap-2">
-                <Form.Check
-                    type="switch"
-                    id="variants-fallback-on-failure"
-                    label="Fallback to closest existing on fetch failure"
-                    disabled={!variantsEnabled}
-                    checked={variantsFallback}
-                    onChange={e => set("variants.fallback-on-failure", String(e.target.checked))} />
-                <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
-                    When you pick a size we don't have AND no working source can be fetched,
-                    serve the closest existing copy instead of returning an error. Strictly
-                    safer than today's behavior. On by default.
-                </p>
+                <Tooltip content="If the requested size can't be fetched, serve the closest existing copy instead of an error. On by default.">
+                    <Form.Check
+                        type="switch"
+                        id="variants-fallback-on-failure"
+                        className="cursor-pointer gap-2 p-0"
+                        label="Fallback to closest existing on fetch failure"
+                        disabled={!variantsEnabled}
+                        checked={variantsFallback}
+                        onChange={e => set("variants.fallback-on-failure", String(e.target.checked))} />
+                </Tooltip>
             </Form.Group>
 
             <Form.Group className="flex flex-col gap-2">

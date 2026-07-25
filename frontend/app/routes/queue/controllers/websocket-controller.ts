@@ -1,5 +1,6 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import type { HistoryEvents, QueueEvents } from "./events-controller";
+import { adjustTotalCount } from "./events-controller";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
 
 const topicNames = {
@@ -29,13 +30,21 @@ export function useQueueHistoryWebsocket(
     historyEvents: HistoryEvents,
     isQueueLive: boolean,
     isHistoryLive: boolean,
+    setTotalQueueCount: (value: React.SetStateAction<number>) => void,
+    setTotalHistoryCount: (value: React.SetStateAction<number>) => void,
 ) {
     const onWebsocketMessage = useCallback((topic: string, message: string) => {
         if (topic == topicNames.queueItemAdded) {
+            // Totals always; slot window only on live page 1.
+            // Count updates live here (not in UI handlers) so optimistic UI remove + qr
+            // do not double-decrement.
+            setTotalQueueCount(count => adjustTotalCount(count, 1));
             if (isQueueLive) queueEvents.onAddQueueSlot(JSON.parse(message));
         }
         else if (topic == topicNames.queueItemRemoved) {
-            if (isQueueLive) queueEvents.onRemoveQueueSlots(new Set<string>(message.split(',')));
+            const ids = message.split(',').filter(Boolean);
+            setTotalQueueCount(count => adjustTotalCount(count, -ids.length));
+            if (isQueueLive) queueEvents.onRemoveQueueSlots(new Set<string>(ids));
         }
         else if (topic == topicNames.queueItemMoved) {
             queueEvents.onMoveQueueSlotsToTop(new Set<string>(message.split(',').filter(Boolean)));
@@ -47,16 +56,21 @@ export function useQueueHistoryWebsocket(
         else if (topic == topicNames.queueItemProviders)
             queueEvents.onChangeQueueSlotProviders(message);
         else if (topic == topicNames.historyItemAdded) {
+            setTotalHistoryCount(count => adjustTotalCount(count, 1));
             if (isHistoryLive) historyEvents.onAddHistorySlot(JSON.parse(message));
         }
         else if (topic == topicNames.historyItemRemoved) {
-            if (isHistoryLive) historyEvents.onRemoveHistorySlots(new Set<string>(message.split(',')));
+            const ids = message.split(',').filter(Boolean);
+            setTotalHistoryCount(count => adjustTotalCount(count, -ids.length));
+            if (isHistoryLive) historyEvents.onRemoveHistorySlots(new Set<string>(ids));
         }
     }, [
         queueEvents,
         historyEvents,
         isQueueLive,
-        isHistoryLive
+        isHistoryLive,
+        setTotalQueueCount,
+        setTotalHistoryCount,
     ]);
 
     useWebsocketTopics(topicSubscriptions, onWebsocketMessage);

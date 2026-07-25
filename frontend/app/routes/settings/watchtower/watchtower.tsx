@@ -1,5 +1,5 @@
 import { type Dispatch, type SetStateAction } from "react";
-import { NativeForm as Form, ManagedSetting, SettingsIntro, SettingsPage } from "~/components/ui";
+import { NativeForm as Form, ManagedSetting, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
 
 const GB = 1024 * 1024 * 1024;
 
@@ -75,16 +75,15 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
                 "watchtower.verbose-logging",
             ]}>
             <Form.Group className="flex flex-col gap-2">
-                <Form.Check
-                    type="switch"
-                    id="watchtower-enabled"
-                    label="Enable Watchtower"
-                    checked={enabled}
-                    onChange={e => set("watchtower.enabled", String(e.target.checked))} />
-                <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
-                    When on, the background engine syncs your lists, resolves the biggest healthy
-                    release for each item, and keeps it verified over time. When off, nothing runs.
-                </p>
+                <Tooltip content="When on, syncs lists, resolves the biggest healthy release per item, and keeps it verified. When off, nothing runs.">
+                    <Form.Check
+                        type="switch"
+                        id="watchtower-enabled"
+                        className="cursor-pointer gap-2 p-0"
+                        label="Enable Watchtower"
+                        checked={enabled}
+                        onChange={e => set("watchtower.enabled", String(e.target.checked))} />
+                </Tooltip>
             </Form.Group>
 
             <Form.Group className="flex flex-col gap-2">
@@ -169,35 +168,30 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
             {(scope === "latest-season" || scope === "first-season" || scope === "all-aired") && (
                 <>
                     <Form.Group className="flex flex-col gap-2">
-                        <Form.Check
-                            type="switch"
-                            id="watchtower-season-bundles"
-                            label="Prefer season bundles for finished seasons"
-                            disabled={!enabled}
-                            checked={seasonBundles}
-                            onChange={e => set("watchtower.season-bundles", String(e.target.checked))} />
-                        <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
-                            Warm one season bundle per completed season, a single release that covers the
-                            whole season and plays per episode, instead of every episode. Still-airing
-                            seasons always use single episodes. Default on.
-                        </p>
+                        <Tooltip content="Warm one season bundle per completed season instead of every episode. Still-airing seasons always use single episodes. Default on.">
+                            <Form.Check
+                                type="switch"
+                                id="watchtower-season-bundles"
+                                className="cursor-pointer gap-2 p-0"
+                                label="Prefer season bundles for finished seasons"
+                                disabled={!enabled}
+                                checked={seasonBundles}
+                                onChange={e => set("watchtower.season-bundles", String(e.target.checked))} />
+                        </Tooltip>
                     </Form.Group>
 
                     {seasonBundles && (
                         <Form.Group className="flex flex-col gap-2">
-                            <Form.Check
-                                type="switch"
-                                id="watchtower-season-bundle-fallback"
-                                label="Fall back to episodes when no season bundle is found"
-                                disabled={!enabled}
-                                checked={bundleFallback}
-                                onChange={e => set("watchtower.season-bundle-fallback", String(e.target.checked))} />
-                            <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
-                                When a finished season has no healthy bundle, warm its individual episodes
-                                instead so the season is still covered. The bundle is parked and stops being
-                                searched, so this will not keep hitting your indexers. Use "check now" on a
-                                parked pack to try for it again. Off by default.
-                            </p>
+                            <Tooltip content="If no healthy bundle exists, warm individual episodes instead. The pack is parked and stops being searched. Off by default.">
+                                <Form.Check
+                                    type="switch"
+                                    id="watchtower-season-bundle-fallback"
+                                    className="cursor-pointer gap-2 p-0"
+                                    label="Fall back to episodes when no season bundle is found"
+                                    disabled={!enabled}
+                                    checked={bundleFallback}
+                                    onChange={e => set("watchtower.season-bundle-fallback", String(e.target.checked))} />
+                            </Tooltip>
                         </Form.Group>
                     )}
 
@@ -324,19 +318,16 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
             </Form.Group>
 
             <Form.Group className="flex flex-col gap-2">
-                <Form.Check
-                    type="switch"
-                    id="watchtower-auto-throughput"
-                    label="Auto throughput (match indexer limits)"
-                    disabled={!enabled}
-                    checked={autoThroughput}
-                    onChange={e => set("watchtower.auto-throughput", String(e.target.checked))} />
-                <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
-                    Resolve as fast as your indexers allow instead of pacing with the daily budget below.
-                    Every search and grab still obeys each indexer's requests-per-minute and daily caps
-                    from <b>Indexer settings</b>, and the engine pauses automatically when an indexer is
-                    tapped out. Best for clearing a large backlog. Default off.
-                </p>
+                <Tooltip content="Resolve as fast as indexers allow instead of pacing with the daily budget. Still obeys each indexer's RPM and daily caps. Default off.">
+                    <Form.Check
+                        type="switch"
+                        id="watchtower-auto-throughput"
+                        className="cursor-pointer gap-2 p-0"
+                        label="Auto throughput (match indexer limits)"
+                        disabled={!enabled}
+                        checked={autoThroughput}
+                        onChange={e => set("watchtower.auto-throughput", String(e.target.checked))} />
+                </Tooltip>
             </Form.Group>
 
             <Form.Group className="flex flex-col gap-2">
@@ -458,19 +449,15 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
             </div>
 
             <Form.Group className="flex flex-col gap-2">
-                <Form.Check
-                    type="switch"
-                    id="watchtower-verbose-logging"
-                    label="Verbose activity logging"
-                    checked={verboseLogging}
-                    onChange={e => set("watchtower.verbose-logging", String(e.target.checked))} />
-                <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
-                    Writes Watchtower's per-item activity to the <b>Logs</b> page at the Information
-                    level: each resolve, why an item is left unavailable, dead releases it skips or
-                    finds, backup promotions, and a short heartbeat every cycle so you can confirm it's
-                    still running. Useful when an item gets stuck or stops updating. Only emits while
-                    Watchtower is enabled. Leave off for normal use — it's chatty.
-                </p>
+                <Tooltip content="Log per-item Watchtower activity at Information level (resolves, skips, heartbeats). Chatty — leave off for normal use.">
+                    <Form.Check
+                        type="switch"
+                        id="watchtower-verbose-logging"
+                        className="cursor-pointer gap-2 p-0"
+                        label="Verbose activity logging"
+                        checked={verboseLogging}
+                        onChange={e => set("watchtower.verbose-logging", String(e.target.checked))} />
+                </Tooltip>
             </Form.Group>
             </ManagedSetting>
         </SettingsPage>

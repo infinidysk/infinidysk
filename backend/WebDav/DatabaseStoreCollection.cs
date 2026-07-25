@@ -10,6 +10,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
+using NzbWebDAV.Streams;
 using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.WebDav.Requests;
 using NzbWebDAV.Websocket;
@@ -24,7 +25,8 @@ public class DatabaseStoreCollection(
     UsenetStreamingClient usenetClient,
     QueueManager queueManager,
     WebsocketManager websocketManager,
-    LazyRarResolver lazyRarResolver
+    LazyRarResolver lazyRarResolver,
+    InFlightArticleBudget inFlightArticleBudget
 ) : BaseStoreReadonlyCollection
 {
     public override string Name => davDirectory.Name;
@@ -45,7 +47,7 @@ public class DatabaseStoreCollection(
         if (child is not null)
             return DatabaseStoreItemFactory.Create(
                 child, httpContext, dbClient, configManager, usenetClient, queueManager, websocketManager,
-                lazyRarResolver);
+                lazyRarResolver, inFlightArticleBudget);
 
         // return empty category folder
         var isContentFolder = davDirectory.Id == DavItem.ContentFolder.Id;
@@ -75,7 +77,7 @@ public class DatabaseStoreCollection(
             childNames?.Add(child.Name);
             yield return DatabaseStoreItemFactory.Create(
                 child, httpContext, dbClient, configManager, usenetClient, queueManager, websocketManager,
-                lazyRarResolver);
+                lazyRarResolver, inFlightArticleBudget);
         }
 
         // include the readme file
