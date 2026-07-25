@@ -10,9 +10,12 @@ using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Api.SabControllers.GetStatus;
 using NzbWebDAV.Api.SabControllers.GetVersion;
 using NzbWebDAV.Api.SabControllers.MoveInQueue;
+using NzbWebDAV.Api.SabControllers.Pause;
 using NzbWebDAV.Api.SabControllers.RemoveFromHistory;
 using NzbWebDAV.Api.SabControllers.RemoveFromQueue;
+using NzbWebDAV.Api.SabControllers.Resume;
 using NzbWebDAV.Api.SabControllers.RetryHistory;
+using NzbWebDAV.Api.SabControllers.SpeedLimit;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -96,12 +99,23 @@ public class SabApiController(
                 return new AddUrlController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager, hitTracker);
 
+            case "pause":
+                return new PauseController(HttpContext, dbClient, configManager);
+            case "resume":
+                return new ResumeController(HttpContext, dbClient, configManager, queueManager);
+            case "speedlimit":
+                return new SpeedLimitController(HttpContext, dbClient, configManager);
+
             case "queue" when HttpContext.GetRequestParam("name") == "delete":
                 return new RemoveFromQueueController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager);
             case "queue" when HttpContext.GetRequestParam("name") == "move":
                 return new MoveInQueueController(
                     HttpContext, dbClient, configManager, websocketManager);
+            case "queue" when HttpContext.GetRequestParam("name") == "pause":
+                return new PauseController(HttpContext, dbClient, configManager);
+            case "queue" when HttpContext.GetRequestParam("name") == "resume":
+                return new ResumeController(HttpContext, dbClient, configManager, queueManager);
             case "queue":
                 return new GetQueueController(
                     HttpContext, dbClient, queueManager, configManager, providerUsageTracker);

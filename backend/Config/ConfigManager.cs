@@ -328,6 +328,7 @@ public class ConfigManager
                 case ConfigKeys.BackupScheduleTime:
                 case ConfigKeys.BackupRetentionCount:
                 case ConfigKeys.ApiNzbBackupRetentionDays:
+                case ConfigKeys.QueueSpeedLimitKbps:
                     RequireLong(item.ConfigName, value);
                     break;
 
@@ -363,6 +364,7 @@ public class ConfigManager
                 case ConfigKeys.DbIsStartupVacuumEnabled:
                 case ConfigKeys.MaintenanceRemoveOrphanedScheduleEnabled:
                 case ConfigKeys.BackupScheduleEnabled:
+                case ConfigKeys.QueuePaused:
                     RequireBool(item.ConfigName, value);
                     break;
 
@@ -644,6 +646,29 @@ public class ConfigManager
         if (configured is null || !int.TryParse(configured, out var value))
             return 1;
         return Math.Clamp(value, 1, 4);
+    }
+
+    /// <summary>
+    /// SAB-compatible queue pause state (<c>mode=pause</c> / <c>mode=resume</c>).
+    /// Blocks the queue coordinator from starting new downloads; items already
+    /// in progress finish naturally and WebDAV keeps serving mounted content.
+    /// </summary>
+    public bool IsSabQueuePaused()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.QueuePaused));
+        return v != null && bool.Parse(v);
+    }
+
+    /// <summary>
+    /// SAB-compatible speed limit in KB/s set via <c>mode=speedlimit</c>. 0 means
+    /// unlimited. Accepted and stored for Arr/API compatibility; actual byte/s
+    /// throttling is tracked separately (see #375).
+    /// </summary>
+    public int GetSabSpeedLimitKbps()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.QueueSpeedLimitKbps));
+        if (v == null) return 0;
+        return int.TryParse(v, out var n) ? Math.Max(0, n) : 0;
     }
 
     public bool IsPipeliningEnabled()

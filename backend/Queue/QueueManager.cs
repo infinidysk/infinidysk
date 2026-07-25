@@ -188,11 +188,12 @@ public class QueueManager : IDisposable
     {
         while (!ct.IsCancellationRequested)
         {
-            // While a speed-test is running, hold off starting new downloads so
-            // it gets the provider's full connection budget. Any item already in
-            // progress finishes naturally; this only gates new work. Resumes
-            // within ~1s of the test ending.
-            if (_benchmarkGate.IsPaused)
+            // While a speed-test is running, or the SAB-compatible queue pause is
+            // active (mode=pause), hold off starting new downloads so a benchmark
+            // gets the provider's full connection budget and a paused queue stops
+            // claiming work. Any item already in progress finishes naturally; this
+            // only gates new work. Resumes within ~1s of the gate clearing.
+            if (_benchmarkGate.IsPaused || _configManager.IsSabQueuePaused())
             {
                 try { await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) { }
@@ -245,7 +246,7 @@ public class QueueManager : IDisposable
 
     private async Task FillWorkerSlotsAsync(CancellationToken ct)
     {
-        while (!_benchmarkGate.IsPaused && !ct.IsCancellationRequested)
+        while (!_benchmarkGate.IsPaused && !_configManager.IsSabQueuePaused() && !ct.IsCancellationRequested)
         {
             var workerCount = _configManager.GetQueueWorkerCount();
             if (_inProgress.Count >= workerCount)

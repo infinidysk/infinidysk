@@ -16,7 +16,7 @@ public class GetQueueController(
     ProviderUsageTracker providerUsageTracker
 ) : SabApiController.BaseController(httpContext, configManager)
 {
-    private async Task<GetQueueResponse> GetQueueAsync(GetQueueRequest request)
+    internal async Task<GetQueueResponse> GetQueueAsync(GetQueueRequest request)
     {
         // Snapshot every in-progress item (primary first).
         var inProgress = queueManager.GetInProgressQueueItems();
@@ -79,13 +79,16 @@ public class GetQueueController(
             .ToList();
 
         // return response
+        var speedLimitKbps = configManager.GetSabSpeedLimitKbps();
         return new GetQueueResponse()
         {
             Queue = new GetQueueResponse.QueueObject()
             {
-                Paused = false,
+                Paused = configManager.IsSabQueuePaused(),
                 Slots = slots,
                 TotalCount = totalCount,
+                SpeedLimit = speedLimitKbps.ToString(),
+                SpeedLimitAbs = speedLimitKbps.ToString(),
             }
         };
     }
