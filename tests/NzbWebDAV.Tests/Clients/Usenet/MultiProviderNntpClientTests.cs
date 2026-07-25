@@ -821,7 +821,7 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
-    public async Task CascadeMode_PreservesPriorityOverAvailableCapacity()
+    public async Task CascadeMode_PreservesPriorityWhenSpareCapacityIsComparable()
     {
         var primaryConnection = new ScriptedNntpClient
         {
@@ -835,7 +835,7 @@ public class MultiProviderNntpClientTests
         };
         using var client = new MultiProviderNntpClient(
         [
-            CreateProvider(primaryConnection, host: "primary.example", maxConnections: 1, priority: 0),
+            CreateProvider(primaryConnection, host: "primary.example", maxConnections: 4, priority: 0),
             CreateProvider(secondaryConnection, host: "secondary.example", maxConnections: 4, priority: 1),
         ], cascadeEnabled: () => true);
 
@@ -844,6 +844,143 @@ public class MultiProviderNntpClientTests
 
         Assert.Equal(1, primaryConnection.SingularRequests);
         Assert.Equal(0, secondaryConnection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task CascadeMode_PrefersIdlePeerWhenPrimaryIsContended()
+    {
+        var primaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var idleConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var primary = CreateProvider(primaryConnection, host: "primary.example", maxConnections: 8, priority: 0);
+        var idle = CreateProvider(idleConnection, host: "idle.example", maxConnections: 8, priority: 1);
+        // Leave primary with a single spare connection so soft contention demotes it.
+        for (var i = 0; i < 7; i++)
+            primary.ReservePending();
+        using var client = new MultiProviderNntpClient([primary, idle], cascadeEnabled: () => true);
+
+        var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+        await response.Stream!.DisposeAsync();
+
+        Assert.Equal(0, primaryConnection.SingularRequests);
+        Assert.Equal(1, idleConnection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task CascadeMode_SkipsFullySaturatedPrimary()
+    {
+        var primaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var backupConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var primary = CreateProvider(primaryConnection, host: "primary.example", maxConnections: 4, priority: 0);
+        var backup = CreateProvider(backupConnection, host: "backup.example", maxConnections: 4, priority: 1);
+        for (var i = 0; i < 4; i++)
+            primary.ReservePending();
+        using var client = new MultiProviderNntpClient([primary, backup], cascadeEnabled: () => true);
+
+        var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+        await response.Stream!.DisposeAsync();
+
+        Assert.Equal(0, primaryConnection.SingularRequests);
+        Assert.Equal(1, backupConnection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task BatchFailover_StartsNextSegmentWithoutWaitingForPriorBodyCompletion()
+    {
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 430,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            DeferSingularCompletion = true,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primary, host: "primary.example", maxConnections: 4),
+            CreateProvider(backup, host: "backup.example", maxConnections: 4),
+        ]);
+
+        UsenetDecodedBodyResponse? first = null;
+        UsenetDecodedBodyResponse? second = null;
+        try
+        {
+            var batch = await client.DecodedBodiesAsync(
+                ["seg-0", "seg-1"], onConnectionReadyAgain: null, CancellationToken.None);
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            // Both fallback starts must proceed while segment 0's body callback is still deferred.
+            while (backup.SingularRequests < 2)
+            {
+                timeout.Token.ThrowIfCancellationRequested();
+                await Task.Delay(10, timeout.Token);
+            }
+
+            Assert.Equal(2, backup.SingularRequests);
+
+            var firstTask = batch.Responses[0];
+            var secondTask = batch.Responses[1];
+            Assert.True(firstTask.IsCompleted);
+            Assert.True(secondTask.IsCompleted);
+            first = await firstTask;
+            second = await secondTask;
+            Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, first.ResponseType);
+            Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, second.ResponseType);
+            Assert.Equal("seg-0", first.SegmentId);
+            Assert.Equal("seg-1", second.SegmentId);
+        }
+        finally
+        {
+            backup.CompletePendingSingularRequests();
+            if (first?.Stream != null) await first.Stream.DisposeAsync();
+            if (second?.Stream != null) await second.Stream.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task BatchResponse_WithCleanNotFound_SkipsPrimaryReprobeWhenDisabled()
+    {
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 222,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primary, host: "primary.example"),
+            CreateProvider(backup, host: "backup.example"),
+        ], retryPrimaryOnMiss: () => false);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        var response = await batch.Responses[0];
+
+        Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+        Assert.Equal(0, primary.SingularRequests);
+        Assert.Equal(1, backup.SingularRequests);
     }
 
     private static MultiConnectionNntpClient CreateProvider(

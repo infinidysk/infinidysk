@@ -315,7 +315,7 @@ public class GetOverviewStatsController(
                 throughputMinutes.Select(t => (t.Minute, t.Articles, t.Misses, t.Errors, t.BytesServed, t.BytesFetched)),
                 bucketSize);
             providers = BuildProvidersFromMinutes(
-                minutes.Select(m => (m.Minute, m.Provider, m.Articles, m.BytesFetched, m.Errors, m.Retries, m.SumDurationMs)),
+                minutes.Select(m => (m.Minute, m.Provider, m.Articles, m.BytesFetched, m.Misses, m.Errors, m.Retries, m.SumDurationMs)),
                 windowStart, window, labelsByMetricsKey);
             totalArticles = minutes.Sum(m => m.Articles);
             totalMisses = minutes.Sum(m => m.Misses);
@@ -737,7 +737,7 @@ public class GetOverviewStatsController(
     }
 
     internal static List<GetOverviewStatsResponse.ProviderRow> BuildProvidersFromMinutes(
-        IEnumerable<(long Minute, string Provider, long Articles, long BytesFetched, long Errors, long Retries, long SumDurationMs)> minutes,
+        IEnumerable<(long Minute, string Provider, long Articles, long BytesFetched, long Misses, long Errors, long Retries, long SumDurationMs)> minutes,
         long windowStart,
         GetOverviewStatsRequest.OverviewWindow window,
         IReadOnlyDictionary<string, string?> labelsByMetricsKey)
@@ -756,6 +756,7 @@ public class GetOverviewStatsController(
             if (!byProvider.TryGetValue(m.Provider, out var acc))
                 acc = new ProviderAccumulator(sparkBuckets);
             acc.Articles += m.Articles;
+            acc.Misses += m.Misses;
             acc.Errors += m.Errors;
             acc.Retries += m.Retries;
             acc.SumDurationMs += m.SumDurationMs;
@@ -772,19 +773,24 @@ public class GetOverviewStatsController(
 
         return byProvider
             .Where(kv => IsConfiguredMetricsKey(kv.Key, labelsByMetricsKey))
-            .Select(kv => new GetOverviewStatsResponse.ProviderRow
+            .Select(kv =>
             {
-                Provider = kv.Key,
-                Nickname = labelsByMetricsKey.GetValueOrDefault(kv.Key),
-                Articles = kv.Value.Articles,
-                BytesFetched = kv.Value.Bytes,
-                Errors = kv.Value.Errors,
-                Retries = kv.Value.Retries,
-                AvgDurationMs = kv.Value.Articles > 0 ? (double)kv.Value.SumDurationMs / kv.Value.Articles : 0,
-                ErrorRate = kv.Value.Articles > 0 ? (double)kv.Value.Errors / kv.Value.Articles : 0,
-                Spark = kv.Value.Spark.ToList(),
-                ErrorSpark = kv.Value.ErrorSpark.ToList(),
-                RetrySpark = kv.Value.RetrySpark.ToList(),
+                var okArticles = Math.Max(0, kv.Value.Articles - kv.Value.Misses - kv.Value.Errors);
+                return new GetOverviewStatsResponse.ProviderRow
+                {
+                    Provider = kv.Key,
+                    Nickname = labelsByMetricsKey.GetValueOrDefault(kv.Key),
+                    Articles = kv.Value.Articles,
+                    BytesFetched = kv.Value.Bytes,
+                    Errors = kv.Value.Errors,
+                    Retries = kv.Value.Retries,
+                    // SumDurationMs is Ok-only from rollup; divide by Ok count, not all attempts.
+                    AvgDurationMs = okArticles > 0 ? (double)kv.Value.SumDurationMs / okArticles : 0,
+                    ErrorRate = kv.Value.Articles > 0 ? (double)kv.Value.Errors / kv.Value.Articles : 0,
+                    Spark = kv.Value.Spark.ToList(),
+                    ErrorSpark = kv.Value.ErrorSpark.ToList(),
+                    RetrySpark = kv.Value.RetrySpark.ToList(),
+                };
             })
             .OrderByDescending(r => r.Articles)
             .ToList();
@@ -809,6 +815,7 @@ public class GetOverviewStatsController(
             if (!byProvider.TryGetValue(host, out var acc))
                 acc = new ProviderAccumulator(sparkBuckets);
             acc.Articles += (long)h.Articles;
+            acc.Misses += (long)h.Misses;
             acc.Errors += (long)h.Errors;
             acc.Retries += (long)h.Retries;
             acc.SumDurationMs += (long)h.SumDurationMs;
@@ -825,19 +832,23 @@ public class GetOverviewStatsController(
 
         return byProvider
             .Where(kv => IsConfiguredMetricsKey(kv.Key, labelsByMetricsKey))
-            .Select(kv => new GetOverviewStatsResponse.ProviderRow
+            .Select(kv =>
             {
-                Provider = kv.Key,
-                Nickname = labelsByMetricsKey.GetValueOrDefault(kv.Key),
-                Articles = kv.Value.Articles,
-                BytesFetched = kv.Value.Bytes,
-                Errors = kv.Value.Errors,
-                Retries = kv.Value.Retries,
-                AvgDurationMs = kv.Value.Articles > 0 ? (double)kv.Value.SumDurationMs / kv.Value.Articles : 0,
-                ErrorRate = kv.Value.Articles > 0 ? (double)kv.Value.Errors / kv.Value.Articles : 0,
-                Spark = kv.Value.Spark.ToList(),
-                ErrorSpark = kv.Value.ErrorSpark.ToList(),
-                RetrySpark = kv.Value.RetrySpark.ToList(),
+                var okArticles = Math.Max(0, kv.Value.Articles - kv.Value.Misses - kv.Value.Errors);
+                return new GetOverviewStatsResponse.ProviderRow
+                {
+                    Provider = kv.Key,
+                    Nickname = labelsByMetricsKey.GetValueOrDefault(kv.Key),
+                    Articles = kv.Value.Articles,
+                    BytesFetched = kv.Value.Bytes,
+                    Errors = kv.Value.Errors,
+                    Retries = kv.Value.Retries,
+                    AvgDurationMs = okArticles > 0 ? (double)kv.Value.SumDurationMs / okArticles : 0,
+                    ErrorRate = kv.Value.Articles > 0 ? (double)kv.Value.Errors / kv.Value.Articles : 0,
+                    Spark = kv.Value.Spark.ToList(),
+                    ErrorSpark = kv.Value.ErrorSpark.ToList(),
+                    RetrySpark = kv.Value.RetrySpark.ToList(),
+                };
             })
             .OrderByDescending(r => r.Articles)
             .ToList();
@@ -845,7 +856,7 @@ public class GetOverviewStatsController(
 
     private sealed class ProviderAccumulator
     {
-        public long Articles, Errors, Retries, SumDurationMs, Bytes;
+        public long Articles, Misses, Errors, Retries, SumDurationMs, Bytes;
         public readonly long[] Spark;
         public readonly long[] ErrorSpark;
         public readonly long[] RetrySpark;

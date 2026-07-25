@@ -59,6 +59,7 @@ const defaultConfig = {
     "usenet.pipelining.enabled": "false",
     "usenet.pipelining.depth": "8",
     "usenet.cascade.enabled": "false",
+    "usenet.cascade.retry-primary-on-miss": "true",
     "webdav.user": "admin",
     "webdav.pass": "",
     "webdav.show-hidden-files": "false",

@@ -128,6 +128,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         return new MultiProviderNntpClient(
             providerClients, usageTracker, metricsWriter, bytesTracker,
             cascadeEnabled: configManager.IsCascadeEnabled,
+            retryPrimaryOnMiss: configManager.IsCascadeRetryPrimaryOnMiss,
             streamTrace: streamTrace,
             activeReadRegistry: activeReadRegistry);
     }

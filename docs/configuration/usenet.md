@@ -44,7 +44,8 @@ a man-in-the-middle attacker to impersonate the provider and read credentials.
 
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
-| Enable cascade routing | `usenet.cascade.enabled` | off | Prefer providers in drag order; off = shared pool |
+| Enable cascade routing | `usenet.cascade.enabled` | off | Prefer providers in drag order; off = shared pool. Contended primaries yield to idler peers. |
+| Re-probe primary after miss | `usenet.cascade.retry-primary-on-miss` | on | After a clean 430/451 on the first batch attempt, try the primary once more before cascading (multi-node spool). Off = skip straight to backups. |
 | Enable NNTP pipelining | `usenet.pipelining.enabled` | off | Batch first-segment BODY during queue imports/benchmarks |
 | Default pipeline depth | `usenet.pipelining.depth` | `8` | Requests in flight per connection (1–64) |
 

@@ -28,8 +28,8 @@ public class GetOverviewStatsProviderFilterTests
         var windowStart = nowMs - 60_000;
         var minutes = new[]
         {
-            (windowStart, ConfiguredKey, 10L, 1000L, 0L, 0L, 100L),
-            (windowStart, DeletedKey, 50L, 5000L, 1L, 2L, 500L),
+            (windowStart, ConfiguredKey, 10L, 1000L, 0L, 0L, 0L, 100L),
+            (windowStart, DeletedKey, 50L, 5000L, 0L, 1L, 2L, 500L),
         };
 
         var rows = GetOverviewStatsController.BuildProvidersFromMinutes(
@@ -52,8 +52,8 @@ public class GetOverviewStatsProviderFilterTests
         var minute1 = windowStart + 60_000;
         var minutes = new[]
         {
-            (minute0, ConfiguredKey, 10L, 1000L, 2L, 4L, 100L),
-            (minute1, ConfiguredKey, 5L, 500L, 1L, 3L, 50L),
+            (minute0, ConfiguredKey, 10L, 1000L, 0L, 2L, 4L, 100L),
+            (minute1, ConfiguredKey, 5L, 500L, 0L, 1L, 3L, 50L),
         };
 
         var rows = GetOverviewStatsController.BuildProvidersFromMinutes(

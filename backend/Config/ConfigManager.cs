@@ -343,6 +343,7 @@ public class ConfigManager
                 case ConfigKeys.UsenetMaxDownloadConnectionsPerStream:
                 case ConfigKeys.UsenetPipeliningEnabled:
                 case ConfigKeys.UsenetCascadeEnabled:
+                case ConfigKeys.UsenetCascadeRetryPrimaryOnMiss:
                 case ConfigKeys.UsenetPipelinedBodyRequests:
                 case ConfigKeys.UsenetSegmentCacheEnabled:
                 case ConfigKeys.PlayWatchdogEnabled:
@@ -656,6 +657,17 @@ public class ConfigManager
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetCascadeEnabled));
         return v != null && bool.Parse(v);
+    }
+
+    /// <summary>
+    /// When true (default), a definitive batch miss (430/451) re-probes the primary once
+    /// before cascading to backups — multi-node spool routing can miss on one connection.
+    /// Disable to skip straight to backups after the initial miss.
+    /// </summary>
+    public bool IsCascadeRetryPrimaryOnMiss()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetCascadeRetryPrimaryOnMiss));
+        return v == null || bool.Parse(v);
     }
 
     public int GetPipeliningDepth()

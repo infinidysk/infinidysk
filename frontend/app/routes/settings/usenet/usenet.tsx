@@ -615,7 +615,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
             </section>
             </ManagedSetting>
 
-            <ManagedSetting configKeys={["usenet.cascade.enabled", "usenet.pipelining.enabled", "usenet.pipelining.depth"]}>
+            <ManagedSetting configKeys={["usenet.cascade.enabled", "usenet.cascade.retry-primary-on-miss", "usenet.pipelining.enabled", "usenet.pipelining.depth"]}>
             <section className="overflow-hidden rounded-lg border border-base-content/10 bg-base-100">
                 <div className="flex items-start gap-3 border-b border-base-content/10 p-4">
                     <span className="rounded-lg bg-primary/10 p-2 text-primary">
@@ -655,6 +655,32 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                             <span className="block text-sm font-medium text-base-content">Enable cascade routing</span>
                             <span className="mt-0.5 block text-xs leading-relaxed text-base-content/50">
                                 Prefer providers in drag order. While off, all enabled providers share work in the pool.
+                                Contended primaries with little spare capacity yield to idler same-tier peers.
+                            </span>
+                        </span>
+                    </label>
+
+                    <label
+                        className={`flex items-start gap-3 rounded-lg bg-base-200/40 p-3 ${cascadeEnabled ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
+                        htmlFor="cascade-retry-primary-on-miss"
+                    >
+                        <Checkbox
+                            className="checkbox-primary mt-0.5 shrink-0"
+                            id="cascade-retry-primary-on-miss"
+                            disabled={!cascadeEnabled}
+                            checked={(config["usenet.cascade.retry-primary-on-miss"] ?? "true") !== "false"}
+                            onChange={(e) => setNewConfig({
+                                ...config,
+                                "usenet.cascade.retry-primary-on-miss": e.target.checked ? "true" : "false",
+                            })}
+                        />
+                        <span>
+                            <span className="block text-sm font-medium text-base-content">
+                                Re-probe primary after article miss
+                            </span>
+                            <span className="mt-0.5 block text-xs leading-relaxed text-base-content/50">
+                                After a clean 430/451 on the first batch attempt, try the primary once more before
+                                cascading. Helps multi-node spool routing; turn off to skip straight to backups.
                             </span>
                         </span>
                     </label>
@@ -1869,6 +1895,7 @@ export function isUsenetSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.pipelining.enabled"] !== newConfig["usenet.pipelining.enabled"]
         || config["usenet.pipelining.depth"] !== newConfig["usenet.pipelining.depth"]
         || config["usenet.cascade.enabled"] !== newConfig["usenet.cascade.enabled"]
+        || config["usenet.cascade.retry-primary-on-miss"] !== newConfig["usenet.cascade.retry-primary-on-miss"]
 }
 
 export function isPositiveInteger(value: string) {

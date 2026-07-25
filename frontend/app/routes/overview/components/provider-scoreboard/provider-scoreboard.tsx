@@ -38,7 +38,10 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                     <th>Share</th>
                                     <th className="w-[120px]">Errors</th>
                                     <th className="w-[120px]">Retries</th>
-                                    <th>Avg ms</th>
+                                    <th
+                                        title="Mean duration of successful fetches only. Includes connection-pool wait inside the provider call — not pure wire RTT. Misses and errors are excluded.">
+                                        Avg ok ms
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -96,7 +99,11 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                                     </div>
                                                 </div>
                                             </td>
-                                            <td className="font-mono tabular-nums">{p.avgDurationMs.toFixed(0)}</td>
+                                            <td
+                                                className="font-mono tabular-nums"
+                                                title="Successful fetches only (includes pool wait)">
+                                                {p.avgDurationMs.toFixed(0)}
+                                            </td>
                                         </tr>
                                     );
                                 })}
