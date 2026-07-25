@@ -13,6 +13,14 @@
 - Overview **Active Reads**: unexpected traffic → rclone VFS or media-server scans.
 - Try disabling segment cache or adjusting Max Download Connections — [WebDAV](../configuration/webdav.md).
 
+## Overview “Served” spikes overnight
+
+**Served** is actual bytes delivered over WebDAV/HTTP, not declared file sizes. Overnight spikes with Plex deep-analysis jobs disabled usually mean something is still reading the mount (library scans, Bazarr, backups) and rclone is amplifying each probe:
+
+- Prefer `--buffer-size=0M` and modest `--vfs-read-ahead` (see [Mounting WebDAV](mounting-webdav.md))
+- Prefer a long `--vfs-cache-max-age` and a large `--vfs-cache-max-size` so scan probes are not re-downloaded every night
+- Confirm **Settings → Rclone Server** can reach RC (`--rc-addr` must not be `127.0.0.1` across containers)
+
 ## *Arr won't import
 
 - Paths must match exactly between NzbDAV completed path and *Arr containers.
