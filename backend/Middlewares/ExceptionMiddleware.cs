@@ -10,6 +10,7 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using Serilog;
+using Serilog.Events;
 
 namespace NzbWebDAV.Middlewares;
 
@@ -198,13 +199,17 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             // reserve full stack traces for unexpected failures.
             var isKnown = IsKnownDownloadException(e, out var knownError);
             var reason = isKnown ? knownError : e.GetType().Name;
+            // Data that was never posted completely is a repairable state of the item,
+            // not a fault in serving it, so it warns rather than errors.
+            var knownLevel = isIncompleteData ? LogEventLevel.Warning : LogEventLevel.Error;
             var dedupeKey = $"{filePath}|{seekPosition}|{reason}";
             LogWithDedup(RecentReadErrors, dedupeKey, suppressed =>
             {
                 if (isKnown)
                 {
                     if (suppressed > 0)
-                        Log.Error(
+                        Log.Write(
+                            knownLevel,
                             "File {FilePath} could not be read from byte position {SeekPosition}: {Reason} (client {UserAgent}, suppressed {SuppressedCount} duplicates in last 60s)",
                             filePath,
                             seekPosition,
@@ -212,7 +217,8 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                             userAgent,
                             suppressed);
                     else
-                        Log.Error(
+                        Log.Write(
+                            knownLevel,
                             "File {FilePath} could not be read from byte position {SeekPosition}: {Reason} (client {UserAgent})",
                             filePath,
                             seekPosition,

@@ -6,9 +6,14 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Middlewares;
 using NzbWebDAV.Services;
+using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Middlewares;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public class ExceptionMiddlewareTests
 {
     [Fact]
@@ -127,6 +132,23 @@ public class ExceptionMiddlewareTests
         Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
     }
 
+    [Fact]
+    public async Task IncompleteMultipartPart_LogsOneWarningLineWithoutAStackDump()
+    {
+        var reason = $"volume ended 3071980 bytes early ({Guid.NewGuid()})";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: true, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new IncompleteMultipartPartException(reason));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        var logged = Assert.Single(
+            events, e => e.RenderMessage().Contains(reason, StringComparison.Ordinal));
+        Assert.Equal(LogEventLevel.Warning, logged.Level);
+        Assert.Null(logged.Exception);
+    }
+
     [Theory]
     [InlineData(0, 1, true)]
     [InlineData(3, 2, false)]
@@ -138,6 +160,44 @@ public class ExceptionMiddlewareTests
         bool expected)
     {
         Assert.Equal(expected, ExceptionMiddleware.ShouldScheduleUrgentRepair(threshold, failureCount));
+    }
+
+    private static async Task<IReadOnlyList<LogEvent>> CaptureLogsAsync(Func<Task> action)
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+
+        return sink.Events;
+    }
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+
+        public IReadOnlyList<LogEvent> Events
+        {
+            get
+            {
+                lock (_events) return _events.ToArray();
+            }
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            lock (_events) _events.Add(logEvent);
+        }
     }
 
     private static ExceptionMiddleware CreateMiddleware(
