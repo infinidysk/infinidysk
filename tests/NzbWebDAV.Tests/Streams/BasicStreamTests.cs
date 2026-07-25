@@ -1,10 +1,44 @@
 using System.Text;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.Tests.Streams;
 
 public class BasicStreamTests
 {
+    [Fact]
+    public async Task DiscardExactBytesAsync_RejectsAStreamThatEndsEarly()
+    {
+        using var stream = new MemoryStream(Encoding.ASCII.GetBytes("abc"));
+
+        var failure = await Assert.ThrowsAsync<EndOfStreamException>(
+            () => stream.DiscardExactBytesAsync(5));
+
+        Assert.Contains("2 bytes before 5", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DiscardExactBytesAsync_SkipsTheRequestedPrefix()
+    {
+        using var stream = new MemoryStream(Encoding.ASCII.GetBytes("abcdefgh"));
+
+        await stream.DiscardExactBytesAsync(3);
+
+        var remaining = new byte[5];
+        Assert.Equal(5, await stream.ReadAsync(remaining));
+        Assert.Equal("defgh", Encoding.ASCII.GetString(remaining));
+    }
+
+    [Fact]
+    public async Task DiscardBytesAsync_ToleratesAStreamThatEndsEarly()
+    {
+        using var stream = new MemoryStream(Encoding.ASCII.GetBytes("abc"));
+
+        await stream.DiscardBytesAsync(5);
+
+        Assert.Equal(0, await stream.ReadAsync(new byte[1]));
+    }
+
     [Fact]
     public async Task LimitedLengthStream_StopsAtConfiguredLength()
     {

@@ -34,7 +34,7 @@ public class CorruptionDetectionTests
             new[] { "segment@example" }.AsMemory(),
             client,
             articleBufferSize: 1,
-            expectedSegmentSize: expected.Length,
+            estimatedSegmentSize: expected.Length,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: false,
             CancellationToken.None);

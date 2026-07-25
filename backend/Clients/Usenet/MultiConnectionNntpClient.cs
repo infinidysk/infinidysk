@@ -197,18 +197,33 @@ public class MultiConnectionNntpClient(
         CancellationToken ct
     )
     {
-        var retryCount = 1;
+        // Streaming reads carry a per-segment deadline so a stalled provider fails over
+        // instead of holding a playback stream open for UsenetSharp's ~40s read timeout.
+        // It applies to issuing the batch, which is the part that waits on the provider;
+        // the response streams are drained by the caller afterwards.
+        var streamingTimeout = ct.GetContext<StreamingTimeoutContext>();
+        var retryCount = streamingTimeout?.MaxRetries ?? 1;
         while (true)
         {
             ConnectionLock<INntpClient>? connectionLock = null;
             var deferredCallback = new DeferredArticleBodyCallback();
+            CancellationTokenSource? attemptCts = null;
             try
             {
                 connectionLock = await connectionPool
                     .GetConnectionLockAsync(GetDownloadPriority(ct), ct)
                     .ConfigureAwait(false);
+
+                var batchCt = ct;
+                if (streamingTimeout != null)
+                {
+                    attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    attemptCts.CancelAfter(streamingTimeout.PerSegmentTimeout);
+                    batchCt = attemptCts.Token;
+                }
+
                 var batch = await connectionLock.Connection.DecodedBodiesAsync(
-                    segmentIds, deferredCallback.Invoke, ct).ConfigureAwait(false);
+                    segmentIds, deferredCallback.Invoke, batchCt).ConfigureAwait(false);
 
                 var callbackInvoked = 0;
                 deferredCallback.Activate(OnConnectionReadyAgain);
@@ -244,6 +259,35 @@ public class MultiConnectionNntpClient(
                     LogException(connectionLock.Dispose);
                     LogException(() => onConnectionReadyAgain?.Invoke(result));
                 }
+            }
+            catch (Exception e) when (
+                streamingTimeout != null
+                && e.IsCancellationException()
+                && !ct.IsCancellationRequested)
+            {
+                // Per-segment deadline fired while the caller is still reading. The
+                // connection has an in-flight pipeline → replace it and try again, so a
+                // single slow provider does not decide what the stream delivers.
+                deferredCallback.Discard();
+                LogException(() => connectionLock?.Replace());
+                LogException(() => connectionLock?.Dispose());
+                if (retryCount > 0)
+                {
+                    Log.Debug(
+                        "Streaming timeout executing pipelined nntp BODY commands after {Timeout}s. Retrying with a new connection ({Retries} left).",
+                        streamingTimeout.PerSegmentTimeout.TotalSeconds, retryCount);
+                    retryCount--;
+                    continue;
+                }
+
+                circuitBreaker.RecordFailure("streaming-timeout-pipelined-BODY");
+                Log.Warning(
+                    "Streaming timeout executing pipelined nntp BODY commands after {Timeout}s. No retries left.",
+                    streamingTimeout.PerSegmentTimeout.TotalSeconds);
+                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
+                throw new TimeoutException(
+                    "Timeout executing pipelined nntp BODY commands after " +
+                    $"{streamingTimeout.MaxRetries + 1} attempts.");
             }
             catch (Exception e) when (e.IsCancellationException(ct))
             {
@@ -294,6 +338,10 @@ public class MultiConnectionNntpClient(
                     providerName);
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
+            }
+            finally
+            {
+                attemptCts?.Dispose();
             }
         }
     }

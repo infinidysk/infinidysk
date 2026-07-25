@@ -22,7 +22,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly Memory<string> _segmentIds;
     private readonly string[][]? _segmentFallbacks;
     private readonly INntpClient _usenetClient;
-    private readonly long _expectedSegmentSize;
+    private readonly long _estimatedSegmentSize;
+    private readonly SegmentSizes _segmentSizes;
     private readonly bool _failFastOnFirstSegment;
     private readonly string _fileName;
     private readonly Channel<Task<SegmentDownloadResult>> _streamTasks;
@@ -47,7 +48,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             segmentIds,
             usenetClient,
             articleBufferSize,
-            expectedSegmentSize: 0,
+            estimatedSegmentSize: 0,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests,
             cancellationToken,
@@ -56,34 +57,47 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             segmentFallbacks);
     }
 
+    /// <param name="estimatedSegmentSize">
+    /// Approximate decoded size per segment, used only for buffer capacity hints and
+    /// prefetch budgeting. It must never determine how many bytes this stream emits —
+    /// an estimate that is off by even one byte shifts every following byte in the file.
+    /// </param>
+    /// <param name="exactSegmentSizes">
+    /// Exact decoded size of each segment in <paramref name="segmentIds"/>, in the same
+    /// order. Supplied when the import recorded per-segment byte ranges, and required
+    /// before a failed segment may be replaced with zeros.
+    /// </param>
     public static Stream Create
     (
         Memory<string> segmentIds,
         INntpClient usenetClient,
         int articleBufferSize,
-        long expectedSegmentSize,
+        long estimatedSegmentSize,
         bool failFastOnFirstSegment,
         bool usePipelinedBodyRequests,
         CancellationToken cancellationToken,
         string? fileName = null,
         long? readBudget = null,
-        string[][]? segmentFallbacks = null
+        string[][]? segmentFallbacks = null,
+        ReadOnlyMemory<long> exactSegmentSizes = default
     )
     {
         return articleBufferSize == 0
             ? new UnbufferedMultiSegmentStream(
-                segmentIds, usenetClient, expectedSegmentSize, fileName, segmentFallbacks)
+                segmentIds, usenetClient, estimatedSegmentSize, fileName, segmentFallbacks,
+                exactSegmentSizes)
             : new MultiSegmentStream(
                 segmentIds,
                 usenetClient,
                 articleBufferSize,
-                expectedSegmentSize,
+                estimatedSegmentSize,
                 failFastOnFirstSegment,
                 usePipelinedBodyRequests,
                 cancellationToken,
                 fileName,
                 readBudget,
-                segmentFallbacks);
+                segmentFallbacks,
+                exactSegmentSizes);
     }
 
     private MultiSegmentStream
@@ -91,19 +105,21 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         Memory<string> segmentIds,
         INntpClient usenetClient,
         int articleBufferSize,
-        long expectedSegmentSize,
+        long estimatedSegmentSize,
         bool failFastOnFirstSegment,
         bool usePipelinedBodyRequests,
         CancellationToken cancellationToken,
         string? fileName,
         long? readBudget,
-        string[][]? segmentFallbacks
+        string[][]? segmentFallbacks,
+        ReadOnlyMemory<long> exactSegmentSizes
     )
     {
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
         _usenetClient = usenetClient;
-        _expectedSegmentSize = expectedSegmentSize;
+        _estimatedSegmentSize = estimatedSegmentSize;
+        _segmentSizes = new SegmentSizes(exactSegmentSizes, segmentIds.Length);
         _failFastOnFirstSegment = failFastOnFirstSegment;
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
         _readBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
@@ -143,9 +159,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private async Task DownloadPipelinedSegments(CancellationToken cancellationToken)
     {
         var segmentsEnqueued = 0;
+        var enqueuedBytes = 0L;
         for (var batchStart = 0; batchStart < _segmentIds.Length;)
         {
-            if (ShouldStopPrefetch(segmentsEnqueued))
+            if (ShouldStopPrefetch(segmentsEnqueued, enqueuedBytes))
                 break;
 
             var batchCount = Math.Min(
@@ -178,6 +195,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     await _streamTasks.Writer.WriteAsync(
                         streamTasks[responseIndex], cancellationToken);
                     segmentsEnqueued++;
+                    enqueuedBytes += GetPlannedSegmentBytes(batchStart + responseIndex);
                 }
             }
             catch
@@ -196,9 +214,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
     private async Task DownloadIndividualSegments(CancellationToken cancellationToken)
     {
+        var enqueuedBytes = 0L;
         for (var index = 0; index < _segmentIds.Length; index++)
         {
-            if (ShouldStopPrefetch(index))
+            if (ShouldStopPrefetch(index, enqueuedBytes))
                 break;
 
             var segmentId = _segmentIds.Span[index];
@@ -210,6 +229,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             try
             {
                 await _streamTasks.Writer.WriteAsync(streamTask, cancellationToken);
+                enqueuedBytes += GetPlannedSegmentBytes(index);
             }
             catch
             {
@@ -220,15 +240,25 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     }
 
     /// <summary>
-    /// Stop enqueueing once estimated fetched bytes cover the read budget plus
-    /// one segment of slack for yEnc size variance. Null budget = unbounded.
+    /// Stop enqueueing once the bytes already in flight cover the read budget plus one
+    /// segment of slack, which absorbs the prefix a seek discards from the first segment.
+    /// Exact segment sizes are used when the import recorded them; otherwise the estimate
+    /// stands in, since over- or under-fetching only costs bandwidth. Null budget =
+    /// unbounded.
     /// </summary>
-    private bool ShouldStopPrefetch(int segmentsEnqueued)
+    private bool ShouldStopPrefetch(int segmentsEnqueued, long enqueuedBytes)
     {
-        if (_readBudget is null || _expectedSegmentSize <= 0)
-            return false;
-        return segmentsEnqueued * _expectedSegmentSize >= _readBudget.Value + _expectedSegmentSize;
+        if (_readBudget is null) return false;
+        if (_segmentSizes.TryGetExactSize(0, out var slack))
+            return enqueuedBytes >= _readBudget.Value + slack;
+        if (_estimatedSegmentSize <= 0) return false;
+        return segmentsEnqueued * _estimatedSegmentSize >= _readBudget.Value + _estimatedSegmentSize;
     }
+
+    private long GetPlannedSegmentBytes(int segmentIndex) =>
+        _segmentSizes.TryGetExactSize(segmentIndex, out var exact)
+            ? exact
+            : Math.Max(0, _estimatedSegmentSize);
 
     private async Task<SegmentDownloadResult> DownloadSegment(
         string segmentId,
@@ -250,7 +280,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                         .DecodedBodyAsync(segmentId, cancellationToken)
                         .ConfigureAwait(false);
 
-                var stream = await DrainSegmentAsync(bodyResponse.Stream!, cancellationToken).ConfigureAwait(false);
+                await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
+                var stream = await DrainSegmentAsync(bodyResponse.Stream!, segmentIndex, cancellationToken)
+                    .ConfigureAwait(false);
                 return SegmentDownloadResult.Success(stream);
             }
             catch (UsenetArticleNotFoundException e)
@@ -272,6 +304,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 return ZeroFillSegment(
                     "Article {SegmentId} missing on all providers while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
                     e.SegmentId,
+                    segmentIndex,
                     e);
             }
             catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
@@ -312,7 +345,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
                 return ZeroFillSegment(
                     "Segment {SegmentId} unavailable after retries while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
-                    segmentId, e);
+                    segmentId, segmentIndex, e);
             }
         }
     }
@@ -327,7 +360,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         try
         {
             var response = await responseTask.ConfigureAwait(false);
-            var stream = await DrainSegmentAsync(response.Stream!, cancellationToken).ConfigureAwait(false);
+            await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+            var stream = await DrainSegmentAsync(response.Stream!, segmentIndex, cancellationToken)
+                .ConfigureAwait(false);
             return SegmentDownloadResult.Success(stream);
         }
         catch (UsenetArticleNotFoundException e)
@@ -341,26 +376,106 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             return ZeroFillSegment(
                 "Article {SegmentId} missing on all providers while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
                 e.SegmentId,
+                segmentIndex,
                 e);
         }
         catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
         {
             var stream = await RetryCorruptSegmentAsync(
-                    segmentId, e, cancellationToken)
+                    segmentId, segmentIndex, e, cancellationToken)
                 .ConfigureAwait(false);
             return SegmentDownloadResult.Success(stream);
         }
         catch (Exception e) when (!cancellationToken.IsCancellationRequested)
         {
+            // A failure inside a pipelined batch says nothing about whether the article
+            // can be fetched at all: the batch shares one connection, so a stall or a
+            // dropped socket takes out unrelated segments with it. Re-request this
+            // segment on its own first, which is what gives provider failover and the
+            // streaming-timeout retries a chance before any data is degraded.
+            var rescued = await TryRescueSegmentAsync(segmentId, segmentIndex, e, cancellationToken)
+                .ConfigureAwait(false);
+            if (rescued is not null)
+                return SegmentDownloadResult.Success(rescued);
+
             if (_failFastOnFirstSegment && isFirstSegment) throw;
             return ZeroFillSegment(
-                "Segment {SegmentId} unavailable while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
-                segmentId, e);
+                "Segment {SegmentId} unavailable after retries while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
+                segmentId, segmentIndex, e);
         }
+    }
+
+    /// <summary>
+    /// Re-requests a segment individually after its pipelined response failed. Returns
+    /// null once the retries are spent, or as soon as the article is known to be missing
+    /// rather than unreachable.
+    /// </summary>
+    private async Task<Stream?> TryRescueSegmentAsync(
+        string segmentId,
+        int segmentIndex,
+        Exception batchFailure,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; attempt <= MaxBodyRetries; attempt++)
+        {
+            Log.Debug(
+                batchFailure,
+                "Pipelined segment {SegmentId} failed; re-requesting it individually (attempt {Attempt}).",
+                segmentId, attempt);
+            if (MultiProviderNntpClient.CurrentReadSessionId is { } retrySession)
+                StreamTrace.TryRetry(retrySession, segmentId, attempt, batchFailure.Message);
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken)
+                    .ConfigureAwait(false);
+                var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+                    .ConfigureAwait(false);
+                await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+                return await DrainSegmentAsync(response.Stream!, segmentIndex, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (UsenetArticleNotFoundException)
+            {
+                return null;
+            }
+            catch (Exception e) when (!cancellationToken.IsCancellationRequested)
+            {
+                Log.Debug(e, "Individual rescue of segment {SegmentId} failed (attempt {Attempt}).",
+                    segmentId, attempt);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Guards against a response being paired with the wrong request. Ordering is
+    /// guaranteed by the batch protocol, so a mismatch means the stream would silently
+    /// carry another segment's bytes at this offset.
+    /// </summary>
+    private static async Task ThrowOnSegmentIdMismatchAsync(
+        string segmentId,
+        UsenetDecodedBodyResponse response)
+    {
+        if (!NntpClient.HasSegmentIdMismatch(
+                segmentId, response.SegmentId, response.ResponseMessage, out var actualId))
+            return;
+
+        if (response.Stream is not null)
+        {
+            try { await response.Stream.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception e) { Log.Debug(e, "Failed to dispose mismatched BODY stream"); }
+        }
+
+        throw new UsenetUnexpectedResponseException(
+            segmentId,
+            $"Response carried segment {actualId} instead of {segmentId}.");
     }
 
     private async Task<Stream> RetryCorruptSegmentAsync(
         string segmentId,
+        int segmentIndex,
         UsenetCorruptArticleException initialFailure,
         CancellationToken cancellationToken)
     {
@@ -380,7 +495,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                     .ConfigureAwait(false);
-                return await DrainSegmentAsync(response.Stream!, cancellationToken)
+                return await DrainSegmentAsync(response.Stream!, segmentIndex, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (UsenetCorruptArticleException exception)
@@ -411,15 +526,20 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 var bodyResponse = await _usenetClient
                     .DecodedBodyAsync(fallbackId, cancellationToken)
                     .ConfigureAwait(false);
+                await ThrowOnSegmentIdMismatchAsync(fallbackId, bodyResponse).ConfigureAwait(false);
                 Log.Debug(
                     "Segment {PrimaryIndex} recovered via fallback MessageId {FallbackId} while reading {FileName}.",
                     segmentIndex, fallbackId, _fileName);
-                return await DrainSegmentAsync(bodyResponse.Stream!, cancellationToken)
+                return await DrainSegmentAsync(bodyResponse.Stream!, segmentIndex, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (UsenetArticleNotFoundException)
             {
                 // Try the next alternate MessageId.
+            }
+            catch (UsenetUnexpectedResponseException e)
+            {
+                Log.Debug(e, "Fallback MessageId {FallbackId} returned another article.", fallbackId);
             }
         }
 
@@ -449,12 +569,28 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
     }
 
+    /// <summary>
+    /// Substitutes zeros for a segment that could not be downloaded, but only for its
+    /// exact length. Every byte after this segment is positioned by how many bytes it
+    /// contributes, so a wrong length corrupts the rest of the file instead of just the
+    /// part that failed — better to fail the read and let the player retry or report it.
+    /// </summary>
     private SegmentDownloadResult ZeroFillSegment(
         string messageTemplate,
         string segmentId,
+        int segmentIndex,
         Exception exception)
     {
-        var fill = _expectedSegmentSize > 0 ? _expectedSegmentSize : 1;
+        if (!_segmentSizes.TryGetFillLength(segmentIndex, out var fill, out var isExact))
+            throw CreateUnknownLengthFailure(segmentId, segmentIndex, exception);
+
+        if (!isExact)
+        {
+            Log.Debug(
+                "Using the observed {Bytes}-byte segment size of {FileName} to replace failed segment {SegmentId}.",
+                fill, _fileName, segmentId);
+        }
+
         return SegmentDownloadResult.ZeroFill(
             new MemoryStream(new byte[fill], writable: false),
             messageTemplate,
@@ -463,13 +599,34 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             exception);
     }
 
-    private async Task<Stream> DrainSegmentAsync(Stream source, CancellationToken cancellationToken)
+    private Exception CreateUnknownLengthFailure(string segmentId, int segmentIndex, Exception failure)
+    {
+        var message =
+            $"Segment {segmentIndex + 1} of {_segmentIds.Length} ({segmentId}) could not be downloaded " +
+            $"while reading \"{_fileName}\", and its exact length is unknown, so the rest of the file " +
+            "cannot be delivered at the right offsets. Repair the item to restore its segment sizes.";
+        return failure.IsNonRetryableDownloadException()
+            ? new NonRetryableDownloadException(message, failure)
+            : new RetryableDownloadException(message, failure);
+    }
+
+    private async Task<Stream> DrainSegmentAsync(
+        Stream source,
+        int segmentIndex,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var capacity = _expectedSegmentSize is > 0 and <= int.MaxValue ? (int)_expectedSegmentSize : 0;
+            var hasExactSize = _segmentSizes.TryGetExactSize(segmentIndex, out var exactSize);
+            var expected = hasExactSize ? exactSize : _estimatedSegmentSize;
+            var capacity = expected is > 0 and <= int.MaxValue ? (int)expected : 0;
             var buffer = new MemoryStream(capacity);
             await source.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+            var drained = buffer.Length;
+            if (hasExactSize)
+                AlignDrainedSegment(buffer, segmentIndex, drained, exactSize);
+            else
+                _segmentSizes.RecordObservedSize(segmentIndex, drained);
             buffer.Position = 0;
             return buffer;
         }
@@ -477,6 +634,38 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             await source.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Keeps a segment's contribution equal to its recorded length. A complete yEnc body
+    /// that decodes to fewer bytes than recorded means the recorded size is wrong, not
+    /// the data, so the shortfall is filled rather than retried — but leaving it unfilled
+    /// would shift every following byte. A longer body is left alone: the wire is the
+    /// better source of truth for bytes that actually arrived.
+    /// </summary>
+    private void AlignDrainedSegment(MemoryStream buffer, int segmentIndex, long drained, long expected)
+    {
+        if (drained == expected) return;
+
+        if (drained > expected)
+        {
+            Log.Debug(
+                "Segment {SegmentIndex} of {FileName} decoded {Drained} bytes but was recorded as {Expected}.",
+                segmentIndex, _fileName, drained, expected);
+            return;
+        }
+
+        var shortfall = expected - drained;
+        ZeroFillLogLimiter.Write(
+            "Segment {SegmentId} of {FileName} decoded {Bytes} bytes short of its recorded size. " +
+            "Filling the gap to keep the rest of the file aligned.",
+            _segmentIds.Span[segmentIndex],
+            _fileName,
+            shortfall);
+        if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
+            StreamTrace.TryZeroFill(sessionId, _segmentIds.Span[segmentIndex], shortfall);
+
+        buffer.SetLength(expected);
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)

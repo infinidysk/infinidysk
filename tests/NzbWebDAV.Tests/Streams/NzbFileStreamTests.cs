@@ -149,11 +149,12 @@ public class NzbFileStreamTests
                 new[] { segmentId }.AsMemory(),
                 client,
                 articleBufferSize: 0,
-                expectedSegmentSize: 5,
+                estimatedSegmentSize: 5,
                 failFastOnFirstSegment: false,
                 usePipelinedBodyRequests: false,
                 cancellationToken: CancellationToken.None,
-                fileName: fileName);
+                fileName: fileName,
+                exactSegmentSizes: new long[] { 5 });
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var buffer = new byte[5];
@@ -195,11 +196,12 @@ public class NzbFileStreamTests
                 new[] { "missing-one", "missing-two" }.AsMemory(),
                 client,
                 articleBufferSize: articleBufferSize,
-                expectedSegmentSize: 5,
+                estimatedSegmentSize: 5,
                 failFastOnFirstSegment: false,
                 usePipelinedBodyRequests: usePipelinedBodyRequests,
                 cancellationToken: CancellationToken.None,
-                fileName: fileName);
+                fileName: fileName,
+                exactSegmentSizes: new long[] { 5, 5 });
 
             var buffer = new byte[5];
             Assert.Equal(5, await stream.ReadAsync(buffer));
@@ -225,11 +227,12 @@ public class NzbFileStreamTests
             new[] { "missing-one", "missing-two", "missing-three", "missing-four" }.AsMemory(),
             client,
             articleBufferSize: 0,
-            expectedSegmentSize: 5,
+            estimatedSegmentSize: 5,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: false,
             cancellationToken: CancellationToken.None,
-            fileName: "/content/show/dead-episode.mkv");
+            fileName: "/content/show/dead-episode.mkv",
+            exactSegmentSizes: new long[] { 5, 5, 5, 5 });
 
         var buffer = new byte[5];
         Assert.Equal(5, await stream.ReadAsync(buffer));

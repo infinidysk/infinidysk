@@ -6,11 +6,73 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Middlewares;
 using NzbWebDAV.Services;
+using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Middlewares;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public class ExceptionMiddlewareTests
 {
+    [Fact]
+    public async Task UnalignableSegmentMidResponse_AbortsAndLogsWithoutAStackDump()
+    {
+        var reason =
+            $"Segment 7 of 12 could not be downloaded, and its exact length is unknown ({Guid.NewGuid()}).";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: true, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new RetryableDownloadException(
+                reason, new TimeoutException("Timeout executing nntp BODY command.")));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        Assert.True(lifetimeFeature.Aborted);
+        var logged = Assert.Single(events, e => e.RenderMessage().Contains(reason, StringComparison.Ordinal));
+        Assert.Equal(LogEventLevel.Error, logged.Level);
+        Assert.Null(logged.Exception);
+    }
+
+    private static async Task<IReadOnlyList<LogEvent>> CaptureLogsAsync(Func<Task> action)
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+
+        return sink.Events;
+    }
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+
+        public IReadOnlyList<LogEvent> Events
+        {
+            get
+            {
+                lock (_events) return _events.ToArray();
+            }
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            lock (_events) _events.Add(logEvent);
+        }
+    }
+
     [Fact]
     public async Task MissingArticleAfterResponseStarted_AbortsConnection()
     {
