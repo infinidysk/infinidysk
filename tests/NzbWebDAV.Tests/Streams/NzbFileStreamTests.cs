@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
@@ -284,6 +285,43 @@ public class NzbFileStreamTests
         Assert.Equal(1, client.BodyRequestCounts["two"]);
     }
 
+    [Fact]
+    public async Task Seek_WhenIndexedSegmentEndsBeforeOffset_ThrowsAndDisposesBodies()
+    {
+        string[] segmentIds = ["short"];
+        var segments = new Dictionary<string, byte[]> { ["short"] = [1, 2, 3, 4, 5] };
+        var ranges = new Dictionary<string, LongRange> { ["short"] = new(0, 5) };
+        var openedBodies = new List<TrackingMemoryStream>();
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            ranges,
+            (_, _) =>
+            {
+                var body = new TrackingMemoryStream([1, 2]);
+                openedBodies.Add(body);
+                return body;
+            });
+        await using var stream = new NzbFileStream(
+            segmentIds,
+            fileSize: 5,
+            client,
+            articleBufferSize: 0,
+            segmentByteRanges: null,
+            usePipelinedBodyRequests: false,
+            fileName: "short.bin");
+        stream.Seek(4, SeekOrigin.Begin);
+
+        var exception = await Assert.ThrowsAsync<SeekPositionNotFoundException>(
+            async () => await stream.ReadAtLeastAsync(
+                new byte[1], 1, throwOnEndOfStream: false));
+
+        Assert.Contains("Byte position 4", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("segment 1", exception.Message, StringComparison.Ordinal);
+        Assert.NotEmpty(openedBodies);
+        Assert.All(openedBodies, body => Assert.True(body.Disposed));
+    }
+
     private static FakeNntpClient CreateClient()
     {
         return new FakeNntpClient(
@@ -463,5 +501,16 @@ public class NzbFileStreamTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class TrackingMemoryStream(byte[] bytes) : MemoryStream(bytes, writable: false)
+    {
+        public bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
     }
 }

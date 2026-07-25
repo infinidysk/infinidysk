@@ -265,6 +265,146 @@ public class StreamingTimeoutTests
         Assert.Equal(0, breaker.TrippedUntilMs);
     }
 
+    [Fact]
+    public async Task DecodedBodiesAsync_StreamingTimeout_RetriesOnFreshConnection()
+    {
+        HangingPipelinedNntpClient? hanging = null;
+        var created = 0;
+        using var pool = new ConnectionPool<INntpClient>(maxConnections: 2, _ =>
+        {
+            if (Interlocked.Increment(ref created) == 1)
+            {
+                hanging = new HangingPipelinedNntpClient();
+                return ValueTask.FromResult<INntpClient>(hanging);
+            }
+
+            return ValueTask.FromResult<INntpClient>(new HealthyPipelinedNntpClient());
+        });
+        var breaker = new ProviderCircuitBreaker("pipelined-timeout-retry");
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "pipelined-timeout-retry");
+        using var cts = new CancellationTokenSource();
+        using var timeoutScope = cts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromMilliseconds(50),
+            MaxRetries = 1,
+        });
+        var callbacks = new List<ArticleBodyResult>();
+
+        var batch = await client.DecodedBodiesAsync(
+            [new SegmentId("one"), new SegmentId("two")],
+            result => callbacks.Add(result),
+            cts.Token);
+
+        Assert.Equal(2, batch.Responses.Count);
+        Assert.NotNull(hanging);
+        Assert.True(hanging!.SawCancellation);
+        Assert.True(hanging.Disposed);
+        Assert.Equal(2, created);
+        Assert.Equal([ArticleBodyResult.Retrieved], callbacks);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_StreamingTimeoutExhausted_ReportsNotRetrievedExactlyOnce()
+    {
+        var clients = new List<HangingPipelinedNntpClient>();
+        using var pool = new ConnectionPool<INntpClient>(maxConnections: 2, _ =>
+        {
+            var connection = new HangingPipelinedNntpClient();
+            clients.Add(connection);
+            return ValueTask.FromResult<INntpClient>(connection);
+        });
+        var breaker = new ProviderCircuitBreaker("pipelined-timeout-exhausted");
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "pipelined-timeout-exhausted");
+        using var cts = new CancellationTokenSource();
+        using var timeoutScope = cts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromMilliseconds(50),
+            MaxRetries = 1,
+        });
+        var callbacks = new List<ArticleBodyResult>();
+
+        var exception = await Assert.ThrowsAsync<TimeoutException>(() =>
+            client.DecodedBodiesAsync(
+                [new SegmentId("one"), new SegmentId("two")],
+                result => callbacks.Add(result),
+                cts.Token));
+
+        Assert.Contains("2 attempts", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(2, clients.Count);
+        Assert.All(clients, connection =>
+        {
+            Assert.True(connection.SawCancellation);
+            Assert.True(connection.Disposed);
+        });
+        Assert.Equal([ArticleBodyResult.NotRetrieved], callbacks);
+        Assert.Equal(1, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_CallerCancellation_DoesNotRetryOrRecordBreakerFailure()
+    {
+        var hanging = new HangingPipelinedNntpClient();
+        var created = 0;
+        using var pool = new ConnectionPool<INntpClient>(maxConnections: 2, _ =>
+        {
+            Interlocked.Increment(ref created);
+            return ValueTask.FromResult<INntpClient>(hanging);
+        });
+        var breaker = new ProviderCircuitBreaker("pipelined-caller-cancel");
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "pipelined-caller-cancel");
+        using var cts = new CancellationTokenSource();
+        using var timeoutScope = cts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromSeconds(5),
+            MaxRetries = 3,
+        });
+        var callbacks = new List<ArticleBodyResult>();
+        var batchTask = client.DecodedBodiesAsync(
+            [new SegmentId("one")],
+            result => callbacks.Add(result),
+            cts.Token);
+
+        await hanging.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => batchTask);
+        Assert.Equal(1, created);
+        Assert.Equal([ArticleBodyResult.NotRetrieved], callbacks);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_TimeoutThenSuccess_DoesNotTripBreaker()
+    {
+        var created = 0;
+        using var pool = new ConnectionPool<INntpClient>(maxConnections: 2, _ =>
+            ValueTask.FromResult<INntpClient>(
+                Interlocked.Increment(ref created) == 1
+                    ? new HangingPipelinedNntpClient()
+                    : new HealthyPipelinedNntpClient()));
+        var breaker = new ProviderCircuitBreaker("pipelined-timeout-recovery");
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "pipelined-timeout-recovery");
+        using var cts = new CancellationTokenSource();
+        using var timeoutScope = cts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromMilliseconds(50),
+            MaxRetries = 1,
+        });
+
+        await client.DecodedBodiesAsync(
+            [new SegmentId("one")],
+            onConnectionReadyAgain: null,
+            cts.Token);
+
+        Assert.False(breaker.IsTripped);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
     /// <summary>
     /// BODY that hangs until cancelled, firing NotRetrieved exactly once
     /// (in-flight cancel → connection not reusable).
@@ -370,7 +510,7 @@ public class StreamingTimeoutTests
         }
     }
 
-    private sealed class HealthyNntpClient(IReadOnlyDictionary<string, byte[]> segments) : NntpClient
+    private class HealthyNntpClient(IReadOnlyDictionary<string, byte[]> segments) : NntpClient
     {
         public override Task ConnectAsync(
             string host, int port, bool useSsl, CancellationToken cancellationToken) =>
@@ -471,6 +611,58 @@ public class StreamingTimeoutTests
             output.Write(Encoding.ASCII.GetBytes("\r\n"));
             output.Write(Encoding.ASCII.GetBytes($"=yend size={source.Length}\r\n"));
             return output.ToArray();
+        }
+    }
+
+    private sealed class HangingPipelinedNntpClient()
+        : HealthyNntpClient(new Dictionary<string, byte[]>())
+    {
+        public TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool SawCancellation { get; private set; }
+        public bool Disposed { get; private set; }
+
+        public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+                throw new InvalidOperationException("Hang was expected to be cancelled.");
+            }
+            catch (OperationCanceledException)
+            {
+                SawCancellation = true;
+                onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved);
+                throw;
+            }
+        }
+
+        public override void Dispose() => Disposed = true;
+    }
+
+    private sealed class HealthyPipelinedNntpClient()
+        : HealthyNntpClient(new Dictionary<string, byte[]>())
+    {
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var responses = segmentIds.Select(segmentId =>
+                Task.FromResult(new UsenetDecodedBodyResponse
+                {
+                    SegmentId = segmentId.ToString(),
+                    ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+                    ResponseMessage = "222 ok",
+                    Stream = null!,
+                })).ToArray();
+            onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            return Task.FromResult(new UsenetDecodedBodyBatch { Responses = responses });
         }
     }
 }
