@@ -60,9 +60,11 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function Queue(props: Route.ComponentProps) {
-    const { queuePageSize, historyPageSize, queuePage, historyPage, totalQueueCount, totalHistoryCount } = props.loaderData;
+    const { queuePageSize, historyPageSize, queuePage, historyPage } = props.loaderData;
     const [queueSlots, setQueueSlots] = useState<PresentationQueueSlot[]>(props.loaderData.queueSlots);
     const [historySlots, setHistorySlots] = useState<PresentationHistorySlot[]>(props.loaderData.historySlots);
+    const [totalQueueCount, setTotalQueueCount] = useState(props.loaderData.totalQueueCount);
+    const [totalHistoryCount, setTotalHistoryCount] = useState(props.loaderData.totalHistoryCount);
     const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
     const uploadQueueRef = useRef<UploadingFile[]>([]);
     const manualCategoryRef = useRef<string>(props.loaderData.manualCategory);
@@ -71,6 +73,8 @@ export default function Queue(props: Route.ComponentProps) {
 
     useEffect(() => { setQueueSlots(props.loaderData.queueSlots); }, [props.loaderData.queueSlots]);
     useEffect(() => { setHistorySlots(props.loaderData.historySlots); }, [props.loaderData.historySlots]);
+    useEffect(() => { setTotalQueueCount(props.loaderData.totalQueueCount); }, [props.loaderData.totalQueueCount]);
+    useEffect(() => { setTotalHistoryCount(props.loaderData.totalHistoryCount); }, [props.loaderData.totalHistoryCount]);
 
     const queueTotalPages = Math.max(1, Math.ceil(totalQueueCount / queuePageSize));
     const historyTotalPages = Math.max(1, Math.ceil(totalHistoryCount / historyPageSize));
@@ -113,7 +117,14 @@ export default function Queue(props: Route.ComponentProps) {
     const historyEvents = useHistoryEvents(setHistorySlots, historyPageSize);
 
     // websocket
-    useQueueHistoryWebsocket(queueEvents, historyEvents, isQueueLive, isHistoryLive);
+    useQueueHistoryWebsocket(
+        queueEvents,
+        historyEvents,
+        isQueueLive,
+        isHistoryLive,
+        setTotalQueueCount,
+        setTotalHistoryCount,
+    );
 
     // uploads
     const dropzone = useQueueDropzone(setUploadingFiles, uploadQueueRef, manualCategoryRef);
@@ -136,7 +147,7 @@ export default function Queue(props: Route.ComponentProps) {
                     <input {...dropzone.getInputProps()} />
                     <QueueTable
                         queueSlots={combinedQueueSlots}
-                        totalQueueCount={props.loaderData.totalQueueCount + uploadingFiles.length}
+                        totalQueueCount={totalQueueCount + uploadingFiles.length}
                         pageNumber={queuePage}
                         pageSize={queuePageSize}
                         pageSizeOptions={PAGE_SIZE_OPTIONS}
@@ -156,10 +167,10 @@ export default function Queue(props: Route.ComponentProps) {
             </div>
 
             {/* history */}
-            {totalHistoryCount > 0 &&
+            {(totalHistoryCount > 0 || historySlots.length > 0) &&
                 <HistoryTable
                     historySlots={historySlots}
-                    totalHistoryCount={props.loaderData.totalHistoryCount}
+                    totalHistoryCount={totalHistoryCount}
                     pageNumber={historyPage}
                     pageSize={historyPageSize}
                     pageSizeOptions={PAGE_SIZE_OPTIONS}
