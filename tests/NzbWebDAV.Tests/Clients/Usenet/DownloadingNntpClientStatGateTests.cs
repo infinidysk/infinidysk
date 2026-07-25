@@ -157,6 +157,63 @@ public class DownloadingNntpClientStatGateTests
             order);
     }
 
+    [Fact]
+    public async Task DecodedBodiesPipelinedAsync_RecordsSemaphoreWait_UnderQueueContention()
+    {
+        var holdFirst = new ManualResetEventSlim(false);
+        var entered = new ConcurrentQueue<string>();
+        var fake = new BlockingPipelinedBodyNntpClient(holdFirst, entered);
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(fake, config);
+
+        var heldCtx = new QueueDownloadContext
+        {
+            IsPrimary = true,
+            GetFanOutConcurrency = () => 1,
+        };
+        var waitingCtx = new QueueDownloadContext
+        {
+            IsPrimary = false,
+            GetFanOutConcurrency = () => 1,
+        };
+
+        using var heldCts = new CancellationTokenSource();
+        using var heldReg = heldCts.Token.SetContext(heldCtx);
+        var heldTask = CollectPipelinedBodiesAsync(client, ["held"], heldCts.Token);
+        await WaitUntilAsync(() => entered.Contains("held"), TimeSpan.FromSeconds(2));
+
+        using var waitingCts = new CancellationTokenSource();
+        using var waitingReg = waitingCts.Token.SetContext(waitingCtx);
+        var waitingTask = CollectPipelinedBodiesAsync(client, ["waiting"], waitingCts.Token);
+
+        await Task.Delay(80);
+        Assert.DoesNotContain("waiting", entered);
+        Assert.Equal(0, waitingCtx.SemaphoreWaitMilliseconds);
+
+        holdFirst.Set();
+        await Task.WhenAll(heldTask, waitingTask);
+
+        Assert.Contains("waiting", entered);
+        Assert.True(
+            waitingCtx.SemaphoreWaitMilliseconds > 0,
+            $"Expected pipelined wait to record semaphore contention, got {waitingCtx.SemaphoreWaitMilliseconds}ms");
+    }
+
+    private static async Task<List<PipelinedBodyResult>> CollectPipelinedBodiesAsync(
+        DownloadingNntpClient client,
+        IReadOnlyList<string> segmentIds,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<PipelinedBodyResult>();
+        await foreach (var result in client.DecodedBodiesPipelinedAsync(
+                           segmentIds, depth: 1, cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(result);
+        }
+
+        return results;
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -348,6 +405,33 @@ public class DownloadingNntpClientStatGateTests
             finally
             {
                 onExit?.Invoke();
+            }
+        }
+    }
+
+    private sealed class BlockingPipelinedBodyNntpClient(
+        ManualResetEventSlim gate,
+        ConcurrentQueue<string> entered) : MinimalNntpClient
+    {
+        public override async IAsyncEnumerable<PipelinedBodyResult> DecodedBodiesPipelinedAsync(
+            IReadOnlyList<string> segmentIds,
+            int depth,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            foreach (var segmentId in segmentIds)
+            {
+                entered.Enqueue(segmentId);
+                while (!gate.IsSet)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await Task.Delay(10, cancellationToken).ConfigureAwait(false);
+                }
+
+                yield return new PipelinedBodyResult
+                {
+                    SegmentId = segmentId,
+                    Found = true,
+                };
             }
         }
     }

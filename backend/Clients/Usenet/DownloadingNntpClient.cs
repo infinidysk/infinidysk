@@ -173,20 +173,27 @@ public class DownloadingNntpClient : WrappingNntpClient
         return (semaphore, priority);
     }
 
-    private async Task<PrioritizedSemaphore> AcquireExclusiveConnectionAsync(CancellationToken cancellationToken)
+    private async Task WaitForSemaphoreAsync(
+        PrioritizedSemaphore semaphore,
+        SemaphorePriority priority,
+        CancellationToken cancellationToken)
     {
-        var (semaphore, priority) = SelectSemaphore(cancellationToken);
         var queueContext = cancellationToken.GetContext<QueueDownloadContext>();
         if (queueContext is null)
         {
             await semaphore.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
+            return;
         }
-        else
-        {
-            var waitTimer = Stopwatch.StartNew();
-            await semaphore.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
-            queueContext.RecordSemaphoreWait(waitTimer.ElapsedMilliseconds);
-        }
+
+        var waitTimer = Stopwatch.StartNew();
+        await semaphore.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
+        queueContext.RecordSemaphoreWait(waitTimer.ElapsedMilliseconds);
+    }
+
+    private async Task<PrioritizedSemaphore> AcquireExclusiveConnectionAsync(CancellationToken cancellationToken)
+    {
+        var (semaphore, priority) = SelectSemaphore(cancellationToken);
+        await WaitForSemaphoreAsync(semaphore, priority, cancellationToken).ConfigureAwait(false);
         return semaphore;
     }
 
@@ -244,7 +251,7 @@ public class DownloadingNntpClient : WrappingNntpClient
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var (semaphore, priority) = SelectSemaphore(cancellationToken);
-        await semaphore.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
+        await WaitForSemaphoreAsync(semaphore, priority, cancellationToken).ConfigureAwait(false);
         try
         {
             await foreach (var result in base.StatsPipelinedAsync(segmentIds, depth, cancellationToken)
@@ -262,7 +269,7 @@ public class DownloadingNntpClient : WrappingNntpClient
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var (semaphore, priority) = SelectSemaphore(cancellationToken);
-        await semaphore.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
+        await WaitForSemaphoreAsync(semaphore, priority, cancellationToken).ConfigureAwait(false);
         try
         {
             await foreach (var result in base.DecodedBodiesPipelinedAsync(segmentIds, depth, cancellationToken)
@@ -280,7 +287,7 @@ public class DownloadingNntpClient : WrappingNntpClient
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var (semaphore, priority) = SelectSemaphore(cancellationToken);
-        await semaphore.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
+        await WaitForSemaphoreAsync(semaphore, priority, cancellationToken).ConfigureAwait(false);
         try
         {
             await foreach (var result in base.DecodedArticlesPipelinedAsync(segmentIds, depth, cancellationToken)
