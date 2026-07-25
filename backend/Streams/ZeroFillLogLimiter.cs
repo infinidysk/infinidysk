@@ -16,12 +16,17 @@ internal static class ZeroFillLogLimiter
     private static readonly TimeSpan CleanupThreshold = TimeSpan.FromMinutes(5);
     private static int _callCount;
 
+    /// <param name="context">
+    /// Optional diagnostic detail appended as its own property, so a warning explains
+    /// which part of which file fell short without needing a second log line.
+    /// </param>
     public static void Write(
         string messageTemplate,
         string segmentId,
         string fileName,
         long bytes,
-        Exception? exception = null)
+        Exception? exception = null,
+        string? context = null)
     {
         var now = DateTime.UtcNow;
         var state = Windows.GetOrAdd(fileName, static _ => new WindowState());
@@ -53,10 +58,15 @@ internal static class ZeroFillLogLimiter
                     fileName);
             }
 
+            var template = context is null ? messageTemplate : messageTemplate + " {Context}";
+            object?[] values = context is null
+                ? [segmentId, fileName, bytes]
+                : [segmentId, fileName, bytes, context];
+
             if (exception is null)
-                Log.Warning(messageTemplate, segmentId, fileName, bytes);
+                Log.Warning(template, values);
             else
-                exception.LogWarningKnownOrStack(messageTemplate, segmentId, fileName, bytes);
+                exception.LogWarningKnownOrStack(template, values);
         }
 
         if (Interlocked.Increment(ref _callCount) % 256 == 0)

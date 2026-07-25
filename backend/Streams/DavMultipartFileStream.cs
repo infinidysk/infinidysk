@@ -218,7 +218,7 @@ public class DavMultipartFileStream : Stream
             {
                 var part = fileParts[i];
                 var extraOffset = (i == firstFilePartIndex) ? firstOffset : 0;
-                yield return Task.FromResult(OpenPart(part, extraOffset));
+                yield return Task.FromResult(OpenPart(part, extraOffset, i));
                 i++;
                 continue;
             }
@@ -234,7 +234,7 @@ public class DavMultipartFileStream : Stream
         }
     }
 
-    private Stream OpenPart(DavMultipartFile.FilePart part, long extraOffset)
+    private Stream OpenPart(DavMultipartFile.FilePart part, long extraOffset, int partIndex)
     {
         if (part.SegmentIdByteRange.StartInclusive != 0 ||
             part.SegmentIdByteRange.Count < 0 ||
@@ -269,7 +269,16 @@ public class DavMultipartFileStream : Stream
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var partId = part.SegmentIds.FirstOrDefault()
                      ?? $"range:{part.FilePartByteRange.StartInclusive}-{part.FilePartByteRange.EndExclusive}";
-        return new PaddedLengthStream(stream, expectedLength, partId, _fileName);
+        var totalParts = (_mpf.Metadata.FileParts?.Length ?? 0) +
+                         (_mpf.Metadata.PendingParts?.Length ?? 0);
+        return new PaddedLengthStream(stream, expectedLength, partId, _fileName, new MultipartPartContext
+        {
+            PartNumber = partIndex + 1,
+            PartCount = totalParts,
+            SeekOffsetWithinPart = extraOffset,
+            DeclaredVolumeLength = effectivePartLength,
+            IsEncrypted = _mpf.Metadata.AesParams is not null,
+        });
     }
 
     internal static long GetEffectivePartLength(DavMultipartFile.FilePart part) =>
@@ -281,12 +290,17 @@ public class DavMultipartFileStream : Stream
         var meta = _mpf.Metadata;
         if (targetIndex >= meta.FileParts.Length)
         {
-            // Resolver should always grow FileParts when there were pending
-            // parts. If we land here, treat as EOF — CombinedStream advances
-            // to the next yield (which will hit yield break).
-            return new MemoryStream(Array.Empty<byte>(), writable: false);
+            // The resolver always grows FileParts when pending parts remain, so landing
+            // here means the volume could not be resolved. Returning an empty stream
+            // would look like a clean end of file and hand the player a silently
+            // truncated download.
+            throw new IncompleteMultipartPartException(
+                $"Volume {targetIndex + 1} of \"{_fileName ?? "unknown"}\" could not be resolved from its " +
+                $"metadata ({meta.FileParts.Length} resolved, {meta.PendingParts?.Length ?? 0} pending). " +
+                "The archive layout could not be read, so the rest of the file cannot be streamed.");
         }
-        return OpenPart(meta.FileParts[targetIndex], 0);
+
+        return OpenPart(meta.FileParts[targetIndex], 0, targetIndex);
     }
 
     protected override void Dispose(bool disposing)

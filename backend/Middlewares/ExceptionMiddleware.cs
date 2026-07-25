@@ -179,10 +179,13 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         }
         catch (Exception e) when (IsDavItemRequest(context))
         {
+            // A volume that is short or unresolvable is missing data, not a server
+            // fault, and repairing the item is what can actually fix it.
+            var isIncompleteData = e.TryGetCausingException(out IncompleteMultipartPartException? _);
             if (!context.Response.HasStarted)
             {
                 context.Response.Clear();
-                context.Response.StatusCode = 500;
+                context.Response.StatusCode = isIncompleteData ? 404 : 500;
             }
 
             var filePath = GetRequestFilePath(context);
@@ -237,7 +240,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                 }
             });
 
-            if (IsTruncatedCiphertextException(e) &&
+            if ((IsTruncatedCiphertextException(e) || isIncompleteData) &&
                 context.Items["DavItem"] is DavItem truncatedItem)
             {
                 ScheduleRepair(truncatedItem.Id);

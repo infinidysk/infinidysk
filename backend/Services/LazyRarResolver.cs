@@ -106,7 +106,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
     // Convenience for the sequential read path (DavMultipartFileStream
     // crossing a single volume boundary during playback). Resolves just one
     // part — enough to keep the iterator advancing.
-    public async Task<DavMultipartFile.Meta> ResolveNextAsync(
+    public virtual async Task<DavMultipartFile.Meta> ResolveNextAsync(
         DavMultipartFile mpf,
         CancellationToken ct)
     {
