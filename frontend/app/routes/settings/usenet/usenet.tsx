@@ -327,6 +327,18 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         [displayedProviders],
     );
 
+    const existingStorageGroups = useMemo(
+        () =>
+            [
+                ...new Set(
+                    providerConfig.Providers.map((p) => p.StorageGroup?.trim() ?? "").filter(
+                        Boolean,
+                    ),
+                ),
+            ].sort((a, b) => a.localeCompare(b)),
+        [providerConfig.Providers],
+    );
+
     // handlers
     const handleAddProvider = useCallback(() => {
         setEditingIndex(null);
@@ -462,6 +474,10 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
 
     const renderProviderCard = (provider: ConnectionDetails, index: number) => {
         const isDisabled = provider.Type === ProviderType.Disabled;
+        const displayName = provider.Nickname?.trim() || provider.Host;
+        const storageGroupLabel = provider.StorageGroup?.trim() || "";
+        const liveConnections = connections[index]?.live ?? 0;
+
         return (
             <SortableItem key={providerKey(provider)} id={providerKey(provider)} disabled={!cascadeEnabled}>
                 {({ setNodeRef, setActivatorNodeRef, attributes, listeners, style, isDragging }) => (
@@ -470,26 +486,27 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                         style={style}
                         className={`overflow-hidden rounded-lg border ${providerCardTone(provider.Type)}`}
                     >
-                        <div className="space-y-3 p-4">
+                        <div className="space-y-3 p-3.5">
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0 flex-1">
-                                    <div className="break-all text-sm font-semibold leading-snug text-base-content">
+                                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                                         {cascadeEnabled && !isDisabled && (
-                                            <Badge className="badge-ghost badge-sm mr-2 align-middle">#{index + 1}</Badge>
+                                            <Badge className="badge-ghost badge-sm shrink-0">#{index + 1}</Badge>
                                         )}
-                                        {provider.Nickname?.trim() || provider.Host}
-                                        {isDisabled && <Badge className="badge-ghost badge-sm ml-2 align-middle">Disabled</Badge>}
+                                        <span className="min-w-0 break-all text-sm font-semibold leading-snug text-base-content">
+                                            {displayName}
+                                        </span>
+                                        {isDisabled && (
+                                            <Badge className="badge-ghost badge-sm shrink-0">Disabled</Badge>
+                                        )}
                                     </div>
-                                    {provider.Nickname?.trim() && (
-                                        <div className="mt-0.5 break-all text-xs text-base-content/60">
-                                            {provider.Host}
-                                        </div>
-                                    )}
-                                    <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-base-content/50">
-                                        Port {provider.Port}
+                                    <div className="mt-0.5 break-all text-xs text-base-content/60">
+                                        {provider.Nickname?.trim()
+                                            ? `${provider.Host}:${provider.Port}`
+                                            : `Port ${provider.Port}`}
                                     </div>
                                 </div>
-                                <div className="flex shrink-0 gap-1">
+                                <div className="flex shrink-0 gap-0.5">
                                     {cascadeEnabled && (
                                         <button
                                             type="button"
@@ -539,64 +556,30 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                                 </div>
                             </div>
 
-                            <div className="border-t border-base-content/10 pt-3">
-                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                    <div className="relative flex min-w-0 items-center gap-2">
-                                        <div className="text-primary">
-                                            <Icon name="person" className="!text-[18px]" />
-                                        </div>
-                                        <div className="flex min-w-0 flex-col">
-                                            <span className="text-[11px] uppercase tracking-wide text-base-content/50">Username</span>
-                                            <span className="truncate text-sm text-base-content">{provider.User}</span>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-center gap-2.5 rounded-lg border border-base-content/10 bg-base-200/40 px-2.5 py-2">
-                                        <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md bg-base-300 text-base-content/60">
-                                            <Icon name="hub" className="!text-[16px]" />
-                                        </div>
-                                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                                            <span className="text-[10px] font-medium uppercase tracking-wide text-base-content/50">Connections</span>
-                                            <span className="break-all text-sm font-medium text-base-content">
-                                                {`${connections[index]?.live ?? 0} / ${provider.MaxConnections} max`}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <div className="relative flex min-w-0 items-center gap-2">
-                                        <div className="text-primary">
-                                            <Icon name={provider.UseSsl ? "lock" : "lock_open"} className="!text-[18px]" />
-                                        </div>
-                                        <div className="flex min-w-0 flex-col">
-                                            <span className="text-[11px] uppercase tracking-wide text-base-content/50">Security</span>
-                                            <span className="truncate text-sm text-base-content">
-                                                {provider.UseSsl ? "SSL Enabled" : "No SSL"}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <div className="relative flex min-w-0 items-center gap-2">
-                                        <div className="text-primary">
-                                            <Icon name="account_tree" className="!text-[18px]" />
-                                        </div>
-                                        <div className="flex min-w-0 flex-col">
-                                            <span className="text-[11px] uppercase tracking-wide text-base-content/50">Behavior</span>
-                                            <span className="truncate text-sm text-base-content">
-                                                {PROVIDER_TYPE_LABELS[provider.Type]}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    {provider.StorageGroup?.trim() && (
-                                        <div className="relative flex min-w-0 items-center gap-2">
-                                            <div className="text-primary">
-                                                <Icon name="storage" className="!text-[18px]" />
-                                            </div>
-                                            <div className="flex min-w-0 flex-col">
-                                                <span className="text-[11px] uppercase tracking-wide text-base-content/50">Storage group</span>
-                                                <span className="truncate text-sm text-base-content">{provider.StorageGroup.trim()}</span>
-                                            </div>
-                                        </div>
+                            <div className="border-t border-base-content/10 pt-2.5">
+                                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                                    <ProviderCardMeta
+                                        icon="person"
+                                        label="Username"
+                                        value={provider.User}
+                                    />
+                                    <ProviderCardMeta
+                                        icon="hub"
+                                        label="Connections"
+                                        value={`${liveConnections} / ${provider.MaxConnections} max`}
+                                        emphasize
+                                    />
+                                    <ProviderCardMeta
+                                        icon="account_tree"
+                                        label="Behavior"
+                                        value={PROVIDER_TYPE_LABELS[provider.Type]}
+                                    />
+                                    {storageGroupLabel && (
+                                        <ProviderCardMeta
+                                            icon="storage"
+                                            label="Storage group"
+                                            value={storageGroupLabel}
+                                        />
                                     )}
                                 </div>
 
@@ -767,9 +750,9 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                 ) : (
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                     <SortableContext items={providerConfig.Providers.map(providerKey)} strategy={rectSortingStrategy}>
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                         {storagePartitions.ungrouped.length > 0 && (
-                            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                                 {storagePartitions.ungrouped.map(({ provider, index }) =>
                                     renderProviderCard(provider, index),
                                 )}
@@ -778,22 +761,24 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                         {storagePartitions.groups.map(({ name, items }) => (
                             <div
                                 key={name}
-                                className="space-y-3 rounded-lg border border-base-content/20 bg-base-200/20 p-3"
+                                className="rounded-lg bg-gradient-to-br from-primary via-secondary to-accent p-px"
                             >
-                                <div className="flex items-center gap-2 px-1">
-                                    <Icon name="storage" className="!text-[18px] text-base-content/60" />
-                                    <span className="text-xs font-semibold uppercase tracking-wide text-base-content/70">
-                                        {name}
-                                    </span>
-                                    <span className="badge badge-ghost badge-sm">
-                                        {items.length}{" "}
-                                        {items.length === 1 ? "provider" : "providers"}
-                                    </span>
-                                </div>
-                                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                                    {items.map(({ provider, index }) =>
-                                        renderProviderCard(provider, index),
-                                    )}
+                                <div className="space-y-2 rounded-[calc(var(--radius-box)-1px)] bg-base-200/90 p-2.5">
+                                    <div className="flex items-center gap-2 px-1">
+                                        <Icon name="storage" className="!text-[16px] text-secondary" />
+                                        <span className="text-xs font-semibold uppercase tracking-wide text-base-content/80">
+                                            {name}
+                                        </span>
+                                        <span className="badge badge-ghost badge-sm">
+                                            {items.length}{" "}
+                                            {items.length === 1 ? "provider" : "providers"}
+                                        </span>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                                        {items.map(({ provider, index }) =>
+                                            renderProviderCard(provider, index),
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         ))}
@@ -807,6 +792,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
             <ProviderModal
                 show={showModal}
                 provider={editingIndex !== null ? providerConfig.Providers[editingIndex] : null}
+                existingStorageGroups={existingStorageGroups}
                 onClose={handleCloseModal}
                 onSave={handleSaveProvider}
                 onApplyPipelining={handleApplyPipelining}
@@ -822,6 +808,44 @@ type UsageRowProps = {
     onReset: () => void;
 };
 
+function ProviderCardMeta({
+    icon,
+    label,
+    value,
+    emphasize = false,
+}: {
+    icon: string;
+    label: string;
+    value: string;
+    emphasize?: boolean;
+}) {
+    if (emphasize) {
+        return (
+            <div className="flex items-center gap-2.5 rounded-lg border border-base-content/10 bg-base-200/40 px-2.5 py-2">
+                <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md bg-base-300 text-base-content/60">
+                    <Icon name={icon} className="!text-[16px]" />
+                </div>
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-base-content/50">{label}</span>
+                    <span className="truncate text-sm font-medium tabular-nums text-base-content">{value}</span>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="relative flex min-w-0 items-center gap-2">
+            <div className="text-primary">
+                <Icon name={icon} className="!text-[18px]" />
+            </div>
+            <div className="flex min-w-0 flex-col">
+                <span className="text-[11px] uppercase tracking-wide text-base-content/50">{label}</span>
+                <span className="truncate text-sm text-base-content">{value}</span>
+            </div>
+        </div>
+    );
+}
+
 function UsageRow({ provider, usage, onReset }: UsageRowProps) {
     const limit = provider.ByteLimit ?? null;
     const used = usage?.bytesUsed ?? 0;
@@ -834,23 +858,31 @@ function UsageRow({ provider, usage, onReset }: UsageRowProps) {
         ? (pct >= 100 ? "danger" : pct >= 95 ? "danger" : pct >= 80 ? "warn" : "ok")
         : "neutral";
 
-    const showAnything = hasLimit || used > 0 || usage !== undefined;
-    if (!showAnything) return null;
-
     const valueToneClass = tone === "danger" ? "text-error" : tone === "warn" ? "text-warning" : "text-base-content";
-    const barToneClass = tone === "danger" ? "bg-error" : tone === "warn" ? "bg-warning" : tone === "ok" ? "bg-success" : "bg-base-content/40";
+    const progressToneClass = tone === "danger"
+        ? "progress-error"
+        : tone === "warn"
+            ? "progress-warning"
+            : tone === "ok"
+                ? "progress-success"
+                : "progress-primary";
 
     return (
-        <div className="mt-3 flex flex-col gap-2 rounded-lg border border-base-content/10 bg-base-200/40 p-3">
-            <div className="flex flex-wrap items-center gap-2.5">
+        <div className="mt-2.5 flex flex-col gap-1.5 rounded-lg border border-base-content/10 bg-base-200/40 p-2.5">
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                 <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-base-content/50">
                     {hasLimit ? "Data Cap" : "Data Used"}
                 </span>
-                <span className={`flex-1 text-xs font-semibold tabular-nums ${valueToneClass}`}>
+                <span className={`min-w-0 flex-1 text-xs font-semibold tabular-nums ${valueToneClass}`}>
                     {hasLimit
-                        ? `${formatBytes(used)} / ${formatBytes(limit as number)}  ·  ${pct.toFixed(1)}%`
+                        ? `${formatBytes(used)} / ${formatBytes(limit as number)} · ${pct.toFixed(1)}%`
                         : formatBytes(used)}
                 </span>
+                {hasLimit && usage && usage.daysRemaining !== null && usage.daysRemaining !== undefined && !usage.overLimit && (
+                    <span className="text-[11px] tabular-nums text-base-content/50">
+                        {formatDaysRemaining(usage.daysRemaining)}
+                    </span>
+                )}
                 <button
                     type="button"
                     className="btn btn-ghost btn-xs"
@@ -860,18 +892,19 @@ function UsageRow({ provider, usage, onReset }: UsageRowProps) {
                     Reset
                 </button>
             </div>
-            {hasLimit && (
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-base-300">
-                    <div
-                        className={`h-full rounded-full transition-[width] duration-200 ${barToneClass}`}
-                        style={{ width: `${pct}%` }}
-                    />
-                </div>
-            )}
-            {usage && usage.daysRemaining !== null && usage.daysRemaining !== undefined && !usage.overLimit && (
-                <div className="text-[11px] tabular-nums text-base-content/50">
-                    {formatDaysRemaining(usage.daysRemaining)}
-                </div>
+            {hasLimit ? (
+                <progress
+                    className={`progress h-1.5 w-full ${progressToneClass}`}
+                    value={pct}
+                    max={100}
+                />
+            ) : (
+                <progress
+                    className="progress progress-neutral h-1.5 w-full"
+                    value={0}
+                    max={100}
+                    aria-label="Data used (no cap)"
+                />
             )}
             {usage?.overLimit && (
                 <div className="text-[11px] leading-snug text-error">
@@ -885,19 +918,21 @@ function UsageRow({ provider, usage, onReset }: UsageRowProps) {
 type ProviderModalProps = {
     show: boolean;
     provider: ConnectionDetails | null;
+    existingStorageGroups: string[];
     onClose: () => void;
     onSave: (provider: ConnectionDetails) => void;
     onApplyPipelining: (enabled: boolean) => void;
     defaultPipeliningDepth: string;
 };
 
-function ProviderModal({ show, provider, onClose, onSave, onApplyPipelining, defaultPipeliningDepth }: ProviderModalProps) {
+function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave, onApplyPipelining, defaultPipeliningDepth }: ProviderModalProps) {
     const isEditing = provider !== null;
     const initialLimit = bytesToValueAndUnit(provider?.ByteLimit);
     const initialUsed = bytesToValueAndUnit(provider?.BytesUsedOffset);
 
     const [nickname, setNickname] = useState(provider?.Nickname || "");
     const [storageGroup, setStorageGroup] = useState(provider?.StorageGroup || "");
+    const [storageGroupOpen, setStorageGroupOpen] = useState(false);
     const [host, setHost] = useState(provider?.Host || "");
     const [port, setPort] = useState(provider?.Port?.toString() || "563");
     const [useSsl, setUseSsl] = useState(provider?.UseSsl ?? true);
@@ -936,6 +971,7 @@ function ProviderModal({ show, provider, onClose, onSave, onApplyPipelining, def
             const used = bytesToValueAndUnit(provider?.BytesUsedOffset);
             setNickname(provider?.Nickname || "");
             setStorageGroup(provider?.StorageGroup || "");
+            setStorageGroupOpen(false);
             setHost(provider?.Host || "");
             setPort(provider?.Port?.toString() || "563");
             setUseSsl(provider?.UseSsl ?? true);
@@ -1201,6 +1237,12 @@ function ProviderModal({ show, provider, onClose, onSave, onApplyPipelining, def
 
     const canSave = isFormValid && (connectionTested || passIsMasked || type == ProviderType.Disabled);
 
+    const storageGroupSuggestions = useMemo(() => {
+        const query = storageGroup.trim().toLowerCase();
+        if (!query) return existingStorageGroups;
+        return existingStorageGroups.filter((name) => name.toLowerCase().includes(query));
+    }, [existingStorageGroups, storageGroup]);
+
     return (
         <Modal
             open={show}
@@ -1237,267 +1279,346 @@ function ProviderModal({ show, provider, onClose, onSave, onApplyPipelining, def
                 </>
             }
         >
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                <div className="flex flex-col gap-1.5 sm:col-span-2">
-                    <Label htmlFor="provider-nickname">Nickname (optional)</Label>
-                    <Input
-                        type="text"
-                        id="provider-nickname"
-                        className="w-full"
-                        placeholder="e.g. Main provider"
-                        value={nickname}
-                        onChange={(e) => setNickname(e.target.value)}
-                    />
-                    <HelpText>
-                        Friendly label shown in the UI in place of the hostname.
-                    </HelpText>
-                </div>
+            <div className="flex flex-col gap-5">
+                <ProviderModalSection title="Connection">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_7.5rem]">
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="provider-host">Host</Label>
+                            <Input
+                                type="text"
+                                id="provider-host"
+                                className="w-full"
+                                placeholder="news.provider.com"
+                                value={host}
+                                onChange={(e) => {
+                                    setHost(e.target.value);
+                                    setConnectionTested(false);
+                                }}
+                            />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="provider-port">Port</Label>
+                            <Input
+                                type="text"
+                                id="provider-port"
+                                className={`w-full ${!isPositiveInteger(port) && port !== "" ? "input-error" : ""}`}
+                                placeholder="563"
+                                value={port}
+                                onChange={(e) => {
+                                    setPort(e.target.value);
+                                    setConnectionTested(false);
+                                }}
+                            />
+                        </div>
+                    </div>
 
-                <div className="flex flex-col gap-1.5 sm:col-span-2">
-                    <Label htmlFor="provider-storage-group">Storage group (optional)</Label>
-                    <Input
-                        type="text"
-                        id="provider-storage-group"
-                        className="w-full"
-                        placeholder="e.g. omicron"
-                        value={storageGroup}
-                        onChange={(e) => setStorageGroup(e.target.value)}
-                    />
-                    <HelpText>
-                        Give providers that share the same upstream storage (identical article
-                        availability) the same label. When one reports an article missing, the others
-                        with this label are skipped for that request to reduce latency. Leave blank
-                        unless you are sure they share storage and the same takedown/retention policy.
-                    </HelpText>
-                </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="provider-user">Username</Label>
+                            <Input
+                                type="text"
+                                id="provider-user"
+                                className="w-full"
+                                placeholder="username"
+                                value={user}
+                                onChange={(e) => {
+                                    setUser(e.target.value);
+                                    setConnectionTested(false);
+                                }}
+                            />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="provider-pass">Password</Label>
+                            <Input
+                                type="password"
+                                id="provider-pass"
+                                className="w-full"
+                                placeholder="password"
+                                value={pass}
+                                onChange={(e) => {
+                                    setPass(e.target.value);
+                                    setConnectionTested(false);
+                                }}
+                            />
+                        </div>
+                    </div>
 
-                <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="provider-host">Host</Label>
-                    <Input
-                        type="text"
-                        id="provider-host"
-                        className="w-full"
-                        placeholder="news.provider.com"
-                        value={host}
-                        onChange={(e) => {
-                            setHost(e.target.value);
-                            setConnectionTested(false);
-                        }}
-                    />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="provider-port">Port</Label>
-                    <Input
-                        type="text"
-                        id="provider-port"
-                        className={`w-full ${!isPositiveInteger(port) && port !== "" ? "input-error" : ""}`}
-                        placeholder="563"
-                        value={port}
-                        onChange={(e) => {
-                            setPort(e.target.value);
-                            setConnectionTested(false);
-                        }}
-                    />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="provider-user">Username</Label>
-                    <Input
-                        type="text"
-                        id="provider-user"
-                        className="w-full"
-                        placeholder="username"
-                        value={user}
-                        onChange={(e) => {
-                            setUser(e.target.value);
-                            setConnectionTested(false);
-                        }}
-                    />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="provider-pass">Password</Label>
-                    <Input
-                        type="password"
-                        id="provider-pass"
-                        className="w-full"
-                        placeholder="password"
-                        value={pass}
-                        onChange={(e) => {
-                            setPass(e.target.value);
-                            setConnectionTested(false);
-                        }}
-                    />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="provider-max-connections">Max Connections</Label>
-                    <Input
-                        type="text"
-                        id="provider-max-connections"
-                        className={`w-full ${!isPositiveInteger(maxConnections) && maxConnections !== "" ? "input-error" : ""}`}
-                        placeholder="20"
-                        value={maxConnections}
-                        onChange={(e) => setMaxConnections(e.target.value)}
-                    />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="provider-pipelining-depth">Pipeline depth</Label>
-                    <Input
-                        type="text"
-                        id="provider-pipelining-depth"
-                        className={`w-full ${!isPipeliningDepthValid ? "input-error" : ""}`}
-                        placeholder={defaultPipeliningDepth || "8"}
-                        value={pipeliningDepth}
-                        onChange={(e) => setPipeliningDepth(e.target.value)}
-                    />
-                    <HelpText>
-                        Requests kept in flight per connection (1–64) when NNTP pipelining is
-                        enabled. Leave blank to use the global default.
-                    </HelpText>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="provider-type">Type</Label>
-                    <Select
-                        id="provider-type"
-                        className="w-full"
-                        value={type}
-                        onChange={(e) => setType(parseInt(e.target.value, 10) as ProviderType)}
-                    >
-                        <option value={ProviderType.Disabled}>Disabled</option>
-                        <option value={ProviderType.Pooled}>Pool Connections</option>
-                        <option value={ProviderType.BackupOnly}>Backup Only</option>
-                    </Select>
-                </div>
-
-                <div className="flex flex-col gap-1.5 sm:col-span-2">
-                    <Tooltip content="Encrypt the NNTP connection. Prefer port 563 with SSL enabled; without SSL credentials are sent in cleartext.">
-                        <Toggle
-                            id="provider-ssl"
-                            className="cursor-pointer gap-2 p-0"
-                            checked={useSsl}
-                            onChange={(e) => {
-                                setUseSsl(e.target.checked);
-                                setConnectionTested(false);
-                            }}
-                            label={<span className="text-sm text-base-content">Use SSL</span>}
-                        />
-                    </Tooltip>
-                    {shouldWarnCleartextCredentials(useSsl, user) && (
-                        <Alert variant="warning" className="text-xs">
-                            Credentials are sent unencrypted without SSL. Prefer port 563 with SSL enabled.
-                        </Alert>
-                    )}
-                    {useSsl && (
-                        <>
-                            <Tooltip content="TLS stays encrypted, but accepts an untrusted or mismatched certificate. Only enable for a provider you trust.">
+                    <div className="flex flex-col gap-2">
+                        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                            <Tooltip content="Encrypt the NNTP connection. Prefer port 563 with SSL enabled; without SSL credentials are sent in cleartext.">
                                 <Toggle
-                                    id="provider-skip-tls-verification"
-                                    className="mt-2 cursor-pointer gap-2 p-0"
-                                    checked={skipTlsVerification}
+                                    id="provider-ssl"
+                                    className="cursor-pointer gap-2 p-0"
+                                    checked={useSsl}
                                     onChange={(e) => {
-                                        setSkipTlsVerification(e.target.checked);
+                                        setUseSsl(e.target.checked);
                                         setConnectionTested(false);
                                     }}
-                                    label={<span className="text-sm text-base-content">Skip TLS certificate verification</span>}
+                                    label={<span className="text-sm text-base-content">Use SSL</span>}
                                 />
                             </Tooltip>
-                            {skipTlsVerification && (
-                                <Alert variant="warning" className="text-xs">
-                                    TLS remains encrypted, but this accepts an untrusted or mismatched certificate.
-                                    Only enable it for a provider you trust.
-                                </Alert>
+                            {useSsl && (
+                                <Tooltip content="TLS stays encrypted, but accepts an untrusted or mismatched certificate. Only enable for a provider you trust.">
+                                    <Toggle
+                                        id="provider-skip-tls-verification"
+                                        className="cursor-pointer gap-2 p-0"
+                                        checked={skipTlsVerification}
+                                        onChange={(e) => {
+                                            setSkipTlsVerification(e.target.checked);
+                                            setConnectionTested(false);
+                                        }}
+                                        label={<span className="text-sm text-base-content">Skip TLS verification</span>}
+                                    />
+                                </Tooltip>
                             )}
-                        </>
-                    )}
-                </div>
-
-                <div className="flex flex-col gap-1.5 sm:col-span-2">
-                    <Label>Data Cap (optional)</Label>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_100px]">
-                        <Input
-                            type="text"
-                            inputMode="decimal"
-                            className="w-full"
-                            placeholder="Leave blank for no cap"
-                            value={limitValue}
-                            onChange={(e) => setLimitValue(e.target.value)}
-                        />
-                        <Select
-                            className="w-full"
-                            value={limitUnit}
-                            onChange={(e) => setLimitUnit(e.target.value as ByteUnitLabel)}
-                        >
-                            {BYTE_UNITS.map(u => (
-                                <option key={u.label} value={u.label}>{u.label}</option>
-                            ))}
-                        </Select>
+                        </div>
+                        {shouldWarnCleartextCredentials(useSsl, user) && (
+                            <Alert variant="warning" className="text-xs">
+                                Credentials are sent unencrypted without SSL. Prefer port 563 with SSL enabled.
+                            </Alert>
+                        )}
+                        {useSsl && skipTlsVerification && (
+                            <Alert variant="warning" className="text-xs">
+                                TLS remains encrypted, but this accepts an untrusted or mismatched certificate.
+                                Only enable it for a provider you trust.
+                            </Alert>
+                        )}
                     </div>
-                    <HelpText>
-                        For block accounts: total bytes you've purchased. The provider auto-pauses at ~95% of this value to absorb in-flight requests, so set the cap to your full block size. The 5% headroom keeps you from overshooting.
-                    </HelpText>
-                </div>
+                </ProviderModalSection>
 
-                <div className="flex flex-col gap-1.5 sm:col-span-2">
-                    <Label>Already Used (optional)</Label>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_100px]">
-                        <Input
-                            type="text"
-                            inputMode="decimal"
-                            className="w-full"
-                            placeholder="0"
-                            value={initialUsedValue}
-                            onChange={(e) => setInitialUsedValue(e.target.value)}
-                        />
-                        <Select
-                            className="w-full"
-                            value={initialUsedUnit}
-                            onChange={(e) => setInitialUsedUnit(e.target.value as ByteUnitLabel)}
-                        >
-                            {BYTE_UNITS.map(u => (
-                                <option key={u.label} value={u.label}>{u.label}</option>
-                            ))}
-                        </Select>
+                <ProviderModalSection title="Identity">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="provider-nickname">Nickname</Label>
+                            <Input
+                                type="text"
+                                id="provider-nickname"
+                                className="w-full"
+                                placeholder="e.g. Main provider"
+                                value={nickname}
+                                onChange={(e) => setNickname(e.target.value)}
+                            />
+                            <HelpText>Shown in the UI instead of the hostname.</HelpText>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                                <Label htmlFor="provider-storage-group">Storage group</Label>
+                                <Tooltip
+                                    placement="bottom"
+                                    content="Same label for providers that share upstream storage. When one reports an article missing, siblings with this label are skipped for that request."
+                                >
+                                    <Icon name="info" className="!text-[15px] text-base-content/45" />
+                                </Tooltip>
+                            </div>
+                            <div className="relative w-full">
+                                <Input
+                                    type="text"
+                                    id="provider-storage-group"
+                                    className="w-full"
+                                    placeholder="e.g. omicron"
+                                    value={storageGroup}
+                                    autoComplete="off"
+                                    role="combobox"
+                                    aria-expanded={storageGroupOpen && storageGroupSuggestions.length > 0}
+                                    aria-controls="provider-storage-group-listbox"
+                                    aria-autocomplete="list"
+                                    onChange={(e) => {
+                                        setStorageGroup(e.target.value);
+                                        setStorageGroupOpen(true);
+                                    }}
+                                    onFocus={() => setStorageGroupOpen(true)}
+                                    onBlur={() => {
+                                        window.setTimeout(() => setStorageGroupOpen(false), 150);
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Escape") setStorageGroupOpen(false);
+                                    }}
+                                />
+                                {storageGroupOpen && storageGroupSuggestions.length > 0 && (
+                                    <ul
+                                        id="provider-storage-group-listbox"
+                                        role="listbox"
+                                        className="absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-box border border-base-content/10 bg-base-300 py-1 shadow-lg"
+                                    >
+                                        {storageGroupSuggestions.map((name) => (
+                                            <li key={name} role="option">
+                                                <button
+                                                    type="button"
+                                                    className="block w-full px-3 py-2 text-left text-sm text-base-content hover:bg-base-content/10"
+                                                    onMouseDown={(e) => e.preventDefault()}
+                                                    onClick={() => {
+                                                        setStorageGroup(name);
+                                                        setStorageGroupOpen(false);
+                                                    }}
+                                                >
+                                                    {name}
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="provider-type">Type</Label>
+                            <Select
+                                id="provider-type"
+                                className="w-full"
+                                value={type}
+                                onChange={(e) => setType(parseInt(e.target.value, 10) as ProviderType)}
+                            >
+                                <option value={ProviderType.Disabled}>Disabled</option>
+                                <option value={ProviderType.Pooled}>Pool Connections</option>
+                                <option value={ProviderType.BackupOnly}>Backup Only</option>
+                            </Select>
+                        </div>
                     </div>
-                    <HelpText>
-                        Seed the counter when migrating a partially-used block from another client. Leave empty for a fresh block.
-                    </HelpText>
-                </div>
+                </ProviderModalSection>
+
+                <ProviderModalSection title="Performance">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="provider-max-connections">Max Connections</Label>
+                            <Input
+                                type="text"
+                                id="provider-max-connections"
+                                className={`w-full ${!isPositiveInteger(maxConnections) && maxConnections !== "" ? "input-error" : ""}`}
+                                placeholder="20"
+                                value={maxConnections}
+                                onChange={(e) => setMaxConnections(e.target.value)}
+                            />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                                <Label htmlFor="provider-pipelining-depth">Pipeline depth</Label>
+                                <Tooltip
+                                    placement="bottom"
+                                    content="Requests kept in flight per connection (1–64) when NNTP pipelining is enabled. Leave blank to use the global default."
+                                >
+                                    <Icon name="info" className="!text-[15px] text-base-content/45" />
+                                </Tooltip>
+                            </div>
+                            <Input
+                                type="text"
+                                id="provider-pipelining-depth"
+                                className={`w-full ${!isPipeliningDepthValid ? "input-error" : ""}`}
+                                placeholder={defaultPipeliningDepth || "8"}
+                                value={pipeliningDepth}
+                                onChange={(e) => setPipeliningDepth(e.target.value)}
+                            />
+                        </div>
+                    </div>
+
+                    <BenchmarkPanel
+                        canBenchmark={canBenchmark}
+                        isBenchmarking={isBenchmarking}
+                        intensity={intensity}
+                        setIntensity={setIntensity}
+                        dataBudget={dataBudget}
+                        setDataBudget={setDataBudget}
+                        pipeliningOnly={pipeliningOnly}
+                        setPipeliningOnly={setPipeliningOnly}
+                        progress={benchmarkProgress}
+                        result={benchmarkResult}
+                        error={benchmarkError}
+                        onRun={() => handleAutoTune()}
+                        onVerify={(connections) => handleAutoTune(connections)}
+                        onCancel={handleCancelBenchmark}
+                        onApply={handleApplyRecommendation}
+                    />
+                </ProviderModalSection>
+
+                <ProviderModalSection title="Data quota">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                                <Label>Data Cap</Label>
+                                <Tooltip
+                                    placement="bottom"
+                                    content="For block accounts: total bytes purchased. The provider auto-pauses near 95% of this value to absorb in-flight requests."
+                                >
+                                    <Icon name="info" className="!text-[15px] text-base-content/45" />
+                                </Tooltip>
+                            </div>
+                            <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-2">
+                                <Input
+                                    type="text"
+                                    inputMode="decimal"
+                                    className="w-full"
+                                    placeholder="No cap"
+                                    value={limitValue}
+                                    onChange={(e) => setLimitValue(e.target.value)}
+                                />
+                                <Select
+                                    className="w-full"
+                                    value={limitUnit}
+                                    onChange={(e) => setLimitUnit(e.target.value as ByteUnitLabel)}
+                                >
+                                    {BYTE_UNITS.map(u => (
+                                        <option key={u.label} value={u.label}>{u.label}</option>
+                                    ))}
+                                </Select>
+                            </div>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                                <Label>Already Used</Label>
+                                <Tooltip
+                                    placement="bottom"
+                                    content="Seed the counter when migrating a partially-used block from another client. Leave empty for a fresh block."
+                                >
+                                    <Icon name="info" className="!text-[15px] text-base-content/45" />
+                                </Tooltip>
+                            </div>
+                            <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-2">
+                                <Input
+                                    type="text"
+                                    inputMode="decimal"
+                                    className="w-full"
+                                    placeholder="0"
+                                    value={initialUsedValue}
+                                    onChange={(e) => setInitialUsedValue(e.target.value)}
+                                />
+                                <Select
+                                    className="w-full"
+                                    value={initialUsedUnit}
+                                    onChange={(e) => setInitialUsedUnit(e.target.value as ByteUnitLabel)}
+                                >
+                                    {BYTE_UNITS.map(u => (
+                                        <option key={u.label} value={u.label}>{u.label}</option>
+                                    ))}
+                                </Select>
+                            </div>
+                        </div>
+                    </div>
+                </ProviderModalSection>
+
+                {testError && (
+                    <Alert variant="danger" className="text-xs">
+                        {testError}
+                    </Alert>
+                )}
+
+                {connectionTested && (
+                    <Alert variant="success" className="text-xs">
+                        Connection test successful!
+                    </Alert>
+                )}
             </div>
-
-            {testError && (
-                <Alert variant="danger" className="mt-4 text-xs">
-                    {testError}
-                </Alert>
-            )}
-
-            {connectionTested && (
-                <Alert variant="success" className="mt-4 text-xs">
-                    Connection test successful!
-                </Alert>
-            )}
-
-            <BenchmarkPanel
-                canBenchmark={canBenchmark}
-                isBenchmarking={isBenchmarking}
-                intensity={intensity}
-                setIntensity={setIntensity}
-                dataBudget={dataBudget}
-                setDataBudget={setDataBudget}
-                pipeliningOnly={pipeliningOnly}
-                setPipeliningOnly={setPipeliningOnly}
-                progress={benchmarkProgress}
-                result={benchmarkResult}
-                error={benchmarkError}
-                onRun={() => handleAutoTune()}
-                onVerify={(connections) => handleAutoTune(connections)}
-                onCancel={handleCancelBenchmark}
-                onApply={handleApplyRecommendation}
-            />
         </Modal>
+    );
+}
+
+function ProviderModalSection({ title, children }: { title: string; children: ReactNode }) {
+    return (
+        <section className="space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-base-content/50">
+                {title}
+            </h3>
+            <div className="space-y-3">
+                {children}
+            </div>
+        </section>
     );
 }
 
@@ -1553,7 +1674,7 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
     const elapsedLabel = formatElapsed(result?.elapsedSeconds);
 
     return (
-        <div className="mt-4 rounded-lg border border-base-content/10 bg-base-200/40 p-4">
+        <div className="rounded-lg border border-base-content/10 bg-base-200/40 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-[180px] flex-1">
                     <div className="text-sm font-semibold text-base-content">Auto-tune connections</div>
