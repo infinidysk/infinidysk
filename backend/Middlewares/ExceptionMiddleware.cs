@@ -154,6 +154,10 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                 context.Response.Clear();
                 context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
                 context.Response.Headers.RetryAfter = "5";
+                context.Response.ContentType = "text/plain; charset=utf-8";
+                await context.Response.WriteAsync(
+                    "Usenet backend did not deliver within the streaming-read-timeout. Retry shortly.",
+                    context.RequestAborted).ConfigureAwait(false);
                 LogWithDedup(RecentStreamingReadTimeouts, filePath, suppressed =>
                 {
                     if (suppressed > 0)
