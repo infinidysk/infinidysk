@@ -1,5 +1,5 @@
-import { ManagedSetting, SettingsIntro, SettingsPage } from "~/components/ui";
-import { Checkbox, Input, Select, Toggle } from "~/components/ui/form";
+import { ManagedSetting, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
+import { Input, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { className } from "~/utils/styling";
@@ -95,69 +95,51 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     description="How content appears to WebDAV clients and the Dav Explorer."
                 >
                     <ManagedSetting configKey="webdav.enforce-readonly">
-                        <div className="space-y-2">
-                            <label className="flex items-center gap-2 text-sm text-base-content/80">
-                                <Checkbox
-                                    id="readonly-checkbox"
-                                    aria-describedby="readonly-help"
-                                    checked={config["webdav.enforce-readonly"] === "true"}
-                                    onChange={e => setNewConfig({ ...config, "webdav.enforce-readonly": "" + e.target.checked })} />
-                                <span>{`Enforce Read-Only`}</span>
-                            </label>
-                            <p className="text-[11px] leading-relaxed text-base-content/45" id="readonly-help">
-                                The WebDAV `/content` folder will be readonly when checked. WebDAV clients will not be able to delete files within this directory.
-                            </p>
-                        </div>
+                        <Tooltip content="Make the WebDAV /content folder read-only so clients cannot delete files there.">
+                            <Toggle
+                                id="readonly-checkbox"
+                                className="cursor-pointer gap-2 p-0"
+                                checked={config["webdav.enforce-readonly"] === "true"}
+                                onChange={e => setNewConfig({ ...config, "webdav.enforce-readonly": "" + e.target.checked })}
+                                label={<span className="text-sm text-base-content">Enforce Read-Only</span>}
+                            />
+                        </Tooltip>
                     </ManagedSetting>
 
                     <ManagedSetting configKey="webdav.windows-safe-paths">
-                        <div className="space-y-2">
-                            <label className="flex items-center gap-2 text-sm text-base-content/80">
-                                <Checkbox
-                                    id="windows-safe-paths-checkbox"
-                                    aria-describedby="windows-safe-paths-help"
-                                    checked={config["webdav.windows-safe-paths"] !== "false"}
-                                    onChange={e => setNewConfig({ ...config, "webdav.windows-safe-paths": String(e.target.checked) })} />
-                                <span>Sanitize paths for Windows</span>
-                            </label>
-                            <p className="text-[11px] leading-relaxed text-base-content/45" id="windows-safe-paths-help">
-                                Replace characters that are invalid on Windows (<code>{`<>:"/\\|?*`}</code>), trim trailing
-                                dots/spaces, and prefix reserved device names. Recommended when using Windows WebDAV
-                                clients or rclone on Windows. Applies to newly mounted content only.
-                            </p>
-                        </div>
+                        <Tooltip content='Replace characters invalid on Windows (<>:"/\|?*), trim trailing dots/spaces, and prefix reserved device names. Applies to newly mounted content only.'>
+                            <Toggle
+                                id="windows-safe-paths-checkbox"
+                                className="cursor-pointer gap-2 p-0"
+                                checked={config["webdav.windows-safe-paths"] !== "false"}
+                                onChange={e => setNewConfig({ ...config, "webdav.windows-safe-paths": String(e.target.checked) })}
+                                label={<span className="text-sm text-base-content">Sanitize paths for Windows</span>}
+                            />
+                        </Tooltip>
                     </ManagedSetting>
 
                     <ManagedSetting configKey="webdav.show-hidden-files">
-                        <div className="space-y-2">
-                            <label className="flex items-center gap-2 text-sm text-base-content/80">
-                                <Checkbox
-                                    id="show-hidden-files-checkbox"
-                                    aria-describedby="show-hidden-files-help"
-                                    checked={config["webdav.show-hidden-files"] === "true"}
-                                    onChange={e => setNewConfig({ ...config, "webdav.show-hidden-files": "" + e.target.checked })} />
-                                <span>{`Show hidden files on Dav Explorer`}</span>
-                            </label>
-                            <p className="text-[11px] leading-relaxed text-base-content/45" id="show-hidden-files-help">
-                                Hidden files or directories are those whose names are prefixed by a period.
-                            </p>
-                        </div>
+                        <Tooltip content="Show files and directories whose names are prefixed by a period in Dav Explorer.">
+                            <Toggle
+                                id="show-hidden-files-checkbox"
+                                className="cursor-pointer gap-2 p-0"
+                                checked={config["webdav.show-hidden-files"] === "true"}
+                                onChange={e => setNewConfig({ ...config, "webdav.show-hidden-files": "" + e.target.checked })}
+                                label={<span className="text-sm text-base-content">Show hidden files on Dav Explorer</span>}
+                            />
+                        </Tooltip>
                     </ManagedSetting>
 
                     <ManagedSetting configKey="webdav.preview-par2-files">
-                        <div className="space-y-2">
-                            <label className="flex items-center gap-2 text-sm text-base-content/80">
-                                <Checkbox
-                                    id="preview-par2-files-checkbox"
-                                    aria-describedby="preview-par2-files-help"
-                                    checked={config["webdav.preview-par2-files"] === "true"}
-                                    onChange={e => setNewConfig({ ...config, "webdav.preview-par2-files": "" + e.target.checked })} />
-                                <span>{`Preview par2 files on Dav Explorer`}</span>
-                            </label>
-                            <p className="text-[11px] leading-relaxed text-base-content/45" id="preview-par2-files-help">
-                                When enabled, par2 files will be rendered as text files on the Dav Explorer page, displaying all File-Descriptor entries.
-                            </p>
-                        </div>
+                        <Tooltip content="Render par2 files as text in Dav Explorer, showing all File-Descriptor entries.">
+                            <Toggle
+                                id="preview-par2-files-checkbox"
+                                className="cursor-pointer gap-2 p-0"
+                                checked={config["webdav.preview-par2-files"] === "true"}
+                                onChange={e => setNewConfig({ ...config, "webdav.preview-par2-files": "" + e.target.checked })}
+                                label={<span className="text-sm text-base-content">Preview par2 files on Dav Explorer</span>}
+                            />
+                        </Tooltip>
                     </ManagedSetting>
                 </SettingsCard>
             </div>
@@ -210,45 +192,38 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                 <ManagedSetting configKey="usenet.max-download-connections">
                     <div className="space-y-2">
                         <label className="block text-sm font-medium text-base-content" htmlFor="max-download-connections-auto-checkbox">Max Download Connections</label>
-                        <Toggle
-                            id="max-download-connections-auto-checkbox"
-                            aria-describedby="max-download-connections-help"
-                            label="Auto — use all Pool provider connections"
-                            checked={isAutoMaxDownloadConnections(config["usenet.max-download-connections"])}
-                            onChange={e => setNewConfig({ ...config, "usenet.max-download-connections": e.target.checked ? "0" : "15" })} />
+                        <Tooltip content="Connections used for WebDAV streaming. Auto uses the combined Pool provider limit; turn off to set a fixed number. Queue imports use their own budget above.">
+                            <Toggle
+                                id="max-download-connections-auto-checkbox"
+                                className="cursor-pointer gap-2 p-0"
+                                checked={isAutoMaxDownloadConnections(config["usenet.max-download-connections"])}
+                                onChange={e => setNewConfig({ ...config, "usenet.max-download-connections": e.target.checked ? "0" : "15" })}
+                                label={<span className="text-sm text-base-content">Auto — use all Pool provider connections</span>}
+                            />
+                        </Tooltip>
                         {!isAutoMaxDownloadConnections(config["usenet.max-download-connections"]) && (
                             <Input
                                 {...className(['w-full', !isValidMaxDownloadConnections(config["usenet.max-download-connections"]) && 'input-error'])}
                                 type="text"
                                 id="max-download-connections-input"
-                                aria-describedby="max-download-connections-help"
                                 placeholder="15"
                                 value={config["usenet.max-download-connections"]}
                                 onChange={e => setNewConfig({ ...config, "usenet.max-download-connections": e.target.value })} />
                         )}
-                        <p className="text-[11px] leading-relaxed text-base-content/45" id="max-download-connections-help">
-                            The total connections used for <strong>webdav streaming</strong> (playback). Leave on
-                            <strong> Auto</strong> to use the combined connection limit of your Pool providers — it
-                            tracks changes as you add or remove providers — or turn Auto off to set a fixed number.
-                            Queue imports use their own budget — see Queue Download Connections above.
-                        </p>
                     </div>
                 </ManagedSetting>
 
                 <ManagedSetting configKeys={["usenet.max-download-connections-per-stream", "usenet.max-download-connections-per-stream-preset"]}>
                     <div className="space-y-2">
-                        <Toggle
-                            id="max-download-connections-per-stream-checkbox"
-                            aria-describedby="max-download-connections-per-stream-help"
-                            label="Apply limit per stream"
-                            checked={config["usenet.max-download-connections-per-stream"] === "true"}
-                            onChange={e => setNewConfig({ ...config, "usenet.max-download-connections-per-stream": String(e.target.checked) })} />
-                        <p className="text-[11px] leading-relaxed text-base-content/45" id="max-download-connections-per-stream-help">
-                            By default the budget above is a <strong>shared total</strong> across all active playback
-                            streams. Enable this to give each concurrent stream <strong>its own budget</strong> instead,
-                            sized by the performance preset below. Your provider&apos;s connection limit still applies as a
-                            hard ceiling on the total connections actually opened.
-                        </p>
+                        <Tooltip content="By default the budget above is shared across streams. Enable to give each concurrent stream its own budget, sized by the preset below. Provider limits still cap total connections.">
+                            <Toggle
+                                id="max-download-connections-per-stream-checkbox"
+                                className="cursor-pointer gap-2 p-0"
+                                checked={config["usenet.max-download-connections-per-stream"] === "true"}
+                                onChange={e => setNewConfig({ ...config, "usenet.max-download-connections-per-stream": String(e.target.checked) })}
+                                label={<span className="text-sm text-base-content">Apply limit per stream</span>}
+                            />
+                        </Tooltip>
                         {config["usenet.max-download-connections-per-stream"] === "true" && (
                             <div className="space-y-2 border-l border-base-content/10 pl-4">
                                 <label className="block text-sm font-medium text-base-content" htmlFor="max-download-connections-per-stream-preset-select">Per-stream performance</label>
@@ -300,17 +275,15 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
             >
                 <ManagedSetting configKeys={["usenet.segment-cache.enabled", "usenet.segment-cache.path", "usenet.segment-cache.max-gb"]}>
                     <div className="space-y-2">
-                        <label className="flex items-center gap-2 text-sm text-base-content/80">
-                            <Checkbox
+                        <Tooltip content="Cache decoded segments on disk so repeat reads and seeks avoid provider traffic. Takes effect after restart.">
+                            <Toggle
                                 id="segment-cache-enabled-checkbox"
-                                aria-describedby="segment-cache-enabled-help"
+                                className="cursor-pointer gap-2 p-0"
                                 checked={config["usenet.segment-cache.enabled"] === "true"}
-                                onChange={e => setNewConfig({ ...config, "usenet.segment-cache.enabled": String(e.target.checked) })} />
-                            <span>Enable Segment Cache</span>
-                        </label>
-                        <p className="text-[11px] leading-relaxed text-base-content/45" id="segment-cache-enabled-help">
-                            Cache decoded segments on disk so repeat reads and seeks avoid provider traffic. Takes effect after restart.
-                        </p>
+                                onChange={e => setNewConfig({ ...config, "usenet.segment-cache.enabled": String(e.target.checked) })}
+                                label={<span className="text-sm text-base-content">Enable Segment Cache</span>}
+                            />
+                        </Tooltip>
                         {config["usenet.segment-cache.enabled"] === "true" && (
                             <div className="grid gap-4 border-l border-base-content/10 pl-4 sm:grid-cols-2">
                                 <label className="space-y-2 text-sm text-base-content/80">
@@ -354,6 +327,26 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     </div>
                 </ManagedSetting>
 
+                <ManagedSetting configKey="usenet.streaming-read-timeout-seconds">
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-base-content" htmlFor="streaming-read-timeout-input">Streaming Read Timeout</label>
+                        <div className="flex w-full">
+                            <Input
+                                className={!isValidStreamingReadTimeout(config["usenet.streaming-read-timeout-seconds"]) ? 'input-error' : undefined}
+                                type="text"
+                                id="streaming-read-timeout-input"
+                                aria-describedby="streaming-read-timeout-help"
+                                placeholder="30"
+                                value={config["usenet.streaming-read-timeout-seconds"]}
+                                onChange={e => setNewConfig({ ...config, "usenet.streaming-read-timeout-seconds": e.target.value })} />
+                            <span className="flex items-center rounded-r border border-l-0 border-base-content/20 bg-base-200 px-2 text-sm text-base-content/80">sec</span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="streaming-read-timeout-help">
+                            Initial backend wait budget to open a WebDAV or /view GET/range (5–120s, default 30): store lookup, download-semaphore admission, connection-pool wait, and first segment. Cleared once body bytes start flowing — mid-stream stalls use the per-segment timeout above. Fails the HTTP read promptly when the Usenet backend never starts delivering, instead of blocking until the client disconnects.
+                        </p>
+                    </div>
+                </ManagedSetting>
+
                 <ManagedSetting configKey="usenet.streaming-segment-retries">
                     <div className="space-y-2">
                         <label className="block text-sm font-medium text-base-content" htmlFor="streaming-segment-retries-input">Streaming Segment Retries</label>
@@ -384,6 +377,25 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                             onChange={e => setNewConfig({ ...config, "usenet.article-buffer-size": e.target.value })} />
                         <p className="text-[11px] leading-relaxed text-base-content/45" id="article-buffer-size-help">
                             The number of articles to buffer ahead, per stream, when reading from the webdav.
+                            Host-wide decoded-byte retention is capped separately by In-flight article budget.
+                        </p>
+                    </div>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="usenet.in-flight-article-budget-mb">
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-base-content" htmlFor="in-flight-article-budget-input">In-flight article budget (MiB)</label>
+                        <Input
+                            {...className(['w-full', !isValidInFlightArticleBudget(config["usenet.in-flight-article-budget-mb"]) && 'input-error'])}
+                            type="text"
+                            id="in-flight-article-budget-input"
+                            aria-describedby="in-flight-article-budget-help"
+                            placeholder="512"
+                            value={config["usenet.in-flight-article-budget-mb"] ?? "512"}
+                            onChange={e => setNewConfig({ ...config, "usenet.in-flight-article-budget-mb": e.target.value })} />
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="in-flight-article-budget-help">
+                            Host-wide cap on decoded article bytes retained in RAM across concurrent WebDAV streams (64–8192, default 512).
+                            Prevents unbounded prefetch under heavy Arr/rclone load from OOM-killing the container.
                         </p>
                     </div>
                 </ManagedSetting>
@@ -409,21 +421,15 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                 </ManagedSetting>
 
                 <ManagedSetting configKey="usenet.pipelined-body-requests">
-                    <div className="space-y-2">
-                        <label className="flex items-center gap-2 text-sm text-base-content/80">
-                            <Checkbox
-                                id="pipelined-body-requests-checkbox"
-                                aria-describedby="pipelined-body-requests-help"
-                                checked={config["usenet.pipelined-body-requests"] === "true"}
-                                onChange={e => setNewConfig({ ...config, "usenet.pipelined-body-requests": "" + e.target.checked })} />
-                            <span>Pipelined article downloads</span>
-                        </label>
-                        <p className="text-[11px] leading-relaxed text-base-content/45" id="pipelined-body-requests-help">
-                            Fetch articles in small NNTP batches for smoother WebDAV streaming. Queue imports use the
-                            separate <strong>Enable NNTP pipelining</strong> toggle under Usenet settings. Disable this
-                            to use the legacy one-at-a-time API while retaining the configured article buffer.
-                        </p>
-                    </div>
+                    <Tooltip content="Fetch articles in small NNTP batches for smoother WebDAV streaming. Queue imports use the separate NNTP pipelining toggle under Usenet settings.">
+                        <Toggle
+                            id="pipelined-body-requests-checkbox"
+                            className="cursor-pointer gap-2 p-0"
+                            checked={config["usenet.pipelined-body-requests"] === "true"}
+                            onChange={e => setNewConfig({ ...config, "usenet.pipelined-body-requests": "" + e.target.checked })}
+                            label={<span className="text-sm text-base-content">Pipelined article downloads</span>}
+                        />
+                    </Tooltip>
                 </ManagedSetting>
             </SettingsCard>
         </SettingsPage>
@@ -440,8 +446,10 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
         || config["queue.worker-count"] !== newConfig["queue.worker-count"]
         || config["usenet.streaming-priority"] !== newConfig["usenet.streaming-priority"]
         || config["usenet.streaming-segment-timeout-seconds"] !== newConfig["usenet.streaming-segment-timeout-seconds"]
+        || config["usenet.streaming-read-timeout-seconds"] !== newConfig["usenet.streaming-read-timeout-seconds"]
         || config["usenet.streaming-segment-retries"] !== newConfig["usenet.streaming-segment-retries"]
         || config["usenet.article-buffer-size"] !== newConfig["usenet.article-buffer-size"]
+        || config["usenet.in-flight-article-budget-mb"] !== newConfig["usenet.in-flight-article-budget-mb"]
         || config["usenet.idle-connection-timeout-seconds"] !== newConfig["usenet.idle-connection-timeout-seconds"]
         || config["usenet.pipelined-body-requests"] !== newConfig["usenet.pipelined-body-requests"]
         || config["webdav.show-hidden-files"] !== newConfig["webdav.show-hidden-files"]
@@ -463,8 +471,10 @@ export function isWebdavSettingsValid(newConfig: Record<string, string>) {
         && isValidQueueWorkerCount(newConfig["queue.worker-count"])
         && isValidStreamingPriority(newConfig["usenet.streaming-priority"])
         && isValidStreamingSegmentTimeout(newConfig["usenet.streaming-segment-timeout-seconds"])
+        && isValidStreamingReadTimeout(newConfig["usenet.streaming-read-timeout-seconds"])
         && isValidStreamingSegmentRetries(newConfig["usenet.streaming-segment-retries"])
         && isValidArticleBufferSize(newConfig["usenet.article-buffer-size"])
+        && isValidInFlightArticleBudget(newConfig["usenet.in-flight-article-budget-mb"])
         && isValidIdleConnectionTimeout(newConfig["usenet.idle-connection-timeout-seconds"])
         && segmentCacheValid;
 }
@@ -508,6 +518,12 @@ function isValidStreamingSegmentTimeout(value: string): boolean {
     return Number.isInteger(num) && num >= 2 && num <= 40;
 }
 
+function isValidStreamingReadTimeout(value: string): boolean {
+    if (value.trim() === "") return false;
+    const num = Number(value);
+    return Number.isInteger(num) && num >= 5 && num <= 120;
+}
+
 function isValidStreamingSegmentRetries(value: string): boolean {
     if (value.trim() === "") return false;
     const num = Number(value);
@@ -516,6 +532,12 @@ function isValidStreamingSegmentRetries(value: string): boolean {
 
 function isValidArticleBufferSize(value: string): boolean {
     return isPositiveInteger(value);
+}
+
+function isValidInFlightArticleBudget(value: string | undefined): boolean {
+    if (value == null || value.trim() === "") return true;
+    const num = Number(value);
+    return Number.isInteger(num) && num >= 64 && num <= 8192;
 }
 
 function isValidIdleConnectionTimeout(value: string | undefined): boolean {

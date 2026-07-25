@@ -20,6 +20,11 @@ export type HistoryEvents = {
     onRemoveHistorySlots: (ids: Set<string>) => void
 };
 
+/** Apply a delta to a live total, never going below zero. */
+export function adjustTotalCount(current: number, delta: number): number {
+    return Math.max(0, current + delta);
+}
+
 export function useQueueEvents(
     setUploadingFiles: (value: React.SetStateAction<UploadingFile[]>) => void,
     setQueueSlots: (value: React.SetStateAction<PresentationQueueSlot[]>) => void,
@@ -31,12 +36,12 @@ export function useQueueEvents(
         uploadQueueRef.current = uploadQueueRef.current.filter(x => x.queueSlot.status === "uploading" || x.queueSlot.filename !== queueSlot.filename);
         setUploadingFiles(files => files.filter(f => f.queueSlot.filename !== queueSlot.filename));
         setQueueSlots(slots => slots.length >= pageSize ? slots : [...slots, queueSlot]);
-    }, [setQueueSlots, pageSize]);
+    }, [setQueueSlots, setUploadingFiles, uploadQueueRef, pageSize]);
 
     const onSelectQueueSlots = useCallback((ids: Set<string>, isSelected: boolean) => {
         setUploadingFiles(files => files.map(x => ids.has(x.queueSlot.nzo_id) ? { ...x, queueSlot: { ...x.queueSlot, isSelected } } : x));
         setQueueSlots(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isSelected } : x));
-    }, [setQueueSlots]);
+    }, [setQueueSlots, setUploadingFiles]);
 
     const onRemovingQueueSlots = useCallback((ids: Set<string>, isRemoving: boolean) => {
         setQueueSlots(slots => slots.map(x => ids.has(x.nzo_id) ? { ...x, isRemoving } : x));
@@ -46,7 +51,7 @@ export function useQueueEvents(
         uploadQueueRef.current = uploadQueueRef.current.filter(x => x.queueSlot.status === "uploading" || !ids.has(x.queueSlot.nzo_id));
         setUploadingFiles(files => files.filter(x => x.queueSlot.status === "uploading" || !ids.has(x.queueSlot.nzo_id)));
         setQueueSlots(slots => slots.filter(x => !ids.has(x.nzo_id)));
-    }, [setQueueSlots]);
+    }, [setQueueSlots, setUploadingFiles, uploadQueueRef]);
 
     const onMoveQueueSlotsToTop = useCallback((ids: Set<string>) => {
         if (ids.size === 0) return;
@@ -117,7 +122,7 @@ export function useQueueEvents(
 
 export function useHistoryEvents(
     setHistorySlots: (value: React.SetStateAction<PresentationHistorySlot[]>) => void,
-    pageSize: number
+    pageSize: number,
 ) {
     const onAddHistorySlot = useCallback((historySlot: HistorySlot) => {
         setHistorySlots(slots => [historySlot, ...slots].slice(0, pageSize));

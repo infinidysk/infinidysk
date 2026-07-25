@@ -1,6 +1,6 @@
 import { Button } from "~/components/ui/button";
-import { ManagedSetting, SettingsPage } from "~/components/ui";
-import { Checkbox, Input, Select } from "~/components/ui/form";
+import { ManagedSetting, SettingsPage, Tooltip } from "~/components/ui";
+import { Checkbox, Input, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { useCallback, useEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import { TagInput } from "~/components/tag-input/tag-input";
@@ -221,39 +221,30 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
             </ManagedSetting>
             <hr />
             <ManagedSetting configKey="api.ensure-importable-video">
-            <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-base-content/80">
-                    <Checkbox
+            <Tooltip content="Mark downloads as failed when no video file is found, so Radarr/Sonarr can grab another NZB.">
+                <Toggle
                     id="ensure-importable-video-checkbox"
-                    aria-describedby="ensure-importable-video-help"
+                    className="cursor-pointer gap-2 p-0"
                     checked={config["api.ensure-importable-video"] === "true"}
-                    onChange={e => setNewConfig({ ...config, "api.ensure-importable-video": "" + e.target.checked })}  />
-                    <span>{`Fail downloads for nzbs without video content`}</span>
-                </label>
-                <p className="text-[11px] leading-relaxed text-base-content/45" id="ensure-importable-video-help">
-                    Whether to mark downloads as `failed` when no single video file is found inside the nzb. This will force Radarr / Sonarr to automatically look for a new nzb.
-                </p>
-            </div>
+                    onChange={e => setNewConfig({ ...config, "api.ensure-importable-video": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Fail downloads for nzbs without video content</span>}
+                />
+            </Tooltip>
             </ManagedSetting>
             <hr />
             <ManagedSetting configKey="api.skip-non-video-on-missing-articles">
-            <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-base-content/80">
-                    <Checkbox
+            <Tooltip content="By default, missing articles in PAR2/NFO/subtitles are skipped. Enable to fail the download so *Arr can grab an alternate.">
+                <Toggle
                     id="fail-missing-non-video-checkbox"
-                    aria-describedby="fail-missing-non-video-help"
+                    className="cursor-pointer gap-2 p-0"
                     checked={config["api.skip-non-video-on-missing-articles"] === "false"}
                     onChange={e => setNewConfig({
                         ...config,
                         "api.skip-non-video-on-missing-articles": String(!e.target.checked)
-                    })} />
-                    <span>Fail downloads when non-video files have missing articles</span>
-                </label>
-                <p className="text-[11px] leading-relaxed text-base-content/45" id="fail-missing-non-video-help">
-                    By default, missing articles in PAR2/NFO/subtitle files are skipped and the job still completes.
-                    Enable this to fail the download instead so *Arr can grab an alternate release.
-                </p>
-            </div>
+                    })}
+                    label={<span className="text-sm text-base-content">Fail downloads when non-video files have missing articles</span>}
+                />
+            </Tooltip>
             </ManagedSetting>
             <hr />
             <ManagedSetting configKey="api.ensure-article-existence-categories">
@@ -279,20 +270,15 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
             </ManagedSetting>
             <hr />
             <ManagedSetting configKey="api.ignore-history-limit">
-            <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-base-content/80">
-                    <Checkbox
+            <Tooltip content="Ignore the History limit from Radarr/Sonarr and always reply with all History items (workaround for Sonarr issue #5452).">
+                <Toggle
                     id="ignore-history-limit-checkbox"
-                    aria-describedby="ignore-history-limit-help"
+                    className="cursor-pointer gap-2 p-0"
                     checked={config["api.ignore-history-limit"] === "true"}
-                    onChange={e => setNewConfig({ ...config, "api.ignore-history-limit": "" + e.target.checked })}  />
-                    <span>{`Always send full History to Radarr/Sonarr`}</span>
-                </label>
-                <p className="text-[11px] leading-relaxed text-base-content/45" id="ignore-history-limit-help">
-                    When enabled, this will ignore the History limit sent by radarr/sonarr and always reply with all History items.&nbsp;
-                    <a href="https://github.com/Sonarr/Sonarr/issues/5452">See here</a>.
-                </p>
-            </div>
+                    onChange={e => setNewConfig({ ...config, "api.ignore-history-limit": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Always send full History to Radarr/Sonarr</span>}
+                />
+            </Tooltip>
             </ManagedSetting>
             <hr />
             <ManagedSetting configKeys={[
@@ -301,14 +287,15 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                 "api.nzb-backup-retention-days",
             ]}>
             <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-base-content/80">
-                    <Checkbox
-                    id="nzb-backup-enabled-checkbox"
-                    aria-describedby="nzb-backup-location-help"
-                    checked={config["api.nzb-backup-enabled"] === "true"}
-                    onChange={e => setNewConfig({ ...config, "api.nzb-backup-enabled": "" + e.target.checked })}  />
-                    <span>{`Save backup copies of incoming NZBs`}</span>
-                </label>
+                <Tooltip content="Save a copy of each incoming NZB to the directory below, organized by category. The directory is created if missing.">
+                    <Toggle
+                        id="nzb-backup-enabled-checkbox"
+                        className="cursor-pointer gap-2 p-0"
+                        checked={config["api.nzb-backup-enabled"] === "true"}
+                        onChange={e => setNewConfig({ ...config, "api.nzb-backup-enabled": "" + e.target.checked })}
+                        label={<span className="text-sm text-base-content">Save backup copies of incoming NZBs</span>}
+                    />
+                </Tooltip>
                 <Input
                     className="mt-4 w-full"
                     type="text"
@@ -320,8 +307,7 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                     aria-invalid={!isValidNzbBackupLocation(config)}
                     onChange={e => setNewConfig({ ...config, "api.nzb-backup-location": e.target.value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="nzb-backup-location-help">
-                    When enabled, a copy of each incoming NZB will be saved to this directory, organized by category.
-                    The directory will be created if it doesn't already exist.
+                    Directory for NZB backups, organized by category.
                 </p>
                 <label className="mt-4 flex items-center gap-2 text-sm text-base-content/80" htmlFor="nzb-backup-retention-days-input">
                     <span>Keep NZB backups for (days)</span>

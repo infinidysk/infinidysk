@@ -279,11 +279,13 @@ public class ConfigManager
                 case ConfigKeys.QueueWorkerCount:
                 case ConfigKeys.UsenetPipeliningDepth:
                 case ConfigKeys.UsenetArticleBufferSize:
+                case ConfigKeys.UsenetInFlightArticleBudgetMb:
                 case ConfigKeys.UsenetIdleConnectionTimeoutSeconds:
                 case ConfigKeys.UsenetSegmentCacheMaxGb:
                 case ConfigKeys.UsenetStreamingPriority:
                 case ConfigKeys.UsenetStreamingSegmentTimeoutSeconds:
                 case ConfigKeys.UsenetStreamingSegmentRetries:
+                case ConfigKeys.UsenetStreamingReadTimeoutSeconds:
                 case ConfigKeys.WardenQuorum:
                 case ConfigKeys.WardenMaxSourceEntries:
                 case ConfigKeys.PlayTotalBudgetSeconds:
@@ -672,6 +674,20 @@ public class ConfigManager
     }
 
     /// <summary>
+    /// Host-wide cap on decoded article bytes retained in RAM across concurrent WebDAV
+    /// streams. Default 512 MiB; clamped to [64, 8192]. Distinct from
+    /// <see cref="GetArticleBufferSize"/>, which bounds per-stream segment count.
+    /// </summary>
+    public int GetInFlightArticleBudgetMb()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetInFlightArticleBudgetMb));
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 64, 8192) : 512;
+    }
+
+    public long GetInFlightArticleBudgetBytes() =>
+        (long)GetInFlightArticleBudgetMb() * 1024L * 1024L;
+
+    /// <summary>
     /// Idle timeout for pooled NNTP connections. Default 60s; clamped to [15, 300].
     /// Takes effect on the next connection-pool rebuild (provider config change or restart).
     /// </summary>
@@ -737,6 +753,20 @@ public class ConfigManager
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingSegmentRetries));
         return int.TryParse(v, out var n) ? Math.Clamp(n, 0, 5) : 3;
+    }
+
+    /// <summary>
+    /// Total backend-wait budget for a single WebDAV/`/view` GET or range read —
+    /// covers download-semaphore admission, the connection-pool gate, and segment
+    /// delivery together. Distinct from (and larger than) the per-segment timeout:
+    /// this bounds the whole read so a stuck provider fails the HTTP request
+    /// instead of blocking until the client disconnects.
+    /// </summary>
+    public TimeSpan GetStreamingReadTimeout()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingReadTimeoutSeconds));
+        var seconds = int.TryParse(v, out var n) ? Math.Clamp(n, 5, 120) : 30;
+        return TimeSpan.FromSeconds(seconds);
     }
 
     public bool IsEnforceReadonlyWebdavEnabled()

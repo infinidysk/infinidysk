@@ -79,14 +79,16 @@ public interface INntpClient : IDisposable
         int articleBufferSize,
         CancellationToken ct,
         bool usePipelinedBodyRequests = true,
-        string? fileName = null);
+        string? fileName = null,
+        InFlightArticleBudget? inFlightArticleBudget = null);
 
     NzbFileStream GetFileStream(
         NzbFile nzbFile,
         long fileSize,
         int articleBufferSize,
         bool usePipelinedBodyRequests = true,
-        string? fileName = null);
+        string? fileName = null,
+        InFlightArticleBudget? inFlightArticleBudget = null);
 
     NzbFileStream GetFileStream(
         string[] segmentIds,
@@ -95,7 +97,8 @@ public interface INntpClient : IDisposable
         LongRange[]? segmentByteRanges = null,
         bool usePipelinedBodyRequests = true,
         string? fileName = null,
-        string[][]? segmentFallbacks = null);
+        string[][]? segmentFallbacks = null,
+        InFlightArticleBudget? inFlightArticleBudget = null);
 
     Task CheckAllSegmentsAsync(
         IEnumerable<string> segmentIds, int concurrency, IProgress<int>? progress, CancellationToken cancellationToken);

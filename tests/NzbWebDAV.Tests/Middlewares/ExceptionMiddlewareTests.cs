@@ -206,6 +206,54 @@ public class ExceptionMiddlewareTests
         Assert.Null(logged.Exception);
     }
 
+    [Fact]
+    public async Task StreamingReadTimeout_BeforeResponseStarted_Returns503WithRetryAfter()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: false, lifetimeFeature);
+        context.Response.Body = new MemoryStream();
+        var middleware = CreateMiddleware(
+            _ => throw new StreamingReadTimeoutException(
+                "WebDAV read exceeded the 5s streaming-read-timeout while waiting for the Usenet backend."));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+        Assert.Equal("5", context.Response.Headers.RetryAfter.ToString());
+        Assert.False(lifetimeFeature.Aborted);
+        context.Response.Body.Position = 0;
+        using var reader = new StreamReader(context.Response.Body);
+        var body = await reader.ReadToEndAsync();
+        Assert.Contains("streaming-read-timeout", body, StringComparison.OrdinalIgnoreCase);
+
+        var logged = Assert.Single(
+            events,
+            e => e.RenderMessage().Contains("streaming-read-timeout", StringComparison.Ordinal)
+                 && e.Level == LogEventLevel.Warning
+                 && e.Exception is null);
+        Assert.Contains("failed fast", logged.RenderMessage(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task StreamingReadTimeout_AfterResponseStarted_AbortsWithoutErrorStack()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: true, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new StreamingReadTimeoutException(
+                "WebDAV read exceeded the 5s streaming-read-timeout while waiting for the Usenet backend."));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        Assert.True(lifetimeFeature.Aborted);
+        var logged = Assert.Single(
+            events,
+            e => e.RenderMessage().Contains("streaming-read-timeout-after-headers", StringComparison.Ordinal)
+                 && e.Level == LogEventLevel.Warning
+                 && e.Exception is null);
+        Assert.Contains("aborted after headers", logged.RenderMessage(), StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(0, 1, true)]
     [InlineData(3, 2, false)]

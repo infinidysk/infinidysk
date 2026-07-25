@@ -30,6 +30,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly int _bodyPipelineBatchSize;
     private readonly ContextualCancellationTokenSource _cts;
     private readonly long? _readBudget;
+    private readonly long _prefetchByteCeiling;
+    private readonly InFlightArticleBudget? _budget;
+    private long _inFlightPrefetchBytes;
+    private TaskCompletionSource _prefetchSpace =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Stream? _stream;
     private int _consecutiveZeroFills;
     private bool _disposed;
@@ -42,7 +47,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         CancellationToken cancellationToken,
         string? fileName = null,
         long? readBudget = null,
-        string[][]? segmentFallbacks = null)
+        string[][]? segmentFallbacks = null,
+        InFlightArticleBudget? inFlightArticleBudget = null)
     {
         return Create(
             segmentIds,
@@ -54,7 +60,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             cancellationToken,
             fileName,
             readBudget,
-            segmentFallbacks);
+            segmentFallbacks,
+            inFlightArticleBudget: inFlightArticleBudget);
     }
 
     /// <param name="estimatedSegmentSize">
@@ -79,7 +86,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         string? fileName = null,
         long? readBudget = null,
         string[][]? segmentFallbacks = null,
-        ReadOnlyMemory<long> exactSegmentSizes = default
+        ReadOnlyMemory<long> exactSegmentSizes = default,
+        InFlightArticleBudget? inFlightArticleBudget = null
     )
     {
         return articleBufferSize == 0
@@ -97,7 +105,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 fileName,
                 readBudget,
                 segmentFallbacks,
-                exactSegmentSizes);
+                exactSegmentSizes,
+                inFlightArticleBudget);
     }
 
     private MultiSegmentStream
@@ -112,7 +121,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         string? fileName,
         long? readBudget,
         string[][]? segmentFallbacks,
-        ReadOnlyMemory<long> exactSegmentSizes
+        ReadOnlyMemory<long> exactSegmentSizes,
+        InFlightArticleBudget? inFlightArticleBudget
     )
     {
         _segmentIds = segmentIds;
@@ -123,6 +133,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _failFastOnFirstSegment = failFastOnFirstSegment;
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
         _readBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        _budget = inFlightArticleBudget ?? InFlightArticleBudget.Current;
+        _prefetchByteCeiling = articleBufferSize > 0 && estimatedSegmentSize > 0
+            ? (long)articleBufferSize * estimatedSegmentSize
+            : 0;
         _bodyPipelineBatchSize = Math.Min(BodyPipelineBatchSize, articleBufferSize);
         _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(articleBufferSize);
         _cts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -165,6 +179,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             if (ShouldStopPrefetch(segmentsEnqueued, enqueuedBytes))
                 break;
 
+            await WaitForPrefetchCeilingAsync(cancellationToken).ConfigureAwait(false);
+
             var batchCount = Math.Min(
                 _bodyPipelineBatchSize, _segmentIds.Length - batchStart);
             var segmentIds = new SegmentId[batchCount];
@@ -192,10 +208,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 for (; responseIndex < streamTasks.Length; responseIndex++)
                 {
+                    var planned = GetPlannedSegmentBytes(batchStart + responseIndex);
                     await _streamTasks.Writer.WriteAsync(
                         streamTasks[responseIndex], cancellationToken);
                     segmentsEnqueued++;
-                    enqueuedBytes += GetPlannedSegmentBytes(batchStart + responseIndex);
+                    enqueuedBytes += planned;
+                    Interlocked.Add(ref _inFlightPrefetchBytes, planned);
                 }
             }
             catch
@@ -220,16 +238,20 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             if (ShouldStopPrefetch(index, enqueuedBytes))
                 break;
 
+            await WaitForPrefetchCeilingAsync(cancellationToken).ConfigureAwait(false);
+
             var segmentId = _segmentIds.Span[index];
             await _streamTasks.Writer.WaitToWriteAsync(cancellationToken);
             var connection = await _usenetClient.AcquireExclusiveConnectionAsync(
                 segmentId, cancellationToken);
             var streamTask = DownloadSegment(
                 segmentId, index, connection, isFirstSegment: index == 0, cancellationToken);
+            var planned = GetPlannedSegmentBytes(index);
             try
             {
                 await _streamTasks.Writer.WriteAsync(streamTask, cancellationToken);
-                enqueuedBytes += GetPlannedSegmentBytes(index);
+                enqueuedBytes += planned;
+                Interlocked.Add(ref _inFlightPrefetchBytes, planned);
             }
             catch
             {
@@ -243,16 +265,51 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// Stop enqueueing once the bytes already in flight cover the read budget plus one
     /// segment of slack, which absorbs the prefix a seek discards from the first segment.
     /// Exact segment sizes are used when the import recorded them; otherwise the estimate
-    /// stands in, since over- or under-fetching only costs bandwidth. Null budget =
-    /// unbounded.
+    /// stands in, since over- or under-fetching only costs bandwidth.
     /// </summary>
     private bool ShouldStopPrefetch(int segmentsEnqueued, long enqueuedBytes)
     {
-        if (_readBudget is null) return false;
-        if (_segmentSizes.TryGetExactSize(0, out var slack))
-            return enqueuedBytes >= _readBudget.Value + slack;
-        if (_estimatedSegmentSize <= 0) return false;
-        return segmentsEnqueued * _estimatedSegmentSize >= _readBudget.Value + _estimatedSegmentSize;
+        // Range read budget: permanent stop once enough of the file is planned.
+        if (_readBudget is not null)
+        {
+            if (_segmentSizes.TryGetExactSize(0, out var slack))
+                return enqueuedBytes >= _readBudget.Value + slack;
+            if (_estimatedSegmentSize <= 0) return false;
+            return segmentsEnqueued * _estimatedSegmentSize >= _readBudget.Value + _estimatedSegmentSize;
+        }
+
+        // Full-file / non-range: never permanently stop (consumer needs the whole file).
+        // Per-stream byte ceiling is enforced by WaitForPrefetchCeilingAsync instead.
+        return false;
+    }
+
+    /// <summary>
+    /// When <see cref="_readBudget"/> is null, pause the producer once in-flight planned
+    /// bytes reach article-buffer-size × estimated segment size so full-file GETs cannot
+    /// retain unbounded decoded bytes ahead of the consumer.
+    /// </summary>
+    private async Task WaitForPrefetchCeilingAsync(CancellationToken cancellationToken)
+    {
+        if (_prefetchByteCeiling <= 0) return;
+
+        while (Interlocked.Read(ref _inFlightPrefetchBytes) >= _prefetchByteCeiling)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var wait = Volatile.Read(ref _prefetchSpace);
+            if (Interlocked.Read(ref _inFlightPrefetchBytes) < _prefetchByteCeiling)
+                return;
+            await wait.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void ReleaseInFlightPrefetchBytes(long plannedBytes)
+    {
+        if (plannedBytes <= 0) return;
+        Interlocked.Add(ref _inFlightPrefetchBytes, -plannedBytes);
+        var prior = Interlocked.Exchange(
+            ref _prefetchSpace,
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        prior.TrySetResult();
     }
 
     private long GetPlannedSegmentBytes(int segmentIndex) =>
@@ -268,8 +325,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         CancellationToken cancellationToken
     )
     {
+        var estimate = GetPlannedSegmentBytes(segmentIndex);
         for (var attempt = 0; ; attempt++)
         {
+            var lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
             try
             {
                 var bodyResponse = attempt == 0
@@ -281,16 +340,20 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                         .ConfigureAwait(false);
 
                 await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
-                var stream = await DrainSegmentAsync(bodyResponse.Stream!, segmentIndex, cancellationToken)
+                var stream = await DrainSegmentAsync(
+                        bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate)
                     .ConfigureAwait(false);
-                return SegmentDownloadResult.Success(stream);
+                lease = null;
+                return SegmentDownloadResult.Success(stream, estimate);
             }
             catch (UsenetArticleNotFoundException e)
             {
+                lease?.Dispose();
+                lease = null;
                 var fallback = await TryFallbackSegmentsAsync(segmentIndex, cancellationToken)
                     .ConfigureAwait(false);
                 if (fallback is not null)
-                    return SegmentDownloadResult.Success(fallback);
+                    return SegmentDownloadResult.Success(fallback, estimate);
 
                 if (_failFastOnFirstSegment && isFirstSegment)
                 {
@@ -309,6 +372,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
             {
+                lease?.Dispose();
+                lease = null;
                 if (attempt >= MaxCorruptionRetries)
                     throw;
 
@@ -323,6 +388,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch (Exception e) when (!cancellationToken.IsCancellationRequested)
             {
+                lease?.Dispose();
+                lease = null;
                 if (attempt < MaxBodyRetries)
                 {
                     Log.Debug(e, "Transient failure fetching segment {SegmentId} (attempt {Attempt}). Retrying.",
@@ -347,6 +414,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     "Segment {SegmentId} unavailable after retries while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
                     segmentId, segmentIndex, e);
             }
+            finally
+            {
+                lease?.Dispose();
+            }
         }
     }
 
@@ -357,20 +428,28 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         bool isFirstSegment,
         CancellationToken cancellationToken)
     {
+        // Lease before awaiting the pipelined response so a burst of batch tasks
+        // cannot materialize beyond the host-wide byte budget.
+        var estimate = GetPlannedSegmentBytes(segmentIndex);
+        var lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
         try
         {
             var response = await responseTask.ConfigureAwait(false);
             await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
-            var stream = await DrainSegmentAsync(response.Stream!, segmentIndex, cancellationToken)
+            var stream = await DrainSegmentAsync(
+                    response.Stream!, segmentIndex, cancellationToken, lease, estimate)
                 .ConfigureAwait(false);
-            return SegmentDownloadResult.Success(stream);
+            lease = null; // owned by BudgetedStream / buffer
+            return SegmentDownloadResult.Success(stream, estimate);
         }
         catch (UsenetArticleNotFoundException e)
         {
+            lease?.Dispose();
+            lease = null;
             var fallback = await TryFallbackSegmentsAsync(segmentIndex, cancellationToken)
                 .ConfigureAwait(false);
             if (fallback is not null)
-                return SegmentDownloadResult.Success(fallback);
+                return SegmentDownloadResult.Success(fallback, estimate);
 
             if (_failFastOnFirstSegment && isFirstSegment) throw;
             return ZeroFillSegment(
@@ -381,13 +460,17 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
         catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
         {
+            lease?.Dispose();
+            lease = null;
             var stream = await RetryCorruptSegmentAsync(
                     segmentId, segmentIndex, e, cancellationToken)
                 .ConfigureAwait(false);
-            return SegmentDownloadResult.Success(stream);
+            return SegmentDownloadResult.Success(stream, estimate);
         }
         catch (Exception e) when (!cancellationToken.IsCancellationRequested)
         {
+            lease?.Dispose();
+            lease = null;
             // A failure inside a pipelined batch says nothing about whether the article
             // can be fetched at all: the batch shares one connection, so a stall or a
             // dropped socket takes out unrelated segments with it. Re-request this
@@ -396,12 +479,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             var rescued = await TryRescueSegmentAsync(segmentId, segmentIndex, e, cancellationToken)
                 .ConfigureAwait(false);
             if (rescued is not null)
-                return SegmentDownloadResult.Success(rescued);
+                return SegmentDownloadResult.Success(rescued, estimate);
 
             if (_failFastOnFirstSegment && isFirstSegment) throw;
             return ZeroFillSegment(
                 "Segment {SegmentId} unavailable after retries while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
                 segmentId, segmentIndex, e);
+        }
+        finally
+        {
+            lease?.Dispose();
         }
     }
 
@@ -538,12 +625,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         return _segmentFallbacks[segmentIndex] ?? [];
     }
 
-    private static async Task DisposeStreamAsync(Task<SegmentDownloadResult> streamTask)
+    private async Task DisposeStreamAsync(
+        Task<SegmentDownloadResult> streamTask,
+        bool releaseInFlight = false)
     {
         try
         {
             var result = await streamTask.ConfigureAwait(false);
             await using var stream = result.Stream;
+            if (releaseInFlight)
+                ReleaseInFlightPrefetchBytes(result.PlannedBytes);
         }
         catch
         {
@@ -578,7 +669,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             messageTemplate,
             segmentId,
             fill,
-            exception);
+            exception,
+            GetPlannedSegmentBytes(segmentIndex));
     }
 
     private Exception CreateUnknownLengthFailure(string segmentId, int segmentIndex, Exception failure)
@@ -595,13 +687,24 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private async Task<Stream> DrainSegmentAsync(
         Stream source,
         int segmentIndex,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ArticleByteLease? existingLease = null,
+        long? leasedEstimate = null)
     {
+        ArticleByteLease? lease = existingLease;
+        var ownsLease = existingLease is null;
         try
         {
             var hasExactSize = _segmentSizes.TryGetExactSize(segmentIndex, out var exactSize);
             var expected = hasExactSize ? exactSize : _estimatedSegmentSize;
-            var capacity = expected is > 0 and <= int.MaxValue ? (int)expected : 0;
+            var estimate = leasedEstimate
+                ?? (expected is > 0 and <= int.MaxValue ? expected : _estimatedSegmentSize);
+            if (estimate < 0) estimate = 0;
+
+            if (lease is null)
+                lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
+
+            var capacity = estimate is > 0 and <= int.MaxValue ? (int)estimate : 0;
             var buffer = new MemoryStream(capacity);
             await source.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
             var drained = buffer.Length;
@@ -609,13 +712,36 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 AlignDrainedSegment(buffer, segmentIndex, drained, exactSize);
             else
                 _segmentSizes.RecordObservedSize(segmentIndex, drained);
+
+            var actual = buffer.Length;
+            if (actual != estimate)
+                lease.Adjust(actual - estimate);
+
             buffer.Position = 0;
-            return buffer;
+            ownsLease = false;
+            return ReferenceEquals(lease, ArticleByteLease.Empty)
+                ? buffer
+                : new BudgetedStream(buffer, lease);
+        }
+        catch
+        {
+            if (ownsLease)
+                lease?.Dispose();
+            throw;
         }
         finally
         {
             await source.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private async ValueTask<ArticleByteLease> LeaseSegmentBytesAsync(
+        long estimate,
+        CancellationToken cancellationToken)
+    {
+        if (_budget is null || estimate <= 0)
+            return ArticleByteLease.Empty;
+        return await _budget.LeaseAsync(estimate, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -663,6 +789,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 if (!await _streamTasks.Reader.WaitToReadAsync(cancellationToken)) return 0;
                 if (!_streamTasks.Reader.TryRead(out var streamTask)) return 0;
                 var result = await streamTask;
+                ReleaseInFlightPrefetchBytes(result.PlannedBytes);
                 _stream = AcceptSegment(result);
             }
 
@@ -720,13 +847,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
         // ensure that streams that were never read from the channel get disposed
         while (_streamTasks.Reader.TryRead(out var streamTask))
-            _ = DisposeStreamAsync(streamTask);
+            _ = DisposeStreamAsync(streamTask, releaseInFlight: true);
 
         base.Dispose();
     }
 
     private sealed record SegmentDownloadResult(
         Stream Stream,
+        long PlannedBytes = 0,
         string? MessageTemplate = null,
         string? SegmentId = null,
         long Bytes = 0,
@@ -734,14 +862,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         public bool IsZeroFill => Failure is not null;
 
-        public static SegmentDownloadResult Success(Stream stream) => new(stream);
+        public static SegmentDownloadResult Success(Stream stream, long plannedBytes = 0) =>
+            new(stream, plannedBytes);
 
         public static SegmentDownloadResult ZeroFill(
             Stream stream,
             string messageTemplate,
             string segmentId,
             long bytes,
-            Exception failure) =>
-            new(stream, messageTemplate, segmentId, bytes, failure);
+            Exception failure,
+            long plannedBytes = 0) =>
+            new(stream, plannedBytes, messageTemplate, segmentId, bytes, failure);
     }
 }

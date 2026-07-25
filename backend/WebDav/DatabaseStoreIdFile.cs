@@ -5,6 +5,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.Streams;
 using NzbWebDAV.WebDav.Base;
 
 namespace NzbWebDAV.WebDav;
@@ -15,7 +16,8 @@ public class DatabaseStoreIdFile(
     DavDatabaseClient dbClient,
     UsenetStreamingClient usenetClient,
     ConfigManager configManager,
-    LazyRarResolver lazyRarResolver
+    LazyRarResolver lazyRarResolver,
+    InFlightArticleBudget inFlightArticleBudget
 ) : BaseStoreReadonlyItem
 {
     public override string Name => davItem.Id.ToString();
@@ -40,12 +42,15 @@ public class DatabaseStoreIdFile(
         return davItem.SubType switch
         {
             DavItem.ItemSubType.NzbFile =>
-                new DatabaseStoreNzbFile(davItem, httpContext, dbClient, usenetClient, configManager),
+                new DatabaseStoreNzbFile(
+                    davItem, httpContext, dbClient, usenetClient, configManager, inFlightArticleBudget),
             DavItem.ItemSubType.RarFile =>
-                new DatabaseStoreRarFile(davItem, httpContext, dbClient, usenetClient, configManager),
+                new DatabaseStoreRarFile(
+                    davItem, httpContext, dbClient, usenetClient, configManager, inFlightArticleBudget),
             DavItem.ItemSubType.MultipartFile =>
-                new DatabaseStoreMultipartFile(davItem, httpContext, dbClient, usenetClient, configManager,
-                    lazyRarResolver),
+                new DatabaseStoreMultipartFile(
+                    davItem, httpContext, dbClient, usenetClient, configManager, lazyRarResolver,
+                    inFlightArticleBudget),
             _ => throw new ArgumentException("Unrecognized id child type.")
         };
     }

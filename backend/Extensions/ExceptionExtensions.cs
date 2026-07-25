@@ -103,6 +103,7 @@ public static class ExceptionExtensions
             or SocketException
             or IOException
             or UnauthorizedAccessException
+            or StreamingReadTimeoutException
             || exception.IsRetryableDownloadException()
             || exception.IsNonRetryableDownloadException();
     }
