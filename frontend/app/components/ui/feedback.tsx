@@ -44,13 +44,15 @@ export function Tooltip({
   content,
   children,
   placement = "top",
+  className = "",
 }: {
   content: string;
   children: ReactNode;
   placement?: TooltipPlacement;
+  className?: string;
 }) {
   return (
-    <span className={`tooltip ${tooltipPlacementClass[placement]}`} data-tip={content}>
+    <span className={`tooltip ${tooltipPlacementClass[placement]} ${className}`.trim()} data-tip={content}>
       {children}
     </span>
   );
