@@ -8,6 +8,7 @@ export type ProviderScoreboardProps = {
 
 export function ProviderScoreboard({ providers, window }: ProviderScoreboardProps) {
     const total = providers.reduce((s, p) => s + p.articles, 0);
+    const outageHelp = `Circuit-open time per ${outageIntervalLabel(window)} interval on a fixed 0–100% scale. Brief trips use a minimum-height tick.`;
 
     return (
         <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
@@ -30,7 +31,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                     <th className="w-[120px]">Activity</th>
                                     <th
                                         className="w-[120px]"
-                                        title="Relative circuit-open history for each interval (scaled to the window’s peak)">
+                                        title={outageHelp}>
                                         Outages
                                     </th>
                                     <th>Articles</th>
@@ -68,10 +69,8 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                             <td>
                                                 <Sparkline values={p.spark} tone="success" />
                                             </td>
-                                            <td title="Relative provider circuit-open history">
-                                                <Sparkline
-                                                    values={p.outageSpark ?? []}
-                                                    tone="error" />
+                                            <td title={outageHelp}>
+                                                <OutageBuckets values={p.outageSpark ?? []} />
                                             </td>
                                             <td className="font-mono tabular-nums">{formatNumber(p.articles)}</td>
                                             <td className="font-mono tabular-nums">{formatBytes(p.bytesFetched)}</td>
@@ -171,19 +170,74 @@ function ShareBar({ share }: { share: number }) {
     );
 }
 
+function outageIntervalLabel(window: OverviewWindow) {
+    switch (window) {
+        case "1h": return "minute";
+        case "all": return "day";
+        default: return "hour";
+    }
+}
+
+export function OutageBuckets({ values }: { values: number[] }) {
+    if (values.length === 0) return <div className="h-[22px] w-[110px] rounded-sm bg-base-content/[0.04]" />;
+
+    const w = 110;
+    const h = 22;
+    const baseline = h - 2;
+    const chartHeight = h - 4;
+    const slotWidth = w / values.length;
+    const gap = Math.min(0.6, slotWidth * 0.18);
+    const barWidth = Math.max(0.25, slotWidth - gap);
+    const peak = Math.max(...values.map(value => Math.min(100, Math.max(0, value))));
+
+    return (
+        <svg
+            viewBox={`0 0 ${w} ${h}`}
+            className="block h-[22px] w-[110px]"
+            preserveAspectRatio="none"
+            role="img"
+            aria-label={`Circuit-open time by interval, peak ${peak}%`}>
+            <line
+                x1="0"
+                y1={baseline}
+                x2={w}
+                y2={baseline}
+                stroke="var(--color-base-content)"
+                strokeOpacity="0.12"
+                vectorEffect="non-scaling-stroke" />
+            {values.map((value, index) => {
+                const percent = Math.min(100, Math.max(0, value));
+                if (percent === 0) return null;
+                const barHeight = Math.max(1.5, percent / 100 * chartHeight);
+                return (
+                    <rect
+                        key={index}
+                        x={index * slotWidth + gap / 2}
+                        y={baseline - barHeight}
+                        width={barWidth}
+                        height={barHeight}
+                        rx={Math.min(0.5, barWidth / 2)}
+                        fill="var(--color-error)"
+                        fillOpacity="0.75">
+                        <title>{`${percent}% circuit open during this interval`}</title>
+                    </rect>
+                );
+            })}
+        </svg>
+    );
+}
+
 function Sparkline({
     values,
     tone = "success",
-    fixedMax,
 }: {
     values: number[],
     tone?: "success" | "error" | "warning",
-    fixedMax?: number,
 }) {
     if (values.length === 0) return <div className="h-[22px] w-[110px] rounded-sm bg-base-content/[0.04]" />;
     const w = 110;
     const h = 22;
-    const max = fixedMax ?? Math.max(1, ...values);
+    const max = Math.max(1, ...values);
     const step = values.length > 1 ? w / (values.length - 1) : 0;
     const y = (v: number) => h - (v / max) * (h - 4) - 2;
     const path = values
