@@ -15,6 +15,7 @@ import {
 } from "./startup-grace";
 import { applyCanonicalForwardedHeaders } from "./forwarded-headers";
 import { backendProxyTimeoutOptions } from "./backend-proxy-options";
+import { handleBackendProxyResponse } from "./backend-proxy-response";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -72,13 +73,7 @@ const forwardToBackend = createProxyMiddleware({
         res.end("Bad Gateway");
       }
     },
-    proxyRes: (proxyRes, req, res) => {
-      proxyRes.on('close', () => {
-        if (!res.writableEnded) {
-          res.end();
-        }
-      });
-    },
+    proxyRes: handleBackendProxyResponse,
   },
 });
 
