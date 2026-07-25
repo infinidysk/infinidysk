@@ -660,14 +660,37 @@ public class MultiProviderNntpClient(
         // an earlier 430, and a later 430 beats an earlier error).
         if (lastOutcomeWasException)
         {
-            Log.Warning(
-                "All providers exhausted. Last error from {Provider}: {ErrorMessage}",
-                lastAttemptedProvider?.Host ?? "unknown",
-                lastException!.SourceException.Message);
+            LogExhaustedProviders(lastAttemptedProvider?.Host, lastException!.SourceException);
             lastException.Throw();
         }
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         throw new Exception("There are no usenet providers configured.");
+    }
+
+    /// <summary>
+    /// Logs the terminal failure once all providers have been tried. Known
+    /// transport/download failures log a human-friendly Warning with the reason;
+    /// unexpected exceptions keep their full stack so they aren't lost, and the
+    /// residual FetchStatus.Other case retains the concrete exception type name
+    /// so support packs stay diagnosable without a schema change.
+    /// </summary>
+    private static void LogExhaustedProviders(string? providerHost, Exception exception)
+    {
+        var host = providerHost ?? "unknown";
+        var status = ClassifyException(exception);
+        if (exception.TryGetKnownErrorMessage(out var reason))
+        {
+            Log.Warning(
+                "All providers exhausted. Last error from {Provider}. Status={Status} Reason: {Reason}",
+                host, status, reason);
+        }
+        else
+        {
+            Log.Error(
+                exception,
+                "All providers exhausted. Unexpected last error from {Provider}. Status={Status} ExceptionType={ExceptionType}",
+                host, status, exception.GetType().FullName);
+        }
     }
 
     private void RecordFetch(string metricsKey, SegmentFetch.FetchStatus status, long durationMs, int retries)
@@ -740,11 +763,31 @@ public class MultiProviderNntpClient(
         return wrapped;
     }
 
-    private static SegmentFetch.FetchStatus ClassifyException(Exception ex)
+    /// <summary>
+    /// Maps a fetch failure to a <see cref="SegmentFetch.FetchStatus"/> for metrics/UI.
+    /// Walks the exception chain (<see cref="ExceptionExtensions.TryGetCausingException{T}"/>)
+    /// so a known cause wrapped by an outer exception is still classified correctly.
+    /// Anything left over falls into <see cref="SegmentFetch.FetchStatus.Other"/> — callers
+    /// should log the concrete exception type there so support packs stay diagnosable.
+    /// Do not renumber existing enum values; only append.
+    /// </summary>
+    internal static SegmentFetch.FetchStatus ClassifyException(Exception ex)
     {
-        if (ex is TimeoutException) return SegmentFetch.FetchStatus.Timeout;
-        if (ex is UnauthorizedAccessException) return SegmentFetch.FetchStatus.Auth;
-        if (ex is System.IO.IOException || ex is System.Net.Sockets.SocketException) return SegmentFetch.FetchStatus.Network;
+        if (ex.TryGetCausingException<TimeoutException>(out _))
+            return SegmentFetch.FetchStatus.Timeout;
+
+        if (ex.TryGetCausingException<UsenetCorruptArticleException>(out _))
+            return SegmentFetch.FetchStatus.Corrupt;
+
+        if (ex.TryGetCausingException<CouldNotLoginToUsenetException>(out _) ||
+            ex.TryGetCausingException<UnauthorizedAccessException>(out _))
+            return SegmentFetch.FetchStatus.Auth;
+
+        if (ex.TryGetCausingException<CouldNotConnectToUsenetException>(out _) ||
+            ex.TryGetCausingException<System.Net.Sockets.SocketException>(out _) ||
+            ex.TryGetCausingException<System.IO.IOException>(out _))
+            return SegmentFetch.FetchStatus.Network;
+
         return SegmentFetch.FetchStatus.Other;
     }
 
