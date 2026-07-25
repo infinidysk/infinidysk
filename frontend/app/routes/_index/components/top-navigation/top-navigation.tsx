@@ -28,7 +28,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
 
   return (
     <>
-      <div className="navbar-start gap-1 px-2 md:px-4">
+      <div className="navbar-start !w-auto shrink-0 gap-1 px-2 md:px-4">
         <label
           htmlFor={drawerToggleId}
           aria-label={isHamburgerMenuOpen ? "Close navigation" : "Open navigation"}
@@ -47,7 +47,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
         </button>
       </div>
 
-      <div className="navbar-end items-center gap-2 px-2 md:px-4">
+      <div className="navbar-end !w-auto ml-auto min-w-0 items-center gap-2 px-2 md:px-4">
         <LiveUsenetConnections hasUsenetProviders={!!hasUsenetProviders} />
         <div className="dropdown dropdown-end">
           <div
