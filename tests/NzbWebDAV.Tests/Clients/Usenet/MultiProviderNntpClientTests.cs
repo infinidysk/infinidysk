@@ -797,7 +797,7 @@ public class MultiProviderNntpClientTests
         var backup = new ScriptedNntpClient
         {
             BatchResponseCode = 222,
-            SingularResponseCode = 223,
+            SingularResponseCode = (int)UsenetResponseType.ArticleExists,
         };
         using var client = new MultiProviderNntpClient(
         [
@@ -806,7 +806,7 @@ public class MultiProviderNntpClientTests
         ], articleMissCache: cache);
 
         var first = await client.StatAsync("segment", CancellationToken.None);
-        Assert.False(first.ArticleExists);
+        Assert.True(first.ArticleExists);
         Assert.Equal(1, missing.SingularRequests);
         Assert.Equal(1, backup.SingularRequests);
         Assert.Equal(1, cache.Entries);
@@ -850,6 +850,72 @@ public class MultiProviderNntpClientTests
         Assert.Equal(1, missing.SingularRequests);
         Assert.Equal(2, backup.SingularRequests);
     }
+
+
+    [Fact]
+    public async Task ArticleMissCache_NetworkFailure_DoesNotCreateCacheEntry()
+    {
+        var config = new ConfigManager();
+        var cache = new ArticleMissNegativeCache(config);
+        var flaky = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = _ => new IOException("connection reset"),
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(flaky, host: "a.example"),
+            CreateProvider(backup, host: "b.example"),
+        ], articleMissCache: cache);
+
+        Assert.Equal(
+            UsenetResponseType.ArticleRetrievedBodyFollows,
+            (await client.DecodedBodyAsync("segment", CancellationToken.None)).ResponseType);
+        Assert.Equal(0, cache.Entries);
+
+        await client.DecodedBodyAsync("segment", CancellationToken.None);
+        Assert.True(flaky.SingularRequests >= 2);
+        Assert.Equal(0, cache.Entries);
+    }
+
+    [Fact]
+    public async Task ArticleMissCache_SkippedProbe_DoesNotRecordOkFetch()
+    {
+        var config = new ConfigManager();
+        var cache = new ArticleMissNegativeCache(config);
+        var writer = new MetricsWriter();
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 430,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primary, host: "a.example"),
+            CreateProvider(backup, host: "b.example"),
+        ], metricsWriter: writer, articleMissCache: cache);
+
+        var first = await client.DecodedBodyAsync("segment", CancellationToken.None);
+        await first.Stream!.DisposeAsync();
+        var fetchesAfterFirst = writer.Stats.QueuedFetches;
+
+        var second = await client.DecodedBodyAsync("segment", CancellationToken.None);
+        await second.Stream!.DisposeAsync();
+
+        Assert.Equal(fetchesAfterFirst + 1, writer.Stats.QueuedFetches);
+        Assert.Equal(1, primary.SingularRequests);
+    }
+
 
     [Fact]
     public async Task CheckAllSegmentsAsync_With451AcrossProviders_ThrowsArticleNotFound()
