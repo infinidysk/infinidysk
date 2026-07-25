@@ -7,8 +7,8 @@ import {
     type MigrationStatus,
 } from "~/components/migration-progress";
 import { Button } from "~/components/ui/button";
-import { Alert, Badge, Spinner } from "~/components/ui/feedback";
-import { Checkbox, Input, Select } from "~/components/ui/form";
+import { Alert, Badge, Spinner, Tooltip } from "~/components/ui/feedback";
+import { Checkbox, Input, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { ManagedSetting, SettingsIntro, SettingsPage } from "~/components/ui";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
@@ -367,13 +367,10 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                     </div>
 
                     <div className="space-y-4 p-4">
-                        <label
-                            className="flex cursor-pointer items-start gap-3 rounded-lg bg-base-200/40 p-3"
-                            htmlFor="backup-schedule-enabled"
-                        >
-                            <Checkbox
-                                className="checkbox-primary mt-0.5 shrink-0"
+                        <Tooltip content="Writes a logical .sql dump of all databases under the config volume once per day.">
+                            <Toggle
                                 id="backup-schedule-enabled"
+                                className="cursor-pointer gap-2 rounded-lg bg-base-200/40 p-3"
                                 checked={scheduleEnabled}
                                 onChange={(e) =>
                                     setNewConfig({
@@ -381,15 +378,9 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                                         "backup.schedule-enabled": String(e.target.checked),
                                     })
                                 }
+                                label={<span className="text-sm font-medium text-base-content">Enable daily backup</span>}
                             />
-                            <span>
-                                <span className="block text-sm font-medium text-base-content">Enable daily backup</span>
-                                <span className="mt-0.5 block text-xs leading-relaxed text-base-content/50">
-                                    Writes a logical <code className="font-mono">.sql</code> dump of all databases under
-                                    the config volume.
-                                </span>
-                            </span>
-                        </label>
+                        </Tooltip>
 
                         <fieldset className="space-y-2" disabled={!scheduleEnabled}>
                             <legend className="text-xs font-medium uppercase tracking-wide text-base-content/50">

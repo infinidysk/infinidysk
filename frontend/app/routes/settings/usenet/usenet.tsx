@@ -1,6 +1,5 @@
 import { type Dispatch, type SetStateAction, type ReactNode, type CSSProperties, useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { Alert, Badge, Button, HelpText, Icon, Input, Label, ManagedSetting, Modal, Select, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
-import { Checkbox, Toggle } from "~/components/ui/form";
+import { Alert, Badge, Button, HelpText, Icon, Input, Label, ManagedSetting, Modal, Select, SettingsIntro, SettingsPage, Tooltip, Toggle } from "~/components/ui";
 import { subscribeWebsocketTopics, useWebsocketTopic } from "~/utils/shared-websocket";
 import { isMaskedSecret } from "~/utils/config-mask";
 import { shouldWarnCleartextCredentials } from "./cleartext-credentials";
@@ -1328,17 +1327,18 @@ function ProviderModal({ show, provider, onClose, onSave, onApplyPipelining, def
                 </div>
 
                 <div className="flex flex-col gap-1.5 sm:col-span-2">
-                    <label htmlFor="provider-ssl" className="flex items-center gap-2">
-                        <Checkbox
+                    <Tooltip content="Encrypt the NNTP connection. Prefer port 563 with SSL enabled; without SSL credentials are sent in cleartext.">
+                        <Toggle
                             id="provider-ssl"
+                            className="cursor-pointer gap-2 p-0"
                             checked={useSsl}
                             onChange={(e) => {
                                 setUseSsl(e.target.checked);
                                 setConnectionTested(false);
                             }}
+                            label={<span className="text-sm text-base-content">Use SSL</span>}
                         />
-                        <span className="text-sm text-base-content/80">Use SSL</span>
-                    </label>
+                    </Tooltip>
                     {shouldWarnCleartextCredentials(useSsl, user) && (
                         <Alert variant="warning" className="text-xs">
                             Credentials are sent unencrypted without SSL. Prefer port 563 with SSL enabled.
@@ -1346,17 +1346,18 @@ function ProviderModal({ show, provider, onClose, onSave, onApplyPipelining, def
                     )}
                     {useSsl && (
                         <>
-                            <label htmlFor="provider-skip-tls-verification" className="mt-2 flex items-center gap-2">
-                                <Checkbox
+                            <Tooltip content="TLS stays encrypted, but accepts an untrusted or mismatched certificate. Only enable for a provider you trust.">
+                                <Toggle
                                     id="provider-skip-tls-verification"
+                                    className="mt-2 cursor-pointer gap-2 p-0"
                                     checked={skipTlsVerification}
                                     onChange={(e) => {
                                         setSkipTlsVerification(e.target.checked);
                                         setConnectionTested(false);
                                     }}
+                                    label={<span className="text-sm text-base-content">Skip TLS certificate verification</span>}
                                 />
-                                <span className="text-sm text-base-content/80">Skip TLS certificate verification</span>
-                            </label>
+                            </Tooltip>
                             {skipTlsVerification && (
                                 <Alert variant="warning" className="text-xs">
                                     TLS remains encrypted, but this accepts an untrusted or mismatched certificate.
@@ -1564,24 +1565,26 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
                 </div>
             </div>
 
-            <label htmlFor="bench-pipe-only" className="label mt-3 cursor-pointer justify-start gap-2">
-                <input
+            <Tooltip
+                className="mt-3 block"
+                content={pipeliningOnly
+                    ? "Won't change your connection count — tests pipelining depth at the Max Connections you've set. Run idle for the cleanest read."
+                    : "When off, also sweeps connection counts. Prefer idle for the cleanest read."}
+            >
+                <Toggle
                     id="bench-pipe-only"
-                    type="checkbox"
-                    className="toggle toggle-sm"
+                    className="cursor-pointer gap-2 p-0"
                     checked={pipeliningOnly}
                     disabled={isBenchmarking}
                     onChange={(e) => setPipeliningOnly(e.target.checked)}
+                    label={<span className="text-sm text-base-content">Only tune pipelining (keep my Max Connections)</span>}
                 />
-                <span className="text-sm text-base-content/80">Only tune pipelining (keep my Max Connections)</span>
-            </label>
+            </Tooltip>
 
             <HelpText>
-                {pipeliningOnly
-                    ? "Won't change your connection count — it tests pipelining depth at the Max Connections you've set. Run it idle for the cleanest read."
-                    : (intensity === "quick"
-                        ? "Quick sizes each step to your line speed, up to the data budget (default 500 MB) — light on metered / block accounts."
-                        : "Thorough runs longer measurement windows for steadier numbers, up to the data budget (default 2 GB). Gigabit-class lines often need 10–20 GB for a full sweep.")}
+                {intensity === "quick"
+                    ? "Quick sizes each step to your line speed, up to the data budget (default 500 MB) — light on metered / block accounts."
+                    : "Thorough runs longer measurement windows for steadier numbers, up to the data budget (default 2 GB). Gigabit-class lines often need 10–20 GB for a full sweep."}
             </HelpText>
 
             {error && (

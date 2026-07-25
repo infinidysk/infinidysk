@@ -1,5 +1,5 @@
-import { ManagedSetting, SettingsCard, SettingsIntro, SettingsPage } from "~/components/ui";
-import { Checkbox, Input, Select } from "~/components/ui/form";
+import { ManagedSetting, SettingsCard, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
+import { Input, Select, Toggle } from "~/components/ui/form";
 import { type Dispatch, type SetStateAction } from "react";
 import { isPositiveInteger } from "../usenet/usenet";
 
@@ -41,20 +41,16 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
             >
             <ManagedSetting configKey="repair.enable">
-            <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-base-content/80">
-                    <Checkbox
+            <Tooltip content={helpText}>
+                <Toggle
                     id="enable-repairs-checkbox"
-                    aria-describedby="enable-repairs-help"
+                    className="cursor-pointer gap-2 p-0"
                     checked={canEnableRepairs && config["repair.enable"] === "true"}
                     disabled={!canEnableRepairs}
-                    onChange={e => setNewConfig({ ...config, "repair.enable": "" + e.target.checked })}  />
-                    <span>{`Enable Background Repairs`}</span>
-                </label>
-                <p className="text-[11px] leading-relaxed text-base-content/45" id="enable-repairs-help">
-                    {helpText}
-                </p>
-            </div>
+                    onChange={e => setNewConfig({ ...config, "repair.enable": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Enable Background Repairs</span>}
+                />
+            </Tooltip>
             </ManagedSetting>
 
             <ManagedSetting configKey="media.library-dir">
@@ -125,20 +121,15 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 </p>
             </div>
             <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-base-content/80">
-                    <Checkbox
-                    id="healthcheck-aging-checkbox"
-                    aria-describedby="healthcheck-aging-help"
-                    checked={(config["repair.healthcheck-aging"] ?? "false") === "true"}
-                    onChange={e => setNewConfig({ ...config, "repair.healthcheck-aging": "" + e.target.checked })}  />
-                    <span>Check older releases less thoroughly</span>
-                </label>
-                <p className="text-[11px] leading-relaxed text-base-content/45" id="healthcheck-aging-help">
-                    Off by default. When enabled, coverage tapers for releases past their first year, on
-                    the basis that a post which has already survived that long is less likely to break.
-                    The taper stops at ten years. Useful for large libraries where most of the catalogue
-                    is long-since posted and rechecking it in full costs more than it finds.
-                </p>
+                <Tooltip content="Off by default. When enabled, coverage tapers for releases past their first year (stops at ten years), useful for large libraries of long-posted content.">
+                    <Toggle
+                        id="healthcheck-aging-checkbox"
+                        className="cursor-pointer gap-2 p-0"
+                        checked={(config["repair.healthcheck-aging"] ?? "false") === "true"}
+                        onChange={e => setNewConfig({ ...config, "repair.healthcheck-aging": "" + e.target.checked })}
+                        label={<span className="text-sm text-base-content">Check older releases less thoroughly</span>}
+                    />
+                </Tooltip>
             </div>
             </ManagedSetting>
             </SettingsCard>
@@ -168,22 +159,16 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
             </div>
             </ManagedSetting>
             <ManagedSetting configKey="repair.auto-remove-unlinked-only">
-            <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-base-content/80">
-                    <Checkbox
+            <Tooltip content="When enabled (default), library-linked files still use Radarr/Sonarr remove-and-search. Disable to force-delete linked files after the failure threshold.">
+                <Toggle
                     id="auto-remove-unlinked-only-checkbox"
-                    aria-describedby="auto-remove-unlinked-only-help"
+                    className="cursor-pointer gap-2 p-0"
                     checked={(config["repair.auto-remove-unlinked-only"] ?? "true") === "true"}
                     disabled={!autoRemoveEnabled}
-                    onChange={e => setNewConfig({ ...config, "repair.auto-remove-unlinked-only": "" + e.target.checked })}  />
-                    <span>Auto-remove unlinked files only</span>
-                </label>
-                <p className="text-[11px] leading-relaxed text-base-content/45" id="auto-remove-unlinked-only-help">
-                    When enabled (default), library-linked files still go through Radarr/Sonarr
-                    remove-and-search instead of silent delete. Disable for aggressive mode that
-                    force-deletes linked files after the failure threshold.
-                </p>
-            </div>
+                    onChange={e => setNewConfig({ ...config, "repair.auto-remove-unlinked-only": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Auto-remove unlinked files only</span>}
+                />
+            </Tooltip>
             </ManagedSetting>
             </SettingsCard>
             </div>

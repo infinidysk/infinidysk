@@ -1,5 +1,5 @@
-import { ManagedSetting, SettingsIntro, SettingsPage } from "~/components/ui";
-import { Checkbox, Input, Select } from "~/components/ui/form";
+import { ManagedSetting, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
+import { Input, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { RemoveUnlinkedFiles } from "./remove-unlinked-files/remove-unlinked-files";
@@ -47,30 +47,18 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                     </div>
 
                     <div className="space-y-4 p-4">
-                        <label
-                            className="flex cursor-pointer items-start gap-3 rounded-lg bg-base-200/40 p-3"
-                            htmlFor="db-startup-vacuum-enabled-checkbox"
-                        >
-                            <Checkbox
-                                className="checkbox-primary mt-0.5 shrink-0"
+                        <Tooltip content="Reclaim unused SQLite space. Large databases may take longer to start.">
+                            <Toggle
                                 id="db-startup-vacuum-enabled-checkbox"
-                                aria-describedby="db-startup-vacuum-enabled-help"
+                                className="cursor-pointer gap-2 rounded-lg bg-base-200/40 p-3"
                                 checked={config["db.is-startup-vacuum-enabled"] === "true"}
                                 onChange={e => setNewConfig({
                                     ...config,
                                     "db.is-startup-vacuum-enabled": String(e.target.checked),
                                 })}
+                                label={<span className="text-sm font-medium text-base-content">Vacuum on startup</span>}
                             />
-                            <span>
-                                <span className="block text-sm font-medium text-base-content">Vacuum on startup</span>
-                                <span
-                                    className="mt-0.5 block text-xs leading-relaxed text-base-content/50"
-                                    id="db-startup-vacuum-enabled-help"
-                                >
-                                    Reclaim unused SQLite space. Large databases may take longer to start.
-                                </span>
-                            </span>
-                        </label>
+                        </Tooltip>
 
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div className="space-y-2">
@@ -146,30 +134,18 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                     </div>
 
                     <div className="space-y-4 p-4">
-                        <label
-                            className="flex cursor-pointer items-start gap-3 rounded-lg bg-base-200/40 p-3"
-                            htmlFor="remove-orphaned-schedule-enabled-checkbox"
-                        >
-                            <Checkbox
-                                className="checkbox-primary mt-0.5 shrink-0"
+                        <Tooltip content="Runs the same protected Remove Orphaned Files cleanup available in the task panel below.">
+                            <Toggle
                                 id="remove-orphaned-schedule-enabled-checkbox"
-                                aria-describedby="remove-orphaned-schedule-help"
+                                className="cursor-pointer gap-2 rounded-lg bg-base-200/40 p-3"
                                 checked={orphanScheduleEnabled}
                                 onChange={e => setNewConfig({
                                     ...config,
                                     "maintenance.remove-orphaned-schedule-enabled": String(e.target.checked),
                                 })}
+                                label={<span className="text-sm font-medium text-base-content">Enable daily cleanup</span>}
                             />
-                            <span>
-                                <span className="block text-sm font-medium text-base-content">Enable daily cleanup</span>
-                                <span
-                                    className="mt-0.5 block text-xs leading-relaxed text-base-content/50"
-                                    id="remove-orphaned-schedule-help"
-                                >
-                                    Runs the same protected cleanup available in the task panel below.
-                                </span>
-                            </span>
-                        </label>
+                        </Tooltip>
 
                         <fieldset className="space-y-2" disabled={!orphanScheduleEnabled}>
                             <legend className="text-xs font-medium uppercase tracking-wide text-base-content/50">
