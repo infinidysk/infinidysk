@@ -33,6 +33,8 @@ public static class ConfigKeys
 
     // usenet
     public const string UsenetArticleBufferSize = "usenet.article-buffer-size";
+    public const string UsenetArticleMissCacheTtlSeconds = "usenet.article-miss-cache-ttl-seconds";
+    public const string UsenetArticleMissCacheMaxEntries = "usenet.article-miss-cache-max-entries";
     public const string UsenetCascadeEnabled = "usenet.cascade.enabled";
     public const string UsenetIdleConnectionTimeoutSeconds = "usenet.idle-connection-timeout-seconds";
     public const string UsenetMaxDownloadConnections = "usenet.max-download-connections";

@@ -51,3 +51,17 @@ a man-in-the-middle attacker to impersonate the provider and read credentials.
 Run Auto-tune before enabling queue pipelining. WebDAV streaming pipelining is a **separate** toggle on [WebDAV](webdav.md).
 
 See [NNTP pipelining](../features/nntp-pipelining.md) and [Multi-provider](../features/multi-provider.md).
+
+## Article-miss negative cache [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+
+After a provider (or [storage group](../features/multi-provider.md)) reports a definitive article miss
+(NNTP 430 or provider 451), NzbDAV remembers that miss so later streaming/batch reads skip
+re-probing the same provider for the same article until the TTL expires. Transient failures
+(timeouts, network, corrupt articles) are never cached.
+
+| Control | Config key | Default | Effect |
+|---------|------------|---------|--------|
+| Miss-cache TTL (seconds) | `usenet.article-miss-cache-ttl-seconds` | `300` | How long a miss stays cached (clamped 30–86400) |
+| Miss-cache max entries | `usenet.article-miss-cache-max-entries` | `10000` | Cap before oldest entries are evicted (clamped 100–1000000) |
+
+The cache clears automatically when Usenet providers are reconfigured.

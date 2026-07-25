@@ -280,6 +280,8 @@ public class ConfigManager
                 case ConfigKeys.UsenetPipeliningDepth:
                 case ConfigKeys.UsenetArticleBufferSize:
                 case ConfigKeys.UsenetIdleConnectionTimeoutSeconds:
+                case ConfigKeys.UsenetArticleMissCacheTtlSeconds:
+                case ConfigKeys.UsenetArticleMissCacheMaxEntries:
                 case ConfigKeys.UsenetSegmentCacheMaxGb:
                 case ConfigKeys.UsenetStreamingPriority:
                 case ConfigKeys.UsenetStreamingSegmentTimeoutSeconds:
@@ -681,6 +683,30 @@ public class ConfigManager
         if (configured is null || !int.TryParse(configured, out var value))
             return 60;
         return Math.Clamp(value, 15, 300);
+    }
+
+    /// <summary>
+    /// How long a definitive per-provider (or per-storage-group) article miss stays
+    /// cached before it is re-probed. Default 300s; clamped to [30, 86400].
+    /// </summary>
+    public TimeSpan GetArticleMissCacheTtl()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetArticleMissCacheTtlSeconds));
+        if (configured is null || !int.TryParse(configured, out var seconds))
+            return TimeSpan.FromSeconds(300);
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 30, 86400));
+    }
+
+    /// <summary>
+    /// Upper bound on the number of cached article-miss entries before the oldest
+    /// are evicted. Default 10000; clamped to [100, 1000000].
+    /// </summary>
+    public int GetArticleMissCacheMaxEntries()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetArticleMissCacheMaxEntries));
+        if (configured is null || !int.TryParse(configured, out var value))
+            return 10_000;
+        return Math.Clamp(value, 100, 1_000_000);
     }
 
     public bool IsPipelinedBodyRequestsEnabled()

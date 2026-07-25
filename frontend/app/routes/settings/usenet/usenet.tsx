@@ -615,7 +615,13 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
             </section>
             </ManagedSetting>
 
-            <ManagedSetting configKeys={["usenet.cascade.enabled", "usenet.pipelining.enabled", "usenet.pipelining.depth"]}>
+            <ManagedSetting configKeys={[
+                "usenet.cascade.enabled",
+                "usenet.pipelining.enabled",
+                "usenet.pipelining.depth",
+                "usenet.article-miss-cache-ttl-seconds",
+                "usenet.article-miss-cache-max-entries",
+            ]}>
             <section className="overflow-hidden rounded-lg border border-base-content/10 bg-base-100">
                 <div className="flex items-start gap-3 border-b border-base-content/10 p-4">
                     <span className="rounded-lg bg-primary/10 p-2 text-primary">
@@ -658,6 +664,50 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                             </span>
                         </span>
                     </label>
+
+                    <div className="space-y-3 rounded-lg bg-base-200/40 p-3">
+                        <p className="text-sm font-medium text-base-content">Article-miss negative cache</p>
+                        <p className="text-xs leading-relaxed text-base-content/50">
+                            After a provider (or storage group) reports a definitive article miss (430/451),
+                            skip re-probing that provider for the same article until the TTL expires.
+                        </p>
+                        <div className="flex flex-wrap gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="article-miss-cache-ttl">TTL (seconds)</Label>
+                                <Input
+                                    type="text"
+                                    id="article-miss-cache-ttl"
+                                    className={`w-full max-w-[10rem] ${config["usenet.article-miss-cache-ttl-seconds"] !== undefined && config["usenet.article-miss-cache-ttl-seconds"] !== "" && !isArticleMissCacheTtl(config["usenet.article-miss-cache-ttl-seconds"]) ? "input-error" : ""}`}
+                                    placeholder="300"
+                                    value={config["usenet.article-miss-cache-ttl-seconds"] ?? ""}
+                                    onChange={(e) => setNewConfig({
+                                        ...config,
+                                        "usenet.article-miss-cache-ttl-seconds": e.target.value,
+                                    })}
+                                />
+                                <p className="text-[11px] leading-relaxed text-base-content/45">
+                                    30–86400. Default 300.
+                                </p>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="article-miss-cache-max">Max entries</Label>
+                                <Input
+                                    type="text"
+                                    id="article-miss-cache-max"
+                                    className={`w-full max-w-[10rem] ${config["usenet.article-miss-cache-max-entries"] !== undefined && config["usenet.article-miss-cache-max-entries"] !== "" && !isArticleMissCacheMaxEntries(config["usenet.article-miss-cache-max-entries"]) ? "input-error" : ""}`}
+                                    placeholder="10000"
+                                    value={config["usenet.article-miss-cache-max-entries"] ?? ""}
+                                    onChange={(e) => setNewConfig({
+                                        ...config,
+                                        "usenet.article-miss-cache-max-entries": e.target.value,
+                                    })}
+                                />
+                                <p className="text-[11px] leading-relaxed text-base-content/45">
+                                    100–1000000. Default 10000. Oldest entries are evicted when full.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
 
                     <div className="border-t border-base-content/10 pt-4">
                         <Alert className="alert-soft mb-4 items-start py-3 text-sm" variant="warning">
@@ -1869,9 +1919,23 @@ export function isUsenetSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.pipelining.enabled"] !== newConfig["usenet.pipelining.enabled"]
         || config["usenet.pipelining.depth"] !== newConfig["usenet.pipelining.depth"]
         || config["usenet.cascade.enabled"] !== newConfig["usenet.cascade.enabled"]
+        || config["usenet.article-miss-cache-ttl-seconds"] !== newConfig["usenet.article-miss-cache-ttl-seconds"]
+        || config["usenet.article-miss-cache-max-entries"] !== newConfig["usenet.article-miss-cache-max-entries"]
 }
 
 export function isPositiveInteger(value: string) {
     const num = Number(value);
     return Number.isInteger(num) && num > 0 && value.trim() === num.toString();
+}
+
+export function isArticleMissCacheTtl(value: string) {
+    if (!isPositiveInteger(value)) return false;
+    const num = Number(value);
+    return num >= 30 && num <= 86400;
+}
+
+export function isArticleMissCacheMaxEntries(value: string) {
+    if (!isPositiveInteger(value)) return false;
+    const num = Number(value);
+    return num >= 100 && num <= 1_000_000;
 }

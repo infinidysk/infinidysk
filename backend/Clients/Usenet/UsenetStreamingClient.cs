@@ -21,10 +21,11 @@ public class UsenetStreamingClient : WrappingNntpClient
         MetricsWriter metricsWriter,
         ProviderBytesTracker bytesTracker,
         StreamTraceBuffer streamTrace,
-        ActiveReadRegistry activeReadRegistry)
+        ActiveReadRegistry activeReadRegistry,
+        ArticleMissNegativeCache? articleMissCache = null)
         : base(CreateDownloadingNntpClient(
             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
-            streamTrace, activeReadRegistry))
+            streamTrace, activeReadRegistry, articleMissCache))
     {
         // when config changes, create a new MultiProviderClient to use instead.
         configManager.OnConfigChanged += (_, configEventArgs) =>
@@ -37,7 +38,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                 // update the connection-pool according to the new config
                 var newUsenetClient = CreateDownloadingNntpClient(
                     configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
-                    streamTrace, activeReadRegistry);
+                    streamTrace, activeReadRegistry, articleMissCache);
                 ReplaceUnderlyingClient(newUsenetClient);
             }
             catch (Exception e)
@@ -57,12 +58,13 @@ public class UsenetStreamingClient : WrappingNntpClient
         MetricsWriter metricsWriter,
         ProviderBytesTracker bytesTracker,
         StreamTraceBuffer streamTrace,
-        ActiveReadRegistry activeReadRegistry
+        ActiveReadRegistry activeReadRegistry,
+        ArticleMissNegativeCache? articleMissCache
     )
     {
         var multiProviderClient = CreateMultiProviderClient(
             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
-            streamTrace, activeReadRegistry);
+            streamTrace, activeReadRegistry, articleMissCache);
         var downloadingClient = new DownloadingNntpClient(multiProviderClient, configManager);
         INntpClient inner = downloadingClient;
         if (configManager.IsSegmentCacheEnabled())
@@ -104,7 +106,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         MetricsWriter metricsWriter,
         ProviderBytesTracker bytesTracker,
         StreamTraceBuffer streamTrace,
-        ActiveReadRegistry activeReadRegistry
+        ActiveReadRegistry activeReadRegistry,
+        ArticleMissNegativeCache? articleMissCache
     )
     {
         var providerConfig = configManager.GetUsenetProviderConfig();
@@ -129,7 +132,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             providerClients, usageTracker, metricsWriter, bytesTracker,
             cascadeEnabled: configManager.IsCascadeEnabled,
             streamTrace: streamTrace,
-            activeReadRegistry: activeReadRegistry);
+            activeReadRegistry: activeReadRegistry,
+            articleMissCache: articleMissCache);
     }
 
     private static MultiConnectionNntpClient CreateProviderClient

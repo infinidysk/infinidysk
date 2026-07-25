@@ -211,6 +211,7 @@ class Program
                 .AddSingleton<NzbFetchCoalescer>()
                 .AddSingleton<PlayResolutionCoalescer>()
                 .AddSingleton<CandidateNegativeCache>()
+                .AddSingleton<ArticleMissNegativeCache>()
                 .AddSingleton<WardenStore>()
                 .AddSingleton<WardenRemoteSourceService>()
                 .AddHostedService(sp => sp.GetRequiredService<WardenRemoteSourceService>())

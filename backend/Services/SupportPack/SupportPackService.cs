@@ -17,7 +17,8 @@ public sealed class SupportPackService(
     ConfigManager configManager,
     MetricsWriter metricsWriter,
     ProviderBytesTracker bytesTracker,
-    UsenetStreamingClient usenetStreamingClient)
+    UsenetStreamingClient usenetStreamingClient,
+    ArticleMissNegativeCache articleMissCache)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -298,6 +299,12 @@ public sealed class SupportPackService(
                     }),
             },
             failoverReasons = failover,
+            articleMissCache = new
+            {
+                hits = articleMissCache.Hits,
+                skips = articleMissCache.Skips,
+                entries = articleMissCache.Entries,
+            },
             metricsHealth = new
             {
                 queued = stats.QueuedFetches + stats.QueuedEvents + stats.QueuedSessions + stats.QueuedFailoverMisses,
