@@ -35,6 +35,7 @@ public static class ConfigKeys
     public const string UsenetArticleBufferSize = "usenet.article-buffer-size";
     public const string UsenetArticleMissCacheTtlSeconds = "usenet.article-miss-cache-ttl-seconds";
     public const string UsenetArticleMissCacheMaxEntries = "usenet.article-miss-cache-max-entries";
+    public const string UsenetInFlightArticleBudgetMb = "usenet.in-flight-article-budget-mb";
     public const string UsenetCascadeEnabled = "usenet.cascade.enabled";
     public const string UsenetIdleConnectionTimeoutSeconds = "usenet.idle-connection-timeout-seconds";
     public const string UsenetMaxDownloadConnections = "usenet.max-download-connections";
@@ -42,6 +43,8 @@ public static class ConfigKeys
     public const string UsenetMaxDownloadConnectionsPerStreamPreset = "usenet.max-download-connections-per-stream-preset";
     public const string UsenetMaxQueueConnections = "usenet.max-queue-connections";
     public const string QueueWorkerCount = "queue.worker-count";
+    public const string QueuePaused = "queue.paused";
+    public const string QueueSpeedLimitKbps = "queue.speed-limit-kbps";
     public const string UsenetPipelinedBodyRequests = "usenet.pipelined-body-requests";
     public const string UsenetPipeliningDepth = "usenet.pipelining.depth";
     public const string UsenetPipeliningEnabled = "usenet.pipelining.enabled";
@@ -52,6 +55,7 @@ public static class ConfigKeys
     public const string UsenetStreamingPriority = "usenet.streaming-priority";
     public const string UsenetStreamingSegmentTimeoutSeconds = "usenet.streaming-segment-timeout-seconds";
     public const string UsenetStreamingSegmentRetries = "usenet.streaming-segment-retries";
+    public const string UsenetStreamingReadTimeoutSeconds = "usenet.streaming-read-timeout-seconds";
 
     // webdav
     public const string WebdavEnforceReadonly = "webdav.enforce-readonly";

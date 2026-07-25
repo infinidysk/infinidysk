@@ -22,8 +22,10 @@ WebDAV authentication and streaming/connection behavior for playback mounts.
 | Per-stream performance | `usenet.max-download-connections-per-stream-preset` | `high` | low/medium/high/max |
 | Streaming Priority (vs Queue) | `usenet.streaming-priority` | `80` | % bandwidth to streaming |
 | Streaming Segment Timeout | `usenet.streaming-segment-timeout-seconds` | `8` | 2–40s |
+| Streaming Read Timeout [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since } | `usenet.streaming-read-timeout-seconds` | `30` | 5–120s initial backend wait to open a GET/range (semaphore + pool + first segment). Cleared once body bytes flow; mid-stream stalls use the per-segment timeout. Unstarted responses return **503** with `Retry-After` — rclone/FUSE may still show client-side errors |
 | Streaming Segment Retries | `usenet.streaming-segment-retries` | `3` | 0–5 |
-| Article Buffer Size | `usenet.article-buffer-size` | `40` | Articles buffered ahead/stream |
+| Article Buffer Size | `usenet.article-buffer-size` | `40` | Articles buffered ahead per stream (count bound) |
+| In-flight article budget (MiB) [since 0.8.2](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.2){ .nzbdav-since } | `usenet.in-flight-article-budget-mb` | `512` | Host-wide cap on decoded article bytes in RAM (64–8192); distinct from per-stream article buffer count |
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | 15–300; pool rebuild/restart |
 | Pipelined article downloads | `usenet.pipelined-body-requests` | on | WebDAV BODY batches |
 | Enforce Read-Only | `webdav.enforce-readonly` | on | `/content` readonly |

@@ -1,6 +1,6 @@
 import { type Dispatch, type ReactNode, type SetStateAction, useCallback, useMemo, useState } from "react";
 import { MultiCheckboxInput } from "~/components/multi-checkbox-input/multi-checkbox-input";
-import { Button, Field, Icon, Input, Label, ManagedSetting, Select, SettingsPage, Toggle } from "~/components/ui";
+import { Button, Field, Icon, Input, Label, ManagedSetting, Select, SettingsPage, Toggle, Tooltip } from "~/components/ui";
 
 type ProfilesSettingsProps = {
     config: Record<string, string>
@@ -367,12 +367,14 @@ function AdapterRow({ token, origin, adapter, enabled, onToggle }: AdapterRowPro
                     <span className="text-sm font-medium text-base-content">{adapter.name}</span>
                     <span className="text-xs text-base-content/60">{adapter.description}</span>
                 </div>
-                <Toggle
-                    id={`adapter-${token}-${adapter.key}`}
-                    label={`Enable ${adapter.name}`}
-                    className="[&>span:last-child]:sr-only"
-                    checked={enabled}
-                    onChange={e => onToggle(e.target.checked)} />
+                <Tooltip content={adapter.description}>
+                    <Toggle
+                        id={`adapter-${token}-${adapter.key}`}
+                        label={`Enable ${adapter.name}`}
+                        className="cursor-pointer gap-2 p-0 [&>span:last-child]:sr-only"
+                        checked={enabled}
+                        onChange={e => onToggle(e.target.checked)} />
+                </Tooltip>
             </div>
             {enabled && (
                 <div className="mt-2 flex items-center gap-2">

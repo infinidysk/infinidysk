@@ -7,8 +7,10 @@ using NWebDav.Server.Props;
 using NWebDav.Server.Stores;
 using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Database.Models.Metrics;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.WebDav.Requests;
@@ -28,6 +30,7 @@ namespace NzbWebDAV.WebDav.Base;
 public class GetAndHeadHandlerPatch : IRequestHandler
 {
     private readonly IStore _store;
+    private readonly ConfigManager _configManager;
     private readonly ProviderUsageTracker _providerUsageTracker;
     private readonly ActiveReadRegistry _activeReadRegistry;
     private readonly StreamTraceBuffer _streamTrace;
@@ -35,12 +38,14 @@ public class GetAndHeadHandlerPatch : IRequestHandler
 
     public GetAndHeadHandlerPatch(
         IStore store,
+        ConfigManager configManager,
         ProviderUsageTracker providerUsageTracker,
         ActiveReadRegistry activeReadRegistry,
         StreamTraceBuffer streamTrace,
         StreamingFailureTracker failureTracker)
     {
         _store = store;
+        _configManager = configManager;
         _providerUsageTracker = providerUsageTracker;
         _activeReadRegistry = activeReadRegistry;
         _streamTrace = streamTrace;
@@ -77,8 +82,46 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         if (range is { Start: not null, End: not null })
             RangeContext.SetReadBudget(range.End.Value - range.Start.Value + 1);
 
+        // Bound the initial backend wait (store lookup + stream open / first segment)
+        // so a stuck provider fails the HTTP request instead of blocking until the
+        // client disconnects. Cleared once body copy starts — mid-stream stalls use
+        // the per-segment StreamingTimeoutContext, not this wall clock. Every
+        // downstream await below must observe `ct` (not httpContext.RequestAborted
+        // directly) — StreamingTimeoutContext / CancellationTokenContext key by the
+        // exact token instance passed in.
+        using var readCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
+        readCts.CancelAfter(_configManager.GetStreamingReadTimeout());
+        var ct = readCts.Token;
+
+        try
+        {
+            return await HandleRequestCoreAsync(
+                    httpContext, request, response, isHeadRequest, range, copyStart, copyEnd, readCts, ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException oce) when (!httpContext.RequestAborted.IsCancellationRequested)
+        {
+            throw new StreamingReadTimeoutException(
+                "WebDAV read exceeded the " +
+                $"{_configManager.GetStreamingReadTimeout().TotalSeconds:0}s streaming-read-timeout " +
+                "while waiting for the Usenet backend.",
+                oce);
+        }
+    }
+
+    private async Task<bool> HandleRequestCoreAsync(
+        HttpContext httpContext,
+        HttpRequest request,
+        HttpResponse response,
+        bool isHeadRequest,
+        NWebDav.Server.Helpers.Range? range,
+        long copyStart,
+        long? copyEnd,
+        CancellationTokenSource readCts,
+        CancellationToken ct)
+    {
         // Obtain the WebDAV collection
-        var entry = await _store.GetItemAsync(request.GetUri(), httpContext.RequestAborted).ConfigureAwait(false);
+        var entry = await _store.GetItemAsync(request.GetUri(), ct).ConfigureAwait(false);
         if (entry == null)
         {
             // Set status to not found
@@ -94,28 +137,28 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         if (propertyManager != null)
         {
             // Add Last-Modified header
-            var lastModifiedUtc = (string?)await propertyManager.GetPropertyAsync(entry, DavGetLastModified<IStoreItem>.PropertyName, true, httpContext.RequestAborted).ConfigureAwait(false);
+            var lastModifiedUtc = (string?)await propertyManager.GetPropertyAsync(entry, DavGetLastModified<IStoreItem>.PropertyName, true, ct).ConfigureAwait(false);
             if (lastModifiedUtc != null)
                 response.Headers.LastModified = lastModifiedUtc;
 
             // Add ETag
-            etag = (string?)await propertyManager.GetPropertyAsync(entry, DavGetEtag<IStoreItem>.PropertyName, true, httpContext.RequestAborted).ConfigureAwait(false);
+            etag = (string?)await propertyManager.GetPropertyAsync(entry, DavGetEtag<IStoreItem>.PropertyName, true, ct).ConfigureAwait(false);
             if (etag != null)
                 response.Headers.ETag = etag;
 
             // Add type
-            var contentType = (string?)await propertyManager.GetPropertyAsync(entry, DavGetContentType<IStoreItem>.PropertyName, true, httpContext.RequestAborted).ConfigureAwait(false);
+            var contentType = (string?)await propertyManager.GetPropertyAsync(entry, DavGetContentType<IStoreItem>.PropertyName, true, ct).ConfigureAwait(false);
             if (contentType != null)
                 response.ContentType = contentType;
 
             // Add language
-            var contentLanguage = (string?)await propertyManager.GetPropertyAsync(entry, DavGetContentLanguage<IStoreItem>.PropertyName, true, httpContext.RequestAborted).ConfigureAwait(false);
+            var contentLanguage = (string?)await propertyManager.GetPropertyAsync(entry, DavGetContentLanguage<IStoreItem>.PropertyName, true, ct).ConfigureAwait(false);
             if (contentLanguage != null)
                 response.Headers.ContentLanguage = contentLanguage;
         }
 
         // Stream the actual entry
-        var stream = await entry.GetReadableStreamAsync(httpContext.RequestAborted).ConfigureAwait(false);
+        var stream = await entry.GetReadableStreamAsync(ct).ConfigureAwait(false);
         await using (stream.ConfigureAwait(false))
         {
             if (stream != Stream.Null)
@@ -217,9 +260,12 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     using var metricsScope = MultiProviderNntpClient.BeginReadSessionScope(sessionId);
                     try
                     {
+                        // Body transfer can run for minutes; drop the admission/open
+                        // deadline and rely on per-segment mid-stream timeouts.
+                        readCts.CancelAfter(Timeout.InfiniteTimeSpan);
                         await CopyToAsync(stream, response.Body, copyStart, copyEnd,
                             (n, pos) => _activeReadRegistry.Touch(sessionId, n, pos),
-                            httpContext.RequestAborted).ConfigureAwait(false);
+                            ct).ConfigureAwait(false);
                         FinishRange(sessionId, ReadSession.EndReasonCode.Completed);
                         ClearStreamingFailureAfterCompletedRead(
                             _failureTracker,

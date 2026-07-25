@@ -9,16 +9,27 @@ export type ErrorDonutProps = {
 
 // Severity-aware palette mapped to daisyUI semantic tokens where possible.
 const COLORS: Record<string, string> = {
-    Missing: "color-mix(in srgb, var(--color-base-content) 45%, transparent)",
-    Other:   "color-mix(in srgb, var(--color-base-content) 35%, transparent)",
-    Timeout: "var(--color-warning)",
-    Corrupt: "var(--color-accent)",
-    Network: "var(--color-error)",
-    Auth:    "var(--color-info)",
+    Missing:  "color-mix(in srgb, var(--color-base-content) 45%, transparent)",
+    Other:    "color-mix(in srgb, var(--color-base-content) 35%, transparent)",
+    Timeout:  "var(--color-warning)",
+    Corrupt:  "var(--color-accent)",
+    Network:  "var(--color-error)",
+    Auth:     "var(--color-info)",
+    Protocol: "var(--color-secondary)",
 };
 const DEFAULT_COLOR = "color-mix(in srgb, var(--color-base-content) 35%, transparent)";
 
-const HARD_FAILURE_STATUSES = new Set(["Timeout", "Corrupt", "Auth", "Network", "Other"]);
+// "Other" means the fetch failed for a reason we haven't classified yet — never
+// imply it's a clean provider miss (that's "Missing").
+const LABELS: Record<string, string> = {
+    Other: "Other (unclassified)",
+};
+
+export function statusLabel(status: string): string {
+    return LABELS[status] ?? status;
+}
+
+const HARD_FAILURE_STATUSES = new Set(["Timeout", "Corrupt", "Auth", "Network", "Protocol", "Other"]);
 
 export function ErrorBreakdown({ errors }: ErrorDonutProps) {
     const [hover, setHover] = useState<string | null>(null);
@@ -94,7 +105,7 @@ export function ErrorBreakdown({ errors }: ErrorDonutProps) {
                                             background: s.color,
                                         }}
                                         onMouseEnter={() => setHover(s.status)}
-                                        title={`${s.status}: ${formatNumber(s.count)} (${formatPercent(s.fraction * 100, 1)})`}
+                                        title={`${statusLabel(s.status)}: ${formatNumber(s.count)} (${formatPercent(s.fraction * 100, 1)})`}
                                     />
                                 ))}
                             </div>
@@ -110,7 +121,7 @@ export function ErrorBreakdown({ errors }: ErrorDonutProps) {
                                         onMouseLeave={() => setHover(null)}
                                     >
                                         <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
-                                        <span className="text-base-content">{s.status}</span>
+                                        <span className="text-base-content">{statusLabel(s.status)}</span>
                                         <span className="font-medium text-base-content tabular-nums">{formatNumber(s.count)}</span>
                                         <span className="text-[11px] text-base-content/50 tabular-nums">{formatPercent(s.fraction * 100, 0)}</span>
                                     </li>

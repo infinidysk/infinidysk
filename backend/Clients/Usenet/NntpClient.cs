@@ -130,7 +130,8 @@ public abstract class NntpClient : INntpClient
         int articleBufferSize,
         CancellationToken ct,
         bool usePipelinedBodyRequests = true,
-        string? fileName = null)
+        string? fileName = null,
+        InFlightArticleBudget? inFlightArticleBudget = null)
     {
         var segmentIds = nzbFile.GetSegmentIds();
         var fileSize = await GetFileSizeAsync(nzbFile, ct).ConfigureAwait(false);
@@ -142,7 +143,8 @@ public abstract class NntpClient : INntpClient
             nzbFile.GetSegmentByteRanges(),
             usePipelinedBodyRequests,
             ResolveFileName(fileName, nzbFile),
-            nzbFile.GetSegmentFallbackIds());
+            nzbFile.GetSegmentFallbackIds(),
+            inFlightArticleBudget);
     }
 
     public virtual NzbFileStream GetFileStream(
@@ -150,7 +152,8 @@ public abstract class NntpClient : INntpClient
         long fileSize,
         int articleBufferSize,
         bool usePipelinedBodyRequests = true,
-        string? fileName = null)
+        string? fileName = null,
+        InFlightArticleBudget? inFlightArticleBudget = null)
     {
         return new NzbFileStream(
             nzbFile.GetSegmentIds(),
@@ -160,7 +163,8 @@ public abstract class NntpClient : INntpClient
             nzbFile.GetSegmentByteRanges(),
             usePipelinedBodyRequests,
             ResolveFileName(fileName, nzbFile),
-            nzbFile.GetSegmentFallbackIds()
+            nzbFile.GetSegmentFallbackIds(),
+            inFlightArticleBudget
         );
     }
 
@@ -171,7 +175,8 @@ public abstract class NntpClient : INntpClient
         LongRange[]? segmentByteRanges = null,
         bool usePipelinedBodyRequests = true,
         string? fileName = null,
-        string[][]? segmentFallbacks = null)
+        string[][]? segmentFallbacks = null,
+        InFlightArticleBudget? inFlightArticleBudget = null)
     {
         return new NzbFileStream(
             segmentIds,
@@ -181,7 +186,8 @@ public abstract class NntpClient : INntpClient
             segmentByteRanges,
             usePipelinedBodyRequests,
             fileName,
-            segmentFallbacks);
+            segmentFallbacks,
+            inFlightArticleBudget);
     }
 
     private static string? ResolveFileName(string? fileName, NzbFile nzbFile)

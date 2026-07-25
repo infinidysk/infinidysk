@@ -167,6 +167,9 @@ export default function Overview(_props: Route.ComponentProps) {
                     articlesPerMinute: live.articlesPerMinute,
                     errorsPerMinute: live.errorsPerMinute,
                     bytesServedPerMinute: live.bytesServedPerMinute,
+                    inFlightArticleBytes: live.inFlightArticleBytes ?? s.tiles.inFlightArticleBytes ?? 0,
+                    inFlightArticleBudgetBytes: live.inFlightArticleBudgetBytes ?? s.tiles.inFlightArticleBudgetBytes ?? 0,
+                    inFlightArticleThrottleEvents: live.inFlightArticleThrottleEvents ?? s.tiles.inFlightArticleThrottleEvents ?? 0,
                 },
                 providers: mergeProviderCircuitBreakers(s.providers, live.providerBreakers),
             }));

@@ -20,6 +20,7 @@ public class SegmentFetch
         Corrupt = 3,
         Auth = 4,
         Network = 5,
+        Protocol = 6,
         Other = 9,
     }
 }

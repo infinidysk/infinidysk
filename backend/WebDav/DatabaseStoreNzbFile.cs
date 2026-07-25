@@ -13,7 +13,8 @@ public class DatabaseStoreNzbFile(
     HttpContext httpContext,
     DavDatabaseClient dbClient,
     INntpClient usenetClient,
-    ConfigManager configManager
+    ConfigManager configManager,
+    InFlightArticleBudget inFlightArticleBudget
 ) : BaseStoreStreamFile(httpContext, configManager)
 {
     public DavItem DavItem => davNzbFile;
@@ -43,7 +44,8 @@ public class DatabaseStoreNzbFile(
             nzbFile.SegmentByteRanges,
             configManager.IsPipelinedBodyRequestsEnabled(),
             davNzbFile.Path,
-            nzbFile.SegmentFallbackIds
+            nzbFile.SegmentFallbackIds,
+            inFlightArticleBudget
         );
     }
 }

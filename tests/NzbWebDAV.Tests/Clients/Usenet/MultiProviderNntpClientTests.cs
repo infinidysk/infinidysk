@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.Metrics;
@@ -1296,6 +1297,123 @@ public class MultiProviderNntpClientTests
 
         Assert.Equal(1, primaryConnection.SingularRequests);
         Assert.Equal(0, secondaryConnection.SingularRequests);
+    }
+
+    [Fact]
+    public void ClassifyException_Timeout_ReturnsTimeout()
+    {
+        var status = MultiProviderNntpClient.ClassifyException(new TimeoutException());
+        Assert.Equal(SegmentFetch.FetchStatus.Timeout, status);
+    }
+
+    [Fact]
+    public void ClassifyException_CorruptArticle_ReturnsCorrupt()
+    {
+        var exception = new UsenetCorruptArticleException("segment", "provider", new Exception("bad crc"));
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+        Assert.Equal(SegmentFetch.FetchStatus.Corrupt, status);
+    }
+
+    [Fact]
+    public void ClassifyException_CouldNotLogin_ReturnsAuth()
+    {
+        var exception = new CouldNotLoginToUsenetException("bad credentials");
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+        Assert.Equal(SegmentFetch.FetchStatus.Auth, status);
+    }
+
+    [Fact]
+    public void ClassifyException_UnauthorizedAccess_ReturnsAuth()
+    {
+        var status = MultiProviderNntpClient.ClassifyException(new UnauthorizedAccessException());
+        Assert.Equal(SegmentFetch.FetchStatus.Auth, status);
+    }
+
+    [Fact]
+    public void ClassifyException_CouldNotConnect_ReturnsNetwork()
+    {
+        var exception = new CouldNotConnectToUsenetException("connection refused");
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+        Assert.Equal(SegmentFetch.FetchStatus.Network, status);
+    }
+
+    [Fact]
+    public void ClassifyException_IOException_ReturnsNetwork()
+    {
+        var status = MultiProviderNntpClient.ClassifyException(new IOException("connection reset"));
+        Assert.Equal(SegmentFetch.FetchStatus.Network, status);
+    }
+
+    [Fact]
+    public void ClassifyException_SocketException_ReturnsNetwork()
+    {
+        var exception = new System.Net.Sockets.SocketException();
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+        Assert.Equal(SegmentFetch.FetchStatus.Network, status);
+    }
+
+    [Fact]
+    public void ClassifyException_UnknownException_ReturnsOther()
+    {
+        var status = MultiProviderNntpClient.ClassifyException(new Exception("boom"));
+        Assert.Equal(SegmentFetch.FetchStatus.Other, status);
+    }
+
+    [Fact]
+    public void ClassifyException_UnexpectedResponse_ReturnsProtocol()
+    {
+        var exception = new UsenetUnexpectedResponseException("<seg@example>", "400 too much time between commands");
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+        Assert.Equal(SegmentFetch.FetchStatus.Protocol, status);
+    }
+
+    [Fact]
+    public void ClassifyException_UnexpectedResponseWrapped_StillReturnsProtocol()
+    {
+        var inner = new UsenetUnexpectedResponseException("<seg@example>", "400 idle timeout");
+        var wrapped = new InvalidOperationException("stream read failed", inner);
+        var status = MultiProviderNntpClient.ClassifyException(wrapped);
+        Assert.Equal(SegmentFetch.FetchStatus.Protocol, status);
+    }
+
+    [Fact]
+    public void ClassifyException_CorruptArticleWrappedInOuterException_StillReturnsCorrupt()
+    {
+        // NNTP failures are often re-thrown wrapped by an outer exception; the innermost
+        // known cause must still win so it isn't misclassified as Other.
+        var inner = new UsenetCorruptArticleException("segment", "provider", new Exception("bad crc"));
+        var wrapped = new InvalidOperationException("stream read failed", inner);
+        var status = MultiProviderNntpClient.ClassifyException(wrapped);
+        Assert.Equal(SegmentFetch.FetchStatus.Corrupt, status);
+    }
+
+    [Fact]
+    public void ClassifyException_LoginFailureWrappedInOuterException_StillReturnsAuth()
+    {
+        var inner = new CouldNotLoginToUsenetException("bad credentials");
+        var wrapped = new InvalidOperationException("stream read failed", inner);
+        var status = MultiProviderNntpClient.ClassifyException(wrapped);
+        Assert.Equal(SegmentFetch.FetchStatus.Auth, status);
+    }
+
+    [Fact]
+    public void ClassifyException_ConnectFailureWrappedInOuterException_StillReturnsNetwork()
+    {
+        var inner = new CouldNotConnectToUsenetException("connection refused");
+        var wrapped = new InvalidOperationException("stream read failed", inner);
+        var status = MultiProviderNntpClient.ClassifyException(wrapped);
+        Assert.Equal(SegmentFetch.FetchStatus.Network, status);
+    }
+
+    [Fact]
+    public void ClassifyException_CorruptArticleInsideAggregateException_StillReturnsCorrupt()
+    {
+        // Task/NNTP wrappers often surface AggregateException; the known cause must
+        // still be found among InnerExceptions, not only InnerException.
+        var inner = new UsenetCorruptArticleException("segment", "provider", new Exception("bad crc"));
+        var aggregate = new AggregateException("one or more errors", inner);
+        var status = MultiProviderNntpClient.ClassifyException(aggregate);
+        Assert.Equal(SegmentFetch.FetchStatus.Corrupt, status);
     }
 
     private static MultiConnectionNntpClient CreateProvider(

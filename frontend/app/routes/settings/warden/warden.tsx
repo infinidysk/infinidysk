@@ -1,6 +1,6 @@
 import { type ChangeEvent, type DragEvent, type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
-import { Alert, Button, Icon, ManagedSetting, Modal, NativeForm as Form, SettingsIntro, SettingsPage, Spinner, Textarea } from "~/components/ui";
+import { Alert, Button, Icon, ManagedSetting, Modal, NativeForm as Form, SettingsIntro, SettingsPage, Spinner, Textarea, Tooltip } from "~/components/ui";
 
 type WardenSettingsProps = {
     config: Record<string, string>;
@@ -402,17 +402,15 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
 
             <ManagedSetting configKey="warden.hide-dead">
             <Form.Group className={"flex flex-col gap-2"}>
-                <Form.Check
-                    type="switch"
-                    id="warden-hide-dead"
-                    label="Filter out anything on the list"
-                    checked={hideDead}
-                    onChange={e => set("warden.hide-dead", String(e.target.checked))} />
-                <p className={"m-0 text-[11px] leading-relaxed text-base-content/45"}>
-                    When on, anything whose fingerprint is filtered by your sources is removed from
-                    what your search profiles return. If everything matches, results are shown anyway
-                    as a last resort.
-                </p>
+                <Tooltip content="Remove search results whose fingerprint is filtered by your sources. If everything matches, results are shown anyway as a last resort.">
+                    <Form.Check
+                        type="switch"
+                        id="warden-hide-dead"
+                        className="cursor-pointer gap-2 p-0"
+                        label="Filter out anything on the list"
+                        checked={hideDead}
+                        onChange={e => set("warden.hide-dead", String(e.target.checked))} />
+                </Tooltip>
             </Form.Group>
             </ManagedSetting>
 
@@ -432,16 +430,15 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
 
             <ManagedSetting configKey="warden.backbone-scope">
             <Form.Group className={"flex flex-col gap-2"}>
-                <Form.Check
-                    type="switch"
-                    id="warden-backbone-scope"
-                    label="Only filter when the provider matches"
-                    checked={backboneScope}
-                    onChange={e => set("warden.backbone-scope", String(e.target.checked))} />
-                <p className={"m-0 text-[11px] leading-relaxed text-base-content/45"}>
-                    A verdict from a remote or imported list only filters when its provider matches one
-                    of yours. Your own list always filters.
-                </p>
+                <Tooltip content="A remote/imported verdict only filters when its provider matches one of yours. Your own list always filters.">
+                    <Form.Check
+                        type="switch"
+                        id="warden-backbone-scope"
+                        className="cursor-pointer gap-2 p-0"
+                        label="Only filter when the provider matches"
+                        checked={backboneScope}
+                        onChange={e => set("warden.backbone-scope", String(e.target.checked))} />
+                </Tooltip>
             </Form.Group>
             </ManagedSetting>
 
@@ -549,9 +546,12 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                                         </div>}
 
                                     {!isLocal &&
-                                        <Form.Check type="switch" id={`enabled-${s.id}`} label="Enabled"
-                                            checked={s.enabled} disabled={rowBusy}
-                                            onChange={e => updateSource(s.id, { enabled: String(e.target.checked) })} />}
+                                        <Tooltip content="Include fingerprints from this remote source in filtering.">
+                                            <Form.Check type="switch" id={`enabled-${s.id}`} label="Enabled"
+                                                className="cursor-pointer gap-2 p-0"
+                                                checked={s.enabled} disabled={rowBusy}
+                                                onChange={e => updateSource(s.id, { enabled: String(e.target.checked) })} />
+                                        </Tooltip>}
 
                                     {s.kind === "remote" &&
                                         <div className={"flex items-center gap-1.5"}>
@@ -800,8 +800,11 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                                         setExportSources(next);
                                     }} />)}
                         </div>}
-                    <Form.Check type="switch" id="export-dedup" label="Deduplicate identical fingerprints"
-                        checked={exportDedup} onChange={e => setExportDedup(e.target.checked)} style={{ marginTop: 8 }} />
+                    <Tooltip content="Collapse identical fingerprints into a single export line.">
+                        <Form.Check type="switch" id="export-dedup" label="Deduplicate identical fingerprints"
+                            className="cursor-pointer gap-2 p-0"
+                            checked={exportDedup} onChange={e => setExportDedup(e.target.checked)} style={{ marginTop: 8 }} />
+                    </Tooltip>
             </Modal>
 
             <Modal
@@ -854,8 +857,11 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                                 onChange={e => setBInterval(e.target.value)} />
                         </Form.Group>
                     </div>
-                    <Form.Check type="switch" id="backup-enabled" label="Back up automatically on this schedule"
-                        checked={bEnabled} onChange={e => setBEnabled(e.target.checked)} style={{ marginTop: 12 }} />
+                    <Tooltip content="Push an automatic backup of your list to GitHub on the schedule below.">
+                        <Form.Check type="switch" id="backup-enabled" label="Back up automatically on this schedule"
+                            className="cursor-pointer gap-2 p-0"
+                            checked={bEnabled} onChange={e => setBEnabled(e.target.checked)} style={{ marginTop: 12 }} />
+                    </Tooltip>
             </Modal>
 
             <ConfirmModal

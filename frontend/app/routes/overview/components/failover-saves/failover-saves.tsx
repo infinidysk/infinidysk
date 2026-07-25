@@ -369,9 +369,13 @@ function reasonMeta(status: string): { label: string, cls: string } {
     switch (status) {
         case "Missing": return { label: "missing", cls: styles.rMissing };
         case "Timeout": return { label: "timed out", cls: styles.rTimeout };
+        case "Protocol": return { label: "protocol", cls: styles.rOther };
         case "Auth": return { label: "auth", cls: styles.rAuth };
         case "Network": return { label: "network", cls: styles.rNetwork };
         case "Corrupt": return { label: "corrupt", cls: styles.rCorrupt };
+        // Unclassified failures must never read as "missing" — that implies a clean
+        // provider 430, which this isn't.
+        case "Other": return { label: "other (unclassified)", cls: styles.rOther };
         default: return { label: status.toLowerCase(), cls: styles.rOther };
     }
 }

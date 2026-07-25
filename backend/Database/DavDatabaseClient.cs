@@ -175,7 +175,8 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var query = Ctx.QueueItems
             .OrderByDescending(q => q.Priority)
             .ThenBy(q => q.CreatedAt)
-            .Where(q => q.PauseUntil == null || nowTime >= q.PauseUntil);
+            .Where(q => q.PauseUntil == null || nowTime >= q.PauseUntil)
+            .Where(q => q.Priority != QueueItem.PriorityOption.Paused);
 
         if (excludeIds is { Count: > 0 })
         {

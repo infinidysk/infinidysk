@@ -9,6 +9,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.Services.SupportPack;
 
@@ -18,7 +19,8 @@ public sealed class SupportPackService(
     MetricsWriter metricsWriter,
     ProviderBytesTracker bytesTracker,
     UsenetStreamingClient usenetStreamingClient,
-    ArticleMissNegativeCache articleMissCache)
+    ArticleMissNegativeCache articleMissCache,
+    InFlightArticleBudget inFlightArticleBudget)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -136,6 +138,9 @@ public sealed class SupportPackService(
                 processorCount = Environment.ProcessorCount,
                 workingSetBytes = Environment.WorkingSet,
                 gcTotalMemoryBytes = GC.GetTotalMemory(forceFullCollection: false),
+                inFlightArticleBytes = inFlightArticleBudget.LeasedBytes,
+                inFlightArticleBudgetBytes = inFlightArticleBudget.CapBytes,
+                inFlightArticleThrottleEvents = inFlightArticleBudget.ThrottleEvents,
                 timeZone = TimeZoneInfo.Local.Id,
             },
             threadPool = new { minWorkerThreads, minIoThreads, maxWorkerThreads, maxIoThreads },

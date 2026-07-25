@@ -1,6 +1,6 @@
 import { Button } from "~/components/ui/button";
-import { Alert } from "~/components/ui/feedback";
-import { Checkbox } from "~/components/ui/form";
+import { Alert, Tooltip } from "~/components/ui/feedback";
+import { Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { useCallback, useState } from "react";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
@@ -102,15 +102,16 @@ export function RecreateStrmFiles({ savedConfig }: RecreateStrmFilesProps) {
                 </p>
 
                 <div className="rounded-lg border border-base-content/10 bg-base-200/40 p-3">
-                    <label className="flex items-center gap-2 text-sm text-base-content/75">
-                        <Checkbox
+                    <Tooltip content="Rewrite every existing STRM sidecar and bump modification times, not only missing or stale ones.">
+                        <Toggle
                             id="recreate-strm-rewrite-all"
+                            className="cursor-pointer gap-2 p-0"
                             checked={rewriteAll}
                             onChange={e => setRewriteAll(e.target.checked)}
                             disabled={isRunning}
+                            label={<span className="text-sm text-base-content">Rewrite every STRM file and update modification times</span>}
                         />
-                        <span>Rewrite every STRM file and update modification times</span>
-                    </label>
+                    </Tooltip>
                     <div className="mt-3 flex flex-col gap-3 border-t border-base-content/10 pt-3 sm:flex-row sm:items-center sm:justify-between">
                         <Button
                             className="shrink-0"

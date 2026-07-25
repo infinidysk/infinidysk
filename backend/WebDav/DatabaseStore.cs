@@ -6,6 +6,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.WebDav;
@@ -17,7 +18,8 @@ public class DatabaseStore(
     UsenetStreamingClient usenetClient,
     QueueManager queueManager,
     WebsocketManager websocketManager,
-    LazyRarResolver lazyRarResolver
+    LazyRarResolver lazyRarResolver,
+    InFlightArticleBudget inFlightArticleBudget
 ) : IStore
 {
     private readonly DatabaseStoreCollection _root = new(
@@ -28,7 +30,8 @@ public class DatabaseStore(
         usenetClient,
         queueManager,
         websocketManager,
-        lazyRarResolver
+        lazyRarResolver,
+        inFlightArticleBudget
     );
 
     public async Task<IStoreItem?> GetItemAsync(string path, CancellationToken cancellationToken)
@@ -43,7 +46,7 @@ public class DatabaseStore(
         if (byPath is not null)
             return DatabaseStoreItemFactory.Create(
                 byPath, httpContextAccessor.HttpContext!, dbClient, configManager,
-                usenetClient, queueManager, websocketManager, lazyRarResolver);
+                usenetClient, queueManager, websocketManager, lazyRarResolver, inFlightArticleBudget);
 
         // Fallback: walk the collection hierarchy segment-by-segment. This covers synthetic
         // items that have no persisted row (empty category folders, .ids children, the

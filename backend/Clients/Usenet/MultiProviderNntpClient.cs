@@ -239,8 +239,8 @@ public class MultiProviderNntpClient(
             catch (Exception e) when (!e.IsCancellationException(cancellationToken))
             {
                 primaryStopwatch.Stop();
-                var reason = ClassifyException(e);
-                RecordFetch(primaryProvider.MetricsKey, reason, primaryStopwatch.ElapsedMilliseconds, 0);
+                var reason = ClassifyAndRecordFailure(
+                    primaryProvider.MetricsKey, e, primaryStopwatch.ElapsedMilliseconds, 0);
                 (priorMisses ??= []).Add((primaryProvider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
             }
@@ -372,8 +372,8 @@ public class MultiProviderNntpClient(
                 catch (Exception e) when (!e.IsCancellationException(cancellationToken))
                 {
                     stopwatch.Stop();
-                    var reason = ClassifyException(e);
-                    RecordFetch(provider.MetricsKey, reason, stopwatch.ElapsedMilliseconds,
+                    var reason = ClassifyAndRecordFailure(
+                        provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
                         priorMisses?.Count ?? 0);
                     (priorMisses ??= []).Add((provider.MetricsKey, reason));
                     deferredCallback.Discard();
@@ -575,8 +575,8 @@ public class MultiProviderNntpClient(
             catch (Exception e) when (!e.IsCancellationException(cancellationToken))
             {
                 stopwatch.Stop();
-                var reason = ClassifyException(e);
-                RecordFetch(provider.MetricsKey, reason, stopwatch.ElapsedMilliseconds, attemptIndex);
+                var reason = ClassifyAndRecordFailure(
+                    provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex);
                 (priorMisses ??= []).Add((provider.MetricsKey, reason));
                 deferredCallback.Discard();
                 lastException = ExceptionDispatchInfo.Capture(e);
@@ -706,8 +706,8 @@ public class MultiProviderNntpClient(
             catch (Exception e) when (!e.IsCancellationException(cancellationToken))
             {
                 stopwatch.Stop();
-                var reason = ClassifyException(e);
-                RecordFetch(provider.MetricsKey, reason, stopwatch.ElapsedMilliseconds, attemptIndex);
+                var reason = ClassifyAndRecordFailure(
+                    provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex);
                 (priorMisses ??= new()).Add((provider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
                 lastOutcomeWasException = true;
@@ -720,10 +720,7 @@ public class MultiProviderNntpClient(
         // an earlier 430, and a later 430 beats an earlier error).
         if (lastOutcomeWasException)
         {
-            Log.Warning(
-                "All providers exhausted. Last error from {Provider}: {ErrorMessage}",
-                lastAttemptedProvider?.Host ?? "unknown",
-                lastException!.SourceException.Message);
+            LogExhaustedProviders(lastAttemptedProvider?.Host, lastException!.SourceException);
             lastException.Throw();
         }
         if (lastNoArticleResult is not null) return lastNoArticleResult;
@@ -749,6 +746,41 @@ public class MultiProviderNntpClient(
     private static string CacheKey(SegmentId segmentId, MultiConnectionNntpClient provider) =>
         ArticleMissNegativeCache.BuildKey(segmentId.ToString()!, provider.MetricsKey, provider.StorageGroup);
 
+    /// <summary>
+    /// Logs the terminal failure once all providers have been tried. Known
+    /// transport/download failures log a human-friendly Warning with the reason;
+    /// unexpected exceptions keep their full stack so they aren't lost, and the
+    /// residual FetchStatus.Other case retains the concrete exception type name
+    /// so support packs stay diagnosable without a schema change.
+    /// </summary>
+    private static void LogExhaustedProviders(string? providerHost, Exception exception)
+    {
+        var host = providerHost ?? "unknown";
+        var status = ClassifyException(exception);
+        if (exception.TryGetKnownErrorMessage(out var reason))
+        {
+            if (status == SegmentFetch.FetchStatus.Other)
+            {
+                Log.Warning(
+                    "All providers exhausted. Last error from {Provider}. Status={Status} ExceptionType={ExceptionType} Reason: {Reason}",
+                    host, status, exception.GetType().FullName, reason);
+            }
+            else
+            {
+                Log.Warning(
+                    "All providers exhausted. Last error from {Provider}. Status={Status} Reason: {Reason}",
+                    host, status, reason);
+            }
+        }
+        else
+        {
+            Log.Error(
+                exception,
+                "All providers exhausted. Unexpected last error from {Provider}. Status={Status} ExceptionType={ExceptionType}",
+                host, status, exception.GetType().FullName);
+        }
+    }
+
     private void RecordFetch(string metricsKey, SegmentFetch.FetchStatus status, long durationMs, int retries)
     {
         if (ReadSessionScope.Value is { } sessionId)
@@ -767,6 +799,26 @@ public class MultiProviderNntpClient(
             Status = status,
             Retries = retries,
         });
+    }
+
+    /// <summary>
+    /// Classifies <paramref name="exception"/>, records the SegmentFetch row, and for residual
+    /// <see cref="SegmentFetch.FetchStatus.Other"/> logs the concrete exception type so support
+    /// packs stay diagnosable without a schema change.
+    /// </summary>
+    private SegmentFetch.FetchStatus ClassifyAndRecordFailure(
+        string metricsKey, Exception exception, long durationMs, int retries)
+    {
+        var status = ClassifyException(exception);
+        RecordFetch(metricsKey, status, durationMs, retries);
+        if (status == SegmentFetch.FetchStatus.Other)
+        {
+            Log.Debug(
+                exception,
+                "Unclassified Usenet segment fetch failure. Host={Host} ExceptionType={ExceptionType}",
+                metricsKey, exception.GetType().FullName);
+        }
+        return status;
     }
 
     private void RecordFailoverMisses(
@@ -819,11 +871,34 @@ public class MultiProviderNntpClient(
         return wrapped;
     }
 
-    private static SegmentFetch.FetchStatus ClassifyException(Exception ex)
+    /// <summary>
+    /// Maps a fetch failure to a <see cref="SegmentFetch.FetchStatus"/> for metrics/UI.
+    /// Walks the exception chain (<see cref="ExceptionExtensions.TryGetCausingException{T}"/>)
+    /// so a known cause wrapped by an outer exception is still classified correctly.
+    /// Anything left over falls into <see cref="SegmentFetch.FetchStatus.Other"/> — callers
+    /// should log the concrete exception type there so support packs stay diagnosable.
+    /// Do not renumber existing enum values; only append.
+    /// </summary>
+    internal static SegmentFetch.FetchStatus ClassifyException(Exception ex)
     {
-        if (ex is TimeoutException) return SegmentFetch.FetchStatus.Timeout;
-        if (ex is UnauthorizedAccessException) return SegmentFetch.FetchStatus.Auth;
-        if (ex is System.IO.IOException || ex is System.Net.Sockets.SocketException) return SegmentFetch.FetchStatus.Network;
+        if (ex.TryGetCausingException<TimeoutException>(out _))
+            return SegmentFetch.FetchStatus.Timeout;
+
+        if (ex.TryGetCausingException<UsenetCorruptArticleException>(out _))
+            return SegmentFetch.FetchStatus.Corrupt;
+
+        if (ex.TryGetCausingException<CouldNotLoginToUsenetException>(out _) ||
+            ex.TryGetCausingException<UnauthorizedAccessException>(out _))
+            return SegmentFetch.FetchStatus.Auth;
+
+        if (ex.TryGetCausingException<CouldNotConnectToUsenetException>(out _) ||
+            ex.TryGetCausingException<System.Net.Sockets.SocketException>(out _) ||
+            ex.TryGetCausingException<System.IO.IOException>(out _))
+            return SegmentFetch.FetchStatus.Network;
+
+        if (ex.TryGetCausingException<UsenetUnexpectedResponseException>(out _))
+            return SegmentFetch.FetchStatus.Protocol;
+
         return SegmentFetch.FetchStatus.Other;
     }
 
