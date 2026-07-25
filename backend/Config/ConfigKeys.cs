@@ -50,6 +50,7 @@ public static class ConfigKeys
     public const string UsenetStreamingPriority = "usenet.streaming-priority";
     public const string UsenetStreamingSegmentTimeoutSeconds = "usenet.streaming-segment-timeout-seconds";
     public const string UsenetStreamingSegmentRetries = "usenet.streaming-segment-retries";
+    public const string UsenetStreamingReadTimeoutSeconds = "usenet.streaming-read-timeout-seconds";
 
     // webdav
     public const string WebdavEnforceReadonly = "webdav.enforce-readonly";

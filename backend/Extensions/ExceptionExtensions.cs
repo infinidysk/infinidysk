@@ -102,6 +102,7 @@ public static class ExceptionExtensions
         return exception is TimeoutException
             or SocketException
             or IOException
+            or StreamingReadTimeoutException
             || exception.IsRetryableDownloadException()
             || exception.IsNonRetryableDownloadException();
     }

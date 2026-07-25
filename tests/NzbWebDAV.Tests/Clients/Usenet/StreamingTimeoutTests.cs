@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
@@ -404,6 +405,55 @@ public class StreamingTimeoutTests
 
         Assert.False(breaker.IsTripped);
         Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
+    public async Task DownloadSemaphoreWait_CancelsWithinStreamingReadDeadline()
+    {
+        // Mirrors WebDAV linking RequestAborted + CancelAfter(streaming-read-timeout)
+        // into AcquireExclusiveConnectionAsync's WaitAsync — a held permit must not hang forever.
+        using var semaphore = new PrioritizedSemaphore(initialAllowed: 1, maxAllowed: 1);
+        await semaphore.WaitAsync(SemaphorePriority.High);
+
+        using var readCts = new CancellationTokenSource();
+        readCts.CancelAfter(TimeSpan.FromMilliseconds(200));
+        var sw = Stopwatch.StartNew();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => semaphore.WaitAsync(SemaphorePriority.High, readCts.Token));
+        sw.Stop();
+
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2),
+            $"Expected deadline cancel within ~200ms, took {sw.Elapsed}");
+        // Holding the original permit — release must still succeed (no leak from cancelled waiter).
+        semaphore.Release();
+        await semaphore.WaitAsync(SemaphorePriority.High).WaitAsync(TimeSpan.FromSeconds(1));
+        semaphore.Release();
+    }
+
+    [Fact]
+    public async Task ConnectionPoolGate_CancelsWithinStreamingReadDeadline()
+    {
+        var created = 0;
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ =>
+            {
+                Interlocked.Increment(ref created);
+                return ValueTask.FromResult<INntpClient>(new HangingNntpClient());
+            });
+
+        using var held = await pool.GetConnectionLockAsync(SemaphorePriority.High, CancellationToken.None);
+
+        using var readCts = new CancellationTokenSource();
+        readCts.CancelAfter(TimeSpan.FromMilliseconds(200));
+        var sw = Stopwatch.StartNew();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => pool.GetConnectionLockAsync(SemaphorePriority.High, readCts.Token));
+        sw.Stop();
+
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2),
+            $"Expected pool-gate cancel within ~200ms, took {sw.Elapsed}");
+        Assert.Equal(1, created);
     }
 
     /// <summary>

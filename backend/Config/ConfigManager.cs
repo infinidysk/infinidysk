@@ -284,6 +284,7 @@ public class ConfigManager
                 case ConfigKeys.UsenetStreamingPriority:
                 case ConfigKeys.UsenetStreamingSegmentTimeoutSeconds:
                 case ConfigKeys.UsenetStreamingSegmentRetries:
+                case ConfigKeys.UsenetStreamingReadTimeoutSeconds:
                 case ConfigKeys.WardenQuorum:
                 case ConfigKeys.WardenMaxSourceEntries:
                 case ConfigKeys.PlayTotalBudgetSeconds:
@@ -737,6 +738,20 @@ public class ConfigManager
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingSegmentRetries));
         return int.TryParse(v, out var n) ? Math.Clamp(n, 0, 5) : 3;
+    }
+
+    /// <summary>
+    /// Total backend-wait budget for a single WebDAV/`/view` GET or range read —
+    /// covers download-semaphore admission, the connection-pool gate, and segment
+    /// delivery together. Distinct from (and larger than) the per-segment timeout:
+    /// this bounds the whole read so a stuck provider fails the HTTP request
+    /// instead of blocking until the client disconnects.
+    /// </summary>
+    public TimeSpan GetStreamingReadTimeout()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingReadTimeoutSeconds));
+        var seconds = int.TryParse(v, out var n) ? Math.Clamp(n, 5, 120) : 30;
+        return TimeSpan.FromSeconds(seconds);
     }
 
     public bool IsEnforceReadonlyWebdavEnabled()

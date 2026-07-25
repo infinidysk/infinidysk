@@ -20,6 +20,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentConnectionLimitErrors = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentSeekErrors = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentReadErrors = new();
+    private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentStreamingReadTimeouts = new();
     private static readonly ConcurrentDictionary<Guid, DateTime> RecentRepairTriggers = new();
     private static readonly TimeSpan DedupeWindow = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan RepairDedupeWindow = TimeSpan.FromMinutes(5);
@@ -141,6 +142,52 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             var filePath = GetRequestFilePath(context);
             Log.Error("File {FilePath} could not connect to usenet provider: {ErrorMessage}", filePath, e.Message);
             AbortStartedResponse(context);
+        }
+        catch (Exception e) when (e.TryGetCausingException(out StreamingReadTimeoutException? _))
+        {
+            // Backend-wait deadline (not client disconnect). Fail fast before headers so
+            // rclone/FUSE can surface an HTTP error instead of wedging in D-state; after
+            // headers we can only abort the truncated body.
+            var filePath = GetRequestFilePath(context);
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.Headers.RetryAfter = "5";
+                LogWithDedup(RecentStreamingReadTimeouts, filePath, suppressed =>
+                {
+                    if (suppressed > 0)
+                        Log.Warning(
+                            "WebDAV read failed fast. Path={Path} Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)",
+                            filePath,
+                            "streaming-read-timeout",
+                            suppressed);
+                    else
+                        Log.Warning(
+                            "WebDAV read failed fast. Path={Path} Reason: {Reason}",
+                            filePath,
+                            "streaming-read-timeout");
+                });
+                Log.Debug(e, "WebDAV streaming-read-timeout stack");
+                return;
+            }
+
+            AbortStartedResponse(context);
+            LogWithDedup(RecentStreamingReadTimeouts, filePath + "|after-headers", suppressed =>
+            {
+                if (suppressed > 0)
+                    Log.Warning(
+                        "WebDAV read aborted after headers due to backend deadline. Path={Path} Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)",
+                        filePath,
+                        "streaming-read-timeout-after-headers",
+                        suppressed);
+                else
+                    Log.Warning(
+                        "WebDAV read aborted after headers due to backend deadline. Path={Path} Reason: {Reason}",
+                        filePath,
+                        "streaming-read-timeout-after-headers");
+            });
+            Log.Debug(e, "WebDAV streaming-read-timeout after-headers stack");
         }
         catch (Exception e) when (
             IsDavItemRequest(context) &&
@@ -389,6 +436,11 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         {
             if (kvp.Value.LastLogged < cutoff)
                 RecentReadErrors.TryRemove(kvp.Key, out _);
+        }
+        foreach (var kvp in RecentStreamingReadTimeouts)
+        {
+            if (kvp.Value.LastLogged < cutoff)
+                RecentStreamingReadTimeouts.TryRemove(kvp.Key, out _);
         }
         foreach (var kvp in RecentRepairTriggers)
         {

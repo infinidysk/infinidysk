@@ -8,6 +8,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.Metrics;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Services;
@@ -29,7 +30,7 @@ public class GetWebdavItemController(
     StreamTraceBuffer streamTrace
 ) : ControllerBase
 {
-    private async Task<Stream> GetWebdavItem(GetWebdavItemRequest request)
+    private async Task<Stream> GetWebdavItem(GetWebdavItemRequest request, CancellationToken ct)
     {
         // /view streams outside NWebDav; attach the same streaming timeout context
         // BaseStoreStreamFile sets for WebDAV so segment fetches fail fast.
@@ -40,14 +41,14 @@ public class GetWebdavItemController(
             PerSegmentTimeout = configManager.GetStreamingSegmentTimeout(),
             MaxRetries = configManager.GetStreamingSegmentRetries(),
         };
-        var scopedStreamingTimeoutContext = HttpContext.RequestAborted.SetContext(streamingTimeoutContext);
+        var scopedStreamingTimeoutContext = ct.SetContext(streamingTimeoutContext);
         HttpContext.Response.OnCompleted(() =>
         {
             scopedStreamingTimeoutContext.Dispose();
             return Task.CompletedTask;
         });
 
-        var item = await store.GetItemAsync(request.Item, HttpContext.RequestAborted).ConfigureAwait(false);
+        var item = await store.GetItemAsync(request.Item, ct).ConfigureAwait(false);
         if (item is null) throw new BadHttpRequestException("The file does not exist.");
         if (item is IStoreCollection) throw new BadHttpRequestException("The file does not exist.");
 
@@ -56,14 +57,14 @@ public class GetWebdavItemController(
 
         // handle par2 preview
         if (Path.GetExtension(item.Name).ToLower() == ".par2" && configManager.IsPreviewPar2FilesEnabled())
-            return await GetPar2PreviewStream(item).ConfigureAwait(false);
+            return await GetPar2PreviewStream(item, ct).ConfigureAwait(false);
 
         // Provisional budget for fully-specified ranges before stream creation.
         if (request.RangeStart is { } provisionalStart && request.RangeEnd is { } provisionalEnd)
             RangeContext.SetReadBudget(provisionalEnd - provisionalStart + 1);
 
         // get the file stream and set the file-size in header
-        var stream = await item.GetReadableStreamAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        var stream = await item.GetReadableStreamAsync(ct).ConfigureAwait(false);
         var fileSize = stream.Length;
 
         var idFile = item as DatabaseStoreIdFile;
@@ -153,34 +154,52 @@ public class GetWebdavItemController(
             HttpContext.Items["readSessionId"] = sessionId;
             using var scope = providerUsageTracker.BeginScope(sessionId);
             using var metricsScope = MultiProviderNntpClient.BeginReadSessionScope(sessionId);
-            await using var response = await GetWebdavItem(request);
-            if (response == Stream.Null)
-                return;
-            var effectiveStart = (long)(HttpContext.Items["effectiveRangeStart"] ?? 0L);
-            var rangeEnd = HttpContext.Items["effectiveRangeEnd"] as long?;
-            streamTrace.RangeOpen(
-                sessionId,
-                request.Item,
-                "GET",
-                effectiveStart,
-                rangeEnd,
-                response.CanSeek ? response.Length : null,
-                Request.Headers.UserAgent.ToString(),
-                HttpContext.Connection.RemoteIpAddress?.ToString());
+
+            // Bound the entire backend wait (NNTP admission + segment delivery) for this
+            // read so a stuck provider fails the HTTP request instead of blocking until
+            // the client disconnects. See GetAndHeadHandlerPatch for the WebDAV parity path.
+            using var readCts = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+            readCts.CancelAfter(configManager.GetStreamingReadTimeout());
+            var ct = readCts.Token;
+
             try
             {
-                await CopyAndReportAsync(response, Response.Body, sessionId, effectiveStart, HttpContext.RequestAborted);
-                FinishRange(sessionId, ReadSession.EndReasonCode.Completed);
+                await using var response = await GetWebdavItem(request, ct);
+                if (response == Stream.Null)
+                    return;
+                var effectiveStart = (long)(HttpContext.Items["effectiveRangeStart"] ?? 0L);
+                var rangeEnd = HttpContext.Items["effectiveRangeEnd"] as long?;
+                streamTrace.RangeOpen(
+                    sessionId,
+                    request.Item,
+                    "GET",
+                    effectiveStart,
+                    rangeEnd,
+                    response.CanSeek ? response.Length : null,
+                    Request.Headers.UserAgent.ToString(),
+                    HttpContext.Connection.RemoteIpAddress?.ToString());
+                try
+                {
+                    await CopyAndReportAsync(response, Response.Body, sessionId, effectiveStart, ct);
+                    FinishRange(sessionId, ReadSession.EndReasonCode.Completed);
+                }
+                catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    FinishRange(sessionId, ReadSession.EndReasonCode.Aborted);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    FinishRange(sessionId, ReadSession.EndReasonCode.Error, ex.Message);
+                    throw;
+                }
             }
-            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+            catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
             {
-                FinishRange(sessionId, ReadSession.EndReasonCode.Aborted);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                FinishRange(sessionId, ReadSession.EndReasonCode.Error, ex.Message);
-                throw;
+                throw new StreamingReadTimeoutException(
+                    "WebDAV /view read exceeded the " +
+                    $"{configManager.GetStreamingReadTimeout().TotalSeconds:0}s streaming-read-timeout " +
+                    "while waiting for the Usenet backend.");
             }
         }
         catch (UnauthorizedAccessException)
@@ -271,8 +290,23 @@ public class GetWebdavItemController(
         {
             HttpContext.Items["configManager"] = configManager;
             var request = new GetWebdavItemRequest(HttpContext);
-            await using var response = await GetWebdavItem(request).ConfigureAwait(false);
-            // HEAD: headers already set, body omitted
+
+            using var readCts = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+            readCts.CancelAfter(configManager.GetStreamingReadTimeout());
+            var ct = readCts.Token;
+
+            try
+            {
+                await using var response = await GetWebdavItem(request, ct).ConfigureAwait(false);
+                // HEAD: headers already set, body omitted
+            }
+            catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                throw new StreamingReadTimeoutException(
+                    "WebDAV /view HEAD exceeded the " +
+                    $"{configManager.GetStreamingReadTimeout().TotalSeconds:0}s streaming-read-timeout " +
+                    "while waiting for the Usenet backend.");
+            }
         }
         catch (UnauthorizedAccessException)
         {
@@ -317,11 +351,11 @@ public class GetWebdavItemController(
         return $"{type}; filename=\"{ascii}\"; filename*=UTF-8''{utf8}";
     }
 
-    private async Task<Stream> GetPar2PreviewStream(IStoreItem item)
+    private async Task<Stream> GetPar2PreviewStream(IStoreItem item, CancellationToken ct)
     {
         Response.Headers.ContentType = "text/plain";
-        await using var stream = await item.GetReadableStreamAsync(HttpContext.RequestAborted).ConfigureAwait(false);
-        var fileDescriptors = await Par2.ReadFileDescriptions(stream, HttpContext.RequestAborted).GetAllAsync()
+        await using var stream = await item.GetReadableStreamAsync(ct).ConfigureAwait(false);
+        var fileDescriptors = await Par2.ReadFileDescriptions(stream, ct).GetAllAsync()
             .ConfigureAwait(false);
         return new MemoryStream(Encoding.UTF8.GetBytes(fileDescriptors.ToIndentedJson()));
     }
