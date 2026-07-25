@@ -6,6 +6,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
@@ -659,7 +660,18 @@ public class StreamingTimeoutTests
                     SegmentId = segmentId.ToString(),
                     ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
                     ResponseMessage = "222 ok",
-                    Stream = null!,
+                    Stream = new CachedYencStream(
+                        new UsenetYencHeader
+                        {
+                            FileName = "ok.bin",
+                            FileSize = 1,
+                            LineLength = 128,
+                            PartNumber = 1,
+                            TotalParts = 1,
+                            PartOffset = 0,
+                            PartSize = 1,
+                        },
+                        new MemoryStream([1], writable: false)),
                 })).ToArray();
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
             return Task.FromResult(new UsenetDecodedBodyBatch { Responses = responses });

@@ -149,7 +149,9 @@ public class SegmentStreamBenchmarks
             var buffer = new byte[64 * 1024];
             var read = await stream.ReadAtLeastAsync(
                 buffer, buffer.Length, throwOnEndOfStream: false);
-            checksum = HashCode.Combine(checksum, read, buffer[0], buffer[read - 1]);
+            checksum = read == 0
+                ? HashCode.Combine(checksum, 0)
+                : HashCode.Combine(checksum, read, buffer[0], buffer[read - 1]);
         }
 
         return checksum;

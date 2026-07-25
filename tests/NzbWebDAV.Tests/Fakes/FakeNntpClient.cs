@@ -143,7 +143,9 @@ internal sealed class FakeNntpClient(
                 new UsenetYencHeader
                 {
                     FileName = "fake.bin",
-                    FileSize = segmentRanges?.Values.Max(range => range.EndExclusive) ?? bytes.Length,
+                    FileSize = segmentRanges is { Count: > 0 }
+                        ? segmentRanges.Values.Max(range => range.EndExclusive)
+                        : bytes.Length,
                     LineLength = 128,
                     PartNumber = 1,
                     TotalParts = segments.Count,

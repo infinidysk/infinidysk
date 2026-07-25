@@ -637,11 +637,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     }
 
     /// <summary>
-    /// Keeps a segment's contribution equal to its recorded length. A complete yEnc body
-    /// that decodes to fewer bytes than recorded means the recorded size is wrong, not
-    /// the data, so the shortfall is filled rather than retried — but leaving it unfilled
-    /// would shift every following byte. A longer body is left alone: the wire is the
-    /// better source of truth for bytes that actually arrived.
+    /// Keeps a segment's contribution equal to its recorded length. Leaving either a
+    /// shortfall or an overrun would shift every following byte, so short bodies are
+    /// padded and long bodies are truncated to the recorded size.
     /// </summary>
     private void AlignDrainedSegment(MemoryStream buffer, int segmentIndex, long drained, long expected)
     {
@@ -650,8 +648,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         if (drained > expected)
         {
             Log.Debug(
-                "Segment {SegmentIndex} of {FileName} decoded {Drained} bytes but was recorded as {Expected}.",
+                "Segment {SegmentIndex} of {FileName} decoded {Drained} bytes but was recorded as {Expected}. Truncating to keep offsets aligned.",
                 segmentIndex, _fileName, drained, expected);
+            buffer.SetLength(expected);
             return;
         }
 

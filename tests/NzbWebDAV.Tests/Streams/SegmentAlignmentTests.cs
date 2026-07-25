@@ -134,8 +134,11 @@ public class SegmentAlignmentTests
         Assert.Equal("aaaaabbbbbbbccccc", Encoding.ASCII.GetString(output));
     }
 
-    [Fact]
-    public async Task BodyShorterThanItsRecordedLength_IsPaddedToKeepOffsets()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4)]
+    public async Task BodyShorterThanItsRecordedLength_IsPaddedToKeepOffsets(
+        int articleBufferSize)
     {
         var client = CreateClient(new Dictionary<string, byte[]>
         {
@@ -144,13 +147,51 @@ public class SegmentAlignmentTests
             ["three"] = Third,
         });
 
-        await using var stream = CreateStream(client, exactSizes: [5, 7, 5]);
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "one", "two", "three" }.AsMemory(),
+            client,
+            articleBufferSize: articleBufferSize,
+            estimatedSegmentSize: 6,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: articleBufferSize > 0,
+            cancellationToken: CancellationToken.None,
+            fileName: $"short-body-{articleBufferSize}.bin",
+            exactSegmentSizes: new long[] { 5, 7, 5 });
         var output = await ReadAllAsync(stream);
 
         Assert.Equal(17, output.Length);
         Assert.Equal("aa", Encoding.ASCII.GetString(output, 0, 2));
         Assert.Equal(new byte[3], output[2..5]);
         Assert.Equal("bbbbbbb", Encoding.ASCII.GetString(output, 5, 7));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4)]
+    public async Task BodyLongerThanItsRecordedLength_IsTruncatedToKeepOffsets(
+        int articleBufferSize)
+    {
+        var client = CreateClient(new Dictionary<string, byte[]>
+        {
+            ["one"] = "aaaaaEXTRA"u8.ToArray(),
+            ["two"] = Second,
+            ["three"] = Third,
+        });
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "one", "two", "three" }.AsMemory(),
+            client,
+            articleBufferSize: articleBufferSize,
+            estimatedSegmentSize: 6,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: articleBufferSize > 0,
+            cancellationToken: CancellationToken.None,
+            fileName: $"long-body-{articleBufferSize}.bin",
+            exactSegmentSizes: new long[] { 5, 7, 5 });
+        var output = await ReadAllAsync(stream);
+
+        Assert.Equal(17, output.Length);
+        Assert.Equal("aaaaabbbbbbbccccc", Encoding.ASCII.GetString(output));
     }
 
     [Fact]

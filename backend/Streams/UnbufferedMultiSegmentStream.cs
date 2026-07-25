@@ -19,6 +19,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private int _currentIndex;
     private int _openSegmentIndex = -1;
     private long _openSegmentBytes;
+    private long _pendingPadBytes;
     private int _consecutiveZeroFills;
     private bool _disposed;
 
@@ -45,6 +46,17 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (_pendingPadBytes > 0)
+            {
+                var fill = (int)Math.Min(_pendingPadBytes, buffer.Length);
+                buffer.Span[..fill].Clear();
+                _pendingPadBytes -= fill;
+                _openSegmentBytes += fill;
+                if (_pendingPadBytes == 0)
+                    await FinishOpenSegmentAsync().ConfigureAwait(false);
+                return fill;
+            }
 
             // if the stream is null, get the next stream.
             if (_stream == null)
@@ -95,19 +107,64 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 }
             }
 
-            // read from the stream
-            var read = await _stream.ReadAsync(buffer, cancellationToken);
+            // Cap the open segment at its recorded length so a too-long body cannot
+            // push every following byte out of place.
+            if (TryGetRemainingExactBytes(out var remainingExact) && remainingExact == 0)
+            {
+                await FinishOpenSegmentAsync().ConfigureAwait(false);
+                continue;
+            }
+
+            var destination = remainingExact > 0 && remainingExact < buffer.Length
+                ? buffer[..(int)remainingExact]
+                : buffer;
+            var read = await _stream.ReadAsync(destination, cancellationToken);
             if (read > 0)
             {
                 _openSegmentBytes += read;
                 return read;
             }
 
-            // if the stream ended, continue to the next stream.
-            if (_openSegmentIndex >= 0)
-                _segmentSizes.RecordObservedSize(_openSegmentIndex, _openSegmentBytes);
-            _openSegmentIndex = -1;
-            await _stream.DisposeAsync();
+            // Body ended early: pad to the recorded length so the next segment still
+            // starts at the offset the rest of the file expects.
+            if (TryGetRemainingExactBytes(out remainingExact) && remainingExact > 0)
+            {
+                ZeroFillLogLimiter.Write(
+                    "Segment {SegmentId} of {FileName} decoded {Bytes} bytes short of its recorded size. " +
+                    "Filling the gap to keep the rest of the file aligned.",
+                    _segmentIds.Span[_openSegmentIndex],
+                    _fileName,
+                    remainingExact);
+                if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
+                    StreamTrace.TryZeroFill(sessionId, _segmentIds.Span[_openSegmentIndex], remainingExact);
+
+                _pendingPadBytes = remainingExact;
+                continue;
+            }
+
+            await FinishOpenSegmentAsync().ConfigureAwait(false);
+        }
+    }
+
+    private bool TryGetRemainingExactBytes(out long remaining)
+    {
+        remaining = 0;
+        if (_openSegmentIndex < 0) return false;
+        if (!_segmentSizes.TryGetExactSize(_openSegmentIndex, out var exact)) return false;
+        remaining = Math.Max(0, exact - _openSegmentBytes);
+        return true;
+    }
+
+    private async Task FinishOpenSegmentAsync()
+    {
+        if (_openSegmentIndex >= 0
+            && !_segmentSizes.TryGetExactSize(_openSegmentIndex, out _))
+            _segmentSizes.RecordObservedSize(_openSegmentIndex, _openSegmentBytes);
+        _openSegmentIndex = -1;
+        _pendingPadBytes = 0;
+        if (_stream is not null)
+        {
+            await _stream.DisposeAsync().ConfigureAwait(false);
             _stream = null;
         }
     }
