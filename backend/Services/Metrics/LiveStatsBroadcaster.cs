@@ -5,6 +5,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.Metrics;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -26,7 +27,8 @@ public class LiveStatsBroadcaster(
     ActiveReadRegistry registry,
     WebsocketManager websocketManager,
     UsenetStreamingClient usenetStreamingClient,
-    ConfigManager configManager
+    ConfigManager configManager,
+    InFlightArticleBudget inFlightArticleBudget
 ) : BackgroundService
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(5);
@@ -96,6 +98,9 @@ public class LiveStatsBroadcaster(
             articlesPerMinute = articles,
             errorsPerMinute = errors,
             bytesServedPerMinute = bytesPerMinute,
+            inFlightArticleBytes = inFlightArticleBudget.LeasedBytes,
+            inFlightArticleBudgetBytes = inFlightArticleBudget.CapBytes,
+            inFlightArticleThrottleEvents = inFlightArticleBudget.ThrottleEvents,
             ts = nowMs,
             providerBreakers,
         };

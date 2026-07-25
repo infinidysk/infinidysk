@@ -279,6 +279,7 @@ public class ConfigManager
                 case ConfigKeys.QueueWorkerCount:
                 case ConfigKeys.UsenetPipeliningDepth:
                 case ConfigKeys.UsenetArticleBufferSize:
+                case ConfigKeys.UsenetInFlightArticleBudgetMb:
                 case ConfigKeys.UsenetIdleConnectionTimeoutSeconds:
                 case ConfigKeys.UsenetSegmentCacheMaxGb:
                 case ConfigKeys.UsenetStreamingPriority:
@@ -670,6 +671,20 @@ public class ConfigManager
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetArticleBufferSize));
         return int.TryParse(v, out var n) ? Math.Clamp(n, 0, 1000) : 40;
     }
+
+    /// <summary>
+    /// Host-wide cap on decoded article bytes retained in RAM across concurrent WebDAV
+    /// streams. Default 512 MiB; clamped to [64, 8192]. Distinct from
+    /// <see cref="GetArticleBufferSize"/>, which bounds per-stream segment count.
+    /// </summary>
+    public int GetInFlightArticleBudgetMb()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetInFlightArticleBudgetMb));
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 64, 8192) : 512;
+    }
+
+    public long GetInFlightArticleBudgetBytes() =>
+        (long)GetInFlightArticleBudgetMb() * 1024L * 1024L;
 
     /// <summary>
     /// Idle timeout for pooled NNTP connections. Default 60s; clamped to [15, 300].

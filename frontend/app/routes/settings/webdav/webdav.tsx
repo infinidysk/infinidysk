@@ -384,6 +384,25 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                             onChange={e => setNewConfig({ ...config, "usenet.article-buffer-size": e.target.value })} />
                         <p className="text-[11px] leading-relaxed text-base-content/45" id="article-buffer-size-help">
                             The number of articles to buffer ahead, per stream, when reading from the webdav.
+                            Host-wide decoded-byte retention is capped separately by In-flight article budget.
+                        </p>
+                    </div>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="usenet.in-flight-article-budget-mb">
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-base-content" htmlFor="in-flight-article-budget-input">In-flight article budget (MiB)</label>
+                        <Input
+                            {...className(['w-full', !isValidInFlightArticleBudget(config["usenet.in-flight-article-budget-mb"]) && 'input-error'])}
+                            type="text"
+                            id="in-flight-article-budget-input"
+                            aria-describedby="in-flight-article-budget-help"
+                            placeholder="512"
+                            value={config["usenet.in-flight-article-budget-mb"] ?? "512"}
+                            onChange={e => setNewConfig({ ...config, "usenet.in-flight-article-budget-mb": e.target.value })} />
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="in-flight-article-budget-help">
+                            Host-wide cap on decoded article bytes retained in RAM across concurrent WebDAV streams (64–8192, default 512).
+                            Prevents unbounded prefetch under heavy Arr/rclone load from OOM-killing the container.
                         </p>
                     </div>
                 </ManagedSetting>
@@ -442,6 +461,7 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.streaming-segment-timeout-seconds"] !== newConfig["usenet.streaming-segment-timeout-seconds"]
         || config["usenet.streaming-segment-retries"] !== newConfig["usenet.streaming-segment-retries"]
         || config["usenet.article-buffer-size"] !== newConfig["usenet.article-buffer-size"]
+        || config["usenet.in-flight-article-budget-mb"] !== newConfig["usenet.in-flight-article-budget-mb"]
         || config["usenet.idle-connection-timeout-seconds"] !== newConfig["usenet.idle-connection-timeout-seconds"]
         || config["usenet.pipelined-body-requests"] !== newConfig["usenet.pipelined-body-requests"]
         || config["webdav.show-hidden-files"] !== newConfig["webdav.show-hidden-files"]
@@ -465,6 +485,7 @@ export function isWebdavSettingsValid(newConfig: Record<string, string>) {
         && isValidStreamingSegmentTimeout(newConfig["usenet.streaming-segment-timeout-seconds"])
         && isValidStreamingSegmentRetries(newConfig["usenet.streaming-segment-retries"])
         && isValidArticleBufferSize(newConfig["usenet.article-buffer-size"])
+        && isValidInFlightArticleBudget(newConfig["usenet.in-flight-article-budget-mb"])
         && isValidIdleConnectionTimeout(newConfig["usenet.idle-connection-timeout-seconds"])
         && segmentCacheValid;
 }
@@ -516,6 +537,12 @@ function isValidStreamingSegmentRetries(value: string): boolean {
 
 function isValidArticleBufferSize(value: string): boolean {
     return isPositiveInteger(value);
+}
+
+function isValidInFlightArticleBudget(value: string | undefined): boolean {
+    if (value == null || value.trim() === "") return true;
+    const num = Number(value);
+    return Number.isInteger(num) && num >= 64 && num <= 8192;
 }
 
 function isValidIdleConnectionTimeout(value: string | undefined): boolean {

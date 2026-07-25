@@ -51,6 +51,7 @@ const defaultConfig = {
     "usenet.streaming-segment-timeout-seconds": "8",
     "usenet.streaming-segment-retries": "3",
     "usenet.article-buffer-size": "40",
+    "usenet.in-flight-article-budget-mb": "512",
     "usenet.idle-connection-timeout-seconds": "60",
     "usenet.pipelined-body-requests": "true",
     "usenet.segment-cache.enabled": "false",

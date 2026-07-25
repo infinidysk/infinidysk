@@ -23,7 +23,8 @@ WebDAV authentication and streaming/connection behavior for playback mounts.
 | Streaming Priority (vs Queue) | `usenet.streaming-priority` | `80` | % bandwidth to streaming |
 | Streaming Segment Timeout | `usenet.streaming-segment-timeout-seconds` | `8` | 2–40s |
 | Streaming Segment Retries | `usenet.streaming-segment-retries` | `3` | 0–5 |
-| Article Buffer Size | `usenet.article-buffer-size` | `40` | Articles buffered ahead/stream |
+| Article Buffer Size | `usenet.article-buffer-size` | `40` | Articles buffered ahead per stream (count bound) |
+| In-flight article budget (MiB) [since 0.8.2](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.2){ .nzbdav-since } | `usenet.in-flight-article-budget-mb` | `512` | Host-wide cap on decoded article bytes in RAM (64–8192); distinct from per-stream article buffer count |
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | 15–300; pool rebuild/restart |
 | Pipelined article downloads | `usenet.pipelined-body-requests` | on | WebDAV BODY batches |
 | Enforce Read-Only | `webdav.enforce-readonly` | on | `/content` readonly |

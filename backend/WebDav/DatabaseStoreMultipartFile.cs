@@ -16,7 +16,8 @@ public class DatabaseStoreMultipartFile(
     DavDatabaseClient dbClient,
     UsenetStreamingClient usenetClient,
     ConfigManager configManager,
-    LazyRarResolver lazyRarResolver
+    LazyRarResolver lazyRarResolver,
+    InFlightArticleBudget inFlightArticleBudget
 ) : BaseStoreStreamFile(httpContext, configManager)
 {
     public DavItem DavItem => davMultipartFile;
@@ -53,7 +54,8 @@ public class DatabaseStoreMultipartFile(
             configManager.GetArticleBufferSize(),
             lazyRarResolver,
             configManager.IsPipelinedBodyRequestsEnabled(),
-            davMultipartFile.Path
+            davMultipartFile.Path,
+            inFlightArticleBudget
         );
 
         return multipartFile.Metadata.AesParams != null

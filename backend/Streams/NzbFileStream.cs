@@ -19,7 +19,8 @@ public class NzbFileStream(
     LongRange[]? segmentByteRanges = null,
     bool usePipelinedBodyRequests = true,
     string? fileName = null,
-    string[][]? segmentFallbacks = null
+    string[][]? segmentFallbacks = null,
+    InFlightArticleBudget? inFlightArticleBudget = null
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
@@ -345,7 +346,8 @@ public class NzbFileStream(
             cancellationToken,
             fileName,
             segmentFallbacks: fallbacks,
-            exactSegmentSizes: exactSizes);
+            exactSegmentSizes: exactSizes,
+            inFlightArticleBudget: inFlightArticleBudget);
     }
 
     protected override void Dispose(bool disposing)

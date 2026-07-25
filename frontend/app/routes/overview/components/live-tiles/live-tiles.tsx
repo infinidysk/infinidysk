@@ -6,12 +6,19 @@ export type LiveTilesProps = {
         articlesPerMinute: number,
         errorsPerMinute: number,
         bytesServedPerMinute: number,
+        inFlightArticleBytes?: number,
+        inFlightArticleBudgetBytes?: number,
+        inFlightArticleThrottleEvents?: number,
     },
 }
 
 export function LiveTiles({ tiles }: LiveTilesProps) {
     const bytesPerSec = tiles.bytesServedPerMinute / 60;
     const articlesPerSec = tiles.articlesPerMinute / 60;
+    const leased = tiles.inFlightArticleBytes ?? 0;
+    const cap = tiles.inFlightArticleBudgetBytes ?? 0;
+    const throttles = tiles.inFlightArticleThrottleEvents ?? 0;
+    const budgetPressure = cap > 0 && leased >= cap * 0.9;
     return (
         <div className="stats stats-vertical w-full border border-base-content/10 bg-base-200 shadow lg:stats-horizontal">
             <Tile
@@ -28,6 +35,14 @@ export function LiveTiles({ tiles }: LiveTilesProps) {
                 label="Read throughput"
                 value={formatBytes(bytesPerSec) + "/s"}
                 sub={`${formatBytes(tiles.bytesServedPerMinute)} / min`}
+            />
+            <Tile
+                label="Article RAM"
+                value={cap > 0 ? `${formatBytes(leased)}` : formatBytes(leased)}
+                sub={cap > 0
+                    ? `${formatBytes(cap)} cap${throttles > 0 ? ` · ${throttles.toLocaleString()} waits` : ""}`
+                    : undefined}
+                accent={budgetPressure ? "danger" : undefined}
             />
             <Tile
                 label="Fetch errors"
