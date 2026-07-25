@@ -15,10 +15,17 @@ const EXPECTED_NETWORK_CODES = new Set([
   "UND_ERR_HEADERS_TIMEOUT",
   "UND_ERR_BODY_TIMEOUT",
   "UND_ERR_SOCKET",
-  BACKEND_MIGRATING_CODE,
 ]);
 
-let lastExpectedBackendUnavailableLogAt = 0;
+const backendUnavailableLogState = process as typeof process & {
+  __nzbdavBackendUnavailableLogState?: { lastLogAt: number };
+};
+
+function getBackendUnavailableLogState(): { lastLogAt: number } {
+  return backendUnavailableLogState.__nzbdavBackendUnavailableLogState ??= {
+    lastLogAt: 0,
+  };
+}
 
 /** Uses process uptime so Express and SSR bundles agree even if this module is duplicated. */
 export function isWithinBackendStartupGrace(uptimeMs = process.uptime() * 1000): boolean {
@@ -62,8 +69,8 @@ export function isExpectedBackendConnectionError(error: unknown): boolean {
 export function isExpectedBackendUnavailableError(error: unknown): boolean {
   if (error instanceof Error && error.name === "BackendUnavailableError") {
     const code = (error as { code?: string }).code;
+    if (code === BACKEND_MIGRATING_CODE) return true;
     if (isExpectedNetworkCode(code)) return true;
-    if (error.message.includes("backend is starting or migrating")) return true;
     return isExpectedBackendConnectionError(error);
   }
   return isExpectedBackendConnectionError(error);
@@ -79,14 +86,15 @@ export function formatBackendUnavailableReason(error: unknown): string {
  * backend-unavailable failure. Shared by unhandledRejection and SSR handleError.
  */
 export function shouldEmitThrottledBackendUnavailableLog(now = Date.now()): boolean {
-  if (now - lastExpectedBackendUnavailableLogAt < BACKEND_FAILURE_LOG_THROTTLE_MS) {
+  const state = getBackendUnavailableLogState();
+  if (now - state.lastLogAt < BACKEND_FAILURE_LOG_THROTTLE_MS) {
     return false;
   }
-  lastExpectedBackendUnavailableLogAt = now;
+  state.lastLogAt = now;
   return true;
 }
 
 /** Test-only: reset throttle state between cases. */
 export function resetBackendUnavailableLogThrottleForTests(): void {
-  lastExpectedBackendUnavailableLogAt = 0;
+  getBackendUnavailableLogState().lastLogAt = 0;
 }

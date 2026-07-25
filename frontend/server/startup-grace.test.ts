@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BACKEND_FAILURE_LOG_THROTTLE_MS,
   BACKEND_MIGRATING_CODE,
@@ -111,5 +111,15 @@ describe("startup-grace helpers", () => {
     expect(
       shouldEmitThrottledBackendUnavailableLog(t0 + BACKEND_FAILURE_LOG_THROTTLE_MS),
     ).toBe(true);
+  });
+
+  it("shares throttle state across separately loaded server bundles", async () => {
+    const t0 = 1_000_000;
+    expect(shouldEmitThrottledBackendUnavailableLog(t0)).toBe(true);
+
+    vi.resetModules();
+    const separatelyLoaded = await import("./startup-grace");
+
+    expect(separatelyLoaded.shouldEmitThrottledBackendUnavailableLog(t0 + 1)).toBe(false);
   });
 });
