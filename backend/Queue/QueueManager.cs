@@ -192,11 +192,24 @@ public class QueueManager : IDisposable
             // active (mode=pause), hold off starting new downloads so a benchmark
             // gets the provider's full connection budget and a paused queue stops
             // claiming work. Any item already in progress finishes naturally; this
-            // only gates new work. Resumes within ~1s of the gate clearing.
+            // only gates new work. ResumeController calls AwakenQueue so resume
+            // does not wait out the full poll interval.
             if (_benchmarkGate.IsPaused || _configManager.IsSabQueuePaused())
             {
-                try { await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false); }
-                catch (OperationCanceledException) { }
+                try
+                {
+                    using var pauseWait = CancellationTokenSource.CreateLinkedTokenSource(
+                        ct, _sleepingQueueToken.Token);
+                    await Task.Delay(TimeSpan.FromSeconds(1), pauseWait.Token).ConfigureAwait(false);
+                }
+                catch when (_sleepingQueueToken.IsCancellationRequested)
+                {
+                    ResetSleepingQueueToken();
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // shutting down
+                }
                 continue;
             }
 

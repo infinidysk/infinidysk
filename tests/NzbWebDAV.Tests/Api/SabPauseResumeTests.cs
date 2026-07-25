@@ -234,6 +234,22 @@ public sealed class SabPauseResumeTests : IAsyncLifetime
         Assert.Null(queueItem);
     }
 
+    [Fact]
+    public async Task GetQueue_ReportsPausedStatusForPriorityPausedItems()
+    {
+        var pausedItem = CreateQueueItem("paused.nzb", QueueItem.PriorityOption.Paused, DateTime.UtcNow);
+        _context.QueueItems.Add(pausedItem);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var queue = await CreateGetQueueController()
+            .GetQueueAsync(new GetQueueRequest(new DefaultHttpContext(), _configManager));
+
+        var slot = Assert.Single(queue.Queue.Slots);
+        Assert.Equal("Paused", slot.Status);
+        Assert.Equal(pausedItem.Id.ToString(), slot.NzoId);
+    }
+
     [Theory]
     [InlineData("pause", typeof(PauseController))]
     [InlineData("resume", typeof(ResumeController))]

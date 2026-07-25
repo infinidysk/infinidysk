@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
@@ -63,7 +64,13 @@ public class GetQueueController(
             {
                 var isInProgress = inProgressById.TryGetValue(queueItem.Id, out var active);
                 var percentage = isInProgress ? active.ProgressPercentage : 0;
-                var status = isInProgress ? "Downloading" : "Queued";
+                // Arr treats slot status "Paused" (priority -2) separately from the
+                // queue-level paused flag set by mode=pause.
+                var status = isInProgress
+                    ? "Downloading"
+                    : queueItem.Priority == QueueItem.PriorityOption.Paused
+                        ? "Paused"
+                        : "Queued";
                 IReadOnlyDictionary<string, long> providerUsage =
                     GetProviderUsageForSlot(isInProgress, queueItem.Id, providerUsageTracker);
                 if (isInProgress && configuredKeys.Count > 0)

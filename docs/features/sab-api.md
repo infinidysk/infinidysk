@@ -14,9 +14,9 @@ Queue and history filters accept both `cat` and `category`. The default category
 
 ## Pause, resume, and speed limit [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
 
-`mode=pause` / `mode=resume` stop and restart **new** queue dequeues. Workers already downloading finish naturally. WebDAV mounts keep serving — pause does not interrupt playback. Queue JSON reports `paused` accurately.
+`mode=pause` / `mode=resume` stop and restart **new** queue dequeues. Workers already downloading finish naturally. WebDAV mounts keep serving — pause does not interrupt playback. Queue JSON reports `paused` accurately. Items added with SAB priority `-2` (Paused) are skipped until their priority changes; queue slots report `status: Paused` for those jobs.
 
-`mode=speedlimit` is accepted and reflected in queue JSON (`speedlimit` / `speedlimit_abs`). Byte-accurate download throttling is tracked separately and is not enforced yet.
+`mode=speedlimit` is **accepted and stored** and reflected in queue JSON (`speedlimit` / `speedlimit_abs`). Byte-accurate download throttling is **not** enforced yet — that work is tracked in [#375](https://github.com/nzbdav/nzbdav/issues/375).
 
 ## Intentional differences
 

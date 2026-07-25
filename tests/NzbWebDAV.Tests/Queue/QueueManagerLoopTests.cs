@@ -192,7 +192,8 @@ public class QueueManagerLoopTests
         await wait;
     }
 
-    private static QueueManager CreateManager()
+    [Fact]
+    public async Task ProcessQueueAsync_SkipsDequeueWhileSabQueuePaused_AndResumesOnAwaken()
     {
         var config = new ConfigManager();
         config.UpdateValues(
@@ -202,7 +203,43 @@ public class QueueManagerLoopTests
                 ConfigName = ConfigKeys.UsenetProviders,
                 ConfigValue = JsonSerializer.Serialize(new UsenetProviderConfig()),
             },
+            new ConfigItem { ConfigName = ConfigKeys.QueuePaused, ConfigValue = "true" },
         ]);
+
+        using var manager = CreateManager(config);
+        var polls = 0;
+        manager.GetTopQueueItemOverride = (_, _) =>
+        {
+            Interlocked.Increment(ref polls);
+            return Task.FromResult<(QueueItem? queueItem, Stream? queueNzbStream)>((null, null));
+        };
+
+        using var cts = new CancellationTokenSource();
+        var loop = manager.ProcessQueueAsync(cts.Token);
+
+        // While paused, the coordinator must not claim work.
+        await Task.Delay(350);
+        Assert.Equal(0, Volatile.Read(ref polls));
+
+        config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.QueuePaused, ConfigValue = "false" },
+        ]);
+        manager.AwakenQueue();
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (DateTime.UtcNow < deadline && Volatile.Read(ref polls) == 0)
+            await Task.Delay(20);
+
+        await cts.CancelAsync();
+        await loop;
+
+        Assert.True(Volatile.Read(ref polls) >= 1, "Expected dequeue attempt after resume + awaken");
+    }
+
+    private static QueueManager CreateManager(ConfigManager? config = null)
+    {
+        config ??= CreateDefaultConfig();
 
         var usenet = new UsenetStreamingClient(
             config,
@@ -222,5 +259,19 @@ public class QueueManagerLoopTests
             new QueueItemSourceTracker(),
             new BenchmarkGate(),
             startLoop: false);
+    }
+
+    private static ConfigManager CreateDefaultConfig()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetProviders,
+                ConfigValue = JsonSerializer.Serialize(new UsenetProviderConfig()),
+            },
+        ]);
+        return config;
     }
 }
