@@ -34,3 +34,12 @@
 | `DISABLE_WEBDAV_AUTH` | Env var (INHERITED — externally contributed, merged upstream) that disables WebDAV Basic Auth entirely for reverse-proxy setups, with no compensating trusted-proxy check (see ADR-009, §11 P1-5). |
 | `FRONTEND_BACKEND_API_KEY` / `api.key` | The two layered shared secrets gating the backend's REST/SAB/WS surfaces — the former is the immutable frontend↔backend trust boundary, the latter a rotatable key layered on top for Sonarr/Radarr (see §8.1, ADR-005). |
 | `downloadKey` | Path-scoped `SHA256(path + apiKey)` capability token embedding stream access in a URL, so `.strm` files/external media players never need the raw shared secret (see §8.1). |
+
+## Redesign-proposal terms (§13)
+
+| Term | Meaning |
+|---|---|
+| Golden-master / characterization test | A regression-test technique that records the *current* system's real output (here: a `DavItem` tree shape + byte-for-byte streamed ranges for a synthetic NZB corpus) and uses that recording as the acceptance bar any rewrite must reproduce exactly — used here specifically to make "did the rewrite preserve behavior" verifiable instead of a matter of faith (see §13.4). |
+| Strangler-fig (migration pattern) | An incremental rewrite strategy where a new implementation takes over one bounded seam of a system (here: WebDAV + streaming) while the old implementation keeps running everything else, rather than a single big-bang cutover — proposed for a possible Rust hybrid (see §13.2.3). |
+| GraalVM native-image | Ahead-of-time compilation of a JVM application to a single native binary — fast startup, low memory, but subject to closed-world reflection/dynamic-class-loading restrictions that need explicit configuration per dependency (see §13.2.4). |
+| .NET Native AOT | The .NET-equivalent ahead-of-time compilation mode (`dotnet publish -p:PublishAot=true`) — same closed-world tradeoffs as GraalVM native-image, but requires zero rewrite of existing C# code (see §13.2.2). |

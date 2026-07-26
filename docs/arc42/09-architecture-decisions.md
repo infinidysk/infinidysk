@@ -91,6 +91,14 @@ document's own system-level analysis (§9.3).
 
 ## 9.3 System-level decisions (not owned by any single subsystem)
 
+> **Superseded by [§13, Redesign Proposals](13-redesign-proposals.md).** The conclusions below were
+> this document's first pass at the language/framework question, written before a dedicated
+> six-agent research round dug into it properly (per explicit feedback that this first pass treated
+> the current stack as more fixed than intended, and applied the same "not recommended" boilerplate
+> to differently-sized decisions). Left in place, unedited, because the reasoning trail of *how* the
+> recommendation changed is itself informative — see §13.7 for a side-by-side of what was revised vs.
+> upheld. **Do not treat the "no, not currently" line below as this document's current position.**
+
 The user's brief explicitly put **programming language**, **frameworks**, and **modularization**
 on the table system-wide, not just per-subsystem. This subsection is this document's own analysis
 — it wasn't assigned to a research agent because no single file scope owns "should this whole

@@ -64,8 +64,8 @@ hypothesis).
 | Auto-migrate-on-boot instead of the explicit `--db-migration` gate | Weakens a deliberate safety property (migration failing mid-boot while also trying to serve traffic) for a marginal QS-5 gain. See [ADR-010](adr/ADR-010-migration-gate.md). |
 | Embedded Postgres or LiteDB instead of SQLite+blob-store | No real win while queue processing stays serial (SQLite's single-writer model isn't today's bottleneck); high migration cost against 30+ inherited EF migrations. See [ADR-001](adr/ADR-001-persistence-model.md). |
 | Rust/C rewrite of yEnc or AES decode for a "native speed" win | yEnc decode is already native/SIMD via `RapidYencSharp`; AES decode already sits on .NET's OS-backed crypto primitives. No profiling evidence of a bottleneck here to justify the QS-7 cost of a new native toolchain. See [ADR-006](adr/ADR-006-usenet-client-layering.md). |
-| Whole-system rewrite in Rust/Go/unified TypeScript | Backend is 96%+ inherited with zero test suite to validate behavioral parity; forfeits upstream mergeability entirely for a footprint gain the research agents' own hypotheses suggest is real but modest, since the actual hot path is already native. See §9.3. Revisit only as a deliberate strategic fork-divergence decision, not a performance optimization. |
-| Full frontend framework rewrite (SvelteKit / SPA / htmx-from-backend) before measuring anything | SSR isn't actually in the streaming hot path, so the strongest performance argument for it doesn't hold up; run the cheap `ssr:false` experiment (P1-10) first. See [ADR-007](adr/ADR-007-frontend-ssr-and-proxy.md). |
+| ~~Whole-system rewrite in Rust/Go/unified TypeScript~~ | **No longer rejected — moved to [§13](13-redesign-proposals.md)**, staged behind confirming upstream's status and building characterization tests. A dedicated six-agent research round found real technical merit here (especially a bounded Rust WebDAV/streaming hybrid) once evaluated properly rather than dismissed on the same boilerplate as every other alternative. |
+| ~~Full frontend framework rewrite before measuring anything~~ | **No longer rejected — moved to [§13](13-redesign-proposals.md)** as the recommended Step 2 (htmx + Web Components, backend-hosted, eliminating the Node process entirely). SSR indeed isn't in the streaming hot path (unchanged finding), but that turned out not to be the decisive question — design-fit for this app's live-queue state is (§13.3.3). |
 | Splitting the backend into separately-versioned modules/projects | No second consumer of an extracted module exists at this deployment scale (one deployable artifact); adds build/dependency-graph complexity for no payoff. See §9.3. |
 
 ## 11.5 Open questions / unresolved
@@ -84,9 +84,20 @@ scope. These are carried forward here verbatim rather than dropped, per arc42's 
 | OQ-6 | Actual Docker image size and per-runtime layer breakdown *(hypothesis, unmeasured)* | Needed to turn ADR-003/P3-5's QS-4 discussion from a shape-of-the-risk statement into a number that can be tracked over time. | `docker build . && docker history` / `dive`, once |
 | OQ-7 | Wall-clock container restart/recovery time after a crash *(hypothesis, unmeasured)* | Needed to put a real number on QS-5's "short bounded time" target (§10) instead of leaving it qualitative. | Kill the container mid-queue-item and time recovery, per the QS-5 confirming experiment in §10.2 |
 
-## 11.6 Summary: the two highest-leverage moves in this entire document
+## 11.6 Summary: the highest-leverage moves in this entire document
 
-If only two items from this backlog are acted on, per the research agents' converging analysis:
+**Updated after [§13](13-redesign-proposals.md)'s redesign research round** — a zero-cost item now
+outranks both of the original two, because it changes the size of the biggest number in the whole
+document:
+
+0. **§13 Step 0 (confirm upstream's real status, days, do this first)** — upstream `nzbdav-dev` has
+   merged nothing to `main` in the last two months with a growing backlog of stale/closed-unmerged
+   PRs (independently verified via the GitHub API, §13.1). This directly changes how much every
+   "forfeits upstream mergeability" cost in this document should actually weigh, at zero cost to
+   check. Do this before weighing any of the items below against that specific cost.
+
+If only two items from the *original* backlog are acted on, per the research agents' converging
+analysis:
 
 1. **P1-1 (yEnc header caching)** — the most concrete, narrowly-scoped fix directly addressing the
    user's "as performant as possible" brief, specifically for QS-1 (seek latency), which is this

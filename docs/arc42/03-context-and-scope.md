@@ -28,7 +28,7 @@ graph LR
 | **Usenet provider(s)** | One or more configured NNTP backends. NzbDav is the client; providers are opaque, rate-limited, occasionally-unreliable external services — failover and circuit-breaking exist specifically because this relationship cannot be assumed reliable. |
 | **Jellyfin / Plex (or any WebDAV/Rclone-capable media server)** | Consume the virtual filesystem as their media library, issuing ranged HTTP reads for seeking. The Jellyfin webhook integration (fork-specific, see §9) additionally lets NzbDav *anticipate* what will be watched next. |
 | **Rclone** | Optional intermediary that remounts the WebDAV filesystem as a native local mount, for tools that can't speak WebDAV directly. |
-| **End user (browser)** | Uses the React Router frontend for configuration, queue/history visibility, and ad hoc filesystem exploration (`/explore`). |
+| **End user (browser)** | Uses the web UI (currently a React Router frontend, see §13 — the framework is explicitly not fixed) for configuration, queue/history visibility, and ad hoc filesystem exploration (`/explore`). |
 
 ## 3.2 Technical context
 

@@ -11,13 +11,23 @@ built, not as originally specified; no separate requirements document exists to 
 ## How to read this
 
 - §1–4, §6, §9–11 were authored directly against the codebase and git history.
-- §5, §7, §8, §12 synthesize five parallel deep-dive research passes (raw output preserved in
-  `_research/` for traceability — treat those as working notes, not the citable document).
+- §5, §7, §8, §12 synthesize five parallel deep-dive research passes on the system as built (raw
+  output preserved in `_research/` for traceability — treat those as working notes, not the citable
+  document).
+- §13 synthesizes a second round of six parallel research passes specifically on redesign
+  alternatives (two backend-language deep dives, a broader backend-alternatives survey, a frontend
+  rewrite proposal, a testing-strategy plan, and an independent skeptic) — written after explicit
+  user feedback that an earlier draft had treated the current tech stack as more fixed than intended.
+  §13 supersedes §9.3's original conclusion; see §13.0 and §13.7 for what changed and why.
 - Every architectural/technical claim is either backed by a `file:line` citation or explicitly marked
   `(hypothesis)` with the experiment that would confirm it — there is no test suite, benchmark, or
   profiler output in this repo, so no performance claim here has been empirically measured.
 - Every weak point, alternative, and optimization is tagged against the quality scenarios in §10,
   so trade-offs are ranked against something concrete rather than an unranked wish list.
+- **Corrections applied during review**: `DISABLE_WEBDAV_AUTH` (§8, §9, ADR-009) was originally
+  mis-tagged as fork-specific and corrected to inherited-from-upstream after verifying the commit
+  against the upstream repo directly — a reminder that a contributor's name alone isn't sufficient
+  evidence of fork-vs-upstream status (see §9.1's methodology note).
 
 ## Table of contents
 
@@ -33,3 +43,6 @@ built, not as originally specified; no separate requirements document exists to 
 10. [Quality Requirements](10-quality-requirements.md)
 11. [Risks and Technical Debt](11-risks-and-technical-debt.md) (aim42 improvement backlog)
 12. [Glossary](12-glossary.md)
+13. [Redesign Proposals](13-redesign-proposals.md) — language/framework/modularization alternatives
+    taken seriously and staged into a concrete plan, per explicit direction that no technology
+    choice in this document is load-bearing. Supersedes §9.3's earlier conclusion.
