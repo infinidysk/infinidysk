@@ -56,15 +56,15 @@ sequenceDiagram
   D->>E: start container
   E->>E: resolve PUID/PGID, create/reuse user+group
   E->>E: chown /config (recursive only on ownership mismatch)
-  E->>B: su-exec user ./NzbWebDAV --db-migration  (blocking, foreground)
-  B-->>E: exit 0 (migration applied) or hard-stop (BlockUpgradesToV06X gate)
-  E->>B: su-exec user ./NzbWebDAV &  (background, real server)
-  E->>E: poll $BACKEND_URL/health, up to 30x1s
-  E->>F: npm run start &  (background; only after backend reports healthy)
+  E->>B: "su-exec user ./NzbWebDAV --db-migration (blocking, foreground)"
+  B-->>E: "exit 0 (migration applied) or hard-stop (BlockUpgradesToV06X gate)"
+  E->>B: "su-exec user ./NzbWebDAV in background (real server)"
+  E->>E: "poll $BACKEND_URL/health, up to 30x1s"
+  E->>F: "npm run start in background (only after backend reports healthy)"
   loop every 0.5s
     E->>E: busy-poll both PIDs (wait_either)
   end
-  Note over E: whichever process exits first,<br/>entrypoint kills the other and exits<br/>with the dead process's exit code
+  Note over E: "whichever process exits first,<br/>entrypoint kills the other and exits<br/>with the dead process's exit code"
 ```
 
 Frontend deliberately does **not** start until the backend's `/health` endpoint returns 200 — a

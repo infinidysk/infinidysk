@@ -70,7 +70,7 @@ sequenceDiagram
   participant Provider as Usenet provider
 
   Player->>Proxy: GET /view/... Range: bytes=X-
-  Note over Proxy: compression excluded for this prefix;<br/>request forwarded unmodified, no session-auth check<br/>(downloadKey capability token instead)
+  Note over Proxy: "compression excluded for this prefix,<br/>request forwarded unmodified, no session-auth check<br/>(downloadKey capability token instead)"
   Proxy->>WebDAV: forwarded range request
   WebDAV->>Stream: stream.Seek(X) — cheap, synchronous, no I/O yet
   Stream->>Stream: first ReadAsync(): position != 0 -> SeekSegment(X)

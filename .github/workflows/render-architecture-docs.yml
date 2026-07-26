@@ -17,25 +17,26 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
-      - name: Install mermaid-filter (renders ```mermaid blocks via headless Chromium)
+      - name: Install mermaid-filter
         run: npm install -g mermaid-filter
 
-      - name: Install pandoc + weasyprint (HTML->PDF engine, avoids a full LaTeX install)
+      - name: Install pandoc + weasyprint
         run: sudo apt-get update && sudo apt-get install -y pandoc weasyprint
 
       - name: Configure headless Chromium for CI sandboxing
         run: |
-          cat > "$RUNNER_TEMP/puppeteer-config.json" <<'EOF'
-          { "args": ["--no-sandbox", "--disable-setuid-sandbox"] }
+          cat > .puppeteer.json <<'EOF'
+          {
+            "args": ["--no-sandbox", "--disable-setuid-sandbox"]
+          }
           EOF
-          echo "PUPPETEER_CONFIG=$RUNNER_TEMP/puppeteer-config.json" >> "$GITHUB_ENV"
 
       - name: Concatenate arc42 sections + ADRs in reading order
         run: |
@@ -53,7 +54,7 @@ jobs:
             printf '\n\n' >> build/combined.md
           done
 
-      - name: Render to PDF (Mermaid diagrams rendered inline via mermaid-filter)
+      - name: Render to PDF
         env:
           MERMAID_FILTER_FORMAT: svg
         run: |
