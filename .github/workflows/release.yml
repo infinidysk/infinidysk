@@ -108,10 +108,11 @@ jobs:
     needs:
       - release-please
       - deploy
-    uses: ./.github/workflows/move-dev-tag.yml
+    uses: ./.github/workflows/move-movable-tag.yml
     permissions:
       contents: write
     with:
+      tag_name: dev
       ref: ${{ needs.release-please.outputs.sha }}
 
   tag-dev-manual:
@@ -119,10 +120,11 @@ jobs:
     needs:
       - resolve-version
       - deploy-manual
-    uses: ./.github/workflows/move-dev-tag.yml
+    uses: ./.github/workflows/move-movable-tag.yml
     permissions:
       contents: write
     with:
+      tag_name: dev
       ref: ${{ needs.resolve-version.outputs.ref }}
 
   announce:

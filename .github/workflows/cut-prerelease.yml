@@ -1,0 +1,87 @@
+name: Cut pre-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Next intended stable (e.g. 0.9.0; usually the open release-please PR version)
+        required: true
+      ref:
+        description: Git ref/SHA to cut from (defaults to the triggering branch tip)
+        required: false
+
+concurrency:
+  group: cut-prerelease-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      rc: ${{ steps.vars.outputs.rc }}
+      tag: ${{ steps.vars.outputs.tag }}
+      sha: ${{ steps.vars.outputs.sha }}
+    steps:
+      - id: vars
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RAW_VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          VERSION="${RAW_VERSION#v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version"; exit 1; }
+          if gh api "repos/${{ github.repository }}/git/ref/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "v${VERSION} is already released" >&2; exit 1
+          fi
+          SHA=$(gh api "repos/${{ github.repository }}/commits/${REF}" --jq .sha)
+          LAST_RC=$(gh api "repos/${{ github.repository }}/git/matching-refs/tags/v${VERSION}-rc." \
+            --jq '[.[].ref | split("-rc.")[-1] | tonumber] | max // 0')
+          RC=$((LAST_RC + 1))
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "rc=${RC}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}-rc.${RC}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    uses: ./.github/workflows/docker-build-push.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      tags: |
+        ghcr.io/${{ github.repository }}:${{ needs.resolve.outputs.tag }}
+        ghcr.io/${{ github.repository }}:rc
+      nzbdav_version: ${{ needs.resolve.outputs.version }}-rc.${{ needs.resolve.outputs.rc }}
+      checkout_ref: ${{ needs.resolve.outputs.sha }}
+    secrets:
+      registry_token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-release:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ needs.resolve.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ needs.resolve.outputs.sha }}" \
+            --title "${{ needs.resolve.outputs.tag }}" \
+            --prerelease --generate-notes
+
+  tag-rc:
+    needs: [resolve, build, publish-release]
+    uses: ./.github/workflows/move-movable-tag.yml
+    permissions:
+      contents: write
+    with:
+      tag_name: rc
+      ref: ${{ needs.resolve.outputs.sha }}

@@ -1,10 +1,10 @@
-name: Pre-release
+name: Refresh :dev
 
 on:
   workflow_dispatch:
 
 concurrency:
-  group: pre-release-${{ github.repository }}
+  group: refresh-dev-${{ github.repository }}
   cancel-in-progress: true
 
 jobs:
@@ -30,10 +30,11 @@ jobs:
 
   tag-dev:
     needs: build
-    uses: ./.github/workflows/move-dev-tag.yml
+    uses: ./.github/workflows/move-movable-tag.yml
     permissions:
       contents: write
     with:
+      tag_name: dev
       ref: ${{ github.sha }}
 
   announce-dev:

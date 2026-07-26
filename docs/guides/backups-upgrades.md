@@ -33,7 +33,7 @@ Database migrations apply automatically on startup. **Back up `/config` before u
 
 Coming from nzbdav-dev `v0.6.4` or a community fork? See [Migration paths](../getting-started/migration.md).
 
-Tags: `latest`, version tags, and `dev` (pre-release) — see [GitHub Releases](https://github.com/nzbdav/nzbdav/releases) and [Changelog](../community/changelog.md).
+Tags: `latest`, version tags, `dev` (unversioned tip snapshot), and `rc` (latest release candidate) — see [GitHub Releases](https://github.com/nzbdav/nzbdav/releases) and [Changelog](../community/changelog.md).
 
 ## Watchtower / Arr updates
 

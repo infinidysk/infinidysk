@@ -1,22 +1,26 @@
-name: Move dev tag
+name: Move movable tag
 
 on:
   workflow_call:
     inputs:
+      tag_name:
+        description: Movable git tag name to create or force-update (e.g. dev, rc)
+        required: true
+        type: string
       ref:
-        description: Commit SHA or git ref to point the movable dev tag at
+        description: Commit SHA or git ref to point the movable tag at
         required: true
         type: string
     outputs:
       previous_sha:
-        description: SHA the movable dev tag pointed at before this move (empty if the tag did not exist)
-        value: ${{ jobs.tag-dev.outputs.previous_sha }}
+        description: SHA the movable tag pointed at before this move (empty if the tag did not exist)
+        value: ${{ jobs.move-tag.outputs.previous_sha }}
       sha:
-        description: SHA the movable dev tag now points at
-        value: ${{ jobs.tag-dev.outputs.sha }}
+        description: SHA the movable tag now points at
+        value: ${{ jobs.move-tag.outputs.sha }}
 
 jobs:
-  tag-dev:
+  move-tag:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -24,25 +28,26 @@ jobs:
       previous_sha: ${{ steps.move.outputs.previous_sha }}
       sha: ${{ steps.move.outputs.sha }}
     steps:
-      - name: Recreate dev tag
+      - name: Recreate movable tag
         id: move
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ inputs.tag_name }}
           REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
           SHA=$(gh api "repos/${{ github.repository }}/commits/${REF}" --jq .sha)
           PREVIOUS_SHA=""
-          if PREV_JSON=$(gh api "repos/${{ github.repository }}/git/ref/tags/dev" 2>/dev/null); then
+          if PREV_JSON=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG_NAME}" 2>/dev/null); then
             PREVIOUS_SHA=$(printf '%s' "$PREV_JSON" | jq -r .object.sha)
-            gh api --method PATCH "repos/${{ github.repository }}/git/refs/tags/dev" \
+            gh api --method PATCH "repos/${{ github.repository }}/git/refs/tags/${TAG_NAME}" \
               -f sha="$SHA" \
               -F force=true
           else
             gh api --method POST "repos/${{ github.repository }}/git/refs" \
-              -f ref="refs/tags/dev" \
+              -f ref="refs/tags/${TAG_NAME}" \
               -f sha="$SHA"
           fi
           echo "previous_sha=${PREVIOUS_SHA}" >> "$GITHUB_OUTPUT"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
-          echo "Moved refs/tags/dev -> $SHA (from ${REF}; previous=${PREVIOUS_SHA:-none})"
+          echo "Moved refs/tags/${TAG_NAME} -> $SHA (from ${REF}; previous=${PREVIOUS_SHA:-none})"
