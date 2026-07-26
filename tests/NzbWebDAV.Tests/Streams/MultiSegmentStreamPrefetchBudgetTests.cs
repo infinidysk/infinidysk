@@ -1,6 +1,7 @@
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
+using NzbWebDAV.Exceptions;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
@@ -167,9 +168,118 @@ public class MultiSegmentStreamPrefetchBudgetTests
         cts.Cancel();
         await stream.DisposeAsync();
 
-        for (var i = 0; i < 50 && budget.LeasedBytes != 0; i++)
-            await Task.Delay(20);
+        Assert.Equal(0, budget.LeasedBytes);
+    }
 
+    [Fact]
+    public async Task DisposeAsync_ReleasesQueuedLeasesBeforeReturning()
+    {
+        const int segmentSize = 20_000;
+        var budget = new InFlightArticleBudget(segmentSize * 16);
+        var segments = Enumerable.Range(0, 20)
+            .ToDictionary(
+                i => $"seg-{i}",
+                _ => Enumerable.Repeat((byte)3, segmentSize).ToArray());
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+
+        var stream = MultiSegmentStream.Create(
+            segments.Keys.ToArray().AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "dispose.bin",
+            readBudget: null,
+            inFlightArticleBudget: budget);
+
+        var buffer = new byte[1024];
+        _ = await stream.ReadAsync(buffer);
+        Assert.True(budget.LeasedBytes > 0);
+
+        await stream.DisposeAsync();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task RemoveHeadWaiter_WakesNextWaiterWhenCapacityAvailable()
+    {
+        const long cap = 1000;
+        var budget = new InFlightArticleBudget(cap);
+        var held = await budget.LeaseAsync(cap, CancellationToken.None);
+
+        using var cts = new CancellationTokenSource();
+        var head = budget.LeaseAsync(cap, cts.Token).AsTask();
+        for (var i = 0; i < 50 && budget.ThrottleEvents == 0; i++)
+            await Task.Delay(10);
+        Assert.True(budget.ThrottleEvents > 0);
+
+        var next = budget.LeaseAsync(cap, CancellationToken.None).AsTask();
+        for (var i = 0; i < 50 && budget.ThrottleEvents < 2; i++)
+            await Task.Delay(10);
+
+        // Free capacity and cancel the head before/while it observes the wake so
+        // RemoveWaiter must signal the new FIFO head.
+        held.Dispose();
+        await cts.CancelAsync();
+        try
+        {
+            await head;
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when the head loses the race to TryLease.
+        }
+
+        if (head.IsCompletedSuccessfully)
+            (await head).Dispose();
+
+        using var lease = await next.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(cap, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task PersistentCorruption_ZeroFillsAndContinues()
+    {
+        const int segmentSize = 50;
+        var budget = new InFlightArticleBudget(segmentSize * 8);
+        var segments = new Dictionary<string, byte[]>
+        {
+            ["a"] = Enumerable.Repeat((byte)1, segmentSize).ToArray(),
+            ["b"] = Enumerable.Repeat((byte)2, segmentSize).ToArray(),
+            ["c"] = Enumerable.Repeat((byte)3, segmentSize).ToArray(),
+        };
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            decodedStreamFactory: (key, bytes) => key == "b"
+                ? new ThrowingCorruptStream("b")
+                : new MemoryStream(bytes, writable: false));
+
+        await using var stream = MultiSegmentStream.Create(
+            segments.Keys.ToArray().AsMemory(),
+            client,
+            articleBufferSize: 4,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "corrupt.bin",
+            exactSegmentSizes: new long[] { segmentSize, segmentSize, segmentSize },
+            inFlightArticleBudget: budget);
+
+        var buffer = new byte[segmentSize];
+        Assert.Equal(segmentSize, await stream.ReadAsync(buffer));
+        Assert.All(buffer, b => Assert.Equal((byte)1, b));
+
+        Assert.Equal(segmentSize, await stream.ReadAsync(buffer));
+        Assert.All(buffer, b => Assert.Equal((byte)0, b));
+
+        Assert.Equal(segmentSize, await stream.ReadAsync(buffer));
+        Assert.All(buffer, b => Assert.Equal((byte)3, b));
+
+        await stream.DisposeAsync();
         Assert.Equal(0, budget.LeasedBytes);
     }
 
@@ -285,6 +395,41 @@ public class MultiSegmentStreamPrefetchBudgetTests
         {
             Log.Logger = previous;
         }
+    }
+
+    private sealed class ThrowingCorruptStream(string segmentId) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new UsenetCorruptArticleException(
+                segmentId, "fake-provider", new InvalidDataException("bad crc"));
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<int>(
+                new UsenetCorruptArticleException(
+                    segmentId, "fake-provider", new InvalidDataException("bad crc")));
+
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
     }
 
     private sealed class CollectingSink : ILogEventSink

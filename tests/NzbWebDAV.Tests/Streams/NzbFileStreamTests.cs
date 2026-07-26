@@ -322,6 +322,80 @@ public class NzbFileStreamTests
         Assert.All(openedBodies, body => Assert.True(body.Disposed));
     }
 
+    [Fact]
+    public async Task Seek_WhenSegmentReadFails_ReleasesArticleBudget()
+    {
+        const int segmentSize = 1000;
+        const int segmentCount = 6;
+        var budget = new InFlightArticleBudget(segmentSize * 40);
+        var segmentIds = Enumerable.Range(0, segmentCount).Select(i => $"seg-{i}").ToArray();
+        var segments = segmentIds.ToDictionary(
+            id => id,
+            _ => Enumerable.Repeat((byte)1, segmentSize).ToArray());
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            decodedStreamFactory: (key, bytes) => key == "seg-2"
+                ? new ThrowingReadStream(() => new IOException("provider reset"))
+                : new MemoryStream(bytes, writable: false));
+
+        await using var stream = new NzbFileStream(
+            segmentIds,
+            fileSize: segmentSize * segmentCount,
+            client,
+            articleBufferSize: 4,
+            segmentByteRanges: null,
+            usePipelinedBodyRequests: false,
+            fileName: "seek-fail.bin",
+            inFlightArticleBudget: budget);
+        stream.Seek(segmentSize * 2 + 10, SeekOrigin.Begin);
+
+        await Assert.ThrowsAnyAsync<Exception>(
+            async () => await stream.ReadAtLeastAsync(
+                new byte[16], 16, throwOnEndOfStream: false));
+
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task Seek_RepeatedSegmentReadFailures_DoNotAccumulateArticleBudget()
+    {
+        const int segmentSize = 1000;
+        const int segmentCount = 6;
+        var budget = new InFlightArticleBudget(segmentSize * 40);
+        var segmentIds = Enumerable.Range(0, segmentCount).Select(i => $"seg-{i}").ToArray();
+        var segments = segmentIds.ToDictionary(
+            id => id,
+            _ => Enumerable.Repeat((byte)1, segmentSize).ToArray());
+
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            var client = new FakeNntpClient(
+                segments,
+                useCachedYencStreams: true,
+                decodedStreamFactory: (key, bytes) => key == "seg-2"
+                    ? new ThrowingReadStream(() => new IOException("provider reset"))
+                    : new MemoryStream(bytes, writable: false));
+
+            await using var stream = new NzbFileStream(
+                segmentIds,
+                fileSize: segmentSize * segmentCount,
+                client,
+                articleBufferSize: 4,
+                segmentByteRanges: null,
+                usePipelinedBodyRequests: false,
+                fileName: "seek-fail-repeat.bin",
+                inFlightArticleBudget: budget);
+            stream.Seek(segmentSize * 2 + 10, SeekOrigin.Begin);
+
+            await Assert.ThrowsAnyAsync<Exception>(
+                async () => await stream.ReadAtLeastAsync(
+                    new byte[16], 16, throwOnEndOfStream: false));
+
+            Assert.Equal(0, budget.LeasedBytes);
+        }
+    }
+
     private static FakeNntpClient CreateClient()
     {
         return new FakeNntpClient(
