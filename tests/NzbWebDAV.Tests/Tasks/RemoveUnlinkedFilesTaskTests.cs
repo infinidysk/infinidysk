@@ -398,6 +398,80 @@ public class RemoveUnlinkedFilesTaskTests
     }
 
     [Fact]
+    public async Task DryRun_Succeeds_WhenPreviousRunLeftUniqueTempTableBehind()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var libraryDir = Path.Combine(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+
+            var linkedIds = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+            var orphanId = Guid.NewGuid();
+            foreach (var id in linkedIds.Append(orphanId))
+            {
+                ctx.Items.Add(DavItem.New(
+                    id,
+                    DavItem.ContentFolder,
+                    $"{id:N}.mkv",
+                    10,
+                    DavItem.ItemType.UsenetFile,
+                    DavItem.ItemSubType.NzbFile,
+                    null,
+                    null,
+                    null,
+                    null));
+            }
+
+            await ctx.SaveChangesAsync();
+
+            foreach (var id in linkedIds)
+            {
+                await File.WriteAllTextAsync(
+                    Path.Combine(libraryDir, $"{id:N}.strm"),
+                    $"http://localhost/view/.ids/{id}.mkv");
+            }
+
+            // Strand the unique temp table the way a run interrupted between its CREATE and
+            // RENAME does. Every later run used to fail on "table already exists".
+            await ctx.Database.ExecuteSqlRawAsync(
+                "CREATE TABLE TMP_LINKED_FILES_UNIQUE (Id TEXT NOT NULL COLLATE NOCASE PRIMARY KEY);");
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            // Assert on progress, not the return value: ExecuteInternal catches the failure and
+            // reports "Failed: ...", so Execute() returns true either way.
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.DoesNotContain("already exists", progress);
+            Assert.StartsWith("Dry Run - Done.", progress);
+            Assert.Contains("Identified 1 unlinked files", progress);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(libraryDir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
     public async Task InsertLinkedIdBatchAsync_InsertsAllIds()
     {
         await using var harness = await TempDb.CreateAsync();

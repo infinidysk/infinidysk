@@ -63,12 +63,47 @@ public class RemoveUnlinkedFilesTask : BaseTask
         catch (Exception e)
         {
             Complete($"Failed: {e.Message}");
-            Log.Error(e, "Failed to remove unlinked files.");
+            if (TryGetKnownFailureReason(e, out var reason))
+            {
+                Log.Warning("Could not remove unlinked files. Reason: {Reason}", reason);
+                Log.Debug(e, "Remove unlinked files known failure stack");
+            }
+            else
+            {
+                Log.Error(e, "Failed to remove unlinked files.");
+            }
         }
         finally
         {
             _progressHeartbeat = null;
         }
+    }
+
+    /// <summary>
+    /// Environmental failures an operator can act on from a single log line: a database that is
+    /// busy, locked, read-only or full, and shutdown mid-run. Everything else keeps its stack so
+    /// genuine bugs and corruption stay diagnosable.
+    /// </summary>
+    private bool TryGetKnownFailureReason(Exception exception, out string reason)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current.IsCancellationException(CancellationToken))
+            {
+                reason = "nzbdav is shutting down";
+                return true;
+            }
+
+            // SQLITE_BUSY, SQLITE_LOCKED, SQLITE_READONLY, SQLITE_FULL
+            if (current is SqliteException { SqliteErrorCode: 5 or 6 or 8 or 13 })
+            {
+                reason = current.Message;
+                return true;
+            }
+        }
+
+        reason = string.Empty;
+        return false;
     }
 
     private async Task RemoveUnlinkedFiles()
@@ -138,9 +173,13 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
         // Create a new table "TMP_LINKED_FILES", dropping old one if it already exists.
         // No index initially for fast writes.
+        // TMP_LINKED_FILES_UNIQUE is dropped too: the indexing step below commits each
+        // statement separately, so a failure between its CREATE and RENAME strands the
+        // unique table and every later run would fail on "table already exists".
         await dbContext.Database.ExecuteSqlRawAsync(
             """
             DROP TABLE IF EXISTS TMP_LINKED_FILES;
+            DROP TABLE IF EXISTS TMP_LINKED_FILES_UNIQUE;
             CREATE TABLE TMP_LINKED_FILES (Id TEXT NOT NULL);
             """).ConfigureAwait(false);
 
