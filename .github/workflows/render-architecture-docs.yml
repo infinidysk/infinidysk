@@ -1,0 +1,72 @@
+name: "Render Architecture Docs"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/arc42/**'
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install mermaid-filter (renders ```mermaid blocks via headless Chromium)
+        run: npm install -g mermaid-filter
+
+      - name: Install pandoc + weasyprint (HTML->PDF engine, avoids a full LaTeX install)
+        run: sudo apt-get update && sudo apt-get install -y pandoc weasyprint
+
+      - name: Configure headless Chromium for CI sandboxing
+        run: |
+          cat > "$RUNNER_TEMP/puppeteer-config.json" <<'EOF'
+          { "args": ["--no-sandbox", "--disable-setuid-sandbox"] }
+          EOF
+          echo "PUPPETEER_CONFIG=$RUNNER_TEMP/puppeteer-config.json" >> "$GITHUB_ENV"
+
+      - name: Concatenate arc42 sections + ADRs in reading order
+        run: |
+          mkdir -p build
+          : > build/combined.md
+          echo "# NzbDav Architecture Documentation" >> build/combined.md
+          echo "" >> build/combined.md
+          for f in $(ls docs/arc42/*.md | sort); do
+            cat "$f" >> build/combined.md
+            printf '\n\n' >> build/combined.md
+          done
+          echo "# Appendix: Architecture Decision Records" >> build/combined.md
+          for f in $(ls docs/arc42/adr/*.md | sort); do
+            cat "$f" >> build/combined.md
+            printf '\n\n' >> build/combined.md
+          done
+
+      - name: Render to PDF (Mermaid diagrams rendered inline via mermaid-filter)
+        env:
+          MERMAID_FILTER_FORMAT: svg
+        run: |
+          pandoc build/combined.md \
+            --filter mermaid-filter \
+            --pdf-engine=weasyprint \
+            --metadata title="NzbDav Architecture Documentation" \
+            --toc --toc-depth=2 \
+            -o build/nzbdav-architecture.pdf
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nzbdav-architecture-docs
+          path: build/nzbdav-architecture.pdf
+          retention-days: 90
