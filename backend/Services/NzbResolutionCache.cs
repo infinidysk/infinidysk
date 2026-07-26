@@ -68,7 +68,7 @@ public class NzbResolutionCache(Func<DavDatabaseContext> contextFactory)
     /// Load non-expired groups from SQLite into the in-memory dictionary.
     /// Deserializes each group's candidates list once and shares it across that group's tokens.
     /// </summary>
-    public async Task HydrateAsync(TimeSpan ttl, CancellationToken ct)
+    public virtual async Task HydrateAsync(TimeSpan ttl, CancellationToken ct)
     {
         var cutoffUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)ttl.TotalMilliseconds;
         await using var ctx = contextFactory();
@@ -122,7 +122,7 @@ public class NzbResolutionCache(Func<DavDatabaseContext> contextFactory)
     /// <summary>
     /// Evict expired in-memory entries and delete expired rows from SQLite.
     /// </summary>
-    public async Task PurgeExpiredAsync(TimeSpan ttl, CancellationToken ct)
+    public virtual async Task PurgeExpiredAsync(TimeSpan ttl, CancellationToken ct)
     {
         var cutoffDateTime = DateTime.UtcNow - ttl;
         var cutoffUnixMs = new DateTimeOffset(cutoffDateTime).ToUnixTimeMilliseconds();
