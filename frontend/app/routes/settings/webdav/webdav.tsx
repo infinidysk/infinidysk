@@ -95,7 +95,7 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     description="How content appears to WebDAV clients and the Dav Explorer."
                 >
                     <ManagedSetting configKey="webdav.enforce-readonly">
-                        <Tooltip content="Make the WebDAV /content folder read-only so clients cannot delete files there.">
+                        <Tooltip placement="bottom" content="Make the WebDAV /content folder read-only so clients cannot delete files there.">
                             <Toggle
                                 id="readonly-checkbox"
                                 className="cursor-pointer gap-2 p-0"
@@ -275,7 +275,7 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
             >
                 <ManagedSetting configKeys={["usenet.segment-cache.enabled", "usenet.segment-cache.path", "usenet.segment-cache.max-gb"]}>
                     <div className="space-y-2">
-                        <Tooltip content="Cache decoded segments on disk so repeat reads and seeks avoid provider traffic. Takes effect after restart.">
+                        <Tooltip placement="bottom" content="Cache decoded segments on disk so repeat reads and seeks avoid provider traffic. Takes effect after restart.">
                             <Toggle
                                 id="segment-cache-enabled-checkbox"
                                 className="cursor-pointer gap-2 p-0"

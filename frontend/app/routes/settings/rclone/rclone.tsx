@@ -63,7 +63,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                 description="Notify the rclone mount whenever WebDAV content is added or removed."
             >
             <ManagedSetting configKey="rclone.rc-enabled">
-            <Tooltip content="Notify your rclone mount via the RC API when files are added or removed on the WebDAV, so you can use a high dir-cache-time.">
+            <Tooltip placement="bottom" content="Notify your rclone mount via the RC API when files are added or removed on the WebDAV, so you can use a high dir-cache-time.">
                 <Toggle
                     id="rclone-rc-enabled-checkbox"
                     className="cursor-pointer gap-2 p-0"

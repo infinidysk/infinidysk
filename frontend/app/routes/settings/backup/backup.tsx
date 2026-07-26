@@ -367,7 +367,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                     </div>
 
                     <div className="space-y-4 p-4">
-                        <Tooltip content="Writes a logical .sql dump of all databases under the config volume once per day.">
+                        <Tooltip placement="bottom" content="Writes a logical .sql dump of all databases under the config volume once per day.">
                             <Toggle
                                 id="backup-schedule-enabled"
                                 className="cursor-pointer gap-2 rounded-lg bg-base-200/40 p-3"

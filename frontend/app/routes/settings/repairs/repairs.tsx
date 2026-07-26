@@ -41,7 +41,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
             >
             <ManagedSetting configKey="repair.enable">
-            <Tooltip content={helpText}>
+            <Tooltip placement="bottom" content={helpText}>
                 <Toggle
                     id="enable-repairs-checkbox"
                     className="cursor-pointer gap-2 p-0"

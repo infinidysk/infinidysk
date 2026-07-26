@@ -79,7 +79,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             >
 
             <Form.Group className="flex flex-col gap-2">
-                <Tooltip content="When off, only the chosen release is tried (legacy). When on, alternatives are tried on failure and in-flight queue items are deduped.">
+                <Tooltip placement="bottom" content="When off, only the chosen release is tried (legacy). When on, alternatives are tried on failure and in-flight queue items are deduped.">
                     <Form.Check
                         type="switch"
                         id="play-watchdog-enabled"
@@ -237,7 +237,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             >
 
             <Form.Group className="flex flex-col gap-2">
-                <Tooltip content="When a candidate stops progressing, set it aside and try the next one without recording it as failed. On by default.">
+                <Tooltip placement="bottom" content="When a candidate stops progressing, set it aside and try the next one without recording it as failed. On by default.">
                     <Form.Check
                         type="switch"
                         id="grab-stall-failover-enabled"
