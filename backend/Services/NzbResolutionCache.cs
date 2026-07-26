@@ -122,7 +122,7 @@ public class NzbResolutionCache(Func<DavDatabaseContext> contextFactory)
     /// <summary>
     /// Evict expired in-memory entries and delete expired rows from SQLite.
     /// </summary>
-    public virtual async Task PurgeExpiredAsync(TimeSpan ttl, CancellationToken ct)
+    public async Task PurgeExpiredAsync(TimeSpan ttl, CancellationToken ct)
     {
         var cutoffDateTime = DateTime.UtcNow - ttl;
         var cutoffUnixMs = new DateTimeOffset(cutoffDateTime).ToUnixTimeMilliseconds();

@@ -7,73 +7,89 @@ namespace NzbWebDAV.Tests.Services;
 
 public sealed class NzbResolutionCacheRetentionServiceTests
 {
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
+
+    // The #665 boot-loop guard: the entrypoint kills the backend when /health does not
+    // answer within its retry window, so hydrating the play-token cache must never hold
+    // up host startup.
     [Fact]
-    public async Task HostStartAsync_CompletesWhileHydrateIsStillBlocked()
+    public async Task HostStartAsync_ReturnsWhileHydrateBlocksItsThread()
     {
         var hydrateEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseHydrate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var cache = new BlockingHydrateCache(hydrateEntered, releaseHydrate);
+        using var releaseHydrate = new ManualResetEventSlim(false);
+        using var host = BuildHost(new ThreadBlockingHydrateCache(hydrateEntered, releaseHydrate));
 
-        using var host = new HostBuilder()
-            .ConfigureServices(services =>
-            {
-                services.AddSingleton<NzbResolutionCache>(cache);
-                services.AddSingleton(new ConfigManager());
-                services.AddHostedService<NzbResolutionCacheRetentionService>();
-            })
-            .Build();
-
-        using var startCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await host.StartAsync(startCts.Token);
-
-        // Host StartAsync must return before hydrate finishes — otherwise /health
-        // stays down for the entrypoint's 30s window (#665).
-        await hydrateEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.False(releaseHydrate.Task.IsCompleted);
-
-        await host.StopAsync(CancellationToken.None);
-        releaseHydrate.TrySetResult();
-    }
-
-    [Fact]
-    public async Task CancelledHydrate_DoesNotFaultTheHost()
-    {
-        var hydrateEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseHydrate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var cache = new BlockingHydrateCache(hydrateEntered, releaseHydrate);
-
-        using var host = new HostBuilder()
-            .ConfigureServices(services =>
-            {
-                services.AddSingleton<NzbResolutionCache>(cache);
-                services.AddSingleton(new ConfigManager());
-                services.AddHostedService<NzbResolutionCacheRetentionService>();
-            })
-            .Build();
-
-        await host.StartAsync(CancellationToken.None);
-        await hydrateEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-        // Cancel while hydrate is blocked; service must catch and not stop the host
-        // via BackgroundServiceExceptionBehavior.
-        var stopTask = host.StopAsync(CancellationToken.None);
-        await stopTask.WaitAsync(TimeSpan.FromSeconds(5));
-        releaseHydrate.TrySetResult();
-    }
-
-    private sealed class BlockingHydrateCache(
-        TaskCompletionSource hydrateEntered,
-        TaskCompletionSource releaseHydrate)
-        : NzbResolutionCache(() => throw new InvalidOperationException("test cache must not open SQLite"))
-    {
-        public override async Task HydrateAsync(TimeSpan ttl, CancellationToken ct)
+        var startTask = Task.Run(() => host.StartAsync(CancellationToken.None));
+        try
         {
-            hydrateEntered.TrySetResult();
-            using var reg = ct.Register(() => releaseHydrate.TrySetCanceled(ct));
-            await releaseHydrate.Task.WaitAsync(ct).ConfigureAwait(false);
+            await hydrateEntered.Task.WaitAsync(Timeout);
+            var startCompleted = await Task.WhenAny(startTask, Task.Delay(Timeout)) == startTask;
+            Assert.True(startCompleted, "Host startup must not wait for the play-token hydrate to finish.");
+        }
+        finally
+        {
+            // Always unblock the hydrate thread, otherwise a regression hangs the suite
+            // instead of failing this test.
+            releaseHydrate.Set();
         }
 
-        public override Task PurgeExpiredAsync(TimeSpan ttl, CancellationToken ct) =>
-            Task.CompletedTask;
+        await startTask.WaitAsync(Timeout);
+        await host.StopAsync(CancellationToken.None).WaitAsync(Timeout);
+    }
+
+    [Fact]
+    public async Task HydrateCancelledByShutdown_DoesNotFaultTheHostedService()
+    {
+        var hydrateEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseHydrate = new ManualResetEventSlim(false);
+        using var host = BuildHost(new ThreadBlockingHydrateCache(hydrateEntered, releaseHydrate));
+
+        // Start off the test thread: a regression that hydrates inside StartAsync blocks
+        // its caller outright, and this keeps that a timeout instead of a hung suite.
+        var startTask = Task.Run(() => host.StartAsync(CancellationToken.None));
+        try
+        {
+            await startTask.WaitAsync(Timeout);
+            await hydrateEntered.Task.WaitAsync(Timeout);
+
+            // Shutdown mid-hydrate must be swallowed, otherwise the faulted ExecuteAsync
+            // stops the host through BackgroundServiceExceptionBehavior.
+            await host.StopAsync(CancellationToken.None).WaitAsync(Timeout);
+
+            var service = host.Services
+                .GetServices<IHostedService>()
+                .OfType<NzbResolutionCacheRetentionService>()
+                .Single();
+            Assert.True(service.ExecuteTask!.IsCompletedSuccessfully);
+        }
+        finally
+        {
+            releaseHydrate.Set();
+        }
+    }
+
+    private static IHost BuildHost(NzbResolutionCache cache) =>
+        new HostBuilder()
+            .ConfigureServices(services => services
+                .AddSingleton(cache)
+                .AddSingleton(new ConfigManager())
+                .AddHostedService<NzbResolutionCacheRetentionService>())
+            .Build();
+
+    /// <summary>
+    /// Blocks the calling thread inside HydrateAsync, mirroring a SQLite read that
+    /// completes synchronously rather than yielding back to the host.
+    /// </summary>
+    private sealed class ThreadBlockingHydrateCache(
+        TaskCompletionSource hydrateEntered,
+        ManualResetEventSlim releaseHydrate)
+        : NzbResolutionCache(() => throw new InvalidOperationException("the test cache must not open SQLite"))
+    {
+        public override Task HydrateAsync(TimeSpan ttl, CancellationToken ct)
+        {
+            hydrateEntered.TrySetResult();
+            releaseHydrate.Wait(ct);
+            return Task.CompletedTask;
+        }
     }
 }

@@ -18,10 +18,9 @@ public class NzbResolutionCacheRetentionService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Hydrate in ExecuteAsync (not StartAsync) so host StartAsync returns and
-        // Kestrel can bind before SQLite open/query finishes. Blocking StartAsync on
-        // hydrate caused a container boot-loop when the entrypoint's 30s /health
-        // window expired mid-open (#665).
+        // Hydrate here rather than in StartAsync: reading the whole non-expired token
+        // table can outlast the entrypoint's /health retry window, and gating host
+        // startup on it boot-looped containers on upgrade (#665).
         try
         {
             await cache.HydrateAsync(configManager.GetPlayResolutionCacheTtl(), stoppingToken)
@@ -29,8 +28,8 @@ public class NzbResolutionCacheRetentionService(
         }
         catch (Exception ex) when (ex.IsCancellationException(stoppingToken))
         {
-            Log.Warning("Play-token cache hydrate skipped. Reason: {Reason}", "nzbdav is shutting down");
-            Log.Debug(ex, "Play-token cache hydrate cancelled stack");
+            Log.Warning("Play-token cache hydrate stopped because nzbdav is shutting down");
+            Log.Debug(ex, "Play-token cache hydrate cancellation stack");
             return;
         }
         catch (Exception ex)
@@ -47,11 +46,9 @@ public class NzbResolutionCacheRetentionService(
                 await cache.PurgeExpiredAsync(configManager.GetPlayResolutionCacheTtl(), stoppingToken)
                     .ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
-            {
-                return;
-            }
-            catch (Exception ex) when (ex.IsCancellationException(stoppingToken))
+            catch (Exception ex) when (ex.IsCancellationException() &&
+                                      (stoppingToken.IsCancellationRequested ||
+                                       SigtermUtil.IsSigtermTriggered()))
             {
                 return;
             }
