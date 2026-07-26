@@ -46,7 +46,8 @@ public sealed class CorruptionDetectingYencStream(
     {
         if (Interlocked.Exchange(ref _reported, 1) == 0)
         {
-            Log.Warning(
+            ThrottledSegmentWarning.Write(
+                $"{providerKey}\n{segmentId}",
                 "Provider {Provider} returned corrupt yEnc data for segment {SegmentId}. Reason: {Reason}",
                 providerKey,
                 segmentId,
