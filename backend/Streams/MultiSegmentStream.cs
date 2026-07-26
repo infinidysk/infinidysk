@@ -38,6 +38,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private Stream? _stream;
     private int _consecutiveZeroFills;
     private bool _disposed;
+    private readonly Task _downloadTask;
+    private readonly object _disposeGate = new();
+    private Task? _disposeTask;
 
     public static Stream Create(
         Memory<string> segmentIds,
@@ -140,7 +143,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _bodyPipelineBatchSize = Math.Min(BodyPipelineBatchSize, articleBufferSize);
         _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(articleBufferSize);
         _cts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _ = DownloadSegments(usePipelinedBodyRequests, _cts.Token);
+        _downloadTask = DownloadSegments(usePipelinedBodyRequests, _cts.Token);
     }
 
     private async Task DownloadSegments(
@@ -375,7 +378,27 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 lease?.Dispose();
                 lease = null;
                 if (attempt >= MaxCorruptionRetries)
-                    throw;
+                {
+                    var fallback = await TryFallbackSegmentsAsync(segmentIndex, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (fallback is not null)
+                        return SegmentDownloadResult.Success(fallback, estimate);
+
+                    if (_failFastOnFirstSegment && isFirstSegment)
+                    {
+                        e.LogWarningKnownOrStack(
+                            "First article {SegmentId} persistently corrupt at playback start while reading {FileName}. " +
+                            "Failing the stream so the player surfaces an error.",
+                            segmentId, _fileName);
+                        throw;
+                    }
+
+                    return ZeroFillSegment(
+                        "Article {SegmentId} persistently corrupt while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
+                        segmentId,
+                        segmentIndex,
+                        e);
+                }
 
                 Log.Debug(
                     e,
@@ -462,10 +485,22 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             lease?.Dispose();
             lease = null;
-            var stream = await RetryCorruptSegmentAsync(
-                    segmentId, segmentIndex, e, cancellationToken)
-                .ConfigureAwait(false);
-            return SegmentDownloadResult.Success(stream, estimate);
+            try
+            {
+                var stream = await RetryCorruptSegmentAsync(
+                        segmentId, segmentIndex, e, cancellationToken)
+                    .ConfigureAwait(false);
+                return SegmentDownloadResult.Success(stream, estimate);
+            }
+            catch (UsenetCorruptArticleException persistent)
+            {
+                if (_failFastOnFirstSegment && isFirstSegment) throw;
+                return ZeroFillSegment(
+                    "Article {SegmentId} persistently corrupt while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
+                    segmentId,
+                    segmentIndex,
+                    persistent);
+            }
         }
         catch (Exception e) when (!cancellationToken.IsCancellationRequested)
         {
@@ -573,6 +608,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
         }
 
+        var fallback = await TryFallbackSegmentsAsync(segmentIndex, cancellationToken)
+            .ConfigureAwait(false);
+        if (fallback is not null)
+            return fallback;
+
         ExceptionDispatchInfo.Capture(failure).Throw();
         throw new InvalidOperationException("Unreachable after rethrowing a corrupt segment failure.");
     }
@@ -605,6 +645,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             catch (UsenetArticleNotFoundException)
             {
                 // Try the next alternate MessageId.
+            }
+            catch (UsenetCorruptArticleException)
+            {
+                // Corrupt fallback — try the next alternate MessageId.
             }
             catch (UsenetUnexpectedResponseException e)
             {
@@ -837,19 +881,72 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
     protected override void Dispose(bool disposing)
     {
-        if (_disposed) return;
         if (!disposing) return;
-        _disposed = true;
-        _cts.Cancel();
-        _cts.Dispose();
-        _stream?.Dispose();
+        // Sync Dispose must stay non-blocking (Seek calls it). Start the same
+        // idempotent cleanup that DisposeAsync awaits for lease release.
+        _ = EnsureDisposeAsync();
+        base.Dispose();
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        await EnsureDisposeAsync().ConfigureAwait(false);
+        GC.SuppressFinalize(this);
+    }
+
+    private Task EnsureDisposeAsync()
+    {
+        lock (_disposeGate)
+        {
+            if (_disposeTask is not null) return _disposeTask;
+            // Mark disposed before async cleanup so sync Dispose immediately rejects reads.
+            _disposed = true;
+            _disposeTask = DisposeCoreAsync();
+            return _disposeTask;
+        }
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        try
+        {
+            _cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Already torn down.
+        }
+
         _streamTasks.Writer.TryComplete();
 
-        // ensure that streams that were never read from the channel get disposed
-        while (_streamTasks.Reader.TryRead(out var streamTask))
-            _ = DisposeStreamAsync(streamTask, releaseInFlight: true);
+        if (_stream is not null)
+        {
+            await _stream.DisposeAsync().ConfigureAwait(false);
+            _stream = null;
+        }
 
-        base.Dispose();
+        // Drain queued segments concurrently so a task blocked on LeaseAsync can
+        // wake when another queued BudgetedStream releases its lease.
+        var pending = new List<Task>();
+        while (_streamTasks.Reader.TryRead(out var streamTask))
+            pending.Add(DisposeStreamAsync(streamTask, releaseInFlight: true));
+
+        try
+        {
+            await _downloadTask.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Producer failures are surfaced on ReadAsync; teardown only needs cleanup.
+        }
+
+        while (_streamTasks.Reader.TryRead(out var streamTask))
+            pending.Add(DisposeStreamAsync(streamTask, releaseInFlight: true));
+
+        if (pending.Count > 0)
+            await Task.WhenAll(pending).ConfigureAwait(false);
+
+        _cts.Dispose();
     }
 
     private sealed record SegmentDownloadResult(

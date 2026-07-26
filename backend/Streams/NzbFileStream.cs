@@ -231,6 +231,13 @@ public class NzbFileStream(
                 $"Byte position {rangeStart} of \"{fileName ?? "unknown"}\" is past the data " +
                 $"available in segment {foundSegment.FoundIndex + 1}. {e.Message}");
         }
+        catch
+        {
+            // Any other failure (corrupt article, cancel, transport) must release the
+            // prefetched BudgetedStream leases before the exception escapes.
+            await stream.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
 
         return stream;
     }
@@ -302,9 +309,24 @@ public class NzbFileStream(
                 // e.g. a mid-stream NNTP read timeout. Fall back to the slow seek
                 // path, whose MultiSegmentStream retries and zero-fills instead of
                 // surfacing a hard error to the WebDAV client.
-                e.LogWarningKnownOrStack(
-                    "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek.",
-                    string.IsNullOrEmpty(fileName) ? "unknown" : fileName);
+                var displayName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
+                if (e.TryGetKnownErrorMessage(out var reason))
+                {
+                    ThrottledSegmentWarning.Write(
+                        displayName,
+                        "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek. Reason: {Reason}",
+                        displayName,
+                        reason);
+                    Log.Debug(e, "Fast seek known failure stack while reading {FileName}", displayName);
+                }
+                else
+                {
+                    Log.Warning(
+                        e,
+                        "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek.",
+                        displayName);
+                }
+
                 return null;
             }
             finally

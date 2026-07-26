@@ -93,12 +93,20 @@ public sealed class InFlightArticleBudget
     private void RemoveWaiter(Waiter? waiter)
     {
         if (waiter?.Node is null) return;
+        TaskCompletionSource<bool>? nextTcs = null;
         lock (_gate)
         {
             if (waiter.Node is null) return;
+            var wasHead = ReferenceEquals(_waiters.First, waiter.Node);
             _waiters.Remove(waiter.Node);
             waiter.Node = null;
+            // A Release that raced with cancellation may have signalled only this
+            // waiter; wake the new head so FIFO waiters do not stall forever.
+            if (wasHead)
+                nextTcs = _waiters.First?.Value.Tcs;
         }
+
+        nextTcs?.TrySetResult(true);
     }
 
     private bool TryLease(long bytes)
