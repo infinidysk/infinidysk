@@ -95,6 +95,6 @@ public class CancellableStream(Stream innerStream, CancellationToken token) : Fa
         if (!disposing) return;
         _disposed = true;
         _innerStream.Dispose();
-        base.Dispose();
+        base.Dispose(disposing);
     }
 }

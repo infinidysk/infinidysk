@@ -885,7 +885,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         // Sync Dispose must stay non-blocking (Seek calls it). Start the same
         // idempotent cleanup that DisposeAsync awaits for lease release.
         _ = EnsureDisposeAsync();
-        base.Dispose();
+        // Must be the protected overload: the parameterless Stream.Dispose() routes
+        // back through Close() into this method and recurses until the stack overflows.
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()

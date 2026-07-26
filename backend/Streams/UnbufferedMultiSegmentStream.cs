@@ -230,6 +230,6 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         if (!disposing) return;
         _disposed = true;
         _stream?.Dispose();
-        base.Dispose();
+        base.Dispose(disposing);
     }
 }
