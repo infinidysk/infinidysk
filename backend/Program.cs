@@ -8,6 +8,7 @@ using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Statistics;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
@@ -89,6 +90,7 @@ class Program
             .AddWebdavBasicAuthentication(configManager)
             .AddSingleton(configManager)
             .AddSingleton(websocketManager)
+            .AddSingleton<ProviderUsageStatsAggregator>()
             .AddSingleton<UsenetStreamingClient>()
             .AddSingleton<QueueManager>()
             .AddSingleton<PrefetchCacheService>()
@@ -119,6 +121,7 @@ class Program
 
         // run
         var app = builder.Build();
+        await app.Services.GetRequiredService<ProviderUsageStatsAggregator>().LoadAsync().ConfigureAwait(false);
         app.UseMiddleware<ExceptionMiddleware>();
         app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
         app.MapHealthChecks("/health");

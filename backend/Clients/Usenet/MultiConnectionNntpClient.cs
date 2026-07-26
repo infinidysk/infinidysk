@@ -2,6 +2,7 @@
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Clients.Usenet.Statistics;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
@@ -22,15 +23,22 @@ namespace NzbWebDAV.Clients.Usenet;
 /// <param name="type"></param>
 /// <param name="circuitBreaker"></param>
 /// <param name="providerName"></param>
+/// <param name="providerId"></param>
+/// <param name="statsAggregator"></param>
 [SuppressMessage("ReSharper", "AccessToDisposedClosure")]
 public class MultiConnectionNntpClient(
     ConnectionPool<INntpClient> connectionPool,
     ProviderType type,
     ProviderCircuitBreaker circuitBreaker,
-    string providerName
+    string providerName,
+    Guid providerId,
+    ProviderUsageStatsAggregator statsAggregator
 ) : NntpClient
 {
     public ProviderType ProviderType { get; } = type;
+    public Guid ProviderId { get; } = providerId;
+    public string ProviderName { get; } = providerName;
+    public ProviderCircuitBreaker CircuitBreaker { get; } = circuitBreaker;
     public bool IsTripped => circuitBreaker.IsTripped;
     public int LiveConnections => connectionPool.LiveConnections;
     public int IdleConnections => connectionPool.IdleConnections;
@@ -70,30 +78,30 @@ public class MultiConnectionNntpClient(
         );
     }
 
-    public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId, CancellationToken ct)
+    public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId, CancellationToken ct)
     {
-        return RunWithConnection(
+        return ApplyCounting(await RunWithConnection(
             "BODY",
             SemaphorePriority.High,
             (connection, onDone) => connection.DecodedBodyAsync(segmentId, onDone, ct),
             onConnectionReadyAgain: null,
             ct
-        );
+        ).ConfigureAwait(false));
     }
 
-    public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync
+    public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync
     (
         SegmentId segmentId,
         CancellationToken ct
     )
     {
-        return RunWithConnection(
+        return ApplyCounting(await RunWithConnection(
             "ARTICLE",
             SemaphorePriority.High,
             (connection, onDone) => connection.DecodedArticleAsync(segmentId, onDone, ct),
             onConnectionReadyAgain: null,
             ct
-        );
+        ).ConfigureAwait(false));
     }
 
     public override Task<UsenetDateResponse> DateAsync(CancellationToken ct)
@@ -107,36 +115,56 @@ public class MultiConnectionNntpClient(
         );
     }
 
-    public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync
+    public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync
     (
         SegmentId segmentId,
         Action<ArticleBodyResult>? onConnectionReadyAgain,
         CancellationToken ct
     )
     {
-        return RunWithConnection(
+        return ApplyCounting(await RunWithConnection(
             "BODY",
             SemaphorePriority.High,
             (connection, onDone) => connection.DecodedBodyAsync(segmentId, onDone, ct),
             onConnectionReadyAgain,
             ct
-        );
+        ).ConfigureAwait(false));
     }
 
-    public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync
+    public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync
     (
         SegmentId segmentId,
         Action<ArticleBodyResult>? onConnectionReadyAgain,
         CancellationToken ct
     )
     {
-        return RunWithConnection(
+        return ApplyCounting(await RunWithConnection(
             "ARTICLE",
             SemaphorePriority.High,
             (connection, onDone) => connection.DecodedArticleAsync(segmentId, onDone, ct),
             onConnectionReadyAgain,
             ct
-        );
+        ).ConfigureAwait(false));
+    }
+
+    // RunWithConnection is generic over T : UsenetResponse and can't wrap Stream generically -
+    // UsenetDecodedBodyResponse/UsenetDecodedArticleResponse are separate records with no shared
+    // interface exposing Stream, so counting is applied at each typed call-site instead (same
+    // pattern as DownloadingNntpClient.ApplyThrottle).
+    private UsenetDecodedBodyResponse ApplyCounting(UsenetDecodedBodyResponse response)
+    {
+        return response with
+        {
+            Stream = new ProviderCountingYencStream(response.Stream, statsAggregator, providerId)
+        };
+    }
+
+    private UsenetDecodedArticleResponse ApplyCounting(UsenetDecodedArticleResponse response)
+    {
+        return response with
+        {
+            Stream = new ProviderCountingYencStream(response.Stream, statsAggregator, providerId)
+        };
     }
 
     private async Task<T> RunWithConnection<T>
@@ -192,6 +220,7 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException _))
             {
+                statsAggregator.RecordArticleNotFound(providerId);
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;

@@ -26,6 +26,47 @@ public class ConfigManager
                 _config[configItem.ConfigName] = configItem.ConfigValue;
             }
         }
+
+        await BackfillMissingUsenetProviderIds(dbContext).ConfigureAwait(false);
+    }
+
+    // Older configs (persisted before ConnectionDetails.Id existed) deserialize with Id == Guid.Empty.
+    // Backfill once at startup so provider identity is stable across app restarts and doesn't get
+    // silently regenerated every time GetUsenetProviderConfig() is called.
+    private async Task BackfillMissingUsenetProviderIds(DavDatabaseContext dbContext)
+    {
+        var rawValue = StringUtil.EmptyToNull(GetConfigValue("usenet.providers"));
+        if (rawValue == null) return;
+
+        var providerConfig = JsonSerializer.Deserialize<UsenetProviderConfig>(rawValue);
+        if (providerConfig == null) return;
+
+        var needsBackfill = false;
+        foreach (var provider in providerConfig.Providers)
+        {
+            if (provider.Id != Guid.Empty) continue;
+            provider.Id = Guid.NewGuid();
+            needsBackfill = true;
+        }
+
+        if (!needsBackfill) return;
+
+        var updatedValue = JsonSerializer.Serialize(providerConfig);
+        lock (_config) _config["usenet.providers"] = updatedValue;
+
+        var configItem = await dbContext.ConfigItems
+            .FirstOrDefaultAsync(x => x.ConfigName == "usenet.providers")
+            .ConfigureAwait(false);
+        if (configItem == null)
+        {
+            dbContext.ConfigItems.Add(new ConfigItem { ConfigName = "usenet.providers", ConfigValue = updatedValue });
+        }
+        else
+        {
+            configItem.ConfigValue = updatedValue;
+        }
+
+        await dbContext.SaveChangesAsync().ConfigureAwait(false);
     }
 
     private string? GetConfigValue(string configName)
