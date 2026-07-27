@@ -19,7 +19,8 @@ Capture per-segment playback events while reproducing buffering or seek stalls:
 2. Choose 15, 30, or 60 minutes and turn tracing on. A warning banner appears while it is active.
 3. Reproduce the issue (Explore `/view` playback is ideal because it skips rclone and your media server).
 4. Download a support pack from the same page while tracing is still on — `stream-traces/` rides along in the archive.
-5. Tracing auto-disables when the timer elapses, and UI-enabled tracing always resets on restart. It is memory-only (capped at 20,000 events) and never written to disk outside the support pack.
+5. Turning tracing off asks for confirmation when the buffer holds events, because that releases the captured traces immediately.
+6. Tracing auto-disables when the timer elapses, and UI-enabled tracing always resets on restart. It is memory-only (capped at 20,000 events) and never written to disk outside the support pack.
 
 Setting `STREAM_TRACE_EVENTS` still enables tracing from startup with no expiry, which is handy for local dev. Dump a single session with `./scripts/dump-stream-trace.sh` — see [Contributing](../community/contributing.md).
 
