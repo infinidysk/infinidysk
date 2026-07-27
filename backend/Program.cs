@@ -50,6 +50,10 @@ class Program
         var level = Enum.TryParse<LogEventLevel>(envLevel, true, out var parsed) ? parsed : defaultLevel;
         var bufferSize = (int)Math.Clamp(EnvironmentUtil.GetLongVariable("LOG_BUFFER_SIZE") ?? 2000, 100, 50000);
         var logBufferSink = new LogBufferSink(bufferSize);
+        // Warnings and errors also land in their own small buffer so a chatty
+        // background service running at Debug cannot evict them before a support
+        // pack is collected.
+        var warningLogBuffer = new WarningLogBuffer(new LogBufferSink(500));
         // Stream tracing is opt-in: unset or 0 disables it. scripts/run-backend.sh
         // enables it for local dev; Docker/production leave it off by default.
         var streamTraceEvents = EnvironmentUtil.GetLongVariable("STREAM_TRACE_EVENTS") ?? 0;
@@ -76,6 +80,7 @@ class Program
                 "{#end}{@m}\n{@x}",
                 theme: TemplateTheme.Code))
             .WriteTo.Sink(logBufferSink)
+            .WriteTo.Sink(warningLogBuffer.Sink, restrictedToMinimumLevel: LogEventLevel.Warning)
             .CreateLogger();
 
         try
@@ -189,6 +194,7 @@ class Program
                 .AddSingleton(configManager)
                 .AddSingleton(websocketManager)
                 .AddSingleton(logBufferSink)
+                .AddSingleton(warningLogBuffer)
                 .AddSingleton(streamTraceBuffer)
                 .AddSingleton(sp =>
                 {

@@ -17,6 +17,7 @@ namespace NzbWebDAV.Services.SupportPack;
 
 public sealed class SupportPackService(
     LogBufferSink logBuffer,
+    WarningLogBuffer warningLogBuffer,
     ConfigManager configManager,
     MetricsWriter metricsWriter,
     ProviderBytesTracker bytesTracker,
@@ -35,9 +36,12 @@ public sealed class SupportPackService(
         var config = configManager.GetDiagnosticSnapshot();
         var redactor = new SupportPackRedactor(CollectSecrets(config));
         var logSnapshot = logBuffer.Snapshot(logBuffer.Capacity, null, null, null, null);
+        var warningSink = warningLogBuffer.Sink;
+        var warningSnapshot = warningSink.Snapshot(warningSink.Capacity, null, null, null, null);
         var sectionStatus = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["logs"] = "included",
+            ["warnings"] = "included",
             ["configuration"] = "included",
             ["environment"] = "included",
         };
@@ -48,6 +52,11 @@ public sealed class SupportPackService(
             archive,
             "logs/backend.log",
             redactor.RedactText(FormatLogs(logSnapshot.Entries)),
+            cancellationToken).ConfigureAwait(false);
+        await WriteTextAsync(
+            archive,
+            "logs/warnings.log",
+            redactor.RedactText(FormatLogs(warningSnapshot.Entries)),
             cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(
             archive,
@@ -77,7 +86,8 @@ public sealed class SupportPackService(
         await WriteJsonAsync(
             archive,
             "manifest.json",
-            await BuildManifestAsync(generatedAt, logSnapshot, sectionStatus, redactor, cancellationToken)
+            await BuildManifestAsync(generatedAt, logSnapshot, warningSnapshot, sectionStatus, redactor,
+                    cancellationToken)
                 .ConfigureAwait(false),
             redactor,
             cancellationToken).ConfigureAwait(false);
@@ -91,6 +101,11 @@ public sealed class SupportPackService(
         active Settings snapshot, runtime information, and aggregate metrics.
         Backend logs are cleared when NzbDAV restarts. Frontend and container logs
         are not included.
+
+        logs/backend.log holds the most recent events of every level, so a busy or
+        debug-level install can push older events out of it. logs/warnings.log keeps
+        the last 500 warnings and errors separately for that reason - check it first
+        when the main log looks like it only contains routine activity.
 
         The archive deliberately excludes database files, backups, blobs/NZBs,
         environment files, session/API key files, crash dumps, stream traces, and
@@ -326,6 +341,7 @@ public sealed class SupportPackService(
     private async Task<object> BuildManifestAsync(
         DateTimeOffset generatedAt,
         LogSnapshot logs,
+        LogSnapshot warnings,
         IReadOnlyDictionary<string, string> sectionStatus,
         SupportPackRedactor redactor,
         CancellationToken cancellationToken)
@@ -339,6 +355,13 @@ public sealed class SupportPackService(
             commit = Environment.GetEnvironmentVariable("NZBDAV_COMMIT_SHA"),
             migrations = new { main = mainMigration, metrics = metricsMigration },
             logs = new { count = logs.Entries.Count, logs.OldestSequence, logs.NewestSequence, capacity = logBuffer.Capacity },
+            warnings = new
+            {
+                count = warnings.Entries.Count,
+                warnings.OldestSequence,
+                warnings.NewestSequence,
+                capacity = warningLogBuffer.Sink.Capacity,
+            },
             sections = sectionStatus,
             redaction = new { secrets = redactor.SecretsRedacted, ipAddresses = redactor.AddressesPseudonymized },
         };
