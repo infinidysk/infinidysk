@@ -10,6 +10,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
@@ -26,7 +27,8 @@ public sealed class SupportPackService(
     UsenetStreamingClient usenetStreamingClient,
     ArticleMissNegativeCache articleMissCache,
     InFlightArticleBudget inFlightArticleBudget,
-    StreamTraceBuffer streamTraceBuffer)
+    StreamTraceBuffer streamTraceBuffer,
+    RuntimeUsageTracker runtimeUsage)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -133,11 +135,18 @@ public sealed class SupportPackService(
         the last 500 warnings and errors separately for that reason - check it first
         when the main log looks like it only contains routine activity.
 
-        environment.json reports a live CPU sample taken while the pack was being
-        built, GC counters (including large-object-heap sizes and pause time), thread
-        pool occupancy, and per-provider connection-pool state with lifetime churn.
-        Collect the pack while the problem is happening - the CPU sample is a
-        half-second window, not a lifetime average.
+        environment.json reports CPU and GC pause figures, thread pool occupancy, and
+        per-provider connection-pool state with lifetime churn. Read cpu.rolling and
+        gc.rolling first: a background sampler records them every few seconds, so
+        their peaks span the whole time the backend has been running rather than the
+        moment the pack was collected. peakWhileReading only counts samples taken
+        while a read was in flight, which tells playback cost apart from container
+        startup, a queue import or a health sweep. cpu.onDemandSample is a half-second
+        window measured while this pack was written - packs are usually collected
+        after the symptom has passed, so treat it as a footnote, not the headline.
+        Prefer the cumulative GC counters (totalPauseDurationMs, totalAllocatedBytes,
+        collection counts) over pauseTimePercentage, which reflects only the most
+        recent collection.
 
         stream-traces/ is included only while developer stream tracing is enabled
         (Settings → Support, or STREAM_TRACE_EVENTS). Tracing is opt-in, memory-only,
@@ -184,7 +193,8 @@ public sealed class SupportPackService(
         var drive = new DriveInfo(root);
         var uptime = ProcessUptime();
         var streamTracing = streamTraceBuffer.GetStatus();
-        var cpu = await SampleCpuAsync(uptime, cancellationToken).ConfigureAwait(false);
+        var usage = runtimeUsage.Snapshot();
+        var cpu = await BuildCpuDiagnosticsAsync(usage, uptime, cancellationToken).ConfigureAwait(false);
 
         return new
         {
@@ -207,8 +217,9 @@ public sealed class SupportPackService(
                 inFlightArticleThrottleEvents = inFlightArticleBudget.ThrottleEvents,
                 timeZone = TimeZoneInfo.Local.Id,
             },
+            runtimeSampler = BuildRuntimeSamplerDiagnostics(usage),
             cpu,
-            gc = BuildGcDiagnostics(),
+            gc = BuildGcDiagnostics(usage),
             threadPool = new
             {
                 minWorkerThreads,
@@ -251,14 +262,43 @@ public sealed class SupportPackService(
     }
 
     /// <summary>
-    /// CPU usage as both a live sample and a process-lifetime average. The sample is what
-    /// matters when a pack is collected while the problem is happening: a lifetime average
-    /// over a mostly-idle process hides a core that is pegged right now. Percentages are
-    /// of the whole machine, so 100 means every core busy.
+    /// Health of the background sampler that produces the rolling CPU and GC figures.
+    /// A <c>lastSampleAtUtc</c> far behind the pack's generation time, or a
+    /// <c>windowSpanMs</c> well under a minute, means the rolling numbers are stale or
+    /// cover a partial window and should be read with that in mind.
     /// </summary>
-    private static async Task<object> SampleCpuAsync(TimeSpan uptime, CancellationToken cancellationToken)
+    private static object BuildRuntimeSamplerDiagnostics(RuntimeUsageSnapshot usage) =>
+        new
+        {
+            intervalMs = (long)RuntimeUsageSampler.TickInterval.TotalMilliseconds,
+            sampleCount = usage.SampleCount,
+            windowSpanMs = usage.WindowSpanMs,
+            lastSampleAtUtc = usage.LastSampleAtUtc,
+        };
+
+    /// <summary>
+    /// CPU cost of the process. Read <c>rolling</c> first. A pack is nearly always
+    /// collected after the symptom has passed, so <c>onDemandSample</c> — measured while
+    /// the pack was being written — usually describes an idle process and answers the
+    /// wrong question. The peaks span the whole process lifetime, and
+    /// <c>peakWhileReading</c> only counts samples taken with a read in flight, which
+    /// separates playback cost from container startup, a queue import or a health sweep.
+    /// Percentages are of the whole machine, so 100 means every core busy.
+    /// </summary>
+    private static async Task<object> BuildCpuDiagnosticsAsync(
+        RuntimeUsageSnapshot usage,
+        TimeSpan uptime,
+        CancellationToken cancellationToken)
     {
         var cores = Math.Max(1, Environment.ProcessorCount);
+        var rolling = new
+        {
+            currentPercentAllCores = usage.Cpu.CurrentPercent,
+            oneMinutePercentAllCores = usage.Cpu.OneMinutePercent,
+            peak = BuildPeak(usage.Cpu.Peak),
+            peakWhileReading = BuildPeak(usage.Cpu.PeakWhileReading),
+        };
+
         try
         {
             var before = Environment.CpuUsage;
@@ -270,33 +310,54 @@ public sealed class SupportPackService(
             return new
             {
                 processorCount = cores,
-                sampleWindowMs = (long)sampleWindow.TotalMilliseconds,
-                samplePercentAllCores = Percent(sampleMs, sampleWindow.TotalMilliseconds * cores),
-                samplePercentOneCore = Percent(sampleMs, sampleWindow.TotalMilliseconds),
+                rolling,
                 lifetimeUserMs = (long)after.UserTime.TotalMilliseconds,
                 lifetimePrivilegedMs = (long)after.PrivilegedTime.TotalMilliseconds,
                 lifetimeTotalMs = (long)after.TotalTime.TotalMilliseconds,
                 lifetimePercentAllCores = Percent(
                     after.TotalTime.TotalMilliseconds, uptime.TotalMilliseconds * cores),
+                onDemandSample = new
+                {
+                    windowMs = (long)sampleWindow.TotalMilliseconds,
+                    percentAllCores = Percent(sampleMs, sampleWindow.TotalMilliseconds * cores),
+                    percentOneCore = Percent(sampleMs, sampleWindow.TotalMilliseconds),
+                },
             };
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
             Log.Debug(e, "Support pack: could not sample CPU usage");
-            return new { processorCount = cores, unavailable = true };
+            // The rolling figures come from counters already banked by the sampler, so
+            // they survive a failure to read the lifetime totals here.
+            return new { processorCount = cores, rolling, unavailable = true };
         }
 
         static double? Percent(double used, double capacity) =>
             capacity <= 0 ? null : Math.Round(used / capacity * 100, 1);
     }
 
+    private static object? BuildPeak(RuntimeUsagePeak? peak) =>
+        peak is null
+            ? null
+            : new { percent = peak.Percent, atUtc = peak.AtUtc, activeReads = peak.ActiveReads };
+
     /// <summary>
     /// GC shape and cost. Generation sizes include the large-object heap, which is where
-    /// article buffers land, and <c>pauseTimePercentage</c> says how much of recent wall
-    /// clock the process spent stopped.
+    /// article buffers land. Prefer the cumulative <c>totalPauseDurationMs</c> and the
+    /// rolling block over <c>pauseTimePercentage</c>, which reflects only the most recent
+    /// collection. Pause percentages are of wall clock, not of core time, because a pause
+    /// stops the whole process.
     /// </summary>
-    private static object BuildGcDiagnostics()
+    private static object BuildGcDiagnostics(RuntimeUsageSnapshot usage)
     {
+        var rolling = new
+        {
+            currentPausePercent = usage.GcPause.CurrentPercent,
+            oneMinutePausePercent = usage.GcPause.OneMinutePercent,
+            peak = BuildPeak(usage.GcPause.Peak),
+            peakWhileReading = BuildPeak(usage.GcPause.PeakWhileReading),
+        };
+
         try
         {
             var info = GC.GetGCMemoryInfo();
@@ -316,6 +377,7 @@ public sealed class SupportPackService(
             {
                 isServerGc = GCSettings.IsServerGC,
                 latencyMode = GCSettings.LatencyMode.ToString(),
+                rolling,
                 gen0Collections = GC.CollectionCount(0),
                 gen1Collections = GC.CollectionCount(1),
                 gen2Collections = GC.CollectionCount(2),
@@ -330,7 +392,7 @@ public sealed class SupportPackService(
         catch (Exception e)
         {
             Log.Debug(e, "Support pack: could not read GC diagnostics");
-            return new { unavailable = true };
+            return new { rolling, unavailable = true };
         }
 
         static string GenerationName(int generation) => generation switch
@@ -565,7 +627,7 @@ public sealed class SupportPackService(
         var (mainMigration, metricsMigration) = await ReadMigrationsAsync(cancellationToken).ConfigureAwait(false);
         return new
         {
-            schemaVersion = 1,
+            schemaVersion = 2,
             generatedAtUtc = generatedAt,
             appVersion = ConfigManager.AppVersion,
             commit = Environment.GetEnvironmentVariable("NZBDAV_COMMIT_SHA"),

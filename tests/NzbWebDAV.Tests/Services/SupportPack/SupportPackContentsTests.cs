@@ -7,6 +7,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Services;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Services.SupportPack;
@@ -112,13 +113,14 @@ public sealed class SupportPackContentsTests : IDisposable
         using var environment = JsonDocument.Parse(entries["environment.json"]);
         var root = environment.RootElement;
 
-        // CPU must be a live sample, not only a lifetime average: a pack collected while
-        // playback stutters has to show what the cores are doing right now.
         var cpu = root.GetProperty("cpu");
         Assert.True(cpu.GetProperty("processorCount").GetInt32() >= 1);
-        Assert.True(cpu.GetProperty("sampleWindowMs").GetInt64() > 0);
-        Assert.True(cpu.GetProperty("samplePercentAllCores").GetDouble() >= 0);
         Assert.True(cpu.GetProperty("lifetimeTotalMs").GetInt64() >= 0);
+
+        // The on-demand probe is kept as a footnote, so it must still be readable.
+        var onDemand = cpu.GetProperty("onDemandSample");
+        Assert.True(onDemand.GetProperty("windowMs").GetInt64() > 0);
+        Assert.True(onDemand.GetProperty("percentAllCores").GetDouble() >= 0);
 
         var gc = root.GetProperty("gc");
         Assert.True(gc.GetProperty("gen0Collections").GetInt32() >= 0);
@@ -139,6 +141,80 @@ public sealed class SupportPackContentsTests : IDisposable
 
         // No providers are configured in this fixture, so the section is present but empty.
         Assert.Equal(JsonValueKind.Array, root.GetProperty("connections").ValueKind);
+    }
+
+    [Fact]
+    public async Task Pack_ReportsPeakCpuAttributedToPlaybackRatherThanOnlyAnIdleSnapshot()
+    {
+        // Packs are collected after the symptom has passed, so an instantaneous sample
+        // describes an idle process. These are the counters that span the incident.
+        var busyAt = new DateTimeOffset(2026, 7, 27, 12, 0, 0, TimeSpan.Zero);
+        var playbackAt = busyAt.AddMinutes(30);
+        var runtimeUsage = new RuntimeUsageTracker(processorCount: 4);
+        runtimeUsage.Record(
+            TimeSpan.FromMilliseconds(16000),
+            TimeSpan.FromMilliseconds(250),
+            TimeSpan.FromSeconds(5),
+            activeReads: 0,
+            busyAt);
+        runtimeUsage.Record(
+            TimeSpan.FromMilliseconds(8000),
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromSeconds(5),
+            activeReads: 2,
+            playbackAt);
+
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)),
+            runtimeUsage);
+
+        using var environment = JsonDocument.Parse(entries["environment.json"]);
+        var root = environment.RootElement;
+
+        var sampler = root.GetProperty("runtimeSampler");
+        Assert.True(sampler.GetProperty("intervalMs").GetInt64() > 0);
+        Assert.Equal(2, sampler.GetProperty("sampleCount").GetInt64());
+        Assert.Equal(10_000, sampler.GetProperty("windowSpanMs").GetInt64());
+        Assert.Equal(playbackAt, sampler.GetProperty("lastSampleAtUtc").GetDateTimeOffset());
+
+        var rolling = root.GetProperty("cpu").GetProperty("rolling");
+        Assert.Equal(40, rolling.GetProperty("currentPercentAllCores").GetDouble());
+        Assert.Equal(60, rolling.GetProperty("oneMinutePercentAllCores").GetDouble());
+
+        var peak = rolling.GetProperty("peak");
+        Assert.Equal(80, peak.GetProperty("percent").GetDouble());
+        Assert.Equal(busyAt, peak.GetProperty("atUtc").GetDateTimeOffset());
+        Assert.Equal(0, peak.GetProperty("activeReads").GetInt32());
+
+        // Without the read count a peak cannot be told apart from a queue import or a
+        // health sweep, which is what made the original figure unusable.
+        var peakWhileReading = rolling.GetProperty("peakWhileReading");
+        Assert.Equal(40, peakWhileReading.GetProperty("percent").GetDouble());
+        Assert.Equal(playbackAt, peakWhileReading.GetProperty("atUtc").GetDateTimeOffset());
+        Assert.Equal(2, peakWhileReading.GetProperty("activeReads").GetInt32());
+
+        var gcRolling = root.GetProperty("gc").GetProperty("rolling");
+        Assert.Equal(2, gcRolling.GetProperty("currentPausePercent").GetDouble());
+        Assert.Equal(5, gcRolling.GetProperty("peak").GetProperty("percent").GetDouble());
+        Assert.Equal(2, gcRolling.GetProperty("peakWhileReading").GetProperty("percent").GetDouble());
+    }
+
+    [Fact]
+    public async Task Pack_ReportsRollingFiguresAsNullBeforeTheSamplerHasTicked()
+    {
+        var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));
+
+        using var environment = JsonDocument.Parse(entries["environment.json"]);
+        var root = environment.RootElement;
+
+        // A pack pulled in the first seconds of process life has nothing banked yet.
+        // Null is honest here; zero would read as a genuinely idle backend.
+        Assert.Equal(0, root.GetProperty("runtimeSampler").GetProperty("sampleCount").GetInt64());
+        var rolling = root.GetProperty("cpu").GetProperty("rolling");
+        Assert.Equal(JsonValueKind.Null, rolling.GetProperty("currentPercentAllCores").ValueKind);
+        Assert.Equal(JsonValueKind.Null, rolling.GetProperty("peak").ValueKind);
+        Assert.Equal(JsonValueKind.Null, rolling.GetProperty("peakWhileReading").ValueKind);
     }
 
     [Fact]
@@ -193,13 +269,15 @@ public sealed class SupportPackContentsTests : IDisposable
 
     private static Task<Dictionary<string, string>> ReadPackEntriesAsync(
         LogBufferSink logBuffer,
-        WarningLogBuffer warningBuffer) =>
-        ReadPackEntriesAsync(logBuffer, warningBuffer, new StreamTraceBuffer(100, enabled: false));
+        WarningLogBuffer warningBuffer,
+        RuntimeUsageTracker? runtimeUsage = null) =>
+        ReadPackEntriesAsync(logBuffer, warningBuffer, new StreamTraceBuffer(100, enabled: false), runtimeUsage);
 
     private static async Task<Dictionary<string, string>> ReadPackEntriesAsync(
         LogBufferSink logBuffer,
         WarningLogBuffer warningBuffer,
-        StreamTraceBuffer streamTraceBuffer)
+        StreamTraceBuffer streamTraceBuffer,
+        RuntimeUsageTracker? runtimeUsage = null)
     {
         var configManager = new ConfigManager();
         var websocketManager = new WebsocketManager();
@@ -221,7 +299,8 @@ public sealed class SupportPackContentsTests : IDisposable
             usenet,
             new ArticleMissNegativeCache(configManager),
             new InFlightArticleBudget(64 * 1024 * 1024),
-            streamTraceBuffer);
+            streamTraceBuffer,
+            runtimeUsage ?? new RuntimeUsageTracker());
 
         using var memory = new MemoryStream();
         await service.WriteAsync(memory, CancellationToken.None);
