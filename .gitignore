@@ -17,6 +17,7 @@ BenchmarkDotNet.Artifacts/
 
 .idea/
 .vscode/
+.cursor/
 
 ########
 # macOS #
