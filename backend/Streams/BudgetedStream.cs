@@ -6,10 +6,10 @@ namespace NzbWebDAV.Streams;
 /// </summary>
 public sealed class BudgetedStream : Stream
 {
-    private readonly MemoryStream _inner;
+    private readonly Stream _inner;
     private ArticleByteLease? _lease;
 
-    public BudgetedStream(MemoryStream inner, ArticleByteLease lease)
+    public BudgetedStream(Stream inner, ArticleByteLease lease)
     {
         _inner = inner;
         _lease = lease;

@@ -293,48 +293,59 @@ public class NzbFileStream(
                 continue;
             }
 
-            MemoryStream head;
+            PooledBufferStream? head = null;
             try
             {
-                await body.DiscardExactBytesAsync(rangeStart - start, ct).ConfigureAwait(false);
-                var tail = end - rangeStart;
-                var capacity = tail is > 0 and <= int.MaxValue ? (int)tail : 0;
-                head = new MemoryStream(capacity);
-                await body.CopyToAsync(head, ct).ConfigureAwait(false);
-                head.Position = 0;
-            }
-            catch (Exception e) when (!ct.IsCancellationRequested)
-            {
-                // The guess was right (headers matched) but the body read failed,
-                // e.g. a mid-stream NNTP read timeout. Fall back to the slow seek
-                // path, whose MultiSegmentStream retries and zero-fills instead of
-                // surfacing a hard error to the WebDAV client.
-                var displayName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
-                if (e.TryGetKnownErrorMessage(out var reason))
+                try
                 {
-                    ThrottledSegmentWarning.Write(
-                        displayName,
-                        "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek. Reason: {Reason}",
-                        displayName,
-                        reason);
-                    Log.Debug(e, "Fast seek known failure stack while reading {FileName}", displayName);
+                    await body.DiscardExactBytesAsync(rangeStart - start, ct).ConfigureAwait(false);
+                    var tail = end - rangeStart;
+                    var capacity = tail is > 0 and <= int.MaxValue ? (int)tail : 0;
+                    head = new PooledBufferStream(capacity);
+                    await body.CopyToAsync(head, ct).ConfigureAwait(false);
+                    head.Position = 0;
                 }
-                else
+                catch (Exception e) when (!ct.IsCancellationRequested)
                 {
-                    Log.Warning(
-                        e,
-                        "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek.",
-                        displayName);
+                    // The guess was right (headers matched) but the body read failed,
+                    // e.g. a mid-stream NNTP read timeout. Fall back to the slow seek
+                    // path, whose MultiSegmentStream retries and zero-fills instead of
+                    // surfacing a hard error to the WebDAV client.
+                    var displayName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
+                    if (e.TryGetKnownErrorMessage(out var reason))
+                    {
+                        ThrottledSegmentWarning.Write(
+                            displayName,
+                            "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek. Reason: {Reason}",
+                            displayName,
+                            reason);
+                        Log.Debug(e, "Fast seek known failure stack while reading {FileName}", displayName);
+                    }
+                    else
+                    {
+                        Log.Warning(
+                            e,
+                            "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek.",
+                            displayName);
+                    }
+
+                    return null;
                 }
 
-                return null;
+                // OnDispose returns the rented head if CombinedStream is disposed before
+                // its first read (head never becomes current). Idempotent dispose is safe
+                // when CombinedStream also disposes head after consuming it.
+                var owned = head;
+                head = null;
+                return new CombinedStream(SpliceHeadThenRest(owned, index + 1, ct))
+                    .OnDispose(() => owned.Dispose());
             }
             finally
             {
                 await body.DisposeAsync().ConfigureAwait(false);
+                if (head is not null)
+                    await head.DisposeAsync().ConfigureAwait(false);
             }
-
-            return new CombinedStream(SpliceHeadThenRest(head, index + 1, ct));
         }
 
         return null;

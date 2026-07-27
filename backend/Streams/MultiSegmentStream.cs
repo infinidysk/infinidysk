@@ -738,6 +738,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         ArticleByteLease? lease = existingLease;
         var ownsLease = existingLease is null;
+        PooledBufferStream? buffer = null;
         try
         {
             var hasExactSize = _segmentSizes.TryGetExactSize(segmentIndex, out var exactSize);
@@ -750,7 +751,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
 
             var capacity = estimate is > 0 and <= int.MaxValue ? (int)estimate : 0;
-            var buffer = new MemoryStream(capacity);
+            buffer = new PooledBufferStream(capacity);
             var drainStarted = Stopwatch.GetTimestamp();
             await source.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
             StreamTrace.TryStall(
@@ -769,12 +770,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
             buffer.Position = 0;
             ownsLease = false;
+            var owned = buffer;
+            buffer = null;
             return ReferenceEquals(lease, ArticleByteLease.Empty)
-                ? buffer
-                : new BudgetedStream(buffer, lease);
+                ? owned
+                : new BudgetedStream(owned, lease);
         }
         catch
         {
+            if (buffer is not null)
+                await buffer.DisposeAsync().ConfigureAwait(false);
             if (ownsLease)
                 lease?.Dispose();
             throw;
@@ -799,7 +804,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// shortfall or an overrun would shift every following byte, so short bodies are
     /// padded and long bodies are truncated to the recorded size.
     /// </summary>
-    private void AlignDrainedSegment(MemoryStream buffer, int segmentIndex, long drained, long expected)
+    private void AlignDrainedSegment(PooledBufferStream buffer, int segmentIndex, long drained, long expected)
     {
         if (drained == expected) return;
 
