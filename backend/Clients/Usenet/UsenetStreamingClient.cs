@@ -98,6 +98,13 @@ public class UsenetStreamingClient : WrappingNntpClient
             : Array.Empty<ProviderCircuitRuntimeSnapshot>();
     }
 
+    public IReadOnlyList<ProviderConnectionSnapshot> GetProviderConnectionSnapshots()
+    {
+        return WrappingNntpClient.Unwrap(InnerClient) is MultiProviderNntpClient multi
+            ? multi.GetProviderConnectionSnapshots()
+            : Array.Empty<ProviderConnectionSnapshot>();
+    }
+
     private static MultiProviderNntpClient CreateMultiProviderClient
     (
         ConfigManager configManager,

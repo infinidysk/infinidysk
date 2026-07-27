@@ -33,6 +33,58 @@ public class StreamTraceBufferTests
     }
 
     [Fact]
+    public void RangeEnd_ReportsStallAttributionAndResetsItForTheNextRange()
+    {
+        var buffer = new StreamTraceBuffer(capacity: 100, maxSessions: 50);
+        var session = Guid.NewGuid();
+
+        buffer.RangeOpen(session, "/view/a.mkv", "GET", 0, null, 1000, null, null);
+        buffer.AddStall(session, StreamStallKind.ProviderWait, TimeSpan.FromMilliseconds(120));
+        buffer.AddStall(session, StreamStallKind.BodyDrain, TimeSpan.FromMilliseconds(30));
+        buffer.AddStall(session, StreamStallKind.ConsumerWait, TimeSpan.FromMilliseconds(400));
+        // Sub-millisecond writes must still accumulate rather than truncate to zero.
+        for (var i = 0; i < 10; i++)
+            buffer.AddStall(session, StreamStallKind.ClientWrite, TimeSpan.FromMicroseconds(300));
+        buffer.ConnectionAcquired(session, TimeSpan.FromMilliseconds(70), wasReused: true);
+        buffer.ConnectionAcquired(session, TimeSpan.FromMilliseconds(500), wasReused: false);
+        buffer.RangeEnd(session, ReadSession.EndReasonCode.Aborted, 4096);
+
+        var first = buffer.GetSessionEvents(session).Last();
+        Assert.Equal(120, first.ProviderWaitMs);
+        Assert.Equal(30, first.BodyDrainMs);
+        Assert.Equal(400, first.ConsumerWaitMs);
+        Assert.Equal(3, first.ClientWriteMs);
+        Assert.Equal(570, first.ConnectionWaitMs);
+        Assert.Equal(1, first.ConnectionsReused);
+        Assert.Equal(1, first.ConnectionsOpened);
+
+        buffer.RangeOpen(session, "/view/a.mkv", "GET", 4096, null, 1000, null, null);
+        buffer.AddStall(session, StreamStallKind.ProviderWait, TimeSpan.FromMilliseconds(15));
+        buffer.RangeEnd(session, ReadSession.EndReasonCode.Completed, 8192);
+
+        var second = buffer.GetSessionEvents(session).Last();
+        Assert.Equal(15, second.ProviderWaitMs);
+        Assert.Null(second.ConsumerWaitMs);
+        Assert.Null(second.ConnectionWaitMs);
+        Assert.Null(second.ConnectionsOpened);
+    }
+
+    [Fact]
+    public void AddStall_BeforeAnyRangeOpen_IsIgnored()
+    {
+        var buffer = new StreamTraceBuffer(capacity: 100, maxSessions: 50);
+        var session = Guid.NewGuid();
+
+        // No range has opened, so there is no session to attribute to. This must not
+        // create one — otherwise background work would grow the session index forever.
+        buffer.AddStall(session, StreamStallKind.ClientWrite, TimeSpan.FromSeconds(1));
+        buffer.ConnectionAcquired(session, TimeSpan.FromSeconds(1), wasReused: false);
+
+        Assert.Empty(buffer.ListSessions());
+        Assert.Empty(buffer.GetSessionEvents(session));
+    }
+
+    [Fact]
     public void DisabledBuffer_RecordsNothing()
     {
         var buffer = new StreamTraceBuffer(100, enabled: false);

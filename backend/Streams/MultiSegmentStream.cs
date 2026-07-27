@@ -1,4 +1,5 @@
-﻿using System.Runtime.ExceptionServices;
+﻿using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
@@ -750,7 +751,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
             var capacity = estimate is > 0 and <= int.MaxValue ? (int)estimate : 0;
             var buffer = new MemoryStream(capacity);
+            var drainStarted = Stopwatch.GetTimestamp();
             await source.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+            StreamTrace.TryStall(
+                MultiProviderNntpClient.CurrentReadSessionId,
+                StreamStallKind.BodyDrain,
+                Stopwatch.GetElapsedTime(drainStarted));
             var drained = buffer.Length;
             if (hasExactSize)
                 AlignDrainedSegment(buffer, segmentIndex, drained, exactSize);
@@ -830,9 +836,17 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             // if the stream is null, get the next stream.
             if (_stream == null)
             {
+                // Time spent here is the consumer starving: prefetch has not yet delivered
+                // the next segment. Low provider time with high consumer wait means the
+                // pipeline is not running far enough ahead, not that the provider is slow.
+                var waitStarted = Stopwatch.GetTimestamp();
                 if (!await _streamTasks.Reader.WaitToReadAsync(cancellationToken)) return 0;
                 if (!_streamTasks.Reader.TryRead(out var streamTask)) return 0;
                 var result = await streamTask;
+                StreamTrace.TryStall(
+                    MultiProviderNntpClient.CurrentReadSessionId,
+                    StreamStallKind.ConsumerWait,
+                    Stopwatch.GetElapsedTime(waitStarted));
                 ReleaseInFlightPrefetchBytes(result.PlannedBytes);
                 _stream = AcceptSegment(result);
             }

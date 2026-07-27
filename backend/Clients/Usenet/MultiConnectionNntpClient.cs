@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
@@ -8,6 +9,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services.StreamTrace;
 using Serilog;
 using UsenetSharp.Models;
 
@@ -95,6 +97,7 @@ public class MultiConnectionNntpClient(
     public int ActiveConnections => connectionPool.ActiveConnections;
     public int AvailableConnections => connectionPool.AvailableConnections;
     public int InFlightConnections => ActiveConnections + PendingSelections;
+    public ConnectionPoolChurn GetConnectionChurn() => connectionPool.GetChurn();
 
     private int _pendingSelections;
     public int PendingSelections => Volatile.Read(ref _pendingSelections);
@@ -210,8 +213,7 @@ public class MultiConnectionNntpClient(
             CancellationTokenSource? attemptCts = null;
             try
             {
-                connectionLock = await connectionPool
-                    .GetConnectionLockAsync(GetDownloadPriority(ct), ct)
+                connectionLock = await AcquireConnectionLockAsync(GetDownloadPriority(ct), ct)
                     .ConfigureAwait(false);
 
                 var batchCt = ct;
@@ -381,7 +383,7 @@ public class MultiConnectionNntpClient(
             ConnectionLock<INntpClient>? connectionLock = null;
             try
             {
-                connectionLock = await connectionPool.GetConnectionLockAsync(priority, ct).ConfigureAwait(false);
+                connectionLock = await AcquireConnectionLockAsync(priority, ct).ConfigureAwait(false);
             }
             catch (Exception e) when (e.IsCancellationException(ct))
             {
@@ -642,7 +644,8 @@ public class MultiConnectionNntpClient(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var priority = GetDownloadPriority(cancellationToken);
-        var connectionLock = await connectionPool.GetConnectionLockAsync(priority, cancellationToken).ConfigureAwait(false);
+        var connectionLock = await AcquireConnectionLockAsync(priority, cancellationToken)
+            .ConfigureAwait(false);
         var completed = false;
         try
         {
@@ -682,6 +685,27 @@ public class MultiConnectionNntpClient(
     private static SemaphorePriority GetDownloadPriority(CancellationToken ct)
     {
         return ct.GetContext<DownloadPriorityContext>()?.Priority ?? SemaphorePriority.Low;
+    }
+
+    /// <summary>
+    /// Borrows a pooled connection, attributing the wait to the current read session so a
+    /// range that spends its time queued behind the pool (or behind handshake pacing after
+    /// a burst of replacements) is distinguishable from one waiting on the provider.
+    /// </summary>
+    private async Task<ConnectionLock<INntpClient>> AcquireConnectionLockAsync(
+        SemaphorePriority priority,
+        CancellationToken ct)
+    {
+        var sessionId = MultiProviderNntpClient.CurrentReadSessionId;
+        if (sessionId is null || !StreamTrace.IsRecording)
+            return await connectionPool.GetConnectionLockAsync(priority, ct).ConfigureAwait(false);
+
+        var started = Stopwatch.GetTimestamp();
+        var connectionLock = await connectionPool.GetConnectionLockAsync(priority, ct)
+            .ConfigureAwait(false);
+        StreamTrace.TryConnectionAcquired(
+            sessionId, Stopwatch.GetElapsedTime(started), connectionLock.WasReused);
+        return connectionLock;
     }
 
     private static void LogException(Action? action)

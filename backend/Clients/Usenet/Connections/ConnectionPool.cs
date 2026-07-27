@@ -1,9 +1,24 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
 
 namespace NzbWebDAV.Clients.Usenet.Connections;
+
+/// <summary>
+/// Lifetime connection churn for one pool. Distinguishes a pool that opened its
+/// connections once from one that keeps replacing them, which the live/idle
+/// gauges cannot show.
+/// </summary>
+public sealed record ConnectionPoolChurn(
+    long ConnectionsOpened,
+    long ConnectionsReused,
+    long ConnectionsDestroyed,
+    long StaleEvictions,
+    long HandshakeFailures,
+    long GateWaitMs,
+    long HandshakeWaitMs);
 
 /// <summary>
 /// Thread-safe, lazy connection pool.
@@ -52,6 +67,26 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private int _live; // number of connections currently alive
     private int _disposed; // 0 == false, 1 == true
 
+    // Lifetime churn counters. A pool that keeps destroying and re-opening connections
+    // pays the handshake cost repeatedly and can never reach its configured width, which
+    // is invisible from the live/idle gauges alone.
+    private long _connectionsOpened;
+    private long _connectionsReused;
+    private long _connectionsDestroyed;
+    private long _staleEvictions;
+    private long _handshakeFailures;
+    private long _gateWaitTicks;
+    private long _handshakeWaitTicks;
+
+    public ConnectionPoolChurn GetChurn() => new(
+        ConnectionsOpened: Interlocked.Read(ref _connectionsOpened),
+        ConnectionsReused: Interlocked.Read(ref _connectionsReused),
+        ConnectionsDestroyed: Interlocked.Read(ref _connectionsDestroyed),
+        StaleEvictions: Interlocked.Read(ref _staleEvictions),
+        HandshakeFailures: Interlocked.Read(ref _handshakeFailures),
+        GateWaitMs: Interlocked.Read(ref _gateWaitTicks) / TimeSpan.TicksPerMillisecond,
+        HandshakeWaitMs: Interlocked.Read(ref _handshakeWaitTicks) / TimeSpan.TicksPerMillisecond);
+
     /* ------------------------------------------------------------------------------ */
 
     public ConnectionPool(
@@ -92,7 +127,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, _sweepCts.Token);
 
+        var gateWaitStarted = Stopwatch.GetTimestamp();
         await _gate.WaitAsync(priority, linked.Token).ConfigureAwait(false);
+        Interlocked.Add(ref _gateWaitTicks, Stopwatch.GetElapsedTime(gateWaitStarted).Ticks);
 
         // Pool might have been disposed after wait returned:
         if (Volatile.Read(ref _disposed) == 1)
@@ -104,6 +141,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         // Try to reuse an existing idle connection.
         if (TryTakeIdleConnection(out var reused))
         {
+            Interlocked.Increment(ref _connectionsReused);
             TriggerConnectionPoolChangedEvent();
             return BuildLock(reused, wasReused: true);
         }
@@ -113,7 +151,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         // connections may return to the idle stack — prefer those over a new handshake.
         try
         {
+            var handshakeWaitStarted = Stopwatch.GetTimestamp();
             await _handshakeGate.WaitAsync(linked.Token).ConfigureAwait(false);
+            Interlocked.Add(ref _handshakeWaitTicks, Stopwatch.GetElapsedTime(handshakeWaitStarted).Ticks);
         }
         catch
         {
@@ -131,6 +171,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
             if (TryTakeIdleConnection(out reused))
             {
+                Interlocked.Increment(ref _connectionsReused);
                 TriggerConnectionPoolChangedEvent();
                 return BuildLock(reused, wasReused: true);
             }
@@ -142,10 +183,12 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             }
             catch
             {
+                Interlocked.Increment(ref _handshakeFailures);
                 _gate.Release(); // free the permit on failure
                 throw;
             }
 
+            Interlocked.Increment(ref _connectionsOpened);
             Interlocked.Increment(ref _live);
             TriggerConnectionPoolChangedEvent();
             return BuildLock(conn, wasReused: false);
@@ -175,6 +218,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             // Stale – destroy and continue looking.
             DisposeConnection(item.Connection);
             Interlocked.Decrement(ref _live);
+            Interlocked.Increment(ref _staleEvictions);
             TriggerConnectionPoolChangedEvent();
         }
 
@@ -214,6 +258,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         // When a lock requests replacement, we dispose the connection instead of reusing.
         DisposeConnection(connection);
         Interlocked.Decrement(ref _live);
+        Interlocked.Increment(ref _connectionsDestroyed);
         if (Volatile.Read(ref _disposed) == 0)
         {
             _gate.Release();

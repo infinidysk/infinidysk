@@ -278,12 +278,41 @@ public sealed class StreamTraceBuffer
         });
     }
 
+    /// <summary>
+    /// Adds time spent blocked on <paramref name="kind"/> to the current range of
+    /// <paramref name="sessionId"/>. Ticks are accumulated rather than milliseconds so
+    /// the many sub-millisecond client writes in a range still add up. No-ops when
+    /// tracing is off or the session has no open range.
+    /// </summary>
+    public void AddStall(Guid sessionId, StreamStallKind kind, TimeSpan elapsed)
+    {
+        if (!Enabled || elapsed <= TimeSpan.Zero) return;
+        if (!_sessions.TryGetValue(sessionId, out var session)) return;
+        session.Stalls.Add(kind, elapsed.Ticks);
+    }
+
+    /// <summary>
+    /// Records a connection acquisition for the current range: how long the borrower
+    /// waited, and whether the pool handed back an idle connection or had to open a
+    /// new one. A range full of fresh handshakes points at connection churn.
+    /// </summary>
+    public void ConnectionAcquired(Guid sessionId, TimeSpan wait, bool wasReused)
+    {
+        if (!Enabled) return;
+        if (!_sessions.TryGetValue(sessionId, out var session)) return;
+        session.Stalls.AddConnection(wait.Ticks, wasReused);
+    }
+
     public void RangeEnd(
         Guid sessionId,
         ReadSession.EndReasonCode endReason,
         long bytesServed,
         string? message = null)
     {
+        var stalls = _sessions.TryGetValue(sessionId, out var session)
+            ? session.Stalls.DrainForRange()
+            : default;
+
         Record(new StreamTraceEvent
         {
             Sequence = 0,
@@ -293,6 +322,13 @@ public sealed class StreamTraceBuffer
             EndReason = StreamTraceEvent.EndReasonName(endReason),
             BytesServed = bytesServed,
             Message = message,
+            ConnectionWaitMs = stalls.ConnectionWaitMs,
+            ProviderWaitMs = stalls.ProviderWaitMs,
+            BodyDrainMs = stalls.BodyDrainMs,
+            ConsumerWaitMs = stalls.ConsumerWaitMs,
+            ClientWriteMs = stalls.ClientWriteMs,
+            ConnectionsOpened = stalls.ConnectionsOpened,
+            ConnectionsReused = stalls.ConnectionsReused,
         });
     }
 
@@ -384,7 +420,85 @@ public sealed class StreamTraceBuffer
         public string? Path { get; set; }
         public int EventCount { get; set; }
         public string? LastKind { get; set; }
+        public StallTotals Stalls { get; } = new();
     }
+
+    /// <summary>
+    /// Per-range stall accumulator. Written concurrently by every prefetch task and the
+    /// consumer, so every field moves through Interlocked; drained and zeroed when the
+    /// range ends so the next range on the same session starts clean.
+    /// </summary>
+    private sealed class StallTotals
+    {
+        private long _connectionWaitTicks;
+        private long _providerWaitTicks;
+        private long _bodyDrainTicks;
+        private long _consumerWaitTicks;
+        private long _clientWriteTicks;
+        private long _connectionsOpened;
+        private long _connectionsReused;
+
+        public void Add(StreamStallKind kind, long ticks)
+        {
+            switch (kind)
+            {
+                case StreamStallKind.ConnectionWait:
+                    Interlocked.Add(ref _connectionWaitTicks, ticks);
+                    break;
+                case StreamStallKind.ProviderWait:
+                    Interlocked.Add(ref _providerWaitTicks, ticks);
+                    break;
+                case StreamStallKind.BodyDrain:
+                    Interlocked.Add(ref _bodyDrainTicks, ticks);
+                    break;
+                case StreamStallKind.ConsumerWait:
+                    Interlocked.Add(ref _consumerWaitTicks, ticks);
+                    break;
+                case StreamStallKind.ClientWrite:
+                    Interlocked.Add(ref _clientWriteTicks, ticks);
+                    break;
+            }
+        }
+
+        public void AddConnection(long waitTicks, bool wasReused)
+        {
+            if (waitTicks > 0) Interlocked.Add(ref _connectionWaitTicks, waitTicks);
+            if (wasReused)
+                Interlocked.Increment(ref _connectionsReused);
+            else
+                Interlocked.Increment(ref _connectionsOpened);
+        }
+
+        public StallSnapshot DrainForRange() => new(
+            Milliseconds(ref _connectionWaitTicks),
+            Milliseconds(ref _providerWaitTicks),
+            Milliseconds(ref _bodyDrainTicks),
+            Milliseconds(ref _consumerWaitTicks),
+            Milliseconds(ref _clientWriteTicks),
+            Count(ref _connectionsOpened),
+            Count(ref _connectionsReused));
+
+        private static long? Milliseconds(ref long ticks)
+        {
+            var drained = Interlocked.Exchange(ref ticks, 0);
+            return drained <= 0 ? null : drained / TimeSpan.TicksPerMillisecond;
+        }
+
+        private static long? Count(ref long counter)
+        {
+            var drained = Interlocked.Exchange(ref counter, 0);
+            return drained <= 0 ? null : drained;
+        }
+    }
+
+    private readonly record struct StallSnapshot(
+        long? ConnectionWaitMs,
+        long? ProviderWaitMs,
+        long? BodyDrainMs,
+        long? ConsumerWaitMs,
+        long? ClientWriteMs,
+        long? ConnectionsOpened,
+        long? ConnectionsReused);
 }
 
 public sealed record StreamTraceSessionSummary(

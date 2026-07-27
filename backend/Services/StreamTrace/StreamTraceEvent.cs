@@ -34,6 +34,17 @@ public sealed record StreamTraceEvent
     [JsonPropertyName("attempt")] public int? Attempt { get; init; }
     [JsonPropertyName("message")] public string? Message { get; init; }
 
+    // Stall attribution, emitted on RangeEnd and reset per range. These overlap by
+    // design — segments are fetched concurrently — so they are shares of a range's
+    // wall clock, not a partition of it.
+    [JsonPropertyName("connWaitMs")] public long? ConnectionWaitMs { get; init; }
+    [JsonPropertyName("providerWaitMs")] public long? ProviderWaitMs { get; init; }
+    [JsonPropertyName("bodyDrainMs")] public long? BodyDrainMs { get; init; }
+    [JsonPropertyName("consumerWaitMs")] public long? ConsumerWaitMs { get; init; }
+    [JsonPropertyName("clientWriteMs")] public long? ClientWriteMs { get; init; }
+    [JsonPropertyName("connOpened")] public long? ConnectionsOpened { get; init; }
+    [JsonPropertyName("connReused")] public long? ConnectionsReused { get; init; }
+
     public static string StatusName(SegmentFetch.FetchStatus status) => status.ToString();
 
     public static string EndReasonName(ReadSession.EndReasonCode reason) => reason.ToString();

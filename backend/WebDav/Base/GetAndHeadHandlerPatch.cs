@@ -1,4 +1,5 @@
 ﻿using System.Buffers;
+using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using NWebDav.Server;
 using NWebDav.Server.Handlers;
@@ -265,7 +266,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         readCts.CancelAfter(Timeout.InfiniteTimeSpan);
                         await CopyToAsync(stream, response.Body, copyStart, copyEnd,
                             (n, pos) => _activeReadRegistry.Touch(sessionId, n, pos),
-                            ct).ConfigureAwait(false);
+                            sessionId, ct).ConfigureAwait(false);
                         FinishRange(sessionId, ReadSession.EndReasonCode.Completed);
                         ClearStreamingFailureAfterCompletedRead(
                             _failureTracker,
@@ -354,6 +355,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         long start,
         long? end,
         Action<long, long>? onBytesServed,
+        Guid? sessionId,
         CancellationToken cancellationToken)
     {
         // Skip to the first offset
@@ -387,8 +389,12 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     return;
 
                 // Write the data to the destination stream
+                var writeStarted = Stopwatch.GetTimestamp();
                 await dest.WriteAsync(
                     buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
+                if (sessionId is { } id)
+                    _streamTrace.AddStall(
+                        id, StreamStallKind.ClientWrite, Stopwatch.GetElapsedTime(writeStarted));
 
                 // Report chunk size + new absolute file position so dashboards can
                 // surface real playback location (not cumulative transferred bytes).

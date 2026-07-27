@@ -48,6 +48,22 @@ public class MultiProviderNntpClient(
                 p.GetCircuitBreakerSnapshot()))
             .ToList();
     }
+
+    public IReadOnlyList<ProviderConnectionSnapshot> GetProviderConnectionSnapshots()
+    {
+        return providers
+            .Select(p => new ProviderConnectionSnapshot(
+                p.MetricsKey,
+                p.Host,
+                p.ProviderType,
+                p.LiveConnections,
+                p.IdleConnections,
+                p.ActiveConnections,
+                p.AvailableConnections,
+                p.PendingSelections,
+                p.GetConnectionChurn()))
+            .ToList();
+    }
     private readonly ProviderUsageTracker _usageTracker = usageTracker ?? new ProviderUsageTracker();
     private static readonly AsyncLocal<Guid?> ReadSessionScope = new();
     internal static Guid? CurrentReadSessionId => ReadSessionScope.Value;
@@ -818,6 +834,8 @@ public class MultiProviderNntpClient(
         if (ReadSessionScope.Value is { } sessionId)
         {
             streamTrace?.Segment(sessionId, metricsKey, status, (int)Math.Min(int.MaxValue, durationMs), retries);
+            streamTrace?.AddStall(
+                sessionId, StreamStallKind.ProviderWait, TimeSpan.FromMilliseconds(durationMs));
         }
 
         if (metricsWriter == null) return;

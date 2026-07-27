@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Diagnostics;
+using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -250,7 +251,10 @@ public class GetWebdavItemController(
                 throw;
             }
             if (read <= 0) break;
+            var writeStarted = Stopwatch.GetTimestamp();
             await dest.WriteAsync(buffer, 0, read, ct).ConfigureAwait(false);
+            streamTrace.AddStall(
+                sessionId, StreamStallKind.ClientWrite, Stopwatch.GetElapsedTime(writeStarted));
             position += read;
             activeReadRegistry.Touch(sessionId, read, position);
         }
