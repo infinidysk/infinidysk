@@ -28,6 +28,14 @@ public class WatchtowerService(
 {
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan NzbFetchTimeout = TimeSpan.FromSeconds(15);
+
+    // Heartbeat throttles. The cycle loop ticks every 20s forever, so logging each
+    // tick would fill the whole log buffer and evict everything support needs.
+    private static readonly TimeSpan CycleStartLogInterval = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan NoProfileLogInterval = TimeSpan.FromMinutes(60);
+    private const string CycleStartLogKey = "cycle-starting";
+    private const string NoProfileLogKey = "no-search-profile";
+    private readonly WatchtowerLogThrottle _logThrottle = new();
     private const int ResolvesPerTick = 3;
     private const int AutoResolveBatch = 25;
     private static readonly TimeSpan AutoStageBudget = TimeSpan.FromSeconds(120);
@@ -70,7 +78,14 @@ public class WatchtowerService(
                     lock (_ctsLock) _disabledCts = cycleCts;
                     var ct = cycleCts.Token;
                     var cycleWatch = Stopwatch.StartNew();
-                    LogActivity("Watchtower: cycle starting");
+                    if (_logThrottle.ShouldLog(CycleStartLogKey, CycleStartLogInterval, out var skippedCycles))
+                    {
+                        if (skippedCycles > 0)
+                            LogActivity("Watchtower: cycle starting ({Skipped:n0} cycles since the last log)",
+                                skippedCycles);
+                        else
+                            LogActivity("Watchtower: cycle starting");
+                    }
                     try
                     {
                         var cycle = RunCycleAsync(cycleWatch, ct);
@@ -129,8 +144,15 @@ public class WatchtowerService(
     private void OnConfigChanged(object? sender, ConfigManager.ConfigEventArgs e)
     {
         if (e.ChangedConfig.ContainsKey(ConfigKeys.WatchtowerVerboseLogging))
+        {
             Log.Information("Watchtower: verbose activity logging {State}",
                 configManager.IsWatchtowerVerboseLoggingEnabled() ? "enabled" : "disabled");
+            _logThrottle.Reset(CycleStartLogKey);
+        }
+
+        // Report the fresh state on the next cycle instead of waiting out the throttle.
+        if (e.ChangedConfig.ContainsKey(ConfigKeys.WatchtowerProfileToken))
+            _logThrottle.Reset(NoProfileLogKey);
 
         if (!e.ChangedConfig.ContainsKey(ConfigKeys.WatchtowerEnabled)) return;
         if (configManager.IsWatchtowerEnabled()) return;
@@ -705,9 +727,21 @@ public class WatchtowerService(
         var profileToken = ResolveProfileToken();
         if (profileToken is null)
         {
-            LogActivity("Watchtower: no search profile configured; skipping resolve");
+            if (_logThrottle.ShouldLog(NoProfileLogKey, NoProfileLogInterval, out var skippedResolves))
+            {
+                if (skippedResolves > 0)
+                    LogActivity(
+                        "Watchtower: no search profile configured; skipping resolve " +
+                        "({Skipped:n0} cycles skipped since the last log)",
+                        skippedResolves);
+                else
+                    LogActivity("Watchtower: no search profile configured; skipping resolve");
+            }
+
             return;
         }
+
+        _logThrottle.Reset(NoProfileLogKey);
 
         var concurrency = configManager.GetWatchtowerResolveConcurrency();
         var stageWatch = Stopwatch.StartNew();
