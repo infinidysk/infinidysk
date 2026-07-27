@@ -18,6 +18,7 @@ using NzbWebDAV.Logging;
 using NzbWebDAV.Middlewares;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.SupportPack;
 using NzbWebDAV.Services.StreamTrace;
@@ -217,6 +218,8 @@ class Program
                 .AddSingleton<NzbWebDAV.Services.Benchmark.BenchmarkRunControl>()
                 .AddHostedService<LogBroadcaster>()
                 .AddSingleton<ActiveReadRegistry>()
+                .AddSingleton(_ => new RuntimeUsageTracker())
+                .AddHostedService<RuntimeUsageSampler>()
                 .AddSingleton<ProviderUsageTracker>(sp =>
                     new ProviderUsageTracker(sp.GetRequiredService<ActiveReadRegistry>()))
                 .AddSingleton<QueueItemSourceTracker>()
