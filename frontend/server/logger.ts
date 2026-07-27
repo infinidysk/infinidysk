@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { createColors } from "picocolors";
+import { clientErrorKey, shouldLogClientError } from "./request-log-throttle.js";
 import { isWithinBackendStartupGrace } from "./startup-grace.js";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -121,11 +122,11 @@ export const requestLogger: RequestHandler = (req, res, next) => {
     // but no way to tell WHICH downstream client is responsible. `req.ip`
     // honors trust-proxy; the raw socket address is included when it
     // differs (i.e. behind a reverse proxy), plus the User-Agent.
+    const socketAddr = req.socket?.remoteAddress ?? "-";
+    const ip = req.ip ?? socketAddr;
+    const userAgent = req.headers["user-agent"] ?? "-";
     const clientInfo = () => {
-      const socketAddr = req.socket?.remoteAddress ?? "-";
-      const ip = req.ip ?? socketAddr;
       const via = ip === socketAddr ? ip : `${ip} (via ${socketAddr})`;
-      const userAgent = req.headers["user-agent"] ?? "-";
       return color.dim(`${via} "${userAgent}"`);
     };
     const message =
@@ -141,7 +142,19 @@ export const requestLogger: RequestHandler = (req, res, next) => {
     } else if (res.statusCode >= 500) {
       logger.error(message);
     } else if (res.statusCode >= 400) {
-      logger.warn(message);
+      // A client repeatedly probing the read-only tree (writing metadata sidecars,
+      // an rclone mount retrying MKCOL/PUT) would otherwise emit a warn per attempt
+      // and bury every other line. Keep the first, collapse the rest to debug.
+      const key = clientErrorKey(
+        req.method, res.statusCode, req.path ?? req.originalUrl, `${ip} ${userAgent}`);
+      const { log, suppressed } = shouldLogClientError(key);
+      if (!log) {
+        logger.debug(message);
+      } else if (suppressed > 0) {
+        logger.warn(`${message} ${color.dim(`(+${suppressed} similar suppressed)`)}`);
+      } else {
+        logger.warn(message);
+      }
     } else if (process.env.NODE_ENV === "development") {
       logger.debug(message);
     }
