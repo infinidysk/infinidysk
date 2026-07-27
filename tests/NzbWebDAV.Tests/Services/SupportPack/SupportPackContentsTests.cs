@@ -74,6 +74,15 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_ExplainsAnEmptyWarningLaneInsteadOfShippingAnEmptyFile()
+    {
+        var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));
+
+        // A zero-byte file reads as a broken export; say why it is empty.
+        Assert.Contains("No warnings or errors", entries["logs/warnings.log"]);
+    }
+
+    [Fact]
     public async Task Pack_ReportsProcessUptimeRatherThanServiceConstructionTime()
     {
         var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));

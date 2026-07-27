@@ -26,6 +26,41 @@ public class SupportPackRedactorTests
     }
 
     [Fact]
+    public void RedactText_KeepsVersionStringsThatLookLikeAddresses()
+    {
+        var redactor = new SupportPackRedactor([]);
+
+        // Browser and player versions are dotted quads. Mangling them costs the
+        // client identity that playback triage relies on, so only real addresses
+        // may be pseudonymized.
+        var result = redactor.RedactText(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+            "Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0 client v1.2.3.4 from 192.0.2.10");
+
+        Assert.Contains("Chrome/140.0.0.0", result);
+        Assert.Contains("Edg/140.0.0.0", result);
+        Assert.Contains("v1.2.3.4", result);
+        Assert.DoesNotContain("192.0.2.10", result);
+        Assert.Equal(1, redactor.AddressesPseudonymized);
+    }
+
+    [Theory]
+    [InlineData("connected from \"203.0.113.7\"")]
+    [InlineData("host=203.0.113.7")]
+    [InlineData("proxy http://203.0.113.7:8080/path")]
+    [InlineData("peer (203.0.113.7)")]
+    [InlineData("203.0.113.7 opened a range")]
+    public void RedactText_StillPseudonymizesRealAddressContexts(string input)
+    {
+        var redactor = new SupportPackRedactor([]);
+
+        var result = redactor.RedactText(input);
+
+        Assert.DoesNotContain("203.0.113.7", result);
+        Assert.Contains("[IP-1]", result);
+    }
+
+    [Fact]
     public void RedactConfigurationValue_RedactsKnownStructuredSecrets()
     {
         var redactor = new SupportPackRedactor([]);

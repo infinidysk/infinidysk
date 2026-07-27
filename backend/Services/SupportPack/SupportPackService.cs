@@ -58,7 +58,9 @@ public sealed class SupportPackService(
         await WriteTextAsync(
             archive,
             "logs/warnings.log",
-            redactor.RedactText(FormatLogs(warningSnapshot.Entries)),
+            warningSnapshot.Entries.Count == 0
+                ? "No warnings or errors were logged since this backend started.\n"
+                : redactor.RedactText(FormatLogs(warningSnapshot.Entries)),
             cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(
             archive,

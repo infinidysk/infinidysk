@@ -194,7 +194,12 @@ internal sealed partial class SupportPackRedactor
     [GeneratedRegex(@"((?:https?|socks5?)://)[^/\s@]+@", RegexOptions.IgnoreCase)]
     private static partial Regex UrlUserInfoRegex();
 
-    [GeneratedRegex(@"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])")]
+    // Version strings are dotted quads too: "Chrome/140.0.0.0" parses as a valid
+    // IPv4 and would otherwise be pseudonymized, destroying the player/browser
+    // identity that playback triage depends on. Reject candidates that are glued
+    // to a letter (v1.2.3.4) or follow a "product/" prefix, while still matching
+    // real addresses after "://", whitespace, quotes, "=", "@" and brackets.
+    [GeneratedRegex(@"(?<![A-Za-z\d.])(?<![A-Za-z]/)\d{1,3}(?:\.\d{1,3}){3}(?![\d.])")]
     private static partial Regex Ipv4Regex();
 
     // Avoid treating timestamps, version numbers, and counters as IPv6. Full
