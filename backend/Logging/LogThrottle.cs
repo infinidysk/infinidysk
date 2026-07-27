@@ -1,14 +1,15 @@
 using System.Collections.Concurrent;
 
-namespace NzbWebDAV.Services;
+namespace NzbWebDAV.Logging;
 
 /// <summary>
-/// Rate-limits repeating Watchtower heartbeat messages. The cycle loop ticks every
-/// 20 seconds forever, so an idle-but-enabled Watchtower would otherwise fill the
-/// whole in-memory log buffer with the same two lines and evict the events support
-/// actually needs (see LogBufferSink).
+/// Rate-limits repeating log messages so a condition that recurs on a loop cannot fill
+/// the whole in-memory log buffer and evict the events support actually needs
+/// (see LogBufferSink). Used for the Watchtower cycle heartbeat, which ticks every
+/// 20 seconds forever, and for read-only WebDAV write rejections, which a client can
+/// re-attempt many times per second.
 /// </summary>
-public sealed class WatchtowerLogThrottle
+public sealed class LogThrottle
 {
     private readonly ConcurrentDictionary<string, State> _states = new();
 

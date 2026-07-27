@@ -1,13 +1,13 @@
-using NzbWebDAV.Services;
+using NzbWebDAV.Logging;
 
-namespace NzbWebDAV.Tests.Services.Watchtower;
+namespace NzbWebDAV.Tests.Logging;
 
-public class WatchtowerLogThrottleTests
+public class LogThrottleTests
 {
     [Fact]
     public void ShouldLog_AllowsFirstCallThenSuppressesWithinTheInterval()
     {
-        var throttle = new WatchtowerLogThrottle();
+        var throttle = new LogThrottle();
         var interval = TimeSpan.FromMinutes(15);
 
         Assert.True(throttle.ShouldLog("cycle", interval, out var firstSuppressed));
@@ -20,7 +20,7 @@ public class WatchtowerLogThrottleTests
     [Fact]
     public void ShouldLog_ReportsSuppressedCountOnceTheIntervalElapses()
     {
-        var throttle = new WatchtowerLogThrottle();
+        var throttle = new LogThrottle();
 
         Assert.True(throttle.ShouldLog("cycle", TimeSpan.Zero, out _));
         Assert.False(throttle.ShouldLog("cycle", TimeSpan.FromMinutes(15), out _));
@@ -38,7 +38,7 @@ public class WatchtowerLogThrottleTests
     [Fact]
     public void ShouldLog_TracksKeysIndependently()
     {
-        var throttle = new WatchtowerLogThrottle();
+        var throttle = new LogThrottle();
         var interval = TimeSpan.FromMinutes(60);
 
         Assert.True(throttle.ShouldLog("cycle", interval, out _));
@@ -50,7 +50,7 @@ public class WatchtowerLogThrottleTests
     [Fact]
     public void Reset_LetsTheNextCallLogImmediately()
     {
-        var throttle = new WatchtowerLogThrottle();
+        var throttle = new LogThrottle();
         var interval = TimeSpan.FromMinutes(60);
 
         Assert.True(throttle.ShouldLog("no-profile", interval, out _));

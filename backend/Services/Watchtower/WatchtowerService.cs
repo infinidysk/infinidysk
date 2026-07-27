@@ -5,6 +5,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -35,7 +36,7 @@ public class WatchtowerService(
     private static readonly TimeSpan NoProfileLogInterval = TimeSpan.FromMinutes(60);
     private const string CycleStartLogKey = "cycle-starting";
     private const string NoProfileLogKey = "no-search-profile";
-    private readonly WatchtowerLogThrottle _logThrottle = new();
+    private readonly LogThrottle _logThrottle = new();
     private const int ResolvesPerTick = 3;
     private const int AutoResolveBatch = 25;
     private static readonly TimeSpan AutoStageBudget = TimeSpan.FromSeconds(120);
