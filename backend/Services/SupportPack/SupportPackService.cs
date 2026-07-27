@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -10,6 +11,7 @@ using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Streams;
+using Serilog;
 
 namespace NzbWebDAV.Services.SupportPack;
 
@@ -26,7 +28,6 @@ public sealed class SupportPackService(
     private const long HourMs = 60 * MinuteMs;
     private const long DayMs = 24 * HourMs;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-    private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
 
     internal async Task WriteAsync(Stream output, CancellationToken cancellationToken)
     {
@@ -122,13 +123,15 @@ public sealed class SupportPackService(
         var configPath = DavDatabaseContext.ConfigPath;
         var root = Path.GetPathRoot(Path.GetFullPath(configPath)) ?? configPath;
         var drive = new DriveInfo(root);
+        var uptime = ProcessUptime();
 
         return new
         {
             generatedAtUtc = generatedAt,
             appVersion = ConfigManager.AppVersion,
             commit = Environment.GetEnvironmentVariable("NZBDAV_COMMIT_SHA"),
-            uptimeSeconds = (long)(generatedAt - _startedAt).TotalSeconds,
+            uptimeSeconds = (long)uptime.TotalSeconds,
+            processStartedAtUtc = generatedAt - uptime,
             runtime = new
             {
                 framework = RuntimeInformation.FrameworkDescription,
@@ -451,6 +454,30 @@ public sealed class SupportPackService(
 
     private static long? FileSize(string path) =>
         File.Exists(path) ? new FileInfo(path).Length : null;
+
+    /// <summary>
+    /// Real uptime of the backend process. This used to be measured from this service's
+    /// own construction, but DI creates it lazily on the first support-pack download, so a
+    /// backend running for hours reported a few seconds and made the log buffer's
+    /// timestamps look impossible. Process start time is absolute, so reading it on demand
+    /// stays accurate. Note that Environment.TickCount64 is unusable here: inside a
+    /// container it reports the host's uptime, not this process's.
+    /// </summary>
+    private static TimeSpan ProcessUptime()
+    {
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            var uptime = DateTimeOffset.UtcNow - process.StartTime.ToUniversalTime();
+            if (uptime > TimeSpan.Zero) return uptime;
+        }
+        catch (Exception e)
+        {
+            Log.Debug(e, "Support pack: could not read the process start time");
+        }
+
+        return TimeSpan.Zero;
+    }
 
     private static string FormatLogs(IEnumerable<LogEntry> entries)
     {
