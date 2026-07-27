@@ -7,15 +7,46 @@ export type SessionStatus =
     | "connected"
     | "mapped"
     | "scanning"
+    | "scan_cancelling"
     | "scanned"
     | "running"
     | "paused"
+    | "cancelling"
     | "complete"
     | "cancelled"
     // Step 6 uses transient linking/applying states and rests at linked.
     | "linking"
     | "linked"
-    | "applying";
+    | "applying"
+    | "restoring";
+
+export function isMigrationWorkActive(status: SessionStatus | undefined): boolean {
+    return status === "scanning" || status === "scan_cancelling"
+        || status === "running" || status === "paused" || status === "cancelling"
+        || status === "linking" || status === "applying" || status === "restoring";
+}
+
+export function canConnectMigration(status: SessionStatus | undefined): boolean {
+    return status === "idle" || status === "connected" || status === "mapped" || status === "scanned"
+        || status === "complete" || status === "cancelled" || status === "linked";
+}
+
+export function canStartScanMigration(status: SessionStatus | undefined): boolean {
+    return status === "connected" || status === "mapped" || status === "scanned"
+        || status === "complete" || status === "cancelled" || status === "linked";
+}
+
+export function canResetMigration(status: SessionStatus | undefined, busy: string | null): boolean {
+    return status !== undefined && !isMigrationWorkActive(status) && busy === null;
+}
+
+export function canEditCategoryMappings(status: SessionStatus | undefined): boolean {
+    return status === "connected" || status === "mapped" || status === "scanned";
+}
+
+export function canEditReleaseSelection(status: SessionStatus | undefined): boolean {
+    return status === "scanned";
+}
 
 export type CategoryMapRow = {
     altmountCategory: string;
@@ -214,6 +245,45 @@ function jsonInit(method: string, payload: unknown): FetchInit {
     };
 }
 
+export async function requestSymlinkApply(acknowledgeUnreadable = false): Promise<void> {
+    await apiJson(
+        `${BASE}/symlinks/apply`,
+        jsonInit("POST", { confirm: true, acknowledgeUnreadable }),
+    );
+}
+
+export async function runUiMutation(
+    fn: () => Promise<void>,
+    recordError: (message: string) => void,
+): Promise<boolean> {
+    try {
+        await fn();
+        return true;
+    } catch (e) {
+        recordError(e instanceof Error ? e.message : String(e));
+        return false;
+    }
+}
+
+export async function loadTableRetainingLastGood<T>(
+    load: () => Promise<T>,
+    commit: (data: T) => void,
+    recordError: (message: string) => void,
+): Promise<boolean> {
+    try {
+        commit(await load());
+        return true;
+    } catch (e) {
+        recordError(e instanceof Error ? e.message : String(e));
+        return false;
+    }
+}
+
+export function beginLatestRequest(generation: { current: number }): () => boolean {
+    const requestGeneration = ++generation.current;
+    return () => requestGeneration === generation.current;
+}
+
 export function useAltmountMigration() {
     const [status, setStatus] = useState<StatusResponse | null>(null);
     const [summary, setSummary] = useState<SummaryResponse | null>(null);
@@ -224,6 +294,7 @@ export function useAltmountMigration() {
     const [symlinkRestoreResult, setSymlinkRestoreResult] = useState<SymlinkRestoreSummary | null>(null);
     const [migrationData, setMigrationData] = useState<MigrationDataSummary | null>(null);
     const mounted = useRef(true);
+    const refreshGeneration = useRef(0);
 
     useEffect(() => {
         mounted.current = true;
@@ -233,17 +304,19 @@ export function useAltmountMigration() {
     }, []);
 
     const refresh = useCallback(async () => {
+        const isLatest = beginLatestRequest(refreshGeneration);
         try {
             const [s, sum] = await Promise.all([
                 apiJson<StatusResponse>(`${BASE}/status`),
                 apiJson<SummaryResponse>(`${BASE}/summary`),
             ]);
-            if (!mounted.current) return;
+            if (!mounted.current || !isLatest()) return;
             setStatus(s);
             setSummary(sum);
             setError(null);
         } catch (e) {
-            if (mounted.current) setError((e as Error).message);
+            if (mounted.current && isLatest())
+                setError(e instanceof Error ? e.message : String(e));
         }
     }, []);
 
@@ -265,9 +338,7 @@ export function useAltmountMigration() {
     // Poll while background work is in progress (scan, run, or Step 6 link/apply).
     const sessionStatus = status?.sessionStatus;
     useEffect(() => {
-        const active = sessionStatus === "scanning" || sessionStatus === "running" || sessionStatus === "paused"
-            || sessionStatus === "linking" || sessionStatus === "applying";
-        if (!active) return;
+        if (!isMigrationWorkActive(sessionStatus)) return;
         const interval = window.setInterval(() => void refresh(), 2500);
         return () => window.clearInterval(interval);
     }, [sessionStatus, refresh]);
@@ -276,9 +347,9 @@ export function useAltmountMigration() {
         setBusy(key);
         setError(null);
         try {
-            await fn();
-        } catch (e) {
-            if (mounted.current) setError((e as Error).message);
+            return await runUiMutation(fn, (message) => {
+                if (mounted.current) setError(message);
+            });
         } finally {
             if (mounted.current) setBusy(null);
         }
@@ -392,8 +463,8 @@ export function useAltmountMigration() {
         return apiJson<SymlinkListResponse>(`${BASE}/symlinks?${params.toString()}`);
     }, []);
 
-    const applySymlinks = useCallback(() => withBusy("symlink-apply", async () => {
-        await apiJson(`${BASE}/symlinks/apply`, jsonInit("POST", { confirm: true }));
+    const applySymlinks = useCallback((acknowledgeUnreadable = false) => withBusy("symlink-apply", async () => {
+        await requestSymlinkApply(acknowledgeUnreadable);
         await refresh();
     }), [withBusy, refresh]);
 

@@ -38,6 +38,8 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store)
     public async Task<RewriteSummary> ApplyAsync(CancellationToken ct = default)
     {
         var session = await store.GetSessionAsync(ct).ConfigureAwait(false);
+        var libraryRoot = session.SymlinkLibraryRoot
+                          ?? throw new InvalidOperationException("Applying symlinks requires Library Root to be configured.");
         var backupDir = session.SymlinkBackupDir
                         ?? throw new InvalidOperationException("Applying symlinks requires SymlinkBackupDir to be set.");
 
@@ -64,7 +66,7 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store)
             ct.ThrowIfCancellationRequested();
             try
             {
-                var current = Ops.ReadLink(row.SymlinkPath);
+                var current = Ops.ReadLink(libraryRoot, row.SymlinkPath);
                 if (current is null)
                 {
                     Fail(row, "No symlink present at apply time.");
@@ -84,7 +86,7 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store)
                 }
                 else
                 {
-                    Ops.CreateOrReplaceSymlink(row.SymlinkPath, row.NewTarget!);
+                    Ops.CreateOrReplaceSymlink(libraryRoot, row.SymlinkPath, row.NewTarget!);
                     row.Status = "applied";
                     row.Error = null;
                     applied++;
@@ -127,5 +129,5 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store)
         string.Equals(
             a.Replace('\\', '/').TrimEnd('/'),
             b.Replace('\\', '/').TrimEnd('/'),
-            StringComparison.OrdinalIgnoreCase);
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 }

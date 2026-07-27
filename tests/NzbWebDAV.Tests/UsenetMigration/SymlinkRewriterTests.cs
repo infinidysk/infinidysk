@@ -15,8 +15,8 @@ public class SymlinkRewriterTests
     {
         public readonly Dictionary<string, string> Links = new(StringComparer.Ordinal);
 
-        public string? ReadLink(string path) => Links.GetValueOrDefault(path);
-        public void CreateOrReplaceSymlink(string path, string target) => Links[path] = target;
+        public string? ReadLink(string libraryRoot, string path) => Links.GetValueOrDefault(path);
+        public void CreateOrReplaceSymlink(string libraryRoot, string path, string target) => Links[path] = target;
     }
 
     private static async Task SeedPlanAsync(MigrationTestHarness h, params MigrationSymlinkRewrite[] rows)
@@ -98,7 +98,11 @@ public class SymlinkRewriterTests
     public async Task Apply_IsIdempotent_OnReRun()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        await h.Store.UpdateSessionAsync(s => s.SymlinkBackupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}"));
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.SymlinkLibraryRoot = "/lib";
+            s.SymlinkBackupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
+        });
         await SeedPlanAsync(h, Row("rewrite", "/lib/a.mkv", "/mnt/altmount/tv/a.mkv", "/mnt/nzbdav/.ids/1/2/3/4/5/aaa"));
 
         var ops = new FakeSymlinkOps { Links = { ["/lib/a.mkv"] = "/mnt/altmount/tv/a.mkv" } };
@@ -125,7 +129,11 @@ public class SymlinkRewriterTests
     public async Task Apply_DriftGuard_FailsWhenTargetChangedSincePlan()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        await h.Store.UpdateSessionAsync(s => s.SymlinkBackupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}"));
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.SymlinkLibraryRoot = "/lib";
+            s.SymlinkBackupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
+        });
         await SeedPlanAsync(h, Row("rewrite", "/lib/a.mkv", "/mnt/altmount/tv/a.mkv", "/mnt/nzbdav/.ids/1/2/3/4/5/aaa"));
 
         // On-disk target no longer matches the plan's OldTarget.
@@ -143,6 +151,49 @@ public class SymlinkRewriterTests
     }
 
     [Fact]
+    public async Task Apply_DriftGuard_UsesOperatingSystemCaseSemantics()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.SymlinkLibraryRoot = "/lib";
+            s.SymlinkBackupDir = backupDir;
+        });
+        await SeedPlanAsync(h, Row(
+            "rewrite",
+            "/lib/a.mkv",
+            "/mnt/Altmount/tv/a.mkv",
+            "/mnt/nzbdav/.ids/1/2/3/4/5/aaa"));
+
+        // This is the same target on Windows, but distinct drift on Linux/macOS.
+        var caseChangedTarget = "/mnt/altmount/tv/a.mkv";
+        var ops = new FakeSymlinkOps { Links = { ["/lib/a.mkv"] = caseChangedTarget } };
+
+        var summary = await new SymlinkRewriter(h.Store) { Ops = ops }.ApplyAsync();
+
+        await using var mig = h.Mig();
+        var row = await mig.SymlinkRewrites.SingleAsync();
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal(1, summary.Applied);
+            Assert.Equal(0, summary.Failed);
+            Assert.Equal("applied", row.Status);
+            Assert.Equal("/mnt/nzbdav/.ids/1/2/3/4/5/aaa", ops.Links["/lib/a.mkv"]);
+        }
+        else
+        {
+            Assert.Equal(0, summary.Applied);
+            Assert.Equal(1, summary.Failed);
+            Assert.Equal("failed", row.Status);
+            Assert.Contains("changed since plan", row.Error);
+            Assert.Equal(caseChangedTarget, ops.Links["/lib/a.mkv"]);
+        }
+
+        try { Directory.Delete(backupDir, recursive: true); } catch { /* best effort */ }
+    }
+
+    [Fact]
     public void RealOps_NeverDeletesRealFile_RefusesNonSymlink()
     {
         // The never-delete invariant, tested on the real filesystem without needing
@@ -155,13 +206,95 @@ public class SymlinkRewriterTests
         try
         {
             var ex = Assert.Throws<IOException>(() =>
-                RealSymlinkOps.Instance.CreateOrReplaceSymlink(realFile, "/mnt/nzbdav/.ids/x"));
+                RealSymlinkOps.Instance.CreateOrReplaceSymlink(dir, realFile, "/mnt/nzbdav/.ids/x"));
             Assert.Contains("non-symlink", ex.Message);
             Assert.Equal("precious content", File.ReadAllText(realFile)); // untouched
         }
         finally
         {
             Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [SkippableFact]
+    public void RealOps_LeafSwapFromSymlinkToFile_LeavesRealFileUntouched()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "Symlink race behavior is validated on the Linux deployment platform.");
+
+        var dir = Path.Combine(Path.GetTempPath(), $"altmig-leaf-race-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var link = Path.Combine(dir, "movie.mkv");
+        File.CreateSymbolicLink(link, "/mnt/altmount/movie.mkv");
+
+        try
+        {
+            var ops = new RealSymlinkOps
+            {
+                BeforeFinalLeafValidation = path =>
+                {
+                    File.Delete(path);
+                    File.WriteAllText(path, "precious content");
+                },
+            };
+
+            var error = Assert.Throws<IOException>(() =>
+                ops.CreateOrReplaceSymlink(dir, link, "/mnt/nzbdav/.ids/x"));
+
+            Assert.Contains("no longer the expected symlink", error.Message);
+            Assert.Equal("precious content", File.ReadAllText(link));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void RealOps_RejectsPathsOutsideLibraryRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"altmig-root-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var outside = Path.Combine(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}.mkv");
+            var ex = Assert.Throws<IOException>(() => RealSymlinkOps.Instance.ReadLink(root, outside));
+            Assert.Contains("outside the configured Library Root", ex.Message);
+        }
+        finally
+        {
+            Directory.Delete(root);
+        }
+    }
+
+    [SkippableFact]
+    public void RealOps_RejectsMutationThroughSymlinkedParentDirectory()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "Directory symlink behavior is validated on the Linux deployment platform.");
+
+        var root = Path.Combine(Path.GetTempPath(), $"altmig-root-{Guid.NewGuid():N}");
+        var outside = Path.Combine(Path.GetTempPath(), $"altmig-outside-{Guid.NewGuid():N}");
+        var escape = Path.Combine(root, "escape");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outside);
+        Directory.CreateSymbolicLink(escape, outside);
+        var outsideFile = Path.Combine(outside, "movie.mkv");
+        File.WriteAllText(outsideFile, "precious content");
+
+        try
+        {
+            var escapedPath = Path.Combine(escape, "movie.mkv");
+            var ex = Assert.Throws<IOException>(() => RealSymlinkOps.Instance.CreateOrReplaceSymlink(
+                root,
+                escapedPath,
+                "/mnt/nzbdav/.ids/x"));
+            Assert.Contains("symbolic link or reparse point", ex.Message);
+            Assert.Equal("precious content", File.ReadAllText(outsideFile));
+        }
+        finally
+        {
+            Directory.Delete(escape);
+            Directory.Delete(root);
+            Directory.Delete(outside);
         }
     }
 }

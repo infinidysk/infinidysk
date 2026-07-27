@@ -12,7 +12,7 @@ namespace NzbWebDAV.Tests.UsenetMigration;
 /// End-to-end coverage of <see cref="SymlinkPlanner"/> over both databases: it
 /// exercises <see cref="SymlinkMatcher.LoadLeavesAsync"/> against the live Dav DB
 /// (leaves found by durable NzbBlobId after HistoryItemId cleanup), conservative
-/// matching, all four classifications, NewTarget == GetTargetPath, and that
+/// matching, symlink classifications, NewTarget == GetTargetPath, and that
 /// NewDavItemId is persisted back onto matched ReleaseFiles.
 /// </summary>
 public class SymlinkPlannerTests
@@ -100,7 +100,8 @@ public class SymlinkPlannerTests
         var planner = new SymlinkPlanner(h.Store, config)
         {
             DavContextFactory = h.DavFactory,
-            SymlinkEnumerator = _ => links,
+            SymlinkEnumerator = (_, _) => new LibraryWalkResult(links, []),
+            LibraryRootValidator = root => root,
         };
 
         var summary = await planner.PlanAsync();
@@ -146,7 +147,10 @@ public class SymlinkPlannerTests
         var planner = new SymlinkPlanner(h.Store, config)
         {
             DavContextFactory = h.DavFactory,
-            SymlinkEnumerator = _ => new[] { new SymlinkPair("/lib/x.mkv", "/mnt/other/x.mkv") },
+            SymlinkEnumerator = (_, _) => new LibraryWalkResult(
+                [new SymlinkPair("/lib/x.mkv", "/mnt/other/x.mkv")],
+                []),
+            LibraryRootValidator = root => root,
         };
 
         await planner.PlanAsync();
@@ -154,6 +158,77 @@ public class SymlinkPlannerTests
 
         await using var mig = h.Mig();
         Assert.Equal(1, await mig.SymlinkRewrites.CountAsync());
+    }
+
+    [Fact]
+    public async Task Plan_TraversalFailure_LeavesPriorPlanIntact()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.SymlinkLibraryRoot = "/lib";
+            s.Status = "linked";
+        });
+
+        await using (var seed = h.Mig())
+        {
+            seed.SymlinkRewrites.Add(new MigrationSymlinkRewrite
+            {
+                SymlinkPath = "/lib/prior.mkv",
+                OldTarget = "/mnt/altmount/tv/prior.mkv",
+                NewTarget = "/mnt/nzbdav/.ids/prior",
+                Status = "rewrite",
+                UpdatedAt = DateTime.UtcNow,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        var planner = new SymlinkPlanner(h.Store, new ConfigManager())
+        {
+            DavContextFactory = h.DavFactory,
+            SymlinkEnumerator = (_, _) => throw new IOException("simulated traversal failure"),
+            LibraryRootValidator = root => root,
+        };
+
+        var error = await Assert.ThrowsAsync<IOException>(() => planner.PlanAsync());
+
+        Assert.Contains("traversal failure", error.Message);
+        await using var mig = h.Mig();
+        var prior = Assert.Single(await mig.SymlinkRewrites.ToListAsync());
+        Assert.Equal("/lib/prior.mkv", prior.SymlinkPath);
+        Assert.Equal("rewrite", prior.Status);
+    }
+
+    [Fact]
+    public async Task Plan_UnreadableLinks_ArePlannedNotDropped()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.SymlinkLibraryRoot = "/lib";
+            s.Status = "linked";
+        });
+
+        var planner = new SymlinkPlanner(h.Store, new ConfigManager())
+        {
+            DavContextFactory = h.DavFactory,
+            SymlinkEnumerator = (_, _) => new LibraryWalkResult(
+                [new SymlinkPair("/lib/readable.mkv", "/mnt/other/readable.mkv")],
+                [new UnreadableLink("/lib/unreadable.mkv", "Permission denied")]),
+            LibraryRootValidator = root => root,
+        };
+
+        var summary = await planner.PlanAsync();
+
+        Assert.Equal(1, summary.NotAltmount);
+        Assert.Equal(1, summary.Unreadable);
+        Assert.Equal(2, summary.Total);
+        await using var mig = h.Mig();
+        var unreadable = await mig.SymlinkRewrites.SingleAsync(r => r.Status == "unreadable");
+        Assert.Equal("/lib/unreadable.mkv", unreadable.SymlinkPath);
+        Assert.Equal("", unreadable.OldTarget);
+        Assert.Null(unreadable.NewTarget);
+        Assert.Equal("Permission denied", unreadable.Error);
     }
 
     [Fact]
@@ -213,10 +288,10 @@ public class SymlinkPlannerTests
         var planner = new SymlinkPlanner(h.Store, config)
         {
             DavContextFactory = h.DavFactory,
-            SymlinkEnumerator = _ => new[]
-            {
-                new SymlinkPair("/lib/earlier.mkv", "/mnt/altmount/tv/Earlier/Earlier.mkv"),
-            },
+            SymlinkEnumerator = (_, _) => new LibraryWalkResult(
+                [new SymlinkPair("/lib/earlier.mkv", "/mnt/altmount/tv/Earlier/Earlier.mkv")],
+                []),
+            LibraryRootValidator = root => root,
         };
 
         var summary = await planner.PlanAsync();
@@ -229,5 +304,33 @@ public class SymlinkPlannerTests
         Assert.Equal(
             DatabaseStoreSymlinkFile.GetTargetPath(davItemId, config.GetRcloneMountDir(), '/'),
             rewrite.NewTarget);
+    }
+
+    [SkippableFact]
+    public async Task Plan_RejectsSymlinkedLibraryRoot()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "Directory symlink behavior is validated on the Linux deployment platform.");
+
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var realRoot = Path.Combine(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
+        var linkedRoot = Path.Combine(Path.GetTempPath(), $"altmig-library-link-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(realRoot);
+        Directory.CreateSymbolicLink(linkedRoot, realRoot);
+
+        try
+        {
+            await h.Store.UpdateSessionAsync(s => s.SymlinkLibraryRoot = linkedRoot);
+
+            var error = await Assert.ThrowsAsync<IOException>(() =>
+                new SymlinkPlanner(h.Store, new ConfigManager()).PlanAsync());
+
+            Assert.Contains("Library Root", error.Message);
+            Assert.Contains("symbolic link", error.Message);
+        }
+        finally
+        {
+            Directory.Delete(linkedRoot);
+            Directory.Delete(realRoot);
+        }
     }
 }

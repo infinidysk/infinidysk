@@ -19,6 +19,13 @@ import {
     type SymlinkBackupInfo,
     type SymlinkPlanForm,
     type SymlinkRow,
+    canConnectMigration,
+    canEditCategoryMappings,
+    canEditReleaseSelection,
+    canResetMigration,
+    canStartScanMigration,
+    isMigrationWorkActive,
+    loadTableRetainingLastGood,
     useAltmountMigration,
 } from "./use-altmount-migration";
 
@@ -29,6 +36,7 @@ const LINK_STEP = 5;
 const SYMLINK_STATUS_HELP: Record<string, string> = {
     rewrite: "Points to Altmount and has a verified NzbDAV replacement.",
     orphan: "Points to Altmount, but no safe NzbDAV match was found.",
+    unreadable: "Found in the library, but its target could not be read or classified. It remains unchanged and may still point at Altmount.",
     "already-nzbdav": "Already points to NzbDAV, so no change is needed.",
     "not-altmount": "Does not point to Altmount and will be left unchanged.",
     applied: "Successfully repointed to NzbDAV.",
@@ -38,6 +46,7 @@ const SYMLINK_STATUS_HELP: Record<string, string> = {
 const SYMLINK_STATUS_LABELS: Record<string, string> = {
     rewrite: "Rewrite",
     orphan: "Orphan",
+    unreadable: "Unreadable",
     "already-nzbdav": "NzbDAV",
     "not-altmount": "Other",
     applied: "Applied",
@@ -69,7 +78,8 @@ const MATCH_METHODS: Record<string, { label: string; help: string }> = {
 
 /** True once the migration has finished, so the optional Links step is available. */
 function canLinkStep(status: SessionStatus | undefined): boolean {
-    return status === "complete" || status === "linking" || status === "linked" || status === "applying";
+    return status === "complete" || status === "linking" || status === "linked"
+        || status === "applying" || status === "restoring";
 }
 
 function stepForStatus(status: SessionStatus | undefined): number {
@@ -77,16 +87,19 @@ function stepForStatus(status: SessionStatus | undefined): number {
         case "connected": return 1;
         case "mapped": return 2;
         case "scanning": return 2;
+        case "scan_cancelling": return 2;
         case "scanned": return 3;
         case "running":
         case "paused":
+        case "cancelling":
         case "complete":
         case "cancelled": return 4;
         // Step 6 is opt-in: it does not auto-advance from "complete", but once the
         // user enters it the linking/applying/linked statuses live on the Links step.
         case "linking":
         case "linked":
-        case "applying": return LINK_STEP;
+        case "applying":
+        case "restoring": return LINK_STEP;
         default: return 0; // idle
     }
 }
@@ -173,7 +186,9 @@ function ConnectStep({ m }: { m: Hook }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [m.status?.sessionStatus]);
 
-    const canSubmit = form.metadataRoot.trim().length > 0 && m.busy !== "connect";
+    const canSubmit = form.metadataRoot.trim().length > 0
+        && canConnectMigration(m.status?.sessionStatus)
+        && m.busy !== "connect";
 
     return (
         <Section icon="link" title="Connect to Altmount" subtitle="Point NzbDAV at the Altmount config volume it can read.">
@@ -232,6 +247,7 @@ function ConnectStep({ m }: { m: Hook }) {
 
 function CategoriesStep({ m, onDone }: { m: Hook; onDone: () => void }) {
     const [draft, setDraft] = useState<CategoryMapRow[]>(m.categories);
+    const editable = canEditCategoryMappings(m.status?.sessionStatus);
     useEffect(() => setDraft(m.categories), [m.categories]);
 
     const update = (altmountCategory: string, patch: Partial<CategoryMapRow>) =>
@@ -244,7 +260,9 @@ function CategoriesStep({ m, onDone }: { m: Hook; onDone: () => void }) {
                 targetCategory: r.targetCategory ?? null,
                 action: r.action,
             })),
-        ).then(onDone);
+        ).then((succeeded) => {
+            if (succeeded) onDone();
+        });
 
     return (
         <Section
@@ -276,7 +294,7 @@ function CategoriesStep({ m, onDone }: { m: Hook; onDone: () => void }) {
                                             className="input-sm w-full max-w-xs"
                                             placeholder="e.g. tv, movies"
                                             value={r.targetCategory ?? ""}
-                                            disabled={r.action === "exclude"}
+                                            disabled={!editable || r.action === "exclude"}
                                             onChange={(e) => update(r.altmountCategory, { targetCategory: e.target.value })}
                                         />
                                     </td>
@@ -284,6 +302,7 @@ function CategoriesStep({ m, onDone }: { m: Hook; onDone: () => void }) {
                                         <Select
                                             className="select-sm"
                                             value={r.action}
+                                            disabled={!editable}
                                             onChange={(e) => update(r.altmountCategory, { action: e.target.value })}
                                         >
                                             <option value="migrate">Migrate</option>
@@ -298,11 +317,15 @@ function CategoriesStep({ m, onDone }: { m: Hook; onDone: () => void }) {
             )}
 
             <div className="mt-4 flex items-center gap-3">
-                <Button variant="primary" disabled={m.busy === "categories"} onClick={save}>
+                <Button variant="primary" disabled={!editable || m.busy === "categories"} onClick={save}>
                     {m.busy === "categories" ? <Spinner className="h-4 w-4" /> : <Icon name="save" className="!text-[18px]" />}
                     Save mapping
                 </Button>
-                <span className="text-xs text-base-content/50">Saving a mapping requires a fresh scan to apply.</span>
+                <span className="text-xs text-base-content/50">
+                    {editable
+                        ? "Saving a mapping requires a fresh scan to apply."
+                        : "Category mappings are locked once migration work starts."}
+                </span>
             </div>
         </Section>
     );
@@ -313,12 +336,20 @@ function CategoriesStep({ m, onDone }: { m: Hook; onDone: () => void }) {
 function ScanStep({ m, onReview }: { m: Hook; onReview: () => void }) {
     const status = m.status?.sessionStatus;
     const scanning = status === "scanning";
-    const runActive = status === "running" || status === "paused";
-    const scanned = status === "scanned" || status === "running" || status === "paused" || status === "complete";
+    const scanCancelling = status === "scan_cancelling";
+    const conflictingWork = isMigrationWorkActive(status) && !scanning && !scanCancelling;
+    const canStart = canStartScanMigration(status);
+    const scanned = status === "scanned" || status === "running" || status === "paused"
+        || status === "cancelling" || status === "complete";
 
     return (
         <Section icon="search" title="Scan the library" subtitle="Read every release, triage it, and detect collisions. No network traffic yet.">
-            {scanning ? (
+            {scanCancelling ? (
+                <div className="flex items-center gap-3 text-sm text-base-content/70">
+                    <Spinner className="h-5 w-5" />
+                    <span>Cancelling scan... waiting for the active filesystem read to drain.</span>
+                </div>
+            ) : scanning ? (
                 <div className="flex items-center gap-3 text-sm text-base-content/70">
                     <Spinner className="h-5 w-5" />
                     <span>Scanning… this reads the metadata tree and decodes each store. It updates automatically.</span>
@@ -328,7 +359,7 @@ function ScanStep({ m, onReview }: { m: Hook; onReview: () => void }) {
                 <div className="space-y-4">
                     {m.summary && scanned && <SummaryTiles summary={m.summary} />}
                     <div className="flex flex-wrap items-center gap-3">
-                        <Button variant="primary" disabled={m.busy === "scan" || runActive} onClick={() => void m.startScan()}>
+                        <Button variant="primary" disabled={m.busy === "scan" || !canStart} onClick={() => void m.startScan()}>
                             {m.busy === "scan" ? <Spinner className="h-4 w-4" /> : <Icon name="search" className="!text-[18px]" />}
                             {scanned ? "Re-scan" : "Start scan"}
                         </Button>
@@ -338,9 +369,9 @@ function ScanStep({ m, onReview }: { m: Hook; onReview: () => void }) {
                                 <Icon name="arrow_forward" className="!text-[18px]" />
                             </Button>
                         )}
-                        {runActive && (
+                        {conflictingWork && (
                             <span className="text-xs text-base-content/55">
-                                Complete or cancel the active migration before starting a new scan.
+                                Wait for the active migration operation to finish before starting a new scan.
                             </span>
                         )}
                     </div>
@@ -354,21 +385,33 @@ function ScanStep({ m, onReview }: { m: Hook; onReview: () => void }) {
 
 function ReviewStep({ m, onRun }: { m: Hook; onRun: () => void }) {
     const [collisions, setCollisions] = useState<CollisionGroup[]>([]);
+    const [collisionsLoading, setCollisionsLoading] = useState(true);
+    const [collisionLoadError, setCollisionLoadError] = useState<string | null>(null);
     const [confirmRun, setConfirmRun] = useState(false);
 
     const reloadCollisions = useCallback(() => {
-        void m.loadCollisions().then(setCollisions).catch(() => setCollisions([]));
+        setCollisionsLoading(true);
+        void loadTableRetainingLastGood(
+            m.loadCollisions,
+            (groups) => {
+                setCollisions(groups);
+                setCollisionLoadError(null);
+            },
+            setCollisionLoadError,
+        ).finally(() => setCollisionsLoading(false));
     }, [m]);
     useEffect(() => reloadCollisions(), [reloadCollisions]);
 
     const summary = m.summary;
-    const canRun = !!summary?.canRun;
+    const canRun = !!summary?.canRun && !collisionsLoading && collisionLoadError === null;
     const needsFreshScan = m.status?.sessionStatus !== "scanned";
     const onlyAlreadyMigrated = !!summary && summary.counts.submittable === 0 && summary.counts.alreadyMigrated > 0;
 
     const doRun = () => {
         setConfirmRun(false);
-        void m.startRun().then(onRun);
+        void m.startRun().then((succeeded) => {
+            if (succeeded) onRun();
+        });
     };
 
     return (
@@ -382,7 +425,13 @@ function ReviewStep({ m, onRun }: { m: Hook; onRun: () => void }) {
                             {onlyAlreadyMigrated ? "Continue to links" : "Start migration"}
                         </Button>
                         {!canRun && (
-                            needsFreshScan ? (
+                            collisionsLoading ? (
+                                <span className="text-xs text-base-content/55">Loading collision review…</span>
+                            ) : collisionLoadError ? (
+                                <span className="text-xs text-error">
+                                    Reload the collision review successfully before starting.
+                                </span>
+                            ) : needsFreshScan ? (
                                 <span className="text-xs text-base-content/55">
                                     Complete a new scan before starting another migration.
                                 </span>
@@ -394,6 +443,19 @@ function ReviewStep({ m, onRun }: { m: Hook; onRun: () => void }) {
                         )}
                     </div>
                 </Section>
+            )}
+
+            {collisionLoadError && (
+                <Alert className="alert-soft text-sm" variant="danger">
+                    <Icon name="error" className="!text-[18px]" />
+                    <span>
+                        Collision review could not be loaded: {collisionLoadError}. The last successful results are
+                        retained, and starting is disabled until a refresh succeeds.
+                    </span>
+                    <Button variant="outline" size="small" disabled={collisionsLoading} onClick={reloadCollisions}>
+                        Retry
+                    </Button>
+                </Alert>
             )}
 
             <CollisionPanel groups={collisions} />
@@ -463,17 +525,22 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
     });
     const [rows, setRows] = useState<ReleaseRow[]>([]);
     const [total, setTotal] = useState(0);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const editable = canEditReleaseSelection(m.status?.sessionStatus);
 
     const load = useCallback(async (f: ReleaseFilters) => {
         setLoading(true);
         try {
-            const data = await m.loadReleases(f);
-            setRows(data.releases);
-            setTotal(data.total);
-        } catch {
-            setRows([]);
-            setTotal(0);
+            await loadTableRetainingLastGood(
+                () => m.loadReleases(f),
+                (data) => {
+                    setRows(data.releases);
+                    setTotal(data.total);
+                    setLoadError(null);
+                },
+                setLoadError,
+            );
         } finally {
             setLoading(false);
         }
@@ -482,7 +549,8 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
     useEffect(() => { void load(filters); }, [load, filters]);
 
     const toggleInclude = (row: ReleaseRow) =>
-        void m.setInclude([row.storeRef], !row.included).then(() => {
+        void m.setInclude([row.storeRef], !row.included).then((succeeded) => {
+            if (!succeeded) return;
             void load(filters);
             onChanged();
         });
@@ -491,6 +559,13 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
 
     return (
         <Section icon="list" title="Releases" subtitle={`${total} release(s)`}>
+            {loadError && (
+                <Alert className="alert-soft mb-3 text-sm" variant="danger">
+                    <Icon name="error" className="!text-[18px]" />
+                    Release data could not be loaded: {loadError}. The last successful results are shown when available.
+                </Alert>
+            )}
+
             <div className="mb-3 flex flex-wrap items-center gap-2">
                 <Select className="select-sm" value={filters.verdict} onChange={(e) => setFilters({ ...filters, verdict: e.target.value, page: 1 })}>
                     <option value="">All verdicts</option>
@@ -536,6 +611,8 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
                     <tbody>
                         {loading && rows.length === 0 ? (
                             <tr><td colSpan={6}><div className="flex justify-center py-6"><Spinner className="h-5 w-5" /></div></td></tr>
+                        ) : loadError && rows.length === 0 ? (
+                            <tr><td colSpan={6}><div className="py-6 text-center text-sm text-error">Release data could not be loaded.</div></td></tr>
                         ) : rows.length === 0 ? (
                             <tr><td colSpan={6}><div className="py-6 text-center text-sm text-base-content/50">No releases match.</div></td></tr>
                         ) : rows.map((r) => (
@@ -545,6 +622,7 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
                                         type="checkbox"
                                         className="checkbox checkbox-sm checkbox-primary"
                                         checked={r.included}
+                                        disabled={!editable || m.busy === "include"}
                                         onChange={() => toggleInclude(r)}
                                     />
                                 </td>
@@ -593,24 +671,35 @@ function RunStep({ m, onLinks }: { m: Hook; onLinks: () => void }) {
     const subs = m.status?.submissions ?? {};
     const terminal = (subs["completed"] ?? 0) + (subs["history_cleared"] ?? 0)
         + (subs["failed"] ?? 0) + (subs["evicted"] ?? 0) + (subs["skipped"] ?? 0);
-    const inFlight = (subs["pending"] ?? 0) + (subs["submitted"] ?? 0) + (subs["processing"] ?? 0);
+    const inFlight = (subs["pending"] ?? 0) + (subs["submitting"] ?? 0)
+        + (subs["submitted"] ?? 0) + (subs["processing"] ?? 0);
     const complete = status === "complete";
     const cancelled = status === "cancelled";
+    const cancelling = status === "cancelling";
     const runFinished = cancelled || canLinkStep(status);
     const submissionIssues = m.status?.submissionIssues ?? [];
 
     return (
         <Section
-            icon={complete ? "check_circle" : cancelled ? "cancel" : "rocket_launch"}
-            title={complete ? "Migration complete" : cancelled ? "Migration cancelled" : status === "paused" ? "Migration paused" : "Migration running"}
+            icon={complete ? "check_circle" : cancelled ? "cancel" : cancelling ? "progress_activity" : "rocket_launch"}
+            title={complete
+                ? "Migration complete"
+                : cancelled
+                    ? "Migration cancelled"
+                    : cancelling
+                        ? "Cancelling migration"
+                        : status === "paused" ? "Migration paused" : "Migration running"}
             subtitle={complete
                 ? "Every release reached a terminal state."
                 : cancelled
                     ? "Complete a new scan before starting another migration."
-                    : "Releases are submitted up to the queue-depth gate and reconciled as they import."}
+                    : cancelling
+                        ? "Waiting for the current queue submission to drain and be reconciled."
+                        : "Releases are submitted up to the queue-depth gate and reconciled as they import."}
         >
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatTile label="Pending" value={subs["pending"] ?? 0} />
+                <StatTile label="Submitting" value={subs["submitting"] ?? 0} />
                 <StatTile label="Submitted" value={subs["submitted"] ?? 0} />
                 <StatTile label="Processing" value={subs["processing"] ?? 0} />
                 <StatTile label="Imported" value={(subs["completed"] ?? 0) + (subs["history_cleared"] ?? 0)} tone="success" />
@@ -638,7 +727,7 @@ function RunStep({ m, onLinks }: { m: Hook; onLinks: () => void }) {
                         <Icon name="stop" className="!text-[18px]" /> Cancel
                     </Button>
                 )}
-                {status === "running" && <span className="text-xs text-base-content/50">Live-updating…</span>}
+                {(status === "running" || cancelling) && <span className="text-xs text-base-content/50">Live-updating…</span>}
             </div>
 
             {complete && (
@@ -712,10 +801,12 @@ function SymlinkStep({ m }: { m: Hook }) {
 
     const linking = status === "linking";
     const applying = status === "applying";
+    const restoring = status === "restoring";
     const linked = status === "linked";
     const busyPlan = m.busy === "symlink-plan";
+    const step6Active = linking || applying || restoring || m.busy !== null;
     const canPlan = form.libraryRoot.trim().length > 0 && form.backupDir.trim().length > 0
-        && !linking && !applying && !busyPlan;
+        && !step6Active;
 
     return (
         <div className="flex flex-col gap-6">
@@ -736,6 +827,7 @@ function SymlinkStep({ m }: { m: Hook }) {
                         required
                         help="Root of the arr/Plex library whose symlinks currently point at Altmount."
                         value={form.libraryRoot}
+                        disabled={step6Active}
                         onChange={(v) => setForm({ ...form, libraryRoot: v })}
                     />
                     <PathField
@@ -743,6 +835,7 @@ function SymlinkStep({ m }: { m: Hook }) {
                         required
                         help="Where the wizard writes the restore tarball before rewriting."
                         value={form.backupDir}
+                        disabled={step6Active}
                         onChange={(v) => setForm({ ...form, backupDir: v })}
                     />
 
@@ -753,6 +846,7 @@ function SymlinkStep({ m }: { m: Hook }) {
                         </Button>
                         {linking && <span className="text-xs text-base-content/60">Scanning the library and matching symlinks… updates automatically.</span>}
                         {applying && <span className="flex items-center gap-2 text-xs text-base-content/60"><Spinner className="h-4 w-4" /> Applying rewrites…</span>}
+                        {restoring && <span className="flex items-center gap-2 text-xs text-base-content/60"><Spinner className="h-4 w-4" /> Restoring symlinks…</span>}
                     </div>
                 </div>
             </Section>
@@ -765,16 +859,21 @@ function SymlinkStep({ m }: { m: Hook }) {
 function SymlinkResults({ m }: { m: Hook }) {
     const [filters, setFilters] = useState<SymlinkFilters>({ page: 1, pageSize: 100, status: "rewrite", q: "", sort: "" });
     const [data, setData] = useState<{ total: number; counts: Record<string, number>; rows: SymlinkRow[] }>({ total: 0, counts: {}, rows: [] });
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [confirmApply, setConfirmApply] = useState(false);
 
     const load = useCallback(async (f: SymlinkFilters) => {
         setLoading(true);
         try {
-            const res = await m.loadSymlinks(f);
-            setData({ total: res.total, counts: res.counts, rows: res.rows });
-        } catch {
-            setData({ total: 0, counts: {}, rows: [] });
+            await loadTableRetainingLastGood(
+                () => m.loadSymlinks(f),
+                (res) => {
+                    setData({ total: res.total, counts: res.counts, rows: res.rows });
+                    setLoadError(null);
+                },
+                setLoadError,
+            );
         } finally {
             setLoading(false);
         }
@@ -784,21 +883,31 @@ function SymlinkResults({ m }: { m: Hook }) {
 
     const counts = data.counts;
     const rewrites = counts["rewrite"] ?? 0;
+    const unreadable = counts["unreadable"] ?? 0;
     const applied = counts["applied"] ?? 0;
     const failed = counts["failed"] ?? 0;
-    const canApply = rewrites > 0 && m.busy !== "symlink-apply";
+    const canApply = !loading && loadError === null && rewrites > 0 && m.busy === null;
     const pages = Math.max(1, Math.ceil(data.total / filters.pageSize));
 
-    const doApply = () => {
+    const doApply = (acknowledgeUnreadable?: boolean) => {
         setConfirmApply(false);
-        void m.applySymlinks();
+        void m.applySymlinks(acknowledgeUnreadable === true);
     };
 
     return (
         <Section icon="rule" title="Rewrite plan" subtitle="Review before applying. Only 'rewrite' rows change; the rest are informational.">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {loadError && (
+                <Alert className="alert-soft mb-4 text-sm" variant="danger">
+                    <Icon name="error" className="!text-[18px]" />
+                    Symlink data could not be loaded: {loadError}. The last successful results are retained, and applying
+                    rewrites is disabled until a refresh succeeds.
+                </Alert>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
                 <StatTile label="Rewrite" value={rewrites} tone="success" help={SYMLINK_STATUS_HELP.rewrite} />
                 <StatTile label="Orphan" value={counts["orphan"] ?? 0} tone={(counts["orphan"] ?? 0) > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.orphan} />
+                {unreadable > 0 && <StatTile label="Unreadable" value={unreadable} tone="error" help={SYMLINK_STATUS_HELP.unreadable} />}
                 <StatTile label="NzbDAV" value={counts["already-nzbdav"] ?? 0} help={SYMLINK_STATUS_HELP["already-nzbdav"]} />
                 <StatTile label="Other" value={counts["not-altmount"] ?? 0} help={SYMLINK_STATUS_HELP["not-altmount"]} />
                 <StatTile label="Applied" value={applied} tone={applied > 0 ? "success" : undefined} help={SYMLINK_STATUS_HELP.applied} />
@@ -810,23 +919,29 @@ function SymlinkResults({ m }: { m: Hook }) {
                     {m.busy === "symlink-apply" ? <Spinner className="h-4 w-4" /> : <Icon name="published_with_changes" className="!text-[18px]" />}
                     Apply {rewrites} rewrite(s)
                 </Button>
-                {rewrites === 0 && applied === 0 && (
-                    <span className="text-xs text-base-content/50">No rewrites to apply — every symlink is already correct, orphaned, or unrelated.</span>
+                {!loading && !loadError && rewrites === 0 && applied === 0 && (
+                    unreadable > 0
+                        ? <span className="text-xs text-error">No verified rewrites are available; {unreadable} unreadable symlink(s) remain unchanged and require review.</span>
+                        : <span className="text-xs text-base-content/50">No rewrites to apply — every symlink is already correct, orphaned, or unrelated.</span>
                 )}
                 {applied > 0 && (
-                    <span className="text-xs text-success">{applied} symlink(s) rewritten. A restore tarball is in your backup directory.</span>
+                    <span className="text-xs text-success">
+                        {applied} symlink(s) rewritten. A restore tarball is in your backup directory.
+                        {unreadable > 0 && <span className="ml-1 text-error">{unreadable} unreadable symlink(s) remain unchanged.</span>}
+                    </span>
                 )}
             </div>
 
             <SymlinkRestoreAction m={m} onRestored={() => void load(filters)} />
 
-            {!loading && rewrites === 0 && <HistoryCleanupAction m={m} />}
+            {!loading && !loadError && rewrites === 0 && <HistoryCleanupAction m={m} />}
 
             <div className="mt-4 mb-3 flex flex-wrap items-center gap-2">
                 <Select className="select-sm" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value, page: 1 })}>
                     <option value="">All statuses</option>
                     <option value="rewrite">Rewrite</option>
                     <option value="orphan">Orphan</option>
+                    <option value="unreadable">Unreadable</option>
                     <option value="already-nzbdav">NzbDAV</option>
                     <option value="not-altmount">Other</option>
                     <option value="applied">Applied</option>
@@ -854,6 +969,8 @@ function SymlinkResults({ m }: { m: Hook }) {
                     <tbody>
                         {loading && data.rows.length === 0 ? (
                             <tr><td colSpan={4}><div className="flex justify-center py-6"><Spinner className="h-5 w-5" /></div></td></tr>
+                        ) : loadError && data.rows.length === 0 ? (
+                            <tr><td colSpan={4}><div className="py-6 text-center text-sm text-error">Symlink data could not be loaded.</div></td></tr>
                         ) : data.rows.length === 0 ? (
                             <tr><td colSpan={4}><div className="py-6 text-center text-sm text-base-content/50">No symlinks match.</div></td></tr>
                         ) : data.rows.map((r) => (
@@ -893,6 +1010,13 @@ function SymlinkResults({ m }: { m: Hook }) {
                         and only symlinks are changed — never the files they point at. Continue?
                     </>
                 }
+                checkboxMessage={unreadable > 0
+                    ? `I acknowledge that ${unreadable} unreadable symlink(s) will remain unchanged`
+                    : undefined}
+                requireCheckbox={unreadable > 0}
+                errorMessage={unreadable > 0
+                    ? `${unreadable} symlink(s) could not be classified and may still point at Altmount.`
+                    : undefined}
                 cancelText="Cancel"
                 confirmText="Apply"
                 onCancel={() => setConfirmApply(false)}
@@ -908,6 +1032,7 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
     const [selected, setSelected] = useState("");
     const [confirm, setConfirm] = useState(false);
     const busy = m.busy === "symlink-restore";
+    const step6Busy = m.busy !== null;
     const archive = backups.find((b) => b.fileName === selected);
     const result = m.symlinkRestoreResult;
 
@@ -931,7 +1056,8 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
     const restore = () => {
         if (!selected) return;
         setConfirm(false);
-        void m.restoreSymlinks(selected).then(() => {
+        void m.restoreSymlinks(selected).then((succeeded) => {
+            if (!succeeded) return;
             onRestored();
             void load();
         });
@@ -951,7 +1077,7 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
                         <Select
                             className="select-sm min-w-64 max-w-full"
                             value={selected}
-                            disabled={loading || backups.length === 0}
+                            disabled={loading || backups.length === 0 || step6Busy}
                             onChange={(e) => setSelected(e.target.value)}
                         >
                             {backups.length === 0 && <option value="">No restore archives found</option>}
@@ -964,13 +1090,13 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
                         <Button
                             variant="outline"
                             size="small"
-                            disabled={!archive?.isValid || busy}
+                            disabled={!archive?.isValid || step6Busy}
                             onClick={() => setConfirm(true)}
                         >
                             {busy ? <Spinner className="h-4 w-4" /> : <Icon name="restore" className="!text-[18px]" />}
                             Restore
                         </Button>
-                        <Button variant="ghost" size="small" disabled={loading} onClick={() => void load()}>
+                        <Button variant="ghost" size="small" disabled={loading || step6Busy} onClick={() => void load()}>
                             <Icon name="refresh" className="!text-[16px]" />
                         </Button>
                     </div>
@@ -1080,7 +1206,7 @@ function HistoryCleanupAction({ m }: { m: Hook }) {
 function SymlinkStatusBadge({ status }: { status: string }) {
     const cls = status === "rewrite" ? "badge-info"
         : status === "applied" ? "badge-success"
-        : status === "failed" ? "badge-error"
+        : status === "failed" || status === "unreadable" ? "badge-error"
         : status === "orphan" ? "badge-warning"
         : "badge-ghost";
     const badge = <Badge className={`badge-sm ${cls} badge-soft cursor-help`}>{SYMLINK_STATUS_LABELS[status] ?? status}</Badge>;
@@ -1105,6 +1231,8 @@ function ResetFooter({ m }: { m: Hook }) {
     const [confirmReset, setConfirmReset] = useState(false);
     const [manage, setManage] = useState(false);
     const [confirmForget, setConfirmForget] = useState(false);
+    const resetActive = isMigrationWorkActive(m.status?.sessionStatus);
+    const resetDisabled = !canResetMigration(m.status?.sessionStatus, m.busy);
 
     const openManage = () => {
         setManage(true);
@@ -1114,11 +1242,15 @@ function ResetFooter({ m }: { m: Hook }) {
     return (
         <div className="border-t border-base-content/10 pt-4">
             <div className="flex flex-wrap items-center gap-2">
-                <Button variant="ghost" size="small" onClick={() => setConfirmReset(true)}>
+                <Button variant="ghost" size="small" disabled={resetDisabled} onClick={() => setConfirmReset(true)}>
                     <Icon name="restart_alt" className="!text-[16px]" /> Reset Wizard
                 </Button>
                 <span className="text-xs text-base-content/45">
-                    Clears this wizard session while preserving completed migration mappings.
+                    {resetActive
+                        ? m.status?.sessionStatus === "cancelling"
+                            ? "Wait for the current queue submission to drain before resetting the wizard."
+                            : "Finish or cancel the active task before resetting the wizard."
+                        : "Clears this wizard session while preserving completed migration mappings."}
                 </span>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -1151,7 +1283,7 @@ function ResetFooter({ m }: { m: Hook }) {
                             Forget all run, release, and file mappings. This removes cross-run symlink provenance, but never
                             deletes mounted content or SAB history. Any symlinks already rewritten remain safe and unchanged.
                         </p>
-                        <Button className="mt-3" variant="danger" size="small" onClick={() => {
+                        <Button className="mt-3" variant="danger" size="small" disabled={resetActive || m.busy !== null} onClick={() => {
                             setManage(false);
                             setConfirmForget(true);
                         }}>
@@ -1254,11 +1386,11 @@ function Section({ icon, title, subtitle, children }: { icon: string; title: str
     );
 }
 
-function PathField({ label, help, value, required, onChange }: { label: string; help?: string; value: string; required?: boolean; onChange: (v: string) => void }) {
+function PathField({ label, help, value, required, disabled, onChange }: { label: string; help?: string; value: string; required?: boolean; disabled?: boolean; onChange: (v: string) => void }) {
     return (
         <label className="block space-y-1">
             <span className="block text-sm font-medium text-base-content">{label}{required && <span className="text-error"> *</span>}</span>
-            <Input className="w-full font-mono" value={value} onChange={(e) => onChange(e.target.value)} placeholder="/path/to/…" />
+            <Input className="w-full font-mono" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} placeholder="/path/to/…" />
             {help && <span className="block text-[11px] leading-relaxed text-base-content/45">{help}</span>}
         </label>
     );

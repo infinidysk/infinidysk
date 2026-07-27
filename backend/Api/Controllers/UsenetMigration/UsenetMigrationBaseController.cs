@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.UsenetMigration;
 using Serilog;
 
@@ -40,7 +41,15 @@ public abstract class UsenetMigrationBaseController : ControllerBase
         catch (Exception e) when (e is not OperationCanceledException ||
                                   !HttpContext.RequestAborted.IsCancellationRequested)
         {
-            Log.Error(e, "Unhandled Usenet migration API failure");
+            if (e.TryGetKnownErrorMessage(out var reason))
+            {
+                Log.Warning("Usenet migration API request failed. Reason: {Reason}", reason);
+                Log.Debug(e, "Usenet migration API known failure stack");
+            }
+            else
+            {
+                Log.Error(e, "Unhandled Usenet migration API failure");
+            }
             return StatusCode(500, new BaseApiResponse { Status = false, Error = "An internal server error occurred." });
         }
     }

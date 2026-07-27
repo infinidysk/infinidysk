@@ -47,8 +47,10 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
 {
     /// <summary>Test seam for the live NzbDAV context; production leaves it null.</summary>
     internal Func<DavDatabaseContext>? DavContextFactory { get; set; }
+    internal Func<CancellationToken, Task>? BeforePersistOverride { get; set; }
 
     private sealed record WalkedMeta(string MetaPath, string VirtualPath, AltmountFileMetadata Meta);
+    private sealed record PendingScanError(string? Path, string Kind, string Message);
 
     /// <summary>A release assembled in memory before verdict/collision finalisation.</summary>
     private sealed class PendingRelease
@@ -63,7 +65,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         public bool IsCollisionCandidate { get; set; }
     }
 
-    public async Task<ScanSummary> RunAsync(CancellationToken ct = default)
+    public async Task<ScanSummary?> RunAsync(CancellationToken ct = default)
     {
         var session = await store.GetSessionAsync(ct).ConfigureAwait(false);
         var metadataRoot = session.AltmountMetadataRoot
@@ -71,14 +73,12 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         var storeRoot = session.AltmountStoreRoot;
 
         // Capture the two global settings the run must re-check before submitting.
-        await store.UpdateSessionAsync(s =>
-        {
-            s.Status = "scanning";
-            s.ScanStartedAt = DateTime.UtcNow;
-            s.ScanCompletedAt = null;
-            s.ScanLazyRarEnabled = configManager.IsLazyRarParsingEnabled();
-            s.ScanWindowsSafePaths = PathSanitizer.IsWindowsSafePathsEnabled;
-        }, ct).ConfigureAwait(false);
+        // The guarded write refuses to revive a scan already being cancelled.
+        if (!await store.CaptureScanStartAsync(
+                configManager.IsLazyRarParsingEnabled(),
+                PathSanitizer.IsWindowsSafePathsEnabled,
+                ct).ConfigureAwait(false))
+            return null;
 
         var categoryMap = await LoadCategoryMapAsync(ct).ConfigureAwait(false);
 
@@ -87,7 +87,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         var groups = new Dictionary<string, List<WalkedMeta>>(StringComparer.Ordinal);
         var v1Metas = new List<WalkedMeta>();
         var metaCount = 0;
-        var scanErrors = 0;
+        var scanErrors = new List<PendingScanError>();
 
         foreach (var metaPath in MetadataTreeWalker.EnumerateMetaFiles(metadataRoot))
         {
@@ -99,8 +99,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {
-                await store.RecordScanErrorAsync(metaPath, "meta_read", e.Message, ct).ConfigureAwait(false);
-                scanErrors++;
+                scanErrors.Add(new PendingScanError(metaPath, "meta_read", e.Message));
                 continue;
             }
 
@@ -117,7 +116,8 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         foreach (var (storeRef, metas) in groups)
         {
             ct.ThrowIfCancellationRequested();
-            pending.Add(await BuildStoreReleaseAsync(storeRef, metas, storeRoot, categoryMap, ct)
+            pending.Add(await BuildStoreReleaseAsync(
+                    storeRef, metas, storeRoot, categoryMap, scanErrors, ct)
                 .ConfigureAwait(false));
         }
 
@@ -132,13 +132,12 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         ApplyCollisions(pending);
 
         // Finalise verdicts and persist.
-        var summary = await PersistAsync(pending, metaCount, scanErrors, ct).ConfigureAwait(false);
+        if (BeforePersistOverride is not null)
+            await BeforePersistOverride(ct).ConfigureAwait(false);
 
-        await store.UpdateSessionAsync(s =>
-        {
-            s.Status = "scanned";
-            s.ScanCompletedAt = DateTime.UtcNow;
-        }, ct).ConfigureAwait(false);
+        var summary = await PersistAsync(pending, metaCount, scanErrors, ct).ConfigureAwait(false);
+        if (summary is null)
+            return null;
 
         Log.Information(
             "Altmount scan complete: {Releases} releases ({Green} green / {Amber} amber / {Red} red), " +
@@ -158,6 +157,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         List<WalkedMeta> metas,
         string? storeRoot,
         IReadOnlyDictionary<string, MigrationCategoryMap> categoryMap,
+        List<PendingScanError> scanErrors,
         CancellationToken ct)
     {
         var parsed = StorePathParser.Parse(storeRef);
@@ -173,7 +173,9 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         var categoryMapped = !string.IsNullOrEmpty(targetCategory);
 
         // Decode the store to learn availability and cost.
-        var (availability, cost) = await LoadStoreAsync(storeRef, storeRoot, ct).ConfigureAwait(false);
+        var (availability, cost) = await LoadStoreAsync(
+                storeRef, storeRoot, scanErrors, ct)
+            .ConfigureAwait(false);
 
         var input = new TriageInput
         {
@@ -348,13 +350,37 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         }
     }
 
-    private async Task<ScanSummary> PersistAsync(
-        List<PendingRelease> pending, int metaCount, int scanErrors, CancellationToken ct)
+    private async Task<ScanSummary?> PersistAsync(
+        List<PendingRelease> pending,
+        int metaCount,
+        IReadOnlyList<PendingScanError> scanErrors,
+        CancellationToken ct)
     {
         int green = 0, amber = 0, red = 0, alreadyMigrated = 0, noStoreRef = 0, queueKeyCollisions = 0;
         long estLazyTotal = 0;
 
         await using var ctx = store.NewContext();
+        await using var transaction = await ctx.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        // Claim scan completion as the transaction's first write. If CancelScan
+        // already published scan_cancelling, no scan artifact is touched. If this
+        // write wins, cancellation waits for the complete result set to commit
+        // and then observes scanned instead of reporting a false cancellation.
+        var now = DateTime.UtcNow;
+        var completed = await ctx.SessionState
+            .Where(s => s.Id == UsenetMigrationStore.SessionId
+                        && s.Status == MigrationSessionStatus.Scanning)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(s => s.Status, MigrationSessionStatus.Scanned)
+                .SetProperty(s => s.ScanCompletedAt, now)
+                .SetProperty(s => s.UpdatedAt, now), ct)
+            .ConfigureAwait(false);
+        if (completed != 1)
+        {
+            await transaction.RollbackAsync(ct).ConfigureAwait(false);
+            return null;
+        }
+
         await UsenetMigrationStore.ClearScanArtifactsAsync(ctx, ct).ConfigureAwait(false);
 
         foreach (var p in pending)
@@ -394,7 +420,16 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             }
         }
 
+        ctx.ScanErrors.AddRange(scanErrors.Select(error => new MigrationScanError
+        {
+            Path = error.Path,
+            Kind = error.Kind,
+            Message = error.Message,
+            OccurredAt = now,
+        }));
+
         await ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
 
         var divergent = pending.Count(p => p.Release.JobNameDiverges);
         return new ScanSummary
@@ -407,7 +442,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             AlreadyMigratedCount = alreadyMigrated,
             NoStoreRefCount = noStoreRef,
             QueueKeyCollisionCount = queueKeyCollisions,
-            ScanErrorCount = scanErrors,
+            ScanErrorCount = scanErrors.Count,
             JobNameDivergenceRate = pending.Count == 0 ? 0 : (double)divergent / pending.Count,
             EstFetchBytesLazyTotal = estLazyTotal,
         };
@@ -428,7 +463,10 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
     /// remapped under <paramref name="storeRoot"/> by its <c>.nzbs/…</c> suffix.
     /// </summary>
     private async Task<(StoreAvailability, CostEstimate?)> LoadStoreAsync(
-        string storeRef, string? storeRoot, CancellationToken ct)
+        string storeRef,
+        string? storeRoot,
+        List<PendingScanError> scanErrors,
+        CancellationToken ct)
     {
         var path = StoreLocator.Resolve(storeRef, storeRoot);
         if (path is null)
@@ -441,7 +479,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         }
         catch (AltmountStoreException e)
         {
-            await store.RecordScanErrorAsync(path, "store_decode", e.Message, ct).ConfigureAwait(false);
+            scanErrors.Add(new PendingScanError(path, "store_decode", e.Message));
             return (StoreAvailability.Corrupt, null);
         }
 
