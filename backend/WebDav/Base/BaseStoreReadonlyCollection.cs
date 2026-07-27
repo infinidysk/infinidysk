@@ -1,39 +1,49 @@
 ﻿using NWebDav.Server;
 using NWebDav.Server.Stores;
 using NzbWebDAV.WebDav.Requests;
-using Serilog;
 
 namespace NzbWebDAV.WebDav.Base;
 
 public abstract class BaseStoreReadonlyCollection : BaseStoreCollection
 {
+    // NWebDav's DavStatusCode enum has no 405 member. SetStatus only assigns
+    // response.StatusCode, so the reason phrase falls back to the server default.
+    private const DavStatusCode MethodNotAllowed = (DavStatusCode)405;
+
     protected override Task<StoreItemResult> CopyAsync(CopyRequest request)
     {
-        Log.Warning("Cannot copy item {ItemName}: forbidden", request.Name);
+        LogRejected("copy item", request.Name);
         return Task.FromResult(new StoreItemResult(DavStatusCode.Forbidden));
     }
 
     protected override Task<StoreItemResult> CreateItemAsync(CreateItemRequest request)
     {
-        Log.Warning("Cannot create item {ItemName}: forbidden", request.Name);
+        LogRejected("create item", request.Name);
         return Task.FromResult(new StoreItemResult(DavStatusCode.Forbidden));
     }
 
-    protected override Task<StoreCollectionResult> CreateCollectionAsync(CreateCollectionRequest request)
+    protected override async Task<StoreCollectionResult> CreateCollectionAsync(CreateCollectionRequest request)
     {
-        Log.Warning("Cannot create directory {DirectoryName}: forbidden", request.Name);
-        return Task.FromResult(new StoreCollectionResult(DavStatusCode.Forbidden));
+        // RFC 4918 9.3.1: MKCOL may only be executed on an unmapped URL, so a directory
+        // that is already there is 405, not 403. Clients read 403 as a permission problem
+        // worth retrying; 405 tells them the directory exists and they can move on.
+        var existing = await GetItemAsync(request.Name, request.CancellationToken).ConfigureAwait(false);
+        if (existing is not null)
+            return new StoreCollectionResult(MethodNotAllowed);
+
+        LogRejected("create directory", request.Name);
+        return new StoreCollectionResult(DavStatusCode.Forbidden);
     }
 
     protected override Task<StoreItemResult> MoveItemAsync(MoveItemRequest request)
     {
-        Log.Warning("Cannot move item {ItemName}: forbidden", request.SourceName);
+        LogRejected("move item", request.SourceName);
         return Task.FromResult(new StoreItemResult(DavStatusCode.Forbidden));
     }
 
     protected override Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)
     {
-        Log.Warning("Cannot delete item {ItemName}: forbidden", request.Name);
+        LogRejected("delete item", request.Name);
         return Task.FromResult(DavStatusCode.Forbidden);
     }
 
@@ -41,4 +51,7 @@ public abstract class BaseStoreReadonlyCollection : BaseStoreCollection
     {
         return false;
     }
+
+    private void LogRejected(string operation, string itemName) =>
+        ReadonlyWriteRejectionLog.Rejected(operation, itemName, Name, UniqueKey);
 }
