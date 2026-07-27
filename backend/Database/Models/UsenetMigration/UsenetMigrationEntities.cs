@@ -9,7 +9,10 @@ public sealed class MigrationSessionState
 {
     public int Id { get; set; } = 1;
 
-    /// <summary>idle|connected|mapped|scanning|scanned|running|paused|complete|linking|cancelled</summary>
+    /// <summary>
+    /// See MigrationSessionStatus for the canonical state values and
+    /// MigrationSessionStateMachine for legal transitions.
+    /// </summary>
     public string Status { get; set; } = "idle";
 
     public string? AltmountMetadataRoot { get; set; }
@@ -191,7 +194,7 @@ public sealed class MigrationSubmission
     public string? NzoId { get; set; }
 
     /// <summary>
-    /// pending|submitted|processing|completed|history_cleared|failed|skipped|evicted.
+    /// pending|submitting|submitted|processing|completed|history_cleared|failed|skipped|evicted.
     /// New successful runs remain completed; history_cleared is retained for
     /// compatibility with older migration sessions. 'evicted' is terminal.
     /// </summary>
@@ -273,13 +276,13 @@ public sealed class MigrationSymlinkRewrite
     /// <summary>Absolute path of the symlink in the arr/Plex library.</summary>
     public string SymlinkPath { get; set; } = "";
 
-    /// <summary>Current link target (points at the Altmount mount before rewrite).</summary>
+    /// <summary>Observed link target; empty when the target could not be read.</summary>
     public string OldTarget { get; set; } = "";
 
     /// <summary>Computed .ids/…/&lt;guid&gt; target; null until matched.</summary>
     public string? NewTarget { get; set; }
 
-    /// <summary>rewrite|already-nzbdav|not-altmount|orphan|applied|failed.</summary>
+    /// <summary>rewrite|already-nzbdav|not-altmount|orphan|unreadable|applied|failed.</summary>
     public string Status { get; set; } = "";
 
     /// <summary>relative-path|exact|unique-size|single-leaf-fallback; null when unmatched.</summary>

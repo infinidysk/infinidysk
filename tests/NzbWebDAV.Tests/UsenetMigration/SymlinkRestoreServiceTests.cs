@@ -10,8 +10,8 @@ public class SymlinkRestoreServiceTests
     {
         public readonly Dictionary<string, string> Links = new(StringComparer.Ordinal);
 
-        public string? ReadLink(string path) => Links.GetValueOrDefault(path);
-        public void CreateOrReplaceSymlink(string path, string target) => Links[path] = target;
+        public string? ReadLink(string libraryRoot, string path) => Links.GetValueOrDefault(path);
+        public void CreateOrReplaceSymlink(string libraryRoot, string path, string target) => Links[path] = target;
     }
 
     [Fact]

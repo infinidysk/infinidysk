@@ -65,7 +65,10 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
             }
             catch (Exception e) when (e is IOException or InvalidDataException or System.Text.Json.JsonException)
             {
-                Log.Warning(e, "Unable to read symlink restore archive {ArchivePath}", path);
+                Log.Warning(
+                    "Unable to read symlink restore archive {ArchivePath}. Reason: {Reason}",
+                    path, e.Message);
+                Log.Debug(e, "Unreadable symlink restore archive {ArchivePath} failure stack", path);
                 archives.Add(new SymlinkBackupInfo(
                     fileName, GetLastWriteTimeUtc(path), GetFileLength(path), 0, 0, false, e.Message));
             }
@@ -122,7 +125,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
 
             try
             {
-                var current = Ops.ReadLink(entry.Path);
+                var current = Ops.ReadLink(libraryRoot, entry.Path);
                 if (current is null)
                 {
                     issues.Add(new SymlinkRestoreIssue(entry.Path, "The path is missing or is no longer a symlink."));
@@ -149,7 +152,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
                     continue;
                 }
 
-                Ops.CreateOrReplaceSymlink(entry.Path, entry.Target);
+                Ops.CreateOrReplaceSymlink(libraryRoot, entry.Path, entry.Target);
                 restored++;
                 requeued += Requeue(ctx, planRow, entry, expectedReplacement);
             }
