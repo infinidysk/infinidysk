@@ -105,6 +105,43 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_ReportsCpuGcAndThreadPoolCountersForBottleneckTriage()
+    {
+        var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));
+
+        using var environment = JsonDocument.Parse(entries["environment.json"]);
+        var root = environment.RootElement;
+
+        // CPU must be a live sample, not only a lifetime average: a pack collected while
+        // playback stutters has to show what the cores are doing right now.
+        var cpu = root.GetProperty("cpu");
+        Assert.True(cpu.GetProperty("processorCount").GetInt32() >= 1);
+        Assert.True(cpu.GetProperty("sampleWindowMs").GetInt64() > 0);
+        Assert.True(cpu.GetProperty("samplePercentAllCores").GetDouble() >= 0);
+        Assert.True(cpu.GetProperty("lifetimeTotalMs").GetInt64() >= 0);
+
+        var gc = root.GetProperty("gc");
+        Assert.True(gc.GetProperty("gen0Collections").GetInt32() >= 0);
+        Assert.True(gc.GetProperty("gen2Collections").GetInt32() >= 0);
+        Assert.True(gc.GetProperty("totalAllocatedBytes").GetInt64() > 0);
+        Assert.True(gc.GetProperty("totalPauseDurationMs").GetInt64() >= 0);
+        Assert.True(gc.TryGetProperty("isServerGc", out _));
+        // Article buffers land on the large-object heap, so its size must be visible.
+        var generations = gc.GetProperty("generations").EnumerateArray()
+            .Select(entry => entry.GetProperty("name").GetString())
+            .ToList();
+        Assert.Contains("loh", generations);
+
+        var threadPool = root.GetProperty("threadPool");
+        Assert.True(threadPool.GetProperty("threadCount").GetInt32() >= 0);
+        Assert.True(threadPool.GetProperty("pendingWorkItems").GetInt64() >= 0);
+        Assert.True(threadPool.GetProperty("completedWorkItems").GetInt64() >= 0);
+
+        // No providers are configured in this fixture, so the section is present but empty.
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("connections").ValueKind);
+    }
+
+    [Fact]
     public async Task Pack_IncludesStreamTracesOnlyWhileTracingIsEnabled()
     {
         var disabled = await ReadPackEntriesAsync(

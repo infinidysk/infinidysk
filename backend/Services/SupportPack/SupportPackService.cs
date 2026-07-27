@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -71,7 +72,7 @@ public sealed class SupportPackService(
         await WriteJsonAsync(
             archive,
             "environment.json",
-            BuildEnvironment(generatedAt),
+            await BuildEnvironmentAsync(generatedAt, cancellationToken).ConfigureAwait(false),
             redactor,
             cancellationToken).ConfigureAwait(false);
 
@@ -132,9 +133,21 @@ public sealed class SupportPackService(
         the last 500 warnings and errors separately for that reason - check it first
         when the main log looks like it only contains routine activity.
 
+        environment.json reports a live CPU sample taken while the pack was being
+        built, GC counters (including large-object-heap sizes and pause time), thread
+        pool occupancy, and per-provider connection-pool state with lifetime churn.
+        Collect the pack while the problem is happening - the CPU sample is a
+        half-second window, not a lifetime average.
+
         stream-traces/ is included only while developer stream tracing is enabled
         (Settings → Support, or STREAM_TRACE_EVENTS). Tracing is opt-in, memory-only,
-        and resets on restart.
+        and resets on restart. RangeEnd events carry stall attribution for the range
+        that just finished: connWaitMs (waiting for an NNTP connection),
+        providerWaitMs (waiting for provider response headers), bodyDrainMs (reading
+        article bodies), consumerWaitMs (playback starved waiting for prefetch), and
+        clientWriteMs (blocked writing to the player). They overlap, because segments
+        are fetched concurrently, so read them as shares of the range rather than a
+        breakdown that sums to its duration.
 
         The archive deliberately excludes database files, backups, blobs/NZBs,
         environment files, session/API key files, crash dumps, and segment-cache
@@ -160,7 +173,9 @@ public sealed class SupportPackService(
             }),
         };
 
-    private object BuildEnvironment(DateTimeOffset generatedAt)
+    private async Task<object> BuildEnvironmentAsync(
+        DateTimeOffset generatedAt,
+        CancellationToken cancellationToken)
     {
         ThreadPool.GetMinThreads(out var minWorkerThreads, out var minIoThreads);
         ThreadPool.GetMaxThreads(out var maxWorkerThreads, out var maxIoThreads);
@@ -169,6 +184,7 @@ public sealed class SupportPackService(
         var drive = new DriveInfo(root);
         var uptime = ProcessUptime();
         var streamTracing = streamTraceBuffer.GetStatus();
+        var cpu = await SampleCpuAsync(uptime, cancellationToken).ConfigureAwait(false);
 
         return new
         {
@@ -191,7 +207,20 @@ public sealed class SupportPackService(
                 inFlightArticleThrottleEvents = inFlightArticleBudget.ThrottleEvents,
                 timeZone = TimeZoneInfo.Local.Id,
             },
-            threadPool = new { minWorkerThreads, minIoThreads, maxWorkerThreads, maxIoThreads },
+            cpu,
+            gc = BuildGcDiagnostics(),
+            threadPool = new
+            {
+                minWorkerThreads,
+                minIoThreads,
+                maxWorkerThreads,
+                maxIoThreads,
+                threadCount = ThreadPool.ThreadCount,
+                pendingWorkItems = ThreadPool.PendingWorkItemCount,
+                completedWorkItems = ThreadPool.CompletedWorkItemCount,
+                processThreadCount = ProcessThreadCount(),
+            },
+            connections = BuildConnectionDiagnostics(),
             storage = new
             {
                 configPath,
@@ -219,6 +248,154 @@ public sealed class SupportPackService(
                 ["MAX_REQUEST_BODY_SIZE"] = Environment.GetEnvironmentVariable("MAX_REQUEST_BODY_SIZE"),
             },
         };
+    }
+
+    /// <summary>
+    /// CPU usage as both a live sample and a process-lifetime average. The sample is what
+    /// matters when a pack is collected while the problem is happening: a lifetime average
+    /// over a mostly-idle process hides a core that is pegged right now. Percentages are
+    /// of the whole machine, so 100 means every core busy.
+    /// </summary>
+    private static async Task<object> SampleCpuAsync(TimeSpan uptime, CancellationToken cancellationToken)
+    {
+        var cores = Math.Max(1, Environment.ProcessorCount);
+        try
+        {
+            var before = Environment.CpuUsage;
+            var sampleWindow = TimeSpan.FromMilliseconds(500);
+            await Task.Delay(sampleWindow, cancellationToken).ConfigureAwait(false);
+            var after = Environment.CpuUsage;
+
+            var sampleMs = (after.TotalTime - before.TotalTime).TotalMilliseconds;
+            return new
+            {
+                processorCount = cores,
+                sampleWindowMs = (long)sampleWindow.TotalMilliseconds,
+                samplePercentAllCores = Percent(sampleMs, sampleWindow.TotalMilliseconds * cores),
+                samplePercentOneCore = Percent(sampleMs, sampleWindow.TotalMilliseconds),
+                lifetimeUserMs = (long)after.UserTime.TotalMilliseconds,
+                lifetimePrivilegedMs = (long)after.PrivilegedTime.TotalMilliseconds,
+                lifetimeTotalMs = (long)after.TotalTime.TotalMilliseconds,
+                lifetimePercentAllCores = Percent(
+                    after.TotalTime.TotalMilliseconds, uptime.TotalMilliseconds * cores),
+            };
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            Log.Debug(e, "Support pack: could not sample CPU usage");
+            return new { processorCount = cores, unavailable = true };
+        }
+
+        static double? Percent(double used, double capacity) =>
+            capacity <= 0 ? null : Math.Round(used / capacity * 100, 1);
+    }
+
+    /// <summary>
+    /// GC shape and cost. Generation sizes include the large-object heap, which is where
+    /// article buffers land, and <c>pauseTimePercentage</c> says how much of recent wall
+    /// clock the process spent stopped.
+    /// </summary>
+    private static object BuildGcDiagnostics()
+    {
+        try
+        {
+            var info = GC.GetGCMemoryInfo();
+            var generations = new List<object>(info.GenerationInfo.Length);
+            for (var generation = 0; generation < info.GenerationInfo.Length; generation++)
+            {
+                var entry = info.GenerationInfo[generation];
+                generations.Add(new
+                {
+                    name = GenerationName(generation),
+                    sizeAfterBytes = entry.SizeAfterBytes,
+                    fragmentationAfterBytes = entry.FragmentationAfterBytes,
+                });
+            }
+
+            return new
+            {
+                isServerGc = GCSettings.IsServerGC,
+                latencyMode = GCSettings.LatencyMode.ToString(),
+                gen0Collections = GC.CollectionCount(0),
+                gen1Collections = GC.CollectionCount(1),
+                gen2Collections = GC.CollectionCount(2),
+                totalAllocatedBytes = GC.GetTotalAllocatedBytes(precise: false),
+                totalPauseDurationMs = (long)GC.GetTotalPauseDuration().TotalMilliseconds,
+                pauseTimePercentage = info.PauseTimePercentage,
+                heapSizeBytes = info.HeapSizeBytes,
+                committedBytes = info.TotalCommittedBytes,
+                generations,
+            };
+        }
+        catch (Exception e)
+        {
+            Log.Debug(e, "Support pack: could not read GC diagnostics");
+            return new { unavailable = true };
+        }
+
+        static string GenerationName(int generation) => generation switch
+        {
+            0 => "gen0",
+            1 => "gen1",
+            2 => "gen2",
+            3 => "loh",
+            4 => "poh",
+            _ => $"gen{generation}",
+        };
+    }
+
+    /// <summary>
+    /// Live pool occupancy plus lifetime churn per provider. High
+    /// <c>connectionsDestroyed</c> against low <c>connectionsReused</c> means connections
+    /// are being replaced rather than pooled, and the handshake wait shows what that costs.
+    /// </summary>
+    private object BuildConnectionDiagnostics()
+    {
+        try
+        {
+            return usenetStreamingClient.GetProviderConnectionSnapshots()
+                .Select(snapshot => new
+                {
+                    providerKey = snapshot.MetricsKey,
+                    host = snapshot.Host,
+                    providerType = snapshot.ProviderType.ToString(),
+                    snapshot.LiveConnections,
+                    snapshot.IdleConnections,
+                    snapshot.ActiveConnections,
+                    snapshot.AvailableConnections,
+                    snapshot.PendingSelections,
+                    churn = new
+                    {
+                        snapshot.Churn.ConnectionsOpened,
+                        snapshot.Churn.ConnectionsReused,
+                        snapshot.Churn.ConnectionsDestroyed,
+                        snapshot.Churn.StaleEvictions,
+                        snapshot.Churn.HandshakeFailures,
+                        snapshot.Churn.GateWaitMs,
+                        snapshot.Churn.HandshakeWaitMs,
+                    },
+                })
+                .ToList<object>();
+        }
+        catch (Exception e)
+        {
+            Log.Debug(e, "Support pack: could not read connection-pool diagnostics");
+            return Array.Empty<object>();
+        }
+    }
+
+    private static int? ProcessThreadCount()
+    {
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            return process.Threads.Count;
+        }
+        catch (Exception e)
+        {
+            Log.Debug(e, "Support pack: could not read the process thread count");
+            return null;
+        }
     }
 
     private async Task<object> BuildMetricsAsync(DateTimeOffset generatedAt, CancellationToken cancellationToken)
