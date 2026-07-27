@@ -294,6 +294,7 @@ public class NzbFileStream(
             }
 
             PooledBufferStream? head = null;
+            var bodyDisposeAttempted = false;
             try
             {
                 try
@@ -304,6 +305,11 @@ public class NzbFileStream(
                     head = new PooledBufferStream(capacity);
                     await body.CopyToAsync(head, ct).ConfigureAwait(false);
                     head.Position = 0;
+                    // Do not relinquish the pooled head until body disposal succeeds.
+                    // Otherwise a disposal exception aborts the return with no owner
+                    // left to return the rented array.
+                    bodyDisposeAttempted = true;
+                    await body.DisposeAsync().ConfigureAwait(false);
                 }
                 catch (Exception e) when (!ct.IsCancellationRequested)
                 {
@@ -342,9 +348,16 @@ public class NzbFileStream(
             }
             finally
             {
-                await body.DisposeAsync().ConfigureAwait(false);
-                if (head is not null)
-                    await head.DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    if (!bodyDisposeAttempted)
+                        await body.DisposeAsync().ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (head is not null)
+                        await head.DisposeAsync().ConfigureAwait(false);
+                }
             }
         }
 

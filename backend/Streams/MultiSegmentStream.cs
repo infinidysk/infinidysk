@@ -739,6 +739,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         ArticleByteLease? lease = existingLease;
         var ownsLease = existingLease is null;
         PooledBufferStream? buffer = null;
+        var sourceDisposeAttempted = false;
         try
         {
             var hasExactSize = _segmentSizes.TryGetExactSize(segmentIndex, out var exactSize);
@@ -769,6 +770,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 lease.Adjust(actual - estimate);
 
             buffer.Position = 0;
+            // Keep the buffer and any internally acquired lease locally owned until
+            // source disposal succeeds. A disposal failure must not strand either.
+            sourceDisposeAttempted = true;
+            await source.DisposeAsync().ConfigureAwait(false);
             ownsLease = false;
             var owned = buffer;
             buffer = null;
@@ -786,7 +791,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
         finally
         {
-            await source.DisposeAsync().ConfigureAwait(false);
+            if (!sourceDisposeAttempted)
+                await source.DisposeAsync().ConfigureAwait(false);
         }
     }
 

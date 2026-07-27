@@ -286,6 +286,23 @@ public class NzbFileStreamTests
     }
 
     [Fact]
+    public async Task FastSeek_BodyDisposeFailure_FallsBackToSlowSeekPath()
+    {
+        var client = CreateFlakyClient(
+            () => new ThrowingDisposeMemoryStream(SegmentBytes[1]));
+        await using var stream = new NzbFileStream(
+            SegmentIds, 15, client, 2, SegmentRanges, usePipelinedBodyRequests: false);
+        stream.Seek(7, SeekOrigin.Begin);
+        var buffer = new byte[3];
+
+        var read = await stream.ReadAtLeastAsync(
+            buffer, buffer.Length, throwOnEndOfStream: false);
+
+        Assert.Equal("hij", Encoding.ASCII.GetString(buffer, 0, read));
+        Assert.True(client.BodyRequestCounts["two"] >= 2);
+    }
+
+    [Fact]
     public async Task Seek_WhenIndexedSegmentEndsBeforeOffset_ThrowsAndDisposesBodies()
     {
         string[] segmentIds = ["short"];
@@ -575,6 +592,17 @@ public class NzbFileStreamTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingDisposeMemoryStream(byte[] bytes)
+        : MemoryStream(bytes, writable: false)
+    {
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing)
+                throw new IOException("Simulated source disposal failure.");
+        }
     }
 
     private sealed class TrackingMemoryStream(byte[] bytes) : MemoryStream(bytes, writable: false)

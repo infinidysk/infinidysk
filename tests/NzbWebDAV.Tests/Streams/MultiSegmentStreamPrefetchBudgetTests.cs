@@ -172,6 +172,39 @@ public class MultiSegmentStreamPrefetchBudgetTests
     }
 
     [Fact]
+    public async Task SourceDisposeFailure_ReleasesFallbackLease()
+    {
+        const int segmentSize = 10_000;
+        var budget = new InFlightArticleBudget(segmentSize * 4);
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["fallback"] = Enumerable.Repeat((byte)7, segmentSize).ToArray(),
+            },
+            useCachedYencStreams: true,
+            decodedStreamFactory: (_, bytes) => new ThrowingDisposeMemoryStream(bytes));
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "missing" }.AsMemory(),
+            client,
+            articleBufferSize: 4,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "dispose-failure.bin",
+            segmentFallbacks: [["fallback"]],
+            exactSegmentSizes: new long[] { segmentSize },
+            inFlightArticleBudget: budget);
+
+        await Assert.ThrowsAsync<IOException>(
+            async () => await stream.ReadAtLeastAsync(
+                new byte[segmentSize], segmentSize, throwOnEndOfStream: false));
+
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
     public async Task DisposeAsync_ReleasesQueuedLeasesBeforeReturning()
     {
         const int segmentSize = 20_000;
@@ -430,6 +463,17 @@ public class MultiSegmentStreamPrefetchBudgetTests
 
         public override void Write(byte[] buffer, int offset, int count) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingDisposeMemoryStream(byte[] bytes)
+        : MemoryStream(bytes, writable: false)
+    {
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing)
+                throw new IOException("Simulated source disposal failure.");
+        }
     }
 
     private sealed class CollectingSink : ILogEventSink
