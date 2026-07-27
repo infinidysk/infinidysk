@@ -774,12 +774,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             // source disposal succeeds. A disposal failure must not strand either.
             sourceDisposeAttempted = true;
             await source.DisposeAsync().ConfigureAwait(false);
+            // Build the wrapper that takes over the buffer and lease before dropping
+            // local ownership, so a failure here still routes both through the catch.
+            var result = ReferenceEquals(lease, ArticleByteLease.Empty)
+                ? (Stream)buffer
+                : new BudgetedStream(buffer, lease);
             ownsLease = false;
-            var owned = buffer;
             buffer = null;
-            return ReferenceEquals(lease, ArticleByteLease.Empty)
-                ? owned
-                : new BudgetedStream(owned, lease);
+            return result;
         }
         catch
         {

@@ -342,9 +342,10 @@ public class NzbFileStream(
                 // its first read (head never becomes current). Idempotent dispose is safe
                 // when CombinedStream also disposes head after consuming it.
                 var owned = head;
-                head = null;
-                return new CombinedStream(SpliceHeadThenRest(owned, index + 1, ct))
+                var spliced = new CombinedStream(SpliceHeadThenRest(owned, index + 1, ct))
                     .OnDispose(() => owned.Dispose());
+                head = null;
+                return spliced;
             }
             finally
             {
