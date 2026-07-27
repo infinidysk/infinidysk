@@ -135,3 +135,39 @@ public class PooledBufferStreamTests
         Assert.Throws<ObjectDisposedException>(() => _ = stream.Length);
     }
 }
+
+public class ZeroStreamTests
+{
+    [Fact]
+    public void Read_EmitsExactZerosAcrossOddSizedReads()
+    {
+        using var stream = new ZeroStream(17);
+        Assert.Equal(17, stream.Length);
+        Assert.Equal(0, stream.Position);
+
+        var first = new byte[5];
+        Assert.Equal(5, stream.Read(first));
+        Assert.Equal(new byte[5], first);
+        Assert.Equal(5, stream.Position);
+
+        var second = new byte[10];
+        Assert.Equal(10, stream.Read(second));
+        Assert.Equal(new byte[10], second);
+
+        var third = new byte[8];
+        Assert.Equal(2, stream.Read(third));
+        Assert.Equal(new byte[2], third[..2]);
+        Assert.Equal(17, stream.Position);
+        Assert.Equal(0, stream.Read(third));
+    }
+
+    [Fact]
+    public void Seek_TracksPosition()
+    {
+        using var stream = new ZeroStream(100);
+        Assert.Equal(50, stream.Seek(50, SeekOrigin.Begin));
+        Assert.Equal(50, stream.Position);
+        Assert.Equal(75, stream.Seek(25, SeekOrigin.Current));
+        Assert.Equal(90, stream.Seek(-10, SeekOrigin.End));
+    }
+}

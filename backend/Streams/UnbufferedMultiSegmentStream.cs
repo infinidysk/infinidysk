@@ -106,7 +106,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                         if (_consecutiveZeroFills >= MaxConsecutiveZeroFills)
                             throw;
 
-                        _stream = new MemoryStream(new byte[fill], writable: false);
+                        _stream = new ZeroStream(fill);
                     }
                 }
             }

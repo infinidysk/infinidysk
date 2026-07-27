@@ -710,7 +710,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
 
         return SegmentDownloadResult.ZeroFill(
-            new MemoryStream(new byte[fill], writable: false),
+            new ZeroStream(fill),
             messageTemplate,
             segmentId,
             fill,
