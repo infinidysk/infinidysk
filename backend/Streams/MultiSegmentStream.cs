@@ -748,8 +748,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             if (lease is null)
                 lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
 
-            var capacity = estimate is > 0 and <= int.MaxValue ? (int)estimate : 0;
-            var buffer = new MemoryStream(capacity);
+            var buffer = new MemoryStream(DrainBufferCapacity(estimate, hasExactSize));
             await source.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
             var drained = buffer.Length;
             if (hasExactSize)
@@ -777,6 +776,33 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             await source.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Capacity for a segment drain buffer.
+    ///
+    /// An exact size is used as-is. An estimate is not: the estimate is
+    /// fileSize/segmentCount, an average that the shorter final segment drags
+    /// strictly below the size of a full segment. Used directly, every full
+    /// segment overflows it by a few hundred bytes and MemoryStream answers an
+    /// overflow by doubling — so each buffered segment ends up holding twice the
+    /// memory it needs, on the Large Object Heap, and a stream keeps
+    /// <c>usenet.article-buffer-size</c> of them at once.
+    ///
+    /// For a file of n-1 uniform segments plus a partial tail, the worst case (an
+    /// empty tail) puts a full segment at <c>average * n / (n - 1)</c> — an
+    /// overshoot of <c>1 / (n - 1)</c> — so 1/16 covers every file with 17 or
+    /// more segments. The division rounds up because truncating leaves the bound
+    /// a byte short exactly at the boundary. Anything still short simply grows
+    /// once, as it did before.
+    /// </summary>
+    internal static int DrainBufferCapacity(long estimate, bool isExact)
+    {
+        if (estimate is <= 0 or > int.MaxValue) return 0;
+        if (isExact) return (int)estimate;
+
+        var padded = estimate + (estimate + 15) / 16;
+        return padded > int.MaxValue ? (int)estimate : (int)padded;
     }
 
     private async ValueTask<ArticleByteLease> LeaseSegmentBytesAsync(
