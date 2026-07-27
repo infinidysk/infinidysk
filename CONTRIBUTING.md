@@ -47,9 +47,9 @@ cd frontend && npm install && npm run dev
 
 `npm run dev` silently runs `scripts/sync-dev-env.sh` via the `predev` hook; if the API key drifts, restart the backend with `scripts/run-backend.sh`. The manual `dotnet publish` / env-var flow below remains supported.
 
-`scripts/run-backend.sh` defaults `LOG_LEVEL=Debug` (and `LOG_BUFFER_SIZE=2000`, `STREAM_TRACE_EVENTS=20000`) when unset so local playback debugging is verbose. Docker/production leave these unset and keep Information-level logging.
+`scripts/run-backend.sh` defaults `LOG_LEVEL=Debug` (and `LOG_BUFFER_SIZE=2000`) when unset so local playback debugging is verbose. Docker/production leave these unset and keep Information-level logging.
 
-Stream tracing is **opt-in**: it only runs when `STREAM_TRACE_EVENTS` is set to a positive value (the run script does this for local dev). When unset or `0` — the Docker/production default — no trace events are recorded and the trace APIs report `enabled: false`.
+Stream tracing is **opt-in** and off by default. Toggle it from **Settings → Support** for 15/30/60 minutes (no restart; it auto-expires and never survives a restart), or set `STREAM_TRACE_EVENTS` to a positive value for an always-on capture from startup. When tracing is off, no trace events are recorded and the trace APIs report `enabled: false`.
 
 yEnc-decoding tests are skipped on platforms where the rapidyenc native library is unavailable (currently macOS arm64); they run in Linux CI.
 

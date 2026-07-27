@@ -24,7 +24,7 @@ cd frontend && npm install && npm run dev
 
 UI: `http://localhost:5173` → proxies to backend `:5000`.
 
-`run-backend.sh` defaults `LOG_LEVEL=Debug`, `LOG_BUFFER_SIZE=2000`, `STREAM_TRACE_EVENTS=20000` for local debugging. Docker leaves these unset.
+`run-backend.sh` defaults `LOG_LEVEL=Debug` and `LOG_BUFFER_SIZE=2000` for local debugging. Docker leaves these unset. Stream tracing is off by default — toggle it from Settings → Support, or export `STREAM_TRACE_EVENTS=20000` for an always-on capture.
 
 ## Real-provider playback
 

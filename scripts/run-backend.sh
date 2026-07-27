@@ -30,7 +30,9 @@ Environment (defaults shown):
   FRONTEND_BACKEND_API_KEY=<persisted in $CONFIG_PATH/.frontend-backend-api-key>
   LOG_LEVEL=Debug
   LOG_BUFFER_SIZE=2000
-  STREAM_TRACE_EVENTS=20000
+
+Stream tracing is off by default; enable it from Settings -> Support, or export
+STREAM_TRACE_EVENTS=20000 before starting for an always-on local capture.
 
 frontend/.env is written automatically for npm run dev.
 EOF
@@ -72,7 +74,8 @@ export ASPNETCORE_URLS="${ASPNETCORE_URLS:-$BACKEND_URL}"
 # Local-dev defaults only (Docker/entrypoint leave LOG_LEVEL unset → Information).
 export LOG_LEVEL="${LOG_LEVEL:-Debug}"
 export LOG_BUFFER_SIZE="${LOG_BUFFER_SIZE:-2000}"
-export STREAM_TRACE_EVENTS="${STREAM_TRACE_EVENTS:-20000}"
+# STREAM_TRACE_EVENTS is deliberately not defaulted: tracing is togglable from
+# Settings -> Support, and forcing it on here hid that path during local testing.
 
 API_KEY_FILE="$CONFIG_PATH/.frontend-backend-api-key"
 if [[ -z "${FRONTEND_BACKEND_API_KEY:-}" ]]; then

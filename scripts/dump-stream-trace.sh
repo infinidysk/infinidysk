@@ -40,8 +40,8 @@ auth_hdr=(-H "x-api-key: $API_KEY")
 SESSIONS_JSON="$(curl -fsS "${auth_hdr[@]}" "$BACKEND_URL/api/get-stream-traces?limit=1")"
 ENABLED="$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("enabled", False)).lower())' <<<"$SESSIONS_JSON")"
 if [[ "$ENABLED" != "true" ]]; then
-  echo "Stream tracing is disabled (STREAM_TRACE_EVENTS unset or 0)." >&2
-  echo "Start the backend via scripts/run-backend.sh, or export STREAM_TRACE_EVENTS=20000 and restart." >&2
+  echo "Stream tracing is disabled." >&2
+  echo "Enable it from Settings -> Support (no restart needed), or export STREAM_TRACE_EVENTS=20000 and restart." >&2
   exit 1
 fi
 

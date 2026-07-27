@@ -54,9 +54,9 @@ class Program
         // background service running at Debug cannot evict them before a support
         // pack is collected.
         var warningLogBuffer = new WarningLogBuffer(new LogBufferSink(500));
-        // Stream tracing is opt-in: unset or 0 disables it. scripts/run-backend.sh
-        // enables it for local dev; Docker/production leave it off by default.
-        // UI enablement (Settings → Support) can also turn it on at runtime with a TTL.
+        // Stream tracing is opt-in: unset or 0 disables it. Setting the env var opts
+        // into an always-on capture with no expiry; Settings → Support can also turn
+        // it on at runtime with a TTL, which is the path most installs use.
         var streamTraceEvents = EnvironmentUtil.GetLongVariable("STREAM_TRACE_EVENTS") ?? 0;
         var streamTraceBuffer = streamTraceEvents > 0
             ? new StreamTraceBuffer(

@@ -21,7 +21,7 @@ Capture per-segment playback events while reproducing buffering or seek stalls:
 4. Download a support pack from the same page while tracing is still on — `stream-traces/` rides along in the archive.
 5. Tracing auto-disables when the timer elapses, and UI-enabled tracing always resets on restart. It is memory-only (capped at 20,000 events) and never written to disk outside the support pack.
 
-Local backends started with `scripts/run-backend.sh` still enable `STREAM_TRACE_EVENTS` with no expiry. Dump a single session with `./scripts/dump-stream-trace.sh` — see [Contributing](../community/contributing.md).
+Setting `STREAM_TRACE_EVENTS` still enables tracing from startup with no expiry, which is handy for local dev. Dump a single session with `./scripts/dump-stream-trace.sh` — see [Contributing](../community/contributing.md).
 
 ## .NET crash dumps (opt-in)
 
