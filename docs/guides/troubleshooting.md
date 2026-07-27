@@ -20,6 +20,24 @@
 - STRM: Base URL reachable from Emby/Jellyfin?
 - Check Automatic Queue Management rules — [Arrs](../configuration/arrs.md).
 
+## 403 / 405 on MKCOL, PUT or DELETE
+
+The mount is a **read-only** virtual filesystem — `/content`, `/completed-symlinks` and `/.ids`
+serve data streamed from Usenet and accept no writes. Refused writes are expected, not a fault:
+
+- `403 Forbidden` — a client tried to create, copy, move or upload something.
+- `405 Method Not Allowed` — `MKCOL` targeted a directory that already exists.
+
+Logs show one aggregated warning per read-only path every 5 minutes (`Refused to create item under
+read-only path …`), with per-attempt detail at `LOG_LEVEL=debug`. NzbDAV cannot stop a client from
+re-attempting, so fix it at the source — the warning and the access-log line both name the client IP
+and User-Agent:
+
+- Media servers (Emby/Jellyfin/Plex/Kodi): turn off saving metadata, artwork or `.nfo`/`.srt`
+  sidecars **into media folders**, or scan your library rather than the NzbDAV mount.
+- *Arr: disable metadata/extra-file writing for the affected root folder.
+- rclone: mount with `--read-only` so it stops probing for writability.
+
 ## `addurl` SSRF / private indexer [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }
 
 Allow Docker DNS or LAN hosts under **Trusted local hosts** — [SABnzbd API](../features/sab-api.md).
