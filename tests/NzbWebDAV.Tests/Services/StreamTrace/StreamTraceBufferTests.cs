@@ -61,4 +61,71 @@ public class StreamTraceBufferTests
         Assert.Equal(newer, sessions[0].SessionId);
         Assert.Equal(older, sessions[1].SessionId);
     }
+
+    [Fact]
+    public void EnableFor_UiSource_CapturesEventsUntilDisabled()
+    {
+        var buffer = new StreamTraceBuffer(100, enabled: false);
+        Assert.False(buffer.Enabled);
+
+        var status = buffer.EnableFor(TimeSpan.FromMinutes(15), 5_000, StreamTraceBuffer.SourceUi);
+        Assert.True(status.Enabled);
+        Assert.Equal(StreamTraceBuffer.SourceUi, status.Source);
+        Assert.True(status.ExpiresAtUnixMs > 0);
+        Assert.Equal(5_000, status.Capacity);
+
+        var session = Guid.NewGuid();
+        buffer.RangeOpen(session, "/view/a.mkv", "GET", 0, 1, 10, null, null);
+        Assert.Single(buffer.GetSessionEvents(session));
+
+        buffer.Disable();
+        Assert.False(buffer.Enabled);
+        Assert.Empty(buffer.ListSessions());
+        Assert.Empty(buffer.GetSessionEvents(session));
+    }
+
+    [Fact]
+    public void EnableFor_ClampsUiCapacityAndLeavesEnvCeilingHigher()
+    {
+        var ui = new StreamTraceBuffer(100, enabled: false);
+        var uiStatus = ui.EnableFor(TimeSpan.FromMinutes(30), 999_999, StreamTraceBuffer.SourceUi);
+        Assert.Equal(StreamTraceBuffer.UiMaxCapacity, uiStatus.Capacity);
+
+        var env = new StreamTraceBuffer(100, enabled: false);
+        var envStatus = env.EnableFor(TimeSpan.Zero, 150_000, StreamTraceBuffer.SourceEnv);
+        Assert.Equal(150_000, envStatus.Capacity);
+        Assert.Equal(0, envStatus.ExpiresAtUnixMs);
+        Assert.True(env.Enabled);
+        Assert.False(env.IsExpired);
+    }
+
+    [Fact]
+    public void IsExpired_BecomesTrueAfterZeroTtlWindow()
+    {
+        var buffer = new StreamTraceBuffer(100, enabled: false);
+        // A 1ms TTL is enough to expire without sleeping long in the test.
+        buffer.EnableFor(TimeSpan.FromMilliseconds(1), 100, StreamTraceBuffer.SourceUi);
+        Thread.Sleep(5);
+        Assert.True(buffer.IsExpired);
+        Assert.False(buffer.Enabled);
+
+        buffer.Disable();
+        Assert.False(buffer.IsExpired);
+        Assert.False(buffer.Enabled);
+    }
+
+    [Fact]
+    public void GetRecentEvents_ReturnsNewestWindowOldestFirst()
+    {
+        var buffer = new StreamTraceBuffer(100);
+        var session = Guid.NewGuid();
+        for (var i = 0; i < 10; i++)
+            buffer.Seek(session, i);
+
+        var recent = buffer.GetRecentEvents(3);
+        Assert.Equal(3, recent.Count);
+        Assert.True(recent[0].Sequence < recent[1].Sequence);
+        Assert.True(recent[1].Sequence < recent[2].Sequence);
+        Assert.Equal(10, recent[^1].Sequence);
+    }
 }

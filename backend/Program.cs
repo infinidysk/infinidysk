@@ -56,10 +56,13 @@ class Program
         var warningLogBuffer = new WarningLogBuffer(new LogBufferSink(500));
         // Stream tracing is opt-in: unset or 0 disables it. scripts/run-backend.sh
         // enables it for local dev; Docker/production leave it off by default.
+        // UI enablement (Settings → Support) can also turn it on at runtime with a TTL.
         var streamTraceEvents = EnvironmentUtil.GetLongVariable("STREAM_TRACE_EVENTS") ?? 0;
-        var streamTraceBuffer = new StreamTraceBuffer(
-            (int)Math.Clamp(streamTraceEvents, 100, 200000),
-            enabled: streamTraceEvents > 0);
+        var streamTraceBuffer = streamTraceEvents > 0
+            ? new StreamTraceBuffer(
+                (int)Math.Clamp(streamTraceEvents, 100, StreamTraceBuffer.EnvMaxCapacity),
+                enabled: true)
+            : new StreamTraceBuffer(StreamTraceBuffer.DefaultUiCapacity, enabled: false);
         StreamTrace.Configure(streamTraceBuffer);
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Is(level)
@@ -196,6 +199,7 @@ class Program
                 .AddSingleton(logBufferSink)
                 .AddSingleton(warningLogBuffer)
                 .AddSingleton(streamTraceBuffer)
+                .AddSingleton<NzbWebDAV.Services.StreamTrace.StreamTraceStatusBroadcaster>()
                 .AddSingleton(sp =>
                 {
                     var cfg = sp.GetRequiredService<ConfigManager>();
@@ -278,6 +282,7 @@ class Program
                 .AddHostedService<MultipartFileSizeRepairService>()
                 .AddHostedService<RemoveOrphanedFilesSchedulerService>()
                 .AddHostedService<ActiveReadsBroadcaster>()
+                .AddHostedService<NzbWebDAV.Services.StreamTrace.StreamTraceExpiryService>()
                 .AddSingleton<WatchtowerStore>()
                 .AddSingleton<ListSourceEnumerator>()
                 .AddSingleton<EpisodeEnumerator>()

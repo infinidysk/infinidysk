@@ -13,12 +13,17 @@ public class GetStreamTracesController(StreamTraceBuffer buffer) : BaseApiContro
             ? Math.Clamp(n, 1, 500)
             : 50;
 
+        var status = buffer.GetStatus();
         var sessions = buffer.ListSessions(limit);
         return Task.FromResult<IActionResult>(Ok(new GetStreamTracesResponse
         {
             Status = true,
-            Enabled = buffer.Enabled,
-            Capacity = buffer.Capacity,
+            Enabled = status.Enabled,
+            Source = status.Source,
+            ExpiresAtUnixMs = status.ExpiresAtUnixMs,
+            Capacity = status.Capacity,
+            EventCount = status.EventCount,
+            SessionCount = status.SessionCount,
             Sessions = sessions.Select(s => new StreamTraceSessionDto
             {
                 SessionId = s.SessionId,
