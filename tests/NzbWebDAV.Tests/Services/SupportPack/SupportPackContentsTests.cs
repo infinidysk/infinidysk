@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
@@ -94,9 +95,65 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.Equal((long)(generatedAt - reportedStart).TotalSeconds, uptimeSeconds);
     }
 
+    [Fact]
+    public async Task Pack_IncludesStreamTracesOnlyWhileTracingIsEnabled()
+    {
+        var disabled = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)),
+            new StreamTraceBuffer(100, enabled: false));
+
+        using (var disabledManifest = JsonDocument.Parse(disabled["manifest.json"]))
+        {
+            Assert.Equal(
+                "disabled",
+                disabledManifest.RootElement.GetProperty("sections").GetProperty("streamTraces").GetString());
+        }
+
+        Assert.False(disabled.ContainsKey("stream-traces/sessions.json"));
+        Assert.False(disabled.ContainsKey("stream-traces/events.jsonl"));
+
+        var buffer = new StreamTraceBuffer(100, enabled: false);
+        buffer.EnableFor(TimeSpan.FromMinutes(15), 100, StreamTraceBuffer.SourceUi);
+        var session = Guid.NewGuid();
+        buffer.RangeOpen(session, "/view/movie.mkv", "GET", 0, 99, 1000, "ua", "203.0.113.10");
+        buffer.Seek(session, 50);
+        buffer.Segment(session, "provider-a", SegmentFetch.FetchStatus.Ok, 12, 0, "msgid@a");
+        buffer.RangeEnd(session, ReadSession.EndReasonCode.Completed, 100);
+
+        var enabled = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)),
+            buffer);
+
+        using var enabledManifest = JsonDocument.Parse(enabled["manifest.json"]);
+        Assert.Equal(
+            "included",
+            enabledManifest.RootElement.GetProperty("sections").GetProperty("streamTraces").GetString());
+
+        Assert.Contains("/view/movie.mkv", enabled["stream-traces/sessions.json"]);
+        Assert.Contains("RangeOpen", enabled["stream-traces/events.jsonl"]);
+        Assert.Contains("Seek", enabled["stream-traces/events.jsonl"]);
+        Assert.Contains("[IP-", enabled["stream-traces/events.jsonl"]);
+        Assert.DoesNotContain("203.0.113.10", enabled["stream-traces/events.jsonl"]);
+
+        using var environment = JsonDocument.Parse(enabled["environment.json"]);
+        var tracing = environment.RootElement.GetProperty("streamTracing");
+        Assert.True(tracing.GetProperty("enabled").GetBoolean());
+        Assert.Equal("ui", tracing.GetProperty("source").GetString());
+        Assert.True(tracing.GetProperty("expiresAtUnixMs").GetInt64() > 0);
+        Assert.True(tracing.GetProperty("eventCount").GetInt64() >= 4);
+    }
+
+    private static Task<Dictionary<string, string>> ReadPackEntriesAsync(
+        LogBufferSink logBuffer,
+        WarningLogBuffer warningBuffer) =>
+        ReadPackEntriesAsync(logBuffer, warningBuffer, new StreamTraceBuffer(100, enabled: false));
+
     private static async Task<Dictionary<string, string>> ReadPackEntriesAsync(
         LogBufferSink logBuffer,
-        WarningLogBuffer warningBuffer)
+        WarningLogBuffer warningBuffer,
+        StreamTraceBuffer streamTraceBuffer)
     {
         var configManager = new ConfigManager();
         var websocketManager = new WebsocketManager();
@@ -106,7 +163,7 @@ public sealed class SupportPackContentsTests : IDisposable
             new ProviderUsageTracker(),
             new MetricsWriter(),
             new ProviderBytesTracker(),
-            new StreamTraceBuffer(100, enabled: false),
+            streamTraceBuffer,
             new ActiveReadRegistry());
 
         var service = new SupportPackService(
@@ -117,13 +174,14 @@ public sealed class SupportPackContentsTests : IDisposable
             new ProviderBytesTracker(),
             usenet,
             new ArticleMissNegativeCache(configManager),
-            new InFlightArticleBudget(64 * 1024 * 1024));
+            new InFlightArticleBudget(64 * 1024 * 1024),
+            streamTraceBuffer);
 
-        using var buffer = new MemoryStream();
-        await service.WriteAsync(buffer, CancellationToken.None);
+        using var memory = new MemoryStream();
+        await service.WriteAsync(memory, CancellationToken.None);
 
-        buffer.Position = 0;
-        using var archive = new ZipArchive(buffer, ZipArchiveMode.Read);
+        memory.Position = 0;
+        using var archive = new ZipArchive(memory, ZipArchiveMode.Read);
         var entries = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var entry in archive.Entries)
         {
