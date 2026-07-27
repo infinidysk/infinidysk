@@ -22,6 +22,7 @@ import { getAppVersion } from "./utils/version.server";
 import { checkForUpdate } from "./utils/update-check.server";
 import { backendClient } from "./clients/backend-client.server";
 import { MigrationBoundary } from "./components/migration-progress";
+import { StreamTracingBanner } from "./components/stream-tracing-banner";
 
 export async function loader({ request }: Route.LoaderArgs) {
   // Single-fetch navigation/revalidation uses internal `.data` URLs
@@ -148,7 +149,14 @@ export default function App({ loaderData }: Route.ComponentProps) {
             hasUsenetProviders={hasUsenetProviders}
           />
         )}
-        bodyChild={showLoading ? <Loading /> : <Outlet />}
+        bodyChild={showLoading ? <Loading /> : (
+          <>
+            <div className="px-4 pt-4 md:px-8">
+              <StreamTracingBanner />
+            </div>
+            <Outlet />
+          </>
+        )}
         leftNavChild={
           <LeftNavigation
             isWatchdogEnabled={isWatchdogEnabled} />

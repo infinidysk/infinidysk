@@ -292,6 +292,38 @@ class BackendClient {
         });
     }
 
+    public async getStreamTracingStatus(): Promise<StreamTracingStatus> {
+        const data = await call("/api/get-stream-traces?limit=1", "Failed to get stream tracing status", {
+            method: "GET",
+        });
+        return {
+            enabled: Boolean(data.enabled),
+            source: data.source ?? "env",
+            expiresAtUnixMs: Number(data.expiresAtUnixMs ?? 0),
+            capacity: Number(data.capacity ?? 0),
+            eventCount: Number(data.eventCount ?? 0),
+            sessionCount: Number(data.sessionCount ?? 0),
+        };
+    }
+
+    public async setStreamTracing(enabled: boolean, minutes: number = 30): Promise<StreamTracingStatus> {
+        const data = await call("/api/set-stream-tracing", "Failed to update stream tracing", {
+            method: "POST",
+            body: form(
+                ["enabled", enabled ? "true" : "false"],
+                ["minutes", String(minutes)],
+            ),
+        });
+        return {
+            enabled: Boolean(data.enabled),
+            source: data.source ?? "ui",
+            expiresAtUnixMs: Number(data.expiresAtUnixMs ?? 0),
+            capacity: Number(data.capacity ?? 0),
+            eventCount: Number(data.eventCount ?? 0),
+            sessionCount: Number(data.sessionCount ?? 0),
+        };
+    }
+
     public async getWatchtower(params: WatchtowerQuery = {}): Promise<WatchtowerData> {
         const qs = new URLSearchParams();
         if (params.state) qs.set("state", params.state);
@@ -827,6 +859,15 @@ export type GetLogsResponse = {
     oldestSequence: number,
     newestSequence: number,
     capacity: number,
+}
+
+export type StreamTracingStatus = {
+    enabled: boolean,
+    source: string,
+    expiresAtUnixMs: number,
+    capacity: number,
+    eventCount: number,
+    sessionCount: number,
 }
 
 export type LogBroadcastMessage = {
