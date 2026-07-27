@@ -207,14 +207,14 @@ export function SupportSettings() {
                     <Toggle
                         label={enabled ? "Tracing on" : "Tracing off"}
                         checked={enabled}
-                        disabled={tracingBusy || status?.source === "env"}
+                        disabled={tracingBusy}
                         onChange={(event) => void setTracing(event.target.checked, minutes)}
                     />
                 </div>
 
                 <p className="text-sm text-base-content/70" aria-live="polite">{statusLine}</p>
 
-                {enabled && status?.source === "ui" && (
+                {enabled && (
                     <div>
                         <Button
                             variant="outline"
@@ -228,8 +228,8 @@ export function SupportSettings() {
 
                 {status?.source === "env" && enabled && (
                     <HelpText>
-                        Tracing was enabled by STREAM_TRACE_EVENTS and has no UI expiry. Clear the env var
-                        and restart to turn it off.
+                        Tracing was started by STREAM_TRACE_EVENTS, so it has no expiry. Turning it off here
+                        applies until the next restart; clear the env var to keep it off permanently.
                     </HelpText>
                 )}
 

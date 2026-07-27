@@ -76,11 +76,9 @@ export function StreamTracingBanner() {
                     Tracing uses RAM only and resets on restart.
                 </span>
             </div>
-            {status.source === "ui" && (
-                <Button variant="ghost" size="small" disabled={busy} onClick={() => void turnOff()}>
-                    Turn off
-                </Button>
-            )}
+            <Button variant="ghost" size="small" disabled={busy} onClick={() => void turnOff()}>
+                Turn off
+            </Button>
         </Alert>
     );
 }
