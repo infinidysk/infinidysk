@@ -14,6 +14,7 @@ import {
 } from "~/components/ui";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
 import type { StreamTracingStatus } from "~/components/stream-tracing-banner";
+import { DisableTracingConfirmModal } from "~/components/stream-tracing-confirm";
 
 type Message = { text: string; variant: "success" | "danger" } | null;
 
@@ -41,6 +42,7 @@ export function SupportSettings() {
     const [minutes, setMinutes] = useState<number>(30);
     const [status, setStatus] = useState<StreamTracingStatus | null>(null);
     const [now, setNow] = useState(() => Date.now());
+    const [confirmDisable, setConfirmDisable] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -128,6 +130,14 @@ export function SupportSettings() {
         }
     }, [minutes]);
 
+    const requestDisable = useCallback(() => {
+        if ((status?.eventCount ?? 0) > 0) {
+            setConfirmDisable(true);
+            return;
+        }
+        void setTracing(false);
+    }, [status?.eventCount, setTracing]);
+
     const enabled = Boolean(status?.enabled);
     const statusLine = enabled && status
         ? `Tracing active — ${formatRemaining(status.expiresAtUnixMs, now)}, ${status.eventCount.toLocaleString()} events across ${status.sessionCount.toLocaleString()} sessions`
@@ -208,7 +218,13 @@ export function SupportSettings() {
                         label={enabled ? "Tracing on" : "Tracing off"}
                         checked={enabled}
                         disabled={tracingBusy}
-                        onChange={(event) => void setTracing(event.target.checked, minutes)}
+                        onChange={(event) => {
+                            if (event.target.checked) {
+                                void setTracing(true, minutes);
+                            } else {
+                                requestDisable();
+                            }
+                        }}
                     />
                 </div>
 
@@ -219,7 +235,7 @@ export function SupportSettings() {
                         <Button
                             variant="outline"
                             disabled={tracingBusy}
-                            onClick={() => void setTracing(false)}
+                            onClick={requestDisable}
                         >
                             Turn off now
                         </Button>
@@ -235,6 +251,17 @@ export function SupportSettings() {
 
                 {tracingMessage && <Alert variant={tracingMessage.variant}>{tracingMessage.text}</Alert>}
             </SettingsCard>
+
+            <DisableTracingConfirmModal
+                show={confirmDisable}
+                eventCount={status?.eventCount ?? 0}
+                sessionCount={status?.sessionCount ?? 0}
+                onCancel={() => setConfirmDisable(false)}
+                onConfirm={() => {
+                    setConfirmDisable(false);
+                    void setTracing(false);
+                }}
+            />
         </SettingsPage>
     );
 }
