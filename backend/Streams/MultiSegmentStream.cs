@@ -758,7 +758,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             if (lease is null)
                 lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
 
-            var capacity = estimate is > 0 and <= int.MaxValue ? (int)estimate : 0;
+            var capacity = await ResolveDrainCapacityHintAsync(
+                source, segmentIndex, estimate, cancellationToken).ConfigureAwait(false);
             buffer = new PooledBufferStream(capacity);
             var traceRange = MultiProviderNntpClient.CurrentStreamTraceRange;
             var drainStarted = Stopwatch.GetTimestamp();
@@ -804,6 +805,55 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             if (!sourceDisposeAttempted)
                 await source.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Uses imported ranges first, then the body's exact decoded yEnc part size, and leaves
+    /// the file average as a fallback only. This chooses a rent hint; it never controls output.
+    /// </summary>
+    private async ValueTask<int> ResolveDrainCapacityHintAsync(
+        Stream source,
+        int segmentIndex,
+        long estimate,
+        CancellationToken cancellationToken)
+    {
+        if (_segmentSizes.TryGetExactSize(segmentIndex, out var exact))
+            return ToCapacity(exact);
+
+        if (estimate <= 0 || estimate > Array.MaxLength)
+            return 0;
+
+        if (source is not YencStream yencSource)
+            return ToCapacity(estimate);
+
+        var header = await yencSource.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+        if (header is not null
+            && header.PartSize > 0
+            && header.PartSize <= Array.MaxLength
+            && IsPlausiblePartSize(
+                header.PartSize, header.TotalParts, _segmentIds.Length, estimate))
+            return (int)header.PartSize;
+
+        return ToCapacity(estimate);
+    }
+
+    internal static int ToCapacity(long value) =>
+        value > 0 && value <= Array.MaxLength ? (int)value : 0;
+
+    /// <summary>
+    /// Rejects remote yEnc PartSize values that cannot be a full-part size for this file
+    /// average, so a malformed header cannot request an arbitrary multi-gigabyte rent.
+    /// </summary>
+    internal static bool IsPlausiblePartSize(
+        long partSize, int totalParts, int remainingParts, long estimate)
+    {
+        if (partSize <= 0 || estimate <= 0) return false;
+        if (totalParts < remainingParts) return false;
+        if (totalParts <= 1) return partSize <= estimate;
+        // EstimatedSegmentSize is floor(fileSize / totalParts), so add one before deriving
+        // the strict upper bound to cover the discarded integer-division remainder.
+        var upperBound = Math.Ceiling((estimate + 1d) * totalParts / (totalParts - 1));
+        return partSize <= upperBound;
     }
 
     private async ValueTask<ArticleByteLease> LeaseSegmentBytesAsync(
