@@ -44,6 +44,7 @@ public class DownloadingNntpClient : WrappingNntpClient
             _streamingSemaphore.UpdateMaxAllowed(_configManager.GetMaxDownloadConnections());
 
         if (e.ChangedConfig.ContainsKey(ConfigKeys.UsenetMaxQueueConnections)
+            || e.ChangedConfig.ContainsKey(ConfigKeys.UsenetMaxQueueConnectionsPreset)
             || e.ChangedConfig.ContainsKey(ConfigKeys.UsenetMaxDownloadConnections)
             || e.ChangedConfig.ContainsKey(ConfigKeys.UsenetProviders))
             _queueSemaphore.UpdateMaxAllowed(_configManager.GetMaxQueueConnections());

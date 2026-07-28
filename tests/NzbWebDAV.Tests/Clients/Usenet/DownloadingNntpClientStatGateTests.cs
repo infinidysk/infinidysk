@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
@@ -37,6 +39,40 @@ public class DownloadingNntpClientStatGateTests
         await Task.WhenAll(tasks);
 
         Assert.True(maxInFlight <= 2);
+        Assert.Equal(0, Volatile.Read(ref inFlight));
+    }
+
+    [Fact]
+    public async Task QueueBudget_FollowsPresetChangesWithoutRestart()
+    {
+        var gate = new ManualResetEventSlim(false);
+        var inFlight = 0;
+        var fake = new BlockingStatNntpClient(gate,
+            () => Interlocked.Increment(ref inFlight),
+            () => Interlocked.Decrement(ref inFlight));
+
+        // "low" is a quarter of the eight pooled connections.
+        var config = CreatePresetConfig("low", poolConnections: 8);
+        Assert.Equal(2, config.GetMaxQueueConnections());
+        using var client = new DownloadingNntpClient(fake, config);
+
+        var tasks = Enumerable.Range(0, 8)
+            .Select(i => client.StatAsync(new SegmentId($"seg-{i}"), CancellationToken.None))
+            .ToArray();
+
+        await WaitUntilAsync(() => Volatile.Read(ref inFlight) == 2, TimeSpan.FromSeconds(2));
+        await Task.Delay(50);
+        Assert.Equal(2, Volatile.Read(ref inFlight));
+
+        config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.UsenetMaxQueueConnectionsPreset, ConfigValue = "max" },
+        ]);
+
+        await WaitUntilAsync(() => Volatile.Read(ref inFlight) == 8, TimeSpan.FromSeconds(2));
+
+        gate.Set();
+        await Task.WhenAll(tasks);
         Assert.Equal(0, Volatile.Read(ref inFlight));
     }
 
@@ -242,6 +278,38 @@ public class DownloadingNntpClientStatGateTests
             },
             new ConfigItem { ConfigName = ConfigKeys.UsenetMaxQueueConnections, ConfigValue = maxQueueConnections.ToString() },
             new ConfigItem { ConfigName = ConfigKeys.UsenetMaxDownloadConnections, ConfigValue = maxDownloadConnections.ToString() },
+        ]);
+        return config;
+    }
+
+    // Provider JSON is serialized from the model rather than hand-written: config
+    // deserialization is case-sensitive, so camelCased literals bind to nothing and
+    // the pooled total silently collapses to 1.
+    private static ConfigManager CreatePresetConfig(string preset, int poolConnections)
+    {
+        var providers = JsonSerializer.Serialize(new UsenetProviderConfig
+        {
+            Providers =
+            [
+                new UsenetProviderConfig.ConnectionDetails
+                {
+                    Type = ProviderType.Pooled,
+                    Host = "nntp.example",
+                    Port = 563,
+                    UseSsl = true,
+                    User = "u",
+                    Pass = "p",
+                    MaxConnections = poolConnections,
+                },
+            ]
+        });
+
+        var config = new ConfigManager();
+        config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.UsenetProviders, ConfigValue = providers },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetMaxQueueConnectionsPreset, ConfigValue = preset },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetMaxDownloadConnections, ConfigValue = "10" },
         ]);
         return config;
     }
