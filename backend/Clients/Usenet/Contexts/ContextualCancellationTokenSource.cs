@@ -55,6 +55,11 @@ public class ContextualCancellationTokenSource : IDisposable
         _cts.Cancel();
     }
 
+    public void CancelAfter(TimeSpan delay)
+    {
+        _cts.CancelAfter(delay);
+    }
+
     public Task CancelAsync()
     {
         return _cts.CancelAsync();

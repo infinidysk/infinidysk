@@ -20,8 +20,11 @@ namespace NzbWebDAV.Clients.Usenet;
 ///   * The connection pool enforces a maximum number of allowed connections
 ///   * When a connection is available, the NNTP command executes immediately
 ///   * When a connection is not available, the NNTP command waits until a connection becomes available.
-///   * When multiple commands are awaiting a connection,
-///     then BODY/ARTICLE commands have higher priority than STAT/HEAD/DATE commands.
+///   * When multiple commands are awaiting a connection, admission follows the
+///     download-priority context on the caller's token: playback work (WebDAV reads and
+///     playback verification) waits in the High lane, while queue and background
+///     maintenance work waits in the Low lane. The pool's Streaming Priority odds decide
+///     how the two lanes share connections while both are occupied.
 /// </summary>
 /// <param name="connectionPool"></param>
 /// <param name="type"></param>
@@ -100,6 +103,12 @@ public class MultiConnectionNntpClient(
     public int InFlightConnections => ActiveConnections + PendingSelections;
     public ConnectionPoolChurn GetConnectionChurn() => connectionPool.GetChurn();
 
+    /// <summary>
+    /// Applies new Streaming Priority odds to this provider's connection gate without
+    /// rebuilding the pool.
+    /// </summary>
+    public void UpdatePriorityOdds(SemaphorePriorityOdds odds) => connectionPool.UpdatePriorityOdds(odds);
+
     private int _pendingSelections;
     public int PendingSelections => Volatile.Read(ref _pendingSelections);
     public void ReservePending() => Interlocked.Increment(ref _pendingSelections);
@@ -129,7 +138,7 @@ public class MultiConnectionNntpClient(
     {
         return RunWithConnection(
             "STAT",
-            SemaphorePriority.Low,
+            GetDownloadPriority(ct),
             (connection, _, commandCt) => connection.StatAsync(segmentId, commandCt),
             onConnectionReadyAgain: null,
             ct
@@ -140,7 +149,7 @@ public class MultiConnectionNntpClient(
     {
         return RunWithConnection(
             "HEAD",
-            SemaphorePriority.Low,
+            GetDownloadPriority(ct),
             (connection, _, commandCt) => connection.HeadAsync(segmentId, commandCt),
             onConnectionReadyAgain: null,
             ct
@@ -599,16 +608,18 @@ public class MultiConnectionNntpClient(
         => RunPipelinedAsync(c => c.DecodedArticlesPipelinedAsync(segmentIds, depth, cancellationToken), cancellationToken);
 
     /// <summary>
-    /// STAT pipeline lease: low priority, no circuit-breaker updates (matching single
-    /// StatAsync). Still replaces the connection on hard failure because UsenetSharp
-    /// poisons it mid-batch.
+    /// STAT pipeline lease: inherits download priority from the caller's token (High for
+    /// playback verification, Low for hosted health), no circuit-breaker updates (matching
+    /// single StatAsync). Still replaces the connection on hard failure because UsenetSharp
+    /// poisons it mid-batch. Acquisition goes through the shared helper so the pool wait
+    /// is instrumented and arbitrated like every other command.
     /// </summary>
     private async IAsyncEnumerable<PipelinedStatResult> RunPipelinedStatAsync(
         Func<INntpClient, IAsyncEnumerable<PipelinedStatResult>> batchFactory,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var connectionLock = await connectionPool
-            .GetConnectionLockAsync(SemaphorePriority.Low, cancellationToken)
+        var connectionLock = await AcquireConnectionLockAsync(
+                GetDownloadPriority(cancellationToken), cancellationToken)
             .ConfigureAwait(false);
         var completed = false;
         try
