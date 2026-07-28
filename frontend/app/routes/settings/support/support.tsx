@@ -231,8 +231,8 @@ export function SupportSettings() {
                     </span>
                 </Alert>
 
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-                    <div className="flex-1 space-y-2">
+                <div className="flex flex-col gap-4">
+                    <div className="space-y-2">
                         <Label htmlFor="stream-tracing-duration">Duration</Label>
                         <Select
                             id="stream-tracing-duration"
@@ -247,45 +247,41 @@ export function SupportSettings() {
                         </Select>
                         <HelpText>Auto-disables after the timer so tracing cannot be left on indefinitely.</HelpText>
                     </div>
-                    <Toggle
-                        label={enabled ? "Tracing on" : "Tracing off"}
-                        checked={enabled}
-                        disabled={tracingBusy}
-                        onChange={(event) => {
-                            if (event.target.checked) {
-                                void setTracing(true, minutes);
-                            } else {
-                                void setTracing(false);
-                            }
-                        }}
-                    />
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Toggle
+                            label={enabled ? "Tracing on" : "Tracing off"}
+                            checked={enabled}
+                            disabled={tracingBusy}
+                            onChange={(event) => {
+                                if (event.target.checked) {
+                                    void setTracing(true, minutes);
+                                } else {
+                                    void setTracing(false);
+                                }
+                            }}
+                        />
+                        {enabled && (
+                            <Button
+                                variant="outline"
+                                disabled={tracingBusy}
+                                onClick={() => void setTracing(false)}
+                            >
+                                Turn off now
+                            </Button>
+                        )}
+                        {retained && (
+                            <Button
+                                variant="outline"
+                                disabled={tracingBusy}
+                                onClick={() => setConfirmDiscard(true)}
+                            >
+                                Discard captured traces
+                            </Button>
+                        )}
+                    </div>
                 </div>
 
                 <p className="text-sm text-base-content/70" aria-live="polite">{statusLine}</p>
-
-                {enabled && (
-                    <div>
-                        <Button
-                            variant="outline"
-                            disabled={tracingBusy}
-                            onClick={() => void setTracing(false)}
-                        >
-                            Turn off now
-                        </Button>
-                    </div>
-                )}
-
-                {retained && (
-                    <div>
-                        <Button
-                            variant="outline"
-                            disabled={tracingBusy}
-                            onClick={() => setConfirmDiscard(true)}
-                        >
-                            Discard captured traces
-                        </Button>
-                    </div>
-                )}
 
                 {status?.source === "env" && enabled && (
                     <HelpText>
