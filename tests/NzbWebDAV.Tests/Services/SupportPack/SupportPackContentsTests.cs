@@ -380,6 +380,7 @@ public sealed class SupportPackContentsTests : IDisposable
             configManager,
             new MetricsWriter(),
             new ProviderBytesTracker(),
+            new ProviderLatencyTracker(),
             usenet,
             new ArticleMissNegativeCache(configManager),
             new InFlightArticleBudget(64 * 1024 * 1024),
