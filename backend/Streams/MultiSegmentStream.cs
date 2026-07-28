@@ -330,8 +330,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     )
     {
         var estimate = GetPlannedSegmentBytes(segmentIndex);
+        HashSet<string>? excludeCorruptProviders = null;
         for (var attempt = 0; ; attempt++)
         {
+            using var excludeScope = excludeCorruptProviders is { Count: > 0 }
+                ? MultiProviderNntpClient.ExcludeProviders(excludeCorruptProviders)
+                : null;
             var lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
             try
             {
@@ -407,6 +411,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     segmentId,
                     e.ProviderKey,
                     attempt + 1);
+                // Segment-scoped only: skip the account that returned corrupt bytes on the
+                // next attempt. Falls back to it when no other provider remains.
+                excludeCorruptProviders ??= new HashSet<string>(StringComparer.Ordinal);
+                if (!string.IsNullOrEmpty(e.ProviderKey))
+                    excludeCorruptProviders.Add(e.ProviderKey);
                 await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -584,6 +593,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         CancellationToken cancellationToken)
     {
         var failure = initialFailure;
+        var excludeCorruptProviders = new HashSet<string>(StringComparer.Ordinal);
+        if (!string.IsNullOrEmpty(failure.ProviderKey))
+            excludeCorruptProviders.Add(failure.ProviderKey);
+
         for (var attempt = 1; attempt <= MaxCorruptionRetries; attempt++)
         {
             Log.Debug(
@@ -597,6 +610,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
             try
             {
+                using var excludeScope = MultiProviderNntpClient.ExcludeProviders(excludeCorruptProviders);
                 var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                     .ConfigureAwait(false);
                 await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
@@ -606,6 +620,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             catch (UsenetCorruptArticleException exception)
             {
                 failure = exception;
+                if (!string.IsNullOrEmpty(exception.ProviderKey))
+                    excludeCorruptProviders.Add(exception.ProviderKey);
             }
         }
 
