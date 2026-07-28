@@ -43,7 +43,7 @@ WebDAV authentication and streaming/connection behavior for playback mounts.
 Playback stalls are only diagnosable if the evidence is still in the log buffer when you collect the pack:
 
 1. Set `LOG_LEVEL=INFO`. At `DEBUG`, routine background activity can fill the whole buffer within hours and evict the streaming events. `logs/warnings.log` in the pack keeps the last 500 warnings and errors regardless, so check it first.
-2. Enable **Developer stream tracing** on **Settings → Support** for 15–60 minutes (or set `STREAM_TRACE_EVENTS=20000` and restart).
+2. Enable **Developer stream tracing** on **Settings → Support** for 15–60 minutes and pick a capacity that covers the whole reproduction (default 100,000 events; or set `STREAM_TRACE_EVENTS=100000` and restart). After downloading the pack, check `manifest.json → streamTraces.overflowed` — if true, increase capacity and reproduce again.
 3. Reproduce the stall — play the file from Explore so the read goes straight to `/view`, skipping rclone and your media server.
 4. Download the pack from **Settings → Support** immediately afterwards, while tracing is still on. The buffer is in-memory and is cleared on restart.
 
