@@ -420,6 +420,19 @@ public sealed class StreamTraceBuffer
         });
     }
 
+    public void PrefetchWidth(Guid sessionId, int previousBatchSize, int batchSize)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.PrefetchWidth.ToString(),
+            PreviousBatchSize = previousBatchSize,
+            BatchSize = batchSize,
+        });
+    }
+
     /// <summary>
     /// Adds time spent blocked on <paramref name="kind"/> to the range identified by
     /// <paramref name="range"/>. Ticks are accumulated rather than milliseconds so

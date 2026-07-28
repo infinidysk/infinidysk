@@ -29,6 +29,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly string _fileName;
     private readonly Channel<Task<SegmentDownloadResult>> _streamTasks;
     private readonly int _bodyPipelineBatchSize;
+    private readonly AdaptiveBodyBatchSizer? _batchSizer;
     private readonly ContextualCancellationTokenSource _cts;
     private readonly long? _readBudget;
     private readonly long _prefetchByteCeiling;
@@ -38,6 +39,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Stream? _stream;
     private int _consecutiveZeroFills;
+    private int _deliveredSegments;
     private bool _disposed;
     private readonly Task _downloadTask;
     private readonly object _disposeGate = new();
@@ -142,6 +144,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             ? (long)articleBufferSize * estimatedSegmentSize
             : 0;
         _bodyPipelineBatchSize = Math.Min(BodyPipelineBatchSize, articleBufferSize);
+        _batchSizer = usePipelinedBodyRequests
+            ? new AdaptiveBodyBatchSizer(_bodyPipelineBatchSize)
+            : null;
         _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(articleBufferSize);
         _cts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _downloadTask = DownloadSegments(usePipelinedBodyRequests, _cts.Token);
@@ -185,8 +190,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
             await WaitForPrefetchCeilingAsync(cancellationToken).ConfigureAwait(false);
 
-            var batchCount = Math.Min(
-                _bodyPipelineBatchSize, _segmentIds.Length - batchStart);
+            // Adaptive width: narrower batches → more outstanding connections at the
+            // same article-buffer memory cost when the consumer is starving.
+            var batchWidth = _batchSizer?.Current ?? _bodyPipelineBatchSize;
+            var batchCount = Math.Min(batchWidth, _segmentIds.Length - batchStart);
             var segmentIds = new SegmentId[batchCount];
             for (var index = 0; index < batchCount; index++)
             {
@@ -855,14 +862,27 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 // pipeline is not running far enough ahead, not that the provider is slow.
                 var traceRange = MultiProviderNntpClient.CurrentStreamTraceRange;
                 var waitStarted = Stopwatch.GetTimestamp();
-                if (!await _streamTasks.Reader.WaitToReadAsync(cancellationToken)) return 0;
-                if (!_streamTasks.Reader.TryRead(out var streamTask)) return 0;
-                var result = await streamTask;
+                var wasQueued = _streamTasks.Reader.TryRead(out var streamTask);
+                if (!wasQueued)
+                {
+                    if (!await _streamTasks.Reader.WaitToReadAsync(cancellationToken)) return 0;
+                    if (!_streamTasks.Reader.TryRead(out streamTask)) return 0;
+                }
+
+                // Ready means prefetch stayed ahead; use IsCompleted (not Successfully) so
+                // faulted tasks still count as present when the consumer arrived.
+                var nextSegment = streamTask
+                    ?? throw new InvalidOperationException("Segment channel returned a null task.");
+                var readyWhenNeeded = wasQueued && nextSegment.IsCompleted;
+                var result = await nextSegment.ConfigureAwait(false);
                 StreamTrace.TryStall(
                     traceRange,
                     StreamStallKind.ConsumerWait,
                     Stopwatch.GetElapsedTime(waitStarted));
                 ReleaseInFlightPrefetchBytes(result.PlannedBytes);
+                // Ignore the first delivered segment (startup warm-up).
+                if (_deliveredSegments++ > 0)
+                    ObserveBatchReadiness(readyWhenNeeded);
                 _stream = AcceptSegment(result);
             }
 
@@ -874,6 +894,21 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             await _stream.DisposeAsync();
             _stream = null;
         }
+    }
+
+    private void ObserveBatchReadiness(bool readyWhenNeeded)
+    {
+        if (_batchSizer is null) return;
+        var change = _batchSizer.Observe(readyWhenNeeded);
+        if (change is null) return;
+
+        Log.Debug(
+            "Prefetch batch size for {FileName} changed from {PreviousBatchSize} to {BatchSize}. " +
+            "ReadyWhenNeeded={ReadyWhenNeeded}",
+            _fileName, change.Value.Previous, change.Value.Current, change.Value.ReadyWhenNeeded);
+
+        if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
+            StreamTrace.TryPrefetchWidth(sessionId, change.Value.Previous, change.Value.Current);
     }
 
     private Stream AcceptSegment(SegmentDownloadResult result)

@@ -38,6 +38,12 @@ WebDAV authentication and streaming/connection behavior for playback mounts.
 
     Raise **Max Download Connections** until throughput plateaus without pegging CPU. Baseline with a host speed test, then time a `/view` download from inside the container against the backend.
 
+## Article Buffer Size and adaptive prefetch [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+
+`usenet.article-buffer-size` bounds how many decoded articles a stream may keep ahead of the consumer — and therefore per-stream memory — not how many provider connections playback may use.
+
+When **Pipelined article downloads** is on, WebDAV BODY requests start in batches of up to four articles on one connection. If playback starves waiting for the next segment, NzbDAV automatically narrows that batch width (`4 → 2 → 1`) so more connections can work in parallel at the same buffer depth. When the consumer stays ahead, batch width recovers gradually. Connection and host-wide byte budgets still apply.
+
 ## Capturing a buffering support pack
 
 Playback stalls are only diagnosable if the evidence is still in the log buffer when you collect the pack:

@@ -33,6 +33,8 @@ public sealed record StreamTraceEvent
     [JsonPropertyName("toProvider")] public string? ToProvider { get; init; }
     [JsonPropertyName("attempt")] public int? Attempt { get; init; }
     [JsonPropertyName("message")] public string? Message { get; init; }
+    [JsonPropertyName("previousBatchSize")] public int? PreviousBatchSize { get; init; }
+    [JsonPropertyName("batchSize")] public int? BatchSize { get; init; }
 
     [JsonPropertyName("rangeGeneration")] public long? RangeGeneration { get; init; }
 
