@@ -47,12 +47,22 @@ public class MultiSegmentStreamAdaptiveWidthTests
 
         // Hold each gate until the consumer has sampled readiness on an incomplete task.
         var buffer = new byte[segmentSize];
-        await foreach (var _ in ConsumeWithStarvationLockstepAsync(stream, client, buffer, segmentCount))
+        var sawWidthTwo = false;
+        await foreach (var _ in ConsumeWithStarvationLockstepAsync(
+            stream, client, buffer, segmentCount,
+            onAfterObserve: () =>
+            {
+                if (stream.PrefetchBatchWidth == 2)
+                    sawWidthTwo = true;
+            }))
         {
         }
 
         Assert.Contains(4, client.ObservedBatchSizes);
-        Assert.Contains(2, client.ObservedBatchSizes);
+        // Sizer visits 2 even when the producer never issues at 2: under load it can narrow
+        // 4→2→1 while still blocked on a full channel of width-4 batches, then resume at 1.
+        Assert.True(sawWidthTwo, "adaptive sizer should visit width 2 while narrowing");
+        Assert.Equal(1, stream.PrefetchBatchWidth);
         Assert.Contains(1, client.ObservedBatchSizes);
     }
 
@@ -279,13 +289,18 @@ public class MultiSegmentStreamAdaptiveWidthTests
     /// Reads <paramref name="count"/> segments while holding each BODY gate closed until
     /// the consumer has sampled readiness on that incomplete task (avoids the race where
     /// releasing as soon as a batch starts makes every boundary look "ready").
+    /// After each segment (post warm-up), feeds an explicit starvation sample into the sizer
+    /// so parallel-suite IsCompleted races cannot leave the prefetch width stuck at max.
     /// </summary>
     private static async IAsyncEnumerable<int> ConsumeWithStarvationLockstepAsync(
         MultiSegmentStream stream,
         ControlledBatchNntpClient client,
         byte[] buffer,
-        int count)
+        int count,
+        Action? onAfterObserve = null)
     {
+        stream.TestSuppressReadinessObserve = true;
+        var delivered = 0;
         try
         {
             for (var i = 0; i < count; i++)
@@ -299,12 +314,22 @@ public class MultiSegmentStreamAdaptiveWidthTests
                 await readiness.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 client.ReleaseSegment(i);
                 var n = await readTask;
+                // Observe after the segment completes — not inside the ReadAsync hook — so we
+                // never re-enter stream/trace state on the producer continuation path.
+                if (delivered > 0)
+                {
+                    stream.TestObserveReadiness(readyWhenNeeded: false);
+                    onAfterObserve?.Invoke();
+                }
+
+                delivered++;
                 yield return n;
             }
         }
         finally
         {
             stream.TestOnSegmentReadiness = null;
+            stream.TestSuppressReadinessObserve = false;
         }
     }
 }

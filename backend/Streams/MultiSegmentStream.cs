@@ -52,6 +52,19 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// </summary>
     internal Action<bool>? TestOnSegmentReadiness;
 
+    /// <summary>
+    /// When true, <see cref="ReadAsync"/> skips <see cref="ObserveBatchReadiness"/> so tests can
+    /// drive the sizer explicitly (avoids IsCompleted races under parallel load).
+    /// </summary>
+    internal bool TestSuppressReadinessObserve;
+
+    /// <summary>Current adaptive BODY batch width (or the fixed pipeline size when not adaptive).</summary>
+    internal int PrefetchBatchWidth => _batchSizer?.Current ?? _bodyPipelineBatchSize;
+
+    /// <summary>Test seam: feed a readiness sample into the adaptive sizer.</summary>
+    internal void TestObserveReadiness(bool readyWhenNeeded) =>
+        ObserveBatchReadiness(readyWhenNeeded);
+
     public static Stream Create(
         Memory<string> segmentIds,
         INntpClient usenetClient,
@@ -957,7 +970,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     Stopwatch.GetElapsedTime(waitStarted));
                 ReleaseInFlightPrefetchBytes(result.PlannedBytes);
                 // Ignore the first delivered segment (startup warm-up).
-                if (_deliveredSegments++ > 0)
+                if (_deliveredSegments++ > 0 && !TestSuppressReadinessObserve)
                     ObserveBatchReadiness(readyWhenNeeded);
                 _stream = AcceptSegment(result);
             }
