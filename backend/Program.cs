@@ -258,6 +258,7 @@ class Program
                 .AddSingleton<MetricsWriter>()
                 .AddHostedService(sp => sp.GetRequiredService<MetricsWriter>())
                 .AddSingleton<ProviderBytesTracker>()
+                .AddSingleton<ProviderLatencyTracker>()
                 .AddHostedService<MetricsRollupService>()
                 .AddHostedService<MetricsRetentionService>()
                 .AddHostedService<SqliteMaintenanceService>()

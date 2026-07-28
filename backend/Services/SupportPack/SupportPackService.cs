@@ -24,6 +24,7 @@ public sealed class SupportPackService(
     ConfigManager configManager,
     MetricsWriter metricsWriter,
     ProviderBytesTracker bytesTracker,
+    ProviderLatencyTracker latencyTracker,
     UsenetStreamingClient usenetStreamingClient,
     ArticleMissNegativeCache articleMissCache,
     InFlightArticleBudget inFlightArticleBudget,
@@ -209,6 +210,15 @@ public sealed class SupportPackService(
         counters are process-wide and cumulative, so they also include queue imports and
         health sweeps. On a scan-heavy install the two legitimately differ by orders of
         magnitude.
+
+        metrics/recent.json → latency24Hours projects one-minute response, pool-wait,
+        and permit-wait histograms into five-minute buckets. Percentiles are bucket
+        upper bounds (not exact sample percentiles). Only successful NNTP responses are
+        counted; body-drain time is excluded from response. Compare:
+        - high response with low pool-wait/permit-wait → provider/server latency
+        - high provider pool-wait → that provider's connections are saturated/churning
+        - high streaming/queue permit-wait → that workload's connection cap is saturated
+        - high trace consumerWaitMs with low values in all three → prefetch/consumer pacing
 
         The archive deliberately excludes database files, backups, blobs/NZBs,
         environment files, session/API key files, crash dumps, and segment-cache
@@ -534,8 +544,48 @@ public sealed class SupportPackService(
                 provider => string.IsNullOrWhiteSpace(provider.Nickname) ? null : provider.Nickname,
                 StringComparer.Ordinal);
 
-        await using var db = new MetricsDbContext();
-        var minuteRows = await db.ThroughputMinutes
+        try
+        {
+            await metricsWriter.FlushNowAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Support pack best-effort metrics flush failed; continuing with queued/tracker data");
+        }
+
+        List<MetricEvent> persistedLatency;
+        IReadOnlyList<MetricEvent> queuedLatency;
+        IReadOnlyList<LatencyFlushItem> trackerLatency;
+        await using (var diagnosticsLease =
+                     await metricsWriter.AcquireDiagnosticSnapshotLeaseAsync(cancellationToken).ConfigureAwait(false))
+        {
+            (queuedLatency, trackerLatency) =
+                metricsWriter.CaptureLatencyHandoff(latencyTracker.SnapshotUnpersisted);
+
+            await using var db = new MetricsDbContext();
+            persistedLatency = await db.MetricEvents
+                .Where(row => row.Kind == "latency" && row.At >= since24Hours)
+                .AsNoTracking()
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        var malformedRows = 0;
+        var normalized = new List<LatencySupportPackProjection.NormalizedLatencyRow>();
+        normalized.AddRange(LatencySupportPackProjection.FromMetricEvents(
+            persistedLatency, LatencySupportPackProjection.SourcePersisted, out var persistedMalformed));
+        malformedRows += persistedMalformed;
+        normalized.AddRange(LatencySupportPackProjection.FromMetricEvents(
+            queuedLatency, LatencySupportPackProjection.SourceQueued, out var queuedMalformed));
+        malformedRows += queuedMalformed;
+        normalized.AddRange(LatencySupportPackProjection.FromFlushItems(trackerLatency));
+        var latency24Hours = LatencySupportPackProjection.BuildLatency24Hours(
+            LatencySupportPackProjection.Deduplicate(normalized),
+            nicknames,
+            malformedRows);
+
+        await using var metricsDb = new MetricsDbContext();
+        var minuteRows = await metricsDb.ThroughputMinutes
             .Where(row => row.Minute >= since24Hours)
             .Select(row => new
             {
@@ -547,7 +597,7 @@ public sealed class SupportPackService(
                 row.BytesServed,
             })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var providerHours = await db.ProviderHourly
+        var providerHours = await metricsDb.ProviderHourly
             .Where(row => row.Hour >= since7Days)
             .Select(row => new
             {
@@ -561,11 +611,11 @@ public sealed class SupportPackService(
                 row.FailoverSaves,
             })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var circuitTransitions = await db.MetricEvents
+        var circuitTransitions = await metricsDb.MetricEvents
             .Where(row => row.Kind == "circuit" && row.At >= since7Days)
             .Select(row => new { row.At, row.Tag1, row.Tag2, row.Num })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var failover = await db.FailoverHourly
+        var failover = await metricsDb.FailoverHourly
             .Where(row => row.Hour >= since7Days)
             .GroupBy(row => row.Reason)
             .Select(group => new { reason = group.Key.ToString(), count = group.Sum(row => row.Count) })
@@ -667,12 +717,15 @@ public sealed class SupportPackService(
                 skips = articleMissCache.Skips,
                 entries = articleMissCache.Entries,
             },
+            latency24Hours,
             metricsHealth = new
             {
                 queued = stats.QueuedFetches + stats.QueuedEvents + stats.QueuedSessions + stats.QueuedFailoverMisses,
                 dropped = stats.DroppedFetches + stats.DroppedEvents + stats.DroppedSessions + stats.DroppedFailoverMisses,
                 stats.LastSuccessfulFlushAtMs,
                 stats.LastFlushError,
+                latencyPendingBuckets = latencyTracker.PendingBuckets,
+                latencyDroppedObservations = latencyTracker.DroppedObservations,
             },
         };
     }

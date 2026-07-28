@@ -23,10 +23,11 @@ public class UsenetStreamingClient : WrappingNntpClient
         ProviderBytesTracker bytesTracker,
         StreamTraceBuffer streamTrace,
         ActiveReadRegistry activeReadRegistry,
-        ArticleMissNegativeCache? articleMissCache = null)
+        ArticleMissNegativeCache? articleMissCache = null,
+        ProviderLatencyTracker? latencyTracker = null)
         : base(CreateDownloadingNntpClient(
             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
-            streamTrace, activeReadRegistry, articleMissCache))
+            streamTrace, activeReadRegistry, articleMissCache, latencyTracker))
     {
         // when config changes, create a new MultiProviderClient to use instead.
         configManager.OnConfigChanged += (_, configEventArgs) =>
@@ -47,7 +48,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                     // separate update (and must not touch the retired client).
                     var newUsenetClient = CreateDownloadingNntpClient(
                         configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
-                        streamTrace, activeReadRegistry, articleMissCache);
+                        streamTrace, activeReadRegistry, articleMissCache, latencyTracker);
                     ReplaceUnderlyingClient(newUsenetClient);
                     return;
                 }
@@ -74,13 +75,14 @@ public class UsenetStreamingClient : WrappingNntpClient
         ProviderBytesTracker bytesTracker,
         StreamTraceBuffer streamTrace,
         ActiveReadRegistry activeReadRegistry,
-        ArticleMissNegativeCache? articleMissCache
+        ArticleMissNegativeCache? articleMissCache,
+        ProviderLatencyTracker? latencyTracker
     )
     {
         var multiProviderClient = CreateMultiProviderClient(
             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
-            streamTrace, activeReadRegistry, articleMissCache);
-        var downloadingClient = new DownloadingNntpClient(multiProviderClient, configManager);
+            streamTrace, activeReadRegistry, articleMissCache, latencyTracker);
+        var downloadingClient = new DownloadingNntpClient(multiProviderClient, configManager, latencyTracker);
         INntpClient inner = downloadingClient;
         if (configManager.IsSegmentCacheEnabled())
         {
@@ -135,7 +137,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         ProviderBytesTracker bytesTracker,
         StreamTraceBuffer streamTrace,
         ActiveReadRegistry activeReadRegistry,
-        ArticleMissNegativeCache? articleMissCache
+        ArticleMissNegativeCache? articleMissCache,
+        ProviderLatencyTracker? latencyTracker
     )
     {
         var providerConfig = configManager.GetUsenetProviderConfig();
@@ -155,7 +158,8 @@ public class UsenetStreamingClient : WrappingNntpClient
                 connectionPoolStats.GetOnConnectionPoolChanged(index),
                 idleTimeoutSeconds,
                 metricsWriter,
-                streamingPriority
+                streamingPriority,
+                latencyTracker
             ))
             .ToList();
         return new MultiProviderNntpClient(
@@ -173,7 +177,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs> onConnectionPoolChanged,
         int idleTimeoutSeconds,
         MetricsWriter metricsWriter,
-        SemaphorePriorityOdds? streamingPriority = null
+        SemaphorePriorityOdds? streamingPriority = null,
+        ProviderLatencyTracker? latencyTracker = null
     )
     {
         var maxConnections = connectionDetails.MaxConnections;
@@ -243,7 +248,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionDetails.Priority,
             connectionDetails.PipeliningDepth,
             connectionDetails.StorageGroup,
-            metricsKey
+            metricsKey,
+            latencyTracker
         );
     }
 
