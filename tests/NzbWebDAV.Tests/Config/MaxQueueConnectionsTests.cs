@@ -56,8 +56,36 @@ public class MaxQueueConnectionsTests
     [InlineData("0.5")]
     public void UnrecognisedPreset_FallsBackToWholePool(string preset)
     {
+        // Defensive only: writes are validated below, so this covers hand-edited rows.
         var config = CreateConfig(absolute: null, preset: preset, pooled: 20);
         Assert.Equal(20, config.GetMaxQueueConnections());
+    }
+
+    [Theory]
+    [InlineData("low")]
+    [InlineData("MEDIUM")]
+    [InlineData("High")]
+    [InlineData("max")]
+    public void ValidateConfigItems_AcceptsAnyCasingTheGetterResolves(string preset)
+    {
+        ConfigManager.ValidateConfigItems(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.UsenetMaxQueueConnectionsPreset, ConfigValue = preset },
+        ]);
+    }
+
+    [Theory]
+    [InlineData("nonsense")]
+    [InlineData("0.5")]
+    public void ValidateConfigItems_RejectsAnUnknownPreset(string preset)
+    {
+        // A typo must fail the write rather than silently meaning "the whole pool",
+        // which is the failure mode the preset exists to remove. ENV-configured
+        // installs have no Settings page to notice the value was ignored.
+        Assert.Throws<ArgumentException>(() => ConfigManager.ValidateConfigItems(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.UsenetMaxQueueConnectionsPreset, ConfigValue = preset },
+        ]));
     }
 
     [Fact]

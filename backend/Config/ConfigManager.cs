@@ -377,6 +377,10 @@ public class ConfigManager
                     RequireOneOf(item.ConfigName, value, "standard", "enhanced", "deep", "complete");
                     break;
 
+                case ConfigKeys.UsenetMaxQueueConnectionsPreset:
+                    RequireOneOf(item.ConfigName, value, "low", "medium", "high", "max");
+                    break;
+
                 case ConfigKeys.UsenetProviders:
                     RequireValidUsenetProviders(item.ConfigName, value, jsonOptions);
                     break;
@@ -645,7 +649,8 @@ public class ConfigManager
     // Mirrors the per-stream preset: a fraction of the pooled-connection budget
     // rather than an absolute count, so one setting means the same thing whatever
     // a user's providers add up to. Null when unset, which keeps the historical
-    // default of "the queue may use the whole pool".
+    // default of "the queue may use the whole pool". Unknown values are rejected
+    // by ValidateConfigItems, so the fall-through only covers hand-edited rows.
     private double? GetMaxQueueConnectionsFraction()
     {
         var preset = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetMaxQueueConnectionsPreset));
