@@ -46,6 +46,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private const int MaxConcurrentHandshakes = 3;
 
     public TimeSpan IdleTimeout { get; }
+    public int MaxConnections => _maxConnections;
     public int LiveConnections => _live;
     public int IdleConnections => _idleConnections.Count;
     public int ActiveConnections => _live - _idleConnections.Count;

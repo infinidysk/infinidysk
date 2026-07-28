@@ -1320,6 +1320,34 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task CascadeMode_PriorityBeatsLargerIdlePool()
+    {
+        var primaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var largerLowerPriority = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        // Reproduce the field failure: Priority 0 / max 20 was losing to Priority 3 / max 32
+        // while both were idle because absolute spare outweighed Priority.
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primaryConnection, host: "primary.example", maxConnections: 20, priority: 0),
+            CreateProvider(largerLowerPriority, host: "large.example", maxConnections: 32, priority: 3),
+        ], cascadeEnabled: () => true);
+
+        var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+        await response.Stream!.DisposeAsync();
+
+        Assert.Equal(1, primaryConnection.SingularRequests);
+        Assert.Equal(0, largerLowerPriority.SingularRequests);
+    }
+
+    [Fact]
     public async Task CascadeMode_PrefersIdlePeerWhenPrimaryIsContended()
     {
         var primaryConnection = new ScriptedNntpClient
@@ -1334,7 +1362,7 @@ public class MultiProviderNntpClientTests
         };
         var primary = CreateProvider(primaryConnection, host: "primary.example", maxConnections: 8, priority: 0);
         var idle = CreateProvider(idleConnection, host: "idle.example", maxConnections: 8, priority: 1);
-        // Leave primary with a single spare connection so soft contention demotes it.
+        // Leave primary with a single spare connection (12.5% <= 25%) so thin-spare demotes it.
         for (var i = 0; i < 7; i++)
             primary.ReservePending();
         using var client = new MultiProviderNntpClient([primary, idle], cascadeEnabled: () => true);
@@ -1344,6 +1372,64 @@ public class MultiProviderNntpClientTests
 
         Assert.Equal(0, primaryConnection.SingularRequests);
         Assert.Equal(1, idleConnection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task CascadeMode_KeepsPrimaryAboveThinSpareThreshold()
+    {
+        var primaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var secondaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var primary = CreateProvider(primaryConnection, host: "primary.example", maxConnections: 8, priority: 0);
+        var secondary = CreateProvider(secondaryConnection, host: "secondary.example", maxConnections: 8, priority: 1);
+        // 6/8 unreserved = 75% spare — above the 25% thin-spare band, so Priority still wins.
+        for (var i = 0; i < 2; i++)
+            primary.ReservePending();
+        using var client = new MultiProviderNntpClient([primary, secondary], cascadeEnabled: () => true);
+
+        var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+        await response.Stream!.DisposeAsync();
+
+        Assert.Equal(1, primaryConnection.SingularRequests);
+        Assert.Equal(0, secondaryConnection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task CascadeMode_TieBreakUsesSpareFractionNotAbsoluteSpare()
+    {
+        var smallerConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var largerConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var larger = CreateProvider(largerConnection, host: "large.example", maxConnections: 32, priority: 0);
+        var smaller = CreateProvider(smallerConnection, host: "small.example", maxConnections: 20, priority: 0);
+        // Equal utilization (50% spare) but unequal absolute spare. Absolute spare would
+        // pick the larger pool (16 > 10). Fraction tie-break keeps list order, so the
+        // smaller pool listed first must win.
+        for (var i = 0; i < 16; i++)
+            larger.ReservePending();
+        for (var i = 0; i < 10; i++)
+            smaller.ReservePending();
+        using var client = new MultiProviderNntpClient([smaller, larger], cascadeEnabled: () => true);
+
+        var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+        await response.Stream!.DisposeAsync();
+
+        Assert.Equal(1, smallerConnection.SingularRequests);
+        Assert.Equal(0, largerConnection.SingularRequests);
     }
 
     [Fact]
@@ -1370,6 +1456,89 @@ public class MultiProviderNntpClientTests
 
         Assert.Equal(0, primaryConnection.SingularRequests);
         Assert.Equal(1, backupConnection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task CascadeMode_PooledTierStillPrecedeBackupOnly()
+    {
+        var backupConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var primaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        // Backup Only with a larger pool must not leapfrog a pooled Priority 0 primary.
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(
+                backupConnection,
+                host: "backup.example",
+                maxConnections: 32,
+                priority: 0,
+                providerType: ProviderType.BackupOnly),
+            CreateProvider(primaryConnection, host: "primary.example", maxConnections: 20, priority: 0),
+        ], cascadeEnabled: () => true);
+
+        var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+        await response.Stream!.DisposeAsync();
+
+        Assert.Equal(1, primaryConnection.SingularRequests);
+        Assert.Equal(0, backupConnection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task ExcludeProviders_SkipsCorruptProviderWhenPeerAvailable()
+    {
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primary, host: "primary.example", maxConnections: 4, priority: 0),
+            CreateProvider(backup, host: "backup.example", maxConnections: 4, priority: 1),
+        ], cascadeEnabled: () => true);
+
+        using (MultiProviderNntpClient.ExcludeProviders(["primary.example"]))
+        {
+            var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+            await response.Stream!.DisposeAsync();
+        }
+
+        Assert.Equal(0, primary.SingularRequests);
+        Assert.Equal(1, backup.SingularRequests);
+    }
+
+    [Fact]
+    public async Task ExcludeProviders_FallsBackWhenEveryProviderIsExcluded()
+    {
+        var only = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(only, host: "only.example", maxConnections: 4, priority: 0),
+        ], cascadeEnabled: () => true);
+
+        using (MultiProviderNntpClient.ExcludeProviders(["only.example"]))
+        {
+            var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+            await response.Stream!.DisposeAsync();
+        }
+
+        Assert.Equal(1, only.SingularRequests);
     }
 
     [Fact]

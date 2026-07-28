@@ -92,6 +92,7 @@ public class MultiConnectionNntpClient(
     /// </summary>
     public bool IsTripped => circuitBreaker.IsTripped;
     public ProviderCircuitBreakerSnapshot GetCircuitBreakerSnapshot() => circuitBreaker.GetSnapshot();
+    public int MaxConnections => connectionPool.MaxConnections;
     public int LiveConnections => connectionPool.LiveConnections;
     public int IdleConnections => connectionPool.IdleConnections;
     public int ActiveConnections => connectionPool.ActiveConnections;
@@ -106,6 +107,12 @@ public class MultiConnectionNntpClient(
 
     public int UnreservedConnections => Math.Max(0, AvailableConnections - PendingSelections);
     public bool HasSpareConnection => UnreservedConnections > 0;
+    /// <summary>
+    /// Unreserved capacity as a fraction of the configured pool size. Used by cascade
+    /// ranking so unequal MaxConnections do not outweigh configured Priority.
+    /// </summary>
+    public double SpareFraction =>
+        (double)UnreservedConnections / Math.Max(1, MaxConnections);
 
     public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken)
     {

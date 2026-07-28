@@ -621,7 +621,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
 
                     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
                         <Tooltip
-                            content="Prefer providers in drag order. While off, all enabled providers share work in the pool. Contended primaries with little spare capacity yield to idler same-tier peers."
+                            content="Prefer providers in drag order. While off, all enabled providers share work in the pool. Thinly-spared primaries (at most 25% of their pool free) yield to idler same-tier peers; larger MaxConnections alone does not outrank priority."
                             className="min-w-0"
                         >
                             <Toggle

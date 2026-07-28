@@ -5,7 +5,7 @@ Add multiple NNTP accounts under **Settings → Usenet**.
 ## Routing
 
 - **Pool (default)** — connections shared across enabled providers.
-- **Cascade** — prefer providers in drag order; fail over down the list. Among providers that still have spare capacity, a thinly-spared primary can yield to a same-tier peer with meaningfully more idle connections. Fully saturated providers are still skipped.
+- **Cascade** — prefer providers in drag order; fail over down the list. Among providers that still have spare capacity, a thinly-spared primary (at most 25% of its pool free) can yield to an idle same-tier peer. Fully saturated providers are still skipped. Absolute pool width does not outrank configured priority while both providers are healthy.
 
 Optional **Re-probe primary after article miss** (`usenet.cascade.retry-primary-on-miss`, default on) retries the primary once after a clean 430/451 before cascading — useful when providers route across spool nodes. Turn it off to go straight to backups after the first miss.
 

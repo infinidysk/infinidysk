@@ -114,6 +114,30 @@ public class MultiProviderNntpClient(
     public sealed class ResponderAttribution { public string? Host; }
     public static readonly AsyncLocal<ResponderAttribution?> AttributionContext = new();
 
+    /// <summary>
+    /// Providers to skip for the current async call only (e.g. the account that just
+    /// returned corrupt yEnc for this segment). Cleared when the scope disposes.
+    /// If every enabled provider is excluded, selection falls back to the full set so
+    /// a lone provider can still be retried.
+    /// </summary>
+    private static readonly AsyncLocal<HashSet<string>?> ExcludedProvidersScope = new();
+
+    public static IDisposable ExcludeProviders(IEnumerable<string> providerKeys)
+    {
+        var previous = ExcludedProvidersScope.Value;
+        var next = previous != null
+            ? new HashSet<string>(previous, StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+        foreach (var key in providerKeys)
+        {
+            if (!string.IsNullOrEmpty(key))
+                next.Add(key);
+        }
+
+        ExcludedProvidersScope.Value = next.Count > 0 ? next : null;
+        return new ScopeReleaser(() => ExcludedProvidersScope.Value = previous);
+    }
+
     private readonly object _selectLock = new();
 
     public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken ct)
@@ -996,6 +1020,18 @@ public class MultiProviderNntpClient(
                 .Where(x => !IsOverLimit(x))
                 .ToList();
 
+            var excluded = ExcludedProvidersScope.Value;
+            if (excluded is { Count: > 0 })
+            {
+                var withoutExcluded = enabled
+                    .Where(x => !excluded.Contains(x.MetricsKey))
+                    .ToList();
+                // Fall back to the full set when every remaining provider was excluded so
+                // a single-provider install can still retry after corruption.
+                if (withoutExcluded.Count > 0)
+                    enabled = withoutExcluded;
+            }
+
             // Reading state here must not claim the half-open probe slot. IsTripped claims
             // it, so one selection ends up holding a probe it may never dispatch while
             // every other selection treats the provider as tripped.
@@ -1022,9 +1058,12 @@ public class MultiProviderNntpClient(
                 : byRecovery;
             var byUsage = prioritized.ThenByDescending(x => GetRemainingBytes(x));
             // Prefer providers with more spare capacity. In cascade mode this is a
-            // tie-break after EffectivePriority (which already soft-scores contention);
-            // in pool mode it outranks learned speed so a full pool cannot monopolize.
-            var capacityBalanced = byUsage.ThenByDescending(x => x.UnreservedConnections);
+            // tie-break after EffectivePriority and uses spare *fraction* so unequal
+            // MaxConnections cannot outweigh Priority. In pool mode absolute spare
+            // outranks learned speed so a full pool cannot monopolize.
+            var capacityBalanced = cascade
+                ? byUsage.ThenByDescending(x => x.SpareFraction)
+                : byUsage.ThenByDescending(x => x.UnreservedConnections);
             var ordered = capacityBalanced
                 .ThenBy(EstimatedDeliveryScore)
                 .ToList();
@@ -1036,10 +1075,11 @@ public class MultiProviderNntpClient(
     }
 
     /// <summary>
-    /// Cascade sort key: configured priority, plus a soft contention score while spare
-    /// capacity remains, plus a large demotion when fully saturated. Among providers that
-    /// still have spare connections, a thinly-spared primary can lose to a same-tier peer
-    /// with meaningfully more idle capacity without waiting for hard saturation.
+    /// Cascade sort key: configured priority, plus one priority step when at most 25% of
+    /// the provider's pool remains unreserved, plus a large demotion when fully
+    /// saturated. Absolute spare is not used — that made larger MaxConnections pools
+    /// outrank a healthier Priority-0 primary while idle. Thin-spare still lets a
+    /// Priority-0 pool with 1/8 free yield to an idle Priority-1 peer (#650).
     /// </summary>
     private static int EffectivePriority(MultiConnectionNntpClient provider)
     {
@@ -1047,10 +1087,9 @@ public class MultiProviderNntpClient(
         if (!provider.HasSpareConnection)
             return provider.Priority + saturationDemotion;
 
-        // Smaller UnreservedConnections => slightly worse (still << saturationDemotion).
-        var spare = Math.Clamp(provider.UnreservedConnections, 0, 1024);
-        var contention = 1024 - spare;
-        return provider.Priority + contention;
+        // At most 25% of the configured pool remains unreserved.
+        var thinSpareDemotion = provider.SpareFraction <= 0.25 ? 1 : 0;
+        return provider.Priority + thinSpareDemotion;
     }
 
     private double EstimatedDeliveryScore(MultiConnectionNntpClient provider)
