@@ -100,8 +100,14 @@ public interface INntpClient : IDisposable
         string[][]? segmentFallbacks = null,
         InFlightArticleBudget? inFlightArticleBudget = null);
 
-    Task CheckAllSegmentsAsync(
-        IEnumerable<string> segmentIds, int concurrency, IProgress<int>? progress, CancellationToken cancellationToken);
+    /// <summary>
+    /// Confirms every segment exists, returning the positions of those missing but tolerated.
+    /// Throws once the missing count passes <paramref name="toleratedMissing"/>, so the
+    /// default of zero fails on the first confirmed miss.
+    /// </summary>
+    Task<IReadOnlyList<int>> CheckAllSegmentsAsync(
+        IEnumerable<string> segmentIds, int concurrency, IProgress<int>? progress,
+        CancellationToken cancellationToken, int toleratedMissing = 0);
 
     Task CheckAllSegmentsPipelinedAsync(
         IReadOnlyList<string> segmentIds, int depth, int fallbackConcurrency, IProgress<int>? progress,

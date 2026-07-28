@@ -109,6 +109,7 @@ const defaultConfig = {
     "repair.healthcheck-concurrency": "50",
     "repair.healthcheck-depth": "standard",
     "repair.healthcheck-aging": "false",
+    "repair.healthcheck-lenient": "false",
     "repair.auto-remove-after-failures": "0",
     "repair.auto-remove-unlinked-only": "true",
     "db.is-startup-vacuum-enabled": "false",

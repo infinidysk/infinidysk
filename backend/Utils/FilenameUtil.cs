@@ -19,6 +19,11 @@ public partial class FilenameUtil
         ".img", ".iso", ".vob", ".mkv", ".mk3d", ".ts", ".wtv", ".m2ts"
     ];
 
+    private static readonly HashSet<string> DegradableVideoExtensions =
+    [
+        ".mp4", ".m4v", ".mov", ".mkv", ".webm"
+    ];
+
     public static bool IsImportantFileType(string filename)
     {
         return IsVideoFile(filename)
@@ -30,6 +35,16 @@ public partial class FilenameUtil
     public static bool IsVideoFile(string filename)
     {
         return VideoExtensions.Contains(Path.GetExtension(filename).ToLower());
+    }
+
+    /// <summary>
+    /// Plain video containers a player can keep decoding through a zero-filled gap.
+    /// Deliberately narrower than <see cref="IsVideoFile"/>, whose list also carries disc
+    /// images, playlists and raw streams, where a hole is corruption rather than a glitch.
+    /// </summary>
+    public static bool IsDegradableVideoFile(string filename)
+    {
+        return DegradableVideoExtensions.Contains(Path.GetExtension(filename).ToLower());
     }
 
     public static bool IsRarFile(string? filename)

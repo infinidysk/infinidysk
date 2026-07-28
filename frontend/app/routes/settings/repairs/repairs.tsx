@@ -95,7 +95,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
             </div>
             </ManagedSetting>
             <ManagedSetting
-                configKeys={["repair.healthcheck-depth", "repair.healthcheck-aging"]}
+                configKeys={["repair.healthcheck-depth", "repair.healthcheck-aging", "repair.healthcheck-lenient"]}
                 className="grid grid-cols-1 gap-4 lg:grid-cols-2"
             >
             <div className="space-y-2">
@@ -120,16 +120,29 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     use more usenet traffic. Complete checks every segment.
                 </p>
             </div>
-            <div className="space-y-2">
-                <Tooltip content="Off by default. When enabled, coverage tapers for releases past their first year (stops at ten years), useful for large libraries of long-posted content.">
-                    <Toggle
-                        id="healthcheck-aging-checkbox"
-                        className="cursor-pointer gap-2 p-0"
-                        checked={(config["repair.healthcheck-aging"] ?? "false") === "true"}
-                        onChange={e => setNewConfig({ ...config, "repair.healthcheck-aging": "" + e.target.checked })}
-                        label={<span className="text-sm text-base-content">Check older releases less thoroughly</span>}
-                    />
-                </Tooltip>
+            <div className="space-y-3">
+                <div>
+                    <Tooltip content="Off by default. When enabled, coverage tapers for releases past their first year (stops at ten years), useful for large libraries of long-posted content.">
+                        <Toggle
+                            id="healthcheck-aging-checkbox"
+                            className="cursor-pointer gap-2 p-0"
+                            checked={(config["repair.healthcheck-aging"] ?? "false") === "true"}
+                            onChange={e => setNewConfig({ ...config, "repair.healthcheck-aging": "" + e.target.checked })}
+                            label={<span className="text-sm text-base-content">Check older releases less thoroughly</span>}
+                        />
+                    </Tooltip>
+                </div>
+                <div>
+                    <Tooltip content="Off by default. When enabled, an unpacked video file may be missing up to 2% of its articles, and never more than 64, and is marked degraded instead of repaired.">
+                        <Toggle
+                            id="healthcheck-lenient-checkbox"
+                            className="cursor-pointer gap-2 p-0"
+                            checked={(config["repair.healthcheck-lenient"] ?? "false") === "true"}
+                            onChange={e => setNewConfig({ ...config, "repair.healthcheck-lenient": "" + e.target.checked })}
+                            label={<span className="text-sm text-base-content">Tolerate a few missing articles in video files</span>}
+                        />
+                    </Tooltip>
+                </div>
             </div>
             </ManagedSetting>
             </SettingsCard>
@@ -181,6 +194,7 @@ export function isRepairsSettingsUpdated(config: Record<string, string>, newConf
         || config["repair.healthcheck-concurrency"] !== newConfig["repair.healthcheck-concurrency"]
         || config["repair.healthcheck-depth"] !== newConfig["repair.healthcheck-depth"]
         || config["repair.healthcheck-aging"] !== newConfig["repair.healthcheck-aging"]
+        || config["repair.healthcheck-lenient"] !== newConfig["repair.healthcheck-lenient"]
         || config["repair.auto-remove-after-failures"] !== newConfig["repair.auto-remove-after-failures"]
         || config["repair.auto-remove-unlinked-only"] !== newConfig["repair.auto-remove-unlinked-only"]
         || config["media.library-dir"] !== newConfig["media.library-dir"];

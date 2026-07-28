@@ -612,6 +612,7 @@ export enum RepairAction {
     Repaired = 1,
     Deleted = 2,
     ActionNeeded = 3,
+    Degraded = 4,
 }
 
 export type OverviewWindow = "1h" | "24h" | "7d" | "30d" | "all";

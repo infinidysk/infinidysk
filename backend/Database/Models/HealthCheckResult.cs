@@ -22,5 +22,8 @@ public class HealthCheckResult
         Repaired = 1,
         Deleted = 2,
         ActionNeeded = 3,
+
+        /// <summary>Missing articles stayed within tolerance, so no repair was attempted.</summary>
+        Degraded = 4,
     }
 }

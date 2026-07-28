@@ -45,7 +45,43 @@ public class NntpClientCheckAllSegmentsTests
     {
         var client = new StatCodeClient(223);
 
-        await client.CheckAllSegmentsAsync(["seg@example"], 1, null, CancellationToken.None);
+        var missing = await client.CheckAllSegmentsAsync(["seg@example"], 1, null, CancellationToken.None);
+
+        Assert.Empty(missing);
+    }
+
+    [Fact]
+    public async Task CheckAllSegmentsAsync_MissesWithinBudget_ReturnsPositionsWithoutThrowing()
+    {
+        var client = new StatCodeClient(430);
+
+        var missing = await client.CheckAllSegmentsAsync(
+            ["a@example", "b@example", "c@example"], 1, null, CancellationToken.None, toleratedMissing: 3);
+
+        Assert.Equal([0, 1, 2], missing.OrderBy(x => x));
+    }
+
+    [Fact]
+    public async Task CheckAllSegmentsAsync_MissPastBudget_ThrowsArticleNotFound()
+    {
+        var client = new StatCodeClient(430);
+
+        var exception = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
+            client.CheckAllSegmentsAsync(
+                ["a@example", "b@example", "c@example"], 1, null, CancellationToken.None,
+                toleratedMissing: 2));
+
+        Assert.Equal("c@example", exception.SegmentId);
+    }
+
+    [Fact]
+    public async Task CheckAllSegmentsAsync_BudgetDoesNotTolerateRetryableResponses()
+    {
+        var client = new StatCodeClient(400);
+
+        await Assert.ThrowsAsync<UsenetUnexpectedResponseException>(() =>
+            client.CheckAllSegmentsAsync(
+                ["a@example"], 1, null, CancellationToken.None, toleratedMissing: 5));
     }
 
     [Fact]
@@ -225,11 +261,12 @@ public class NntpClientCheckAllSegmentsTests
             }
         }
 
-        public override async Task CheckAllSegmentsAsync(
+        public override async Task<IReadOnlyList<int>> CheckAllSegmentsAsync(
             IEnumerable<string> segmentIds,
             int concurrency,
             IProgress<int>? progress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            int toleratedMissing = 0)
         {
             CheckAllSegmentsCallCount++;
             LastConcurrency = concurrency;
@@ -237,17 +274,18 @@ public class NntpClientCheckAllSegmentsTests
             RecheckedSegmentIds.AddRange(list);
 
             var processed = 0;
-            foreach (var segmentId in list)
+            for (var position = 0; position < list.Count; position++)
             {
                 progress?.Report(++processed);
                 var code = recheckCodes[_recheckIndex++];
                 if (code == (int)UsenetResponseType.ArticleExists) continue;
                 if (code is 430 or 451)
-                    throw new UsenetArticleNotFoundException(segmentId, $"{code} missing");
-                throw new UsenetUnexpectedResponseException(segmentId, $"{code} unexpected");
+                    throw new UsenetArticleNotFoundException(list[position], $"{code} missing");
+                throw new UsenetUnexpectedResponseException(list[position], $"{code} unexpected");
             }
 
             await Task.CompletedTask;
+            return [];
         }
 
         public override Task ConnectAsync(

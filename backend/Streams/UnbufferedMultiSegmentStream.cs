@@ -9,8 +9,6 @@ namespace NzbWebDAV.Streams;
 
 public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
 {
-    private const int MaxConsecutiveZeroFills = 3;
-
     private readonly Memory<string> _segmentIds;
     private readonly string[][]? _segmentFallbacks;
     private readonly INntpClient _usenetClient;
@@ -23,7 +21,6 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private long _pendingPadBytes;
     private int _consecutiveZeroFills;
     private bool _disposed;
-
 
     public UnbufferedMultiSegmentStream(
         Memory<string> segmentIds,
@@ -103,7 +100,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                             e);
                         if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
                             StreamTrace.TryZeroFill(sessionId, e.SegmentId, fill);
-                        if (_consecutiveZeroFills >= MaxConsecutiveZeroFills)
+                        if (_consecutiveZeroFills >= ZeroFillPolicy.MaxConsecutive)
                             throw;
 
                         _stream = new ZeroStream(fill);

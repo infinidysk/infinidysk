@@ -11,6 +11,7 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.PostProcessors;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -30,6 +31,14 @@ public class HealthCheckService : BackgroundService
     // A release keeps full depth for its first year, then tapers until it stops aging at ten.
     private const double FullDepthDays = 365;
     private const double MinDepthDays = 3650;
+
+    // Two caps rather than one, because a missing article costs a viewer two separate things.
+    // An article is a fixed size, so the ratio is the share of runtime that plays back silent,
+    // which scales with the file. The number of interruptions does not scale: a viewer tolerates
+    // about as many on an episode as on a feature, which is what the flat count bounds. Whichever
+    // is lower wins, so the ratio protects small files and the count protects everything else.
+    private const double LenientMissingRatio = 0.02;
+    private const int LenientMissingCeiling = 64;
 
     private readonly ConfigManager _configManager;
     private readonly INntpClient _usenetClient;
@@ -192,7 +201,8 @@ public class HealthCheckService : BackgroundService
             }
 
             // update the release date, if null
-            var segments = await GetAllSegments(davItem, dbClient, ct).ConfigureAwait(false);
+            var item = await GetAllSegments(davItem, dbClient, ct).ConfigureAwait(false);
+            var segments = item.Segments;
             if (davItem.ReleaseDate == null) await UpdateReleaseDate(davItem, segments, ct).ConfigureAwait(false);
 
             // sample large files to reduce NNTP load while keeping head/tail/stride coverage
@@ -200,7 +210,8 @@ public class HealthCheckService : BackgroundService
             var age = _configManager.IsHealthCheckAgingEnabled() && davItem.ReleaseDate is { } posted
                 ? DateTimeOffset.UtcNow - posted
                 : (TimeSpan?)null;
-            var sampled = SampleSegments(segments, _configManager.GetHealthCheckDepth(), age);
+            var sampledIndexes = SampleSegmentIndexes(segments, _configManager.GetHealthCheckDepth(), age);
+            var sampled = sampledIndexes.Select(i => segments[i]).ToList();
 
             // setup progress tracking
             var progressHook = new Progress<int>();
@@ -213,8 +224,22 @@ public class HealthCheckService : BackgroundService
 
             // perform health check
             var progress = progressHook.ToPercentage(sampled.Count);
-            await ArticleExistenceChecker.CheckAsync(_usenetClient, sampled, concurrency, progress, ct)
+            var tolerated = ToleratedMissingArticles(
+                davItem.Name, totalSegments, _configManager.IsHealthCheckLenient(), item.CarriesOwnBytes);
+            var missingPositions = await ArticleExistenceChecker
+                .CheckAsync(_usenetClient, sampled, concurrency, progress, ct, tolerated)
                 .ConfigureAwait(false);
+            var missing = missingPositions.Count;
+
+            // Staying inside the budget is not enough: some damage a read refuses outright, and
+            // passing it here would hand back a file that errors instead of playing. Fail as if
+            // the budget had been exceeded, and let the same catch schedule the repair.
+            var missingIndexes = missingPositions.Select(p => sampledIndexes[p]).ToList();
+            if (FindUnreadableDamage(missingIndexes, totalSegments) is { } unreadable)
+            {
+                throw new UsenetArticleNotFoundException(segments[unreadable.Index], unreadable.Reason);
+            }
+
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
@@ -225,15 +250,39 @@ public class HealthCheckService : BackgroundService
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
-            _failureTracker.ClearFailure(davItem.Id);
-            var healthyMessage = sampled.Count < totalSegments
-                ? $"File is healthy (sampled {sampled.Count}/{totalSegments} segments)."
-                : "File is healthy.";
-            await RecordHealthResult(
-                dbClient, davItem,
-                HealthCheckResult.HealthResult.Healthy,
-                HealthCheckResult.RepairAction.None,
-                healthyMessage, ct).ConfigureAwait(false);
+            var coverage = sampled.Count < totalSegments
+                ? $" (sampled {sampled.Count}/{totalSegments} segments)"
+                : "";
+
+            if (missing > 0)
+            {
+                // Leave the streaming failure counter alone. Playback is still the backstop for a
+                // gap too long to zero-fill, and it needs its own count of hard failures to do it.
+                Log.Warning(
+                    "Tolerating {MissingCount} of {ToleratedCount} allowed missing article(s) for {FilePath}",
+                    missing, tolerated, davItem.Path);
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Healthy,
+                    HealthCheckResult.RepairAction.Degraded,
+                    // The count is of what was checked, so say so rather than implying the
+                    // whole file was measured.
+                    sampled.Count < totalSegments
+                        ? $"File is degraded: {missing} missing from a {sampled.Count}-segment " +
+                          $"sample of {totalSegments}, within the {tolerated} allowed."
+                        : $"File is degraded: {missing} of {totalSegments} articles missing, " +
+                          $"within the {tolerated} allowed.",
+                    ct).ConfigureAwait(false);
+            }
+            else
+            {
+                _failureTracker.ClearFailure(davItem.Id);
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Healthy,
+                    HealthCheckResult.RepairAction.None,
+                    $"File is healthy{coverage}.", ct).ConfigureAwait(false);
+            }
         }
         catch (UsenetArticleNotFoundException e)
         {
@@ -398,6 +447,24 @@ public class HealthCheckService : BackgroundService
     }
 
     /// <summary>
+    /// How many missing articles a check may accept before the file fails. Zero unless every
+    /// condition holds, so anything not covered keeps failing on its first confirmed miss.
+    /// </summary>
+    /// <remarks>
+    /// Counted against the file's whole segment count rather than the sampled subset, so a
+    /// shallow depth can pass a file carrying more missing articles than the caps name. The
+    /// alternative, scaling the budget down by coverage, makes the caps mean different things
+    /// at different depths for no gain in what a viewer actually experiences.
+    /// </remarks>
+    internal static int ToleratedMissingArticles(
+        string filename, int totalSegments, bool lenient, bool carriesOwnBytes)
+    {
+        if (!lenient || !carriesOwnBytes || totalSegments <= 0) return 0;
+        if (!FilenameUtil.IsDegradableVideoFile(filename)) return 0;
+        return (int)Math.Min(LenientMissingRatio * totalSegments, LenientMissingCeiling);
+    }
+
+    /// <summary>
     /// How many segments to STAT for one file. Files up to the floor are checked in full,
     /// larger ones are sampled based on their size, and an optional age scales the result
     /// down from there. <see cref="HealthCheckDepth.Complete"/> skips all of it.
@@ -442,9 +509,25 @@ public class HealthCheckService : BackgroundService
         HealthCheckDepth depth = ConfigManager.DefaultHealthCheckDepth,
         TimeSpan? age = null)
     {
+        // Hand back the caller's own list when the sample covers everything, so checking a large
+        // file in full does not copy it.
+        if (segments.Count <= SampleTarget(segments.Count, depth, age)) return segments;
+        return SampleSegmentIndexes(segments, depth, age).Select(i => segments[i]).ToList();
+    }
+
+    /// <summary>
+    /// The same sample as <see cref="SampleSegments"/>, as ascending positions in the file.
+    /// A caller holding these can tell whether two missing articles were neighbours, which the
+    /// article ids alone cannot answer.
+    /// </summary>
+    internal static List<int> SampleSegmentIndexes(
+        List<string> segments,
+        HealthCheckDepth depth = ConfigManager.DefaultHealthCheckDepth,
+        TimeSpan? age = null)
+    {
         var count = segments.Count;
         var target = SampleTarget(count, depth, age);
-        if (count <= target) return segments;
+        if (count <= target) return Enumerable.Range(0, count).ToList();
 
         const int headCount = 100;
         const int tailCount = 100;
@@ -468,7 +551,70 @@ public class HealthCheckService : BackgroundService
             result.Add(i);
         }
 
-        return result.OrderBy(i => i).Select(i => segments[i]).ToList();
+        return result.OrderBy(i => i).ToList();
+    }
+
+    /// <summary>
+    /// The first missing article a read would refuse rather than skip past, with the reason, or
+    /// null when the damage is one playback survives. Positions are in the file, not the sample.
+    /// </summary>
+    /// <remarks>
+    /// A read fails outright on the first article instead of zero-filling it, cannot always size
+    /// the last one to fill it, and drops the stream once
+    /// <see cref="ZeroFillPolicy.MaxConsecutive"/> in a row are filled. Both ends are always
+    /// sampled, so all three are visible here.
+    /// </remarks>
+    internal static (int Index, string Reason)? FindUnreadableDamage(
+        IReadOnlyCollection<int> missingIndexes, int totalSegments)
+    {
+        if (missingIndexes.Count == 0) return null;
+        if (missingIndexes.Contains(0)) return (0, "the first article is missing");
+
+        var lastIndex = totalSegments - 1;
+        if (missingIndexes.Contains(lastIndex)) return (lastIndex, "the last article is missing");
+
+        var (length, start) = LongestMissingRun(missingIndexes);
+        return length >= ZeroFillPolicy.MaxConsecutive
+            ? (start, $"{length} consecutive articles missing")
+            : null;
+    }
+
+    /// <summary>
+    /// The longest run of consecutive missing articles among <paramref name="missingIndexes"/>,
+    /// which must be positions in the file rather than in the sample, and where that run starts.
+    /// Start is -1 when nothing is missing.
+    /// </summary>
+    internal static (int Length, int Start) LongestMissingRun(IEnumerable<int> missingIndexes)
+    {
+        var longest = 0;
+        var longestStart = -1;
+        var run = 0;
+        var runStart = 0;
+        var previous = int.MinValue;
+        foreach (var index in missingIndexes.OrderBy(i => i))
+        {
+            if (index == previous)
+            {
+                continue;
+            }
+
+            if (index == previous + 1)
+            {
+                run++;
+            }
+            else
+            {
+                run = 1;
+                runStart = index;
+            }
+
+            previous = index;
+            if (run <= longest) continue;
+            longest = run;
+            longestStart = runStart;
+        }
+
+        return (longest, longestStart);
     }
 
     private async Task UpdateReleaseDate(DavItem davItem, List<string> segments, CancellationToken ct)
@@ -482,27 +628,41 @@ public class HealthCheckService : BackgroundService
         davItem.ReleaseDate = articleHeaders.Date;
     }
 
-    private async Task<List<string>> GetAllSegments(DavItem davItem, DavDatabaseClient dbClient, CancellationToken ct)
+    /// <summary>
+    /// An item's segments, and whether those segments carry the file's own bytes. They do not
+    /// when the file was extracted from an archive, and the item's name does not reveal it: the
+    /// aggregators name an archive member after the file within it, so a rar-packed release is
+    /// an item called something.mkv.
+    /// </summary>
+    private sealed record ItemSegments(List<string> Segments, bool CarriesOwnBytes);
+
+    private async Task<ItemSegments> GetAllSegments(DavItem davItem, DavDatabaseClient dbClient, CancellationToken ct)
     {
         if (davItem.SubType == DavItem.ItemSubType.NzbFile)
         {
             var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
-            return nzbFile?.SegmentIds?.ToList() ?? [];
+            return new ItemSegments(nzbFile?.SegmentIds?.ToList() ?? [], true);
         }
 
         if (davItem.SubType == DavItem.ItemSubType.RarFile)
         {
             var rarFile = await dbClient.GetDavRarFileAsync(davItem, ct).ConfigureAwait(false);
-            return rarFile?.RarParts?.SelectMany(x => x.SegmentIds)?.ToList() ?? [];
+            return new ItemSegments(rarFile?.RarParts?.SelectMany(x => x.SegmentIds)?.ToList() ?? [], false);
         }
 
         if (davItem.SubType == DavItem.ItemSubType.MultipartFile)
         {
+            // Rar members, 7z members and a plain video split across .001 parts all land on this
+            // subtype, and nothing stored distinguishes them for every item: only the lazy rar
+            // path records a path within the archive, and byte ranges separate them only when the
+            // entry does not happen to start and end on a part boundary. Treated as packed until
+            // there is a marker that holds for already-imported items too.
             var multipartFile = await dbClient.GetDavMultipartFileAsync(davItem, ct).ConfigureAwait(false);
-            return multipartFile?.Metadata?.FileParts?.SelectMany(x => x.SegmentIds)?.ToList() ?? [];
+            var parts = multipartFile?.Metadata?.FileParts;
+            return new ItemSegments(parts?.SelectMany(x => x.SegmentIds)?.ToList() ?? [], false);
         }
 
-        return [];
+        return new ItemSegments([], false);
     }
 
     /// <summary>

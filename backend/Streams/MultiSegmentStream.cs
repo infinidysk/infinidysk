@@ -18,7 +18,6 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private const int BodyPipelineBatchSize = 4;
     private const int MaxBodyRetries = 2;
     private const int MaxCorruptionRetries = 3;
-    private const int MaxConsecutiveZeroFills = 3;
 
     private readonly Memory<string> _segmentIds;
     private readonly string[][]? _segmentFallbacks;
@@ -1008,7 +1007,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
             StreamTrace.TryZeroFill(sessionId, result.SegmentId!, result.Bytes);
 
-        if (_consecutiveZeroFills < MaxConsecutiveZeroFills)
+        if (_consecutiveZeroFills < ZeroFillPolicy.MaxConsecutive)
             return result.Stream;
 
         result.Stream.Dispose();

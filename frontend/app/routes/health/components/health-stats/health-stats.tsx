@@ -15,6 +15,7 @@ enum RepairAction {
     Repaired = 1,
     Deleted = 2,
     ActionNeeded = 3,
+    Degraded = 4,
 }
 
 export function HealthStats({ stats }: HealthStatsProps) {

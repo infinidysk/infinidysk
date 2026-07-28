@@ -364,6 +364,7 @@ public class ConfigManager
                 case ConfigKeys.WardenBackboneScope:
                 case ConfigKeys.RepairEnable:
                 case ConfigKeys.RepairHealthcheckAging:
+                case ConfigKeys.RepairHealthcheckLenient:
                 case ConfigKeys.RepairAutoRemoveUnlinkedOnly:
                 case ConfigKeys.RcloneRcEnabled:
                 case ConfigKeys.DbIsStartupVacuumEnabled:
@@ -1423,6 +1424,16 @@ public class ConfigManager
     public bool IsHealthCheckAgingEnabled()
     {
         var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairHealthcheckAging));
+        return configValue != null && bool.Parse(configValue);
+    }
+
+    /// <summary>
+    /// Whether a health check may accept a few missing articles in a plain video container
+    /// instead of repairing it. Off by default, so any confirmed miss fails the check.
+    /// </summary>
+    public bool IsHealthCheckLenient()
+    {
+        var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairHealthcheckLenient));
         return configValue != null && bool.Parse(configValue);
     }
 

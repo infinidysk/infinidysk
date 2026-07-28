@@ -206,37 +206,52 @@ public abstract class NntpClient : INntpClient
         return string.IsNullOrEmpty(subjectName) ? null : subjectName;
     }
 
-    public virtual async Task CheckAllSegmentsAsync
+    public virtual async Task<IReadOnlyList<int>> CheckAllSegmentsAsync
     (
         IEnumerable<string> segmentIds,
         int concurrency,
         IProgress<int>? progress,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        int toleratedMissing = 0
     )
     {
         using var childCt = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var token = childCt.Token;
 
         var tasks = segmentIds
-            .Select(async segmentId => (
+            .Select(async (segmentId, position) => (
+                Position: position,
                 SegmentId: segmentId,
                 Result: await StatAsync(segmentId, token).ConfigureAwait(false)
             ))
             .WithConcurrencyAsync(concurrency, token);
 
         var processed = 0;
+
+        // Positions, not ids, because only the caller knows where each one sits in the file.
+        // They arrive in completion order rather than input order, so the caller sorts.
+        var missing = new List<int>();
         await foreach (var task in tasks.ConfigureAwait(false))
         {
             progress?.Report(++processed);
             if (task.Result.ResponseType == UsenetResponseType.ArticleExists) continue;
-            await childCt.CancelAsync().ConfigureAwait(false);
 
             // Definitive missing (430 / provider 451) fails the health check; any other
             // response (e.g. a stale connection's goodbye line) must stay retryable.
             if (UsenetArticleAvailability.IsDefinitiveMissing(task.Result))
+            {
+                // Results are consumed on this one loop, so the list needs no synchronization.
+                missing.Add(task.Position);
+                if (missing.Count <= toleratedMissing) continue;
+                await childCt.CancelAsync().ConfigureAwait(false);
                 throw new UsenetArticleNotFoundException(task.SegmentId, task.Result.ResponseMessage);
+            }
+
+            await childCt.CancelAsync().ConfigureAwait(false);
             throw new UsenetUnexpectedResponseException(task.SegmentId, task.Result.ResponseMessage);
         }
+
+        return missing;
     }
 
     public virtual async IAsyncEnumerable<PipelinedStatResult> StatsPipelinedAsync
