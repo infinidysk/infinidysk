@@ -119,45 +119,15 @@ class Program
                 return;
             }
 
-            // initialize database
+            // Keep both database schemas current before config or application services
+            // read them. The stock entrypoint already does this through --db-migration;
+            // direct backend launches use the same progress UI here.
+            var startupCancellationToken = SigtermUtil.GetCancellationToken();
             await using var databaseContext = new DavDatabaseContext();
-            await databaseContext.Database
-                .ExecuteSqlRawAsync(
-                    "PRAGMA journal_mode = WAL;",
-                    SigtermUtil.GetCancellationToken())
+            await using var metricsBootstrap = new MetricsDbContext();
+            await StartupDatabaseMigrator
+                .RunAsync(databaseContext, metricsBootstrap, startupCancellationToken)
                 .ConfigureAwait(false);
-
-            await ClearStaleMigrationLockAsync(databaseContext, SigtermUtil.GetCancellationToken())
-                .ConfigureAwait(false);
-
-            // The stock entrypoint runs `--db-migration` (the maintenance
-            // runner) before the server starts, so this is a no-op there.
-            // Deployments that launch the backend directly (e.g. separate
-            // chart-managed containers that bypass entrypoint.sh) would
-            // otherwise never migrate the main database and fail at runtime
-            // with missing tables/columns.
-            var pendingMigrations = (await databaseContext.Database
-                .GetPendingMigrationsAsync(SigtermUtil.GetCancellationToken())
-                .ConfigureAwait(false)).ToList();
-            if (pendingMigrations.Count > 0)
-            {
-                Log.Warning(
-                    "Applying {Count} pending database migrations at startup ({First} .. {Last})",
-                    pendingMigrations.Count, pendingMigrations[0], pendingMigrations[^1]);
-                await databaseContext.Database
-                    .MigrateAsync(SigtermUtil.GetCancellationToken())
-                    .ConfigureAwait(false);
-                Log.Information("Database migrations completed");
-            }
-
-            // The metrics database has its own schema and must also be current on
-            // normal startup, where the operational migration runner is skipped.
-            await using (var metricsBootstrap = new MetricsDbContext())
-            {
-                await metricsBootstrap.Database
-                    .MigrateAsync(SigtermUtil.GetCancellationToken())
-                    .ConfigureAwait(false);
-            }
 
             // initialize the config-manager
             var configManager = new ConfigManager();
