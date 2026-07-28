@@ -1051,8 +1051,10 @@ public class MultiProviderNntpClient(
         if (!provider.HasSpareConnection)
             return provider.Priority + saturationDemotion;
 
-        // At most 25% of the configured pool remains unreserved.
-        var thinSpareDemotion = provider.SpareFraction <= 0.25 ? 1 : 0;
+        // At most 25% of the configured pool remains unreserved (integer form of
+        // spare/max <= 1/4 so boundary cases like 2/8 do not depend on float rounding).
+        var max = Math.Max(1, provider.MaxConnections);
+        var thinSpareDemotion = provider.UnreservedConnections * 4 <= max ? 1 : 0;
         return provider.Priority + thinSpareDemotion;
     }
 
