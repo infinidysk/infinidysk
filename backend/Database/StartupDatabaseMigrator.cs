@@ -23,8 +23,16 @@ internal static class StartupDatabaseMigrator
         Func<MigrationProgress, CancellationToken, Task<IAsyncDisposable?>> startStatusServer,
         CancellationToken cancellationToken)
     {
+        var databasePath = databaseContext.Database.GetDbConnection().DataSource;
+        await using var lease = await DatabaseMigrationLease
+            .AcquireAsync(databasePath, cancellationToken)
+            .ConfigureAwait(false);
+
         await databaseContext.Database
             .ExecuteSqlRawAsync("PRAGMA journal_mode = WAL;", cancellationToken)
+            .ConfigureAwait(false);
+        await DatabaseStartupGuards
+            .ClearAbandonedMigrationLockAsync(databaseContext, cancellationToken)
             .ConfigureAwait(false);
 
         var pendingMigrations = (await databaseContext.Database

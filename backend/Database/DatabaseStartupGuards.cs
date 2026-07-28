@@ -1,4 +1,6 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
 
 namespace NzbWebDAV.Database;
 
@@ -11,19 +13,85 @@ internal static class DatabaseStartupGuards
     /// True when the operational database has a <c>ConfigItems</c> table.
     /// Fresh / WAL-created empty files do not, so callers must not query config yet.
     /// </summary>
-    public static async Task<bool> ConfigItemsTableExistsAsync(
+    public static Task<bool> ConfigItemsTableExistsAsync(
         DbContext databaseContext,
+        CancellationToken cancellationToken = default) =>
+        TableExistsAsync(databaseContext, "ConfigItems", cancellationToken);
+
+    public static async Task<bool> TableExistsAsync(
+        DbContext databaseContext,
+        string tableName,
         CancellationToken cancellationToken = default)
     {
         var count = await databaseContext.Database
-            .SqlQueryRaw<int>(
-                """
+            .SqlQuery<int>(
+                $"""
                 SELECT COUNT(*) AS Value
                 FROM sqlite_master
-                WHERE type = 'table' AND name = 'ConfigItems'
+                WHERE type = 'table' AND name = {tableName}
                 """)
             .FirstAsync(cancellationToken)
             .ConfigureAwait(false);
         return count > 0;
+    }
+
+    /// <summary>
+    /// Clears EF's SQLite migration-lock row after the caller has acquired the
+    /// crash-safe <see cref="DatabaseMigrationLease"/>.
+    /// </summary>
+    public static async Task ClearAbandonedMigrationLockAsync(
+        DbContext databaseContext,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await TableExistsAsync(databaseContext, "__EFMigrationsLock", cancellationToken)
+                .ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var timestamps = await databaseContext.Database
+            .SqlQueryRaw<string>(
+                """
+                SELECT "Timestamp" AS Value
+                FROM "__EFMigrationsLock"
+                WHERE "Id" = 1
+                LIMIT 1
+                """)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (timestamps.Count == 0)
+            return;
+
+        var cleared = await databaseContext.Database
+            .ExecuteSqlRawAsync("DELETE FROM \"__EFMigrationsLock\"", cancellationToken)
+            .ConfigureAwait(false);
+        if (cleared == 0)
+            return;
+
+        var timestamp = timestamps[0];
+        if (DateTimeOffset.TryParse(
+                timestamp,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AllowWhiteSpaces,
+                out var acquiredAt))
+        {
+            var age = DateTimeOffset.UtcNow - acquiredAt;
+            if (age < TimeSpan.Zero)
+                age = TimeSpan.Zero;
+            Log.Warning(
+                "Cleared {Count} abandoned EF migration lock row(s) acquired at {Timestamp} "
+                + "({Age} old); the prior migration did not exit cleanly",
+                cleared,
+                acquiredAt,
+                age);
+        }
+        else
+        {
+            Log.Warning(
+                "Cleared {Count} abandoned EF migration lock row(s) with timestamp {Timestamp}; "
+                + "the prior migration did not exit cleanly",
+                cleared,
+                timestamp);
+        }
     }
 }
