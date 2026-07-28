@@ -445,6 +445,9 @@ class Program
             await databaseContext.Database.MigrateAsync(targetMigration, ct).ConfigureAwait(false);
             Log.Information("Database migrations completed");
             await using var metricsContext = new MetricsDbContext();
+            await DatabaseStartupGuards
+                .ClearAbandonedMigrationLockAsync(metricsContext, ct)
+                .ConfigureAwait(false);
             await metricsContext.Database.MigrateAsync(ct).ConfigureAwait(false);
             await PerformDatabaseVacuumIfEnabled().ConfigureAwait(false);
             return;
@@ -475,6 +478,9 @@ class Program
             {
                 Log.Information("No pending database migrations");
                 await using var metricsContext = new MetricsDbContext();
+                await DatabaseStartupGuards
+                    .ClearAbandonedMigrationLockAsync(metricsContext, ct)
+                    .ConfigureAwait(false);
                 await metricsContext.Database.MigrateAsync(ct).ConfigureAwait(false);
                 Log.Information("Database migrations completed");
                 return;
@@ -552,6 +558,9 @@ class Program
                 if (step.Id == MigrationProgress.MetricsStepId)
                 {
                     await using var metricsContext = new MetricsDbContext();
+                    await DatabaseStartupGuards
+                        .ClearAbandonedMigrationLockAsync(metricsContext, ct)
+                        .ConfigureAwait(false);
                     await metricsContext.Database.MigrateAsync(ct).ConfigureAwait(false);
                 }
                 else if (step.Id == MigrationProgress.VacuumStepId)

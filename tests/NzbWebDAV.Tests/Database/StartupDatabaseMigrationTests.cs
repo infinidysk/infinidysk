@@ -9,6 +9,7 @@ namespace NzbWebDAV.Tests.Database;
 public sealed class StartupDatabaseMigrationTests
 {
     private const string PriorMainMigration = "20260713120000_Add-Path-Index-To-DavItems";
+    private const string PriorMetricsMigration = "20260601104313_AddFailoverEdges";
 
     [Fact]
     public async Task RunAsync_AppliesPendingMainAndMetricsMigrations()
@@ -20,12 +21,20 @@ public sealed class StartupDatabaseMigrationTests
             await using var mainContext = CreateMainContext(mainPath);
             await mainContext.Database.MigrateAsync(PriorMainMigration);
             await using var metricsContext = CreateMetricsContext(metricsPath);
+            await metricsContext.Database.MigrateAsync(PriorMetricsMigration);
+            await metricsContext.Database.ExecuteSqlRawAsync(
+                """
+                INSERT OR REPLACE INTO "__EFMigrationsLock" ("Id", "Timestamp")
+                VALUES (1, '2026-07-23 01:40:05+00:00')
+                """);
 
-            await StartupDatabaseMigrator.RunAsync(
-                mainContext,
-                metricsContext,
-                static (_, _) => Task.FromResult<IAsyncDisposable?>(null),
-                CancellationToken.None);
+            await StartupDatabaseMigrator
+                .RunAsync(
+                    mainContext,
+                    metricsContext,
+                    static (_, _) => Task.FromResult<IAsyncDisposable?>(null),
+                    CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(10));
 
             Assert.Empty(await mainContext.Database.GetPendingMigrationsAsync());
             Assert.Empty(await metricsContext.Database.GetPendingMigrationsAsync());

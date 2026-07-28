@@ -34,6 +34,9 @@ internal static class StartupDatabaseMigrator
         await DatabaseStartupGuards
             .ClearAbandonedMigrationLockAsync(databaseContext, cancellationToken)
             .ConfigureAwait(false);
+        await DatabaseStartupGuards
+            .ClearAbandonedMigrationLockAsync(metricsContext, cancellationToken)
+            .ConfigureAwait(false);
 
         var pendingMigrations = (await databaseContext.Database
             .GetPendingMigrationsAsync(cancellationToken)
