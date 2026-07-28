@@ -254,7 +254,7 @@ public class MultiSegmentStreamAdaptiveWidthTests
         }
     }
 
-    private static Stream CreatePipelinedStream(
+    private static MultiSegmentStream CreatePipelinedStream(
         ControlledBatchNntpClient client,
         int segmentCount,
         int articleBufferSize,
@@ -262,7 +262,7 @@ public class MultiSegmentStreamAdaptiveWidthTests
         InFlightArticleBudget? budget = null)
     {
         var exactSizes = Enumerable.Repeat((long)segmentSize, segmentCount).ToArray();
-        return MultiSegmentStream.Create(
+        return (MultiSegmentStream)MultiSegmentStream.Create(
             client.SegmentIds.AsMemory(),
             client,
             articleBufferSize,
@@ -281,19 +281,20 @@ public class MultiSegmentStreamAdaptiveWidthTests
     /// releasing as soon as a batch starts makes every boundary look "ready").
     /// </summary>
     private static async IAsyncEnumerable<int> ConsumeWithStarvationLockstepAsync(
-        Stream stream,
+        MultiSegmentStream stream,
         ControlledBatchNntpClient client,
         byte[] buffer,
         int count)
     {
-        var previous = MultiSegmentStream.TestOnSegmentReadiness;
         try
         {
             for (var i = 0; i < count; i++)
             {
                 var readiness = new TaskCompletionSource(
                     TaskCreationOptions.RunContinuationsAsynchronously);
-                MultiSegmentStream.TestOnSegmentReadiness = _ => readiness.TrySetResult();
+                // Instance-scoped: other MultiSegmentStream tests running in parallel cannot
+                // complete this readiness TCS.
+                stream.TestOnSegmentReadiness = _ => readiness.TrySetResult();
                 var readTask = stream.ReadAsync(buffer).AsTask();
                 await readiness.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 client.ReleaseSegment(i);
@@ -303,7 +304,7 @@ public class MultiSegmentStreamAdaptiveWidthTests
         }
         finally
         {
-            MultiSegmentStream.TestOnSegmentReadiness = previous;
+            stream.TestOnSegmentReadiness = null;
         }
     }
 }

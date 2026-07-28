@@ -1,3 +1,5 @@
+using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using UsenetSharp.Models;
@@ -147,4 +149,147 @@ public class MultiSegmentStreamCapacityHintTests
         Assert.False(MultiSegmentStream.IsPlausiblePartSize(-1, 10, 10, 1000));
         Assert.False(MultiSegmentStream.IsPlausiblePartSize(5_000_000, 10, 10, 500_000));
     }
+
+    [Theory]
+    [InlineData(typeof(InvalidDataException))]
+    [InlineData(typeof(IOException))]
+    public async Task Drain_FallsBackToEstimate_WhenGetYencHeadersThrows(Type exceptionType)
+    {
+        const int size = 4096;
+        var bytes = Enumerable.Repeat((byte)7, size).ToArray();
+        var toThrow = (Exception)Activator.CreateInstance(exceptionType, "header parse failed")!;
+        var client = new HeaderThrowingBodyClient(bytes, toThrow);
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "seg-0" }.AsMemory(),
+            client,
+            articleBufferSize: 1,
+            estimatedSegmentSize: size,
+            failFastOnFirstSegment: true,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "header-throw.bin");
+
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output);
+        Assert.Equal(bytes, output.ToArray());
+    }
+}
+
+/// <summary>
+/// Returns a YencStream whose header parse throws but whose body still decodes via ReadAsync,
+/// matching the ResolveDrainCapacityHintAsync fallback contract.
+/// </summary>
+file sealed class HeaderThrowingBodyClient(byte[] payload, Exception headerException) : NntpClient
+{
+    public override Task ConnectAsync(
+        string host, int port, bool useSsl, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    public override Task<UsenetResponse> AuthenticateAsync(
+        string user, string pass, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetStatResponse> StatAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetHeadResponse> HeadAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        DecodedBodyAsync(segmentId, null, cancellationToken);
+
+    public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+        SegmentId segmentId,
+        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+        return Task.FromResult(new UsenetDecodedBodyResponse
+        {
+            SegmentId = segmentId.ToString(),
+            ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+            ResponseMessage = "222 fake body",
+            Stream = new HeaderThrowingYencStream(payload, headerException),
+        });
+    }
+
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+        SegmentId segmentId,
+        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetExclusiveConnection> AcquireExclusiveConnectionAsync(
+        string segmentId, CancellationToken cancellationToken) =>
+        Task.FromResult(new UsenetExclusiveConnection(null));
+
+    public override Task<UsenetExclusiveConnection> AcquireExclusiveConnectionAsync(
+        IReadOnlyList<SegmentId> segmentIds, CancellationToken cancellationToken) =>
+        Task.FromResult(new UsenetExclusiveConnection(null));
+
+    public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+        SegmentId segmentId,
+        UsenetExclusiveConnection exclusiveConnection,
+        CancellationToken cancellationToken) =>
+        DecodedBodyAsync(segmentId, exclusiveConnection.OnConnectionReadyAgain, cancellationToken);
+
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        UsenetExclusiveConnection exclusiveConnection,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+        SegmentId segmentId,
+        UsenetExclusiveConnection exclusiveConnection,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override void Dispose()
+    {
+    }
+}
+
+file sealed class HeaderThrowingYencStream : CachedYencStream
+{
+    private readonly Exception _headerException;
+
+    public HeaderThrowingYencStream(byte[] payload, Exception headerException)
+        : base(
+            new UsenetYencHeader
+            {
+                FileName = "throw.bin",
+                FileSize = payload.Length,
+                LineLength = 128,
+                PartNumber = 1,
+                TotalParts = 1,
+                PartOffset = 0,
+                PartSize = payload.Length,
+            },
+            new MemoryStream(payload, writable: false))
+    {
+        _headerException = headerException;
+    }
+
+    public override ValueTask<UsenetYencHeader?> GetYencHeadersAsync(
+        CancellationToken cancellationToken = default) =>
+        throw _headerException;
 }

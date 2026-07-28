@@ -46,10 +46,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private Task? _disposeTask;
 
     /// <summary>
-    /// Optional test hook invoked after each segment-boundary readiness sample and before
-    /// the segment task is awaited. Production code never sets this.
+    /// Optional per-instance test hook invoked after each segment-boundary readiness sample
+    /// and before the segment task is awaited. Production code never sets this; keeping it
+    /// instance-scoped avoids cross-talk when xUnit runs stream tests in parallel.
     /// </summary>
-    internal static Action<bool>? TestOnSegmentReadiness;
+    internal Action<bool>? TestOnSegmentReadiness;
 
     public static Stream Create(
         Memory<string> segmentIds,
