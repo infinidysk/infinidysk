@@ -114,30 +114,6 @@ public class MultiProviderNntpClient(
     public sealed class ResponderAttribution { public string? Host; }
     public static readonly AsyncLocal<ResponderAttribution?> AttributionContext = new();
 
-    /// <summary>
-    /// Providers to skip for the current async call only (e.g. the account that just
-    /// returned corrupt yEnc for this segment). Cleared when the scope disposes.
-    /// If every enabled provider is excluded, selection falls back to the full set so
-    /// a lone provider can still be retried.
-    /// </summary>
-    private static readonly AsyncLocal<HashSet<string>?> ExcludedProvidersScope = new();
-
-    public static IDisposable ExcludeProviders(IEnumerable<string> providerKeys)
-    {
-        var previous = ExcludedProvidersScope.Value;
-        var next = previous != null
-            ? new HashSet<string>(previous, StringComparer.Ordinal)
-            : new HashSet<string>(StringComparer.Ordinal);
-        foreach (var key in providerKeys)
-        {
-            if (!string.IsNullOrEmpty(key))
-                next.Add(key);
-        }
-
-        ExcludedProvidersScope.Value = next.Count > 0 ? next : null;
-        return new ScopeReleaser(() => ExcludedProvidersScope.Value = previous);
-    }
-
     private readonly object _selectLock = new();
 
     public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken ct)
@@ -1019,18 +995,6 @@ public class MultiProviderNntpClient(
                 .Where(x => x.ProviderType != ProviderType.Disabled)
                 .Where(x => !IsOverLimit(x))
                 .ToList();
-
-            var excluded = ExcludedProvidersScope.Value;
-            if (excluded is { Count: > 0 })
-            {
-                var withoutExcluded = enabled
-                    .Where(x => !excluded.Contains(x.MetricsKey))
-                    .ToList();
-                // Fall back to the full set when every remaining provider was excluded so
-                // a single-provider install can still retry after corruption.
-                if (withoutExcluded.Count > 0)
-                    enabled = withoutExcluded;
-            }
 
             // Reading state here must not claim the half-open probe slot. IsTripped claims
             // it, so one selection ends up holding a probe it may never dispatch while

@@ -1389,8 +1389,8 @@ public class MultiProviderNntpClientTests
         };
         var primary = CreateProvider(primaryConnection, host: "primary.example", maxConnections: 8, priority: 0);
         var secondary = CreateProvider(secondaryConnection, host: "secondary.example", maxConnections: 8, priority: 1);
-        // 6/8 unreserved = 75% spare — above the 25% thin-spare band, so Priority still wins.
-        for (var i = 0; i < 2; i++)
+        // 3/8 unreserved = 37.5% spare — just above the 25% thin-spare band.
+        for (var i = 0; i < 5; i++)
             primary.ReservePending();
         using var client = new MultiProviderNntpClient([primary, secondary], cascadeEnabled: () => true);
 
@@ -1399,6 +1399,33 @@ public class MultiProviderNntpClientTests
 
         Assert.Equal(1, primaryConnection.SingularRequests);
         Assert.Equal(0, secondaryConnection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task CascadeMode_YieldsAtThinSpareThreshold()
+    {
+        var primaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var secondaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var primary = CreateProvider(primaryConnection, host: "primary.example", maxConnections: 8, priority: 0);
+        var secondary = CreateProvider(secondaryConnection, host: "secondary.example", maxConnections: 8, priority: 1);
+        // 2/8 unreserved = exactly 25%, so the idle next-priority peer wins.
+        for (var i = 0; i < 6; i++)
+            primary.ReservePending();
+        using var client = new MultiProviderNntpClient([primary, secondary], cascadeEnabled: () => true);
+
+        var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+        await response.Stream!.DisposeAsync();
+
+        Assert.Equal(0, primaryConnection.SingularRequests);
+        Assert.Equal(1, secondaryConnection.SingularRequests);
     }
 
     [Fact]
@@ -1459,7 +1486,7 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
-    public async Task CascadeMode_PooledTierStillPrecedeBackupOnly()
+    public async Task CascadeMode_PooledTierStillPrecedesBackupOnly()
     {
         var backupConnection = new ScriptedNntpClient
         {
@@ -1488,57 +1515,6 @@ public class MultiProviderNntpClientTests
 
         Assert.Equal(1, primaryConnection.SingularRequests);
         Assert.Equal(0, backupConnection.SingularRequests);
-    }
-
-    [Fact]
-    public async Task ExcludeProviders_SkipsCorruptProviderWhenPeerAvailable()
-    {
-        var primary = new ScriptedNntpClient
-        {
-            BatchResponseCode = 222,
-            SingularResponseCode = 222,
-        };
-        var backup = new ScriptedNntpClient
-        {
-            BatchResponseCode = 222,
-            SingularResponseCode = 222,
-        };
-        using var client = new MultiProviderNntpClient(
-        [
-            CreateProvider(primary, host: "primary.example", maxConnections: 4, priority: 0),
-            CreateProvider(backup, host: "backup.example", maxConnections: 4, priority: 1),
-        ], cascadeEnabled: () => true);
-
-        using (MultiProviderNntpClient.ExcludeProviders(["primary.example"]))
-        {
-            var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
-            await response.Stream!.DisposeAsync();
-        }
-
-        Assert.Equal(0, primary.SingularRequests);
-        Assert.Equal(1, backup.SingularRequests);
-    }
-
-    [Fact]
-    public async Task ExcludeProviders_FallsBackWhenEveryProviderIsExcluded()
-    {
-        var only = new ScriptedNntpClient
-        {
-            BatchResponseCode = 222,
-            SingularResponseCode = 222,
-        };
-        using var client = new MultiProviderNntpClient(
-        [
-            CreateProvider(only, host: "only.example", maxConnections: 4, priority: 0),
-        ], cascadeEnabled: () => true);
-
-        using (MultiProviderNntpClient.ExcludeProviders(["only.example"]))
-        {
-            var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
-            await response.Stream!.DisposeAsync();
-        }
-
-        Assert.Equal(1, only.SingularRequests);
     }
 
     [Fact]
