@@ -45,18 +45,10 @@ public class MultiSegmentStreamAdaptiveWidthTests
         await using var stream = CreatePipelinedStream(
             client, segmentCount, articleBufferSize, segmentSize);
 
-        // Gate every response so the consumer always awaits incomplete segment tasks.
+        // Hold each gate until the consumer has sampled readiness on an incomplete task.
         var buffer = new byte[segmentSize];
-        for (var i = 0; i < segmentCount; i++)
+        await foreach (var _ in ConsumeWithStarvationLockstepAsync(stream, client, buffer, segmentCount))
         {
-            var readTask = stream.ReadAsync(buffer);
-            await client.WaitUntilAsync(
-                () => client.StartedSegmentCount > i, TimeSpan.FromSeconds(5));
-            // Release only the segment the consumer is blocked on so the next
-            // boundary still sees an incomplete task (starvation signal).
-            client.ReleaseSegment(i);
-            var n = await readTask;
-            Assert.Equal(segmentSize, n);
         }
 
         Assert.Contains(4, client.ObservedBatchSizes);
@@ -78,14 +70,14 @@ public class MultiSegmentStreamAdaptiveWidthTests
         var buffer = new byte[segmentSize];
 
         // Starve first so the pipeline narrows to 1.
-        for (var i = 0; i < 48; i++)
+        var starved = 0;
+        await foreach (var n in ConsumeWithStarvationLockstepAsync(stream, client, buffer, 48))
         {
-            var readTask = stream.ReadAsync(buffer);
-            await client.WaitUntilAsync(() => client.StartedSegmentCount > i, TimeSpan.FromSeconds(5));
-            client.ReleaseSegment(i);
-            Assert.Equal(segmentSize, await readTask);
+            Assert.Equal(segmentSize, n);
+            starved++;
         }
 
+        Assert.Equal(48, starved);
         Assert.Contains(1, client.ObservedBatchSizes);
 
         // Keep a completed lead ahead of the consumer so boundaries stay ready while the
@@ -172,14 +164,8 @@ public class MultiSegmentStreamAdaptiveWidthTests
         var actual = new MemoryStream();
 
         // Starve to force 4→2→1, then release ahead to recover toward 4.
-        for (var i = 0; i < 40; i++)
-        {
-            var readTask = stream.ReadAsync(buffer);
-            await client.WaitUntilAsync(() => client.StartedSegmentCount > i, TimeSpan.FromSeconds(5));
-            client.ReleaseSegment(i);
-            var n = await readTask;
+        await foreach (var n in ConsumeWithStarvationLockstepAsync(stream, client, buffer, 40))
             actual.Write(buffer, 0, n);
-        }
 
         client.ReleaseAllUpTo(segmentCount - 1);
         while (true)
@@ -287,6 +273,38 @@ public class MultiSegmentStreamAdaptiveWidthTests
             fileName: "adaptive.bin",
             exactSegmentSizes: exactSizes,
             inFlightArticleBudget: budget);
+    }
+
+    /// <summary>
+    /// Reads <paramref name="count"/> segments while holding each BODY gate closed until
+    /// the consumer has sampled readiness on that incomplete task (avoids the race where
+    /// releasing as soon as a batch starts makes every boundary look "ready").
+    /// </summary>
+    private static async IAsyncEnumerable<int> ConsumeWithStarvationLockstepAsync(
+        Stream stream,
+        ControlledBatchNntpClient client,
+        byte[] buffer,
+        int count)
+    {
+        var previous = MultiSegmentStream.TestOnSegmentReadiness;
+        try
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var readiness = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                MultiSegmentStream.TestOnSegmentReadiness = _ => readiness.TrySetResult();
+                var readTask = stream.ReadAsync(buffer).AsTask();
+                await readiness.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                client.ReleaseSegment(i);
+                var n = await readTask;
+                yield return n;
+            }
+        }
+        finally
+        {
+            MultiSegmentStream.TestOnSegmentReadiness = previous;
+        }
     }
 }
 

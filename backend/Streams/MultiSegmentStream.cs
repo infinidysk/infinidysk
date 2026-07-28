@@ -45,6 +45,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
 
+    /// <summary>
+    /// Optional test hook invoked after each segment-boundary readiness sample and before
+    /// the segment task is awaited. Production code never sets this.
+    /// </summary>
+    internal static Action<bool>? TestOnSegmentReadiness;
+
     public static Stream Create(
         Memory<string> segmentIds,
         INntpClient usenetClient,
@@ -826,7 +832,23 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         if (source is not YencStream yencSource)
             return ToCapacity(estimate);
 
-        var header = await yencSource.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+        UsenetYencHeader? header;
+        try
+        {
+            header = await yencSource.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception e) when (e is InvalidDataException or IOException)
+        {
+            // Header parse failed on a body that still may decode via ReadAsync (test fakes
+            // and some nonstandard streams). Keep the estimate; do not swallow corrupt-article
+            // or other download failures — those are not thrown from GetYencHeadersAsync here.
+            return ToCapacity(estimate);
+        }
+
         if (header is not null
             && header.PartSize > 0
             && header.PartSize <= Array.MaxLength
@@ -924,6 +946,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 var nextSegment = streamTask
                     ?? throw new InvalidOperationException("Segment channel returned a null task.");
                 var readyWhenNeeded = wasQueued && nextSegment.IsCompleted;
+                // Test hook: fires after readiness is sampled and before the segment task is awaited,
+                // so lockstep tests can keep the gate closed until starvation is observed.
+                TestOnSegmentReadiness?.Invoke(readyWhenNeeded);
                 var result = await nextSegment.ConfigureAwait(false);
                 StreamTrace.TryStall(
                     traceRange,
