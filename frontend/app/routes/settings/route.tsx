@@ -240,6 +240,20 @@ function Body(props: BodyProps) {
         setSaveError(null);
     }, [config]);
 
+    const postConfigUpdate = useCallback(async (changedConfig: Record<string, string>) => {
+        const response = await fetch("/settings/update", {
+            method: "POST",
+            body: (() => {
+                const form = new FormData();
+                form.append("config", JSON.stringify(changedConfig));
+                return form;
+            })()
+        });
+        if (!response.ok) {
+            throw new Error(`Settings update failed with status ${response.status}`);
+        }
+    }, []);
+
     const onSave = useCallback(async () => {
         setIsSaving(true);
         setIsSaved(false);
@@ -255,17 +269,7 @@ function Body(props: BodyProps) {
                 setIsSaved(true);
                 return;
             }
-            const response = await fetch("/settings/update", {
-                method: "POST",
-                body: (() => {
-                    const form = new FormData();
-                    form.append("config", JSON.stringify(changedConfig));
-                    return form;
-                })()
-            });
-            if (!response.ok) {
-                throw new Error(`Settings update failed with status ${response.status}`);
-            }
+            await postConfigUpdate(changedConfig);
             setConfig(newConfig);
             setIsSaved(true);
         } catch {
@@ -273,7 +277,41 @@ function Body(props: BodyProps) {
         } finally {
             setIsSaving(false);
         }
-    }, [config, newConfig, managedEnv]);
+    }, [config, newConfig, managedEnv, postConfigUpdate]);
+
+    const persistConfigPatch = useCallback(async (patch: Record<string, string>) => {
+        const nextNew = pinManagedConfigKeys(
+            { ...newConfig, ...patch },
+            config,
+            managedEnv,
+        );
+        setNewConfigState(nextNew);
+        setSaveError(null);
+
+        const changedFromPatch: Record<string, string> = {};
+        for (const key of Object.keys(patch)) {
+            if (config[key] !== nextNew[key]) {
+                changedFromPatch[key] = nextNew[key];
+            }
+        }
+        const changedConfig = omitManagedConfigKeys(changedFromPatch, managedEnv);
+
+        if (Object.keys(changedConfig).length > 0) {
+            await postConfigUpdate(changedConfig);
+        }
+
+        const nextSaved = { ...config };
+        for (const key of Object.keys(patch)) {
+            nextSaved[key] = nextNew[key];
+        }
+        setConfig(nextSaved);
+
+        const remaining = omitManagedConfigKeys(
+            getChangedConfig(nextSaved, nextNew),
+            managedEnv,
+        );
+        setIsSaved(Object.keys(remaining).length === 0);
+    }, [config, newConfig, managedEnv, postConfigUpdate]);
 
     return (
         <ManagedEnvProvider value={managedEnv}>
@@ -295,7 +333,13 @@ function Body(props: BodyProps) {
                         </span>
                     </Alert>
                 )}
-                {activeTab === "usenet" && <UsenetSettings config={newConfig} setNewConfig={setNewConfig} />}
+                {activeTab === "usenet" && (
+                    <UsenetSettings
+                        config={newConfig}
+                        setNewConfig={setNewConfig}
+                        persistConfigPatch={persistConfigPatch}
+                    />
+                )}
                 {activeTab === "indexers" && <IndexersSettings config={newConfig} setNewConfig={setNewConfig} savedConfig={config} />}
                 {activeTab === "profiles" && <ProfilesSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "watchdog" && <WatchdogSettings config={newConfig} setNewConfig={setNewConfig} />}
