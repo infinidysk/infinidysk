@@ -407,12 +407,14 @@ public class MultiProviderNntpClient(
                         if (responseType == UsenetResponseType.ArticleRetrievedBodyFollows)
                         {
                             _usageTracker.RecordSuccess(provider.MetricsKey);
+                            var crossMisses = FilterCrossProviderMisses(
+                                priorMisses, provider.MetricsKey);
                             RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                                stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0, traceRange);
-                            if (priorMisses is { Count: > 0 })
+                                stopwatch.ElapsedMilliseconds, crossMisses?.Count ?? 0, traceRange);
+                            if (crossMisses is { Count: > 0 })
                             {
                                 _usageTracker.RecordFailoverSave();
-                                RecordFailoverMisses(priorMisses, provider.MetricsKey);
+                                RecordFailoverMisses(crossMisses, provider.MetricsKey);
                             }
                             response = WrapProviderResponse(response, provider.MetricsKey);
                             gateOwnedByTransfer = true;
@@ -618,12 +620,14 @@ public class MultiProviderNntpClient(
                 {
                     if (attribution != null) attribution.Host = provider.Host;
                     _usageTracker.RecordSuccess(provider.MetricsKey);
+                    var crossMisses = FilterCrossProviderMisses(
+                        priorMisses, provider.MetricsKey);
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
-                    if (attemptIndex > 0)
+                        stopwatch.ElapsedMilliseconds, crossMisses?.Count ?? 0, traceRange);
+                    if (crossMisses is { Count: > 0 })
                     {
                         _usageTracker.RecordFailoverSave();
-                        RecordFailoverMisses(priorMisses, provider.MetricsKey);
+                        RecordFailoverMisses(crossMisses, provider.MetricsKey);
                     }
                     result = WrapProviderResponse(result, provider.MetricsKey);
                     deferredCallback.Activate(onConnectionReadyAgain ?? (_ => { }));
@@ -766,12 +770,14 @@ public class MultiProviderNntpClient(
                                           or UsenetResponseType.ArticleRetrievedHeadAndBodyFollow)
                 {
                     _usageTracker.RecordSuccess(provider.MetricsKey);
+                    var crossMisses = FilterCrossProviderMisses(
+                        priorMisses, provider.MetricsKey);
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
-                    if (attemptIndex > 0)
+                        stopwatch.ElapsedMilliseconds, crossMisses?.Count ?? 0, traceRange);
+                    if (crossMisses is { Count: > 0 })
                     {
                         _usageTracker.RecordFailoverSave();
-                        RecordFailoverMisses(priorMisses, rescuer: provider.MetricsKey);
+                        RecordFailoverMisses(crossMisses, rescuer: provider.MetricsKey);
                     }
                     result = WrapProviderResponse(result, provider.MetricsKey);
                 }
@@ -913,6 +919,25 @@ public class MultiProviderNntpClient(
                 metricsKey, exception.GetType().FullName);
         }
         return status;
+    }
+
+    /// <summary>
+    /// Same-provider self-retries (timeout → re-probe primary) are not backup rescues.
+    /// Overview FailoverSaves / FailoverMisses only keep misses from a different provider.
+    /// </summary>
+    private static List<(string Host, SegmentFetch.FetchStatus Reason)>? FilterCrossProviderMisses(
+        List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses,
+        string rescuer)
+    {
+        if (priorMisses is not { Count: > 0 }) return null;
+        List<(string Host, SegmentFetch.FetchStatus Reason)>? cross = null;
+        foreach (var miss in priorMisses)
+        {
+            if (string.Equals(miss.Host, rescuer, StringComparison.OrdinalIgnoreCase))
+                continue;
+            (cross ??= []).Add(miss);
+        }
+        return cross;
     }
 
     private void RecordFailoverMisses(

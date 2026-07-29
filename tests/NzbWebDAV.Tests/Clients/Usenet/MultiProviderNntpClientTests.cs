@@ -75,6 +75,85 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task BatchResponse_SameProviderRetry_DoesNotRecordFailoverRescue()
+    {
+        // Primary batch miss, then same host succeeds on the singular re-probe.
+        // That is a self-retry, not a backup rescue — Overview must not count it.
+        var writer = new MetricsWriter();
+        var connection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+            [CreateProvider(connection, host: "news.example")],
+            metricsWriter: writer);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        Assert.Equal(
+            UsenetResponseType.ArticleRetrievedBodyFollows,
+            (await batch.Responses[0]).ResponseType);
+
+        Assert.Equal(0, writer.Stats.QueuedFailoverMisses);
+        Assert.Equal(1, connection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task BatchResponse_SameProviderTimeoutRetry_DoesNotRecordFailoverRescue()
+    {
+        var writer = new MetricsWriter();
+        var connection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            FaultBatchResponsesWith = () => new TimeoutException("nntp read timed out"),
+        };
+        using var client = new MultiProviderNntpClient(
+            [CreateProvider(connection, host: "solo.example")],
+            metricsWriter: writer);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        Assert.Equal(
+            UsenetResponseType.ArticleRetrievedBodyFollows,
+            (await batch.Responses[0]).ResponseType);
+
+        Assert.Equal(0, writer.Stats.QueuedFailoverMisses);
+        Assert.Equal(1, connection.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_CrossProviderRescue_RecordsFailoverMiss()
+    {
+        var writer = new MetricsWriter();
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = (int)UsenetResponseType.NoArticleWithThatMessageId,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(primary, host: "a.example"),
+                CreateProvider(backup, host: "b.example", providerType: ProviderType.BackupOnly),
+            ],
+            metricsWriter: writer,
+            cascadeEnabled: () => true,
+            retryPrimaryOnMiss: () => false);
+
+        var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+
+        Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+        Assert.True(backup.SingularRequests >= 1);
+        Assert.Equal(1, writer.Stats.QueuedFailoverMisses);
+    }
+
+    [Fact]
     public async Task BatchResponse_WithUnexpectedResponse_ThrowsRetryableWhenRetriesFail()
     {
         var connection = new ScriptedNntpClient
@@ -1764,6 +1843,7 @@ public class MultiProviderNntpClientTests
         public required int BatchResponseCode { get; init; }
         public int SingularResponseCode { get; init; } = 222;
         public Func<int, Exception?>? BatchException { get; init; }
+        public Func<Exception>? FaultBatchResponsesWith { get; init; }
         public Func<string, Exception>? SingularException { get; init; }
         public bool DeferSingularCompletion { get; init; }
         public int BatchRequests { get; private set; }
@@ -1781,9 +1861,19 @@ public class MultiProviderNntpClientTests
                 throw exception;
 
             var responses = segmentIds
-                .Select(segmentId => Task.FromResult(CreateResponse(segmentId, BatchResponseCode)))
+                .Select(segmentId =>
+                {
+                    if (FaultBatchResponsesWith != null)
+                        return Task.FromException<UsenetDecodedBodyResponse>(FaultBatchResponsesWith());
+                    return Task.FromResult(CreateResponse(segmentId, BatchResponseCode));
+                })
                 .ToArray();
-            onConnectionReadyAgain?.Invoke(ToArticleBodyResult(BatchResponseCode));
+            // Faulted per-segment tasks are resolved by MultiProvider failover; do not claim
+            // Retrieved here or the batch coordinator will treat the body as already done.
+            onConnectionReadyAgain?.Invoke(
+                FaultBatchResponsesWith != null
+                    ? ArticleBodyResult.NotRetrieved
+                    : ToArticleBodyResult(BatchResponseCode));
             return Task.FromResult(new UsenetDecodedBodyBatch { Responses = responses });
         }
 

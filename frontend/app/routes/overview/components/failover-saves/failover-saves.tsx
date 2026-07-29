@@ -49,7 +49,7 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
             <div>
                 <h3 className="card-title text-base">Backup rescues</h3>
                 <p className="text-xs text-base-content/50">
-                    When your main provider misses a piece mid-session, a backup delivers it before anything fails ({sinceLabel})
+                    When one provider misses a piece mid-session, a different provider delivers it before anything fails ({sinceLabel})
                 </p>
             </div>
 
@@ -58,10 +58,10 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
                     <div className="mb-3.5 flex items-center gap-4">
                         <span className="shrink-0 text-[40px] leading-[0.95] font-bold tracking-tight text-base-content tabular-nums">{formatNumber(articlesRecovered)}</span>
                         <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-medium text-base-content/80">segments your backups rescued</div>
+                            <div className="text-[13px] font-medium text-base-content/80">segments rescued by another provider</div>
                             <div className="mt-0.5 text-xs text-base-content/50">
                                 {totalArticles > 0 ? (
-                                    <>that&rsquo;s <strong className="font-semibold text-base-content">{formatSmallPercent(saveRate)}</strong> of all fetches a backup had to cover</>
+                                    <>that&rsquo;s <strong className="font-semibold text-base-content">{formatSmallPercent(saveRate)}</strong> of all fetches that needed a second provider</>
                                 ) : (
                                     <>your stack self-healed every time it mattered</>
                                 )}
@@ -221,7 +221,7 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
                 <div className="py-6 text-center text-xs text-base-content/50">
                     No backup rescues in this window.
                     <div className="mt-1.5 text-base-content/40">
-                        Every segment was served on the first try. When a provider misses, a backup steps in.
+                        Every segment was served without needing another provider. Same-provider retries after timeouts do not count here.
                         You&rsquo;ll see who failed, who covered, and why, right here.
                     </div>
                 </div>
