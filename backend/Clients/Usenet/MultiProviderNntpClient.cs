@@ -410,11 +410,12 @@ public class MultiProviderNntpClient(
                             var crossMisses = FilterCrossProviderMisses(
                                 priorMisses, provider.MetricsKey);
                             RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                                stopwatch.ElapsedMilliseconds, crossMisses?.Count ?? 0, traceRange);
-                            if (crossMisses is { Count: > 0 })
+                                stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0, traceRange);
+                            if (priorMisses is { Count: > 0 })
                             {
-                                _usageTracker.RecordFailoverSave();
-                                RecordFailoverMisses(crossMisses, provider.MetricsKey);
+                                if (crossMisses is { Count: > 0 })
+                                    _usageTracker.RecordFailoverSave();
+                                RecordRescue(priorMisses, crossMisses, provider.MetricsKey);
                             }
                             response = WrapProviderResponse(response, provider.MetricsKey);
                             gateOwnedByTransfer = true;
@@ -623,11 +624,12 @@ public class MultiProviderNntpClient(
                     var crossMisses = FilterCrossProviderMisses(
                         priorMisses, provider.MetricsKey);
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                        stopwatch.ElapsedMilliseconds, crossMisses?.Count ?? 0, traceRange);
-                    if (crossMisses is { Count: > 0 })
+                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
+                    if (priorMisses is { Count: > 0 })
                     {
-                        _usageTracker.RecordFailoverSave();
-                        RecordFailoverMisses(crossMisses, provider.MetricsKey);
+                        if (crossMisses is { Count: > 0 })
+                            _usageTracker.RecordFailoverSave();
+                        RecordRescue(priorMisses, crossMisses, provider.MetricsKey);
                     }
                     result = WrapProviderResponse(result, provider.MetricsKey);
                     deferredCallback.Activate(onConnectionReadyAgain ?? (_ => { }));
@@ -773,11 +775,12 @@ public class MultiProviderNntpClient(
                     var crossMisses = FilterCrossProviderMisses(
                         priorMisses, provider.MetricsKey);
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                        stopwatch.ElapsedMilliseconds, crossMisses?.Count ?? 0, traceRange);
-                    if (crossMisses is { Count: > 0 })
+                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
+                    if (priorMisses is { Count: > 0 })
                     {
-                        _usageTracker.RecordFailoverSave();
-                        RecordFailoverMisses(crossMisses, rescuer: provider.MetricsKey);
+                        if (crossMisses is { Count: > 0 })
+                            _usageTracker.RecordFailoverSave();
+                        RecordRescue(priorMisses, crossMisses, rescuer: provider.MetricsKey);
                     }
                     result = WrapProviderResponse(result, provider.MetricsKey);
                 }
@@ -940,19 +943,24 @@ public class MultiProviderNntpClient(
         return cross;
     }
 
-    private void RecordFailoverMisses(
-        List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses,
+    /// <summary>
+    /// Stream traces keep every prior-miss edge (including same-provider retries) for
+    /// support-pack stall attribution. Overview FailoverMisses only get cross-provider edges.
+    /// </summary>
+    private void RecordRescue(
+        List<(string Host, SegmentFetch.FetchStatus Reason)>? allMisses,
+        List<(string Host, SegmentFetch.FetchStatus Reason)>? crossMisses,
         string rescuer)
     {
-        if (priorMisses != null && ReadSessionScope.Value is { } sessionId)
+        if (allMisses != null && ReadSessionScope.Value is { } sessionId)
         {
-            foreach (var (from, reason) in priorMisses)
+            foreach (var (from, reason) in allMisses)
                 streamTrace?.Failover(sessionId, from, rescuer, reason.ToString());
         }
 
-        if (metricsWriter == null || priorMisses == null) return;
+        if (metricsWriter == null || crossMisses is not { Count: > 0 }) return;
         var at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        foreach (var (from, reason) in priorMisses)
+        foreach (var (from, reason) in crossMisses)
         {
             metricsWriter.RecordFailoverMiss(new FailoverMiss
             {

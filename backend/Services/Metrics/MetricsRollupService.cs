@@ -155,7 +155,7 @@ public class MetricsRollupService(
         }
     }
 
-    private static async Task RollupMinuteAsync(MetricsDbContext db, long minute)
+    internal static async Task RollupMinuteAsync(MetricsDbContext db, long minute)
     {
         var next = minute + OneMinute;
 
@@ -184,6 +184,9 @@ public class MetricsRollupService(
 
         // ProviderMinute: per-provider counters. BytesFetched intentionally omitted from
         // ON CONFLICT — the tracker is the sole writer of that column.
+        // FailoverSaves come from FailoverMisses (cross-provider rescue edges only), not from
+        // SegmentFetch.Retries — Retries still counts same-provider self-retries for the
+        // scoreboard. Each RecordRescue call stamps one shared At, so distinct At = one save.
         await db.Database.ExecuteSqlRawAsync(
             """
             INSERT INTO ProviderMinutes (Minute, Provider, Articles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist)
@@ -193,7 +196,8 @@ public class MetricsRollupService(
                 SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END),
                 SUM(CASE WHEN Status NOT IN (0, 1) THEN 1 ELSE 0 END),
                 SUM(Retries),
-                SUM(CASE WHEN Status = 0 AND Retries > 0 THEN 1 ELSE 0 END),
+                (SELECT COUNT(DISTINCT f.At) FROM FailoverMisses f
+                    WHERE f.ToProvider = SegmentFetches.Provider AND f.At >= {0} AND f.At < {1}),
                 -- Ok-only durations so Overview "Avg ok ms" is not inflated by misses/errors.
                 SUM(CASE WHEN Status = 0 THEN DurationMs ELSE 0 END),
                 NULL
