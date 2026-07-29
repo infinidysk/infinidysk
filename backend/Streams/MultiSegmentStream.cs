@@ -46,24 +46,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private Task? _disposeTask;
 
     /// <summary>
-    /// Optional per-instance test hook invoked after each segment-boundary readiness sample
-    /// and before the segment task is awaited. Production code never sets this; keeping it
-    /// instance-scoped avoids cross-talk when xUnit runs stream tests in parallel.
+    /// Optional per-instance test hook invoked with the segment-boundary readiness sample,
+    /// after it is taken and before the segment task is awaited. Production code never sets
+    /// this; instance scope keeps parallel stream tests from observing each other's streams.
     /// </summary>
     internal Action<bool>? TestOnSegmentReadiness;
 
-    /// <summary>
-    /// When true, <see cref="ReadAsync"/> skips <see cref="ObserveBatchReadiness"/> so tests can
-    /// drive the sizer explicitly (avoids IsCompleted races under parallel load).
-    /// </summary>
-    internal bool TestSuppressReadinessObserve;
-
     /// <summary>Current adaptive BODY batch width (or the fixed pipeline size when not adaptive).</summary>
     internal int PrefetchBatchWidth => _batchSizer?.Current ?? _bodyPipelineBatchSize;
-
-    /// <summary>Test seam: feed a readiness sample into the adaptive sizer.</summary>
-    internal void TestObserveReadiness(bool readyWhenNeeded) =>
-        ObserveBatchReadiness(readyWhenNeeded);
 
     public static Stream Create(
         Memory<string> segmentIds,
@@ -970,7 +960,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     Stopwatch.GetElapsedTime(waitStarted));
                 ReleaseInFlightPrefetchBytes(result.PlannedBytes);
                 // Ignore the first delivered segment (startup warm-up).
-                if (_deliveredSegments++ > 0 && !TestSuppressReadinessObserve)
+                if (_deliveredSegments++ > 0)
                     ObserveBatchReadiness(readyWhenNeeded);
                 _stream = AcceptSegment(result);
             }

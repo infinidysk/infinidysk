@@ -139,12 +139,12 @@ public class ConnectionPoolPriorityTests
             var admitted = await Task.WhenAny(nextHigh, nextLow).WaitAsync(WaitBudget);
             if (admitted == nextHigh)
             {
-                highWaiters.Dequeue();
+                _ = highWaiters.Dequeue();
                 admissions.Add(SemaphorePriority.High);
             }
             else
             {
-                lowWaiters.Dequeue();
+                _ = lowWaiters.Dequeue();
                 admissions.Add(SemaphorePriority.Low);
             }
 
