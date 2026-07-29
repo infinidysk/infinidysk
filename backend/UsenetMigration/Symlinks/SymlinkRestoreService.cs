@@ -92,11 +92,20 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
         if (entries.Count == 0)
             throw new InvalidDataException("The selected archive does not contain any symlinks.");
 
-        await using var ctx = store.NewContext();
-        var planRows = await ctx.SymlinkRewrites.ToListAsync(ct).ConfigureAwait(false);
+        // Load plan rows then release the SQLite connection before filesystem work.
+        // Holding an open context across CreateOrReplaceSymlink deadlocks callers that
+        // need a write transaction on the same migration DB (e.g. concurrent plan/apply).
+        List<Database.Models.UsenetMigration.MigrationSymlinkRewrite> planRows;
+        await using (var planCtx = store.NewContext())
+        {
+            planRows = await planCtx.SymlinkRewrites.AsNoTracking().ToListAsync(ct)
+                .ConfigureAwait(false);
+        }
+
         var issues = new List<SymlinkRestoreIssue>();
         var seenPaths = new HashSet<string>(PathComparer);
-        int restored = 0, alreadyRestored = 0, requeued = 0;
+        var pendingRequeues = new List<(string Path, string OldTarget, string NewTarget)>();
+        int restored = 0, alreadyRestored = 0;
 
         foreach (var entry in entries)
         {
@@ -134,7 +143,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
                 if (PathsEqual(current, entry.Target))
                 {
                     alreadyRestored++;
-                    requeued += Requeue(ctx, planRow, entry, expectedReplacement);
+                    TryQueueRequeue(pendingRequeues, entry, expectedReplacement);
                     continue;
                 }
                 if (string.IsNullOrWhiteSpace(expectedReplacement))
@@ -154,7 +163,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
 
                 Ops.CreateOrReplaceSymlink(libraryRoot, entry.Path, entry.Target);
                 restored++;
-                requeued += Requeue(ctx, planRow, entry, expectedReplacement);
+                TryQueueRequeue(pendingRequeues, entry, expectedReplacement);
             }
             catch (Exception e)
             {
@@ -162,8 +171,34 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
             }
         }
 
-        if (requeued > 0)
+        var requeued = 0;
+        if (pendingRequeues.Count > 0)
+        {
+            await using var ctx = store.NewContext();
+            var rows = await ctx.SymlinkRewrites.ToListAsync(ct).ConfigureAwait(false);
+            foreach (var pending in pendingRequeues)
+            {
+                var row = rows.FirstOrDefault(r => PathsEqual(r.SymlinkPath, pending.Path));
+                if (row is null)
+                {
+                    row = new Database.Models.UsenetMigration.MigrationSymlinkRewrite
+                    {
+                        SymlinkPath = pending.Path,
+                    };
+                    ctx.SymlinkRewrites.Add(row);
+                    rows.Add(row);
+                }
+
+                row.OldTarget = pending.OldTarget;
+                row.NewTarget = pending.NewTarget;
+                row.Status = "rewrite";
+                row.Error = null;
+                row.UpdatedAt = DateTime.UtcNow;
+                requeued++;
+            }
+
             await ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
 
         Log.Information(
             "Symlink restore from {ArchivePath}: {Restored} restored, {AlreadyRestored} already restored, {Failed} failed",
@@ -205,28 +240,15 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
                && !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
     }
 
-    private static int Requeue(
-        Database.UsenetMigrationDbContext ctx,
-        Database.Models.UsenetMigration.MigrationSymlinkRewrite? row,
+    private static bool TryQueueRequeue(
+        List<(string Path, string OldTarget, string NewTarget)> pending,
         SymlinkBackup.Entry entry,
         string? replacementTarget)
     {
         if (string.IsNullOrWhiteSpace(replacementTarget))
-            return 0;
-        if (row is null)
-        {
-            row = new Database.Models.UsenetMigration.MigrationSymlinkRewrite
-            {
-                SymlinkPath = entry.Path,
-            };
-            ctx.SymlinkRewrites.Add(row);
-        }
-        row.OldTarget = entry.Target;
-        row.NewTarget = replacementTarget;
-        row.Status = "rewrite";
-        row.Error = null;
-        row.UpdatedAt = DateTime.UtcNow;
-        return 1;
+            return false;
+        pending.Add((entry.Path, entry.Target, replacementTarget));
+        return true;
     }
 
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()

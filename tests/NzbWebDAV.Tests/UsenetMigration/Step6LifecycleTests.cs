@@ -26,16 +26,17 @@ public sealed class Step6LifecycleTests
 {
     private sealed class BlockingSymlinkOps(string path, string currentTarget) : ISymlinkOps
     {
-        internal TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal ManualResetEventSlim Entered { get; } = new(false);
+        internal ManualResetEventSlim Release { get; } = new(false);
 
         public string? ReadLink(string libraryRoot, string candidatePath) =>
             candidatePath == path ? currentTarget : null;
 
         public void CreateOrReplaceSymlink(string libraryRoot, string candidatePath, string target)
         {
-            Entered.TrySetResult(true);
-            Release.Task.GetAwaiter().GetResult();
+            Entered.Set();
+            if (!Release.Wait(TimeSpan.FromSeconds(30)))
+                throw new TimeoutException("BlockingSymlinkOps was not released within 30s.");
             currentTarget = target;
         }
     }
@@ -70,7 +71,7 @@ public sealed class Step6LifecycleTests
         try
         {
             var restore = runner.RestoreSymlinksAsync(archiveName, disconnectedClient.Token);
-            await ops.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(await Task.Run(() => ops.Entered.Wait(TimeSpan.FromSeconds(5))));
 
             Assert.Equal("restoring", (await h.Store.GetSessionAsync()).Status);
             var plan = await h.Store.StartSymlinkPlanAsync(root.FullName, backups.FullName);
@@ -79,7 +80,7 @@ public sealed class Step6LifecycleTests
             Assert.Equal(MigrationSessionTransitionOutcome.Rejected, apply.Outcome);
 
             disconnectedClient.Cancel();
-            ops.Release.TrySetResult(true);
+            ops.Release.Set();
 
             var summary = await restore.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(1, summary.Restored);
@@ -87,7 +88,7 @@ public sealed class Step6LifecycleTests
         }
         finally
         {
-            ops.Release.TrySetResult(true);
+            ops.Release.Set();
             root.Delete(recursive: true);
             backups.Delete(recursive: true);
         }
