@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace NzbWebDAV.UsenetMigration.Symlinks;
@@ -58,7 +59,10 @@ internal static class MigrationSymlinkUtil
         var unreadable = new List<UnreadableLink>();
         try
         {
-            while (ReadNullTerminated(process.StandardOutput, ct) is { } symlinkPath)
+            // Read raw bytes from find -print0. StreamReader/UTF-8 decoding can
+            // mis-handle arbitrary Linux filenames and stall the census.
+            var stdout = process.StandardOutput.BaseStream;
+            while (ReadNullTerminated(stdout, ct) is { } symlinkPath)
             {
                 ct.ThrowIfCancellationRequested();
                 var fullPath = Path.GetFullPath(symlinkPath);
@@ -76,7 +80,12 @@ internal static class MigrationSymlinkUtil
                 }
             }
 
-            process.WaitForExit();
+            if (!process.WaitForExit(60_000))
+            {
+                TryKill(process);
+                throw new TimeoutException("Migration symlink scan timed out waiting for find to exit.");
+            }
+
             ct.ThrowIfCancellationRequested();
         }
         catch
@@ -172,20 +181,27 @@ internal static class MigrationSymlinkUtil
         }
     }
 
-    private static string? ReadNullTerminated(StreamReader reader, CancellationToken ct)
+    private static string? ReadNullTerminated(Stream stream, CancellationToken ct)
     {
-        var value = new StringBuilder();
+        var bytes = new List<byte>(256);
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            var next = reader.Read();
+            var next = stream.ReadByte();
             if (next < 0)
-                return value.Length == 0 ? null : value.ToString();
-            if (next == '\0')
-                return value.ToString();
-            value.Append((char)next);
+                return bytes.Count == 0 ? null : DecodePathBytes(bytes);
+            if (next == 0)
+                return DecodePathBytes(bytes);
+            bytes.Add((byte)next);
         }
     }
+
+    /// <summary>
+    /// Decodes find -print0 paths as UTF-8 with replacement so non-UTF-8
+    /// filenames become unreadable entries instead of stalling StreamReader.
+    /// </summary>
+    private static string DecodePathBytes(List<byte> bytes) =>
+        Encoding.UTF8.GetString(CollectionsMarshal.AsSpan(bytes));
 
     private static void TryKill(Process process)
     {
