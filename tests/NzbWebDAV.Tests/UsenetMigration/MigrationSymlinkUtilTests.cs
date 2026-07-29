@@ -118,9 +118,12 @@ public sealed class MigrationSymlinkUtilTests
 
             var result = MigrationSymlinkUtil.GetAllSymlinks(root);
 
-            Assert.Equal(CountFindResults(root), result.Links.Count + result.Unreadable.Count);
+            // Fixture has two readable links + one non-UTF-8 unreadable entry.
+            // Do not spawn a second find here: redirecting both streams and
+            // draining stdout before stderr can deadlock the process pipes.
             Assert.Equal(2, result.Links.Count);
             Assert.Single(result.Unreadable);
+            Assert.Equal(3, result.Links.Count + result.Unreadable.Count);
         }
         finally
         {
@@ -133,6 +136,7 @@ public sealed class MigrationSymlinkUtilTests
         var startInfo = new ProcessStartInfo
         {
             FileName = "/bin/sh",
+            RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
         };
@@ -143,26 +147,17 @@ public sealed class MigrationSymlinkUtilTests
 
         using var process = Process.Start(startInfo)
                             ?? throw new InvalidOperationException("Unable to create non-UTF-8 symlink fixture.");
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, stderr);
-    }
-
-    private static int CountFindResults(string root)
-    {
-        using var process = Process.Start(MigrationSymlinkUtil.CreateLinuxFindStartInfo(root))
-                            ?? throw new InvalidOperationException("Unable to count symlink fixture entries.");
-        var count = 0;
-        while (process.StandardOutput.BaseStream.ReadByte() is var next && next >= 0)
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(10_000))
         {
-            if (next == 0)
-                count++;
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException("Creating non-UTF-8 symlink fixture timed out.");
         }
 
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var stderr = stderrTask.GetAwaiter().GetResult();
+        _ = stdoutTask.GetAwaiter().GetResult();
         Assert.True(process.ExitCode == 0, stderr);
-        return count;
     }
 
     private static void DeleteLinuxTree(string root)
@@ -170,16 +165,19 @@ public sealed class MigrationSymlinkUtilTests
         if (!Directory.Exists(root))
             return;
 
+        // Do not redirect stderr without draining it — a full pipe deadlocks WaitForExit.
         var startInfo = new ProcessStartInfo
         {
             FileName = "/bin/rm",
-            RedirectStandardError = true,
             UseShellExecute = false,
         };
         startInfo.ArgumentList.Add("-rf");
         startInfo.ArgumentList.Add("--");
         startInfo.ArgumentList.Add(root);
         using var process = Process.Start(startInfo);
-        process?.WaitForExit();
+        if (process is null)
+            return;
+        if (!process.WaitForExit(10_000))
+            process.Kill(entireProcessTree: true);
     }
 }
