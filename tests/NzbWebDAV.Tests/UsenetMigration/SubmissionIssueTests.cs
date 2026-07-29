@@ -63,10 +63,10 @@ public class SubmissionIssueTests
         string storeRef,
         string state,
         string? error) => new()
-    {
-        StoreRef = storeRef,
-        State = state,
-        Error = error,
-        UpdatedAt = DateTime.UtcNow,
-    };
+        {
+            StoreRef = storeRef,
+            State = state,
+            Error = error,
+            UpdatedAt = DateTime.UtcNow,
+        };
 }
