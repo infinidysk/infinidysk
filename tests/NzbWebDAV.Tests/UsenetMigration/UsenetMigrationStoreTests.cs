@@ -121,8 +121,14 @@ public class UsenetMigrationStoreTests
         {
             seed.Releases.Add(new MigrationRelease
             {
-                StoreRef = "store-1", StoreBasename = "x", SubmitFileName = "x", QueueFileName = "x.nzb",
-                JobName = "x", Verdict = "green", VerdictReasons = "[]", ScannedAt = DateTime.UtcNow,
+                StoreRef = "store-1",
+                StoreBasename = "x",
+                SubmitFileName = "x",
+                QueueFileName = "x.nzb",
+                JobName = "x",
+                Verdict = "green",
+                VerdictReasons = "[]",
+                ScannedAt = DateTime.UtcNow,
             });
             await seed.SaveChangesAsync();
         }
@@ -144,13 +150,20 @@ public class UsenetMigrationStoreTests
         {
             seed.Releases.Add(new MigrationRelease
             {
-                StoreRef = "store-claim", StoreBasename = "x", SubmitFileName = "x",
-                QueueFileName = "x.nzb", JobName = "x", Verdict = "green",
-                VerdictReasons = "[]", ScannedAt = DateTime.UtcNow,
+                StoreRef = "store-claim",
+                StoreBasename = "x",
+                SubmitFileName = "x",
+                QueueFileName = "x.nzb",
+                JobName = "x",
+                Verdict = "green",
+                VerdictReasons = "[]",
+                ScannedAt = DateTime.UtcNow,
             });
             seed.Submissions.Add(new MigrationSubmission
             {
-                StoreRef = "store-claim", State = "pending", UpdatedAt = DateTime.UtcNow,
+                StoreRef = "store-claim",
+                State = "pending",
+                UpdatedAt = DateTime.UtcNow,
             });
             await seed.SaveChangesAsync();
         }
@@ -236,8 +249,14 @@ public class UsenetMigrationStoreTests
             mig.CategoryMap.Add(new MigrationCategoryMap { AltmountCategory = "tv", TargetCategory = "tv", Action = "migrate", DiscoveredBy = "config", UpdatedAt = DateTime.UtcNow });
             mig.Releases.Add(new MigrationRelease
             {
-                StoreRef = "s1", StoreBasename = "x", SubmitFileName = "x", QueueFileName = "x.nzb",
-                JobName = "x", Verdict = "green", VerdictReasons = "[]", ScannedAt = DateTime.UtcNow,
+                StoreRef = "s1",
+                StoreBasename = "x",
+                SubmitFileName = "x",
+                QueueFileName = "x.nzb",
+                JobName = "x",
+                Verdict = "green",
+                VerdictReasons = "[]",
+                ScannedAt = DateTime.UtcNow,
             });
             mig.Submissions.Add(new MigrationSubmission { StoreRef = "s1", State = "pending", UpdatedAt = DateTime.UtcNow });
             mig.MigrationRuns.Add(new MigrationRun
@@ -308,15 +327,20 @@ public class UsenetMigrationStoreTests
         {
             var run = new MigrationRun
             {
-                SourceType = "altmount", Status = "completed", StartedAt = DateTime.UtcNow,
+                SourceType = "altmount",
+                Status = "completed",
+                StartedAt = DateTime.UtcNow,
             };
             mig.MigrationRuns.Add(run);
             await mig.SaveChangesAsync();
 
             var release = new MigratedRelease
             {
-                SourceReleaseId = "source-1", FirstRunId = run.Id, LastRunId = run.Id,
-                MigratedAt = DateTime.UtcNow, LastVerifiedAt = DateTime.UtcNow,
+                SourceReleaseId = "source-1",
+                FirstRunId = run.Id,
+                LastRunId = run.Id,
+                MigratedAt = DateTime.UtcNow,
+                LastVerifiedAt = DateTime.UtcNow,
             };
             mig.MigratedReleases.Add(release);
             await mig.SaveChangesAsync();

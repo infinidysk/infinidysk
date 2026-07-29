@@ -37,8 +37,8 @@ public sealed class MigrationSessionStateMachineTests
     public static IEnumerable<object[]> TransitionMatrix()
     {
         foreach (var (transition, expected) in ExpectedRules)
-        foreach (var status in MigrationSessionStatus.All)
-            yield return [(int)transition, status, expected.SourceStatuses.Contains(status)];
+            foreach (var status in MigrationSessionStatus.All)
+                yield return [(int)transition, status, expected.SourceStatuses.Contains(status)];
     }
 
     [Theory]

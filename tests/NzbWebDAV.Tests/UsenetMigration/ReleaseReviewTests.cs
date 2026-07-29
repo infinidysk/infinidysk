@@ -67,16 +67,16 @@ public class ReleaseReviewTests
         string verdict,
         long bytes = 0,
         params string[] reasons) => new()
-    {
-        StoreRef = name,
-        StoreBasename = name,
-        SubmitFileName = name,
-        QueueFileName = $"{name}.nzb",
-        JobName = name,
-        Verdict = verdict,
-        VerdictReasons = JsonSerializer.Serialize(reasons),
-        Included = included,
-        EstFetchBytesLazy = bytes,
-        ScannedAt = DateTime.UtcNow,
-    };
+        {
+            StoreRef = name,
+            StoreBasename = name,
+            SubmitFileName = name,
+            QueueFileName = $"{name}.nzb",
+            JobName = name,
+            Verdict = verdict,
+            VerdictReasons = JsonSerializer.Serialize(reasons),
+            Included = included,
+            EstFetchBytesLazy = bytes,
+            ScannedAt = DateTime.UtcNow,
+        };
 }

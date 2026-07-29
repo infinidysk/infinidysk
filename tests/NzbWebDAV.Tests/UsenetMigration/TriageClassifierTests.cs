@@ -11,14 +11,14 @@ public class TriageClassifierTests
         string password = "",
         bool nested = false,
         bool clips = false) => new()
-    {
-        StoreRef = "/config/.nzbs/tv/1-x.nzbz",
-        Status = status,
-        Encryption = enc,
-        Password = password,
-        HasNestedSources = nested,
-        HasClipBoundaries = clips,
-    };
+        {
+            StoreRef = "/config/.nzbs/tv/1-x.nzbz",
+            Status = status,
+            Encryption = enc,
+            Password = password,
+            HasNestedSources = nested,
+            HasClipBoundaries = clips,
+        };
 
     private static TriageInput Input(
         bool hasStoreRef = true,
@@ -27,14 +27,14 @@ public class TriageClassifierTests
         bool categoryMapped = true,
         bool jobNameDiverges = false,
         bool filenamePasswordMarker = false) => new()
-    {
-        HasStoreRef = hasStoreRef,
-        Store = store,
-        Metas = metas ?? new[] { Meta() },
-        CategoryMapped = categoryMapped,
-        JobNameDiverges = jobNameDiverges,
-        FilenamePasswordMarker = filenamePasswordMarker,
-    };
+        {
+            HasStoreRef = hasStoreRef,
+            Store = store,
+            Metas = metas ?? new[] { Meta() },
+            CategoryMapped = categoryMapped,
+            JobNameDiverges = jobNameDiverges,
+            FilenamePasswordMarker = filenamePasswordMarker,
+        };
 
     [Fact]
     public void CleanHealthyRelease_IsGreen_NoReasons()
