@@ -294,7 +294,7 @@ public class SymlinkRewriterTests
         {
             Directory.Delete(escape);
             Directory.Delete(root);
-            Directory.Delete(outside);
+            Directory.Delete(outside, recursive: true);
         }
     }
 }
