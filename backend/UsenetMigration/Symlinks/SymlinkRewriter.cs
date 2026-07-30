@@ -86,7 +86,7 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store)
                 }
                 else
                 {
-                    Ops.CreateOrReplaceSymlink(libraryRoot, row.SymlinkPath, row.NewTarget!);
+                    Ops.ReplaceSymlink(libraryRoot, row.SymlinkPath, row.OldTarget, row.NewTarget!);
                     row.Status = "applied";
                     row.Error = null;
                     applied++;

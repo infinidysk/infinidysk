@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace NzbWebDAV.UsenetMigration.Symlinks;
 
 /// <summary>
@@ -13,12 +15,21 @@ public interface ISymlinkOps
     string? ReadLink(string libraryRoot, string path);
 
     /// <summary>
-    /// Point the symlink at <paramref name="path"/> to <paramref name="target"/>,
-    /// replacing an existing symlink there. Removes only the link inode — never the
+    /// Check-and-swap: replace the symlink at <paramref name="path"/> only when its
+    /// current target equals <paramref name="expectedOldTarget"/>, pointing it at
+    /// <paramref name="newTarget"/>. Removes only the link inode — never the
     /// pointed-at content — and refuses to touch a path that is a real (non-symlink)
-    /// file or directory.
+    /// file or directory. If create fails after delete, best-effort recreates the
+    /// old link before rethrowing.
     /// </summary>
-    void CreateOrReplaceSymlink(string libraryRoot, string path, string target);
+    void ReplaceSymlink(string libraryRoot, string path, string expectedOldTarget, string newTarget);
+
+    /// <summary>
+    /// Create a symlink at an entirely absent path. Refuses if anything already
+    /// exists there (symlink or real file/dir). Used by restore when the link was
+    /// stranded between delete and recreate.
+    /// </summary>
+    void CreateSymlink(string libraryRoot, string path, string target);
 }
 
 /// <summary>Production <see cref="ISymlinkOps"/> over the real filesystem.</summary>
@@ -29,13 +40,17 @@ public sealed class RealSymlinkOps : ISymlinkOps
     /// <summary>Test-only fault injection at the final leaf validation boundary.</summary>
     internal Action<string>? BeforeFinalLeafValidation { get; init; }
 
+    /// <summary>Test-only fault injection immediately before creating the new link.</summary>
+    internal Action<string>? BeforeCreateSymlink { get; init; }
+
     public string? ReadLink(string libraryRoot, string path)
     {
         var safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, path);
         return ReadLinkUnchecked(safePath);
     }
 
-    public void CreateOrReplaceSymlink(string libraryRoot, string path, string target)
+    public void ReplaceSymlink(
+        string libraryRoot, string path, string expectedOldTarget, string newTarget)
     {
         var safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, path);
         var existing = ReadLinkUnchecked(safePath);
@@ -52,7 +67,7 @@ public sealed class RealSymlinkOps : ISymlinkOps
                 throw new IOException(
                     $"Refusing to replace '{safePath}' because it is no longer the expected symlink.");
             }
-            if (!string.Equals(current, existing, SymlinkPathGuard.PathComparison))
+            if (!string.Equals(current, expectedOldTarget, SymlinkPathGuard.PathComparison))
             {
                 throw new IOException(
                     $"Refusing to replace '{safePath}' because its symlink target changed during replacement.");
@@ -70,10 +85,74 @@ public sealed class RealSymlinkOps : ISymlinkOps
             // A real file or directory lives here, so never replace it.
             throw new IOException($"Refusing to replace non-symlink at '{safePath}'.");
         }
+        else
+        {
+            // Path entirely absent — only restore may create from scratch; apply
+            // always expects an existing link matching expectedOldTarget.
+            throw new IOException(
+                $"Refusing to replace '{safePath}' because no symlink is present.");
+        }
 
         // The delete/create boundary cannot be expressed as one managed filesystem
         // operation. Validate the still-existing parent again immediately before
-        // creating the replacement link.
+        // creating the replacement link. On create failure, recreate the OLD link
+        // so restore archives are not the only recovery path for a stranded hole.
+        safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, safePath);
+        try
+        {
+            BeforeCreateSymlink?.Invoke(safePath);
+            File.CreateSymbolicLink(safePath, newTarget);
+        }
+        catch (Exception createError)
+        {
+            Exception? recreateError = null;
+            try
+            {
+                if (ReadLinkUnchecked(safePath) is null
+                    && !File.Exists(safePath)
+                    && !Directory.Exists(safePath))
+                {
+                    File.CreateSymbolicLink(safePath, expectedOldTarget);
+                }
+            }
+            catch (Exception e)
+            {
+                recreateError = e;
+            }
+
+            if (recreateError is not null)
+            {
+                Log.Error(
+                    createError,
+                    "Symlink create failed at {Path} and recreating the previous target also failed. " +
+                    "Restore the link from the migration backup archive. Recreate error: {RecreateReason}",
+                    safePath, recreateError.Message);
+                Log.Debug(recreateError, "Symlink recreate failure stack at {Path}", safePath);
+                throw new IOException(
+                    $"Failed to create symlink at '{safePath}' and could not recreate the previous target; " +
+                    "restore the link from the migration backup archive. " +
+                    $"Create: {createError.Message}; Recreate: {recreateError.Message}",
+                    createError);
+            }
+
+            Log.Warning(
+                "Symlink create failed at {Path}; previous target was recreated. Reason: {Reason}",
+                safePath, createError.Message);
+            Log.Debug(createError, "Symlink create failure stack at {Path}", safePath);
+            throw;
+        }
+    }
+
+    public void CreateSymlink(string libraryRoot, string path, string target)
+    {
+        var safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, path);
+        if (ReadLinkUnchecked(safePath) is not null
+            || File.Exists(safePath)
+            || Directory.Exists(safePath))
+        {
+            throw new IOException($"Refusing to create symlink over existing path at '{safePath}'.");
+        }
+
         safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, safePath);
         File.CreateSymbolicLink(safePath, target);
     }

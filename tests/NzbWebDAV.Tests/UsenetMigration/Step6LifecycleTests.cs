@@ -29,7 +29,12 @@ public sealed class Step6LifecycleTests
         public string? ReadLink(string libraryRoot, string candidatePath) =>
             candidatePath == path ? currentTarget : null;
 
-        public void CreateOrReplaceSymlink(string libraryRoot, string candidatePath, string target)
+        public void ReplaceSymlink(string libraryRoot, string candidatePath, string expectedOldTarget, string target)
+        {
+            currentTarget = target;
+        }
+
+        public void CreateSymlink(string libraryRoot, string candidatePath, string target)
         {
             currentTarget = target;
         }

@@ -11,7 +11,21 @@ public class SymlinkRestoreServiceTests
         public readonly Dictionary<string, string> Links = new(StringComparer.Ordinal);
 
         public string? ReadLink(string libraryRoot, string path) => Links.GetValueOrDefault(path);
-        public void CreateOrReplaceSymlink(string libraryRoot, string path, string target) => Links[path] = target;
+
+        public void ReplaceSymlink(string libraryRoot, string path, string expectedOldTarget, string newTarget)
+        {
+            if (!Links.TryGetValue(path, out var current)
+                || !string.Equals(current, expectedOldTarget, StringComparison.Ordinal))
+                throw new IOException($"Refusing to replace '{path}' because its symlink target changed during replacement.");
+            Links[path] = newTarget;
+        }
+
+        public void CreateSymlink(string libraryRoot, string path, string target)
+        {
+            if (Links.ContainsKey(path))
+                throw new IOException($"Refusing to create symlink over existing path at '{path}'.");
+            Links[path] = target;
+        }
     }
 
     [Fact]
@@ -129,6 +143,68 @@ public class SymlinkRestoreServiceTests
         Assert.Equal("rewrite", row.Status);
 
         Directory.Delete(backupDir, recursive: true);
+    }
+
+    [Fact]
+    public async Task Restore_RecreatesEntirelyMissingSymlink()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var root = Path.Combine(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
+        var link = Path.Combine(root, "movie.mkv");
+        var archiveName = "altmount-symlink-backup-20260720-120003.tar.gz";
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.Status = "linked";
+            s.SymlinkLibraryRoot = root;
+            s.SymlinkBackupDir = backupDir;
+        });
+        await SymlinkBackup.WriteAsync(
+            Path.Combine(backupDir, archiveName),
+            [new SymlinkBackup.Entry(link, "/alt/original.mkv", "/nzbdav/replacement.mkv")]);
+        var ops = new FakeSymlinkOps(); // link absent
+
+        var result = await new SymlinkRestoreService(h.Store) { Ops = ops }.RestoreAsync(archiveName);
+
+        Assert.Equal(1, result.Restored);
+        Assert.Equal("/alt/original.mkv", ops.Links[link]);
+
+        Directory.Delete(backupDir, recursive: true);
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public async Task Restore_RefusesRealFileAtPath()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var root = Path.Combine(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
+        var link = Path.Combine(root, "movie.mkv");
+        File.WriteAllText(link, "precious");
+        var archiveName = "altmount-symlink-backup-20260720-120004.tar.gz";
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.Status = "linked";
+            s.SymlinkLibraryRoot = root;
+            s.SymlinkBackupDir = backupDir;
+        });
+        await SymlinkBackup.WriteAsync(
+            Path.Combine(backupDir, archiveName),
+            [new SymlinkBackup.Entry(link, "/alt/original.mkv", "/nzbdav/replacement.mkv")]);
+        var ops = new FakeSymlinkOps();
+
+        var result = await new SymlinkRestoreService(h.Store) { Ops = ops }.RestoreAsync(archiveName);
+
+        Assert.Equal(0, result.Restored);
+        Assert.Equal(1, result.Failed);
+        Assert.Contains(result.Issues, i => i.Reason.Contains("real file"));
+        Assert.Equal("precious", File.ReadAllText(link));
+        Assert.False(ops.Links.ContainsKey(link));
+
+        Directory.Delete(backupDir, recursive: true);
+        Directory.Delete(root, recursive: true);
     }
 
     [Theory]

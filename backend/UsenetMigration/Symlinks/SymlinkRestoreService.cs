@@ -141,7 +141,18 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
                 var current = Ops.ReadLink(libraryRoot, entry.Path);
                 if (current is null)
                 {
-                    issues.Add(new SymlinkRestoreIssue(entry.Path, "The path is missing or is no longer a symlink."));
+                    // Distinguish entirely-missing (stranded by a failed create) from
+                    // a real file/dir that must never be overwritten.
+                    if (PathExistsAsNonSymlink(entry.Path))
+                    {
+                        issues.Add(new SymlinkRestoreIssue(
+                            entry.Path, "The path exists as a real file or directory and was left untouched."));
+                        continue;
+                    }
+
+                    Ops.CreateSymlink(libraryRoot, entry.Path, entry.Target);
+                    restored++;
+                    TryQueueRequeue(pendingRequeues, entry, expectedReplacement);
                     continue;
                 }
                 if (PathsEqual(current, entry.Target))
@@ -165,7 +176,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
                     continue;
                 }
 
-                Ops.CreateOrReplaceSymlink(libraryRoot, entry.Path, entry.Target);
+                Ops.ReplaceSymlink(libraryRoot, entry.Path, expectedReplacement, entry.Target);
                 restored++;
                 TryQueueRequeue(pendingRequeues, entry, expectedReplacement);
             }
@@ -264,4 +275,15 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
             a.Replace('\\', '/').TrimEnd('/'),
             b.Replace('\\', '/').TrimEnd('/'),
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private static bool PathExistsAsNonSymlink(string path)
+    {
+        try
+        {
+            var attrs = File.GetAttributes(path);
+            return (attrs & FileAttributes.ReparsePoint) == 0;
+        }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
 }

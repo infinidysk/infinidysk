@@ -16,7 +16,21 @@ public class SymlinkRewriterTests
         public readonly Dictionary<string, string> Links = new(StringComparer.Ordinal);
 
         public string? ReadLink(string libraryRoot, string path) => Links.GetValueOrDefault(path);
-        public void CreateOrReplaceSymlink(string libraryRoot, string path, string target) => Links[path] = target;
+
+        public void ReplaceSymlink(string libraryRoot, string path, string expectedOldTarget, string newTarget)
+        {
+            if (!Links.TryGetValue(path, out var current)
+                || !string.Equals(current, expectedOldTarget, StringComparison.Ordinal))
+                throw new IOException($"Refusing to replace '{path}' because its symlink target changed during replacement.");
+            Links[path] = newTarget;
+        }
+
+        public void CreateSymlink(string libraryRoot, string path, string target)
+        {
+            if (Links.ContainsKey(path))
+                throw new IOException($"Refusing to create symlink over existing path at '{path}'.");
+            Links[path] = target;
+        }
     }
 
     private static async Task SeedPlanAsync(MigrationTestHarness h, params MigrationSymlinkRewrite[] rows)
@@ -206,7 +220,7 @@ public class SymlinkRewriterTests
         try
         {
             var ex = Assert.Throws<IOException>(() =>
-                RealSymlinkOps.Instance.CreateOrReplaceSymlink(dir, realFile, "/mnt/nzbdav/.ids/x"));
+                RealSymlinkOps.Instance.ReplaceSymlink(dir, realFile, "/mnt/altmount/x", "/mnt/nzbdav/.ids/x"));
             Assert.Contains("non-symlink", ex.Message);
             Assert.Equal("precious content", File.ReadAllText(realFile)); // untouched
         }
@@ -238,7 +252,7 @@ public class SymlinkRewriterTests
             };
 
             var error = Assert.Throws<IOException>(() =>
-                ops.CreateOrReplaceSymlink(dir, link, "/mnt/nzbdav/.ids/x"));
+                ops.ReplaceSymlink(dir, link, "/mnt/altmount/movie.mkv", "/mnt/nzbdav/.ids/x"));
 
             Assert.Contains("no longer the expected symlink", error.Message);
             Assert.Equal("precious content", File.ReadAllText(link));
@@ -283,9 +297,10 @@ public class SymlinkRewriterTests
         try
         {
             var escapedPath = Path.Combine(escape, "movie.mkv");
-            var ex = Assert.Throws<IOException>(() => RealSymlinkOps.Instance.CreateOrReplaceSymlink(
+            var ex = Assert.Throws<IOException>(() => RealSymlinkOps.Instance.ReplaceSymlink(
                 root,
                 escapedPath,
+                "/mnt/altmount/x",
                 "/mnt/nzbdav/.ids/x"));
             Assert.Contains("symbolic link or reparse point", ex.Message);
             Assert.Equal("precious content", File.ReadAllText(outsideFile));
@@ -295,6 +310,36 @@ public class SymlinkRewriterTests
             Directory.Delete(escape);
             Directory.Delete(root);
             Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [SkippableFact]
+    public void RealOps_CreateFailure_RecreatesOldLink()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "Symbolic link create/recreate is validated on Unix.");
+
+        var dir = Path.Combine(Path.GetTempPath(), $"altmig-recreate-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var link = Path.Combine(dir, "movie.mkv");
+        const string oldTarget = "/mnt/altmount/movie.mkv";
+        File.CreateSymbolicLink(link, oldTarget);
+
+        try
+        {
+            var ops = new RealSymlinkOps
+            {
+                BeforeCreateSymlink = _ => throw new IOException("simulated ENOSPC"),
+            };
+
+            var ex = Assert.Throws<IOException>(() =>
+                ops.ReplaceSymlink(dir, link, oldTarget, "/mnt/nzbdav/.ids/x"));
+
+            Assert.Contains("simulated ENOSPC", ex.Message);
+            Assert.Equal(oldTarget, new FileInfo(link).LinkTarget);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
         }
     }
 }
