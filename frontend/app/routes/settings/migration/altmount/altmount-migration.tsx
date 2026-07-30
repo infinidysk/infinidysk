@@ -129,7 +129,8 @@ export function AltmountMigration() {
             <SettingsIntro>
                 Import an existing Altmount library into NzbDAV by re-submitting each release through NzbDAV's own
                 download pipeline. Connect to the library, map categories, scan and review, then run the migration.
-                Nothing in your current NzbDAV content is modified.
+                Nothing in your current NzbDAV content is modified. This path is experimental — verify a few releases
+                play correctly before decommissioning AltMount.
             </SettingsIntro>
 
             <ul className="steps w-full text-xs">

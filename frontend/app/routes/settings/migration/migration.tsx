@@ -1,5 +1,7 @@
 import { useState, type ComponentType } from "react";
 import { SettingsIntro, SettingsPage } from "~/components/ui";
+import { Alert, Badge } from "~/components/ui/feedback";
+import { Icon } from "~/components/ui/icon";
 import { Tabs, TabPanel } from "~/components/ui/tabs";
 import { AltmountMigration } from "./altmount/altmount-migration";
 
@@ -31,8 +33,19 @@ export function Migration() {
     return (
         <SettingsPage>
             <SettingsIntro>
-                Migration — import an existing library from another downloader. Pick a source below, then follow that source's guided wizard.
+                <span className="mr-2 inline-flex align-middle">
+                    <Badge className="badge-sm badge-warning badge-soft">Experimental</Badge>
+                </span>
+                Import an existing library from another downloader. This wizard is experimental — keep AltMount available until you have verified playback, and back up <code className="font-mono text-xs">/config</code> first.
             </SettingsIntro>
+
+            <Alert className="alert-soft text-sm" variant="warning">
+                <Icon name="science" className="!text-[18px]" />
+                <span>
+                    Experimental feature. Expect rough edges; report issues with a support pack. The migration
+                    ledger is disposable and separate from Backup &amp; Restore.
+                </span>
+            </Alert>
 
             <div className="space-y-2">
                 <Tabs

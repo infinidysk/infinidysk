@@ -23,6 +23,6 @@ Actions: Create / Upload / Download / Preserve / Restore / Delete.
 
 !!! note "Migration database is disposable"
 
-    Backups deliberately exclude `usenet-migration.db` (Altmount migration wizard state and provenance). Deleting that file only loses migration bookkeeping — never mounted WebDAV content. If you restore a database backup mid-migration and the wizard shows many `evicted` releases, reset or forget migration data and re-scan; already-imported releases are re-detected and not resubmitted. See [Migrate from Altmount](../guides/altmount-migration.md).
+    Backups deliberately exclude `usenet-migration.db` (experimental Altmount migration wizard state and provenance). Deleting that file only loses migration bookkeeping — never mounted WebDAV content. If you restore a database backup mid-migration and the wizard shows many `evicted` releases, reset or forget migration data and re-scan; already-imported releases are re-detected and not resubmitted. See [Migrate from Altmount](../guides/altmount-migration.md).
 
 [Backups and upgrades](../guides/backups-upgrades.md)

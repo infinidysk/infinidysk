@@ -55,4 +55,4 @@ If something fails, restore the `/config` backup and reopen the previous image �
 
 ## Related
 
-- [Migrate from Altmount](../guides/altmount-migration.md) [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } · [Docker](docker.md) · [First run](first-run.md) · [Compare alternatives](../guides/compare.md) · [About](../community/about.md)
+- [Migrate from Altmount (experimental)](../guides/altmount-migration.md) [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } · [Docker](docker.md) · [First run](first-run.md) · [Compare alternatives](../guides/compare.md) · [About](../community/about.md)
