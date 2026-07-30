@@ -1,6 +1,10 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Config;
+using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Websocket;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
@@ -14,10 +18,10 @@ public class WrappingNntpClientRetirementTests
         var wrapper = new TestWrappingClient(oldClient);
         var newClient = new CountingDisposableClient();
 
-        var drainTask = wrapper.ReplaceUnderlyingClientForTestsAsync(
-            newClient, TimeSpan.FromSeconds(5));
+        var drainTask = wrapper.ReplaceUnderlyingClientForTestsAsync(newClient);
 
         Assert.False(oldClient.Disposed);
+        Assert.True(oldClient.Retired);
 
         oldClient.InFlightConnections = 0;
         await drainTask.WaitAsync(TimeSpan.FromSeconds(5));
@@ -28,16 +32,71 @@ public class WrappingNntpClientRetirementTests
     }
 
     [Fact]
-    public async Task ReplaceUnderlyingClient_ForceDisposesAfterGracePeriod()
+    public async Task ReplaceUnderlyingClient_DoesNotForceDisposeInFlightWork()
     {
         var oldClient = new CountingDisposableClient { InFlightConnections = 5 };
         var wrapper = new TestWrappingClient(oldClient);
         var newClient = new CountingDisposableClient();
 
-        await wrapper.ReplaceUnderlyingClientForTestsAsync(
-            newClient, TimeSpan.FromMilliseconds(50));
+        var drainTask = wrapper.ReplaceUnderlyingClientForTestsAsync(newClient);
+        await Task.Delay(500);
+
+        Assert.False(oldClient.Disposed);
+
+        oldClient.InFlightConnections = 0;
+        await drainTask.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.True(oldClient.Disposed);
+    }
+
+    [Fact]
+    public async Task ReplaceUnderlyingClient_DeactivatesRetiredConnectionStatsImmediately()
+    {
+        var connectionStats = new ConnectionPoolStats(
+            new UsenetProviderConfig(),
+            new WebsocketManager());
+        var oldClient = new MultiProviderNntpClient([], connectionPoolStats: connectionStats);
+        var wrapper = new TestWrappingClient(oldClient);
+
+        await wrapper.ReplaceUnderlyingClientForTestsAsync(new CountingDisposableClient());
+
+        Assert.False(connectionStats.IsActive);
+    }
+
+    [Fact]
+    public async Task ConnectionPoolStats_Deactivate_DropsScheduledAndFutureUpdates()
+    {
+        var websocketManager = new WebsocketManager();
+        var connectionStats = new ConnectionPoolStats(
+            new UsenetProviderConfig
+            {
+                Providers =
+                [
+                    new UsenetProviderConfig.ConnectionDetails
+                    {
+                        Type = ProviderType.Pooled,
+                        Host = "news.example.com",
+                        Port = 563,
+                        UseSsl = true,
+                        User = "user",
+                        Pass = "pass",
+                        MaxConnections = 50,
+                    },
+                ],
+            },
+            websocketManager);
+        var onChanged = connectionStats.GetOnConnectionPoolChanged(0);
+
+        onChanged(
+            this,
+            new ConnectionPoolStats.ConnectionPoolChangedEventArgs(25, 5, 50));
+        connectionStats.Deactivate();
+        onChanged(
+            this,
+            new ConnectionPoolStats.ConnectionPoolChangedEventArgs(1, 0, 50));
+        await Task.Delay(500);
+
+        Assert.Null(websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));
     }
 
     private sealed class TestWrappingClient(INntpClient inner) : WrappingNntpClient(inner);
@@ -46,6 +105,9 @@ public class WrappingNntpClientRetirementTests
     {
         public int InFlightConnections { get; set; }
         public bool Disposed { get; private set; }
+        public bool Retired { get; private set; }
+
+        internal override void Retire() => Retired = true;
 
         public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken) =>
             Task.CompletedTask;

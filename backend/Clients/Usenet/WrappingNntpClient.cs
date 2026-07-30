@@ -8,8 +8,6 @@ namespace NzbWebDAV.Clients.Usenet;
 
 public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpConnectionStats
 {
-    private const int MaxRetiringClients = 4;
-    private static readonly TimeSpan RetirementGracePeriod = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DrainPollInterval = TimeSpan.FromMilliseconds(250);
 
     private INntpClient _usenetClient = usenetClient;
@@ -21,9 +19,7 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
             client = wrap.InnerClient;
         return client;
     }
-    private readonly ConcurrentQueue<(INntpClient Client, DateTimeOffset Deadline)> _retiringClients = new();
-    private int _retiringCount;
-    private int _drainLoopRunning;
+    private readonly ConcurrentDictionary<INntpClient, byte> _retiringClients = new();
 
     public int InFlightConnections =>
         _usenetClient is INntpConnectionStats stats ? stats.InFlightConnections : 0;
@@ -112,103 +108,66 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
         _usenetClient.DecodedArticlesPipelinedAsync(segmentIds, depth, cancellationToken);
 
     /// <summary>
-    /// Swap the live client immediately so new requests use new pools, then retire the
-    /// old client after in-flight borrows drain (or a bounded grace period).
+    /// Swap the live client immediately so new requests use new pools, then dispose the
+    /// old client after all in-flight borrows drain.
     /// </summary>
     protected void ReplaceUnderlyingClient(INntpClient usenetClient)
     {
-        var old = _usenetClient;
-        _usenetClient = usenetClient;
+        var old = Interlocked.Exchange(ref _usenetClient, usenetClient);
+        if (old is NntpClient oldNntpClient)
+            oldNntpClient.Retire();
         EnqueueForRetirement(old);
     }
 
     /// <summary>
-    /// Test hook: swap with an explicit grace period and wait for the drain loop to finish.
+    /// Test hook: swap and wait for the old client to drain.
     /// Drains inline (no background loop) so exactly one consumer works the queue.
     /// </summary>
     internal Task ReplaceUnderlyingClientForTestsAsync(
-        INntpClient usenetClient, TimeSpan gracePeriod, CancellationToken cancellationToken = default)
+        INntpClient usenetClient, CancellationToken cancellationToken = default)
     {
-        var old = _usenetClient;
-        _usenetClient = usenetClient;
-        EnqueueForRetirement(old, DateTimeOffset.UtcNow + gracePeriod, startDrainLoop: false);
-        return DrainRetiringClientsAsync(cancellationToken);
+        var old = Interlocked.Exchange(ref _usenetClient, usenetClient);
+        if (old is NntpClient oldNntpClient)
+            oldNntpClient.Retire();
+        EnqueueForRetirement(old, startDrain: false);
+        return DrainRetiringClientAsync(old, cancellationToken);
     }
 
-    private void EnqueueForRetirement(
-        INntpClient old, DateTimeOffset? deadline = null, bool startDrainLoop = true)
+    private void EnqueueForRetirement(INntpClient old, bool startDrain = true)
     {
-        deadline ??= DateTimeOffset.UtcNow + RetirementGracePeriod;
-
-        // Bound stacked rapid saves: force-dispose the oldest excess clients.
-        while (Volatile.Read(ref _retiringCount) >= MaxRetiringClients
-               && _retiringClients.TryDequeue(out var excess))
-        {
-            Interlocked.Decrement(ref _retiringCount);
-            TryDispose(excess.Client, forced: true);
-        }
-
-        Interlocked.Increment(ref _retiringCount);
-        _retiringClients.Enqueue((old, deadline.Value));
-        if (startDrainLoop)
-            EnsureDrainLoop();
-    }
-
-    private void EnsureDrainLoop()
-    {
-        if (Interlocked.CompareExchange(ref _drainLoopRunning, 1, 0) != 0)
+        if (!_retiringClients.TryAdd(old, 0))
             return;
 
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await DrainRetiringClientsAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _drainLoopRunning, 0);
-                // A replace may have enqueued while we were clearing the flag.
-                if (!_retiringClients.IsEmpty)
-                    EnsureDrainLoop();
-            }
-        });
+        if (startDrain)
+            _ = Task.Run(() => DrainRetiringClientAsync(old, CancellationToken.None));
     }
 
-    private async Task DrainRetiringClientsAsync(CancellationToken cancellationToken)
+    private async Task DrainRetiringClientAsync(
+        INntpClient client,
+        CancellationToken cancellationToken)
     {
-        while (!_retiringClients.IsEmpty)
+        while (_retiringClients.ContainsKey(client))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!_retiringClients.TryPeek(out var next))
-                break;
-
-            var inFlight = next.Client is INntpConnectionStats stats
+            var inFlight = client is INntpConnectionStats stats
                 ? stats.InFlightConnections
                 : 0;
-            var expired = DateTimeOffset.UtcNow >= next.Deadline;
 
-            if (inFlight > 0 && !expired)
-            {
-                await Task.Delay(DrainPollInterval, cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            if (!_retiringClients.TryDequeue(out next))
+            if (inFlight == 0)
                 break;
 
-            Interlocked.Decrement(ref _retiringCount);
-            TryDispose(next.Client, forced: inFlight > 0);
+            await Task.Delay(DrainPollInterval, cancellationToken).ConfigureAwait(false);
         }
+
+        if (_retiringClients.TryRemove(client, out _))
+            TryDispose(client);
     }
 
-    private static void TryDispose(INntpClient client, bool forced)
+    private static void TryDispose(INntpClient client)
     {
         try
         {
-            if (forced)
-                Log.Debug("Force-disposing replaced NNTP client after grace period with in-flight work remaining");
             client.Dispose();
         }
         catch (Exception e)
@@ -220,13 +179,19 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
     public override void Dispose()
     {
         // Dispose the live client and anything still retiring.
-        while (_retiringClients.TryDequeue(out var retiring))
+        foreach (var retiring in _retiringClients.Keys)
         {
-            Interlocked.Decrement(ref _retiringCount);
-            TryDispose(retiring.Client, forced: true);
+            if (_retiringClients.TryRemove(retiring, out _))
+                TryDispose(retiring);
         }
 
         _usenetClient.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    internal override void Retire()
+    {
+        if (_usenetClient is NntpClient nntpClient)
+            nntpClient.Retire();
     }
 }

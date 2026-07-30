@@ -18,6 +18,14 @@ public abstract class NntpClient : INntpClient
 {
     public virtual int PipeliningDepth => 0;
 
+    /// <summary>
+    /// Stops generation-scoped side effects when a wrapper replaces this client while
+    /// allowing work already in flight to finish before disposal.
+    /// </summary>
+    internal virtual void Retire()
+    {
+    }
+
     public abstract Task ConnectAsync(
         string host, int port, bool useSsl, CancellationToken cancellationToken);
 

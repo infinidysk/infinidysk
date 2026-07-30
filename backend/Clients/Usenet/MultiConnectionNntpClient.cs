@@ -420,6 +420,19 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
+            catch (Exception e) when (
+                connectionPool.IsDisposed &&
+                e is ObjectDisposedException or OperationCanceledException)
+            {
+                Log.Warning(
+                    "Connection pool for provider {Provider} retired while a request was waiting. " +
+                    "Abandoning the stale request without retrying or penalizing provider health.",
+                    providerName);
+                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
+                throw new IOException(
+                    $"Connection pool for provider '{providerName}' retired while the request was waiting.",
+                    e);
+            }
             catch (Exception e)
             {
                 circuitBreaker.RecordFailure($"get-connection-{e.GetType().Name}");

@@ -17,6 +17,38 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class StreamingTimeoutTests
 {
     [Fact]
+    public async Task RunWithConnection_DisposedPool_DoesNotRetryOrPenalizeProvider()
+    {
+        var breaker = new ProviderCircuitBreaker("retired-pool");
+        var created = 0;
+        var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ =>
+            {
+                Interlocked.Increment(ref created);
+                return ValueTask.FromResult<INntpClient>(new HangingNntpClient());
+            });
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "retired-pool");
+        using var heldConnection = await pool.GetConnectionLockAsync(SemaphorePriority.Low);
+
+        var callbacks = 0;
+        var request = client.DecodedBodyAsync(
+            "seg",
+            _ => Interlocked.Increment(ref callbacks),
+            CancellationToken.None);
+        await Task.Delay(50);
+
+        await pool.DisposeAsync();
+
+        var exception = await Assert.ThrowsAsync<IOException>(() => request);
+        Assert.IsAssignableFrom<OperationCanceledException>(exception.InnerException);
+        Assert.Equal(1, created);
+        Assert.Equal(1, callbacks);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
     public async Task RunWithConnection_WithStreamingTimeout_FailsFastAndRetriesOnFreshConnection()
     {
         HangingNntpClient? hanging = null;

@@ -51,6 +51,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     public int IdleConnections => _idleConnections.Count;
     public int ActiveConnections => _live - _idleConnections.Count;
     public int AvailableConnections => _maxConnections - ActiveConnections;
+    internal bool IsDisposed => Volatile.Read(ref _disposed) == 1;
 
     public event EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs>? OnConnectionPoolChanged;
 

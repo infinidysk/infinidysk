@@ -168,7 +168,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             retryPrimaryOnMiss: configManager.IsCascadeRetryPrimaryOnMiss,
             streamTrace: streamTrace,
             activeReadRegistry: activeReadRegistry,
-            articleMissCache: articleMissCache);
+            articleMissCache: articleMissCache,
+            connectionPoolStats: connectionPoolStats);
     }
 
     private static MultiConnectionNntpClient CreateProviderClient

@@ -2,6 +2,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
+using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Database.Models.Metrics;
@@ -27,7 +28,8 @@ public class MultiProviderNntpClient(
     Func<bool>? retryPrimaryOnMiss = null,
     StreamTraceBuffer? streamTrace = null,
     ActiveReadRegistry? activeReadRegistry = null,
-    ArticleMissNegativeCache? articleMissCache = null
+    ArticleMissNegativeCache? articleMissCache = null,
+    ConnectionPoolStats? connectionPoolStats = null
 ) : NntpClient, INntpConnectionStats
 {
     /// <summary>
@@ -1161,9 +1163,12 @@ public class MultiProviderNntpClient(
 
     public override void Dispose()
     {
+        connectionPoolStats?.Deactivate();
         foreach (var provider in providers)
             provider.Dispose();
         _batchFallbackStartGate.Dispose();
         GC.SuppressFinalize(this);
     }
+
+    internal override void Retire() => connectionPoolStats?.Deactivate();
 }
