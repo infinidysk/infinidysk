@@ -472,6 +472,8 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
 
         await UsenetMigrationStore.ClearScanArtifactsAsync(ctx, ct).ConfigureAwait(false);
 
+        const int flushBatchSize = 500;
+        var sinceFlush = 0;
         foreach (var p in pending)
         {
             var verdict = VerdictReason.VerdictFor(p.BaseReasons);
@@ -506,6 +508,14 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
                     State = "pending",
                     UpdatedAt = DateTime.UtcNow,
                 });
+            }
+
+            sinceFlush++;
+            if (sinceFlush >= flushBatchSize)
+            {
+                await ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+                ctx.ChangeTracker.Clear();
+                sinceFlush = 0;
             }
         }
 

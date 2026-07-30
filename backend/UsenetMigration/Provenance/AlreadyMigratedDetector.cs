@@ -71,6 +71,7 @@ public sealed class AlreadyMigratedDetector
             .Where(l => l.NzbBlobId is not null)
             .GroupBy(l => l.NzbBlobId!.Value)
             .ToDictionary(g => g.Key, g => g.ToList());
+        var liveByMountPrefix = BuildMountPrefixIndex(liveLeaves);
 
         long? discoveryRunId = null;
         var detectedStoreRefs = new HashSet<string>(StringComparer.Ordinal);
@@ -86,7 +87,7 @@ public sealed class AlreadyMigratedDetector
                 detected = MatchHistorical(candidate, historicalFiles, liveById);
             }
 
-            detected ??= MatchLiveMount(candidate, liveLeaves);
+            detected ??= MatchLiveMount(candidate, liveByMountPrefix);
             if (detected is null)
                 continue;
 
@@ -194,18 +195,14 @@ public sealed class AlreadyMigratedDetector
 
     private static List<DetectedFile>? MatchLiveMount(
         AlreadyMigratedCandidate candidate,
-        IReadOnlyList<ReleaseLeaf> liveLeaves)
+        IReadOnlyDictionary<string, List<ReleaseLeaf>> liveByMountPrefix)
     {
         if (candidate.Files.Count == 0)
             return null;
 
         var mountKey = MatchKey.ForRelativePath(
             $"/content/{candidate.TargetCategory}/{candidate.JobName}");
-        var candidates = liveLeaves
-            .Where(l => MatchKey.ForRelativePath(l.Path)
-                .StartsWith(mountKey + "/", StringComparison.Ordinal))
-            .ToList();
-        if (candidates.Count == 0)
+        if (!liveByMountPrefix.TryGetValue(mountKey, out var candidates) || candidates.Count == 0)
             return null;
 
         var sourceById = candidate.Files
@@ -231,6 +228,29 @@ public sealed class AlreadyMigratedDetector
                 leafById[m.DavItemId!.Value],
                 "live-" + m.MatchMethod))
             .ToList();
+    }
+
+    /// <summary>
+    /// Groups live leaves by their <c>/content/&lt;cat&gt;/&lt;job&gt;</c> normalized prefix
+    /// so each candidate does an O(1) lookup instead of scanning every leaf.
+    /// </summary>
+    private static Dictionary<string, List<ReleaseLeaf>> BuildMountPrefixIndex(
+        IReadOnlyList<ReleaseLeaf> liveLeaves)
+    {
+        var index = new Dictionary<string, List<ReleaseLeaf>>(StringComparer.Ordinal);
+        foreach (var leaf in liveLeaves)
+        {
+            var norm = MatchKey.ForRelativePath(leaf.Path);
+            var slash = norm.IndexOf('/', "content/".Length);
+            if (slash < 0) continue;
+            slash = norm.IndexOf('/', slash + 1);
+            if (slash < 0) continue;
+            var prefix = norm[..slash];
+            if (!index.TryGetValue(prefix, out var list))
+                index[prefix] = list = new List<ReleaseLeaf>();
+            list.Add(leaf);
+        }
+        return index;
     }
 
     private static async Task UpsertFilesAsync(

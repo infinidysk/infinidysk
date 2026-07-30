@@ -217,12 +217,16 @@ function ConnectStep({ m }: { m: Hook }) {
                         label="Max Queue Depth"
                         help="Upper bound on releases queued into NzbDAV at once."
                         value={form.maxQueueDepth}
+                        min={1}
+                        max={500}
                         onChange={(v) => setForm({ ...form, maxQueueDepth: v })}
                     />
                     <NumberField
                         label="Submit Workers"
                         help="Recommended to keep at 1 — concurrent submissions can trip queue-key eviction."
                         value={form.submitWorkers}
+                        min={1}
+                        max={16}
                         onChange={(v) => setForm({ ...form, submitWorkers: v })}
                     />
                 </div>
@@ -1416,11 +1420,27 @@ function PathField({ label, help, value, required, disabled, onChange }: { label
     );
 }
 
-function NumberField({ label, help, value, onChange }: { label: string; help?: string; value: number; onChange: (v: number) => void }) {
+function NumberField({
+    label, help, value, onChange, min, max,
+}: {
+    label: string;
+    help?: string;
+    value: number;
+    onChange: (v: number) => void;
+    min?: number;
+    max?: number;
+}) {
     return (
         <label className="block space-y-1">
             <span className="block text-sm font-medium text-base-content">{label}</span>
-            <Input className="w-full max-w-[10rem]" type="number" min={1} value={value} onChange={(e) => onChange(parseInt(e.target.value) || 1)} />
+            <Input
+                className="w-full max-w-[10rem]"
+                type="number"
+                min={min ?? 1}
+                max={max}
+                value={value}
+                onChange={(e) => onChange(parseInt(e.target.value) || (min ?? 1))}
+            />
             {help && <span className="block text-[11px] leading-relaxed text-base-content/45">{help}</span>}
         </label>
     );

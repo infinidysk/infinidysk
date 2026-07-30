@@ -134,8 +134,10 @@ public sealed class UsenetMigrationStore
         session.AltmountMetadataRoot = values.MetadataRoot;
         session.AltmountConfigPath = values.ConfigPath;
         session.AltmountStoreRoot = values.StoreRoot;
-        if (values.MaxQueueDepth is > 0) session.MaxQueueDepth = values.MaxQueueDepth.Value;
-        if (values.SubmitWorkers is > 0) session.SubmitWorkers = values.SubmitWorkers.Value;
+        if (values.MaxQueueDepth is not null)
+            session.MaxQueueDepth = ClampMaxQueueDepth(values.MaxQueueDepth.Value);
+        if (values.SubmitWorkers is not null)
+            session.SubmitWorkers = ClampSubmitWorkers(values.SubmitWorkers.Value, session.MaxQueueDepth);
         session.UpdatedAt = now;
 
         var preferences = await ctx.Preferences
@@ -150,8 +152,10 @@ public sealed class UsenetMigrationStore
         preferences.AltmountMetadataRoot = values.MetadataRoot;
         preferences.AltmountConfigPath = values.ConfigPath;
         preferences.AltmountStoreRoot = values.StoreRoot;
-        if (values.MaxQueueDepth is > 0) preferences.MaxQueueDepth = values.MaxQueueDepth.Value;
-        if (values.SubmitWorkers is > 0) preferences.SubmitWorkers = values.SubmitWorkers.Value;
+        if (values.MaxQueueDepth is not null)
+            preferences.MaxQueueDepth = ClampMaxQueueDepth(values.MaxQueueDepth.Value);
+        if (values.SubmitWorkers is not null)
+            preferences.SubmitWorkers = ClampSubmitWorkers(values.SubmitWorkers.Value, preferences.MaxQueueDepth);
         preferences.UpdatedAt = now;
 
         await SeedCategoryMapFromConfigAsync(ctx, categories, now, ct).ConfigureAwait(false);
@@ -815,4 +819,9 @@ public sealed class UsenetMigrationStore
         await ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         return submission;
     }
+
+    internal static int ClampMaxQueueDepth(int value) => Math.Clamp(value, 1, 500);
+
+    internal static int ClampSubmitWorkers(int value, int maxQueueDepth) =>
+        Math.Clamp(value, 1, Math.Min(16, Math.Max(1, maxQueueDepth)));
 }
