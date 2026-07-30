@@ -112,6 +112,7 @@ public class MultiConnectionNntpClient(
     public void UpdatePriorityOdds(SemaphorePriorityOdds odds) => connectionPool.UpdatePriorityOdds(odds);
 
     private int _pendingSelections;
+    private int _retiredPoolWarningLogged;
     public int PendingSelections => Volatile.Read(ref _pendingSelections);
     public void ReservePending() => Interlocked.Increment(ref _pendingSelections);
     public void ReleasePending() => Interlocked.Decrement(ref _pendingSelections);
@@ -799,10 +800,13 @@ public class MultiConnectionNntpClient(
 
     private IOException CreateRetiredPoolException(Exception inner)
     {
-        Log.Warning(
-            "Connection pool for provider {Provider} retired while a request was waiting. " +
-            "Abandoning the stale request without retrying or penalizing provider health.",
-            providerName);
+        if (Interlocked.Exchange(ref _retiredPoolWarningLogged, 1) == 0)
+        {
+            Log.Warning(
+                "Connection pool for provider {Provider} retired while requests were waiting. " +
+                "Abandoning stale requests without retrying or penalizing provider health.",
+                providerName);
+        }
         return new IOException(
             $"Connection pool for provider '{providerName}' retired while the request was waiting.",
             inner);
