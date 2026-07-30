@@ -38,6 +38,18 @@ public class MetadataReaderTests
     }
 
     [Fact]
+    public void ReadFileMetadata_SourceNzbPath_DecodesField2()
+    {
+        var payload = new TestProtoWriter()
+            .Varint(1, 10)
+            .String(2, "/config/.nzbs/tv/Show.nzb")
+            .ToArray();
+        var fm = MetadataReader.ReadFileMetadata(payload);
+        Assert.Equal("/config/.nzbs/tv/Show.nzb", fm.SourceNzbPath);
+        Assert.Equal("", fm.StoreRef);
+    }
+
+    [Fact]
     public void ReadFileMetadata_StatusDegraded_DecodesAsEnum()
     {
         var payload = new TestProtoWriter()

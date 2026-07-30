@@ -54,9 +54,13 @@ public sealed class AltmountFileMetadata
 
     /// <summary>
     /// proto field 18 — path to the release's shared <c>.nzbz</c> store, and the
-    /// release identity key. Empty values identify v1 metadata that cannot be migrated.
+    /// release identity key. Empty values identify v1 metadata that cannot be
+    /// migrated unless the original NZB survives on disk (<c>source_nzb_path</c>).
     /// </summary>
     public string StoreRef { get; init; } = "";
+
+    /// <summary>proto field 2 — path to the original NZB (v1 metadata; may be gzipped).</summary>
+    public string SourceNzbPath { get; init; } = "";
 
     /// <summary>True when proto field 15 contains at least one nested source.</summary>
     public bool HasNestedSources { get; init; }

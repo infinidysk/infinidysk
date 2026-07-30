@@ -319,6 +319,105 @@ public sealed class SubmissionWorkerPoolTests
             Assert.Equal(committedId, (await dav.QueueItems.SingleAsync()).Id);
     }
 
+    [Fact]
+    public async Task BuildNzb_V1Release_LoadsOriginalNzbGzFromDisk()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var root = Path.Combine(Path.GetTempPath(), "nzbdav-v1sub-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Combine(root, "meta", "tv");
+        var nzbsDir = Path.Combine(root, ".nzbs", "tv");
+        Directory.CreateDirectory(metaDir);
+        Directory.CreateDirectory(nzbsDir);
+
+        const string nzbXml =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+            "<nzb xmlns=\"http://www.newzbin.com/DTD/2003/nzb\">\n" +
+            "  <file poster=\"p\" date=\"1\" subject=\"s\">\n  </file>\n</nzb>\n";
+        var nzbPath = Path.Combine(nzbsDir, "Show.nzb.gz");
+        await using (var fs = File.Create(nzbPath))
+        await using (var gz = new System.IO.Compression.GZipStream(fs, System.IO.Compression.CompressionLevel.Optimal))
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(nzbXml);
+            await gz.WriteAsync(bytes);
+        }
+
+        var metaPath = Path.Combine(metaDir, "Show.meta");
+        var metaBytes = new TestProtoWriter()
+            .Varint(1, 100)
+            .String(2, "/foreign/.nzbs/tv/Show.nzb")
+            .Varint(3, 1)
+            .ToArray();
+        await File.WriteAllBytesAsync(metaPath, metaBytes);
+
+        var storeRef = $"v1:{metaPath}";
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.Status = "running";
+            s.MaxQueueDepth = 10;
+            s.AltmountStoreRoot = root;
+        });
+        await using (var migration = h.Mig())
+        {
+            migration.Releases.Add(new MigrationRelease
+            {
+                StoreRef = storeRef,
+                StoreBasename = "Show",
+                SubmitFileName = "Show",
+                QueueFileName = "Show.nzb",
+                JobName = "Show",
+                TargetCategory = "tv",
+                Verdict = "amber",
+                VerdictReasons = "[\"v1_source_nzb\"]",
+                ScannedAt = DateTime.UtcNow,
+            });
+            migration.ReleaseFiles.Add(new MigrationReleaseFile
+            {
+                StoreRef = storeRef,
+                MetaPath = metaPath,
+                VirtualPath = "tv/Show",
+                FileName = "Show",
+                NormalisedName = "show",
+                FileSize = 100,
+            });
+            migration.Submissions.Add(new MigrationSubmission
+            {
+                StoreRef = storeRef,
+                State = "pending",
+                UpdatedAt = DateTime.UtcNow,
+            });
+            await migration.SaveChangesAsync();
+        }
+
+        byte[]? captured = null;
+        using var queueManager = CreateQueueManager();
+        var pool = new SubmissionWorkerPool(
+            h.Store,
+            queueManager,
+            new ConfigManager(),
+            new WebsocketManager())
+        {
+            DavContextFactory = h.DavFactory,
+            // Exercise real BuildNzbAsync; stub only the queue boundary.
+            SubmitPreparedReleaseOverride = (_, _, nzbBytes, _) =>
+            {
+                captured = nzbBytes;
+                return Task.CompletedTask;
+            },
+        };
+
+        try
+        {
+            Assert.Equal(1, await pool.SubmitBatchAsync(CancellationToken.None));
+            Assert.NotNull(captured);
+            Assert.Equal(0x1f, captured![0]);
+            Assert.Equal(0x8b, captured[1]);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static SubmissionWorkerPool CreatePool(MigrationTestHarness h, QueueManager queueManager)
     {
         var pool = new SubmissionWorkerPool(

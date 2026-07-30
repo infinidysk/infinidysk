@@ -20,7 +20,10 @@ public static class VerdictReason
 
     // --- Red: excluded by default ------------------------------------------
 
-    /// <summary>v1 Altmount metadata — no shared store, so it cannot be losslessly migrated.</summary>
+    /// <summary>
+    /// v1 Altmount metadata with no shared store and no recoverable original NZB
+    /// on disk — cannot be losslessly migrated.
+    /// </summary>
     public const string NoStoreRef = "no_store_ref";
 
     /// <summary><c>store_ref</c> set but the <c>.nzbz</c> was not found.</summary>
@@ -45,6 +48,11 @@ public static class VerdictReason
     public const string CollidesWithExistingQueueItem = "collides_with_existing_queue_item";
 
     // --- Amber: will attempt; outcome may differ from Altmount --------------
+
+    /// <summary>
+    /// v1 metadata migrated from the original NZB file on disk, not a v3 store.
+    /// </summary>
+    public const string V1SourceNzb = "v1_source_nzb";
 
     /// <summary>
     /// Some (but not all) files are <c>CORRUPTED</c>.
@@ -94,6 +102,7 @@ public static class VerdictReason
         [CategoryUnmapped] = Verdict.Red,
         [QueueKeyCollision] = Verdict.Red,
         [CollidesWithExistingQueueItem] = Verdict.Red,
+        [V1SourceNzb] = Verdict.Amber,
         [SomeFilesCorrupted] = Verdict.Amber,
         [StatusDegraded] = Verdict.Amber,
         [SomeFilesDegraded] = Verdict.Amber,

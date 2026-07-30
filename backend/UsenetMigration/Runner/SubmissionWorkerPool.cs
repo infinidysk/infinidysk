@@ -194,6 +194,9 @@ public sealed class SubmissionWorkerPool(
         UsenetMigrationDbContext ctx,
         CancellationToken ct)
     {
+        if (release.StoreRef.StartsWith("v1:", StringComparison.Ordinal))
+            return await BuildV1NzbAsync(release, session, ctx, ct).ConfigureAwait(false);
+
         var storePath = StoreLocator.Resolve(release.StoreRef, session.AltmountStoreRoot)
                         ?? throw new InvalidOperationException(
                             $"Store '{release.StoreRef}' is no longer readable at submit time.");
@@ -209,6 +212,62 @@ public sealed class SubmissionWorkerPool(
         }
 
         return nzbBytes;
+    }
+
+    /// <summary>
+    /// Rebuilds a v1 release from its original NZB on disk (possibly <c>.nzb.gz</c>).
+    /// Re-reads the meta so submit-time resolution matches scan-time StoreLocator rules.
+    /// Gzipped NZBs are passed through unchanged unless an encryption head must be
+    /// injected (then they are decompressed to XML first).
+    /// </summary>
+    private static async Task<byte[]> BuildV1NzbAsync(
+        MigrationRelease release,
+        MigrationSessionState session,
+        UsenetMigrationDbContext ctx,
+        CancellationToken ct)
+    {
+        var metaPath = await ctx.ReleaseFiles.AsNoTracking()
+            .Where(f => f.StoreRef == release.StoreRef)
+            .OrderBy(f => f.Id)
+            .Select(f => f.MetaPath)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException(
+                $"v1 release '{release.StoreRef}' has no recorded meta path.");
+
+        var meta = await AltmountMetaReader.ReadAsync(metaPath, ct).ConfigureAwait(false);
+        var nzbPath = StoreLocator.ResolveSourceNzb(meta.SourceNzbPath, session.AltmountStoreRoot)
+                      ?? throw new InvalidOperationException(
+                          $"Original NZB for v1 release '{release.StoreRef}' is no longer readable.");
+
+        var nzbBytes = await File.ReadAllBytesAsync(nzbPath, ct).ConfigureAwait(false);
+
+        if (!(release.HasPassword || release.Encryption is not null))
+            return nzbBytes;
+
+        if (IsGzip(nzbBytes))
+            nzbBytes = DecompressGzip(nzbBytes);
+
+        var encryptionMeta = meta.Encryption != AltmountEncryption.None
+                             || !string.IsNullOrEmpty(meta.Password)
+            ? meta
+            : await LoadEncryptionMetaAsync(release.StoreRef, ctx, ct).ConfigureAwait(false);
+        if (encryptionMeta is not null)
+            nzbBytes = EncryptionHeadInjector.Inject(nzbBytes, encryptionMeta);
+
+        return nzbBytes;
+    }
+
+    private static bool IsGzip(ReadOnlySpan<byte> bytes) =>
+        bytes.Length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
+
+    private static byte[] DecompressGzip(byte[] gzipped)
+    {
+        using var input = new MemoryStream(gzipped);
+        using var gz = new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        gz.CopyTo(output);
+        return output.ToArray();
     }
 
     private async Task SubmitPreparedReleaseAsync(

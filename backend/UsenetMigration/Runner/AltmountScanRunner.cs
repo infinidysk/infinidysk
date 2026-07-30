@@ -124,7 +124,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         }
 
         foreach (var v1 in v1Metas)
-            pending.Add(BuildV1Release(v1));
+            pending.Add(BuildV1Release(v1, storeRoot, categoryMap));
 
         // Pass 3: recognize complete live/provenance matches before collision
         // detection so they are not resubmitted or shown as conflicts.
@@ -227,13 +227,43 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         return new PendingRelease { Release = release, Files = files, BaseReasons = baseReasons };
     }
 
-    private static PendingRelease BuildV1Release(WalkedMeta v1)
+    private static PendingRelease BuildV1Release(
+        WalkedMeta v1,
+        string? storeRoot,
+        IReadOnlyDictionary<string, MigrationCategoryMap> categoryMap)
     {
         var basename = DeriveBasename(v1.MetaPath);
         var storeRef = $"v1:{v1.MetaPath}";
         var queueFileName = NzbDavNaming.QueueFileName(basename);
         var jobName = NzbDavNaming.JobName(basename);
         var files = new List<MigrationReleaseFile> { BuildFile(storeRef, v1) };
+
+        var resolvedNzb = StoreLocator.ResolveSourceNzb(v1.Meta.SourceNzbPath, storeRoot);
+        var altCategory = DeriveTopLevelCategory(v1.VirtualPath);
+        categoryMap.TryGetValue(altCategory, out var mapping);
+        var targetCategory = mapping is { Action: "migrate" } ? mapping.TargetCategory : null;
+        var categoryMapped = !string.IsNullOrEmpty(targetCategory);
+
+        List<string> baseReasons;
+        if (resolvedNzb is null)
+        {
+            baseReasons = new List<string> { VerdictReason.NoStoreRef };
+        }
+        else
+        {
+            var input = new TriageInput
+            {
+                HasStoreRef = true,
+                Store = StoreAvailability.Ok,
+                Metas = new[] { v1.Meta },
+                CategoryMapped = categoryMapped,
+                JobNameDiverges = !string.Equals(jobName, basename, StringComparison.Ordinal),
+                FilenamePasswordMarker = FilenameUtil.PasswordRegex.IsMatch(queueFileName),
+            };
+            baseReasons = TriageClassifier.Classify(input).ToList();
+            baseReasons.Insert(0, VerdictReason.V1SourceNzb);
+        }
+
         var release = new MigrationRelease
         {
             StoreRef = storeRef,
@@ -242,18 +272,36 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             QueueFileName = queueFileName,
             JobName = jobName,
             JobNameDiverges = !string.Equals(jobName, basename, StringComparison.Ordinal),
+            AltmountCategory = altCategory,
+            TargetCategory = targetCategory,
+            CollisionGroupKey = categoryMapped ? $"{targetCategory} {jobName}" : null,
             MetaFileCount = 1,
             WorstFileStatus = v1.Meta.Status == AltmountFileStatus.Unspecified ? null : v1.Meta.Status.ToString(),
+            Encryption = v1.Meta.Encryption == AltmountEncryption.None
+                ? null
+                : EncryptionHeadInjector.EncryptionToString(v1.Meta.Encryption),
+            HasPassword = !string.IsNullOrEmpty(v1.Meta.Password),
+            HasFilenamePassword = FilenameUtil.PasswordRegex.IsMatch(queueFileName),
+            HasNestedSources = v1.Meta.HasNestedSources,
+            HasClipBoundaries = v1.Meta.HasClipBoundaries,
             SourceNzbdavId = AgreedNzbdavId(files),
-            Included = true,
+            Included = mapping is not { Action: "exclude" },
             ScannedAt = DateTime.UtcNow,
         };
         return new PendingRelease
         {
             Release = release,
             Files = files,
-            BaseReasons = new List<string> { VerdictReason.NoStoreRef },
+            BaseReasons = baseReasons,
         };
+    }
+
+    /// <summary>Top-level directory of a virtual path, or "" when the file sits at the metadata root.</summary>
+    private static string DeriveTopLevelCategory(string virtualPath)
+    {
+        var normalised = virtualPath.Replace('\\', '/').Trim('/');
+        var slash = normalised.IndexOf('/');
+        return slash < 0 ? "" : normalised[..slash];
     }
 
     private static MigrationReleaseFile BuildFile(string storeRef, WalkedMeta m)

@@ -1375,6 +1375,7 @@ const REASON_LABELS: Record<string, string> = {
     status_degraded: "all files degraded",
     some_files_degraded: "some files degraded",
     known_holes: "known holes",
+    v1_source_nzb: "Original NZB on disk (v1)",
 };
 
 function Section({ icon, title, subtitle, children }: { icon: string; title: string; subtitle?: string; children: React.ReactNode }) {

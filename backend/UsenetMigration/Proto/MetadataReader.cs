@@ -45,6 +45,7 @@ public static class MetadataReader
         var encryption = AltmountEncryption.None;
         long releaseDate = 0;
         var storeRef = "";
+        var sourceNzbPath = "";
         var hasNested = false;
         var hasClips = false;
         var hasHoles = false;
@@ -56,6 +57,9 @@ public static class MetadataReader
             {
                 case 1 when wire == ProtoWireReader.WireType.Varint: // file_size
                     fileSize = reader.ReadInt64();
+                    break;
+                case 2 when wire == ProtoWireReader.WireType.LengthDelimited: // source_nzb_path
+                    sourceNzbPath = reader.ReadString();
                     break;
                 case 3 when wire == ProtoWireReader.WireType.Varint: // status
                     status = (AltmountFileStatus)reader.ReadInt32();
@@ -103,6 +107,7 @@ public static class MetadataReader
             Encryption = encryption,
             ReleaseDate = releaseDate,
             StoreRef = storeRef,
+            SourceNzbPath = sourceNzbPath,
             HasNestedSources = hasNested,
             HasClipBoundaries = hasClips,
             HasKnownHoles = hasHoles,
