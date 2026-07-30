@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.2](https://github.com/nzbdav/nzbdav/compare/v0.9.1...v0.9.2) (2026-07-30)
+
+
+### Features
+
+* **ui:** pause overview live updates while editing layout ([#722](https://github.com/nzbdav/nzbdav/issues/722)) ([891b469](https://github.com/nzbdav/nzbdav/commit/891b469e5821664fe45fc955357e1579bd35c179))
+
+
+### Bug Fixes
+
+* **metrics:** Overview Backup rescues no longer counts same-provider retries ([#714](https://github.com/nzbdav/nzbdav/issues/714)) ([283b9c1](https://github.com/nzbdav/nzbdav/commit/283b9c16137868da1fd33fccd4a3ae190d71cf09))
+* **nntp:** stop connection-count thrash and disposed-pool warning spam after recovery ([#719](https://github.com/nzbdav/nzbdav/issues/719)) ([2391204](https://github.com/nzbdav/nzbdav/commit/2391204e093e9c93fd54407cf7b71db3bc2e9f1c))
+* **streaming:** prioritize playback, adapt prefetch, and improve support diagnostics ([#707](https://github.com/nzbdav/nzbdav/issues/707)) ([ab21cda](https://github.com/nzbdav/nzbdav/commit/ab21cdab10e04412d7ed7a3d3ac6a5b35871e858))
+* **ui:** make stream tracing banner Turn off button readable ([#720](https://github.com/nzbdav/nzbdav/issues/720)) ([4bb6d4d](https://github.com/nzbdav/nzbdav/commit/4bb6d4d080df0c80e7c5ff5c0f91ac0c490b0ce1))
+* **ui:** persist usenet provider settings when saving from the provider modal ([#711](https://github.com/nzbdav/nzbdav/issues/711)) ([5c85de8](https://github.com/nzbdav/nzbdav/commit/5c85de87c9c2e946586f2b9e4495da3a20718b50))
+
 ## [0.9.1](https://github.com/nzbdav/nzbdav/compare/v0.9.0...v0.9.1) (2026-07-28)
 
 
