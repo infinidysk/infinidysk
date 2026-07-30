@@ -241,6 +241,15 @@ public class MultiProviderNntpClient(
                 }
                 return new UsenetDecodedBodyBatch { Responses = responses };
             }
+            catch (NntpClientRetiredException)
+            {
+                // Every provider in this client belongs to the same retired generation.
+                // Do not walk the remaining disposed pools or record network failures.
+                deferredCallback.Discard();
+                InvokeCompletionCallback(
+                    onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
+                throw;
+            }
             catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _))
             {
                 // Invalid / permanently missing segment ids are invalid on every provider.
@@ -300,6 +309,10 @@ public class MultiProviderNntpClient(
             try
             {
                 response = await primaryResponse.ConfigureAwait(false);
+            }
+            catch (NntpClientRetiredException)
+            {
+                throw;
             }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken))
             {
@@ -445,6 +458,13 @@ public class MultiProviderNntpClient(
                         }
 
                         lastException = null;
+                    }
+                    catch (NntpClientRetiredException)
+                    {
+                        // The whole provider set belongs to the retired generation.
+                        deferredCallback.Discard();
+                        coordinator.CompleteAttempt();
+                        throw;
                     }
                     catch (Exception e) when (!e.IsCancellationException(cancellationToken))
                     {
@@ -652,6 +672,13 @@ public class MultiProviderNntpClient(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 return result;
             }
+            catch (NntpClientRetiredException)
+            {
+                deferredCallback.Discard();
+                InvokeCompletionCallback(
+                    onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
+                throw;
+            }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken))
             {
                 stopwatch.Stop();
@@ -787,6 +814,10 @@ public class MultiProviderNntpClient(
                 // matches StatsPipelinedAsync which records nothing).
 
                 return result;
+            }
+            catch (NntpClientRetiredException)
+            {
+                throw;
             }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken))
             {

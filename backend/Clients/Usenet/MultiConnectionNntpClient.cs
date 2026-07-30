@@ -326,7 +326,7 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e))
+            catch (NntpClientRetiredException)
             {
                 deferredCallback.Discard();
                 // Normally this branch is reached while waiting to acquire and the lock is
@@ -335,7 +335,7 @@ public class MultiConnectionNntpClient(
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
-                throw CreateRetiredPoolException(e);
+                throw;
             }
             catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _))
             {
@@ -432,10 +432,10 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e))
+            catch (NntpClientRetiredException)
             {
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
-                throw CreateRetiredPoolException(e);
+                throw;
             }
             catch (Exception e)
             {
@@ -783,8 +783,16 @@ public class MultiConnectionNntpClient(
     {
         var traceRange = MultiProviderNntpClient.CurrentStreamTraceRange;
         var started = Stopwatch.GetTimestamp();
-        var connectionLock = await connectionPool.GetConnectionLockAsync(priority, ct)
-            .ConfigureAwait(false);
+        ConnectionLock<INntpClient> connectionLock;
+        try
+        {
+            connectionLock = await connectionPool.GetConnectionLockAsync(priority, ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e))
+        {
+            throw CreateRetiredPoolException(e);
+        }
         var elapsed = Stopwatch.GetElapsedTime(started);
         latencyTracker?.Record(MetricsKey, LatencyPhase.PoolWait, workload, operation, elapsed);
         StreamTrace.TryConnectionAcquired(traceRange, elapsed, connectionLock.WasReused);
@@ -798,7 +806,7 @@ public class MultiConnectionNntpClient(
     private bool IsRetiredPoolAcquisitionFailure(Exception e) =>
         connectionPool.IsDisposed && e is ObjectDisposedException or OperationCanceledException;
 
-    private IOException CreateRetiredPoolException(Exception inner)
+    private NntpClientRetiredException CreateRetiredPoolException(Exception inner)
     {
         if (Interlocked.Exchange(ref _retiredPoolWarningLogged, 1) == 0)
         {
@@ -807,7 +815,7 @@ public class MultiConnectionNntpClient(
                 "Abandoning stale requests without retrying or penalizing provider health.",
                 providerName);
         }
-        return new IOException(
+        return new NntpClientRetiredException(
             $"Connection pool for provider '{providerName}' retired while the request was waiting.",
             inner);
     }

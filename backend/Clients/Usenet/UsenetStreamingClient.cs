@@ -15,6 +15,8 @@ namespace NzbWebDAV.Clients.Usenet;
 
 public class UsenetStreamingClient : WrappingNntpClient
 {
+    private readonly Lock _configChangeLock = new();
+
     public UsenetStreamingClient(
         ConfigManager configManager,
         WebsocketManager websocketManager,
@@ -39,29 +41,32 @@ public class UsenetStreamingClient : WrappingNntpClient
             // if unrelated config changed, do nothing
             if (!providersChanged && !streamingPriorityChanged) return;
 
-            try
+            lock (_configChangeLock)
             {
-                if (providersChanged)
+                try
                 {
-                    // update the connection-pool according to the new config. New pools are
-                    // built with the current odds, so a save that changes both needs no
-                    // separate update (and must not touch the retired client).
-                    var newUsenetClient = CreateDownloadingNntpClient(
-                        configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
-                        streamTrace, activeReadRegistry, articleMissCache, latencyTracker);
-                    ReplaceUnderlyingClient(newUsenetClient);
-                    return;
-                }
+                    if (providersChanged)
+                    {
+                        // update the connection-pool according to the new config. New pools are
+                        // built with the current odds, so a save that changes both needs no
+                        // separate update (and must not touch the retired client).
+                        var newUsenetClient = CreateDownloadingNntpClient(
+                            configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
+                            streamTrace, activeReadRegistry, articleMissCache, latencyTracker);
+                        ReplaceUnderlyingClient(newUsenetClient);
+                        return;
+                    }
 
-                // Streaming Priority alone only re-arms the provider gates; rebuilding pools
-                // would drop healthy TLS connections mid-playback.
-                UpdateProviderPriorityOdds(configManager.GetStreamingPriority());
-            }
-            catch (Exception e)
-            {
-                // Keep the previous (working) client and let remaining OnConfigChanged
-                // subscribers run — a throw from a multicast handler aborts the rest.
-                Log.Error(e, "Failed to rebuild usenet client after provider config change; keeping previous client");
+                    // Streaming Priority alone only re-arms the provider gates; rebuilding pools
+                    // would drop healthy TLS connections mid-playback.
+                    UpdateProviderPriorityOdds(configManager.GetStreamingPriority());
+                }
+                catch (Exception e)
+                {
+                    // Keep the previous (working) client and let remaining OnConfigChanged
+                    // subscribers run — a throw from a multicast handler aborts the rest.
+                    Log.Error(e, "Failed to rebuild usenet client after provider config change; keeping previous client");
+                }
             }
         };
     }
