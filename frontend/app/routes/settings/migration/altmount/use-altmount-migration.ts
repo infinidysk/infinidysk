@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // --- API shapes (camelCase, matching the backend's default JSON policy) -------
 
@@ -284,6 +284,26 @@ export function beginLatestRequest(generation: { current: number }): () => boole
     return () => requestGeneration === generation.current;
 }
 
+/** Like loadTableRetainingLastGood, but ignores stale out-of-order responses. */
+export async function loadTableLatest<T>(
+    generation: { current: number },
+    load: () => Promise<T>,
+    commit: (data: T) => void,
+    recordError: (message: string) => void,
+): Promise<boolean> {
+    const isLatest = beginLatestRequest(generation);
+    try {
+        const data = await load();
+        if (!isLatest()) return false;
+        commit(data);
+        return true;
+    } catch (e) {
+        if (!isLatest()) return false;
+        recordError(e instanceof Error ? e.message : String(e));
+        return false;
+    }
+}
+
 export function useAltmountMigration() {
     const [status, setStatus] = useState<StatusResponse | null>(null);
     const [summary, setSummary] = useState<SummaryResponse | null>(null);
@@ -487,15 +507,15 @@ export function useAltmountMigration() {
         await refresh();
     }), [withBusy, refresh]);
 
-    const symlinkCsvHref = (f: Pick<SymlinkFilters, "status" | "q" | "sort">): string => {
+    const symlinkCsvHref = useCallback((f: Pick<SymlinkFilters, "status" | "q" | "sort">): string => {
         const params = new URLSearchParams({ format: "csv" });
         if (f.status) params.set("status", f.status);
         if (f.q) params.set("q", f.q);
         if (f.sort) params.set("sort", f.sort);
         return `${BASE}/symlinks?${params.toString()}`;
-    };
+    }, []);
 
-    return {
+    return useMemo(() => ({
         status,
         summary,
         categories,
@@ -529,5 +549,38 @@ export function useAltmountMigration() {
         loadSymlinkBackups,
         restoreSymlinks,
         symlinkCsvHref,
-    };
+    }), [
+        status,
+        summary,
+        categories,
+        error,
+        busy,
+        historyCleanupResult,
+        symlinkRestoreResult,
+        migrationData,
+        refresh,
+        connect,
+        loadCategories,
+        saveCategories,
+        startScan,
+        cancelScan,
+        loadReleases,
+        setInclude,
+        loadCollisions,
+        startRun,
+        resumeRun,
+        pauseRun,
+        cancelRun,
+        cleanupHistory,
+        reset,
+        loadMigrationData,
+        forgetMigrationData,
+        planSymlinks,
+        cancelSymlinkOperation,
+        loadSymlinks,
+        applySymlinks,
+        loadSymlinkBackups,
+        restoreSymlinks,
+        symlinkCsvHref,
+    ]);
 }

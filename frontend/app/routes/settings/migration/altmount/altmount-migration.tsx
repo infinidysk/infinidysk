@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Badge, Spinner, Tooltip } from "~/components/ui/feedback";
 import { Button } from "~/components/ui/button";
 import { Input, Select } from "~/components/ui/form";
@@ -25,9 +25,18 @@ import {
     canResetMigration,
     canStartScanMigration,
     isMigrationWorkActive,
-    loadTableRetainingLastGood,
+    loadTableLatest,
     useAltmountMigration,
 } from "./use-altmount-migration";
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+    const [debounced, setDebounced] = useState(value);
+    useEffect(() => {
+        const handle = window.setTimeout(() => setDebounced(value), delayMs);
+        return () => window.clearTimeout(handle);
+    }, [value, delayMs]);
+    return debounced;
+}
 
 const STEPS = ["Connect", "Categories", "Scan", "Review", "Run", "Links"] as const;
 
@@ -392,10 +401,12 @@ function ReviewStep({ m, onRun }: { m: Hook; onRun: () => void }) {
     const [collisionsLoading, setCollisionsLoading] = useState(true);
     const [collisionLoadError, setCollisionLoadError] = useState<string | null>(null);
     const [confirmRun, setConfirmRun] = useState(false);
+    const collisionGeneration = useRef(0);
 
     const reloadCollisions = useCallback(() => {
         setCollisionsLoading(true);
-        void loadTableRetainingLastGood(
+        void loadTableLatest(
+            collisionGeneration,
             m.loadCollisions,
             (groups) => {
                 setCollisions(groups);
@@ -403,7 +414,7 @@ function ReviewStep({ m, onRun }: { m: Hook; onRun: () => void }) {
             },
             setCollisionLoadError,
         ).finally(() => setCollisionsLoading(false));
-    }, [m]);
+    }, [m.loadCollisions]);
     useEffect(() => reloadCollisions(), [reloadCollisions]);
 
     const summary = m.summary;
@@ -527,16 +538,24 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
     const [filters, setFilters] = useState<ReleaseFilters>({
         page: 1, pageSize: 50, verdict: "", included: "", q: "", sort: "",
     });
+    const [searchDraft, setSearchDraft] = useState("");
+    const debouncedSearch = useDebouncedValue(searchDraft, 300);
     const [rows, setRows] = useState<ReleaseRow[]>([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const editable = canEditReleaseSelection(m.status?.sessionStatus);
+    const loadGeneration = useRef(0);
+
+    useEffect(() => {
+        setFilters((current) => (current.q === debouncedSearch ? current : { ...current, q: debouncedSearch, page: 1 }));
+    }, [debouncedSearch]);
 
     const load = useCallback(async (f: ReleaseFilters) => {
         setLoading(true);
         try {
-            await loadTableRetainingLastGood(
+            await loadTableLatest(
+                loadGeneration,
                 () => m.loadReleases(f),
                 (data) => {
                     setRows(data.releases);
@@ -548,7 +567,7 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
         } finally {
             setLoading(false);
         }
-    }, [m]);
+    }, [m.loadReleases]);
 
     useEffect(() => { void load(filters); }, [load, filters]);
 
@@ -592,8 +611,8 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
                 <Input
                     className="input-sm w-48"
                     placeholder="Search name…"
-                    value={filters.q}
-                    onChange={(e) => setFilters({ ...filters, q: e.target.value, page: 1 })}
+                    value={searchDraft}
+                    onChange={(e) => setSearchDraft(e.target.value)}
                 />
                 <Button variant="ghost" size="small" onClick={() => void load(filters)}>
                     <Icon name="refresh" className="!text-[16px]" />
@@ -873,15 +892,23 @@ function SymlinkStep({ m }: { m: Hook }) {
 
 function SymlinkResults({ m }: { m: Hook }) {
     const [filters, setFilters] = useState<SymlinkFilters>({ page: 1, pageSize: 100, status: "rewrite", q: "", sort: "" });
+    const [searchDraft, setSearchDraft] = useState("");
+    const debouncedSearch = useDebouncedValue(searchDraft, 300);
     const [data, setData] = useState<{ total: number; counts: Record<string, number>; rows: SymlinkRow[] }>({ total: 0, counts: {}, rows: [] });
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [confirmApply, setConfirmApply] = useState(false);
+    const loadGeneration = useRef(0);
+
+    useEffect(() => {
+        setFilters((current) => (current.q === debouncedSearch ? current : { ...current, q: debouncedSearch, page: 1 }));
+    }, [debouncedSearch]);
 
     const load = useCallback(async (f: SymlinkFilters) => {
         setLoading(true);
         try {
-            await loadTableRetainingLastGood(
+            await loadTableLatest(
+                loadGeneration,
                 () => m.loadSymlinks(f),
                 (res) => {
                     setData({ total: res.total, counts: res.counts, rows: res.rows });
@@ -892,7 +919,7 @@ function SymlinkResults({ m }: { m: Hook }) {
         } finally {
             setLoading(false);
         }
-    }, [m]);
+    }, [m.loadSymlinks]);
 
     useEffect(() => { void load(filters); }, [load, filters]);
 
@@ -965,8 +992,8 @@ function SymlinkResults({ m }: { m: Hook }) {
                 <Input
                     className="input-sm w-56"
                     placeholder="Search path…"
-                    value={filters.q}
-                    onChange={(e) => setFilters({ ...filters, q: e.target.value, page: 1 })}
+                    value={searchDraft}
+                    onChange={(e) => setSearchDraft(e.target.value)}
                 />
                 <Button variant="ghost" size="small" onClick={() => void load(filters)}>
                     <Icon name="refresh" className="!text-[16px]" />
@@ -1050,21 +1077,26 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
     const step6Busy = m.busy !== null;
     const archive = backups.find((b) => b.fileName === selected);
     const result = m.symlinkRestoreResult;
+    const loadGeneration = useRef(0);
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const items = await m.loadSymlinkBackups();
-            setBackups(items);
-            setSelected((current) => items.some((item) => item.fileName === current)
-                ? current
-                : items.find((item) => item.isValid)?.fileName ?? items[0]?.fileName ?? "");
-        } catch (e) {
-            m.setError((e as Error).message);
+            await loadTableLatest(
+                loadGeneration,
+                m.loadSymlinkBackups,
+                (items) => {
+                    setBackups(items);
+                    setSelected((current) => items.some((item) => item.fileName === current)
+                        ? current
+                        : items.find((item) => item.isValid)?.fileName ?? items[0]?.fileName ?? "");
+                },
+                (message) => m.setError(message),
+            );
         } finally {
             setLoading(false);
         }
-    }, [m]);
+    }, [m.loadSymlinkBackups, m.setError]);
 
     useEffect(() => { void load(); }, [load]);
 

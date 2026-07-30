@@ -7,6 +7,7 @@ import {
     canResetMigration,
     canStartScanMigration,
     isMigrationWorkActive,
+    loadTableLatest,
     loadTableRetainingLastGood,
     requestSymlinkApply,
     runUiMutation,
@@ -150,6 +151,32 @@ describe("runUiMutation", () => {
         )).resolves.toBe(false);
         expect(recordError).toHaveBeenCalledOnce();
         expect(recordError).toHaveBeenCalledWith("API rejected the mutation");
+    });
+});
+
+describe("loadTableLatest", () => {
+    it("commits only the newest response when requests resolve out of order", async () => {
+        const generation = { current: 0 };
+        const commit = vi.fn();
+        const recordError = vi.fn();
+
+        let resolveStale!: (value: string) => void;
+        let resolveFresh!: (value: string) => void;
+        const stale = new Promise<string>((resolve) => { resolveStale = resolve; });
+        const fresh = new Promise<string>((resolve) => { resolveFresh = resolve; });
+
+        const first = loadTableLatest(generation, () => stale, commit, recordError);
+        const second = loadTableLatest(generation, () => fresh, commit, recordError);
+
+        resolveFresh("fresh");
+        await expect(second).resolves.toBe(true);
+        expect(commit).toHaveBeenCalledOnce();
+        expect(commit).toHaveBeenCalledWith("fresh");
+
+        resolveStale("stale");
+        await expect(first).resolves.toBe(false);
+        expect(commit).toHaveBeenCalledOnce();
+        expect(recordError).not.toHaveBeenCalled();
     });
 });
 
