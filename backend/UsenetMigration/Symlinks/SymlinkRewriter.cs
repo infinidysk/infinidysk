@@ -84,6 +84,25 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store, ConfigManager co
             actionable.Select(r => new SymlinkBackup.Entry(r.SymlinkPath, r.OldTarget, r.NewTarget)).ToList(),
             ct).ConfigureAwait(false);
 
+        // Verify the archive is readable before touching the library.
+        IReadOnlyList<SymlinkBackup.Entry> verified;
+        try
+        {
+            verified = await SymlinkBackup.ReadAsync(backupPath, ct).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or System.Text.Json.JsonException)
+        {
+            throw new InvalidDataException(
+                $"Symlink backup at '{backupPath}' could not be verified after writing; apply aborted.", e);
+        }
+
+        if (verified.Count != actionable.Count)
+        {
+            throw new InvalidDataException(
+                $"Symlink backup at '{backupPath}' entry count mismatch " +
+                $"(wrote {actionable.Count}, read {verified.Count}); apply aborted.");
+        }
+
         // 2) Retarget each, drift-guarded and idempotent.
         int applied = 0, failed = invalidBeforeApply;
         foreach (var row in actionable)

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Extensions;
 using Serilog;
 
 namespace NzbWebDAV.UsenetMigration.Symlinks;
@@ -182,7 +183,23 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
             }
             catch (Exception e)
             {
-                issues.Add(new SymlinkRestoreIssue(entry.Path, e.Message));
+                if (e is IOException)
+                {
+                    issues.Add(new SymlinkRestoreIssue(entry.Path, e.Message));
+                }
+                else if (e.TryGetKnownErrorMessage(out var reason))
+                {
+                    Log.Warning(
+                        "Symlink restore skipped {Path}. Reason: {Reason}",
+                        entry.Path, reason);
+                    Log.Debug(e, "Symlink restore known failure stack for {Path}", entry.Path);
+                    issues.Add(new SymlinkRestoreIssue(entry.Path, reason));
+                }
+                else
+                {
+                    Log.Error(e, "Unexpected error restoring symlink {Path}: {Message}", entry.Path, e.Message);
+                    issues.Add(new SymlinkRestoreIssue(entry.Path, e.Message));
+                }
             }
         }
 

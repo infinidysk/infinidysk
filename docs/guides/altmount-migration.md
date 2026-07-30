@@ -30,7 +30,9 @@ The wizard can be reset after work reaches a non-active state. Resetting clears 
 
 ## Symlink safety and restore
 
-Set **Library Root** to the media library containing the links and **Backup Directory** to a separate writable location. Apply and restore are confined to the Library Root and reject symlinked or reparse-point parent directories. If a link target changes after planning, the drift guard leaves it untouched.
+Set **Library Root** to the media library containing the links and **Backup Directory** to a separate writable location (not on the AltMount mount you are about to decommission). Apply and restore are confined to the Library Root and reject symlinked or reparse-point parent directories. If a link target changes after planning, the drift guard leaves it untouched.
+
+Pause *Arr import automation while Apply runs — a rename race with Sonarr/Radarr during rewrite can leave a drifted link. Restored (and rewritten) symlinks are owned by the NzbDAV process user.
 
 The dry-run plan classifies every symlink found during the library walk:
 

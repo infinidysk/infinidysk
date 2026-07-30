@@ -886,6 +886,9 @@ public sealed class UsenetMigrationController(
         try
         {
             Directory.CreateDirectory(path);
+            var probe = Path.Combine(path, $".nzbdav-probe-{Guid.NewGuid():N}");
+            System.IO.File.WriteAllText(probe, "ok");
+            System.IO.File.Delete(probe);
         }
         catch (Exception e)
         {
@@ -911,12 +914,17 @@ public sealed class UsenetMigrationController(
         return System.Text.Encoding.UTF8.GetBytes(sb.ToString());
     }
 
-    private static string Csv(string? value)
+    /// <summary>
+    /// CSV-escapes a field and prefixes a leading apostrophe when the value would
+    /// be interpreted as a spreadsheet formula (<c>=</c>/<c>+</c>/<c>-</c>/<c>@</c>).
+    /// </summary>
+    internal static string Csv(string? value)
     {
         if (string.IsNullOrEmpty(value)) return "";
+        var safe = value[0] is '=' or '+' or '-' or '@' ? "'" + value : value;
         // Quote when the field contains a delimiter, quote, or newline; double interior quotes.
-        if (value.IndexOfAny([',', '"', '\n', '\r']) < 0) return value;
-        return "\"" + value.Replace("\"", "\"\"") + "\"";
+        if (safe.IndexOfAny([',', '"', '\n', '\r']) < 0) return safe;
+        return "\"" + safe.Replace("\"", "\"\"") + "\"";
     }
 
     private static string[] Reasons(string json)

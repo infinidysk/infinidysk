@@ -14,6 +14,7 @@ namespace NzbWebDAV.UsenetMigration.Symlinks;
 public static class SymlinkBackup
 {
     private const string ManifestEntryName = "symlinks.json";
+    private const long MaxManifestBytes = 64L * 1024 * 1024;
 
     public sealed record Entry(string Path, string Target, string? ReplacementTarget = null);
 
@@ -26,14 +27,27 @@ public static class SymlinkBackup
 
         var json = JsonSerializer.SerializeToUtf8Bytes(entries);
 
-        await using var fs = File.Create(backupFilePath);
-        await using var gz = new GZipStream(fs, CompressionLevel.Optimal);
-        await using var tar = new TarWriter(gz, TarEntryFormat.Pax, leaveOpen: false);
-        var manifest = new PaxTarEntry(TarEntryType.RegularFile, ManifestEntryName)
+        await using (var fs = new FileStream(
+                         backupFilePath,
+                         FileMode.Create,
+                         FileAccess.Write,
+                         FileShare.None,
+                         bufferSize: 4096,
+                         FileOptions.Asynchronous))
         {
-            DataStream = new MemoryStream(json),
-        };
-        await tar.WriteEntryAsync(manifest, ct).ConfigureAwait(false);
+            await using (var gz = new GZipStream(fs, CompressionLevel.Optimal, leaveOpen: true))
+            await using (var tar = new TarWriter(gz, TarEntryFormat.Pax, leaveOpen: false))
+            {
+                var manifest = new PaxTarEntry(TarEntryType.RegularFile, ManifestEntryName)
+                {
+                    DataStream = new MemoryStream(json),
+                };
+                await tar.WriteEntryAsync(manifest, ct).ConfigureAwait(false);
+            }
+
+            await fs.FlushAsync(ct).ConfigureAwait(false);
+            fs.Flush(flushToDisk: true);
+        }
     }
 
     /// <summary>Reads the manifest back out of a backup (does not touch the filesystem).</summary>
@@ -48,9 +62,28 @@ public static class SymlinkBackup
             if (entry.Name != ManifestEntryName || entry.DataStream is null)
                 continue;
             using var ms = new MemoryStream();
-            await entry.DataStream.CopyToAsync(ms, ct).ConfigureAwait(false);
-            return JsonSerializer.Deserialize<List<Entry>>(ms.ToArray()) ?? new List<Entry>();
+            await CopyBoundedAsync(entry.DataStream, ms, MaxManifestBytes, ct).ConfigureAwait(false);
+            var list = JsonSerializer.Deserialize<List<Entry?>>(ms.ToArray()) ?? [];
+            return list.Where(e => e is not null).Cast<Entry>().ToList();
         }
         throw new InvalidDataException("The archive does not contain a symlink manifest.");
+    }
+
+    private static async Task CopyBoundedAsync(
+        Stream source, Stream destination, long maxBytes, CancellationToken ct)
+    {
+        var buffer = new byte[8192];
+        long total = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
+            if (read == 0)
+                return;
+            total += read;
+            if (total > maxBytes)
+                throw new InvalidDataException(
+                    $"The symlink backup manifest exceeds the {maxBytes} byte limit.");
+            await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+        }
     }
 }

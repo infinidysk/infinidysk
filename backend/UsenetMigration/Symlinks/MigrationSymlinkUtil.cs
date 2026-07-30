@@ -140,10 +140,23 @@ internal static class MigrationSymlinkUtil
     {
         var links = new List<SymlinkPair>();
         var unreadable = new List<UnreadableLink>();
-        foreach (var path in Directory.EnumerateFileSystemEntries(
-                     directoryPath,
-                     "*",
-                     SearchOption.AllDirectories))
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            AttributesToSkip = 0,
+        };
+        var enumerable = new System.IO.Enumeration.FileSystemEnumerable<string>(
+            directoryPath,
+            (ref System.IO.Enumeration.FileSystemEntry entry) => entry.ToFullPath(),
+            options)
+        {
+            ShouldRecursePredicate = (ref System.IO.Enumeration.FileSystemEntry entry) =>
+                entry.Attributes.HasFlag(FileAttributes.Directory)
+                && !entry.Attributes.HasFlag(FileAttributes.ReparsePoint),
+        };
+
+        foreach (var path in enumerable)
         {
             ct.ThrowIfCancellationRequested();
             var info = new FileInfo(path);
