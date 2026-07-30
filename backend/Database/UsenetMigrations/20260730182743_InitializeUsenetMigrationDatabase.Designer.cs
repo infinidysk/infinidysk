@@ -11,14 +11,14 @@ using NzbWebDAV.Database;
 namespace NzbWebDAV.Database.UsenetMigrations
 {
     [DbContext(typeof(UsenetMigrationDbContext))]
-    [Migration("20260720062047_AddMigrationPreferences")]
-    partial class AddMigrationPreferences
+    [Migration("20260730182743_InitializeUsenetMigrationDatabase")]
+    partial class InitializeUsenetMigrationDatabase
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.UsenetMigration.MigratedFile", b =>
                 {
