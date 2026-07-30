@@ -39,7 +39,7 @@ public sealed class AlreadyMigratedDetector
 
         var storeRefs = candidates.Select(c => c.StoreRef).ToList();
         var provenance = await migrationContext.MigratedReleases
-            .Where(r => r.SourceType == "altmount" && storeRefs.Contains(r.SourceReleaseId))
+            .Where(r => r.SourceType == MigrationSourceTypes.Altmount && storeRefs.Contains(r.SourceReleaseId))
             .ToDictionaryAsync(r => r.SourceReleaseId, StringComparer.Ordinal, ct)
             .ConfigureAwait(false);
         var provenanceIds = provenance.Values.Select(r => r.Id).ToList();
@@ -96,7 +96,7 @@ public sealed class AlreadyMigratedDetector
                 discoveryRunId ??= await CreateDiscoveryRunAsync(migrationContext, ct).ConfigureAwait(false);
                 migratedRelease = new MigratedRelease
                 {
-                    SourceType = "altmount",
+                    SourceType = MigrationSourceTypes.Altmount,
                     SourceReleaseId = candidate.StoreRef,
                     FirstRunId = discoveryRunId.Value,
                     LastRunId = discoveryRunId.Value,
@@ -309,7 +309,7 @@ public sealed class AlreadyMigratedDetector
         var now = DateTime.UtcNow;
         var run = new MigrationRun
         {
-            SourceType = "altmount",
+            SourceType = MigrationSourceTypes.Altmount,
             Status = "discovered",
             StartedAt = now,
             CompletedAt = now,

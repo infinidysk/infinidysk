@@ -1,3 +1,5 @@
+using NzbWebDAV.UsenetMigration;
+
 namespace NzbWebDAV.Database.Models.UsenetMigration;
 
 /// <summary>
@@ -219,7 +221,7 @@ public sealed class MigrationSubmission
 public sealed class MigrationRun
 {
     public long Id { get; set; }
-    public string SourceType { get; set; } = "altmount";
+    public string SourceType { get; set; } = MigrationSourceTypes.Altmount;
     public string Status { get; set; } = "running";
     public DateTime StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
@@ -233,7 +235,7 @@ public sealed class MigrationRun
 public sealed class MigratedRelease
 {
     public long Id { get; set; }
-    public string SourceType { get; set; } = "altmount";
+    public string SourceType { get; set; } = MigrationSourceTypes.Altmount;
     public string SourceReleaseId { get; set; } = "";
     public long FirstRunId { get; set; }
     public long LastRunId { get; set; }

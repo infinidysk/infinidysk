@@ -61,14 +61,14 @@ public sealed class MigrationProvenanceService
         var now = DateTime.UtcNow;
         var migratedRelease = await migrationContext.MigratedReleases
             .FirstOrDefaultAsync(
-                r => r.SourceType == "altmount" && r.SourceReleaseId == submission.StoreRef,
+                r => r.SourceType == MigrationSourceTypes.Altmount && r.SourceReleaseId == submission.StoreRef,
                 ct)
             .ConfigureAwait(false);
         if (migratedRelease is null)
         {
             migratedRelease = new MigratedRelease
             {
-                SourceType = "altmount",
+                SourceType = MigrationSourceTypes.Altmount,
                 SourceReleaseId = submission.StoreRef,
                 FirstRunId = runId,
                 MigratedAt = now,
@@ -140,7 +140,7 @@ public sealed class MigrationProvenanceService
         var now = DateTime.UtcNow;
         var run = new MigrationRun
         {
-            SourceType = "altmount",
+            SourceType = MigrationSourceTypes.Altmount,
             Status = "running",
             StartedAt = now,
         };

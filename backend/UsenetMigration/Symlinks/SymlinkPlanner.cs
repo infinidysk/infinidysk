@@ -257,6 +257,19 @@ public sealed class SymlinkPlanner(UsenetMigrationStore store, ConfigManager con
     /// <c>NewDavItemId</c> (persisting it back), and returns the basename-indexed
     /// correlation set.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Source seam:</b> this is the single point that couples the symlink engine to
+    /// AltMount's release/file shape (store refs, submission states, and historical
+    /// <see cref="Database.Models.UsenetMigration.MigratedRelease"/> rows). A future
+    /// source (for example Decypharr) must reimplement this correlation provider.
+    /// </para>
+    /// <para>
+    /// <see cref="SymlinkMatcher"/>, <see cref="ISymlinkOps"/>, <see cref="SymlinkRewriter"/>,
+    /// <see cref="SymlinkRestoreService"/>, and <see cref="MigrationSymlinkUtil"/> are
+    /// source-agnostic and can be reused as-is.
+    /// </para>
+    /// </remarks>
     private async Task<Dictionary<string, List<CorrelatedFile>>> BuildCorrelationIndexAsync(CancellationToken ct)
     {
         await using var ctx = store.NewContext();
@@ -389,7 +402,7 @@ public sealed class SymlinkPlanner(UsenetMigrationStore store, ConfigManager con
         CancellationToken ct)
     {
         var releases = await migrationContext.MigratedReleases.AsNoTracking()
-            .Where(r => r.SourceType == "altmount")
+            .Where(r => r.SourceType == MigrationSourceTypes.Altmount)
             .ToDictionaryAsync(r => r.Id, ct)
             .ConfigureAwait(false);
         if (releases.Count == 0)

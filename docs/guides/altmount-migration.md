@@ -60,6 +60,16 @@ Use **Restore previous rewrite** to select a generated archive. Restore verifies
 | A symlink is `orphan`, `unreadable`, or `failed` | Review its match/target details. The wizard will not guess or overwrite a link that cannot be verified safely. |
 | Many releases show `evicted` or `failed` after restoring a database backup | The migration ledger is ahead of the restored main database. Use Reset (or Forget migration data), then re-scan; releases that already imported are re-detected and not resubmitted. |
 
+## Extending to other sources
+
+The wizard core — session state machine, runs, provenance, submission lifecycle, claim recovery, reconciler, and history cleaner — is source-neutral. Adding another downloader (for example Decypharr) needs:
+
+1. A scan runner and metadata/store readers for that source's on-disk layout.
+2. A correlation provider that maps library symlinks to imported DavItems (today that seam is `SymlinkPlanner.BuildCorrelationIndexAsync`).
+3. Distinct restore-archive prefixes so Step 6 backups do not collide across sources.
+
+Decypharr is torrent/debrid-first with its own usenet mode, so a full import path needs its own analysis. The symlink retargeting engine (matcher, ops, rewriter, restore, walker) already applies to any mount-to-mount move once correlation is supplied.
+
 ## Related
 
 [Migration paths](../getting-started/migration.md) · [Backups and upgrades](backups-upgrades.md) · [SABnzbd settings](../configuration/sabnzbd.md)

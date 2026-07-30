@@ -33,7 +33,10 @@ public sealed class SymlinkRestoreSummary
 /// </summary>
 public sealed class SymlinkRestoreService(UsenetMigrationStore store)
 {
-    internal const string ArchivePrefix = "altmount-symlink-backup-";
+    internal const string DefaultArchivePrefix = "altmount-symlink-backup-";
+
+    /// <summary>Archive filename prefix; override for a future migration source with distinct archives.</summary>
+    internal string ArchivePrefix { get; set; } = DefaultArchivePrefix;
     internal const string ArchiveSuffix = ".tar.gz";
 
     internal ISymlinkOps Ops { get; set; } = RealSymlinkOps.Instance;
@@ -252,7 +255,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
     {
         if (string.IsNullOrWhiteSpace(fileName)
             || !string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal)
-            || !fileName.StartsWith(ArchivePrefix, StringComparison.Ordinal)
+            || !fileName.StartsWith(DefaultArchivePrefix, StringComparison.Ordinal)
             || !fileName.EndsWith(ArchiveSuffix, StringComparison.Ordinal))
             throw new InvalidDataException("The selected symlink restore archive name is invalid.");
 

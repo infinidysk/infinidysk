@@ -41,6 +41,9 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store, ConfigManager co
     /// <summary>Test seam for the live NzbDAV context; production leaves it null.</summary>
     internal Func<DavDatabaseContext>? DavContextFactory { get; set; }
 
+    /// <summary>Archive filename prefix; override for a future migration source with distinct archives.</summary>
+    internal string ArchivePrefix { get; set; } = SymlinkRestoreService.DefaultArchivePrefix;
+
     public async Task<RewriteSummary> ApplyAsync(CancellationToken ct = default)
     {
         var session = await store.GetSessionAsync(ct).ConfigureAwait(false);
@@ -78,7 +81,7 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store, ConfigManager co
         }
 
         // 1) Backup FIRST — the prior state of every row we might change.
-        var backupPath = BuildBackupPath(backupDir, UtcNow());
+        var backupPath = BuildBackupPath(backupDir, UtcNow(), ArchivePrefix);
         await SymlinkBackup.WriteAsync(
             backupPath,
             actionable.Select(r => new SymlinkBackup.Entry(r.SymlinkPath, r.OldTarget, r.NewTarget)).ToList(),
@@ -237,9 +240,9 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store, ConfigManager co
         row.Error = error;
     }
 
-    private static string BuildBackupPath(string backupDir, DateTime createdAt)
+    private static string BuildBackupPath(string backupDir, DateTime createdAt, string archivePrefix)
     {
-        var stem = $"altmount-symlink-backup-{createdAt:yyyyMMdd-HHmmss}";
+        var stem = $"{archivePrefix}{createdAt:yyyyMMdd-HHmmss}";
         var path = Path.Combine(backupDir, $"{stem}.tar.gz");
         for (var suffix = 2; File.Exists(path); suffix++)
             path = Path.Combine(backupDir, $"{stem}-{suffix}.tar.gz");

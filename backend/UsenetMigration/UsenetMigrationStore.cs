@@ -356,7 +356,7 @@ public sealed class UsenetMigrationStore
         var now = DateTime.UtcNow;
         var run = new MigrationRun
         {
-            SourceType = "altmount",
+            SourceType = MigrationSourceTypes.Altmount,
             Status = "running",
             StartedAt = now,
         };
