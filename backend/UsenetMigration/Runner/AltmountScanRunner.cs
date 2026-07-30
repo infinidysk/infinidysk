@@ -89,7 +89,9 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         var metaCount = 0;
         var scanErrors = new List<PendingScanError>();
 
-        foreach (var metaPath in MetadataTreeWalker.EnumerateMetaFiles(metadataRoot))
+        foreach (var metaPath in MetadataTreeWalker.EnumerateMetaFiles(
+                     metadataRoot,
+                     (path, message) => scanErrors.Add(new PendingScanError(path, "walk", message))))
         {
             ct.ThrowIfCancellationRequested();
             AltmountFileMetadata meta;
