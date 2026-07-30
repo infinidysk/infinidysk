@@ -55,7 +55,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
         _workerPool = new SubmissionWorkerPool(store, queueManager, configManager, websocketManager);
         _reconciler = new SubmissionReconciler(store);
         _symlinkPlanner = new SymlinkPlanner(store, configManager);
-        _symlinkRewriter = new SymlinkRewriter(store);
+        _symlinkRewriter = new SymlinkRewriter(store, configManager);
         _symlinkRestoreService = new SymlinkRestoreService(store);
     }
 
