@@ -56,6 +56,7 @@ Use **Restore previous rewrite** to select a generated archive. Restore verifies
 | Start migration is disabled | Resolve blocking collisions, map or exclude every category, and successfully refresh the review tables. |
 | Reset is disabled | Cancel active work and wait for the session to reach a non-active state. A paused run is still active. |
 | A symlink is `orphan`, `unreadable`, or `failed` | Review its match/target details. The wizard will not guess or overwrite a link that cannot be verified safely. |
+| Many releases show `evicted` or `failed` after restoring a database backup | The migration ledger is ahead of the restored main database. Use Reset (or Forget migration data), then re-scan; releases that already imported are re-detected and not resubmitted. |
 
 ## Related
 

@@ -151,15 +151,20 @@ public sealed class SubmissionReconciler(UsenetMigrationStore store)
                 .ToListAsync(ct)
                 .ConfigureAwait(false);
 
+        const string restoreHint =
+            " (this can also happen after restoring a database backup — reset the wizard and re-scan)";
         sub.Error = release is null
-            ? "The submission disappeared from both the NzbDAV queue and history before it completed."
+            ? "The submission disappeared from both the NzbDAV queue and history before it completed." +
+              restoreHint
             : $"Another migration release used the same NzbDAV queue key " +
-              $"({release.TargetCategory}, {release.QueueFileName}), replacing this submission.";
+              $"({release.TargetCategory}, {release.QueueFileName}), replacing this submission." +
+              restoreHint;
 
         Log.Error(
             "Migration release {StoreRef} (nzo {NzoId}) vanished from both queue and history — " +
             "silently evicted by a colliding re-add on key ({Category}, {FileName}). " +
-            "Marked evicted (terminal, will NOT auto-resubmit). Colliding sibling(s): {Siblings}",
+            "Marked evicted (terminal, will NOT auto-resubmit). Colliding sibling(s): {Siblings}. " +
+            "This can also happen after restoring a database backup — reset the wizard and re-scan",
             sub.StoreRef, sub.NzoId, release?.TargetCategory, release?.QueueFileName,
             siblings.Count == 0 ? "none found" : string.Join(", ", siblings));
     }
