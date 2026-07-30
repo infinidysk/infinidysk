@@ -472,6 +472,7 @@ public sealed class UsenetMigrationController(
             {
                 SymlinkLibraryRoot = session.SymlinkLibraryRoot ?? preferences?.SymlinkLibraryRoot,
                 SymlinkBackupDir = session.SymlinkBackupDir ?? preferences?.SymlinkBackupDir,
+                DefaultBackupDir = DefaultSymlinkBackupDir(),
             },
             MaxQueueDepth = preferences is null || session.AltmountMetadataRoot is not null
                 ? session.MaxQueueDepth
@@ -525,7 +526,11 @@ public sealed class UsenetMigrationController(
             throw new BadHttpRequestException("Finish the migration before rewriting symlinks.");
 
         var libraryRoot = RequireLibraryRoot(request.LibraryRoot);
-        var backupDir = EnsureWritableDir(request.BackupDir, "backupDir");
+        var backupDir = EnsureWritableDir(
+            string.IsNullOrWhiteSpace(request.BackupDir)
+                ? DefaultSymlinkBackupDir()
+                : request.BackupDir,
+            "backupDir");
         RejectBackupInsideLibrary(libraryRoot, backupDir);
 
         var transition = await store.StartSymlinkPlanAsync(
@@ -573,11 +578,17 @@ public sealed class UsenetMigrationController(
             _ => query.OrderBy(r => r.Status).ThenBy(r => r.SymlinkPath),
         };
 
-        // CSV export returns the full filtered set (unpaged) so nothing is truncated.
+        // CSV / shell exports return the full filtered set (unpaged) so nothing is truncated.
         if (string.Equals(format, "csv", StringComparison.OrdinalIgnoreCase))
         {
             var all = await query.ToListAsync(HttpContext.RequestAborted).ConfigureAwait(false);
             return File(BuildCsv(all), "text/csv", "altmount-symlink-plan.csv");
+        }
+
+        if (string.Equals(format, "sh", StringComparison.OrdinalIgnoreCase))
+        {
+            var all = await query.ToListAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+            return File(BuildShellScript(all), "text/x-shellscript", "altmount-symlink-plan.sh");
         }
 
         var total = await query.CountAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -878,6 +889,10 @@ public sealed class UsenetMigrationController(
         return path;
     }
 
+    /// <summary>Default Step 6 backup directory under CONFIG_PATH (no extra volume required).</summary>
+    internal static string DefaultSymlinkBackupDir() =>
+        Path.Join(DavDatabaseContext.ConfigPath, "migration-backups");
+
     /// <summary>Validates a directory the wizard must write to, creating it if absent.</summary>
     private static string EnsureWritableDir(string? path, string field)
     {
@@ -912,6 +927,43 @@ public sealed class UsenetMigrationController(
                 .Append(Csv(r.Error)).Append('\n');
         }
         return System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+    }
+
+    /// <summary>
+    /// Emits a host-runnable POSIX script for rewrite rows only. The wizard status table
+    /// is not updated when this script runs — in-container Apply remains the recommended path.
+    /// </summary>
+    internal static byte[] BuildShellScript(IEnumerable<MigrationSymlinkRewrite> rows)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("#!/bin/sh");
+        sb.AppendLine("# NzbDAV AltMount symlink rewrite plan (host-runnable).");
+        sb.AppendLine("# Run where the library paths are visible. Drifted links are skipped.");
+        sb.AppendLine("# This does NOT update the wizard status table; prefer in-container Apply + restore archive.");
+        sb.AppendLine("set -eu");
+        sb.AppendLine();
+        foreach (var r in rows.Where(r => r.Status == "rewrite" && !string.IsNullOrEmpty(r.NewTarget)))
+        {
+            var path = ShQuote(r.SymlinkPath);
+            var oldTarget = ShQuote(r.OldTarget);
+            var newTarget = ShQuote(r.NewTarget!);
+            sb.AppendLine($"p={path}");
+            sb.AppendLine($"old={oldTarget}");
+            sb.AppendLine($"new={newTarget}");
+            sb.AppendLine("if [ -L \"$p\" ] && [ \"$(readlink \"$p\")\" = \"$old\" ]; then");
+            sb.AppendLine("  ln -sfn \"$new\" \"$p\"");
+            sb.AppendLine("else");
+            sb.AppendLine("  echo \"SKIP (drifted): $p\"");
+            sb.AppendLine("fi");
+            sb.AppendLine();
+        }
+        return System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+    }
+
+    /// <summary>Wrap in single quotes, escaping embedded quotes as <c>'\''</c>.</summary>
+    internal static string ShQuote(string value)
+    {
+        return "'" + value.Replace("'", "'\\''") + "'";
     }
 
     /// <summary>

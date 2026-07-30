@@ -836,7 +836,9 @@ function SymlinkStep({ m }: { m: Hook }) {
     const status = m.status?.sessionStatus;
     const [form, setForm] = useState<SymlinkPlanForm>({
         libraryRoot: m.status?.symlinks?.symlinkLibraryRoot ?? "",
-        backupDir: m.status?.symlinks?.symlinkBackupDir ?? "",
+        backupDir: m.status?.symlinks?.symlinkBackupDir
+            ?? m.status?.symlinks?.defaultBackupDir
+            ?? "",
     });
 
     // Sync from the session once it loads (without clobbering user edits).
@@ -844,7 +846,9 @@ function SymlinkStep({ m }: { m: Hook }) {
         if (!m.status) return;
         setForm((f) => ({
             libraryRoot: f.libraryRoot || (m.status?.symlinks?.symlinkLibraryRoot ?? ""),
-            backupDir: f.backupDir || (m.status?.symlinks?.symlinkBackupDir ?? ""),
+            backupDir: f.backupDir
+                || (m.status?.symlinks?.symlinkBackupDir ?? "")
+                || (m.status?.symlinks?.defaultBackupDir ?? ""),
         }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [m.status?.sessionStatus]);
@@ -855,8 +859,7 @@ function SymlinkStep({ m }: { m: Hook }) {
     const linked = status === "linked";
     const busyPlan = m.busy === "symlink-plan";
     const step6Active = linking || applying || restoring || m.busy !== null;
-    const canPlan = form.libraryRoot.trim().length > 0 && form.backupDir.trim().length > 0
-        && !step6Active;
+    const canPlan = form.libraryRoot.trim().length > 0 && !step6Active;
 
     return (
         <div className="flex flex-col gap-6">
@@ -875,15 +878,14 @@ function SymlinkStep({ m }: { m: Hook }) {
                     <PathField
                         label="Library Root"
                         required
-                        help="Root of the arr/Plex library whose symlinks currently point at Altmount."
+                        help="Root of the arr/Plex library whose symlinks currently point at Altmount. Needed only for in-container Apply; download the shell script to rewrite on the host instead."
                         value={form.libraryRoot}
                         disabled={step6Active}
                         onChange={(v) => setForm({ ...form, libraryRoot: v })}
                     />
                     <PathField
                         label="Backup Directory"
-                        required
-                        help="Where the wizard writes the restore tarball before rewriting."
+                        help="Defaults to /config/migration-backups — no extra volume needed. Leave blank to use that default."
                         value={form.backupDir}
                         disabled={step6Active}
                         onChange={(v) => setForm({ ...form, backupDir: v })}
@@ -1027,6 +1029,14 @@ function SymlinkResults({ m }: { m: Hook }) {
                 </Button>
                 <a className="btn btn-sm btn-ghost" href={m.symlinkCsvHref(filters)} download>
                     <Icon name="download" className="!text-[16px]" /> CSV
+                </a>
+                <a
+                    className="btn btn-sm btn-ghost"
+                    href={m.symlinkShellHref(filters)}
+                    download
+                    title="Host-runnable rewrite script. Does not update the wizard table; prefer in-container Apply when the library is mounted."
+                >
+                    <Icon name="terminal" className="!text-[16px]" /> Shell script
                 </a>
             </div>
 

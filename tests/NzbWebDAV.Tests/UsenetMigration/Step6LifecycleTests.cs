@@ -254,7 +254,10 @@ public sealed class Step6LifecycleTests
 
         const string apiKey = "step6-cancel-test-key";
         var previousApiKey = Environment.GetEnvironmentVariable("FRONTEND_BACKEND_API_KEY");
+        var previousConfig = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        var configDir = Directory.CreateTempSubdirectory("altmig-config-");
         Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", apiKey);
+        Environment.SetEnvironmentVariable("CONFIG_PATH", configDir.FullName);
         try
         {
             var config = new ConfigManager();
@@ -280,6 +283,15 @@ public sealed class Step6LifecycleTests
                 Assert.IsType<OkObjectResult>(await controller.PlanSymlinks(
                     new SymlinkPlanRequest(library.FullName, backups.FullName)));
                 Assert.Equal("linking", (await h.Store.GetSessionAsync()).Status);
+
+                await h.Store.UpdateSessionAsync(s => s.Status = "complete");
+                Assert.IsType<OkObjectResult>(await controller.PlanSymlinks(
+                    new SymlinkPlanRequest(library.FullName, null)));
+                var session = await h.Store.GetSessionAsync();
+                Assert.Equal("linking", session.Status);
+                Assert.Equal(
+                    Path.Join(configDir.FullName, "migration-backups"),
+                    session.SymlinkBackupDir);
             }
             finally
             {
@@ -290,6 +302,8 @@ public sealed class Step6LifecycleTests
         finally
         {
             Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousApiKey);
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previousConfig);
+            configDir.Delete(true);
         }
     }
 

@@ -81,6 +81,7 @@ export type StatusResponse = {
     symlinks?: {
         symlinkLibraryRoot?: string | null;
         symlinkBackupDir?: string | null;
+        defaultBackupDir?: string | null;
     };
     maxQueueDepth: number;
     submitWorkers: number;
@@ -544,6 +545,15 @@ export function useAltmountMigration() {
         return `${BASE}/symlinks?${params.toString()}`;
     }, []);
 
+    const symlinkShellHref = useCallback((f: Pick<SymlinkFilters, "status" | "q" | "sort">): string => {
+        const params = new URLSearchParams({ format: "sh", status: "rewrite" });
+        if (f.q) params.set("q", f.q);
+        if (f.sort) params.set("sort", f.sort);
+        // Ignore the UI status filter so the script always contains rewrite rows only;
+        // the backend also filters to Status == rewrite.
+        return `${BASE}/symlinks?${params.toString()}`;
+    }, []);
+
     return useMemo(() => ({
         status,
         summary,
@@ -578,6 +588,7 @@ export function useAltmountMigration() {
         loadSymlinkBackups,
         restoreSymlinks,
         symlinkCsvHref,
+        symlinkShellHref,
     }), [
         status,
         summary,
@@ -611,5 +622,6 @@ export function useAltmountMigration() {
         loadSymlinkBackups,
         restoreSymlinks,
         symlinkCsvHref,
+        symlinkShellHref,
     ]);
 }

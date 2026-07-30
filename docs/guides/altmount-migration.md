@@ -10,12 +10,28 @@ WARNING: "Back up and keep Altmount data available"
     Back up both applications before beginning. Mount the Altmount metadata, config, and store paths read-only when possible, and keep the old service available until migrated releases play correctly from NzbDAV. The optional symlink step needs write access to the media library and a writable backup directory.
 
 ## Before you start
-Note: Altmount does NOT have to be running, but can be, for this process to run.
+
+Altmount does **not** have to be running for this process.
+
 - Configure and test the Usenet providers NzbDAV will use.
 - Create the destination NzbDAV categories expected by Radarr and Sonarr.
-- Mount the Altmount paths into the NzbDAV container. Values entered in the wizard are **container paths**, not host paths.
-- Locate the metadata tree containing `.meta` files and the store tree containing `.nzbs/*.nzbz` files.
+- Mount **exactly one** new path into the NzbDAV container: the AltMount data directory, read-only (for example `- /host/path/altmount:/altmount:ro`). Values entered in the wizard are **container paths**, not host paths.
+- **No rclone configuration changes** are required for any part of the migration.
+- Locate the metadata tree containing `.meta` files and the store tree containing `.nzbs/*.nzbz` files (often under the same AltMount data mount).
 - Keep Altmount's `config.yaml` available if you want its SABnzbd category list discovered automatically.
+- The optional Links step needs the media library mounted **only** for in-container Apply. Prefer downloading the shell script to rewrite links on the host when you do not want a library volume in NzbDAV. Symlink backup archives default to `/config/migration-backups` (no extra volume).
+
+Example compose fragment for the one-mount default:
+
+```yaml
+services:
+  nzbdav:
+    volumes:
+      - /host/path/config:/config
+      - /host/path/altmount:/altmount:ro
+      # Optional — only for in-container Step 6 Apply:
+      # - /host/path/media:/data/media
+```
 
 ## Run the wizard
 
@@ -30,9 +46,11 @@ The wizard can be reset after work reaches a non-active state. Resetting clears 
 
 ## Symlink safety and restore
 
-Set **Library Root** to the media library containing the links and **Backup Directory** to a separate writable location (not on the AltMount mount you are about to decommission). Apply and restore are confined to the Library Root and reject symlinked or reparse-point parent directories. If a link target changes after planning, the drift guard leaves it untouched.
+Set **Library Root** to the media library containing the links. **Backup Directory** defaults to `/config/migration-backups` (do not place it on the AltMount mount you are about to decommission). Apply and restore are confined to the Library Root and reject symlinked or reparse-point parent directories. If a link target changes after planning, the drift guard leaves it untouched.
 
 Pause *Arr import automation while Apply runs — a rename race with Sonarr/Radarr during rewrite can leave a drifted link. Restored (and rewritten) symlinks are owned by the NzbDAV process user.
+
+You can download a **shell script** of rewrite rows to run on the host (or any container where the library paths are visible). That path does not update the wizard status table; in-container Apply with the restore archive remains the recommended path when the library is mounted.
 
 The dry-run plan classifies every symlink found during the library walk:
 

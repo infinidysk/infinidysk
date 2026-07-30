@@ -1,4 +1,5 @@
 using NzbWebDAV.Api.Controllers.UsenetMigration;
+using NzbWebDAV.Database.Models.UsenetMigration;
 using NzbWebDAV.UsenetMigration.Symlinks;
 
 namespace NzbWebDAV.Tests.UsenetMigration;
@@ -16,6 +17,68 @@ public class SymlinkBackupAndCsvTests
     public void Csv_PrefixesFormulaInjectionAndQuotesDelimiters(string input, string expected)
     {
         Assert.Equal(expected, UsenetMigrationController.Csv(input));
+    }
+
+    [Fact]
+    public void ShQuote_EscapesEmbeddedSingleQuotes()
+    {
+        Assert.Equal("'plain'", UsenetMigrationController.ShQuote("plain"));
+        Assert.Equal("'it'\\''s'", UsenetMigrationController.ShQuote("it's"));
+        Assert.Equal("''", UsenetMigrationController.ShQuote(""));
+    }
+
+    [Fact]
+    public void BuildShellScript_EmitsOnlyRewriteRowsWithDriftGuard()
+    {
+        var rows = new[]
+        {
+            new MigrationSymlinkRewrite
+            {
+                SymlinkPath = "/lib/a.mkv",
+                OldTarget = "/alt/a.mkv",
+                NewTarget = "/nzbdav/a.mkv",
+                Status = "rewrite",
+            },
+            new MigrationSymlinkRewrite
+            {
+                SymlinkPath = "/lib/orphan.mkv",
+                OldTarget = "/alt/o.mkv",
+                NewTarget = null,
+                Status = "orphan",
+            },
+            new MigrationSymlinkRewrite
+            {
+                SymlinkPath = "/lib/it's.mkv",
+                OldTarget = "/alt/it's.mkv",
+                NewTarget = "/nzbdav/it's.mkv",
+                Status = "rewrite",
+            },
+        };
+
+        var script = System.Text.Encoding.UTF8.GetString(UsenetMigrationController.BuildShellScript(rows));
+        Assert.Contains("ln -sfn", script);
+        Assert.Contains("SKIP (drifted)", script);
+        Assert.Contains("readlink", script);
+        Assert.Contains("/lib/a.mkv", script);
+        Assert.Contains("'\\''", script); // embedded quote escaping
+        Assert.DoesNotContain("orphan.mkv", script);
+    }
+
+    [Fact]
+    public void DefaultSymlinkBackupDir_IsUnderConfigPath()
+    {
+        var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", "/tmp/nzbdav-config-test");
+            Assert.Equal(
+                Path.Join("/tmp/nzbdav-config-test", "migration-backups"),
+                UsenetMigrationController.DefaultSymlinkBackupDir());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
+        }
     }
 
     [Fact]
