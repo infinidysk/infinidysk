@@ -218,12 +218,12 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             WorstFileStatus = worstStatus == AltmountFileStatus.Unspecified ? null : worstStatus.ToString(),
             HasNestedSources = input.Metas.Any(m => m.HasNestedSources),
             HasClipBoundaries = input.Metas.Any(m => m.HasClipBoundaries),
-            SourceNzbdavId = null,
             Included = mapping is not { Action: "exclude" },
             ScannedAt = DateTime.UtcNow,
         };
 
         var files = metas.Select(m => BuildFile(storeRef, m)).ToList();
+        release.SourceNzbdavId = AgreedNzbdavId(files);
         return new PendingRelease { Release = release, Files = files, BaseReasons = baseReasons };
     }
 
@@ -233,6 +233,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         var storeRef = $"v1:{v1.MetaPath}";
         var queueFileName = NzbDavNaming.QueueFileName(basename);
         var jobName = NzbDavNaming.JobName(basename);
+        var files = new List<MigrationReleaseFile> { BuildFile(storeRef, v1) };
         var release = new MigrationRelease
         {
             StoreRef = storeRef,
@@ -243,13 +244,14 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             JobNameDiverges = !string.Equals(jobName, basename, StringComparison.Ordinal),
             MetaFileCount = 1,
             WorstFileStatus = v1.Meta.Status == AltmountFileStatus.Unspecified ? null : v1.Meta.Status.ToString(),
+            SourceNzbdavId = AgreedNzbdavId(files),
             Included = true,
             ScannedAt = DateTime.UtcNow,
         };
         return new PendingRelease
         {
             Release = release,
-            Files = new List<MigrationReleaseFile> { BuildFile(storeRef, v1) },
+            Files = files,
             BaseReasons = new List<string> { VerdictReason.NoStoreRef },
         };
     }
@@ -267,9 +269,46 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             NormalisedName = MatchKey.ForLeaf(fileName),
             FileSize = m.Meta.FileSize,
             FileStatus = m.Meta.Status == AltmountFileStatus.Unspecified ? null : m.Meta.Status.ToString(),
-            NzbdavId = null,
+            NzbdavId = ReadSidecarId(m.MetaPath),
             Flags = flags,
         };
+    }
+
+    /// <summary>
+    /// AltMount writes the originating NzbDAV GUID to <c>{meta}.meta.id</c>.
+    /// Returns the trimmed GUID string when present and parseable; otherwise null.
+    /// </summary>
+    private static string? ReadSidecarId(string metaPath)
+    {
+        var idPath = metaPath + ".id";
+        if (!System.IO.File.Exists(idPath))
+            return null;
+
+        try
+        {
+            var text = System.IO.File.ReadAllText(idPath).Trim();
+            return Guid.TryParse(text, out _) ? text : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Warning(
+                "Could not read AltMount .id sidecar at {Path}. Reason: {Reason}",
+                idPath, e.Message);
+            return null;
+        }
+    }
+
+    /// <summary>When every file carries the same NzbdavId, that GUID is the release provenance.</summary>
+    private static string? AgreedNzbdavId(IReadOnlyList<MigrationReleaseFile> files)
+    {
+        if (files.Count == 0)
+            return null;
+        var first = files[0].NzbdavId;
+        if (string.IsNullOrEmpty(first))
+            return null;
+        return files.All(f => string.Equals(f.NzbdavId, first, StringComparison.Ordinal))
+            ? first
+            : null;
     }
 
     // --- collision + persistence ------------------------------------------

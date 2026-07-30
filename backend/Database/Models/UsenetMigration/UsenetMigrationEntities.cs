@@ -157,7 +157,9 @@ public sealed class MigrationRelease
 
     // NOTE: no HasKnownHoles column — Altmount has no known_holes field.
 
-    /// <summary>Source-side NzbDAV id when available; null because sidecar .id files are not read.</summary>
+    /// <summary>
+    /// Source-side NzbDAV id when every file's <c>.meta.id</c> sidecar agrees on one GUID.
+    /// </summary>
     public string? SourceNzbdavId { get; set; }
 
     public bool Included { get; set; } = true;

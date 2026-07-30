@@ -67,15 +67,20 @@ public sealed class AlreadyMigratedDetector
             .ToListAsync(ct)
             .ConfigureAwait(false);
         var liveById = liveLeaves.ToDictionary(l => l.DavItemId);
+        var liveByBlobId = liveLeaves
+            .Where(l => l.NzbBlobId is not null)
+            .GroupBy(l => l.NzbBlobId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         long? discoveryRunId = null;
         var detectedStoreRefs = new HashSet<string>(StringComparer.Ordinal);
         foreach (var candidate in candidates)
         {
             ct.ThrowIfCancellationRequested();
-            List<DetectedFile>? detected = null;
+            List<DetectedFile>? detected = MatchSidecar(candidate, liveById, liveByBlobId);
             provenance.TryGetValue(candidate.StoreRef, out var migratedRelease);
-            if (migratedRelease is not null
+            if (detected is null
+                && migratedRelease is not null
                 && provenanceFilesByRelease.TryGetValue(migratedRelease.Id, out var historicalFiles))
             {
                 detected = MatchHistorical(candidate, historicalFiles, liveById);
@@ -105,13 +110,65 @@ public sealed class AlreadyMigratedDetector
                     migrationContext, migratedRelease, candidate, detected, ct)
                 .ConfigureAwait(false);
             detectedStoreRefs.Add(candidate.StoreRef);
+            var method = detected.All(f => f.MatchMethod == "sidecar") ? "sidecar"
+                : detected.All(f => f.MatchMethod == "provenance") ? "provenance"
+                : "live-content";
             Log.Information(
                 "Recognized already migrated release {StoreRef}: {FileCount} file(s), Method={Method}",
-                candidate.StoreRef, detected.Count,
-                detected.All(f => f.MatchMethod == "provenance") ? "provenance" : "live-content");
+                candidate.StoreRef, detected.Count, method);
         }
 
         return detectedStoreRefs;
+    }
+
+    /// <summary>
+    /// Authoritative match via AltMount <c>.meta.id</c> sidecars: each file's
+    /// <see cref="MigrationReleaseFile.NzbdavId"/> must resolve to a live leaf by
+    /// <c>DavItemId</c> or <c>NzbBlobId</c>.
+    /// </summary>
+    private static List<DetectedFile>? MatchSidecar(
+        AlreadyMigratedCandidate candidate,
+        IReadOnlyDictionary<Guid, ReleaseLeaf> liveById,
+        IReadOnlyDictionary<Guid, List<ReleaseLeaf>> liveByBlobId)
+    {
+        if (candidate.Files.Count == 0)
+            return null;
+        if (candidate.Files.Any(f => string.IsNullOrEmpty(f.NzbdavId)
+                                     || !Guid.TryParse(f.NzbdavId, out _)))
+            return null;
+
+        var result = new List<DetectedFile>(candidate.Files.Count);
+        var used = new HashSet<Guid>();
+        foreach (var source in candidate.Files)
+        {
+            var id = Guid.Parse(source.NzbdavId!);
+            ReleaseLeaf? leaf = null;
+            if (liveById.TryGetValue(id, out var byItem))
+            {
+                leaf = byItem;
+            }
+            else if (liveByBlobId.TryGetValue(id, out var byBlob))
+            {
+                if (byBlob.Count == 1)
+                {
+                    leaf = byBlob[0];
+                }
+                else
+                {
+                    var sized = byBlob
+                        .Where(l => MatchKey.ForLeaf(l.Name) == source.NormalisedName
+                                    && l.FileSize == source.FileSize)
+                        .ToList();
+                    leaf = sized.Count == 1 ? sized[0] : null;
+                }
+            }
+
+            if (leaf is null || !used.Add(leaf.DavItemId))
+                return null;
+            result.Add(new DetectedFile(source, leaf, "sidecar"));
+        }
+
+        return result;
     }
 
     private static List<DetectedFile>? MatchHistorical(

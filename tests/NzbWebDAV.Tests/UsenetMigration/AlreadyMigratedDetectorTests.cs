@@ -62,6 +62,32 @@ public class AlreadyMigratedDetectorTests
         Assert.False(await migration.MigrationRuns.AnyAsync());
     }
 
+    [Fact]
+    public async Task SidecarGuids_MatchLiveLeavesWhenNamesDiffer()
+    {
+        // Live leaves use names that name-matching cannot resolve to the AltMount
+        // virtual paths; only .id sidecar GUIDs (DavItemIds) make the match.
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var nzoId = Guid.NewGuid();
+        var ids = await SeedMountedFilesAsync(
+            h, nzoId, ("renamed-video.bin", 1_000), ("renamed-subs.bin", 100));
+        var candidate = Candidate(
+            File("tv/Show/Episode.mkv", 1_000, ids[0].ToString()),
+            File("tv/Show/Episode.srt", 100, ids[1].ToString()));
+
+        await using var migration = h.Mig();
+        await using var dav = h.Dav();
+        var detected = await new AlreadyMigratedDetector()
+            .DetectAndRecordAsync([candidate], migration, dav);
+
+        Assert.Contains("store-1", detected);
+        var rows = await migration.MigratedFiles.OrderBy(f => f.VirtualPath).ToListAsync();
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Equal("sidecar", r.MatchMethod));
+        Assert.Equal(ids[0], rows[0].DavItemId);
+        Assert.Equal(ids[1], rows[1].DavItemId);
+    }
+
     private static AlreadyMigratedCandidate Candidate(params MigrationReleaseFile[] files) =>
         new()
         {
@@ -71,7 +97,7 @@ public class AlreadyMigratedDetectorTests
             Files = files,
         };
 
-    private static MigrationReleaseFile File(string virtualPath, long size)
+    private static MigrationReleaseFile File(string virtualPath, long size, string? nzbdavId = null)
     {
         var name = Path.GetFileName(virtualPath);
         return new MigrationReleaseFile
@@ -82,10 +108,11 @@ public class AlreadyMigratedDetectorTests
             FileName = name,
             NormalisedName = MatchKey.ForLeaf(name),
             FileSize = size,
+            NzbdavId = nzbdavId,
         };
     }
 
-    private static async Task SeedMountedFilesAsync(
+    private static async Task<Guid[]> SeedMountedFilesAsync(
         MigrationTestHarness h,
         Guid nzoId,
         params (string name, long size)[] files)
@@ -100,13 +127,18 @@ public class AlreadyMigratedDetectorTests
             DavItem.ItemType.Directory, DavItem.ItemSubType.Directory,
             null, null, historyItemId: null, fileBlobId: null);
         dav.Items.AddRange(category, release);
-        foreach (var (name, size) in files)
+        var ids = new Guid[files.Length];
+        for (var i = 0; i < files.Length; i++)
         {
+            var (name, size) = files[i];
+            var id = Guid.NewGuid();
+            ids[i] = id;
             dav.Items.Add(DavItem.New(
-                Guid.NewGuid(), release, name, size,
+                id, release, name, size,
                 DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
                 null, null, historyItemId: null, fileBlobId: null, nzbBlobId: nzoId));
         }
         await dav.SaveChangesAsync();
+        return ids;
     }
 }
