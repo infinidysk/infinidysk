@@ -47,6 +47,7 @@ public static class MetadataReader
         var storeRef = "";
         var hasNested = false;
         var hasClips = false;
+        var hasHoles = false;
 
         var reader = new ProtoWireReader(payload);
         while (reader.TryReadTag(out var field, out var wire))
@@ -82,6 +83,10 @@ public static class MetadataReader
                 case 18 when wire == ProtoWireReader.WireType.LengthDelimited: // store_ref
                     storeRef = reader.ReadString();
                     break;
+                case 21 when wire == ProtoWireReader.WireType.LengthDelimited: // known_holes
+                    reader.ReadLengthDelimited();
+                    hasHoles = true;
+                    break;
                 default:
                     reader.SkipField(wire);
                     break;
@@ -100,6 +105,7 @@ public static class MetadataReader
             StoreRef = storeRef,
             HasNestedSources = hasNested,
             HasClipBoundaries = hasClips,
+            HasKnownHoles = hasHoles,
         };
     }
 

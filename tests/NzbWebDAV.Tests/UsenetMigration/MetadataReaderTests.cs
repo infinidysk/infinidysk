@@ -18,6 +18,7 @@ public class MetadataReaderTests
             .Bytes(15, new byte[] { 0x08, 0x01 })  // nested_sources (a sub-message)
             .Bytes(17, new byte[] { 0x08, 0x02 })  // clip_boundaries
             .String(18, "/config/.nzbs/tv/9-Show.nzbz") // store_ref
+            .Bytes(21, new byte[] { 0x08, 0x01 })  // known_holes
             .ToArray();
 
         var withMagic = MetadataReader.MetaMagicV3.Concat(payload).ToArray();
@@ -32,7 +33,19 @@ public class MetadataReaderTests
         Assert.Equal(1700000000, fm.ReleaseDate);
         Assert.True(fm.HasNestedSources);
         Assert.True(fm.HasClipBoundaries);
+        Assert.True(fm.HasKnownHoles);
         Assert.Equal("/config/.nzbs/tv/9-Show.nzbz", fm.StoreRef);
+    }
+
+    [Fact]
+    public void ReadFileMetadata_StatusDegraded_DecodesAsEnum()
+    {
+        var payload = new TestProtoWriter()
+            .Varint(1, 10)
+            .Varint(3, 4) // FILE_STATUS_DEGRADED
+            .ToArray();
+        var fm = MetadataReader.ReadFileMetadata(payload);
+        Assert.Equal(AltmountFileStatus.Degraded, fm.Status);
     }
 
     [Fact]

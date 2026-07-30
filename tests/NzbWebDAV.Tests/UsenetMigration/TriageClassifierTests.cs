@@ -10,7 +10,8 @@ public class TriageClassifierTests
         AltmountEncryption enc = AltmountEncryption.None,
         string password = "",
         bool nested = false,
-        bool clips = false) => new()
+        bool clips = false,
+        bool holes = false) => new()
         {
             StoreRef = "/config/.nzbs/tv/1-x.nzbz",
             Status = status,
@@ -18,6 +19,7 @@ public class TriageClassifierTests
             Password = password,
             HasNestedSources = nested,
             HasClipBoundaries = clips,
+            HasKnownHoles = holes,
         };
 
     private static TriageInput Input(
@@ -71,12 +73,57 @@ public class TriageClassifierTests
     }
 
     [Fact]
-    public void SomeFilesCorrupted_IsAmber_ReplacingRemovedStatusDegraded()
+    public void SomeFilesCorrupted_IsAmber()
     {
         var metas = new[] { Meta(AltmountFileStatus.Healthy), Meta(AltmountFileStatus.Corrupted) };
         var reasons = TriageClassifier.Classify(Input(metas: metas));
         Assert.Contains(VerdictReason.SomeFilesCorrupted, reasons);
         Assert.Equal(Verdict.Amber, VerdictReason.VerdictFor(reasons));
+    }
+
+    [Fact]
+    public void AllFilesDegraded_IsAmberStatusDegraded()
+    {
+        var metas = new[] { Meta(AltmountFileStatus.Degraded), Meta(AltmountFileStatus.Degraded) };
+        var reasons = TriageClassifier.Classify(Input(metas: metas));
+        Assert.Equal(new[] { VerdictReason.StatusDegraded }, reasons);
+        Assert.Equal(Verdict.Amber, VerdictReason.VerdictFor(reasons));
+    }
+
+    [Fact]
+    public void SomeFilesDegraded_IsAmber()
+    {
+        var metas = new[] { Meta(AltmountFileStatus.Healthy), Meta(AltmountFileStatus.Degraded) };
+        var reasons = TriageClassifier.Classify(Input(metas: metas));
+        Assert.Contains(VerdictReason.SomeFilesDegraded, reasons);
+        Assert.Equal(Verdict.Amber, VerdictReason.VerdictFor(reasons));
+    }
+
+    [Fact]
+    public void KnownHoles_IsAmber()
+    {
+        var reasons = TriageClassifier.Classify(Input(metas: new[] { Meta(holes: true) }));
+        Assert.Contains(VerdictReason.KnownHoles, reasons);
+        Assert.Equal(Verdict.Amber, VerdictReason.VerdictFor(reasons));
+    }
+
+    [Fact]
+    public void WorstFileStatus_OrdersCorruptedAboveDegraded()
+    {
+        Assert.Equal(
+            AltmountFileStatus.Corrupted,
+            TriageClassifier.WorstFileStatus(new[]
+            {
+                Meta(AltmountFileStatus.Degraded),
+                Meta(AltmountFileStatus.Corrupted),
+            }));
+        Assert.Equal(
+            AltmountFileStatus.Degraded,
+            TriageClassifier.WorstFileStatus(new[]
+            {
+                Meta(AltmountFileStatus.Healthy),
+                Meta(AltmountFileStatus.Degraded),
+            }));
     }
 
     [Fact]

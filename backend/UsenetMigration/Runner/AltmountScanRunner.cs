@@ -540,6 +540,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
         if (meta.HasNestedSources) flags.Add("nested");
         if (meta.HasClipBoundaries) flags.Add("clips");
         if (meta.Encryption != AltmountEncryption.None) flags.Add("encrypted");
+        if (meta.HasKnownHoles) flags.Add("holes");
         return flags.Count == 0 ? null : JsonSerializer.Serialize(flags);
     }
 

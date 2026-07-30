@@ -15,7 +15,15 @@ enum Encryption {
 enum FileStatus {
   FILE_STATUS_UNSPECIFIED = 0;
   FILE_STATUS_HEALTHY = 1;     // All segments available and file is complete
+  // FILE_STATUS_PARTIAL = 2 was removed; do not reuse.
   FILE_STATUS_CORRUPTED = 3;   // Segments missing or corrupted
+  FILE_STATUS_DEGRADED = 4;    // Media payload segments missing: playable with glitches
+}
+
+// HoleRun records a contiguous byte range of missing media payload.
+message HoleRun {
+  int64 start_offset = 1;
+  int64 end_offset = 2;
 }
 
 // SegmentData contains Usenet segment information with byte offsets
@@ -105,6 +113,7 @@ message FileMetadata {
   string store_ref = 18;               // id/path of the shared NzbStore
   repeated SegmentRef segment_refs = 19; // v3 replacement for segment_data
   repeated SegmentRun segment_runs = 20; // compact run encoding; preferred over segment_refs when present
+  repeated HoleRun known_holes = 21;     // confirmed missing media payload ranges
 }
 
 // --- v3 shared-store types ---

@@ -1363,11 +1363,19 @@ function ReasonBadges({ reasons }: { reasons: string[] }) {
     return (
         <span className="flex flex-wrap gap-1">
             {reasons.map((r) => (
-                <span key={r} className="badge badge-xs badge-ghost font-mono">{r}</span>
+                <span key={r} className="badge badge-xs badge-ghost font-mono" title={REASON_LABELS[r] ?? r}>
+                    {REASON_LABELS[r] ?? r}
+                </span>
             ))}
         </span>
     );
 }
+
+const REASON_LABELS: Record<string, string> = {
+    status_degraded: "all files degraded",
+    some_files_degraded: "some files degraded",
+    known_holes: "known holes",
+};
 
 function Section({ icon, title, subtitle, children }: { icon: string; title: string; subtitle?: string; children: React.ReactNode }) {
     return (

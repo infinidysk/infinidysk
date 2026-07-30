@@ -47,10 +47,18 @@ public static class VerdictReason
     // --- Amber: will attempt; outcome may differ from Altmount --------------
 
     /// <summary>
-    /// Some (but not all) files are <c>CORRUPTED</c>. Altmount has no separate
-    /// DEGRADED status, so partial corruption is derived from the file counts.
+    /// Some (but not all) files are <c>CORRUPTED</c>.
     /// </summary>
     public const string SomeFilesCorrupted = "some_files_corrupted";
+
+    /// <summary>Every file is <c>DEGRADED</c> — AltMount confirmed missing media segments.</summary>
+    public const string StatusDegraded = "status_degraded";
+
+    /// <summary>Some (but not all) files are <c>DEGRADED</c>.</summary>
+    public const string SomeFilesDegraded = "some_files_degraded";
+
+    /// <summary>At least one file carries confirmed <c>known_holes</c>.</summary>
+    public const string KnownHoles = "known_holes";
 
     /// <summary>Inner RAR within outer RAR — NzbDAV's multipart model is single-level.</summary>
     public const string NestedSources = "nested_sources";
@@ -87,6 +95,9 @@ public static class VerdictReason
         [QueueKeyCollision] = Verdict.Red,
         [CollidesWithExistingQueueItem] = Verdict.Red,
         [SomeFilesCorrupted] = Verdict.Amber,
+        [StatusDegraded] = Verdict.Amber,
+        [SomeFilesDegraded] = Verdict.Amber,
+        [KnownHoles] = Verdict.Amber,
         [NestedSources] = Verdict.Amber,
         [ClipBoundaries] = Verdict.Amber,
         [Encrypted] = Verdict.Amber,

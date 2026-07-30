@@ -2,14 +2,14 @@ namespace NzbWebDAV.UsenetMigration.Model;
 
 /// <summary>
 /// Health status of an Altmount virtual file.
-/// Mirrors Altmount's <c>FileStatus</c> proto enum. Only these three values are
-/// defined; Altmount does not expose a separate DEGRADED status.
+/// Mirrors Altmount's <c>FileStatus</c> proto enum (including DEGRADED since AltMount v0.3.0).
 /// </summary>
 public enum AltmountFileStatus
 {
     Unspecified = 0,
     Healthy = 1,
     Corrupted = 3,
+    Degraded = 4,
 }
 
 /// <summary>
@@ -63,6 +63,9 @@ public sealed class AltmountFileMetadata
 
     /// <summary>True when proto field 17 contains at least one clip boundary.</summary>
     public bool HasClipBoundaries { get; init; }
+
+    /// <summary>True when proto field 21 contains at least one known hole.</summary>
+    public bool HasKnownHoles { get; init; }
 
     // nzbdav_id (proto field 14) is not read because Altmount clears it before
     // marshalling and stores it in a sidecar `.id` file, leaving the proto field empty.

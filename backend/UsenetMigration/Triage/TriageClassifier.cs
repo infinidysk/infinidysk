@@ -60,7 +60,7 @@ public static class TriageClassifier
         }
 
         // Health: every file dead is a hard exclude (Altmount already knows).
-        var (corrupted, total) = CountCorrupted(input.Metas);
+        var (corrupted, degraded, total) = CountHealth(input.Metas);
         if (total > 0 && corrupted == total)
             return new[] { VerdictReason.StatusCorrupted };
 
@@ -71,6 +71,13 @@ public static class TriageClassifier
 
         if (corrupted > 0)
             reasons.Add(VerdictReason.SomeFilesCorrupted);
+        else if (total > 0 && degraded == total)
+            reasons.Add(VerdictReason.StatusDegraded);
+        else if (degraded > 0)
+            reasons.Add(VerdictReason.SomeFilesDegraded);
+
+        if (input.Metas.Any(m => m.HasKnownHoles))
+            reasons.Add(VerdictReason.KnownHoles);
 
         if (input.Metas.Any(m => m.Encryption != AltmountEncryption.None))
             reasons.Add(VerdictReason.Encrypted);
@@ -94,17 +101,24 @@ public static class TriageClassifier
     {
         if (metas.Any(m => m.Status == AltmountFileStatus.Corrupted))
             return AltmountFileStatus.Corrupted;
+        if (metas.Any(m => m.Status == AltmountFileStatus.Degraded))
+            return AltmountFileStatus.Degraded;
         if (metas.Any(m => m.Status == AltmountFileStatus.Healthy))
             return AltmountFileStatus.Healthy;
         return AltmountFileStatus.Unspecified;
     }
 
-    private static (int corrupted, int total) CountCorrupted(IReadOnlyList<AltmountFileMetadata> metas)
+    private static (int corrupted, int degraded, int total) CountHealth(IReadOnlyList<AltmountFileMetadata> metas)
     {
         var corrupted = 0;
+        var degraded = 0;
         foreach (var m in metas)
+        {
             if (m.Status == AltmountFileStatus.Corrupted)
                 corrupted++;
-        return (corrupted, metas.Count);
+            else if (m.Status == AltmountFileStatus.Degraded)
+                degraded++;
+        }
+        return (corrupted, degraded, metas.Count);
     }
 }
