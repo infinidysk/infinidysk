@@ -10,8 +10,9 @@ const TOPIC_ACTIVE_READS = "ar";
 /**
  * Live "right now" panel — reads cards refreshed via the ActiveReads WS topic.
  * Hidden when no reads are active so the page collapses cleanly.
+ * When `paused`, the subscription is disabled so layout edit borders stay stable.
  */
-export function LiveReadsPanel() {
+export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
     const [reads, setReads] = useState<ActiveRead[]>([]);
     // Track previous bytesRead per session for live MiB/s computation.
     const prevRef = useRef<Map<string, { bytes: number, at: number, rate: number }>>(new Map());
@@ -38,7 +39,7 @@ export function LiveReadsPanel() {
             prevRef.current = next;
             setReads(payload.reads ?? []);
         } catch { /* ignore */ }
-    });
+    }, { enabled: !paused });
 
     if (reads.length === 0) return null;
 

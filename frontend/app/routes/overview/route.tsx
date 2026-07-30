@@ -1,5 +1,5 @@
 import type { Route } from "./+types/route";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
 import { DndContext, PointerSensor, KeyboardSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, verticalListSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
@@ -89,6 +89,8 @@ export default function Overview(_props: Route.ComponentProps) {
     const [detailLoaded, setDetailLoaded] = useState(false);
     const [staticLoaded, setStaticLoaded] = useState(false);
     const { order, save, reset } = useRowOrder(DEFAULT_ROW_ORDER);
+    const editModeRef = useRef(editMode);
+    editModeRef.current = editMode;
 
     const liveTiles = stats.tiles;
     const isLongWindow = window === "7d" || window === "30d" || window === "all";
@@ -113,8 +115,14 @@ export default function Overview(_props: Route.ComponentProps) {
         };
 
         fetchWindow();
-        const interval = setInterval(fetchWindow, 30_000);
-        const onVisible = () => { if (!document.hidden) fetchWindow(); };
+        const interval = setInterval(() => {
+            if (editModeRef.current) return;
+            void fetchWindow();
+        }, 30_000);
+        const onVisible = () => {
+            if (editModeRef.current) return;
+            if (!document.hidden) void fetchWindow();
+        };
         document.addEventListener("visibilitychange", onVisible);
         return () => {
             cancelled = true;
@@ -184,6 +192,7 @@ export default function Overview(_props: Route.ComponentProps) {
     }, []);
 
     useWebsocketTopics(topicSubscriptions, onWsMessage, {
+        enabled: !editMode,
         onOpen: () => setConnectedAt(Date.now()),
         onClose: () => {
             setConnectedAt(null);
@@ -198,7 +207,7 @@ export default function Overview(_props: Route.ComponentProps) {
 
     const rowContent = useMemo<Record<string, ReactNode>>(() => ({
         liveTiles: <LiveTiles tiles={liveTiles} />,
-        liveReads: <LiveReadsPanel />,
+        liveReads: <LiveReadsPanel paused={editMode} />,
         throughput: windowLoaded
             ? (
                 <ThroughputChart
@@ -274,7 +283,7 @@ export default function Overview(_props: Route.ComponentProps) {
         lifetime: staticLoaded
             ? <LifetimeBlock lifetime={stats.lifetime} />
             : <Skeleton height={120} />,
-    }), [liveTiles, stats, window, isLongWindow, windowLoaded, detailLoaded, staticLoaded]);
+    }), [liveTiles, stats, window, isLongWindow, windowLoaded, detailLoaded, staticLoaded, editMode]);
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -326,7 +335,7 @@ export default function Overview(_props: Route.ComponentProps) {
                 </div>
             </div>
 
-            {(liveStatsStale || metricsError || droppedMetrics > 0) && (
+            {((!editMode && liveStatsStale) || metricsError || droppedMetrics > 0) && (
                 <div
                     role="alert"
                     className={`alert text-xs ${
