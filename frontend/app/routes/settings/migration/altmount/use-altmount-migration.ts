@@ -221,7 +221,7 @@ export type ReleaseFilters = {
     sort: string;
 };
 
-const BASE = "/api/altmount-migration";
+const BASE = "/api/migration/altmount";
 
 type FetchInit = Parameters<typeof fetch>[1];
 

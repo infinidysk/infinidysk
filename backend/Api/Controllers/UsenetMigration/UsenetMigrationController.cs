@@ -32,7 +32,7 @@ public sealed class UsenetMigrationController(
 {
     // --- connect -----------------------------------------------------------
 
-    [HttpPost("api/altmount-migration/connect")]
+    [HttpPost("api/migration/altmount/connect")]
     public Task<IActionResult> Connect([FromBody] ConnectRequest request) => GuardedAsync(async () =>
     {
         var metadataRoot = RequireDir(request.MetadataRoot, "metadataRoot");
@@ -70,7 +70,7 @@ public sealed class UsenetMigrationController(
 
     // --- categories --------------------------------------------------------
 
-    [HttpGet("api/altmount-migration/categories")]
+    [HttpGet("api/migration/altmount/categories")]
     public Task<IActionResult> GetCategories() => GuardedAsync(async () =>
     {
         var map = await store.GetCategoryMapAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -78,7 +78,7 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, sessionStatus = session.Status, categories = map });
     });
 
-    [HttpPut("api/altmount-migration/categories")]
+    [HttpPut("api/migration/altmount/categories")]
     public Task<IActionResult> PutCategories([FromBody] CategoryMapRequest request) => GuardedAsync(async () =>
     {
         var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -112,7 +112,7 @@ public sealed class UsenetMigrationController(
 
     // --- scan --------------------------------------------------------------
 
-    [HttpPost("api/altmount-migration/scan")]
+    [HttpPost("api/migration/altmount/scan")]
     public Task<IActionResult> StartScan() => GuardedAsync(async () =>
     {
         var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -134,7 +134,7 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, state = "scanning" });
     });
 
-    [HttpDelete("api/altmount-migration/scan")]
+    [HttpDelete("api/migration/altmount/scan")]
     public Task<IActionResult> CancelScan() => GuardedAsync(async () =>
     {
         var transition = await store.TryTransitionSessionAsync(
@@ -150,7 +150,7 @@ public sealed class UsenetMigrationController(
 
     // --- releases ----------------------------------------------------------
 
-    [HttpGet("api/altmount-migration/releases")]
+    [HttpGet("api/migration/altmount/releases")]
     public Task<IActionResult> GetReleases(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
@@ -199,7 +199,7 @@ public sealed class UsenetMigrationController(
         });
     });
 
-    [HttpPut("api/altmount-migration/releases/include")]
+    [HttpPut("api/migration/altmount/releases/include")]
     public Task<IActionResult> SetInclude([FromBody] IncludeRequest request) => GuardedAsync(async () =>
     {
         var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -228,7 +228,7 @@ public sealed class UsenetMigrationController(
 
     // --- collisions --------------------------------------------------------
 
-    [HttpGet("api/altmount-migration/collisions")]
+    [HttpGet("api/migration/altmount/collisions")]
     public Task<IActionResult> GetCollisions() => GuardedAsync(async () =>
     {
         await using var ctx = store.NewContext();
@@ -265,7 +265,7 @@ public sealed class UsenetMigrationController(
 
     // --- summary -----------------------------------------------------------
 
-    [HttpGet("api/altmount-migration/summary")]
+    [HttpGet("api/migration/altmount/summary")]
     public Task<IActionResult> GetSummary() => GuardedAsync(async () =>
     {
         var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -328,7 +328,7 @@ public sealed class UsenetMigrationController(
 
     // --- run ---------------------------------------------------------------
 
-    [HttpPost("api/altmount-migration/run")]
+    [HttpPost("api/migration/altmount/run")]
     public Task<IActionResult> StartRun() => GuardedAsync(async () =>
     {
         var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -388,7 +388,7 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, state = "running" });
     });
 
-    [HttpPost("api/altmount-migration/run/resume")]
+    [HttpPost("api/migration/altmount/run/resume")]
     public Task<IActionResult> ResumeRun() => GuardedAsync(async () =>
     {
         var transition = await store.TryTransitionSessionAsync(
@@ -399,7 +399,7 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, state = "running" });
     });
 
-    [HttpDelete("api/altmount-migration/run")]
+    [HttpDelete("api/migration/altmount/run")]
     public Task<IActionResult> StopRun([FromQuery] bool cancel = false) => GuardedAsync(async () =>
     {
         var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -434,7 +434,7 @@ public sealed class UsenetMigrationController(
 
     // --- status ------------------------------------------------------------
 
-    [HttpGet("api/altmount-migration/status")]
+    [HttpGet("api/migration/altmount/status")]
     public Task<IActionResult> GetStatus() => GuardedAsync(async () =>
     {
         var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -497,7 +497,7 @@ public sealed class UsenetMigrationController(
         });
     });
 
-    [HttpPost("api/altmount-migration/history/cleanup")]
+    [HttpPost("api/migration/altmount/history/cleanup")]
     public Task<IActionResult> CleanupHistory([FromBody] HistoryCleanupRequest request) => GuardedAsync(async () =>
     {
         if (request.Confirm != true)
@@ -515,7 +515,7 @@ public sealed class UsenetMigrationController(
 
     // --- symlinks (Step 6 — optional) --------------------------------------
 
-    [HttpPost("api/altmount-migration/symlinks/plan")]
+    [HttpPost("api/migration/altmount/symlinks/plan")]
     public Task<IActionResult> PlanSymlinks([FromBody] SymlinkPlanRequest request) => GuardedAsync(async () =>
     {
         var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -538,7 +538,7 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, state = "linking" });
     });
 
-    [HttpGet("api/altmount-migration/symlinks")]
+    [HttpGet("api/migration/altmount/symlinks")]
     public Task<IActionResult> GetSymlinks(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 100,
@@ -598,7 +598,7 @@ public sealed class UsenetMigrationController(
         });
     });
 
-    [HttpPost("api/altmount-migration/symlinks/apply")]
+    [HttpPost("api/migration/altmount/symlinks/apply")]
     public Task<IActionResult> ApplySymlinks([FromBody] SymlinkApplyRequest request) => GuardedAsync(async () =>
     {
         // Apply is the only Step 6 action that mutates the library, so require
@@ -639,7 +639,7 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, state = "applying" });
     });
 
-    [HttpDelete("api/altmount-migration/symlinks/operation")]
+    [HttpDelete("api/migration/altmount/symlinks/operation")]
     public Task<IActionResult> CancelSymlinkOperation() => GuardedAsync(async () =>
     {
         var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -661,7 +661,7 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, state = "linked" });
     });
 
-    [HttpGet("api/altmount-migration/symlinks/backups")]
+    [HttpGet("api/migration/altmount/symlinks/backups")]
     public Task<IActionResult> GetSymlinkBackups() => GuardedAsync(async () =>
     {
         var backups = await new SymlinkRestoreService(store)
@@ -670,7 +670,7 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, backups });
     });
 
-    [HttpPost("api/altmount-migration/symlinks/restore")]
+    [HttpPost("api/migration/altmount/symlinks/restore")]
     public Task<IActionResult> RestoreSymlinks([FromBody] SymlinkRestoreRequest request) => GuardedAsync(async () =>
     {
         if (request.Confirm != true)
@@ -692,14 +692,14 @@ public sealed class UsenetMigrationController(
 
     // --- reset -------------------------------------------------------------
 
-    [HttpPost("api/altmount-migration/reset")]
+    [HttpPost("api/migration/altmount/reset")]
     public Task<IActionResult> Reset() => GuardedAsync(async () =>
     {
         await ResetWizardAsync(store, HttpContext.RequestAborted).ConfigureAwait(false);
         return Ok(new { status = true });
     });
 
-    [HttpGet("api/altmount-migration/migration-data")]
+    [HttpGet("api/migration/altmount/migration-data")]
     public Task<IActionResult> GetMigrationData() => GuardedAsync(async () =>
     {
         var summary = await store.GetMigrationDataSummaryAsync(HttpContext.RequestAborted)
@@ -707,7 +707,7 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, summary });
     });
 
-    [HttpPost("api/altmount-migration/migration-data/forget")]
+    [HttpPost("api/migration/altmount/migration-data/forget")]
     public Task<IActionResult> ForgetMigrationData([FromBody] ForgetMigrationDataRequest request) => GuardedAsync(async () =>
     {
         if (request.Confirm != true)

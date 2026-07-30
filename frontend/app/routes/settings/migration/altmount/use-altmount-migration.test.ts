@@ -31,7 +31,7 @@ describe("requestSymlinkApply", () => {
 
             expect(fetchMock).toHaveBeenCalledOnce();
             const [url, init] = fetchMock.mock.calls[0];
-            expect(url).toBe("/api/altmount-migration/symlinks/apply");
+            expect(url).toBe("/api/migration/altmount/symlinks/apply");
             expect(init?.method).toBe("POST");
             expect(JSON.parse(String(init?.body))).toEqual({
                 confirm: true,
