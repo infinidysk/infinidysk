@@ -122,7 +122,10 @@ public static class OverviewStatsReset
             .Where(x => x.Provider == providerKey).ExecuteDeleteAsync(ct).ConfigureAwait(false);
         deleted += await db.MetricEvents
             .Where(x =>
-                (x.Kind == "circuit" || x.Kind == "latency") && x.Tag1 == providerKey)
+                (x.Kind == "circuit"
+                 || x.Kind == "latency"
+                 || x.Kind == MetricsWriter.FailoverSaveEventKind)
+                && x.Tag1 == providerKey)
             .ExecuteDeleteAsync(ct).ConfigureAwait(false);
         deleted += await db.FailoverMisses
             .Where(x => x.FromProvider == providerKey || x.ToProvider == providerKey)

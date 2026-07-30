@@ -90,6 +90,18 @@ public class OverviewStatsResetTests
         db.MetricEvents.AddRange(
             new MetricEvent { At = now, Kind = "circuit", Tag1 = target, Tag2 = "open" },
             new MetricEvent { At = now, Kind = "circuit", Tag1 = other, Tag2 = "open" },
+            new MetricEvent
+            {
+                At = now,
+                Kind = MetricsWriter.FailoverSaveEventKind,
+                Tag1 = target,
+            },
+            new MetricEvent
+            {
+                At = now,
+                Kind = MetricsWriter.FailoverSaveEventKind,
+                Tag1 = other,
+            },
             new MetricEvent { At = now, Kind = "global" });
         db.FailoverMisses.AddRange(
             new FailoverMiss
@@ -145,7 +157,9 @@ public class OverviewStatsResetTests
         Assert.Equal(1, await db.ProviderHourly.CountAsync(x => x.Provider == other));
         Assert.Equal(0, await db.MetricEvents.CountAsync(x =>
             x.Kind == "circuit" && x.Tag1 == target));
-        Assert.Equal(2, await db.MetricEvents.CountAsync());
+        Assert.Equal(0, await db.MetricEvents.CountAsync(x =>
+            x.Kind == MetricsWriter.FailoverSaveEventKind && x.Tag1 == target));
+        Assert.Equal(3, await db.MetricEvents.CountAsync());
         Assert.Equal(0, await db.FailoverMisses.CountAsync(x =>
             x.FromProvider == target || x.ToProvider == target));
         Assert.Equal(1, await db.FailoverMisses.CountAsync());
@@ -387,11 +401,26 @@ public class OverviewStatsResetTests
                 ToProvider = "c",
                 Reason = SegmentFetch.FetchStatus.Missing,
             });
+            writer.RecordEvent(new MetricEvent
+            {
+                At = 1,
+                Kind = MetricsWriter.FailoverSaveEventKind,
+                Tag1 = "a",
+            });
+            writer.RecordEvent(new MetricEvent
+            {
+                At = 2,
+                Kind = MetricsWriter.FailoverSaveEventKind,
+                Tag1 = "b",
+            });
 
             writer.DiscardQueuedForProvider("a");
 
             Assert.Equal(1, writer.Stats.QueuedFetches);
             Assert.Equal(1, writer.Stats.QueuedFailoverMisses);
+            var saveEvents = writer.SnapshotQueuedEvents(MetricsWriter.FailoverSaveEventKind);
+            var saveEvent = Assert.Single(saveEvents);
+            Assert.Equal("b", saveEvent.Tag1);
         }
         finally
         {

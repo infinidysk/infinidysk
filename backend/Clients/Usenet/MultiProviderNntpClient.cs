@@ -407,16 +407,10 @@ public class MultiProviderNntpClient(
                         if (responseType == UsenetResponseType.ArticleRetrievedBodyFollows)
                         {
                             _usageTracker.RecordSuccess(provider.MetricsKey);
-                            var crossMisses = FilterCrossProviderMisses(
-                                priorMisses, provider.MetricsKey);
-                            RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                                stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0, traceRange);
-                            if (priorMisses is { Count: > 0 })
-                            {
-                                if (crossMisses is { Count: > 0 })
-                                    _usageTracker.RecordFailoverSave();
-                                RecordRescue(priorMisses, crossMisses, provider.MetricsKey);
-                            }
+                            RecordSuccessfulFetch(
+                                provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
+                                stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0,
+                                traceRange, priorMisses);
                             response = WrapProviderResponse(response, provider.MetricsKey);
                             gateOwnedByTransfer = true;
                             deferredCallback.Activate(result =>
@@ -621,16 +615,9 @@ public class MultiProviderNntpClient(
                 {
                     if (attribution != null) attribution.Host = provider.Host;
                     _usageTracker.RecordSuccess(provider.MetricsKey);
-                    var crossMisses = FilterCrossProviderMisses(
-                        priorMisses, provider.MetricsKey);
-                    RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
-                    if (priorMisses is { Count: > 0 })
-                    {
-                        if (crossMisses is { Count: > 0 })
-                            _usageTracker.RecordFailoverSave();
-                        RecordRescue(priorMisses, crossMisses, provider.MetricsKey);
-                    }
+                    RecordSuccessfulFetch(
+                        provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
+                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange, priorMisses);
                     result = WrapProviderResponse(result, provider.MetricsKey);
                     deferredCallback.Activate(onConnectionReadyAgain ?? (_ => { }));
                     return result;
@@ -772,16 +759,9 @@ public class MultiProviderNntpClient(
                                           or UsenetResponseType.ArticleRetrievedHeadAndBodyFollow)
                 {
                     _usageTracker.RecordSuccess(provider.MetricsKey);
-                    var crossMisses = FilterCrossProviderMisses(
-                        priorMisses, provider.MetricsKey);
-                    RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
-                    if (priorMisses is { Count: > 0 })
-                    {
-                        if (crossMisses is { Count: > 0 })
-                            _usageTracker.RecordFailoverSave();
-                        RecordRescue(priorMisses, crossMisses, rescuer: provider.MetricsKey);
-                    }
+                    RecordSuccessfulFetch(
+                        provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
+                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange, priorMisses);
                     result = WrapProviderResponse(result, provider.MetricsKey);
                 }
                 else if (result is UsenetDecodedBodyResponse or UsenetDecodedArticleResponse)
@@ -874,12 +854,13 @@ public class MultiProviderNntpClient(
         }
     }
 
-    private void RecordFetch(
+    private SegmentFetch RecordFetch(
         string metricsKey,
         SegmentFetch.FetchStatus status,
         long durationMs,
         int retries,
-        StreamTraceRangeContext? traceRange)
+        StreamTraceRangeContext? traceRange,
+        bool enqueue = true)
     {
         if (traceRange is { } range)
         {
@@ -890,8 +871,7 @@ public class MultiProviderNntpClient(
             streamTrace?.AddFetchWait(traceRange, TimeSpan.FromMilliseconds(durationMs));
         }
 
-        if (metricsWriter == null) return;
-        metricsWriter.RecordFetch(new SegmentFetch
+        var fetch = new SegmentFetch
         {
             At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             Provider = metricsKey,
@@ -900,7 +880,32 @@ public class MultiProviderNntpClient(
             DurationMs = (int)Math.Min(int.MaxValue, durationMs),
             Status = status,
             Retries = retries,
-        });
+        };
+        if (enqueue)
+            metricsWriter?.RecordFetch(fetch);
+        return fetch;
+    }
+
+    private void RecordSuccessfulFetch(
+        string metricsKey,
+        SegmentFetch.FetchStatus status,
+        long durationMs,
+        int retries,
+        StreamTraceRangeContext? traceRange,
+        List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses)
+    {
+        var fetch = RecordFetch(
+            metricsKey, status, durationMs, retries, traceRange, enqueue: false);
+        if (priorMisses is not { Count: > 0 })
+        {
+            metricsWriter?.RecordFetch(fetch);
+            return;
+        }
+
+        var crossMisses = FilterCrossProviderMisses(priorMisses, metricsKey);
+        if (crossMisses is { Count: > 0 })
+            _usageTracker.RecordFailoverSave();
+        RecordRescue(priorMisses, crossMisses, metricsKey, fetch);
     }
 
     /// <summary>
@@ -950,7 +955,8 @@ public class MultiProviderNntpClient(
     private void RecordRescue(
         List<(string Host, SegmentFetch.FetchStatus Reason)>? allMisses,
         List<(string Host, SegmentFetch.FetchStatus Reason)>? crossMisses,
-        string rescuer)
+        string rescuer,
+        SegmentFetch fetch)
     {
         if (allMisses != null && ReadSessionScope.Value is { } sessionId)
         {
@@ -958,18 +964,33 @@ public class MultiProviderNntpClient(
                 streamTrace?.Failover(sessionId, from, rescuer, reason.ToString());
         }
 
-        if (metricsWriter == null || crossMisses is not { Count: > 0 }) return;
-        var at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (metricsWriter == null) return;
+        if (crossMisses is not { Count: > 0 })
+        {
+            metricsWriter.RecordFetch(fetch);
+            return;
+        }
+
+        var misses = new List<FailoverMiss>(crossMisses.Count);
         foreach (var (from, reason) in crossMisses)
         {
-            metricsWriter.RecordFailoverMiss(new FailoverMiss
+            misses.Add(new FailoverMiss
             {
-                At = at,
+                At = fetch.At,
                 FromProvider = from,
                 ToProvider = rescuer,
                 Reason = reason,
             });
         }
+        metricsWriter.RecordRescue(
+            fetch,
+            new MetricEvent
+            {
+                At = fetch.At,
+                Kind = MetricsWriter.FailoverSaveEventKind,
+                Tag1 = rescuer,
+            },
+            misses);
     }
 
     private T WrapProviderResponse<T>(T result, string metricsKey) where T : UsenetResponse

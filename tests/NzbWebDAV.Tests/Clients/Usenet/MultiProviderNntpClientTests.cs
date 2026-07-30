@@ -96,6 +96,7 @@ public class MultiProviderNntpClientTests
             (await batch.Responses[0]).ResponseType);
 
         Assert.Equal(0, writer.Stats.QueuedFailoverMisses);
+        Assert.Empty(writer.SnapshotQueuedEvents(MetricsWriter.FailoverSaveEventKind));
         Assert.Equal(1, connection.SingularRequests);
     }
 
@@ -120,6 +121,7 @@ public class MultiProviderNntpClientTests
             (await batch.Responses[0]).ResponseType);
 
         Assert.Equal(0, writer.Stats.QueuedFailoverMisses);
+        Assert.Empty(writer.SnapshotQueuedEvents(MetricsWriter.FailoverSaveEventKind));
         Assert.Equal(1, connection.SingularRequests);
     }
 
@@ -151,6 +153,7 @@ public class MultiProviderNntpClientTests
         Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
         Assert.True(backup.SingularRequests >= 1);
         Assert.Equal(1, writer.Stats.QueuedFailoverMisses);
+        Assert.Single(writer.SnapshotQueuedEvents(MetricsWriter.FailoverSaveEventKind));
     }
 
     [Fact]

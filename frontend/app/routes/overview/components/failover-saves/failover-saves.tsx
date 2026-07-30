@@ -221,7 +221,7 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
                 <div className="py-6 text-center text-xs text-base-content/50">
                     No backup rescues in this window.
                     <div className="mt-1.5 text-base-content/40">
-                        Every segment was served without needing another provider. Same-provider retries after timeouts do not count here.
+                        No segment was rescued by another provider. Same-provider retries after timeouts do not count here.
                         You&rsquo;ll see who failed, who covered, and why, right here.
                     </div>
                 </div>

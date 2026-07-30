@@ -8,7 +8,7 @@ using NzbWebDAV.Services.Metrics;
 namespace NzbWebDAV.Tests.Services.Metrics;
 
 /// <summary>
-/// Backup rescues (ProviderMinutes.FailoverSaves) come from FailoverMisses edges,
+/// Backup rescues (ProviderMinutes.FailoverSaves) come from one event per rescue,
 /// not from SegmentFetch.Retries. Same-provider self-retries keep Retries visible
 /// on the scoreboard without inflating Overview Backup rescues.
 /// </summary>
@@ -58,6 +58,11 @@ public sealed class MetricsRollupFailoverSavesTests
                     (At, FromProvider, ToProvider, Reason)
                 VALUES
                     ({2}, 'primary', 'backup', 1);
+
+                INSERT INTO MetricEvents
+                    (At, Kind, RefId, Tag1, Tag2, Num, Note)
+                VALUES
+                    ({2}, 'failover-save', NULL, 'backup', NULL, NULL, NULL);
                 """,
                 Minute + 1, Minute + 2, Minute + 2);
 
@@ -78,7 +83,7 @@ public sealed class MetricsRollupFailoverSavesTests
     }
 
     [Fact]
-    public async Task RollupMinute_MultipleEdgeRowsSameAt_CountAsOneSave()
+    public async Task RollupMinute_ConcurrentSavesWithSameTimestamp_CountSeparately()
     {
         await withMetricsDb(async context =>
         {
@@ -94,6 +99,12 @@ public sealed class MetricsRollupFailoverSavesTests
                 VALUES
                     ({1}, 'a', 'rescuer', 2),
                     ({1}, 'b', 'rescuer', 1);
+
+                INSERT INTO MetricEvents
+                    (At, Kind, RefId, Tag1, Tag2, Num, Note)
+                VALUES
+                    ({1}, 'failover-save', NULL, 'rescuer', NULL, NULL, NULL),
+                    ({1}, 'failover-save', NULL, 'rescuer', NULL, NULL, NULL);
                 """,
                 Minute + 1, Minute + 5);
 
@@ -101,7 +112,7 @@ public sealed class MetricsRollupFailoverSavesTests
 
             var row = await context.ProviderMinutes.AsNoTracking().SingleAsync();
             Assert.Equal(2, row.Retries);
-            Assert.Equal(1, row.FailoverSaves);
+            Assert.Equal(2, row.FailoverSaves);
         });
     }
 

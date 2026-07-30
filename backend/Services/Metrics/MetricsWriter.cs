@@ -33,6 +33,7 @@ public enum EventEnqueueResult
 /// </summary>
 public class MetricsWriter : BackgroundService
 {
+    internal const string FailoverSaveEventKind = "failover-save";
     private const int FlushThreshold = 1000;
     private const int MaxQueueLength = 10_000;
     private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(5);
@@ -124,6 +125,11 @@ public class MetricsWriter : BackgroundService
 
     public void RecordFetch(SegmentFetch f)
     {
+        EnqueueFetch(f);
+    }
+
+    private void EnqueueFetch(SegmentFetch f)
+    {
         if (_fetches.Count >= MaxQueueLength)
         {
             Interlocked.Increment(ref _droppedFetches);
@@ -133,6 +139,11 @@ public class MetricsWriter : BackgroundService
     }
 
     public void RecordEvent(MetricEvent e)
+    {
+        EnqueueEvent(e);
+    }
+
+    private void EnqueueEvent(MetricEvent e)
     {
         if (_events.Count >= MaxQueueLength)
         {
@@ -173,12 +184,35 @@ public class MetricsWriter : BackgroundService
 
     public void RecordFailoverMiss(FailoverMiss m)
     {
+        EnqueueFailoverMiss(m);
+    }
+
+    private void EnqueueFailoverMiss(FailoverMiss m)
+    {
         if (_failoverMisses.Count >= MaxQueueLength)
         {
             Interlocked.Increment(ref _droppedFailoverMisses);
             return;
         }
         _failoverMisses.Enqueue(m);
+    }
+
+    /// <summary>
+    /// Enqueues one successful fetch, its save event, and detailed miss edges as one
+    /// drain unit so the minute rollup cannot observe only part of the rescue.
+    /// </summary>
+    public void RecordRescue(
+        SegmentFetch fetch,
+        MetricEvent save,
+        IReadOnlyList<FailoverMiss> misses)
+    {
+        lock (_enqueueGate)
+        {
+            EnqueueFetch(fetch);
+            EnqueueEvent(save);
+            foreach (var miss in misses)
+                EnqueueFailoverMiss(miss);
+        }
     }
 
     public IReadOnlyList<MetricEvent> SnapshotQueuedEvents(string kind)
@@ -276,11 +310,19 @@ public class MetricsWriter : BackgroundService
             return;
         }
 
-        var generation = Volatile.Read(ref _resetGeneration);
-        var fetches = Drain(_fetches);
-        var events = Drain(_events);
-        var sessions = Drain(_sessions);
-        var failoverMisses = Drain(_failoverMisses);
+        int generation;
+        List<SegmentFetch> fetches;
+        List<MetricEvent> events;
+        List<ReadSession> sessions;
+        List<FailoverMiss> failoverMisses;
+        lock (_enqueueGate)
+        {
+            generation = Volatile.Read(ref _resetGeneration);
+            fetches = Drain(_fetches);
+            events = Drain(_events);
+            sessions = Drain(_sessions);
+            failoverMisses = Drain(_failoverMisses);
+        }
         if (fetches.Count == 0 && events.Count == 0 && sessions.Count == 0 && failoverMisses.Count == 0) return;
 
         // BeginReset ran between the pause check and Drain — abandon.
@@ -366,17 +408,21 @@ public class MetricsWriter : BackgroundService
     /// </summary>
     public void DiscardQueuedForProvider(string providerKey)
     {
-        FilterQueue(_fetches, f => !string.Equals(f.Provider, providerKey, StringComparison.Ordinal));
-        FilterQueue(_events, e =>
-            !(IsProviderKeyedEvent(e) && string.Equals(e.Tag1, providerKey, StringComparison.Ordinal)));
-        FilterQueue(_failoverMisses, m =>
-            !string.Equals(m.FromProvider, providerKey, StringComparison.Ordinal)
-            && !string.Equals(m.ToProvider, providerKey, StringComparison.Ordinal));
+        lock (_enqueueGate)
+        {
+            FilterQueue(_fetches, f => !string.Equals(f.Provider, providerKey, StringComparison.Ordinal));
+            FilterQueue(_events, e =>
+                !(IsProviderKeyedEvent(e) && string.Equals(e.Tag1, providerKey, StringComparison.Ordinal)));
+            FilterQueue(_failoverMisses, m =>
+                !string.Equals(m.FromProvider, providerKey, StringComparison.Ordinal)
+                && !string.Equals(m.ToProvider, providerKey, StringComparison.Ordinal));
+        }
     }
 
     private static bool IsProviderKeyedEvent(MetricEvent e) =>
         string.Equals(e.Kind, "circuit", StringComparison.Ordinal)
-        || string.Equals(e.Kind, "latency", StringComparison.Ordinal);
+        || string.Equals(e.Kind, "latency", StringComparison.Ordinal)
+        || string.Equals(e.Kind, FailoverSaveEventKind, StringComparison.Ordinal);
 
     private static void FilterQueue<T>(ConcurrentQueue<T> queue, Func<T, bool> keep)
     {
