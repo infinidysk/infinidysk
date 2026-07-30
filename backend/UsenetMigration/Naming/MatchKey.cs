@@ -1,3 +1,4 @@
+using System.Text;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.UsenetMigration.Naming;
@@ -9,8 +10,9 @@ namespace NzbWebDAV.UsenetMigration.Naming;
 ///
 /// <para>
 /// NzbDAV names every leaf via <c>SanitizeDavName == PathSanitizer.SanitizeComponent</c>
-/// (see <c>BaseAggregator</c>), so this key uses the identical transform. It also case-folds
-/// because obfuscation/deobfuscation can flip case and the match should tolerate it.
+/// (see <c>BaseAggregator</c>), so this key uses the identical transform. It also NFC-normalizes
+/// then case-folds because obfuscation/deobfuscation can flip case and macOS/Linux can
+/// disagree on Unicode composition; the match should tolerate both.
 /// </para>
 ///
 /// <para>
@@ -27,7 +29,9 @@ namespace NzbWebDAV.UsenetMigration.Naming;
 public static class MatchKey
 {
     public static string ForLeaf(string fileName) =>
-        PathSanitizer.SanitizeComponent(fileName, windowsSafe: true).ToLowerInvariant();
+        PathSanitizer.SanitizeComponent(fileName, windowsSafe: true)
+            .Normalize(NormalizationForm.FormC)
+            .ToLowerInvariant();
 
     public static string ForRelativePath(string path)
     {

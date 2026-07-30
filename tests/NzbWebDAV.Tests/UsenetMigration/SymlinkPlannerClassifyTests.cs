@@ -93,4 +93,30 @@ public class SymlinkPlannerClassifyTests
         Assert.Equal("rewrite", c.Status);
         Assert.Equal("s2", c.StoreRef); // the deeper, more specific correlation
     }
+
+    [Fact]
+    public void CaseDistinctVirtualPaths_BothSurviveInCorrelationIndex()
+    {
+        // Regression: OrdinalIgnoreCase correlation keys would collapse these and
+        // silently pick one StoreRef for both — rewriting a symlink to the wrong release.
+        var index = Index(
+            new CorrelatedFile
+            {
+                VirtualPath = "TV/Show/file.mkv",
+                StoreRef = "store-upper",
+                ReleaseFileId = 1,
+                NewDavItemId = Guid.NewGuid(),
+                MatchMethod = "exact",
+            },
+            new CorrelatedFile
+            {
+                VirtualPath = "tv/Show/file.mkv",
+                StoreRef = "store-lower",
+                ReleaseFileId = 2,
+                NewDavItemId = Guid.NewGuid(),
+                MatchMethod = "exact",
+            });
+
+        Assert.Equal(2, index["file.mkv"].Select(c => c.StoreRef).Distinct(StringComparer.Ordinal).Count());
+    }
 }

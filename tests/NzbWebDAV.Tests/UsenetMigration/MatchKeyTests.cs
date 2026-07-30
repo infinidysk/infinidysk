@@ -48,6 +48,15 @@ public class MatchKeyTests
     }
 
     [Fact]
+    public void ForLeaf_NfcNormalizesBeforeCaseFold()
+    {
+        // "é" as NFD (e + combining acute) must match NFC.
+        var nfc = "café.mkv";
+        var nfd = "cafe\u0301.mkv";
+        Assert.Equal(MatchKey.ForLeaf(nfc), MatchKey.ForLeaf(nfd));
+    }
+
+    [Fact]
     public void ForLeaf_CaseOnlyDifferenceCollapsesToOneKey()
     {
         // Absorbs obfuscation/deobfuscation case changes.

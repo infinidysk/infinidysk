@@ -109,6 +109,21 @@ public sealed class SymlinkPlanner(UsenetMigrationStore store, ConfigManager con
         foreach (var link in walk.Links)
         {
             ct.ThrowIfCancellationRequested();
+            // Directory symlinks must not be rewritten to file-leaf .ids targets.
+            if (IsDirectorySymlink(link.SymlinkPath))
+            {
+                notAltmount++;
+                rows.Add(new MigrationSymlinkRewrite
+                {
+                    SymlinkPath = link.SymlinkPath,
+                    OldTarget = link.TargetPath,
+                    NewTarget = null,
+                    Status = "not-altmount",
+                    UpdatedAt = plannedAt,
+                });
+                continue;
+            }
+
             var c = Classify(link.TargetPath, index, mountDir);
             switch (c.Status)
             {
@@ -334,7 +349,9 @@ public sealed class SymlinkPlanner(UsenetMigrationStore store, ConfigManager con
         await ctx.SaveChangesAsync(ct).ConfigureAwait(false);
 
         var historical = await LoadHistoricalCorrelationsAsync(ctx, ct).ConfigureAwait(false);
-        var correlations = new Dictionary<string, CorrelatedFile>(StringComparer.OrdinalIgnoreCase);
+        // Ordinal (not OrdinalIgnoreCase): case-distinct virtual paths are distinct
+        // releases on Linux; merging them can rewrite a symlink to the wrong file.
+        var correlations = new Dictionary<string, CorrelatedFile>(StringComparer.Ordinal);
         foreach (var item in historical)
             correlations[item.VirtualPath] = item;
         foreach (var f in files)
@@ -412,6 +429,20 @@ public sealed class SymlinkPlanner(UsenetMigrationStore store, ConfigManager con
                 MatchMethod = "provenance",
             })
             .ToList();
+    }
+
+    private static bool IsDirectorySymlink(string path)
+    {
+        try
+        {
+            var attrs = File.GetAttributes(path);
+            return attrs.HasFlag(FileAttributes.Directory)
+                   && attrs.HasFlag(FileAttributes.ReparsePoint);
+        }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException or IOException)
+        {
+            return false;
+        }
     }
 
     private static LibraryWalkResult DefaultEnumerator(string libraryRoot, CancellationToken ct) =>
