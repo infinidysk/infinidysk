@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.Models.UsenetMigration;
 
 namespace NzbWebDAV.Database;
@@ -16,6 +17,7 @@ public sealed class UsenetMigrationDbContext : DbContext
     private static readonly Lazy<DbContextOptions<UsenetMigrationDbContext>> Options = new(() =>
         new DbContextOptionsBuilder<UsenetMigrationDbContext>()
             .UseSqlite($"Data Source={DatabaseFilePath}")
+            .AddInterceptors(new SqliteUsenetMigrationPragmas())
             .Options
     );
 

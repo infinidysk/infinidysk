@@ -37,6 +37,7 @@ internal sealed class MigrationTestHarness : IAsyncDisposable
 
         MigOptions = new DbContextOptionsBuilder<UsenetMigrationDbContext>()
             .UseSqlite($"Data Source={_migPath}")
+            .AddInterceptors(new SqliteUsenetMigrationPragmas())
             .Options;
 
         DavOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
