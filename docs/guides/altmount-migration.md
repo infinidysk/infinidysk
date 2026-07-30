@@ -1,4 +1,4 @@
-# Migrate from Altmount [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+# Migrate from Altmount [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
 
 The guided migration under **Settings → System → Migration** imports an existing Altmount library by rebuilding each release's NZB and submitting it through NzbDAV's normal queue. It does not modify Altmount metadata or store files.
 
