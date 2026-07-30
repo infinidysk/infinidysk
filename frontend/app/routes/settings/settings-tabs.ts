@@ -14,7 +14,7 @@ export type SettingsTab =
     | "maintenance"
     | "backup"
     | "support"
-    | "altmount-migration";
+    | "migration";
 
 export type SettingsTabItem = {
     id: SettingsTab;
@@ -61,7 +61,7 @@ export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
             { id: "maintenance", label: "Maintenance", icon: "settings_suggest" },
             { id: "backup", label: "Backup & Restore", icon: "settings_backup_restore" },
             { id: "support", label: "Support", icon: "support_agent" },
-            { id: "altmount-migration", label: "Altmount Migration", icon: "moving" },
+            { id: "migration", label: "Migration", icon: "moving" },
         ],
     },
 ];

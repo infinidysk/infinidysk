@@ -3,7 +3,7 @@ import { Alert, Badge, Spinner, Tooltip } from "~/components/ui/feedback";
 import { Button } from "~/components/ui/button";
 import { Input, Select } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
-import { SettingsIntro, SettingsPage } from "~/components/ui";
+import { SettingsIntro } from "~/components/ui";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { Modal } from "~/components/ui/modal";
 import {
@@ -115,7 +115,7 @@ export function AltmountMigration() {
     useEffect(() => setViewStep(stepForStatus(sessionStatus)), [sessionStatus]);
 
     return (
-        <SettingsPage>
+        <div className="flex w-full flex-col gap-6">
             <SettingsIntro>
                 Import an existing Altmount library into NzbDAV by re-submitting each release through NzbDAV's own
                 download pipeline. Connect to the library, map categories, scan and review, then run the migration.
@@ -154,7 +154,7 @@ export function AltmountMigration() {
             {viewStep === LINK_STEP && <SymlinkStep m={m} />}
 
             <ResetFooter m={m} />
-        </SettingsPage>
+        </div>
     );
 }
 

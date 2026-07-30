@@ -1,6 +1,6 @@
 # Migrate from Altmount [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
 
-The guided migration under **Settings → Altmount Migration** imports an existing Altmount library by rebuilding each release's NZB and submitting it through NzbDAV's normal queue. It does not modify Altmount metadata or store files.
+The guided migration under **Settings → System → Migration** imports an existing Altmount library by rebuilding each release's NZB and submitting it through NzbDAV's normal queue. It does not modify Altmount metadata or store files.
 
 Both legacy raw-protobuf metadata and Altmount v3-prefixed `.meta` formats are supported, including v3 stores. The wizard follows each file's recorded `store_ref`; **Altmount Store Root** can remap its `.nzbs/...` suffix when the library was copied from another host or mounted at a different container path. Pre-v0.3.0 (v1) releases without a store are migrated from the original NZB when it still exists on disk (including `.nzb.gz` under `.nzbs/`).
 

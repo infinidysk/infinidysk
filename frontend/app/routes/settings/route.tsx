@@ -11,7 +11,7 @@ import { isIndexersSettingsUpdated, isIndexersSettingsValid, IndexersSettings } 
 import { isProfilesSettingsUpdated, isProfilesSettingsValid, ProfilesSettings } from "./profiles/profiles";
 import { isMaintenanceSettingsUpdated, Maintenance } from "./maintenance/maintenance";
 import { isBackupSettingsUpdated, BackupSettings } from "./backup/backup";
-import { AltmountMigration } from "./altmount-migration/altmount-migration";
+import { Migration } from "./migration/migration";
 import { isRepairsSettingsUpdated, RepairsSettings } from "./repairs/repairs";
 import { isWatchdogSettingsUpdated, WatchdogSettings } from "./watchdog/watchdog";
 import { isPreflightSettingsUpdated, PreflightSettings } from "./preflight/preflight";
@@ -355,7 +355,7 @@ function Body(props: BodyProps) {
                 {activeTab === "maintenance" && <Maintenance savedConfig={config} config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "backup" && <BackupSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "support" && <SupportSettings />}
-                {activeTab === "altmount-migration" && <AltmountMigration />}
+                {activeTab === "migration" && <Migration />}
             </SettingsPanel>
 
             {saveError && (
@@ -363,7 +363,7 @@ function Body(props: BodyProps) {
                     {saveError}
                 </Alert>
             )}
-            {((activeTab !== "support" && activeTab !== "altmount-migration") || isUpdated) && <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-base-content/10 bg-base-300/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
+            {((activeTab !== "support" && activeTab !== "migration") || isUpdated) && <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-base-content/10 bg-base-300/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
                 {isUpdated && <Button
                     className="min-w-28"
                     variant="outline"
