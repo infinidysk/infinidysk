@@ -28,8 +28,10 @@ public sealed class MigrationSessionStateMachineTests
             [MigrationSessionTransition.ReturnRunToReview] = new("scanned", "running"),
             [MigrationSessionTransition.StartLinkPlan] = new("linking", "complete", "linked"),
             [MigrationSessionTransition.CompleteLinkPlan] = new("linked", "linking"),
+            [MigrationSessionTransition.CancelLinkPlan] = new("linked", "linking"),
             [MigrationSessionTransition.StartApply] = new("applying", "linked"),
             [MigrationSessionTransition.CompleteApply] = new("linked", "applying"),
+            [MigrationSessionTransition.CancelApply] = new("linked", "applying"),
             [MigrationSessionTransition.StartRestore] = new("restoring", "linked"),
             [MigrationSessionTransition.CompleteRestore] = new("linked", "restoring"),
         };

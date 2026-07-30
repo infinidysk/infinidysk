@@ -455,6 +455,11 @@ export function useAltmountMigration() {
         await refresh();
     }), [withBusy, refresh]);
 
+    const cancelSymlinkOperation = useCallback(() => withBusy("symlink-cancel", async () => {
+        await apiJson(`${BASE}/symlinks/operation`, { method: "DELETE" });
+        await refresh();
+    }), [withBusy, refresh]);
+
     const loadSymlinks = useCallback(async (f: SymlinkFilters): Promise<SymlinkListResponse> => {
         const params = new URLSearchParams({ page: String(f.page), pageSize: String(f.pageSize) });
         if (f.status) params.set("status", f.status);
@@ -518,6 +523,7 @@ export function useAltmountMigration() {
         loadMigrationData,
         forgetMigrationData,
         planSymlinks,
+        cancelSymlinkOperation,
         loadSymlinks,
         applySymlinks,
         loadSymlinkBackups,

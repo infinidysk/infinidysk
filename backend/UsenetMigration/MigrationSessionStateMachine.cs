@@ -61,8 +61,10 @@ internal enum MigrationSessionTransition
     ReturnRunToReview,
     StartLinkPlan,
     CompleteLinkPlan,
+    CancelLinkPlan,
     StartApply,
     CompleteApply,
+    CancelApply,
     StartRestore,
     CompleteRestore,
 }
@@ -174,10 +176,16 @@ internal static class MigrationSessionStateMachine
             MigrationSessionTransition.CompleteLinkPlan => new(
                 MigrationSessionStatus.Linked,
                 [MigrationSessionStatus.Linking]),
+            MigrationSessionTransition.CancelLinkPlan => new(
+                MigrationSessionStatus.Linked,
+                [MigrationSessionStatus.Linking]),
             MigrationSessionTransition.StartApply => new(
                 MigrationSessionStatus.Applying,
                 [MigrationSessionStatus.Linked]),
             MigrationSessionTransition.CompleteApply => new(
+                MigrationSessionStatus.Linked,
+                [MigrationSessionStatus.Applying]),
+            MigrationSessionTransition.CancelApply => new(
                 MigrationSessionStatus.Linked,
                 [MigrationSessionStatus.Applying]),
             MigrationSessionTransition.StartRestore => new(

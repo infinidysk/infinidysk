@@ -524,8 +524,9 @@ public sealed class UsenetMigrationController(
         if (session.Status is not ("complete" or "linked"))
             throw new BadHttpRequestException("Finish the migration before rewriting symlinks.");
 
-        var libraryRoot = RequireDir(request.LibraryRoot, "libraryRoot");
+        var libraryRoot = RequireLibraryRoot(request.LibraryRoot);
         var backupDir = EnsureWritableDir(request.BackupDir, "backupDir");
+        RejectBackupInsideLibrary(libraryRoot, backupDir);
 
         var transition = await store.StartSymlinkPlanAsync(
                 libraryRoot, backupDir, HttpContext.RequestAborted)
@@ -636,6 +637,28 @@ public sealed class UsenetMigrationController(
                 $"Cannot apply symlinks while migration operation '{transition.CurrentStatus}' is active.");
 
         return Ok(new { status = true, state = "applying" });
+    });
+
+    [HttpDelete("api/altmount-migration/symlinks/operation")]
+    public Task<IActionResult> CancelSymlinkOperation() => GuardedAsync(async () =>
+    {
+        var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        var transitionKind = session.Status switch
+        {
+            "linking" => MigrationSessionTransition.CancelLinkPlan,
+            "applying" => MigrationSessionTransition.CancelApply,
+            _ => throw new BadHttpRequestException(
+                $"Only an active symlink plan or apply can be cancelled; current state is '{session.Status}'."),
+        };
+
+        var transition = await store.TryTransitionSessionAsync(transitionKind, HttpContext.RequestAborted)
+            .ConfigureAwait(false);
+        if (!transition.Succeeded)
+            throw new BadHttpRequestException(
+                $"Only an active symlink plan or apply can be cancelled; current state is '{transition.CurrentStatus}'.");
+
+        runner.InterruptStep6();
+        return Ok(new { status = true, state = "linked" });
     });
 
     [HttpGet("api/altmount-migration/symlinks/backups")]
@@ -789,6 +812,54 @@ public sealed class UsenetMigrationController(
         if (!Directory.Exists(path))
             throw new BadHttpRequestException($"{field} directory does not exist: {path}");
         return path;
+    }
+
+    /// <summary>
+    /// Library root for Step 6: must exist, must not be <c>/</c>, and must not
+    /// overlap <see cref="DavDatabaseContext.ConfigPath"/>.
+    /// </summary>
+    private static string RequireLibraryRoot(string? path)
+    {
+        var libraryRoot = RequireDir(path, "libraryRoot");
+        var full = Path.GetFullPath(libraryRoot);
+        if (full is "/" or @"\")
+            throw new BadHttpRequestException("libraryRoot cannot be the filesystem root.");
+
+        var configPath = Path.GetFullPath(DavDatabaseContext.ConfigPath);
+        if (PathsOverlap(full, configPath))
+            throw new BadHttpRequestException(
+                "libraryRoot must not be the NzbDAV config directory or contain it (or vice versa).");
+
+        return full;
+    }
+
+    private static void RejectBackupInsideLibrary(string libraryRoot, string backupDir)
+    {
+        var fullLib = Path.GetFullPath(libraryRoot);
+        var fullBackup = Path.GetFullPath(backupDir);
+        var relative = Path.GetRelativePath(fullLib, fullBackup);
+        if (relative == "."
+            || (!Path.IsPathRooted(relative)
+                && relative != ".."
+                && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal)))
+        {
+            throw new BadHttpRequestException("backupDir must not be inside libraryRoot.");
+        }
+    }
+
+    private static bool PathsOverlap(string a, string b)
+    {
+        var relativeAb = Path.GetRelativePath(a, b);
+        var relativeBa = Path.GetRelativePath(b, a);
+        return IsWithinOrEqual(relativeAb) || IsWithinOrEqual(relativeBa);
+
+        static bool IsWithinOrEqual(string relative) =>
+            relative == "."
+            || (!Path.IsPathRooted(relative)
+                && relative != ".."
+                && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal));
     }
 
     private static string? OptionalDir(string? path, string field)

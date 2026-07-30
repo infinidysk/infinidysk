@@ -844,6 +844,17 @@ function SymlinkStep({ m }: { m: Hook }) {
                             {(busyPlan || linking) ? <Spinner className="h-4 w-4" /> : <Icon name="search" className="!text-[18px]" />}
                             {linked ? "Rebuild plan" : "Build plan"}
                         </Button>
+                        {(linking || applying) && (
+                            <Button
+                                variant="outline"
+                                size="small"
+                                disabled={m.busy === "symlink-cancel"}
+                                onClick={() => void m.cancelSymlinkOperation()}
+                            >
+                                {m.busy === "symlink-cancel" ? <Spinner className="h-4 w-4" /> : <Icon name="stop" className="!text-[18px]" />}
+                                Cancel
+                            </Button>
+                        )}
                         {linking && <span className="text-xs text-base-content/60">Scanning the library and matching symlinks… updates automatically.</span>}
                         {applying && <span className="flex items-center gap-2 text-xs text-base-content/60"><Spinner className="h-4 w-4" /> Applying rewrites…</span>}
                         {restoring && <span className="flex items-center gap-2 text-xs text-base-content/60"><Spinner className="h-4 w-4" /> Restoring symlinks…</span>}

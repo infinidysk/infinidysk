@@ -42,6 +42,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
     private readonly SubmissionOperationGate _scanGate = new();
     private readonly SubmissionOperationGate _submissionGate = new();
     private readonly SubmissionOperationGate _restoreGate = new();
+    private readonly SubmissionOperationGate _linkGate = new();
 
     public UsenetMigrationRunner(
         UsenetMigrationStore store,
@@ -66,6 +67,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
     /// </summary>
     internal void InterruptSubmissionBatch() => _submissionGate.Interrupt();
     internal void InterruptScan() => _scanGate.Interrupt();
+    internal void InterruptStep6() => _linkGate.Interrupt();
 
     internal AltmountScanRunner ScanRunnerForTests => _scanRunner;
     internal SubmissionWorkerPool WorkerPoolForTests => _workerPool;
@@ -243,9 +245,15 @@ public sealed class UsenetMigrationRunner : BackgroundService
         MigrationSessionTransition completionTransition,
         CancellationToken ct)
     {
+        using var linkOperation = _linkGate.Begin(ct);
         try
         {
-            await operation(ct).ConfigureAwait(false);
+            await operation(linkOperation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+            when (linkOperation.Token.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            // User cancel via InterruptStep6 — fall through to linked.
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -254,10 +262,19 @@ public sealed class UsenetMigrationRunner : BackgroundService
         }
         catch (Exception e)
         {
-            Log.Warning(
-                "Usenet migration {Operation} stopped and returned to Review. Reason: {Reason}",
-                operationName, e.Message);
-            Log.Debug(e, "Usenet migration {Operation} failure stack", operationName);
+            if (e.TryGetKnownErrorMessage(out var reason))
+            {
+                Log.Warning(
+                    "Usenet migration {Operation} stopped and returned to Review. Reason: {Reason}",
+                    operationName, reason);
+                Log.Debug(e, "Usenet migration {Operation} known failure stack", operationName);
+            }
+            else
+            {
+                Log.Error(e,
+                    "Unexpected error during Usenet migration {Operation}: {Message}",
+                    operationName, e.Message);
+            }
         }
 
         await _store.TryTransitionSessionAsync(completionTransition, ct).ConfigureAwait(false);

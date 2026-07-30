@@ -243,6 +243,119 @@ public sealed class Step6LifecycleTests
         Assert.Equal("linked", (await h.Store.GetSessionAsync()).Status);
     }
 
+    [Fact]
+    public async Task CancelLinkPlan_ReturnsToLinked_AndSubsequentPlanWorks()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        await h.Store.UpdateSessionAsync(s => s.Status = "linking");
+        using var queueManager = CreateQueueManager();
+        var runner = new UsenetMigrationRunner(
+            h.Store, queueManager, new ConfigManager(), new WebsocketManager());
+
+        const string apiKey = "step6-cancel-test-key";
+        var previousApiKey = Environment.GetEnvironmentVariable("FRONTEND_BACKEND_API_KEY");
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", apiKey);
+        try
+        {
+            var config = new ConfigManager();
+            using var services = new ServiceCollection()
+                .AddSingleton(config)
+                .AddSingleton(h.Store)
+                .BuildServiceProvider();
+            var httpContext = new DefaultHttpContext { RequestServices = services };
+            httpContext.Request.Headers["x-api-key"] = apiKey;
+            var controller = new UsenetMigrationController(h.Store, runner)
+            {
+                ControllerContext = new ControllerContext { HttpContext = httpContext },
+            };
+
+            Assert.IsType<OkObjectResult>(await controller.CancelSymlinkOperation());
+            Assert.Equal("linked", (await h.Store.GetSessionAsync()).Status);
+
+            var library = Directory.CreateTempSubdirectory("altmig-lib-");
+            var backups = Directory.CreateTempSubdirectory("altmig-bak-");
+            try
+            {
+                await h.Store.UpdateSessionAsync(s => s.Status = "complete");
+                Assert.IsType<OkObjectResult>(await controller.PlanSymlinks(
+                    new SymlinkPlanRequest(library.FullName, backups.FullName)));
+                Assert.Equal("linking", (await h.Store.GetSessionAsync()).Status);
+            }
+            finally
+            {
+                library.Delete(true);
+                backups.Delete(true);
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousApiKey);
+        }
+    }
+
+    [Fact]
+    public async Task PlanSymlinks_RejectsFilesystemRootAndConfigOverlap()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        await h.Store.UpdateSessionAsync(s => s.Status = "complete");
+        using var queueManager = CreateQueueManager();
+        var runner = new UsenetMigrationRunner(
+            h.Store, queueManager, new ConfigManager(), new WebsocketManager());
+
+        const string apiKey = "step6-root-guard-key";
+        var previousApiKey = Environment.GetEnvironmentVariable("FRONTEND_BACKEND_API_KEY");
+        var previousConfig = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        var configDir = Directory.CreateTempSubdirectory("altmig-config-");
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", apiKey);
+        Environment.SetEnvironmentVariable("CONFIG_PATH", configDir.FullName);
+        try
+        {
+            var config = new ConfigManager();
+            using var services = new ServiceCollection()
+                .AddSingleton(config)
+                .AddSingleton(h.Store)
+                .BuildServiceProvider();
+            var httpContext = new DefaultHttpContext { RequestServices = services };
+            httpContext.Request.Headers["x-api-key"] = apiKey;
+            var controller = new UsenetMigrationController(h.Store, runner)
+            {
+                ControllerContext = new ControllerContext { HttpContext = httpContext },
+            };
+
+            var backups = Directory.CreateTempSubdirectory("altmig-bak-");
+            try
+            {
+                var rootRejected = Assert.IsType<BadRequestObjectResult>(
+                    await controller.PlanSymlinks(new SymlinkPlanRequest("/", backups.FullName)));
+                Assert.Contains("filesystem root", Assert.IsType<BaseApiResponse>(rootRejected.Value).Error!);
+
+                var configRejected = Assert.IsType<BadRequestObjectResult>(
+                    await controller.PlanSymlinks(new SymlinkPlanRequest(configDir.FullName, backups.FullName)));
+                Assert.Contains("config directory", Assert.IsType<BaseApiResponse>(configRejected.Value).Error!);
+
+                var nestedBackup = Path.Combine(configDir.FullName, "nested-backup");
+                Directory.CreateDirectory(nestedBackup);
+                // Use a valid library that is not config, but put backup inside it.
+                var library = Directory.CreateTempSubdirectory("altmig-lib-");
+                var inside = Path.Combine(library.FullName, "backups");
+                var insideRejected = Assert.IsType<BadRequestObjectResult>(
+                    await controller.PlanSymlinks(new SymlinkPlanRequest(library.FullName, inside)));
+                Assert.Contains("inside libraryRoot", Assert.IsType<BaseApiResponse>(insideRejected.Value).Error!);
+                library.Delete(true);
+            }
+            finally
+            {
+                backups.Delete(true);
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousApiKey);
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previousConfig);
+            configDir.Delete(true);
+        }
+    }
+
     private static QueueManager CreateQueueManager()
     {
         var config = new ConfigManager();
