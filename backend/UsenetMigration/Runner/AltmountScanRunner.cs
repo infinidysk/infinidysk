@@ -202,7 +202,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             JobNameDiverges = jobNameDiverges,
             AltmountCategory = altCategory,
             TargetCategory = targetCategory,
-            CollisionGroupKey = categoryMapped ? $"{targetCategory} {jobName}" : null,
+            CollisionGroupKey = categoryMapped ? $"{targetCategory}\0{jobName}" : null,
             MetaFileCount = metas.Count,
             TotalBytes = cost?.TotalBytes,
             NzbFileCount = cost?.NzbFileCount ?? 0,
@@ -274,7 +274,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             JobNameDiverges = !string.Equals(jobName, basename, StringComparison.Ordinal),
             AltmountCategory = altCategory,
             TargetCategory = targetCategory,
-            CollisionGroupKey = categoryMapped ? $"{targetCategory} {jobName}" : null,
+            CollisionGroupKey = categoryMapped ? $"{targetCategory}\0{jobName}" : null,
             MetaFileCount = 1,
             WorstFileStatus = v1.Meta.Status == AltmountFileStatus.Unspecified ? null : v1.Meta.Status.ToString(),
             Encryption = v1.Meta.Encryption == AltmountEncryption.None

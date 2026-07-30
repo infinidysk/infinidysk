@@ -196,7 +196,7 @@ public sealed class MigrationSubmission
     public string? NzoId { get; set; }
 
     /// <summary>
-    /// pending|submitting|submitted|processing|completed|history_cleared|failed|skipped|evicted.
+    /// pending|submitting|submitted|processing|completed|history_cleared|failed|evicted.
     /// New successful runs remain completed; history_cleared is retained for
     /// compatibility with older migration sessions. 'evicted' is terminal.
     /// </summary>

@@ -1,8 +1,9 @@
 namespace NzbWebDAV.UsenetMigration.Source;
 
 /// <summary>
-/// Matches Altmount's inline category sanitizer
-/// (internal/importer/processor.go:513-520, duplicated in queue_handlers.go).
+/// Matches Altmount's inline category sanitizer in
+/// <c>internal/importer/processor.go</c> / queue handlers (verified against
+/// javi11/altmount main during the migration wizard development).
 ///
 /// The entire transform: backslashes → forward slashes; trim leading/trailing
 /// slashes; if any path segment is "." or "..", blank the WHOLE category. No

@@ -12,6 +12,13 @@ public enum Verdict
 /// Machine-readable verdict reason codes. A release can carry multiple reasons;
 /// its verdict is the maximum severity across them. Human-readable detail is
 /// stored separately.
+///
+/// <para>
+/// Constraint: no reason code may be a substring of another. EF queries match
+/// <c>VerdictReasons</c> JSON by SQL substring, so e.g. <c>password</c> inside
+/// <c>filename_password_marker</c> would silently corrupt filters. A unit test
+/// enforces this.
+/// </para>
 /// </summary>
 public static class VerdictReason
 {
@@ -78,7 +85,7 @@ public static class VerdictReason
     public const string Encrypted = "encrypted";
 
     /// <summary>Archive password present.</summary>
-    public const string Password = "password";
+    public const string Password = "archive_password";
 
     /// <summary><c>JobName != SubmitFileName</c> — mount folder will not match the release name.</summary>
     public const string JobNameDiverges = "job_name_diverges";

@@ -8,10 +8,9 @@ namespace NzbWebDAV.UsenetMigration.Source;
 ///
 /// This reader handles the minimal block-style subset Altmount emits: a top-level
 /// <c>sabnzbd:</c> map containing a
-/// <c>categories:</c> sequence of simple scalar maps. It deliberately does NOT
-/// implement flow style, anchors, or block scalars — a config using those, or
-/// any parse ambiguity, surfaces as a thrown <see cref="AltmountConfigException"/>
-/// rather than a silently wrong category list. The category set is also
+/// <c>categories:</c> sequence of simple scalar maps. Flow-style
+/// <c>categories: […]</c> is rejected. Escaped quotes in scalars
+/// (<c>''</c> / <c>\"</c>) are unescaped. The category set is also
 /// cross-checked against the store tree during Scan, so a missed category still
 /// shows up as config drift.
 /// </summary>
@@ -59,7 +58,15 @@ public static class AltmountConfigReader
             if (trimmed.StartsWith("complete_dir:", StringComparison.Ordinal))
                 completeDir = ScalarValue(trimmed["complete_dir:".Length..]);
             else if (trimmed == "categories:" || trimmed.StartsWith("categories:", StringComparison.Ordinal))
+            {
+                var rest = trimmed.Length > "categories:".Length
+                    ? trimmed["categories:".Length..].TrimStart()
+                    : "";
+                if (rest.StartsWith('['))
+                    throw new AltmountConfigException(
+                        "Flow-style categories: [ … ] is not supported; use a block-style list.");
                 categories = ParseCategories(lines, i + 1, end, indent);
+            }
         }
 
         return new AltmountSabConfig { CompleteDir = completeDir, Categories = categories };
@@ -212,11 +219,28 @@ public static class AltmountConfigReader
         if (s[0] is '\'' or '"')
         {
             var quote = s[0];
-            var close = s.IndexOf(quote, 1);
-            if (close > 0)
-                return s.Substring(1, close - 1);
-            // Unterminated quote — fall through and return the remainder.
-            return s[1..];
+            var sb = new System.Text.StringBuilder(s.Length);
+            for (var i = 1; i < s.Length; i++)
+            {
+                var c = s[i];
+                if (quote == '\'' && c == '\'' && i + 1 < s.Length && s[i + 1] == '\'')
+                {
+                    sb.Append('\'');
+                    i++;
+                    continue;
+                }
+                if (quote == '"' && c == '\\' && i + 1 < s.Length)
+                {
+                    sb.Append(s[i + 1]);
+                    i++;
+                    continue;
+                }
+                if (c == quote)
+                    return sb.ToString();
+                sb.Append(c);
+            }
+            // Unterminated quote — return what we collected.
+            return sb.ToString();
         }
 
         // Unquoted: cut an inline comment introduced by " #".
@@ -227,4 +251,8 @@ public static class AltmountConfigReader
 }
 
 /// <summary>Raised when the Altmount config cannot be read or parsed.</summary>
-public sealed class AltmountConfigException(string message, Exception inner) : Exception(message, inner);
+public sealed class AltmountConfigException : Exception
+{
+    public AltmountConfigException(string message) : base(message) { }
+    public AltmountConfigException(string message, Exception inner) : base(message, inner) { }
+}

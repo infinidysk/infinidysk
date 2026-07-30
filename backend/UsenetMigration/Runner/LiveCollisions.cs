@@ -21,7 +21,7 @@ public static class LiveCollisions
     };
 
     /// <summary>The <c>(Category, FileName)</c> UNIQUE-key half, formatted for hashing.</summary>
-    public static string Key(string category, string fileName) => category + " " + fileName;
+    public static string Key(string category, string fileName) => category + "\0" + fileName;
 
     /// <summary>
     /// Snapshots live NzbDAV state for pass 3: the set of queue <c>(cat, fileName)</c>

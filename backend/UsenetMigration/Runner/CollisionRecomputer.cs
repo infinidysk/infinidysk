@@ -98,7 +98,7 @@ public sealed class CollisionRecomputer(UsenetMigrationStore store)
                 _ => "red",
             };
             r.VerdictReasons = JsonSerializer.Serialize(reasons);
-            r.CollisionGroupKey = string.IsNullOrEmpty(r.TargetCategory) ? null : $"{r.TargetCategory} {r.JobName}";
+            r.CollisionGroupKey = string.IsNullOrEmpty(r.TargetCategory) ? null : $"{r.TargetCategory}\0{r.JobName}";
 
             var shouldSubmit = r.Included && verdict != Verdict.Red &&
                                !reasons.Contains(VerdictReason.AlreadyMigrated);

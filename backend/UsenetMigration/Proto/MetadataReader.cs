@@ -116,12 +116,20 @@ public static class MetadataReader
 
     /// <summary>
     /// Reads only the <c>store_ref</c> from a <c>.meta</c> file, mirroring
-    /// Altmount's <c>readStoreRef</c> fast path. Returns "" for non-v3 files.
+    /// Altmount's <c>readStoreRef</c> fast path. Returns "" for non-v3 files and
+    /// for corrupt v3 payloads (aligned with upstream).
     /// </summary>
     public static string ReadStoreRef(ReadOnlySpan<byte> fileBytes)
     {
         if (!IsV3Meta(fileBytes)) return "";
-        return DecodeFileMetadata(fileBytes[MetaMagicV3.Length..], isV3: true).StoreRef;
+        try
+        {
+            return DecodeFileMetadata(fileBytes[MetaMagicV3.Length..], isV3: true).StoreRef;
+        }
+        catch (Exception)
+        {
+            return "";
+        }
     }
 
     /// <summary>

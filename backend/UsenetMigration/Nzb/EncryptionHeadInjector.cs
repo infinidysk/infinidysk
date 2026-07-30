@@ -5,8 +5,9 @@ using NzbWebDAV.UsenetMigration.Model;
 namespace NzbWebDAV.UsenetMigration.Nzb;
 
 /// <summary>
-/// Matches Altmount's <c>injectEncryptionMeta</c>
-/// (internal/api/file_handlers.go:349). <c>BuildNZB</c> emits no
+/// Matches Altmount's <c>injectEncryptionMeta</c> in
+/// <c>internal/api/file_handlers.go</c> (verified against javi11/altmount main
+/// during the migration wizard development). <c>BuildNZB</c> emits no
 /// <c>&lt;head&gt;</c>, so this inserts cipher/password/salt <c>&lt;meta&gt;</c>
 /// tags after the opening <c>&lt;nzb&gt;</c> tag when the release is encrypted or
 /// carries a password.

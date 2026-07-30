@@ -10,7 +10,6 @@ public sealed class MigrationHistoryCleanupSummary
     public int Removed { get; init; }
     public int AlreadyAbsent { get; init; }
     public int Skipped { get; init; }
-    public int Failed { get; init; }
 }
 
 /// <summary>
@@ -87,8 +86,8 @@ public sealed class MigrationHistoryCleaner(UsenetMigrationStore store)
         };
         Log.Information(
             "Usenet migration history cleanup: Eligible={Eligible}, Removed={Removed}, " +
-            "AlreadyAbsent={AlreadyAbsent}, Skipped={Skipped}, Failed={Failed}",
-            summary.Eligible, summary.Removed, summary.AlreadyAbsent, summary.Skipped, summary.Failed);
+            "AlreadyAbsent={AlreadyAbsent}, Skipped={Skipped}",
+            summary.Eligible, summary.Removed, summary.AlreadyAbsent, summary.Skipped);
         return summary;
     }
 }

@@ -5,12 +5,14 @@ namespace NzbWebDAV.UsenetMigration.Source;
 /// NZB basename. Operates on the <c>store_ref</c> read from the <c>.meta</c>,
 /// which is authoritative; the path is never reconstructed from convention.
 ///
-/// Store path convention (internal/importer/processor.go:522-537):
+/// Store path convention (verified against javi11/altmount
+/// <c>internal/importer/processor.go</c> around the <c>{configDir}/.nzbs/…</c>
+/// layout; see AltMount main as of the migration wizard development):
 /// <code>{configDir}/.nzbs/{sanitizedCategory}/{queueID}-{base}.nzbz</code>
 /// with two wrinkles this parser must honour:
 /// <list type="bullet">
-/// <item>The <c>{queueID}-</c> prefix is added ONLY when queueID &gt; 0
-///   (processor.go:534), so it is frequently absent.</item>
+/// <item>The <c>{queueID}-</c> prefix is added ONLY when queueID &gt; 0,
+///   so it is frequently absent.</item>
 /// <item>A category that produced a path outside configDir falls back to bare
 ///   <c>.nzbs/{base}.nzbz</c> — an uncategorised store.</item>
 /// </list>
