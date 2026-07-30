@@ -38,6 +38,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
     internal ISymlinkOps Ops { get; set; } = RealSymlinkOps.Instance;
     internal Func<string, DateTime> GetLastWriteTimeUtc { get; set; } = File.GetLastWriteTimeUtc;
     internal Func<string, long> GetFileLength { get; set; } = path => new FileInfo(path).Length;
+    internal Func<CancellationToken, Task>? BeforeFilesystemWorkForTests { get; set; }
 
     public async Task<IReadOnlyList<SymlinkBackupInfo>> ListAsync(CancellationToken ct = default)
     {
@@ -101,6 +102,9 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
             planRows = await planCtx.SymlinkRewrites.AsNoTracking().ToListAsync(ct)
                 .ConfigureAwait(false);
         }
+
+        if (BeforeFilesystemWorkForTests is { } beforeFilesystemWork)
+            await beforeFilesystemWork(ct).ConfigureAwait(false);
 
         var issues = new List<SymlinkRestoreIssue>();
         var seenPaths = new HashSet<string>(PathComparer);

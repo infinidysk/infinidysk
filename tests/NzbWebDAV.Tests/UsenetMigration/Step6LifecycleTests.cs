@@ -24,19 +24,13 @@ namespace NzbWebDAV.Tests.UsenetMigration;
 [Collection(nameof(ConfigPathCollection))]
 public sealed class Step6LifecycleTests
 {
-    private sealed class BlockingSymlinkOps(string path, string currentTarget) : ISymlinkOps
+    private sealed class TestSymlinkOps(string path, string currentTarget) : ISymlinkOps
     {
-        internal ManualResetEventSlim Entered { get; } = new(false);
-        internal ManualResetEventSlim Release { get; } = new(false);
-
         public string? ReadLink(string libraryRoot, string candidatePath) =>
             candidatePath == path ? currentTarget : null;
 
         public void CreateOrReplaceSymlink(string libraryRoot, string candidatePath, string target)
         {
-            Entered.Set();
-            if (!Release.Wait(TimeSpan.FromSeconds(30)))
-                throw new TimeoutException("BlockingSymlinkOps was not released within 30s.");
             currentTarget = target;
         }
     }
@@ -64,14 +58,23 @@ public sealed class Step6LifecycleTests
         using var queueManager = CreateQueueManager();
         var runner = new UsenetMigrationRunner(
             h.Store, queueManager, new ConfigManager(), new WebsocketManager());
-        var ops = new BlockingSymlinkOps(link, replacement);
+        var ops = new TestSymlinkOps(link, replacement);
         runner.SymlinkRestoreServiceForTests.Ops = ops;
+        var filesystemWorkEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFilesystemWork = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.SymlinkRestoreServiceForTests.BeforeFilesystemWorkForTests = async ct =>
+        {
+            filesystemWorkEntered.TrySetResult();
+            await releaseFilesystemWork.Task.WaitAsync(ct);
+        };
         using var disconnectedClient = new CancellationTokenSource();
 
         try
         {
             var restore = runner.RestoreSymlinksAsync(archiveName, disconnectedClient.Token);
-            Assert.True(await Task.Run(() => ops.Entered.Wait(TimeSpan.FromSeconds(5))));
+            await filesystemWorkEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.Equal("restoring", (await h.Store.GetSessionAsync()).Status);
             var plan = await h.Store.StartSymlinkPlanAsync(root.FullName, backups.FullName);
@@ -80,7 +83,7 @@ public sealed class Step6LifecycleTests
             Assert.Equal(MigrationSessionTransitionOutcome.Rejected, apply.Outcome);
 
             disconnectedClient.Cancel();
-            ops.Release.Set();
+            releaseFilesystemWork.TrySetResult();
 
             var summary = await restore.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(1, summary.Restored);
@@ -88,7 +91,7 @@ public sealed class Step6LifecycleTests
         }
         finally
         {
-            ops.Release.Set();
+            releaseFilesystemWork.TrySetResult();
             root.Delete(recursive: true);
             backups.Delete(recursive: true);
         }
