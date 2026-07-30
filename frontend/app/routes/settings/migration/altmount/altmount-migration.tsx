@@ -24,6 +24,7 @@ import {
     canEditReleaseSelection,
     canResetMigration,
     canStartScanMigration,
+    hasScanData,
     isMigrationWorkActive,
     loadTableLatest,
     useAltmountMigration,
@@ -139,10 +140,23 @@ export function AltmountMigration() {
                     return (
                         <li
                             key={label}
-                            className={`step ${reachable ? "step-primary" : ""} ${reachable ? "cursor-pointer" : ""}`}
-                            onClick={() => { if (reachable) setViewStep(idx); }}
+                            className={`step ${reachable ? "step-primary" : ""}`}
                         >
-                            {label}
+                            <button
+                                type="button"
+                                className={`bg-transparent ${reachable ? "cursor-pointer" : "cursor-default opacity-60"}`}
+                                disabled={!reachable}
+                                onClick={() => { if (reachable) setViewStep(idx); }}
+                                onKeyDown={(event) => {
+                                    if (!reachable) return;
+                                    if (event.key === "Enter" || event.key === " ") {
+                                        event.preventDefault();
+                                        setViewStep(idx);
+                                    }
+                                }}
+                            >
+                                {label}
+                            </button>
                         </li>
                     );
                 })}
@@ -352,8 +366,7 @@ function ScanStep({ m, onReview }: { m: Hook; onReview: () => void }) {
     const scanCancelling = status === "scan_cancelling";
     const conflictingWork = isMigrationWorkActive(status) && !scanning && !scanCancelling;
     const canStart = canStartScanMigration(status);
-    const scanned = status === "scanned" || status === "running" || status === "paused"
-        || status === "cancelling" || status === "complete";
+    const scanned = hasScanData(status);
 
     return (
         <Section icon="search" title="Scan the library" subtitle="Read every release, triage it, and detect collisions. No network traffic yet.">
@@ -701,6 +714,7 @@ function RunStep({ m, onLinks }: { m: Hook; onLinks: () => void }) {
     const cancelling = status === "cancelling";
     const runFinished = cancelled || canLinkStep(status);
     const submissionIssues = m.status?.submissionIssues ?? [];
+    const [confirmCancel, setConfirmCancel] = useState(false);
 
     return (
         <Section
@@ -746,7 +760,7 @@ function RunStep({ m, onLinks }: { m: Hook; onLinks: () => void }) {
                     </Button>
                 )}
                 {(status === "running" || status === "paused") && (
-                    <Button variant="outline" disabled={m.busy === "run"} onClick={() => void m.cancelRun()}>
+                    <Button variant="outline" disabled={m.busy === "run"} onClick={() => setConfirmCancel(true)}>
                         <Icon name="stop" className="!text-[18px]" /> Cancel
                     </Button>
                 )}
@@ -765,6 +779,19 @@ function RunStep({ m, onLinks }: { m: Hook; onLinks: () => void }) {
                 </div>
             )}
             {complete && <HistoryCleanupAction m={m} />}
+
+            <ConfirmModal
+                show={confirmCancel}
+                title="Cancel migration"
+                message={<>Cancelling requires a new scan before another run. Cancel the migration?</>}
+                cancelText="Keep running"
+                confirmText="Cancel migration"
+                onCancel={() => setConfirmCancel(false)}
+                onConfirm={() => {
+                    setConfirmCancel(false);
+                    void m.cancelRun();
+                }}
+            />
         </Section>
     );
 }
@@ -1392,10 +1419,10 @@ function SummaryTiles({ summary }: { summary: SummaryResponse }) {
 function StatTile({ label, value, tone, help }: { label: string; value: number | string; tone?: "success" | "warning" | "error"; help?: string }) {
     const toneClass = tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : tone === "error" ? "text-error" : "text-base-content";
     const tile = (
-        <div className={`rounded-lg border border-base-content/10 bg-base-100 p-3 ${help ? "cursor-help" : ""}`}>
-            <div className={`font-mono text-xl font-semibold ${toneClass}`}>{value}</div>
-            <div className="text-[11px] uppercase tracking-wide text-base-content/50">{label}</div>
-        </div>
+        <span className={`block rounded-lg border border-base-content/10 bg-base-100 p-3 ${help ? "cursor-help" : ""}`}>
+            <span className={`block font-mono text-xl font-semibold ${toneClass}`}>{value}</span>
+            <span className="block text-[11px] uppercase tracking-wide text-base-content/50">{label}</span>
+        </span>
     );
     return help ? <Tooltip content={help}>{tile}</Tooltip> : tile;
 }

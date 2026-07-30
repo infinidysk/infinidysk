@@ -3,7 +3,7 @@ import { Alert } from "~/components/ui/feedback";
 import { Checkbox } from "~/components/ui/form";
 import { Modal } from "~/components/ui/modal";
 import { WordWrap } from "../word-wrap/word-wrap";
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useId, useState, type ReactNode } from "react";
 
 export type ConfirmModalProps = {
     show: boolean,
@@ -18,8 +18,13 @@ export type ConfirmModalProps = {
     onConfirm: (isCheckboxChecked?: boolean) => void,
 }
 
+export function confirmDisabled(requireCheckbox: boolean | undefined, isChecked: boolean): boolean {
+    return requireCheckbox === true && !isChecked;
+}
+
 export function ConfirmModal(props: ConfirmModalProps) {
     const [isCheckboxChecked, setIsCheckboxChecked] = useState(false);
+    const checkboxId = useId();
     const { onCancel: cancel, onConfirm: confirm } = props;
 
     const onConfirm = useCallback((isChecked?: boolean) => {
@@ -43,7 +48,7 @@ export function ConfirmModal(props: ConfirmModalProps) {
                 </Button>
                 <Button
                     variant="danger"
-                    disabled={props.requireCheckbox === true && !isCheckboxChecked}
+                    disabled={confirmDisabled(props.requireCheckbox, isCheckboxChecked)}
                     onClick={() => onConfirm(isCheckboxChecked)}
                 >
                     {props.confirmText || "Confirm Removal"}
@@ -55,7 +60,7 @@ export function ConfirmModal(props: ConfirmModalProps) {
                 {props.checkboxMessage && (
                     <label className="flex items-center gap-2 text-sm text-base-content/80">
                         <Checkbox
-                            id="modal-checkbox"
+                            id={checkboxId}
                             checked={isCheckboxChecked}
                             onChange={(event) => setIsCheckboxChecked(event.target.checked)}
                         />

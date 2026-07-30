@@ -6,6 +6,7 @@ import {
     canEditReleaseSelection,
     canResetMigration,
     canStartScanMigration,
+    hasScanData,
     isMigrationWorkActive,
     loadTableLatest,
     loadTableRetainingLastGood,
@@ -132,6 +133,20 @@ describe("review mutation state guards", () => {
         expect(canEditReleaseSelection("scanned")).toBe(true);
         statuses.forEach((status) => expect(canEditReleaseSelection(status)).toBe(false));
     });
+});
+
+describe("hasScanData", () => {
+    it.each<SessionStatus>([
+        "scanned", "running", "paused", "cancelling", "complete", "cancelled",
+        "linking", "linked", "applying", "restoring",
+    ])("reports scan data available for status %s", (status) => {
+        expect(hasScanData(status)).toBe(true);
+    });
+
+    it.each<SessionStatus>(["idle", "connected", "mapped", "scanning", "scan_cancelling"])(
+        "reports no scan data for status %s",
+        (status) => expect(hasScanData(status)).toBe(false),
+    );
 });
 
 describe("runUiMutation", () => {

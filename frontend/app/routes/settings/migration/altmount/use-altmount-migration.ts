@@ -48,6 +48,20 @@ export function canEditReleaseSelection(status: SessionStatus | undefined): bool
     return status === "scanned";
 }
 
+/** True once a scan has produced summary/review data worth showing. */
+export function hasScanData(status: SessionStatus | undefined): boolean {
+    return status === "scanned"
+        || status === "running"
+        || status === "paused"
+        || status === "cancelling"
+        || status === "complete"
+        || status === "cancelled"
+        || status === "linking"
+        || status === "linked"
+        || status === "applying"
+        || status === "restoring";
+}
+
 export type CategoryMapRow = {
     altmountCategory: string;
     altmountDir?: string | null;
@@ -357,11 +371,26 @@ export function useAltmountMigration() {
 
     // Poll while background work is in progress (scan, run, or Step 6 link/apply).
     const sessionStatus = status?.sessionStatus;
+    const previousSessionStatus = useRef<SessionStatus | undefined>(undefined);
     useEffect(() => {
         if (!isMigrationWorkActive(sessionStatus)) return;
         const interval = window.setInterval(() => void refresh(), 2500);
         return () => window.clearInterval(interval);
     }, [sessionStatus, refresh]);
+
+    // Refresh discovered categories once a scan finishes (or is cancelled).
+    useEffect(() => {
+        const previous = previousSessionStatus.current;
+        previousSessionStatus.current = sessionStatus;
+        if (
+            (previous === "scanning" || previous === "scan_cancelling")
+            && sessionStatus !== undefined
+            && sessionStatus !== "scanning"
+            && sessionStatus !== "scan_cancelling"
+        ) {
+            void loadCategories();
+        }
+    }, [sessionStatus, loadCategories]);
 
     const withBusy = useCallback(async (key: string, fn: () => Promise<void>) => {
         setBusy(key);
