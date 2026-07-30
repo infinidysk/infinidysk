@@ -85,25 +85,23 @@ public class ConnectionPoolStats
         // so events arriving after the snapshot are never lost.
         Volatile.Write(ref _flushScheduled, 0);
 
-        List<string> messages;
         lock (_lock)
         {
-            // Re-check under the lock so a concurrent Retire()/Deactivate() cannot
-            // let a stale generation publish after its replacement is already live.
+            // Publish while holding the same lock used by Deactivate(). SendMessage is
+            // synchronous, so once Deactivate returns no stale flush can still win the
+            // last-message race against the replacement generation.
             if (_active == 0)
                 return;
 
-            messages = new List<string>();
             for (var i = 0; i < _dirty.Length; i++)
             {
                 if (!_dirty[i]) continue;
                 _dirty[i] = false;
-                messages.Add($"{i}|{_latestLive[i]}|{_latestIdle[i]}|{_totalLive}|{_max}|{_totalIdle}");
+                var message =
+                    $"{i}|{_latestLive[i]}|{_latestIdle[i]}|{_totalLive}|{_max}|{_totalIdle}";
+                _ = _websocketManager.SendMessage(WebsocketTopic.UsenetConnections, message);
             }
         }
-
-        foreach (var message in messages)
-            _ = _websocketManager.SendMessage(WebsocketTopic.UsenetConnections, message);
     }
 
     /// <summary>

@@ -8,6 +8,7 @@ namespace NzbWebDAV.Clients.Usenet;
 
 public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpConnectionStats
 {
+    private const int MaxRetiringClients = 4;
     private static readonly TimeSpan DrainPollInterval = TimeSpan.FromMilliseconds(250);
 
     private INntpClient _usenetClient = usenetClient;
@@ -20,6 +21,10 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
         return client;
     }
     private readonly ConcurrentDictionary<INntpClient, byte> _retiringClients = new();
+    // Weak entries preserve retirement order for the cap without retaining every
+    // successfully drained client for the lifetime of the wrapper.
+    private readonly ConcurrentQueue<WeakReference<INntpClient>> _retirementOrder = new();
+    private readonly Lock _retirementLock = new();
 
     public int InFlightConnections =>
         _usenetClient is INntpConnectionStats stats ? stats.InFlightConnections : 0;
@@ -135,11 +140,45 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
 
     private void EnqueueForRetirement(INntpClient old, bool startDrain = true)
     {
-        if (!_retiringClients.TryAdd(old, 0))
-            return;
+        lock (_retirementLock)
+        {
+            if (!_retiringClients.TryAdd(old, 0))
+                return;
+
+            _retirementOrder.Enqueue(new WeakReference<INntpClient>(old));
+            TrimExcessRetiringClients();
+        }
 
         if (startDrain)
             _ = Task.Run(() => DrainRetiringClientAsync(old, CancellationToken.None));
+    }
+
+    private void TrimExcessRetiringClients()
+    {
+        while (_retirementOrder.TryPeek(out var oldestReference))
+        {
+            // Completed drains remain in the ordering queue. Remove stale entries eagerly
+            // so routine sequential saves do not accumulate ordering metadata.
+            if (!oldestReference.TryGetTarget(out var oldest)
+                || !_retiringClients.ContainsKey(oldest))
+            {
+                _retirementOrder.TryDequeue(out _);
+                continue;
+            }
+
+            if (_retiringClients.Count <= MaxRetiringClients)
+                break;
+
+            _retirementOrder.TryDequeue(out _);
+            if (!_retiringClients.TryRemove(oldest, out _))
+                continue;
+
+            Log.Warning(
+                "Force-disposing the oldest retired NNTP client because more than " +
+                "{MaxRetiringClients} client generations are still draining.",
+                MaxRetiringClients);
+            TryDispose(oldest);
+        }
     }
 
     private async Task DrainRetiringClientAsync(

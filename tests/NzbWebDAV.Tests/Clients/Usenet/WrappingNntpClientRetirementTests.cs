@@ -50,6 +50,30 @@ public class WrappingNntpClientRetirementTests
     }
 
     [Fact]
+    public async Task ReplaceUnderlyingClient_BoundsStackedRetiringGenerations()
+    {
+        var oldest = new CountingDisposableClient { InFlightConnections = 1 };
+        var wrapper = new TestWrappingClient(oldest);
+        var replacements = Enumerable.Range(0, 5)
+            .Select(_ => new CountingDisposableClient { InFlightConnections = 1 })
+            .ToArray();
+
+        var drains = replacements
+            .Select(replacement => wrapper.ReplaceUnderlyingClientForTestsAsync(replacement))
+            .ToArray();
+
+        Assert.True(oldest.Disposed);
+        Assert.All(replacements, replacement => Assert.False(replacement.Disposed));
+
+        foreach (var replacement in replacements)
+            replacement.InFlightConnections = 0;
+        await Task.WhenAll(drains).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.All(replacements[..^1], replacement => Assert.True(replacement.Disposed));
+        Assert.False(replacements[^1].Disposed);
+    }
+
+    [Fact]
     public async Task ReplaceUnderlyingClient_DeactivatesRetiredConnectionStatsImmediately()
     {
         var connectionStats = new ConnectionPoolStats(

@@ -328,6 +328,11 @@ public class MultiConnectionNntpClient(
             catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e))
             {
                 deferredCallback.Discard();
+                // Normally this branch is reached while waiting to acquire and the lock is
+                // null. Keep cleanup here for the concurrent-dispose edge where the command
+                // itself observes disposal after acquisition.
+                LogException(() => connectionLock?.Replace());
+                LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw CreateRetiredPoolException(e);
             }

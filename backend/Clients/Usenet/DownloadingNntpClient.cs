@@ -319,4 +319,12 @@ public class DownloadingNntpClient : WrappingNntpClient
         base.Dispose();
         GC.SuppressFinalize(this);
     }
+
+    internal override void Retire()
+    {
+        // Retired generations may remain alive while active BODY streams drain, but they
+        // must stop reacting to subsequent settings saves immediately.
+        _configManager.OnConfigChanged -= OnConfigChanged;
+        base.Retire();
+    }
 }
