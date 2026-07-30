@@ -49,6 +49,38 @@ public class StreamingTimeoutTests
     }
 
     [Fact]
+    public async Task DecodedBodiesAsync_DisposedPool_DoesNotRetryOrPenalizeProvider()
+    {
+        var breaker = new ProviderCircuitBreaker("retired-batch-pool");
+        var created = 0;
+        var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ =>
+            {
+                Interlocked.Increment(ref created);
+                return ValueTask.FromResult<INntpClient>(new HangingNntpClient());
+            });
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "retired-batch-pool");
+        using var heldConnection = await pool.GetConnectionLockAsync(SemaphorePriority.Low);
+
+        var callbacks = 0;
+        var request = client.DecodedBodiesAsync(
+            ["seg-a", "seg-b"],
+            _ => Interlocked.Increment(ref callbacks),
+            CancellationToken.None);
+        await Task.Delay(50);
+
+        await pool.DisposeAsync();
+
+        var exception = await Assert.ThrowsAsync<IOException>(() => request);
+        Assert.IsAssignableFrom<OperationCanceledException>(exception.InnerException);
+        Assert.Equal(1, created);
+        Assert.Equal(1, callbacks);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
     public async Task RunWithConnection_WithStreamingTimeout_FailsFastAndRetriesOnFreshConnection()
     {
         HangingNntpClient? hanging = null;

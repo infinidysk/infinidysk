@@ -253,7 +253,6 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             DisposeConnection(connection);
             Interlocked.Decrement(ref _live);
-            TriggerConnectionPoolChangedEvent();
             return;
         }
 
@@ -271,13 +270,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         if (Volatile.Read(ref _disposed) == 0)
         {
             _gate.Release();
+            TriggerConnectionPoolChangedEvent();
         }
-
-        TriggerConnectionPoolChangedEvent();
     }
 
     private void TriggerConnectionPoolChangedEvent()
     {
+        if (Volatile.Read(ref _disposed) == 1)
+            return;
+
         OnConnectionPoolChanged?.Invoke(this, new ConnectionPoolStats.ConnectionPoolChangedEventArgs(
             _live,
             _idleConnections.Count,
@@ -342,6 +343,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+        // Drop handlers before draining so late Return/Destroy from in-flight locks
+        // cannot overwrite the live generation's connection-count websocket updates.
+        OnConnectionPoolChanged = null;
 
         await _sweepCts.CancelAsync();
 

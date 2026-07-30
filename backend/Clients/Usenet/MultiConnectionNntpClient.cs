@@ -325,6 +325,12 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
+            catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e))
+            {
+                deferredCallback.Discard();
+                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
+                throw CreateRetiredPoolException(e);
+            }
             catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _))
             {
                 // Permanently missing / invalid segment ids are not connection failures.
@@ -420,18 +426,10 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e) when (
-                connectionPool.IsDisposed &&
-                e is ObjectDisposedException or OperationCanceledException)
+            catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e))
             {
-                Log.Warning(
-                    "Connection pool for provider {Provider} retired while a request was waiting. " +
-                    "Abandoning the stale request without retrying or penalizing provider health.",
-                    providerName);
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
-                throw new IOException(
-                    $"Connection pool for provider '{providerName}' retired while the request was waiting.",
-                    e);
+                throw CreateRetiredPoolException(e);
             }
             catch (Exception e)
             {
@@ -785,6 +783,24 @@ public class MultiConnectionNntpClient(
         latencyTracker?.Record(MetricsKey, LatencyPhase.PoolWait, workload, operation, elapsed);
         StreamTrace.TryConnectionAcquired(traceRange, elapsed, connectionLock.WasReused);
         return connectionLock;
+    }
+
+    /// <summary>
+    /// Pool disposal (client retirement / shutdown) is not a provider-health failure.
+    /// Stale requests must abandon without retrying the same dead pool or feeding the breaker.
+    /// </summary>
+    private bool IsRetiredPoolAcquisitionFailure(Exception e) =>
+        connectionPool.IsDisposed && e is ObjectDisposedException or OperationCanceledException;
+
+    private IOException CreateRetiredPoolException(Exception inner)
+    {
+        Log.Warning(
+            "Connection pool for provider {Provider} retired while a request was waiting. " +
+            "Abandoning the stale request without retrying or penalizing provider health.",
+            providerName);
+        return new IOException(
+            $"Connection pool for provider '{providerName}' retired while the request was waiting.",
+            inner);
     }
 
     private async Task<UsenetDecodedBodyResponse> RecordSuccessfulResponseAsync(

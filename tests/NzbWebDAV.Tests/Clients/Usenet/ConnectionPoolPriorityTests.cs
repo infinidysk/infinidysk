@@ -104,6 +104,24 @@ public class ConnectionPoolPriorityTests
         await DrainAsync([secondHigh]);
     }
 
+    [Fact]
+    public async Task Dispose_StopsPublishingConnectionCountEvents()
+    {
+        var events = 0;
+        await using var pool = CreatePool(maxConnections: 1);
+        pool.OnConnectionPoolChanged += (_, _) => Interlocked.Increment(ref events);
+
+        var borrowed = await pool.GetConnectionLockAsync(SemaphorePriority.Low);
+        var beforeDispose = Volatile.Read(ref events);
+        Assert.True(beforeDispose > 0);
+
+        await pool.DisposeAsync();
+        borrowed.Dispose();
+        await Task.Delay(50);
+
+        Assert.Equal(beforeDispose, Volatile.Read(ref events));
+    }
+
     /// <summary>
     /// Saturates a one-connection pool, queues waiters in both lanes, then releases
     /// <paramref name="releases"/> times and reports which lane won each admission.
