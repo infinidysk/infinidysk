@@ -26,6 +26,13 @@ public class HealthCheckService : BackgroundService
     private const int MaximumMissingSegmentIds = 100_000;
     private const int NoMatchConfirmationsRequired = 2;
 
+    // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
+    // a replacement loop (Arr keeps re-grabbing a release repair keeps rejecting, issue #732).
+    // After the limit is hit, further repairs at that path are deferred instead of deleting again.
+    internal const int RepairRecurrenceLimit = 3;
+    internal static readonly TimeSpan RepairRecurrenceWindow = TimeSpan.FromHours(6);
+    private const int MaximumTrackedRepairPaths = 10_000;
+
     // Files at or below this many segments are checked in full, before any aging taper.
     public const int SampleFloor = 8000;
 
@@ -43,6 +50,7 @@ public class HealthCheckService : BackgroundService
     private static readonly HashSet<string> _missingSegmentIds = [];
     private static readonly Queue<string> _missingSegmentOrder = [];
     private static readonly ConcurrentDictionary<Guid, int> _arrNoMatchConfirmations = new();
+    private static readonly ConcurrentDictionary<string, List<DateTimeOffset>> _recentRepairRemovalsByPath = new();
 
     public HealthCheckService
     (
@@ -571,6 +579,51 @@ public class HealthCheckService : BackgroundService
         confirmationCount >= NoMatchConfirmationsRequired;
 
     /// <summary>
+    /// True when the linked library path has already had <see cref="RepairRecurrenceLimit"/>
+    /// downloads removed by repair within <see cref="RepairRecurrenceWindow"/>. The path is the
+    /// stable identity across replacement cycles: each re-grab creates a new DavItem, but Arr
+    /// imports it to the same library location.
+    /// </summary>
+    internal static bool IsRepairRateLimited(string linkedPath, DateTimeOffset utcNow)
+    {
+        if (!_recentRepairRemovalsByPath.TryGetValue(linkedPath, out var removals))
+            return false;
+        lock (removals)
+        {
+            removals.RemoveAll(x => utcNow - x >= RepairRecurrenceWindow);
+            return removals.Count >= RepairRecurrenceLimit;
+        }
+    }
+
+    internal static void RecordRepairRemoval(string linkedPath, DateTimeOffset utcNow)
+    {
+        var removals = _recentRepairRemovalsByPath.GetOrAdd(linkedPath, _ => []);
+        lock (removals)
+        {
+            removals.RemoveAll(x => utcNow - x >= RepairRecurrenceWindow);
+            removals.Add(utcNow);
+        }
+
+        if (_recentRepairRemovalsByPath.Count <= MaximumTrackedRepairPaths)
+            return;
+
+        // Best-effort prune of fully stale paths; a concurrent add racing a TryRemove can at
+        // worst drop one timestamp, which only makes the rate limiter marginally more lenient.
+        foreach (var entry in _recentRepairRemovalsByPath)
+        {
+            bool stale;
+            lock (entry.Value)
+            {
+                entry.Value.RemoveAll(x => utcNow - x >= RepairRecurrenceWindow);
+                stale = entry.Value.Count == 0;
+            }
+
+            if (stale)
+                _recentRepairRemovalsByPath.TryRemove(entry.Key, out _);
+        }
+    }
+
+    /// <summary>
     /// Outcome of consulting Arr instances for a library-linked unhealthy item.
     /// </summary>
     public enum ArrLinkedRepairDecision
@@ -831,10 +884,38 @@ public class HealthCheckService : BackgroundService
             }
 
             var linkedPath = symlinkOrStrmPath!;
+            var linkType = linkedPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
+
+            // Rate-limit repairs per library path: when Arr keeps re-importing broken
+            // replacements to the same location, deleting again only fuels the loop.
+            if (IsRepairRateLimited(linkedPath, DateTimeOffset.UtcNow))
+            {
+                Log.Warning(
+                    "Health-check repair rate limit reached for {LinkedPath}: " +
+                    "{RemovalCount} downloads already removed within {WindowHours} hours. " +
+                    "Leaving the file in place to break the replacement loop.",
+                    linkedPath,
+                    RepairRecurrenceLimit,
+                    RepairRecurrenceWindow.TotalHours);
+                var deferUntil = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = deferUntil;
+                davItem.NextHealthCheck = deferUntil + TimeSpan.FromDays(1);
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    string.Join(" ", [
+                        "File failed health validation.",
+                        $"Repair already removed {RepairRecurrenceLimit} downloads for this library path",
+                        $"within the last {RepairRecurrenceWindow.TotalHours:0} hours,",
+                        "which indicates a replacement loop.",
+                        "Leaving the file in place rather than triggering another replacement."
+                    ]), ct).ConfigureAwait(false);
+                return;
+            }
 
             // if the unhealthy item is linked within the organized media-library
             // then we must find the corresponding arr instance and trigger a new search.
-            var linkType = linkedPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
             var arrDecision = await DecideArrLinkedRepairAsync(
                 _configManager.GetArrConfig().GetArrClients(),
                 linkedPath,
@@ -846,6 +927,7 @@ public class HealthCheckService : BackgroundService
 
             if (arrDecision == ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded)
             {
+                RecordRepairRemoval(linkedPath, DateTimeOffset.UtcNow);
                 DeletionAuditLog.Record(
                     "health-repair",
                     davItem,
