@@ -5,6 +5,8 @@ import { HealthStats } from "./components/health-stats/health-stats";
 import { useCallback, useEffect, useState } from "react";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
 import { Alert, Icon } from "~/components/ui";
+import type { HealthCheckQueueResponse } from "~/clients/backend-client.server";
+import { completeHealthCheck, type HealthQueueState } from "./health-queue-state";
 
 const topicNames = {
     healthItemStatus: 'hs',
@@ -38,8 +40,11 @@ export async function loader() {
 export default function Health({ loaderData }: Route.ComponentProps) {
     const { isEnabled } = loaderData;
     const [historyStats, setHistoryStats] = useState(loaderData.historyStats);
-    const [queueItems, setQueueItems] = useState(loaderData.queueItems);
-    const [uncheckedCount, setUncheckedCount] = useState(loaderData.uncheckedCount);
+    const [queueState, setQueueState] = useState<HealthQueueState>({
+        items: loaderData.queueItems,
+        uncheckedCount: loaderData.uncheckedCount,
+    });
+    const { items: queueItems, uncheckedCount } = queueState;
 
     // effects
     useEffect(() => {
@@ -47,19 +52,20 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         const refetchData = async () => {
             const response = await fetch('/api/get-health-check-queue?pageSize=30');
             if (response.ok) {
-                const healthCheckQueue = await response.json();
-                setQueueItems(healthCheckQueue.items);
-                setUncheckedCount(healthCheckQueue.uncheckedCount);
+                const healthCheckQueue: HealthCheckQueueResponse = await response.json();
+                setQueueState({
+                    items: healthCheckQueue.items,
+                    uncheckedCount: healthCheckQueue.uncheckedCount,
+                });
             }
         };
         refetchData();
-    }, [queueItems, setQueueItems])
+    }, [queueItems, setQueueState])
 
     // events
     const onHealthItemStatus = useCallback(async (message: string) => {
         const [davItemId, healthResult, repairAction] = message.split('|');
-        setQueueItems(x => x.filter(item => item.id !== davItemId));
-        setUncheckedCount(x => x - 1);
+        setQueueState(x => completeHealthCheck(x, davItemId));
         setHistoryStats(x => {
             const healthResultNum = Number(healthResult);
             const repairActionNum = Number(repairAction);
@@ -89,22 +95,25 @@ export default function Health({ loaderData }: Route.ComponentProps) {
             // if an update occurred, return the modified array
             return newStats;
         });
-    }, [setQueueItems, setHistoryStats]);
+    }, [setQueueState, setHistoryStats]);
 
     const onHealthItemProgress = useCallback((message: string) => {
         const [davItemId, progress] = message.split('|');
         if (progress === "done") return;
-        setQueueItems(queueItems => {
-            const index = queueItems.findIndex(x => x.id === davItemId);
-            if (index === -1) return queueItems;
-            return queueItems
-                .filter((_, i) => i >= index)
-                .map(item => item.id === davItemId
-                    ? { ...item, progress: Number(progress) }
-                    : item
-                )
+        setQueueState(queueState => {
+            const index = queueState.items.findIndex(x => x.id === davItemId);
+            if (index === -1) return queueState;
+            return {
+                ...queueState,
+                items: queueState.items
+                    .filter((_, i) => i >= index)
+                    .map(item => item.id === davItemId
+                        ? { ...item, progress: Number(progress) }
+                        : item
+                    ),
+            };
         });
-    }, [setQueueItems]);
+    }, [setQueueState]);
 
     // websocket
     const onWebsocketMessage = useCallback((topic: string, message: string) => {

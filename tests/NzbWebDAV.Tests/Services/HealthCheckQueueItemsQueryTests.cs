@@ -65,15 +65,16 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OrderedQuery_PlacesUrgentHistoryLinkedItemAheadOfScheduledItem()
+    public async Task OrderedQuery_PrioritizesUrgentThenUncheckedThenScheduledItems()
     {
         var historyId = Guid.NewGuid();
-        var scheduledAt = DateTimeOffset.UtcNow.AddHours(2);
+        var scheduledAt = DateTimeOffset.UtcNow.AddHours(-2);
 
         var historyLinkedUrgent = NewUsenetFile("urgent-first.mkv", historyId, DateTimeOffset.UnixEpoch);
-        var unlinkedScheduled = NewUsenetFile("scheduled-second.mkv", null, scheduledAt);
+        var uncheckedItem = NewUsenetFile("unchecked-second.mkv", null, nextHealthCheck: null);
+        var unlinkedScheduled = NewUsenetFile("scheduled-third.mkv", null, scheduledAt);
 
-        _context.Items.AddRange(historyLinkedUrgent, unlinkedScheduled);
+        _context.Items.AddRange(historyLinkedUrgent, uncheckedItem, unlinkedScheduled);
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
@@ -82,11 +83,14 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
             .ToListAsync();
 
         Assert.Equal(
-            [historyLinkedUrgent.Id, unlinkedScheduled.Id],
+            [historyLinkedUrgent.Id, uncheckedItem.Id, unlinkedScheduled.Id],
             orderedIds);
     }
 
-    private static DavItem NewUsenetFile(string name, Guid? historyItemId, DateTimeOffset nextHealthCheck)
+    private static DavItem NewUsenetFile(
+        string name,
+        Guid? historyItemId,
+        DateTimeOffset? nextHealthCheck)
     {
         var item = DavItem.New(
             Guid.NewGuid(),

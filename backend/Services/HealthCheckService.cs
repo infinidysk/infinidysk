@@ -161,10 +161,12 @@ public class HealthCheckService : BackgroundService
 
     public static IOrderedQueryable<DavItem> GetHealthCheckQueueItems(DavDatabaseClient dbClient)
     {
-        // Non-null NextHealthCheck first (includes urgent UnixEpoch from dynamic repair),
-        // then ascending NextHealthCheck, then newest releases.
+        // Playback-triggered urgent repairs stay first. Never-checked files come next so
+        // routine rechecks cannot starve the initial scan.
         return GetHealthCheckQueueItemsQuery(dbClient)
-            .OrderBy(x => x.NextHealthCheck == null ? 1 : 0)
+            .OrderBy(x =>
+                x.NextHealthCheck == DateTimeOffset.UnixEpoch ? 0 :
+                x.NextHealthCheck == null ? 1 : 2)
             .ThenBy(x => x.NextHealthCheck)
             .ThenByDescending(x => x.ReleaseDate)
             .ThenBy(x => x.Id);
