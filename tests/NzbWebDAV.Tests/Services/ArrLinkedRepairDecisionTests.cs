@@ -67,7 +67,7 @@ public class ArrLinkedRepairDecisionTests
     }
 
     [Fact]
-    public async Task ConfirmedOrphan_DeletesEvenIfAnotherInstanceUnreachable()
+    public async Task MediaItemMiss_WithAnotherInstanceUnreachable_DefersWithoutDelete()
     {
         var clients = new ArrClient[]
         {
@@ -87,7 +87,7 @@ public class ArrLinkedRepairDecisionTests
         var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeleteConfirmedOrphan, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, decision);
     }
 
     [Fact]
@@ -153,7 +153,7 @@ public class ArrLinkedRepairDecisionTests
     }
 
     [Fact]
-    public async Task NoMatchingRoot_DeletesAsOrphan()
+    public async Task NoMatchingRoot_DefersWithoutDelete()
     {
         var clients = new ArrClient[]
         {
@@ -169,7 +169,64 @@ public class ArrLinkedRepairDecisionTests
         var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeleteConfirmedOrphan, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
+    }
+
+    [Fact]
+    public async Task ExactMediaPathMiss_DefersWithoutDelete()
+    {
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.MediaItemNotFound)),
+        };
+
+        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
+    }
+
+    [Fact]
+    public async Task MediaItemMiss_ContinuesToAnotherOwningInstance()
+    {
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://first-radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.MediaItemNotFound)),
+            new ScriptedArrClient(
+                host: "http://second-radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) =>
+                    Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded)),
+        };
+
+        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, decision);
+    }
+
+    [Fact]
+    public async Task NoArrInstances_DefersWithoutDelete()
+    {
+        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+            [], LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
     }
 
     private sealed class ScriptedArrClient(

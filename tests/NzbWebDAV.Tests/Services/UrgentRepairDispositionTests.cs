@@ -57,4 +57,28 @@ public class UrgentRepairDispositionTests
             HealthCheckService.UrgentRepairDisposition.ForceDelete,
             HealthCheckService.GetUrgentRepairDisposition(3, 3, hasLibraryLink: true, autoRemoveUnlinkedOnly: false));
     }
+
+    [Fact]
+    public void MissingLibraryLink_WithoutForceDelete_Defers()
+    {
+        Assert.Equal(
+            HealthCheckService.LibraryLinkRepairDisposition.DeferMissingLink,
+            HealthCheckService.GetLibraryLinkRepairDisposition(null, forceDelete: false));
+    }
+
+    [Fact]
+    public void MissingLibraryLink_WithExplicitForceDelete_Deletes()
+    {
+        Assert.Equal(
+            HealthCheckService.LibraryLinkRepairDisposition.ForceDelete,
+            HealthCheckService.GetLibraryLinkRepairDisposition(null, forceDelete: true));
+    }
+
+    [Fact]
+    public void PresentLibraryLink_UsesArrRepair()
+    {
+        Assert.Equal(
+            HealthCheckService.LibraryLinkRepairDisposition.RepairLinked,
+            HealthCheckService.GetLibraryLinkRepairDisposition("/library/movie.mkv", forceDelete: false));
+    }
 }

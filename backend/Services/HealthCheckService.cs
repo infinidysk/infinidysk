@@ -510,7 +510,7 @@ public class HealthCheckService : BackgroundService
     /// </summary>
     public enum UrgentRepairDisposition
     {
-        /// <summary>Call Repair() with today's behavior (Arr search or orphan delete).</summary>
+        /// <summary>Call Repair() without forcing deletion.</summary>
         RepairNormally,
         /// <summary>Clear the urgent flag and wait for more streaming failures.</summary>
         Defer,
@@ -542,6 +542,28 @@ public class HealthCheckService : BackgroundService
     }
 
     /// <summary>
+    /// How repair should treat the result of the organized-library lookup.
+    /// </summary>
+    internal enum LibraryLinkRepairDisposition
+    {
+        RepairLinked,
+        DeferMissingLink,
+        ForceDelete,
+    }
+
+    internal static LibraryLinkRepairDisposition GetLibraryLinkRepairDisposition(
+        string? symlinkOrStrmPath,
+        bool forceDelete)
+    {
+        if (forceDelete)
+            return LibraryLinkRepairDisposition.ForceDelete;
+
+        return symlinkOrStrmPath == null
+            ? LibraryLinkRepairDisposition.DeferMissingLink
+            : LibraryLinkRepairDisposition.RepairLinked;
+    }
+
+    /// <summary>
     /// Outcome of consulting Arr instances for a library-linked unhealthy item.
     /// </summary>
     public enum ArrLinkedRepairDecision
@@ -549,8 +571,8 @@ public class HealthCheckService : BackgroundService
         /// <summary>An Arr instance owned the file and remove-and-blocklist succeeded.</summary>
         RemoveAndBlocklistSucceeded,
         /// <summary>
-        /// At least one Arr instance was unreachable/unusable and no instance confirmed the link
-        /// as an orphan — leave the DavItem in place.
+        /// At least one Arr instance was unreachable/unusable and no instance completed repair —
+        /// leave the DavItem in place.
         /// </summary>
         DeferUnreachable,
         /// <summary>
@@ -558,13 +580,13 @@ public class HealthCheckService : BackgroundService
         /// Leave it in place rather than searching again without blocklisting the failed release.
         /// </summary>
         DeferMissingDownloadHistory,
-        /// <summary>Ownership was fully determined: no Arr media-item; safe to delete.</summary>
-        DeleteConfirmedOrphan,
+        /// <summary>No reachable Arr instance confirmed ownership; leave the organized link in place.</summary>
+        DeferNoMatchingMediaItem,
     }
 
     /// <summary>
     /// Consults Arr clients to decide whether a library-linked unhealthy item should trigger
-    /// remove-and-blocklist, be deferred while an instance is down, or be deleted as a confirmed orphan.
+    /// remove-and-blocklist or be deferred when ownership cannot be confirmed safely.
     /// Extracted so the unreachable-instance fail-safe can be unit-tested without a full Repair harness.
     /// </summary>
     internal static async Task<ArrLinkedRepairDecision> DecideArrLinkedRepairAsync(
@@ -573,12 +595,10 @@ public class HealthCheckService : BackgroundService
         Guid? downloadId,
         CancellationToken ct)
     {
-        // Track whether we could fully determine ownership. If any instance was unreachable,
-        // errored, or returned an unusable root folder, a later "no owner found" is unreliable
-        // and we must not delete a link one of those instances may own. This is independent of
-        // ownerConfirmedOrphan below, which is a definite answer and deletes regardless.
+        // Track whether a no-owner result is authoritative enough to explain to the operator.
+        // Neither outcome permits deletion: a successful-but-incomplete library/Arr view is
+        // indistinguishable from a genuine orphan at this point.
         var anInstanceFailed = false;
-        var ownerConfirmedOrphan = false;
 
         foreach (var arrClient in arrClients)
         {
@@ -636,17 +656,15 @@ public class HealthCheckService : BackgroundService
             if (repairOutcome == ArrRepairOutcome.DownloadHistoryNotFound)
                 return ArrLinkedRepairDecision.DeferMissingDownloadHistory;
 
-            // The owning instance was reached and reports no corresponding media-item, so this
-            // link is a confirmed orphan. Record that ownership was determined and break; the
-            // delete below then proceeds even if some other instance was unreachable.
-            ownerConfirmedOrphan = true;
-            break;
+            // A root-folder match with no exact media-item match may be caused by path
+            // normalization, stale Arr data, or a transient partial response. Keep checking
+            // other configured instances, but never use this single miss to authorize deletion.
         }
 
-        if (anInstanceFailed && !ownerConfirmedOrphan)
+        if (anInstanceFailed)
             return ArrLinkedRepairDecision.DeferUnreachable;
 
-        return ArrLinkedRepairDecision.DeleteConfirmedOrphan;
+        return ArrLinkedRepairDecision.DeferNoMatchingMediaItem;
     }
 
     private static void LogArrRepairFailure(Exception exception, string messageTemplate, string host)
@@ -737,19 +755,19 @@ public class HealthCheckService : BackgroundService
                 return;
             }
 
-            // if the unhealthy item is unlinked/orphaned, or auto-remove force-delete is requested,
-            // then we can simply delete it (and the library link when present).
+            // A missing library link is not proof that the item is orphaned: a FUSE mount can
+            // temporarily present a successfully empty or partial view. Only an explicit
+            // force-delete policy may remove the item from this branch.
             var symlinkOrStrmPath = OrganizedLinksUtil.GetLink(davItem, _configManager);
-            if (symlinkOrStrmPath == null || forceDelete)
+            var linkDisposition = GetLibraryLinkRepairDisposition(symlinkOrStrmPath, forceDelete);
+            if (linkDisposition == LibraryLinkRepairDisposition.ForceDelete)
             {
-                if (forceDelete && symlinkOrStrmPath != null)
+                if (symlinkOrStrmPath != null)
                     await Task.Run(() => File.Delete(symlinkOrStrmPath)).ConfigureAwait(false);
 
-                var auditReason = forceDelete
-                    ? streamingFailureCount is > 0
-                        ? $"auto-removed after repeated streaming failures (count={streamingFailureCount})"
-                        : "auto-removed after repeated streaming failures"
-                    : "health validation failed; orphaned (no library symlink/strm)";
+                var auditReason = streamingFailureCount is > 0
+                    ? $"auto-removed after repeated streaming failures (count={streamingFailureCount})"
+                    : "auto-removed after repeated streaming failures";
                 DeletionAuditLog.Record("health-repair", davItem, auditReason);
 
                 dbClient.Ctx.Items.Remove(davItem);
@@ -759,7 +777,7 @@ public class HealthCheckService : BackgroundService
                     ? $" Streaming failure count: {streamingFailureCount}."
                     : "";
                 string deleteMessage;
-                if (forceDelete && symlinkOrStrmPath != null)
+                if (symlinkOrStrmPath != null)
                 {
                     var forceDeleteLinkType = symlinkOrStrmPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
                     deleteMessage = string.Join(" ", [
@@ -768,19 +786,11 @@ public class HealthCheckService : BackgroundService
                         $"Deleted the webdav-file and {forceDeleteLinkType}."
                     ]);
                 }
-                else if (forceDelete)
+                else
                 {
                     deleteMessage = string.Join(" ", [
                         "File failed during streaming.",
                         $"Auto-removed after repeated streaming failures.{failureNote}",
-                        "Deleted file."
-                    ]);
-                }
-                else
-                {
-                    deleteMessage = string.Join(" ", [
-                        "File failed health validation.",
-                        "Could not find corresponding symlink or strm-file within Library Dir.",
                         "Deleted file."
                     ]);
                 }
@@ -793,12 +803,32 @@ public class HealthCheckService : BackgroundService
                 return;
             }
 
+            if (linkDisposition == LibraryLinkRepairDisposition.DeferMissingLink)
+            {
+                var utcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = utcNow;
+                davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    string.Join(" ", [
+                        "File failed health validation.",
+                        "Could not find a corresponding symlink or strm-file within Library Dir.",
+                        "The library scan may be incomplete, so the webdav-file was left in place.",
+                        "Use Remove Orphaned Files for deliberate unlinked-item cleanup."
+                    ]), ct).ConfigureAwait(false);
+                return;
+            }
+
+            var linkedPath = symlinkOrStrmPath!;
+
             // if the unhealthy item is linked within the organized media-library
             // then we must find the corresponding arr instance and trigger a new search.
-            var linkType = symlinkOrStrmPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
+            var linkType = linkedPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
             var arrDecision = await DecideArrLinkedRepairAsync(
                 _configManager.GetArrConfig().GetArrClients(),
-                symlinkOrStrmPath,
+                linkedPath,
                 davItem.HistoryItemId ?? davItem.NzbBlobId,
                 ct).ConfigureAwait(false);
 
@@ -862,24 +892,21 @@ public class HealthCheckService : BackgroundService
                 return;
             }
 
-            // if we could not find a corresponding arr instance
-            // then we can delete both the item and the link-file.
-            await Task.Run(() => File.Delete(symlinkOrStrmPath)).ConfigureAwait(false);
-            DeletionAuditLog.Record(
-                "health-repair",
-                davItem,
-                "health validation failed; library link present but no Arr media-item (confirmed orphan)");
-            dbClient.Ctx.Items.Remove(davItem);
-            _failureTracker.ClearFailure(davItem.Id);
+            // A reachable Arr returning no exact media-item match still does not prove that the
+            // organized link is orphaned. Keep both records and let the guarded maintenance task
+            // handle deliberate orphan cleanup.
+            var noMatchUtcNow = DateTimeOffset.UtcNow;
+            davItem.LastHealthCheck = noMatchUtcNow;
+            davItem.NextHealthCheck = noMatchUtcNow + TimeSpan.FromDays(1);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Unhealthy,
-                HealthCheckResult.RepairAction.Deleted,
+                HealthCheckResult.RepairAction.ActionNeeded,
                 string.Join(" ", [
                     "File failed health validation.",
                     $"Corresponding {linkType} found within Library Dir.",
-                    "Could not find corresponding Radarr/Sonarr media-item to trigger a new search.",
-                    $"Deleted the webdav-file and {linkType}."
+                    "No configured Radarr/Sonarr instance confirmed a matching media-item.",
+                    $"Leaving the webdav-file and {linkType} in place rather than deleting them."
                 ]), ct).ConfigureAwait(false);
         }
         catch (Exception e)
