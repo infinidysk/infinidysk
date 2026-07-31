@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useRef } from "react";
 import { Form, useNavigate } from "react-router";
 import type { RequiredTopNavProps } from "../page-layout/page-layout";
 import { LiveUsenetConnections } from "../live-usenet-connections/live-usenet-connections";
@@ -24,11 +24,32 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
     hasUsenetProviders,
   } = props;
   const navigate = useNavigate();
+  const menusRef = useRef<HTMLDivElement>(null);
   const displayVersion = version || "unknown";
   const hasUpdate = Boolean(updateAvailable);
   const channelLabel = isComparableVersion(version) ? "Stable" : "Dev";
   const showUserMenu = !isFrontendAuthDisabled && Boolean(username);
   const initial = username?.trim().charAt(0).toUpperCase() || "?";
+
+  useEffect(() => {
+    function closeOpenMenusOnOutsidePointer(event: PointerEvent) {
+      const root = menusRef.current;
+      if (!root) return;
+
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+
+      for (const menu of root.querySelectorAll<HTMLDetailsElement>("details.dropdown")) {
+        if (!menu.open) continue;
+        if (!menu.contains(target)) {
+          menu.open = false;
+        }
+      }
+    }
+
+    document.addEventListener("pointerdown", closeOpenMenusOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOpenMenusOnOutsidePointer);
+  }, []);
 
   return (
     <>
@@ -51,7 +72,10 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
         </button>
       </div>
 
-      <div className="navbar-end !w-auto ml-auto min-w-0 items-center gap-2 px-2 md:px-4">
+      <div
+        ref={menusRef}
+        className="navbar-end !w-auto ml-auto min-w-0 items-center gap-2 px-2 md:px-4"
+      >
         <LiveUsenetConnections hasUsenetProviders={!!hasUsenetProviders} />
         <details className="dropdown dropdown-end" name="top-nav">
           <summary
