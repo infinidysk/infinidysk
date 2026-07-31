@@ -53,7 +53,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
 
       <div className="navbar-end !w-auto ml-auto min-w-0 items-center gap-2 px-2 md:px-4">
         <LiveUsenetConnections hasUsenetProviders={!!hasUsenetProviders} />
-        <details className="dropdown dropdown-end">
+        <details className="dropdown dropdown-end" name="top-nav">
           <summary
             className={
               hasUpdate
@@ -148,7 +148,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
             <Form method="post" action="/logout" id="top-nav-logout" className="hidden">
               <input name="confirm" value="true" type="hidden" />
             </Form>
-            <details className="dropdown dropdown-end">
+            <details className="dropdown dropdown-end" name="top-nav">
               <summary
                 className="btn btn-ghost btn-circle btn-sm list-none"
                 aria-label="User menu"
