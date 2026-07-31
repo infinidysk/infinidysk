@@ -7,7 +7,7 @@ import type { IncomingMessage } from "http";
 
 export const IS_FRONTEND_AUTH_DISABLED = process.env.DISABLE_FRONTEND_AUTH === 'true';
 
-type User = {
+export type User = {
   username: string;
 };
 
@@ -76,13 +76,21 @@ export async function isAuthenticated(request: Request | IncomingMessage): Promi
   if (IS_FRONTEND_AUTH_DISABLED) return true;
 
   // Otherwise, check session storage
+  return (await getSessionUser(request)) !== null;
+}
+
+export async function getSessionUser(request: Request | IncomingMessage): Promise<User | null> {
+  if (IS_FRONTEND_AUTH_DISABLED) return null;
+
   const cookieHeader = request instanceof Request
     ? request.headers.get("cookie")
     : request.headers.cookie;
-  if (!cookieHeader) return false;
+  if (!cookieHeader) return null;
+
   const session = await sessionStorage.getSession(cookieHeader);
-  const user = session.get("user");
-  return !!user;
+  const user = session.get("user") as User | undefined;
+  if (!user?.username) return null;
+  return { username: user.username };
 }
 
 export async function login(request: Request): Promise<ResponseInit> {

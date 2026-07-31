@@ -13,7 +13,7 @@ import {
 
 import "./app.css";
 import type { Route } from "./+types/root";
-import { IS_FRONTEND_AUTH_DISABLED } from "~/auth/authentication.server";
+import { getSessionUser, IS_FRONTEND_AUTH_DISABLED } from "~/auth/authentication.server";
 import { TopNavigation } from "./routes/_index/components/top-navigation/top-navigation";
 import { LeftNavigation } from "./routes/_index/components/left-navigation/left-navigation";
 import { PageLayout } from "./routes/_index/components/page-layout/page-layout";
@@ -38,12 +38,14 @@ export async function loader({ request }: Route.LoaderArgs) {
   ]);
 
   const version = await getAppVersion();
+  const sessionUser = await getSessionUser(request);
 
   return {
     useLayout: true,
     version,
     updateAvailable: await checkForUpdate(version),
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
+    username: sessionUser?.username ?? null,
     hasUsenetProviders: hasConfiguredUsenetProviders(
       config.find(item => item.configName === "usenet.providers")?.configValue
     ),
@@ -122,6 +124,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
     version,
     updateAvailable,
     isFrontendAuthDisabled,
+    username,
     hasUsenetProviders,
     isWatchdogEnabled,
   } = loaderData;
@@ -146,6 +149,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
             version={version}
             updateAvailable={updateAvailable}
             isFrontendAuthDisabled={isFrontendAuthDisabled}
+            username={username}
             hasUsenetProviders={hasUsenetProviders}
           />
         )}
