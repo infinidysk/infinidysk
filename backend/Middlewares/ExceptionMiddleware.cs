@@ -69,7 +69,10 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             });
 
             if (context.Items["DavItem"] is DavItem davItem)
+            {
+                RecordMissingArticleForFailFast(davItem, notFound.SegmentId);
                 ScheduleRepair(davItem.Id);
+            }
 
             AbortStartedResponse(context);
         }
@@ -305,6 +308,19 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             AbortStartedResponse(context);
         }
+    }
+
+    /// <summary>
+    /// Streaming is the only check that reaches freshly imported (history-linked) items, so a
+    /// missing article discovered mid-stream must feed the step-0 queue precheck. Otherwise a
+    /// re-grab of the same broken release imports cleanly again and loops through repair
+    /// forever (issue #732). Failing the re-grab pre-import lets Arr blocklist it properly.
+    /// </summary>
+    internal static void RecordMissingArticleForFailFast(DavItem davItem, string segmentId)
+    {
+        if (!FilenameUtil.IsImportantFileType(davItem.Name))
+            return;
+        HealthCheckService.AddMissingSegmentIds([segmentId]);
     }
 
     private static void AbortStartedResponse(HttpContext context)
