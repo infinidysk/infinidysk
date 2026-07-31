@@ -53,47 +53,36 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
 
       <div className="navbar-end !w-auto ml-auto min-w-0 items-center gap-2 px-2 md:px-4">
         <LiveUsenetConnections hasUsenetProviders={!!hasUsenetProviders} />
-        <div className="dropdown dropdown-end">
-          <div
+        <details className="dropdown dropdown-end">
+          <summary
             className={
               hasUpdate
-                ? undefined
-                : "rounded-box bg-gradient-to-br from-primary via-secondary to-accent p-px"
+                ? "btn btn-primary h-10 min-h-10 shrink-0 list-none gap-2 rounded-box px-4 whitespace-nowrap"
+                : "list-none rounded-box bg-gradient-to-br from-primary via-secondary to-accent p-px"
             }
+            aria-label={hasUpdate ? "Update available" : "App menu"}
           >
-            <button
-              type="button"
-              tabIndex={0}
-              className={
-                hasUpdate
-                  ? "btn btn-primary h-10 min-h-10 shrink-0 gap-2 rounded-box px-4 whitespace-nowrap"
-                  : "btn btn-ghost h-10 min-h-10 shrink-0 gap-2 rounded-[calc(var(--radius-box)-1px)] border-0 bg-base-200 px-4 whitespace-nowrap hover:bg-base-200"
-              }
-              aria-label={hasUpdate ? "Update available" : "App menu"}
-            >
-              {hasUpdate ? (
-                <>
-                  <Icon name="arrow_circle_up" className="!text-[20px]" />
-                  <span className="text-sm font-semibold">Update available</span>
-                </>
-              ) : (
-                <>
-                  <span className="inline-flex items-center gap-2 whitespace-nowrap">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-base-content/40">
-                      {channelLabel}
-                    </span>
-                    <span className="h-3 w-px bg-base-content/15" aria-hidden="true" />
-                    <span className="font-mono text-sm tracking-tight text-base-content/80">
-                      {displayVersion}
-                    </span>
+            {hasUpdate ? (
+              <>
+                <Icon name="arrow_circle_up" className="!text-[20px]" />
+                <span className="text-sm font-semibold">Update available</span>
+              </>
+            ) : (
+              <span className="btn btn-ghost h-10 min-h-10 shrink-0 gap-2 rounded-[calc(var(--radius-box)-1px)] border-0 bg-base-200 px-4 whitespace-nowrap hover:bg-base-200 pointer-events-none">
+                <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-base-content/40">
+                    {channelLabel}
                   </span>
-                  <Icon name="expand_more" className="!text-[18px] text-base-content/50" />
-                </>
-              )}
-            </button>
-          </div>
+                  <span className="h-3 w-px bg-base-content/15" aria-hidden="true" />
+                  <span className="font-mono text-sm tracking-tight text-base-content/80">
+                    {displayVersion}
+                  </span>
+                </span>
+                <Icon name="expand_more" className="!text-[18px] text-base-content/50" />
+              </span>
+            )}
+          </summary>
           <ul
-            tabIndex={0}
             className="dropdown-content menu z-50 mt-2 w-64 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg"
           >
             <li className="menu-title">
@@ -153,39 +142,38 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
               </a>
             </li>
           </ul>
-        </div>
+        </details>
         {showUserMenu && (
-          <div className="dropdown dropdown-end">
+          <>
             <Form method="post" action="/logout" id="top-nav-logout" className="hidden">
               <input name="confirm" value="true" type="hidden" />
             </Form>
-            <button
-              type="button"
-              tabIndex={0}
-              className="btn btn-ghost btn-circle btn-sm"
-              aria-label="User menu"
-            >
-              <div className="avatar avatar-placeholder">
-                <div className="w-8 rounded-full bg-neutral text-neutral-content">
-                  <span className="text-xs">{initial}</span>
+            <details className="dropdown dropdown-end">
+              <summary
+                className="btn btn-ghost btn-circle btn-sm list-none"
+                aria-label="User menu"
+              >
+                <div className="avatar avatar-placeholder">
+                  <div className="w-8 rounded-full bg-neutral text-neutral-content">
+                    <span className="text-xs">{initial}</span>
+                  </div>
                 </div>
-              </div>
-            </button>
-            <ul
-              tabIndex={0}
-              className="dropdown-content menu z-50 mt-2 w-56 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg"
-            >
-              <li className="menu-title">
-                <span>{username}</span>
-              </li>
-              <li>
-                <button type="submit" form="top-nav-logout">
-                  <Icon name="logout" className="!text-[18px]" />
-                  Logout
-                </button>
-              </li>
-            </ul>
-          </div>
+              </summary>
+              <ul
+                className="dropdown-content menu z-50 mt-2 w-56 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg"
+              >
+                <li className="menu-title">
+                  <span>{username}</span>
+                </li>
+                <li>
+                  <button type="submit" form="top-nav-logout">
+                    <Icon name="logout" className="!text-[18px]" />
+                    Logout
+                  </button>
+                </li>
+              </ul>
+            </details>
+          </>
         )}
       </div>
     </>
