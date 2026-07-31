@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Collections.Concurrent;
+using System.Net;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.RadarrSonarr.SonarrModels;
 using NzbWebDAV.Utils;
@@ -7,8 +8,10 @@ namespace NzbWebDAV.Clients.RadarrSonarr;
 
 public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 {
-    private static readonly Dictionary<string, int> SeriesPathToSeriesIdCache = new();
-    private static readonly Dictionary<string, int> SymlinkOrStrmToEpisodeFileIdCache = new();
+    private static readonly ConcurrentDictionary<(string Host, string Path), int>
+        SeriesPathToSeriesIdCache = new();
+    private static readonly ConcurrentDictionary<(string Host, string Path), int>
+        SymlinkOrStrmToEpisodeFileIdCache = new();
 
     public Task<SonarrQueue> GetSonarrQueueAsync() =>
         Get<SonarrQueue>($"/queue?protocol=usenet&pageSize=5000");
@@ -59,12 +62,14 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 
     private async Task<int?> GetEpisodeFileId(string symlinkOrStrmPath, CancellationToken ct)
     {
+        var cacheKey = (Host, symlinkOrStrmPath);
+
         // if episode-file-id is found in the cache, verify it and return it
-        if (SymlinkOrStrmToEpisodeFileIdCache.TryGetValue(symlinkOrStrmPath, out var episodeFileId))
+        if (SymlinkOrStrmToEpisodeFileIdCache.TryGetValue(cacheKey, out var episodeFileId))
         {
             var episodeFile = await GetEpisodeFileOrNull(episodeFileId, ct).ConfigureAwait(false);
             if (episodeFile?.Path == symlinkOrStrmPath) return episodeFileId;
-            SymlinkOrStrmToEpisodeFileIdCache.Remove(symlinkOrStrmPath);
+            SymlinkOrStrmToEpisodeFileIdCache.TryRemove(cacheKey, out _);
         }
 
         // otherwise, find the series-id
@@ -75,7 +80,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         int? result = null;
         foreach (var episodeFile in await GetAllEpisodeFiles(seriesId.Value, ct).ConfigureAwait(false))
         {
-            SymlinkOrStrmToEpisodeFileIdCache[episodeFile.Path!] = episodeFile.Id;
+            SymlinkOrStrmToEpisodeFileIdCache[(Host, episodeFile.Path!)] = episodeFile.Id;
             if (episodeFile.Path == symlinkOrStrmPath)
                 result = episodeFile.Id;
         }
@@ -87,25 +92,31 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     private async Task<int?> GetSeriesId(string symlinkOrStrmPath, CancellationToken ct)
     {
         // get series-id from cache
-        var cachedSeriesPath = PathUtil.GetAllParentDirectories(symlinkOrStrmPath)
-            .Where(x => SeriesPathToSeriesIdCache.ContainsKey(x))
-            .FirstOrDefault();
+        string? cachedSeriesPath = null;
+        var cachedSeriesId = 0;
+        foreach (var parentPath in PathUtil.GetAllParentDirectories(symlinkOrStrmPath))
+        {
+            if (!SeriesPathToSeriesIdCache.TryGetValue((Host, parentPath), out cachedSeriesId))
+                continue;
+
+            cachedSeriesPath = parentPath;
+            break;
+        }
 
         // if found, verify and return it
         if (cachedSeriesPath != null)
         {
-            var cachedSeriesId = SeriesPathToSeriesIdCache[cachedSeriesPath];
             var series = await GetSeriesOrNull(cachedSeriesId, ct).ConfigureAwait(false);
             if (series?.Path != null && symlinkOrStrmPath.StartsWith(series.Path))
                 return cachedSeriesId;
-            SeriesPathToSeriesIdCache.Remove(cachedSeriesPath);
+            SeriesPathToSeriesIdCache.TryRemove((Host, cachedSeriesPath), out _);
         }
 
         // otherwise, fetch all series and repopulate the cache
         int? result = null;
         foreach (var series in await GetAllSeries(ct).ConfigureAwait(false))
         {
-            SeriesPathToSeriesIdCache[series.Path!] = series.Id;
+            SeriesPathToSeriesIdCache[(Host, series.Path!)] = series.Id;
             if (symlinkOrStrmPath.StartsWith(series.Path!))
                 result = series.Id;
         }

@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Collections.Concurrent;
+using System.Net;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.RadarrSonarr.RadarrModels;
 
@@ -6,7 +7,8 @@ namespace NzbWebDAV.Clients.RadarrSonarr;
 
 public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 {
-    private static readonly Dictionary<string, int> SymlinkOrStrmToMovieIdCache = new();
+    private static readonly ConcurrentDictionary<(string Host, string Path), int>
+        SymlinkOrStrmToMovieIdCache = new();
 
     public Task<RadarrMovie> GetMovieAsync(int id, CancellationToken ct = default) =>
         Get<RadarrMovie>($"/movie/{id}", ct);
@@ -43,15 +45,17 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 
     private async Task<int?> GetMovieFileId(string symlinkOrStrmPath, CancellationToken ct)
     {
+        var cacheKey = (Host, symlinkOrStrmPath);
+
         // if we already have the movie-id cached
         // then let's use it to find and return the corresponding movie-file-id
-        if (SymlinkOrStrmToMovieIdCache.TryGetValue(symlinkOrStrmPath, out var movieId))
+        if (SymlinkOrStrmToMovieIdCache.TryGetValue(cacheKey, out var movieId))
         {
             var movie = await GetMovieOrNullAsync(movieId, ct).ConfigureAwait(false);
             var movieFile = movie?.MovieFile;
             if (movieFile?.Path == symlinkOrStrmPath)
                 return movieFile.Id;
-            SymlinkOrStrmToMovieIdCache.Remove(symlinkOrStrmPath);
+            SymlinkOrStrmToMovieIdCache.TryRemove(cacheKey, out _);
         }
 
         // otherwise, let's fetch all movies, cache all movie files
@@ -62,7 +66,7 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         {
             var movieFile = movie.MovieFile;
             if (movieFile?.Path != null)
-                SymlinkOrStrmToMovieIdCache[movieFile.Path] = movie.Id;
+                SymlinkOrStrmToMovieIdCache[(Host, movieFile.Path)] = movie.Id;
             if (movieFile?.Path == symlinkOrStrmPath)
                 result = movieFile.Id;
         }
