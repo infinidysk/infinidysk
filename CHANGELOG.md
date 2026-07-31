@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.4](https://github.com/nzbdav/nzbdav/compare/v0.9.3...v0.9.4) (2026-07-31)
+
+
+### Features
+
+* **ui:** simplify overview activity and optional indexer widgets ([#733](https://github.com/nzbdav/nzbdav/issues/733)) ([5a90728](https://github.com/nzbdav/nzbdav/commit/5a90728830054093bbc7fba5095c9b0d83386dff))
+
+
+### Bug Fixes
+
+* **health:** stop endless re-grab loops when imports succeed before repair ([#737](https://github.com/nzbdav/nzbdav/issues/737)) ([1918388](https://github.com/nzbdav/nzbdav/commit/1918388336582995daed9913fff849d6dca58142))
+* **ui:** preserve overview widget spacing ([#735](https://github.com/nzbdav/nzbdav/issues/735)) ([3af547b](https://github.com/nzbdav/nzbdav/commit/3af547b14ee8d295293b68b8318b0e52e33ed970))
+
 ## [0.9.3](https://github.com/nzbdav/nzbdav/compare/v0.9.2...v0.9.3) (2026-07-31)
 
 
