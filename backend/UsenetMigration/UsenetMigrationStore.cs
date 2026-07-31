@@ -1,7 +1,9 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.UsenetMigration.Model;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.UsenetMigration;
+using Serilog;
 
 namespace NzbWebDAV.UsenetMigration;
 
@@ -43,13 +45,24 @@ public sealed class UsenetMigrationStore
     internal Func<bool> DatabaseFileExists { get; set; } =
         static () => File.Exists(UsenetMigrationDbContext.DatabaseFilePath);
 
+    /// <summary>Path of the disposable ledger SQLite file. Overridable in tests.</summary>
+    internal Func<string> DatabaseFilePath { get; set; } =
+        static () => UsenetMigrationDbContext.DatabaseFilePath;
+
+    internal Action ClearSqlitePools { get; set; } =
+        static () => SqliteConnection.ClearAllPools();
+
     private readonly SemaphoreSlim _databaseInitialization = new(1, 1);
     private bool _databaseInitialized;
 
     /// <summary>Opens a fresh context for callers doing their own bulk unit of work.</summary>
     public UsenetMigrationDbContext NewContext() => ContextFactory();
 
-    /// <summary>Applies the migration so the SQLite file and schema exist (idempotent).</summary>
+    /// <summary>
+    /// Applies the migration so the SQLite file and schema exist. Idempotent when history
+    /// matches this build. If a pre-squash (or otherwise incompatible) disposable ledger is
+    /// present, recreates it once and continues — wizard progress is lost; mounted content is not.
+    /// </summary>
     public async Task EnsureDatabaseAsync(CancellationToken ct = default)
     {
         if (Volatile.Read(ref _databaseInitialized))
@@ -61,15 +74,73 @@ public sealed class UsenetMigrationStore
             if (_databaseInitialized)
                 return;
 
-            await using var ctx = ContextFactory();
-            await ctx.Database.MigrateAsync(ct).ConfigureAwait(false);
-            await GetOrCreateSessionAsync(ctx, ct).ConfigureAwait(false);
+            try
+            {
+                await MigrateAndCreateSessionAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception e) when (IsIncompatibleMigrationLedger(e))
+            {
+                var path = DatabaseFilePath();
+                Log.Warning(
+                    "Usenet migration ledger was incompatible with this build and was recreated at {Path}. Wizard progress was reset; mounted content is unchanged.",
+                    path);
+                Log.Debug(e, "Usenet migration ledger incompatible history stack");
+
+                RecreateDatabaseFiles();
+                await MigrateAndCreateSessionAsync(ct).ConfigureAwait(false);
+            }
+
             Volatile.Write(ref _databaseInitialized, true);
         }
         finally
         {
             _databaseInitialization.Release();
         }
+    }
+
+    private async Task MigrateAndCreateSessionAsync(CancellationToken ct)
+    {
+        await using var ctx = ContextFactory();
+        await ctx.Database.MigrateAsync(ct).ConfigureAwait(false);
+        await GetOrCreateSessionAsync(ctx, ct).ConfigureAwait(false);
+    }
+
+    private void RecreateDatabaseFiles()
+    {
+        ClearSqlitePools();
+        var databaseFilePath = DatabaseFilePath();
+        foreach (var path in new[]
+                 {
+                     databaseFilePath,
+                     databaseFilePath + "-wal",
+                     databaseFilePath + "-shm",
+                     databaseFilePath + "-journal",
+                 })
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch (Exception e)
+            {
+                Log.Debug(e, "Failed to delete usenet migration ledger file {Path}", path);
+            }
+        }
+    }
+
+    private static bool IsIncompatibleMigrationLedger(Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is SqliteException { SqliteErrorCode: 1 } sqlite &&
+                sqlite.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // --- preferences -------------------------------------------------------

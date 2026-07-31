@@ -61,6 +61,78 @@ public class UsenetMigrationStoreTests
     }
 
     [Fact]
+    public async Task EnsureDatabase_RecreatesIncompatiblePreSquashLedger()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"altmig-stale-{Guid.NewGuid():N}.db");
+        await CreatePreSquashStaleLedgerAsync(databasePath);
+
+        var options = new DbContextOptionsBuilder<UsenetMigrationDbContext>()
+            .UseSqlite($"Data Source={databasePath}")
+            .Options;
+        var store = new UsenetMigrationStore
+        {
+            ContextFactory = () => new UsenetMigrationDbContext(options),
+            DatabaseFilePath = () => databasePath,
+            DatabaseFileExists = () => File.Exists(databasePath),
+        };
+
+        try
+        {
+            await store.EnsureDatabaseAsync();
+
+            var session = await store.GetSessionAsync();
+            Assert.Equal(UsenetMigrationStore.SessionId, session.Id);
+
+            await using var context = new UsenetMigrationDbContext(options);
+            var applied = await context.Database.GetAppliedMigrationsAsync();
+            Assert.Contains(applied, id => id.Contains("InitializeUsenetMigrationDatabase"));
+            Assert.DoesNotContain(applied, id => id.StartsWith("20260718001736", StringComparison.Ordinal));
+            Assert.Equal(1, await context.SessionState.CountAsync());
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach (var path in new[]
+                     {
+                         databasePath,
+                         databasePath + "-wal",
+                         databasePath + "-shm",
+                         databasePath + "-journal",
+                     })
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+        }
+    }
+
+    private static async Task CreatePreSquashStaleLedgerAsync(string databasePath)
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={databasePath}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            CREATE TABLE "CategoryMap" (
+                "AltmountCategory" TEXT NOT NULL CONSTRAINT "PK_CategoryMap" PRIMARY KEY,
+                "AltmountDir" TEXT NULL,
+                "AltmountSanitizedDir" TEXT NULL,
+                "AltmountType" TEXT NULL,
+                "TargetCategory" TEXT NULL,
+                "Action" TEXT NOT NULL,
+                "DiscoveredBy" TEXT NOT NULL,
+                "UpdatedAt" TEXT NOT NULL
+            );
+            CREATE TABLE "__EFMigrationsHistory" (
+                "MigrationId" TEXT NOT NULL CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY,
+                "ProductVersion" TEXT NOT NULL
+            );
+            INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+            VALUES ('20260718001736_InitializeUsenetMigrationDatabase', '9.0.0');
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    [Fact]
     public async Task UpdateSession_PersistsMutation_AndStampsUpdatedAt()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
