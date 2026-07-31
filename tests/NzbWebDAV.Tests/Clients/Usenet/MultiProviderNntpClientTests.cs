@@ -126,6 +126,71 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task BatchResponse_TimeoutWithBackup_SkipsPrimaryReprobeAndUsesBackup()
+    {
+        // After an exhausted streaming/read timeout the primary already burned its
+        // per-segment retry budget. Re-probing it before backups delays failover (#723).
+        var writer = new MetricsWriter();
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            FaultBatchResponsesWith = () => new TimeoutException(
+                "Timeout executing nntp BODY command after 4 attempts."),
+            SingularException = _ => new TimeoutException(
+                "Timeout executing nntp BODY command after 4 attempts."),
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(primary, host: "a.example"),
+                CreateProvider(backup, host: "b.example", providerType: ProviderType.BackupOnly),
+            ],
+            metricsWriter: writer);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        Assert.Equal(
+            UsenetResponseType.ArticleRetrievedBodyFollows,
+            (await batch.Responses[0]).ResponseType);
+
+        Assert.Equal(0, primary.SingularRequests);
+        Assert.Equal(1, backup.SingularRequests);
+        Assert.Equal(1, writer.Stats.QueuedFailoverMisses);
+        Assert.Single(writer.SnapshotQueuedEvents(MetricsWriter.FailoverSaveEventKind));
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_OpenPrimaryCircuit_UsesBackupOnly()
+    {
+        var openPrimary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var healthyBackup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(openPrimary, host: "a.example", circuitBreaker: OpenBreaker("a.example")),
+            CreateProvider(healthyBackup, host: "b.example", providerType: ProviderType.BackupOnly),
+        ]);
+
+        var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+
+        Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+        Assert.Equal(0, openPrimary.SingularRequests);
+        Assert.Equal(1, healthyBackup.SingularRequests);
+    }
+
+    [Fact]
     public async Task DecodedBodyAsync_CrossProviderRescue_RecordsFailoverMiss()
     {
         var writer = new MetricsWriter();

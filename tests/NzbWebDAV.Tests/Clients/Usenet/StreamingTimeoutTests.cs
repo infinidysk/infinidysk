@@ -10,11 +10,16 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public class StreamingTimeoutTests
 {
     [Fact]
@@ -604,6 +609,150 @@ public class StreamingTimeoutTests
     }
 
     [Fact]
+    public async Task MultiProvider_StreamingTimeout_FailsOverToBackup()
+    {
+        var primaryCreated = 0;
+        var backupCreated = 0;
+        var primaryPool = new ConnectionPool<INntpClient>(
+            maxConnections: 2,
+            _ =>
+            {
+                Interlocked.Increment(ref primaryCreated);
+                return ValueTask.FromResult<INntpClient>(new HangingNntpClient());
+            });
+        var backupPool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ =>
+            {
+                Interlocked.Increment(ref backupCreated);
+                return ValueTask.FromResult<INntpClient>(
+                    new HealthyNntpClient(new Dictionary<string, byte[]>
+                    {
+                        ["seg"] = [1, 2, 3, 4],
+                    }));
+            });
+        var primary = new MultiConnectionNntpClient(
+            primaryPool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("news.primary.example"),
+            "news.primary.example",
+            priority: 0);
+        var backup = new MultiConnectionNntpClient(
+            backupPool,
+            ProviderType.BackupOnly,
+            new ProviderCircuitBreaker("news.backup.example"),
+            "news.backup.example",
+            priority: 1);
+        using var client = new MultiProviderNntpClient([primary, backup]);
+
+        using var cts = new CancellationTokenSource();
+        using var timeoutScope = cts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromMilliseconds(50),
+            MaxRetries = 1,
+        });
+
+        var response = await client.DecodedBodyAsync("seg", onConnectionReadyAgain: null, cts.Token);
+
+        Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+        Assert.Equal(2, primaryCreated);
+        Assert.Equal(1, backupCreated);
+        if (response.Stream != null)
+            await response.Stream.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task MultiProvider_PipelinedStreamingTimeout_FailsOverToBackup()
+    {
+        var primaryCreated = 0;
+        var backupCreated = 0;
+        var primaryPool = new ConnectionPool<INntpClient>(
+            maxConnections: 2,
+            _ =>
+            {
+                Interlocked.Increment(ref primaryCreated);
+                return ValueTask.FromResult<INntpClient>(new HangingPipelinedNntpClient());
+            });
+        var backupPool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ =>
+            {
+                Interlocked.Increment(ref backupCreated);
+                return ValueTask.FromResult<INntpClient>(new HealthyPipelinedNntpClient());
+            });
+        var primary = new MultiConnectionNntpClient(
+            primaryPool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("news.primary.example"),
+            "news.primary.example",
+            priority: 0);
+        var backup = new MultiConnectionNntpClient(
+            backupPool,
+            ProviderType.BackupOnly,
+            new ProviderCircuitBreaker("news.backup.example"),
+            "news.backup.example",
+            priority: 1);
+        using var client = new MultiProviderNntpClient([primary, backup]);
+
+        using var cts = new CancellationTokenSource();
+        using var timeoutScope = cts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromMilliseconds(50),
+            MaxRetries = 1,
+        });
+
+        var batch = await client.DecodedBodiesAsync(
+            [new SegmentId("one")], onConnectionReadyAgain: null, cts.Token);
+        Assert.Equal(
+            UsenetResponseType.ArticleRetrievedBodyFollows,
+            (await batch.Responses[0]).ResponseType);
+        Assert.Equal(2, primaryCreated);
+        Assert.Equal(1, backupCreated);
+    }
+
+    [Fact]
+    public async Task RunWithConnection_StreamingTimeoutExhausted_WarningIncludesProvider()
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+
+        try
+        {
+            using var pool = new ConnectionPool<INntpClient>(
+                maxConnections: 2,
+                _ => ValueTask.FromResult<INntpClient>(new HangingNntpClient()));
+            using var client = new MultiConnectionNntpClient(
+                pool,
+                ProviderType.Pooled,
+                new ProviderCircuitBreaker("news.verycheapprovider.com"),
+                "news.verycheapprovider.com");
+
+            using var cts = new CancellationTokenSource();
+            using var timeoutScope = cts.Token.SetContext(new StreamingTimeoutContext
+            {
+                PerSegmentTimeout = TimeSpan.FromMilliseconds(50),
+                MaxRetries = 0,
+            });
+
+            await Assert.ThrowsAsync<TimeoutException>(() =>
+                client.DecodedBodyAsync("seg", onConnectionReadyAgain: null, cts.Token));
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+
+        Assert.Contains(sink.Events, e =>
+            e.Level == LogEventLevel.Warning
+            && e.RenderMessage().Contains("news.verycheapprovider.com", StringComparison.Ordinal)
+            && e.RenderMessage().Contains("No retries left", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ConnectionPoolGate_CancelsWithinStreamingReadDeadline()
     {
         var created = 0;
@@ -835,6 +984,24 @@ public class StreamingTimeoutTests
             output.Write(Encoding.ASCII.GetBytes("\r\n"));
             output.Write(Encoding.ASCII.GetBytes($"=yend size={source.Length}\r\n"));
             return output.ToArray();
+        }
+    }
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+
+        public IReadOnlyList<LogEvent> Events
+        {
+            get
+            {
+                lock (_events) return _events.ToArray();
+            }
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            lock (_events) _events.Add(logEvent);
         }
     }
 

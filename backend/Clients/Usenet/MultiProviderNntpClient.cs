@@ -345,8 +345,14 @@ public class MultiProviderNntpClient(
 
             // Re-probe primary once on a definitive miss when enabled (default). Multi-node
             // spool routing can return a transient 430/451 on one connection. Operators may
-            // disable via usenet.cascade.retry-primary-on-miss; connection-level failures
-            // always re-try the primary.
+            // disable via usenet.cascade.retry-primary-on-miss; most connection-level
+            // failures also re-try the primary once.
+            //
+            // Exhausted streaming/read timeouts are different: MultiConnectionNntpClient
+            // already spent the per-segment retry budget on this provider. Re-probing it
+            // before backups only burns more playback time (#723). When no fallbacks exist,
+            // keep the primary in the retry list so a solo provider can still recover via
+            // a singular BODY.
             //
             // Coherence with ArticleMissNegativeCache:
             // - Never MarkMissing the primary on this initial batch 430 — that would prime
@@ -356,12 +362,15 @@ public class MultiProviderNntpClient(
             // - MarkMissing only from definitive misses inside the retry/fallback loop below.
             IReadOnlyList<MultiConnectionNntpClient> retryProviders;
             var primaryCachedMiss = IsCachedMissing(segmentId, primaryProvider);
+            var exhaustedTimeout = lastException != null
+                && lastException.SourceException.TryGetCausingException<TimeoutException>(out _);
             var reprobePrimary = !definitiveMiss
                 || (retryPrimaryOnMiss?.Invoke() != false && !primaryCachedMiss);
-            if (definitiveMiss && !reprobePrimary)
+            if ((exhaustedTimeout && fallbackProviders.Count > 0)
+                || (definitiveMiss && !reprobePrimary))
             {
                 var primaryGroup = NormalizeStorageGroup(primaryProvider.StorageGroup);
-                if (primaryGroup.Length > 0) missingGroups.Add(primaryGroup);
+                if (primaryGroup.Length > 0 && definitiveMiss) missingGroups.Add(primaryGroup);
                 retryProviders = fallbackProviders;
             }
             else

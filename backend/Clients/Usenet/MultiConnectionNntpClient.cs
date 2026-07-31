@@ -311,8 +311,8 @@ public class MultiConnectionNntpClient(
 
                 circuitBreaker.RecordFailure("streaming-timeout-pipelined-BODY");
                 Log.Warning(
-                    "Streaming timeout executing pipelined nntp BODY commands after {Timeout}s. No retries left.",
-                    streamingTimeout.PerSegmentTimeout.TotalSeconds);
+                    "Streaming timeout executing pipelined nntp BODY commands for provider {Provider} after {Timeout}s. No retries left.",
+                    providerName, streamingTimeout.PerSegmentTimeout.TotalSeconds);
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw new TimeoutException(
                     "Timeout executing pipelined nntp BODY commands after " +
@@ -506,8 +506,8 @@ public class MultiConnectionNntpClient(
                 // providers still trip without over-counting a single segment.
                 circuitBreaker.RecordFailure($"streaming-timeout-{name}");
                 Log.Warning(
-                    "Streaming timeout executing nntp {Command} command after {Timeout}s. No retries left.",
-                    name, streamingTimeout.PerSegmentTimeout.TotalSeconds);
+                    "Streaming timeout executing nntp {Command} command for provider {Provider} after {Timeout}s. No retries left.",
+                    name, providerName, streamingTimeout.PerSegmentTimeout.TotalSeconds);
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw new TimeoutException(
                     $"Timeout executing nntp {name} command after {streamingTimeout.MaxRetries + 1} attempts.");
