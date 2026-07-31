@@ -152,6 +152,15 @@ public class QueueItemProcessor(
         // it to the history as a failed job.
         catch (Exception e)
         {
+            // Remember definitively missing articles so retries of this item and re-grabs
+            // of the same release fail in milliseconds at the step-0 precheck instead of
+            // re-verifying every article across all providers (issue #732).
+            if (e.TryGetCausingException<UsenetArticleNotFoundException>(out var articleNotFound) &&
+                articleNotFound is not null)
+            {
+                HealthCheckService.AddMissingSegmentIds([articleNotFound.SegmentId]);
+            }
+
             try
             {
                 await MarkQueueItemCompleted(startTime, error: e.Message).ConfigureAwait(false);

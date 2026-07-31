@@ -254,6 +254,45 @@ public class ExceptionMiddlewareTests
         Assert.Contains("aborted after headers", logged.RenderMessage(), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task MissingArticleWithDavItem_RecordsSegmentForQueueFailFast()
+    {
+        // Re-grabs of the same release must fail the step-0 queue precheck pre-import
+        // instead of importing again and looping through repair (issue #732).
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new UsenetArticleNotFoundException(segmentId));
+
+        await middleware.InvokeAsync(context);
+
+        var ex = Assert.Throws<UsenetArticleNotFoundException>(
+            () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
+        Assert.Equal(segmentId, ex.SegmentId);
+    }
+
+    [Fact]
+    public void RecordMissingArticleForFailFast_IgnoresUnimportantFileTypes()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var id = Guid.NewGuid();
+        var davItem = new DavItem
+        {
+            Id = id,
+            IdPrefix = id.ToString("N")[..DavItem.IdPrefixLength],
+            CreatedAt = DateTime.UtcNow,
+            Name = "release.nfo",
+            Path = "/content/release.nfo",
+            Type = DavItem.ItemType.UsenetFile,
+        };
+
+        ExceptionMiddleware.RecordMissingArticleForFailFast(davItem, segmentId);
+
+        // Must not throw — unimportant files never enter the fail-fast cache.
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);
+    }
+
     [Theory]
     [InlineData(0, 1, true)]
     [InlineData(3, 2, false)]
