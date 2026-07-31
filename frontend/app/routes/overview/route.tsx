@@ -363,7 +363,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             )}
 
             <div className="flex min-w-0 flex-col items-stretch gap-4 xl:flex-row">
-                <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-1 flex-col gap-4">
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
                         <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
                             {visibleOrder.map(id => {
