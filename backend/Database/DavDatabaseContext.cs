@@ -124,6 +124,15 @@ public sealed class DavDatabaseContext : DbContext
 
             e.Property(i => i.RandomSalt)
                 .IsRequired();
+
+            // At most one Admin account ever - the frontend's onboarding check-then-act
+            // (isOnboarding() then createAccount()) is not itself race-safe, so this is
+            // the authoritative backstop against two concurrent onboarding submissions
+            // both creating an admin account.
+            e.HasIndex(i => i.Type)
+                .IsUnique()
+                .HasFilter($"\"Type\" = {(int)Account.AccountType.Admin}")
+                .HasDatabaseName("IX_Accounts_SingleAdmin");
         });
 
         // DavItem
