@@ -33,6 +33,11 @@ public class HealthCheckService : BackgroundService
     internal static readonly TimeSpan RepairRecurrenceWindow = TimeSpan.FromHours(6);
     private const int MaximumTrackedRepairPaths = 10_000;
 
+    // How many of a rejected release's segment ids to seed into the fail-fast cache.
+    // Bounded so a single large release cannot evict the whole FIFO cache; the queue
+    // precheck fails on any overlap, so a prefix is sufficient to reject a re-grab.
+    internal const int RejectedReleaseSeedSegments = 200;
+
     // Files at or below this many segments are checked in full, before any aging taper.
     public const int SampleFloor = 8000;
 
@@ -886,13 +891,13 @@ public class HealthCheckService : BackgroundService
             var linkedPath = symlinkOrStrmPath!;
             var linkType = linkedPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
 
-            // Rate-limit repairs per library path: when Arr keeps re-importing broken
+            // Rate-limit repairs per library file: when Arr keeps re-importing broken
             // replacements to the same location, deleting again only fuels the loop.
             if (IsRepairRateLimited(linkedPath, DateTimeOffset.UtcNow))
             {
                 Log.Warning(
-                    "Health-check repair rate limit reached for {LinkedPath}: " +
-                    "{RemovalCount} downloads already removed within {WindowHours} hours. " +
+                    "Health-check repair rate limit reached for library file {LinkedPath}: " +
+                    "{RemovalCount} downloads already removed for this file within {WindowHours} hours. " +
                     "Leaving the file in place to break the replacement loop.",
                     linkedPath,
                     RepairRecurrenceLimit,
@@ -906,7 +911,7 @@ public class HealthCheckService : BackgroundService
                     HealthCheckResult.RepairAction.ActionNeeded,
                     string.Join(" ", [
                         "File failed health validation.",
-                        $"Repair already removed {RepairRecurrenceLimit} downloads for this library path",
+                        $"Repair already removed {RepairRecurrenceLimit} downloads for this library file",
                         $"within the last {RepairRecurrenceWindow.TotalHours:0} hours,",
                         "which indicates a replacement loop.",
                         "Leaving the file in place rather than triggering another replacement."
@@ -928,6 +933,7 @@ public class HealthCheckService : BackgroundService
             if (arrDecision == ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded)
             {
                 RecordRepairRemoval(linkedPath, DateTimeOffset.UtcNow);
+                await SeedRejectedReleaseSegmentsAsync(davItem, dbClient, ct).ConfigureAwait(false);
                 DeletionAuditLog.Record(
                     "health-repair",
                     davItem,
@@ -1083,6 +1089,44 @@ public class HealthCheckService : BackgroundService
         );
         return result;
     }
+
+    /// <summary>
+    /// Seeds the fail-fast cache with the segment ids of a release that repair just rejected
+    /// via remove-and-blocklist. The cache semantically holds "segments of rejected releases"
+    /// here: a corrupt-archive or truncated-stream rejection can have every article present,
+    /// but a re-grab of the same release carries identical message-ids, so failing it at the
+    /// queue step-0 precheck — pre-import, where Arr blocklisting works — is the intended
+    /// outcome regardless of which failure type triggered the repair (issue #732).
+    /// </summary>
+    private async Task SeedRejectedReleaseSegmentsAsync(
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        CancellationToken ct)
+    {
+        try
+        {
+            var segments = await GetAllSegments(davItem, dbClient, ct).ConfigureAwait(false);
+            AddMissingSegmentIds(SelectRejectedReleaseSeedSegments(segments));
+        }
+        catch (Exception e) when (!e.IsCancellationException(ct))
+        {
+            // A missing blob must not abort the repair; the release is already
+            // blocklisted in Arr, we only lose the pre-import fail-fast.
+            Log.Warning(
+                "Could not seed the fail-fast cache with segments of rejected release {Path}. " +
+                "A re-grab of the same release may import once more before failing. Reason: {Reason}",
+                davItem.Path, e.Message);
+            Log.Debug(e, "Rejected-release cache seeding failure stack for {Path}", davItem.Path);
+        }
+    }
+
+    /// <summary>
+    /// Selects the bounded prefix of a rejected release's segment ids to seed into the cache.
+    /// </summary>
+    internal static List<string> SelectRejectedReleaseSeedSegments(List<string> segments) =>
+        segments.Count <= RejectedReleaseSeedSegments
+            ? segments
+            : segments.Take(RejectedReleaseSeedSegments).ToList();
 
     public static void AddMissingSegmentIds(IEnumerable<string> segmentIds)
     {
