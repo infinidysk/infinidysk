@@ -18,7 +18,9 @@ import { LifetimeBlock } from "./components/lifetime-block/lifetime-block";
 import { RecordsBlock } from "./components/records-block/records-block";
 import { FailoverSaves } from "./components/failover-saves/failover-saves";
 import { SortableRow } from "./components/sortable-row/sortable-row";
+import { backendClient } from "~/clients/backend-client.server";
 import { useRowOrder } from "./utils/use-row-order";
+import { hasConfiguredIndexers } from "./utils/has-configured-indexers";
 import {
     EMPTY_OVERVIEW_STATS,
     mergeOverviewStats,
@@ -60,7 +62,13 @@ const DEFAULT_ROW_ORDER = [
 
 /** Shell-only loader — stats load client-side in sections so first paint is instant. */
 export async function loader() {
-    return { stats: null as OverviewStatsResponse | null };
+    const config = await backendClient.getConfig(["indexers.instances"]);
+    return {
+        stats: null as OverviewStatsResponse | null,
+        hasConfiguredIndexers: hasConfiguredIndexers(
+            config.find(item => item.configName === "indexers.instances")?.configValue,
+        ),
+    };
 }
 
 export function shouldRevalidate() {
@@ -77,7 +85,7 @@ function Skeleton({ height = 120 }: { height?: number }) {
     );
 }
 
-export default function Overview(_props: Route.ComponentProps) {
+export default function Overview({ loaderData }: Route.ComponentProps) {
     const [stats, setStats] = useState<OverviewStatsResponse>(EMPTY_OVERVIEW_STATS);
     const [window, setWindow] = useState<OverviewWindow>("24h");
     const [editMode, setEditMode] = useState(false);
@@ -264,12 +272,12 @@ export default function Overview(_props: Route.ComponentProps) {
         failover: windowLoaded
             ? <FailoverSaves failover={stats.failover} window={window} />
             : <Skeleton height={180} />,
-        indexers: staticLoaded
+        indexers: loaderData.hasConfiguredIndexers && staticLoaded
             ? <IndexerScoreboard indexers={stats.indexers} />
-            : <Skeleton height={140} />,
-        indexerApiUsage: staticLoaded
+            : loaderData.hasConfiguredIndexers ? <Skeleton height={140} /> : null,
+        indexerApiUsage: loaderData.hasConfiguredIndexers && staticLoaded
             ? <IndexerApiUsage rows={stats.indexerApiUsage} />
-            : <Skeleton height={120} />,
+            : loaderData.hasConfiguredIndexers ? <Skeleton height={120} /> : null,
         recordsCatalogue: (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {staticLoaded
@@ -283,7 +291,14 @@ export default function Overview(_props: Route.ComponentProps) {
         lifetime: staticLoaded
             ? <LifetimeBlock lifetime={stats.lifetime} />
             : <Skeleton height={120} />,
-    }), [liveTiles, stats, window, isLongWindow, windowLoaded, detailLoaded, staticLoaded, editMode]);
+    }), [liveTiles, stats, window, isLongWindow, windowLoaded, detailLoaded, staticLoaded, editMode, loaderData.hasConfiguredIndexers]);
+
+    const visibleOrder = useMemo(
+        () => loaderData.hasConfiguredIndexers
+            ? order
+            : order.filter(id => id !== "indexers" && id !== "indexerApiUsage"),
+        [loaderData.hasConfiguredIndexers, order],
+    );
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -350,8 +365,8 @@ export default function Overview(_props: Route.ComponentProps) {
             )}
 
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-                <SortableContext items={order} strategy={verticalListSortingStrategy}>
-                    {order.map(id => {
+                <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
+                    {visibleOrder.map(id => {
                         const content = rowContent[id];
                         if (!content) return null;
                         return (
