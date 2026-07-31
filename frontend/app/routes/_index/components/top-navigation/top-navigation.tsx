@@ -9,6 +9,7 @@ export type TopNavigationProps = RequiredTopNavProps & {
   version?: string,
   updateAvailable?: UpdateAvailable | null,
   isFrontendAuthDisabled?: boolean,
+  username?: string | null,
   hasUsenetProviders?: boolean,
 };
 
@@ -19,12 +20,15 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
     version,
     updateAvailable,
     isFrontendAuthDisabled,
+    username,
     hasUsenetProviders,
   } = props;
   const navigate = useNavigate();
   const displayVersion = version || "unknown";
   const hasUpdate = Boolean(updateAvailable);
   const channelLabel = isComparableVersion(version) ? "Stable" : "Dev";
+  const showUserMenu = !isFrontendAuthDisabled && Boolean(username);
+  const initial = username?.trim().charAt(0).toUpperCase() || "?";
 
   return (
     <>
@@ -88,11 +92,6 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
               )}
             </button>
           </div>
-          {!isFrontendAuthDisabled && (
-            <Form method="post" action="/logout" id="top-nav-logout" className="hidden">
-              <input name="confirm" value="true" type="hidden" />
-            </Form>
-          )}
           <ul
             tabIndex={0}
             className="dropdown-content menu z-50 mt-2 w-64 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg"
@@ -153,19 +152,41 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
                 Changelog
               </a>
             </li>
-            {!isFrontendAuthDisabled && (
-              <>
-                <li />
-                <li>
-                  <button type="submit" form="top-nav-logout">
-                    <Icon name="logout" className="!text-[18px]" />
-                    Logout
-                  </button>
-                </li>
-              </>
-            )}
           </ul>
         </div>
+        {showUserMenu && (
+          <div className="dropdown dropdown-end">
+            <Form method="post" action="/logout" id="top-nav-logout" className="hidden">
+              <input name="confirm" value="true" type="hidden" />
+            </Form>
+            <button
+              type="button"
+              tabIndex={0}
+              className="btn btn-ghost btn-circle btn-sm"
+              aria-label="User menu"
+            >
+              <div className="avatar avatar-placeholder">
+                <div className="w-8 rounded-full bg-neutral text-neutral-content">
+                  <span className="text-xs">{initial}</span>
+                </div>
+              </div>
+            </button>
+            <ul
+              tabIndex={0}
+              className="dropdown-content menu z-50 mt-2 w-56 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg"
+            >
+              <li className="menu-title">
+                <span>{username}</span>
+              </li>
+              <li>
+                <button type="submit" form="top-nav-logout">
+                  <Icon name="logout" className="!text-[18px]" />
+                  Logout
+                </button>
+              </li>
+            </ul>
+          </div>
+        )}
       </div>
     </>
   );

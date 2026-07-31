@@ -50,9 +50,19 @@ describe("authentication sessions", () => {
     const cookie = getSetCookie(loginResult);
 
     expect(authenticateMock).toHaveBeenCalledWith("alice", "secret");
-    await expect(authentication.isAuthenticated(new Request("http://localhost/", {
+    const authenticatedRequest = new Request("http://localhost/", {
       headers: { Cookie: cookie },
-    }))).resolves.toBe(true);
+    });
+    await expect(authentication.isAuthenticated(authenticatedRequest)).resolves.toBe(true);
+    await expect(authentication.getSessionUser(authenticatedRequest)).resolves.toEqual({
+      username: "alice",
+    });
+  });
+
+  it("returns null session user when unauthenticated", async () => {
+    await expect(
+      authentication.getSessionUser(new Request("http://localhost/")),
+    ).resolves.toBeNull();
   });
 
   it("rejects missing or invalid credentials", async () => {
