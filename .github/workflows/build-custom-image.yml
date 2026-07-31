@@ -1,0 +1,26 @@
+name: Build custom image
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git branch, tag, or SHA to build
+        required: true
+        type: string
+      image_tag:
+        description: GHCR image tag (for example, test-altmount-mig)
+        required: true
+        type: string
+
+jobs:
+  build:
+    uses: ./.github/workflows/docker-build-push.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      checkout_ref: ${{ inputs.ref }}
+      tags: ghcr.io/${{ github.repository }}:${{ inputs.image_tag }}
+      nzbdav_version: ${{ inputs.image_tag }}
+    secrets:
+      registry_token: ${{ secrets.GITHUB_TOKEN }}
