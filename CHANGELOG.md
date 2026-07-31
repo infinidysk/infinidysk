@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.3](https://github.com/nzbdav/nzbdav/compare/v0.9.2...v0.9.3) (2026-07-31)
+
+
+### Bug Fixes
+
+* **health:** blocklist failed releases before Arr replacement searches ([#727](https://github.com/nzbdav/nzbdav/issues/727)) ([3623e82](https://github.com/nzbdav/nzbdav/commit/3623e82e5b5c9d24af630b8ab5f7f95b532eb25d))
+* **health:** prevent repair deleting files after inconclusive lookups ([#728](https://github.com/nzbdav/nzbdav/issues/728)) ([d4e224c](https://github.com/nzbdav/nzbdav/commit/d4e224c4aa9428f761d4e784587508fa74a416e9))
+* **nntp:** fail over immediately after streaming timeouts ([#725](https://github.com/nzbdav/nzbdav/issues/725)) ([1ef5589](https://github.com/nzbdav/nzbdav/commit/1ef558957252cb870ab8bab61adbafea501d8029))
+
 ## [0.9.2](https://github.com/nzbdav/nzbdav/compare/v0.9.1...v0.9.2) (2026-07-30)
 
 
