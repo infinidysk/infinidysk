@@ -1,7 +1,6 @@
 import { Link, useLocation, useNavigation } from "react-router";
 import type React from "react";
 import { useEffect, useState } from "react";
-import { LiveReads } from "../live-reads/live-reads";
 import { Icon } from "~/components/ui";
 import {
     SETTINGS_TAB_GROUPS,
@@ -96,9 +95,6 @@ export function LeftNavigation({
                     ))}
                 </ul>
             </nav>
-            <div className="mt-auto flex flex-col gap-3">
-                <LiveReads />
-            </div>
         </div>
     );
 }

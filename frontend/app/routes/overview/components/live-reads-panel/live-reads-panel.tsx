@@ -9,7 +9,7 @@ const TOPIC_ACTIVE_READS = "ar";
 
 /**
  * Live "right now" panel — reads cards refreshed via the ActiveReads WS topic.
- * Hidden when no reads are active so the page collapses cleanly.
+ * Keeps an empty state when no reads are active so the dashboard rail is stable.
  * When `paused`, the subscription is disabled so layout edit borders stay stable.
  */
 export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
@@ -41,20 +41,23 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
         } catch { /* ignore */ }
     }, { enabled: !paused });
 
-    if (reads.length === 0) return null;
-
     return (
-        <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
+        <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm xl:h-full">
             <div className="card-body gap-3 p-4">
                 <div className="flex items-center gap-2.5">
                     <span className={styles.livePulse} aria-hidden="true" />
                     <h3 className="card-title m-0 text-base">Right now</h3>
-                    <span className="badge badge-ghost badge-sm ml-auto font-mono tabular-nums">
-                        {reads.length} active
-                    </span>
+                    {reads.length > 0 && (
+                        <span className="badge badge-ghost badge-sm ml-auto font-mono tabular-nums">
+                            {reads.length} active
+                        </span>
+                    )}
                 </div>
 
-                <div className="flex flex-wrap gap-2.5">
+                {reads.length === 0 ? (
+                    <p className="m-0 text-sm text-base-content/50">No active reads.</p>
+                ) : (
+                <div className="flex flex-col gap-2.5">
                     {reads.map(r => {
                         const meta = prevRef.current.get(r.id);
                         const rate = meta?.rate ?? 0;
@@ -67,7 +70,7 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
                         return (
                             <div
                                 key={r.id}
-                                className="flex min-w-0 flex-[1_1_260px] flex-col gap-2 rounded-box border border-base-content/10 bg-base-200 p-3"
+                                className="flex min-w-0 w-full flex-col gap-2 rounded-box border border-base-content/10 bg-base-200 p-3"
                             >
                                 <div className="truncate text-sm font-medium text-base-content" title={r.path}>
                                     {r.fileName || lastSegment(r.path)}
@@ -130,6 +133,7 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
                         );
                     })}
                 </div>
+                )}
             </div>
         </section>
     );

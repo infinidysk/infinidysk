@@ -47,7 +47,6 @@ const WINDOWS: { value: OverviewWindow, label: string }[] = [
 
 const DEFAULT_ROW_ORDER = [
     "liveTiles",
-    "liveReads",
     "throughput",
     "providers",
     "activity",
@@ -215,7 +214,6 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
 
     const rowContent = useMemo<Record<string, ReactNode>>(() => ({
         liveTiles: <LiveTiles tiles={liveTiles} />,
-        liveReads: <LiveReadsPanel paused={editMode} />,
         throughput: windowLoaded
             ? (
                 <ThroughputChart
@@ -315,7 +313,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     };
 
     return (
-        <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-4 p-4">
+        <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-4 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="m-0 text-xl font-semibold tracking-tight text-base-content">Overview</h2>
                 <div className="inline-flex flex-wrap items-center gap-2">
@@ -364,19 +362,26 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                 </div>
             )}
 
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-                <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
-                    {visibleOrder.map(id => {
-                        const content = rowContent[id];
-                        if (!content) return null;
-                        return (
-                            <SortableRow key={id} id={id} editMode={editMode}>
-                                {content}
-                            </SortableRow>
-                        );
-                    })}
-                </SortableContext>
-            </DndContext>
+            <div className="flex min-w-0 flex-col items-stretch gap-4 xl:flex-row">
+                <div className="min-w-0 flex-1">
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                        <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
+                            {visibleOrder.map(id => {
+                                const content = rowContent[id];
+                                if (!content) return null;
+                                return (
+                                    <SortableRow key={id} id={id} editMode={editMode}>
+                                        {content}
+                                    </SortableRow>
+                                );
+                            })}
+                        </SortableContext>
+                    </DndContext>
+                </div>
+                <aside className="flex w-full shrink-0 xl:w-80 xl:self-stretch">
+                    <LiveReadsPanel paused={editMode} />
+                </aside>
+            </div>
         </div>
     );
 }
