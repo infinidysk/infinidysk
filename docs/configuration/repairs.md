@@ -16,14 +16,16 @@ Background health monitoring and replacement of unhealthy library items.
 | Health Check Depth | `repair.healthcheck-depth` | `standard` | standard / enhanced / deep / complete |
 | Check older releases less thoroughly [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } | `repair.healthcheck-aging` | off | Aging taper |
 | Repair After Streaming Failures | `repair.auto-remove-after-failures` | `0` | Consecutive streaming failures before urgent repair; `0` = immediate repair |
-| Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items use *Arr remove-and-search instead of force-delete |
+| Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items are removed and blocklisted through *Arr instead of force-deleted |
 | Library Directory | `media.library-dir` | empty | Organized media path in container |
 
 `repair.auto-remove-after-failures` applies only to streaming-triggered failures such as missing
 articles and corrupt archives. With a value greater than `0`, NzbDAV waits for that many
-consecutive failures before it starts an urgent repair. At the threshold, linked library items
-trigger *Arr remove-and-search when **Auto-remove unlinked files only** is enabled; unlinked files
-are removed. Disable that option to force-delete linked items at the threshold.
+consecutive failures before it starts an urgent repair. At the threshold, linked library items are
+removed and their original downloads are marked failed in *Arr when **Auto-remove unlinked files
+only** is enabled. *Arr blocklists those releases and applies its configured failed-download
+redownload policy. Unlinked files are removed. Disable that option to force-delete linked items at
+the threshold.
 
 Successful full-file playback and a successful background health check reset the in-memory failure
 count. The count resets when NzbDAV restarts, so it is intentionally not a durable replacement for

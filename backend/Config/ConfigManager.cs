@@ -1438,8 +1438,8 @@ public class ConfigManager
     }
 
     /// <summary>
-    /// When true (default), library-linked items use *Arr remove-and-search at the failure
-    /// threshold. When false, linked items are force-deleted after the threshold as well.
+    /// When true (default), library-linked items are removed and blocklisted through *Arr at the
+    /// failure threshold. When false, linked items are force-deleted after the threshold as well.
     /// </summary>
     public bool IsAutoRemoveUnlinkedOnly()
     {

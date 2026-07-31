@@ -13,80 +13,67 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public Task<SonarrQueue> GetSonarrQueueAsync() =>
         Get<SonarrQueue>($"/queue?protocol=usenet&pageSize=5000");
 
-    public Task<List<SonarrSeries>> GetAllSeries() =>
-        Get<List<SonarrSeries>>($"/series");
+    public Task<List<SonarrSeries>> GetAllSeries(CancellationToken ct = default) =>
+        Get<List<SonarrSeries>>($"/series", ct);
 
-    public Task<SonarrSeries> GetSeries(int seriesId) =>
-        Get<SonarrSeries>($"/series/{seriesId}");
+    public Task<SonarrSeries> GetSeries(int seriesId, CancellationToken ct = default) =>
+        Get<SonarrSeries>($"/series/{seriesId}", ct);
 
-    private Task<SonarrSeries?> GetSeriesOrNull(int seriesId) =>
-        GetOrNull<SonarrSeries>($"/series/{seriesId}");
+    private Task<SonarrSeries?> GetSeriesOrNull(int seriesId, CancellationToken ct = default) =>
+        GetOrNull<SonarrSeries>($"/series/{seriesId}", ct);
 
-    public Task<SonarrEpisodeFile> GetEpisodeFile(int episodeFileId) =>
-        Get<SonarrEpisodeFile>($"/episodefile/{episodeFileId}");
+    public Task<SonarrEpisodeFile> GetEpisodeFile(int episodeFileId, CancellationToken ct = default) =>
+        Get<SonarrEpisodeFile>($"/episodefile/{episodeFileId}", ct);
 
-    private Task<SonarrEpisodeFile?> GetEpisodeFileOrNull(int episodeFileId) =>
-        GetOrNull<SonarrEpisodeFile>($"/episodefile/{episodeFileId}");
+    private Task<SonarrEpisodeFile?> GetEpisodeFileOrNull(int episodeFileId, CancellationToken ct = default) =>
+        GetOrNull<SonarrEpisodeFile>($"/episodefile/{episodeFileId}", ct);
 
-    public Task<List<SonarrEpisodeFile>> GetAllEpisodeFiles(int seriesId) =>
-        Get<List<SonarrEpisodeFile>>($"/episodefile?seriesId={seriesId}");
+    public Task<List<SonarrEpisodeFile>> GetAllEpisodeFiles(int seriesId, CancellationToken ct = default) =>
+        Get<List<SonarrEpisodeFile>>($"/episodefile?seriesId={seriesId}", ct);
 
-    public Task<List<SonarrEpisode>> GetEpisodesFromEpisodeFileId(int episodeFileId) =>
-        Get<List<SonarrEpisode>>($"/episode?episodeFileId={episodeFileId}");
+    public Task<List<SonarrEpisode>> GetEpisodesFromEpisodeFileId(
+        int episodeFileId,
+        CancellationToken ct = default) =>
+        Get<List<SonarrEpisode>>($"/episode?episodeFileId={episodeFileId}", ct);
 
-    public Task<HttpStatusCode> DeleteEpisodeFile(int episodeFileId) =>
-        Delete($"/episodefile/{episodeFileId}");
+    public Task<HttpStatusCode> DeleteEpisodeFile(int episodeFileId, CancellationToken ct = default) =>
+        Delete($"/episodefile/{episodeFileId}", ct: ct);
 
-    public Task<ArrCommand> SearchEpisodesAsync(List<int> episodeIds) =>
-        CommandAsync(new { name = "EpisodeSearch", episodeIds });
-
-    public override async Task<bool> RemoveAndSearch(string symlinkOrStrmPath)
+    public override async Task<ArrRepairOutcome> RemoveAndBlocklist(
+        string symlinkOrStrmPath,
+        Guid downloadId,
+        CancellationToken ct = default)
     {
-        // get episode-file-id and episode-ids
-        var mediaIds = await GetMediaIds(symlinkOrStrmPath);
-        if (mediaIds == null) return false;
+        var episodeFileId = await GetEpisodeFileId(symlinkOrStrmPath, ct).ConfigureAwait(false);
+        if (episodeFileId == null) return ArrRepairOutcome.MediaItemNotFound;
 
-        // delete the episode-file
-        if (await DeleteEpisodeFile(mediaIds.Value.episodeFileId) != HttpStatusCode.OK)
+        var historyId = await GetHistoryRecordId(downloadId, ct).ConfigureAwait(false);
+        if (historyId == null) return ArrRepairOutcome.DownloadHistoryNotFound;
+
+        if (await DeleteEpisodeFile(episodeFileId.Value, ct).ConfigureAwait(false) != HttpStatusCode.OK)
             throw new Exception($"Failed to delete episode file `{symlinkOrStrmPath}` from sonarr instance `{Host}`.");
 
-        // trigger a new search for each episode
-        await SearchEpisodesAsync(mediaIds.Value.episodeIds);
-        return true;
+        await MarkHistoryFailed(historyId.Value, ct).ConfigureAwait(false);
+        return ArrRepairOutcome.RemoveAndBlocklistSucceeded;
     }
 
-    private async Task<(int episodeFileId, List<int> episodeIds)?> GetMediaIds(string symlinkOrStrmPath)
-    {
-        // get episode-file-id
-        var episodeFileId = await GetEpisodeFileId(symlinkOrStrmPath);
-        if (episodeFileId == null) return null;
-
-        // get episode-ids
-        var episodes = await GetEpisodesFromEpisodeFileId(episodeFileId.Value);
-        var episodeIds = episodes.Select(x => x.Id).ToList();
-        if (episodeIds.Count == 0) return null;
-
-        // return
-        return (episodeFileId.Value, episodeIds);
-    }
-
-    private async Task<int?> GetEpisodeFileId(string symlinkOrStrmPath)
+    private async Task<int?> GetEpisodeFileId(string symlinkOrStrmPath, CancellationToken ct)
     {
         // if episode-file-id is found in the cache, verify it and return it
         if (SymlinkOrStrmToEpisodeFileIdCache.TryGetValue(symlinkOrStrmPath, out var episodeFileId))
         {
-            var episodeFile = await GetEpisodeFileOrNull(episodeFileId);
+            var episodeFile = await GetEpisodeFileOrNull(episodeFileId, ct).ConfigureAwait(false);
             if (episodeFile?.Path == symlinkOrStrmPath) return episodeFileId;
             SymlinkOrStrmToEpisodeFileIdCache.Remove(symlinkOrStrmPath);
         }
 
         // otherwise, find the series-id
-        var seriesId = await GetSeriesId(symlinkOrStrmPath);
+        var seriesId = await GetSeriesId(symlinkOrStrmPath, ct).ConfigureAwait(false);
         if (seriesId == null) return null;
 
         // then use it to find all episode-files and repopulate the cache
         int? result = null;
-        foreach (var episodeFile in await GetAllEpisodeFiles(seriesId.Value))
+        foreach (var episodeFile in await GetAllEpisodeFiles(seriesId.Value, ct).ConfigureAwait(false))
         {
             SymlinkOrStrmToEpisodeFileIdCache[episodeFile.Path!] = episodeFile.Id;
             if (episodeFile.Path == symlinkOrStrmPath)
@@ -97,7 +84,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         return result;
     }
 
-    private async Task<int?> GetSeriesId(string symlinkOrStrmPath)
+    private async Task<int?> GetSeriesId(string symlinkOrStrmPath, CancellationToken ct)
     {
         // get series-id from cache
         var cachedSeriesPath = PathUtil.GetAllParentDirectories(symlinkOrStrmPath)
@@ -108,7 +95,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         if (cachedSeriesPath != null)
         {
             var cachedSeriesId = SeriesPathToSeriesIdCache[cachedSeriesPath];
-            var series = await GetSeriesOrNull(cachedSeriesId);
+            var series = await GetSeriesOrNull(cachedSeriesId, ct).ConfigureAwait(false);
             if (series?.Path != null && symlinkOrStrmPath.StartsWith(series.Path))
                 return cachedSeriesId;
             SeriesPathToSeriesIdCache.Remove(cachedSeriesPath);
@@ -116,7 +103,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 
         // otherwise, fetch all series and repopulate the cache
         int? result = null;
-        foreach (var series in await GetAllSeries())
+        foreach (var series in await GetAllSeries(ct).ConfigureAwait(false))
         {
             SeriesPathToSeriesIdCache[series.Path!] = series.Id;
             if (symlinkOrStrmPath.StartsWith(series.Path!))

@@ -153,13 +153,13 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     onChange={e => setNewConfig({ ...config, "repair.auto-remove-after-failures": e.target.value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="auto-remove-after-failures-help">
                     Wait for this many consecutive streaming playback failures before urgent repair starts. Linked library
-                    items then use Radarr/Sonarr remove-and-search; unlinked items are removed. Set to 0 for immediate
-                    repair (default).
+                    items are removed and blocklisted through Radarr/Sonarr, which then applies its failed-download
+                    redownload policy. Unlinked items are removed. Set to 0 for immediate repair (default).
                 </p>
             </div>
             </ManagedSetting>
             <ManagedSetting configKey="repair.auto-remove-unlinked-only">
-            <Tooltip content="When enabled (default), library-linked files still use Radarr/Sonarr remove-and-search. Disable to force-delete linked files after the failure threshold.">
+            <Tooltip content="When enabled (default), library-linked releases are removed and blocklisted through Radarr/Sonarr. Disable to force-delete linked files after the failure threshold.">
                 <Toggle
                     id="auto-remove-unlinked-only-checkbox"
                     className="cursor-pointer gap-2 p-0"

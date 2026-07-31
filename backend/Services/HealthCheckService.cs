@@ -546,25 +546,31 @@ public class HealthCheckService : BackgroundService
     /// </summary>
     public enum ArrLinkedRepairDecision
     {
-        /// <summary>An Arr instance owned the file and remove-and-search succeeded.</summary>
-        RemoveAndSearchSucceeded,
+        /// <summary>An Arr instance owned the file and remove-and-blocklist succeeded.</summary>
+        RemoveAndBlocklistSucceeded,
         /// <summary>
         /// At least one Arr instance was unreachable/unusable and no instance confirmed the link
         /// as an orphan — leave the DavItem in place.
         /// </summary>
         DeferUnreachable,
+        /// <summary>
+        /// The Arr media item exists, but its original download history cannot be identified.
+        /// Leave it in place rather than searching again without blocklisting the failed release.
+        /// </summary>
+        DeferMissingDownloadHistory,
         /// <summary>Ownership was fully determined: no Arr media-item; safe to delete.</summary>
         DeleteConfirmedOrphan,
     }
 
     /// <summary>
     /// Consults Arr clients to decide whether a library-linked unhealthy item should trigger
-    /// remove-and-search, be deferred while an instance is down, or be deleted as a confirmed orphan.
+    /// remove-and-blocklist, be deferred while an instance is down, or be deleted as a confirmed orphan.
     /// Extracted so the unreachable-instance fail-safe can be unit-tested without a full Repair harness.
     /// </summary>
     internal static async Task<ArrLinkedRepairDecision> DecideArrLinkedRepairAsync(
         IEnumerable<ArrClient> arrClients,
         string symlinkOrStrmPath,
+        Guid? downloadId,
         CancellationToken ct)
     {
         // Track whether we could fully determine ownership. If any instance was unreachable,
@@ -603,23 +609,32 @@ public class HealthCheckService : BackgroundService
                 continue;
             }
 
-            bool removedAndSearched;
+            if (downloadId == null)
+                return ArrLinkedRepairDecision.DeferMissingDownloadHistory;
+
+            ArrRepairOutcome repairOutcome;
             try
             {
-                removedAndSearched = await arrClient.RemoveAndSearch(symlinkOrStrmPath).ConfigureAwait(false);
+                repairOutcome = await arrClient.RemoveAndBlocklist(
+                    symlinkOrStrmPath,
+                    downloadId.Value,
+                    ct).ConfigureAwait(false);
             }
             catch (Exception e)
             {
                 anInstanceFailed = true;
                 LogArrRepairFailure(
                     e,
-                    "Health-check repair: remove-and-search failed on {Host}",
+                    "Health-check repair: remove-and-blocklist failed on {Host}",
                     arrClient.Host);
                 continue;
             }
 
-            if (removedAndSearched)
-                return ArrLinkedRepairDecision.RemoveAndSearchSucceeded;
+            if (repairOutcome == ArrRepairOutcome.RemoveAndBlocklistSucceeded)
+                return ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded;
+
+            if (repairOutcome == ArrRepairOutcome.DownloadHistoryNotFound)
+                return ArrLinkedRepairDecision.DeferMissingDownloadHistory;
 
             // The owning instance was reached and reports no corresponding media-item, so this
             // link is a confirmed orphan. Record that ownership was determined and break; the
@@ -784,14 +799,15 @@ public class HealthCheckService : BackgroundService
             var arrDecision = await DecideArrLinkedRepairAsync(
                 _configManager.GetArrConfig().GetArrClients(),
                 symlinkOrStrmPath,
+                davItem.HistoryItemId ?? davItem.NzbBlobId,
                 ct).ConfigureAwait(false);
 
-            if (arrDecision == ArrLinkedRepairDecision.RemoveAndSearchSucceeded)
+            if (arrDecision == ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded)
             {
                 DeletionAuditLog.Record(
                     "health-repair",
                     davItem,
-                    "health validation failed; Arr remove-and-search triggered");
+                    "health validation failed; Arr media removed and original download blocklisted");
                 dbClient.Ctx.Items.Remove(davItem);
                 _failureTracker.ClearFailure(davItem.Id);
                 await RecordHealthResult(
@@ -801,7 +817,26 @@ public class HealthCheckService : BackgroundService
                     string.Join(" ", [
                         "File failed health validation.",
                         $"Corresponding {linkType} found within Library Dir.",
-                        "Triggered new Arr search."
+                        "Removed the Arr media file and blocklisted its original download.",
+                        "Arr will apply its configured failed-download redownload policy."
+                    ]), ct).ConfigureAwait(false);
+                return;
+            }
+
+            if (arrDecision == ArrLinkedRepairDecision.DeferMissingDownloadHistory)
+            {
+                var utcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = utcNow;
+                davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    string.Join(" ", [
+                        "File failed health validation.",
+                        $"Corresponding {linkType} and Arr media item found,",
+                        "but the original Arr download history could not be identified.",
+                        "Leaving the file in place rather than searching again without blocklisting the failed release."
                     ]), ct).ConfigureAwait(false);
                 return;
             }

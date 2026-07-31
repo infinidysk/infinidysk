@@ -18,7 +18,10 @@ public class ArrClient(string host, string apiKey)
     public Task<ArrApiInfoResponse> GetApiInfo(CancellationToken ct = default) =>
         GetRoot<ArrApiInfoResponse>($"/api", ct);
 
-    public virtual Task<bool> RemoveAndSearch(string symlinkOrStrmPath) =>
+    public virtual Task<ArrRepairOutcome> RemoveAndBlocklist(
+        string symlinkOrStrmPath,
+        Guid downloadId,
+        CancellationToken ct = default) =>
         throw new InvalidOperationException();
 
     public virtual Task<List<ArrRootFolder>> GetRootFolders() =>
@@ -52,6 +55,19 @@ public class ArrClient(string host, string apiKey)
 
     public Task<ArrCommand> CommandAsync(object command, CancellationToken ct = default) =>
         Post<ArrCommand>($"/command", command, ct);
+
+    protected async Task<int?> GetHistoryRecordId(Guid downloadId, CancellationToken ct = default)
+    {
+        var history = await Get<ArrHistory>(
+            $"/history?downloadId={downloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ct).ConfigureAwait(false);
+        return history.Records.FirstOrDefault()?.Id;
+    }
+
+    protected async Task MarkHistoryFailed(int historyId, CancellationToken ct = default)
+    {
+        _ = await Post<object>($"/history/failed/{historyId}", new { }, ct).ConfigureAwait(false);
+    }
 
     protected Task<T> Get<T>(string path, CancellationToken ct = default) =>
         GetRoot<T>($"{BasePath}{path}", ct);
