@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System.Collections.Concurrent;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
@@ -23,6 +24,7 @@ namespace NzbWebDAV.Services;
 public class HealthCheckService : BackgroundService
 {
     private const int MaximumMissingSegmentIds = 100_000;
+    private const int NoMatchConfirmationsRequired = 2;
 
     // Files at or below this many segments are checked in full, before any aging taper.
     public const int SampleFloor = 8000;
@@ -40,6 +42,7 @@ public class HealthCheckService : BackgroundService
 
     private static readonly HashSet<string> _missingSegmentIds = [];
     private static readonly Queue<string> _missingSegmentOrder = [];
+    private static readonly ConcurrentDictionary<Guid, int> _arrNoMatchConfirmations = new();
 
     public HealthCheckService
     (
@@ -226,6 +229,7 @@ public class HealthCheckService : BackgroundService
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
             _failureTracker.ClearFailure(davItem.Id);
+            _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
             var healthyMessage = sampled.Count < totalSegments
                 ? $"File is healthy (sampled {sampled.Count}/{totalSegments} segments)."
                 : "File is healthy.";
@@ -563,6 +567,9 @@ public class HealthCheckService : BackgroundService
             : LibraryLinkRepairDisposition.RepairLinked;
     }
 
+    internal static bool ShouldDeleteAfterArrNoMatch(int confirmationCount) =>
+        confirmationCount >= NoMatchConfirmationsRequired;
+
     /// <summary>
     /// Outcome of consulting Arr instances for a library-linked unhealthy item.
     /// </summary>
@@ -760,6 +767,8 @@ public class HealthCheckService : BackgroundService
             // force-delete policy may remove the item from this branch.
             var symlinkOrStrmPath = OrganizedLinksUtil.GetLink(davItem, _configManager);
             var linkDisposition = GetLibraryLinkRepairDisposition(symlinkOrStrmPath, forceDelete);
+            if (linkDisposition != LibraryLinkRepairDisposition.RepairLinked)
+                _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
             if (linkDisposition == LibraryLinkRepairDisposition.ForceDelete)
             {
                 if (symlinkOrStrmPath != null)
@@ -832,6 +841,9 @@ public class HealthCheckService : BackgroundService
                 davItem.HistoryItemId ?? davItem.NzbBlobId,
                 ct).ConfigureAwait(false);
 
+            if (arrDecision != ArrLinkedRepairDecision.DeferNoMatchingMediaItem)
+                _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
+
             if (arrDecision == ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded)
             {
                 DeletionAuditLog.Record(
@@ -892,21 +904,53 @@ public class HealthCheckService : BackgroundService
                 return;
             }
 
-            // A reachable Arr returning no exact media-item match still does not prove that the
-            // organized link is orphaned. Keep both records and let the guarded maintenance task
-            // handle deliberate orphan cleanup.
-            var noMatchUtcNow = DateTimeOffset.UtcNow;
-            davItem.LastHealthCheck = noMatchUtcNow;
-            davItem.NextHealthCheck = noMatchUtcNow + TimeSpan.FromDays(1);
+            // A reachable Arr returning no exact media-item match is inconclusive once, because
+            // path normalization or a partial Arr response can produce a false miss. Require a
+            // second consecutive fully reachable miss before deliberately removing a confirmed
+            // Arr orphan. This also gives genuine orphan links a cleanup path; the maintenance
+            // task cannot see them as unlinked while the organized link still exists.
+            var noMatchConfirmations = _arrNoMatchConfirmations.AddOrUpdate(
+                davItem.Id,
+                1,
+                static (_, previous) => previous + 1);
+            if (!ShouldDeleteAfterArrNoMatch(noMatchConfirmations))
+            {
+                var noMatchUtcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = noMatchUtcNow;
+                davItem.NextHealthCheck = noMatchUtcNow + TimeSpan.FromDays(1);
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    string.Join(" ", [
+                        "File failed health validation.",
+                        $"Corresponding {linkType} found within Library Dir.",
+                        "No configured Radarr/Sonarr instance confirmed a matching media-item.",
+                        $"Leaving the webdav-file and {linkType} in place after no-match confirmation {noMatchConfirmations}/{NoMatchConfirmationsRequired}."
+                    ]), ct).ConfigureAwait(false);
+                return;
+            }
+
+            _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
+            await Task.Run(() => File.Delete(linkedPath)).ConfigureAwait(false);
+            DeletionAuditLog.Record(
+                "health-repair",
+                davItem,
+                "health validation failed; no Arr media-item after repeated reachable confirmations");
+            dbClient.Ctx.Items.Remove(davItem);
+            _failureTracker.ClearFailure(davItem.Id);
+            var confirmedOrphanUtcNow = DateTimeOffset.UtcNow;
+            davItem.LastHealthCheck = confirmedOrphanUtcNow;
+            davItem.NextHealthCheck = confirmedOrphanUtcNow + TimeSpan.FromDays(1);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Unhealthy,
-                HealthCheckResult.RepairAction.ActionNeeded,
+                HealthCheckResult.RepairAction.Deleted,
                 string.Join(" ", [
                     "File failed health validation.",
                     $"Corresponding {linkType} found within Library Dir.",
                     "No configured Radarr/Sonarr instance confirmed a matching media-item.",
-                    $"Leaving the webdav-file and {linkType} in place rather than deleting them."
+                    $"Deleted the webdav-file and {linkType} after {noMatchConfirmations} consecutive confirmations."
                 ]), ct).ConfigureAwait(false);
         }
         catch (Exception e)
