@@ -52,7 +52,6 @@ jobs:
           SHA: ${{ github.sha }}
           PREVIOUS_SHA: ${{ needs.tag-dev.outputs.previous_sha }}
           REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           if [ -z "${DISCORD_DEVELOPMENT_WEBHOOK_URL}" ]; then
@@ -61,15 +60,22 @@ jobs:
           fi
 
           SHORT_SHA="${SHA:0:7}"
-          ANNOUNCEMENT_BODY=$(printf '**Dev image refreshed**\n`ghcr.io/%s:dev` and git tag `dev` now point to `%s`.\nRun: %s' "${REPO}" "${SHORT_SHA}" "${RUN_URL}")
-
+          BASE_LABEL="Changes since last dev build"
           if [ -n "${PREVIOUS_SHA}" ] && [ "${PREVIOUS_SHA}" != "${SHA}" ]; then
             CHANGELOG=$(gh api "repos/${REPO}/compare/${PREVIOUS_SHA}...${SHA}" \
-              --jq '.commits[] | "• " + (.commit.message | split("\n")[0] | sub(" \\(#[0-9]+\\)$"; ""))')
-            if [ -n "${CHANGELOG}" ]; then
-              ANNOUNCEMENT_BODY=$(printf '%s\n\n**Changes since previous :dev:**\n%s' "${ANNOUNCEMENT_BODY}" "${CHANGELOG}")
-            fi
+              --jq '.commits[] | "- " + (.commit.message | split("\n")[0] | sub(" \\(#[0-9]+\\)$"; "")) + " ([" + .sha[0:7] + "](" + .html_url + "))"')
+          elif [ "${PREVIOUS_SHA}" = "${SHA}" ]; then
+            CHANGELOG="- (no new commits since last dev build)"
+          else
+            BASE_LABEL="Initial dev build"
+            CHANGELOG=$(printf -- '- Current commit ([%s](https://github.com/%s/commit/%s))' "${SHORT_SHA}" "${REPO}" "${SHA}")
           fi
+          if [ -z "${CHANGELOG}" ]; then
+            CHANGELOG="- (no new commits since last dev build)"
+          fi
+
+          ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `dev-%s`)\n%s\n%s' \
+            "${SHORT_SHA}" "${BASE_LABEL}" "${CHANGELOG}")
 
           MAX_LEN=1900
           if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then
@@ -78,5 +84,5 @@ jobs:
 
           ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
           curl --fail-with-body -sS -H "Content-Type: application/json" \
-            -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4}" \
+            -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
             "$DISCORD_DEVELOPMENT_WEBHOOK_URL"
