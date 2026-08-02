@@ -30,6 +30,9 @@ public sealed class StreamTraceStatusBroadcaster(WebsocketManager websocketManag
             _lastPayload = payload;
         }
 
+        if (!websocketManager.HasSubscribers(WebsocketTopic.StreamTracing))
+            return;
+
         await websocketManager.SendMessage(WebsocketTopic.StreamTracing, payload).ConfigureAwait(false);
     }
 

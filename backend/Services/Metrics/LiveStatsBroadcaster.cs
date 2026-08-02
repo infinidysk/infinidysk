@@ -63,6 +63,9 @@ public class LiveStatsBroadcaster(
 
     private async Task BroadcastAsync()
     {
+        if (!websocketManager.HasSubscribers(WebsocketTopic.LiveStats))
+            return;
+
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var sinceMs = nowMs - WindowMs;
 
