@@ -63,12 +63,12 @@ jobs:
           BASE_LABEL="Changes since last dev build"
           if [ -n "${PREVIOUS_SHA}" ] && [ "${PREVIOUS_SHA}" != "${SHA}" ]; then
             CHANGELOG=$(gh api "repos/${REPO}/compare/${PREVIOUS_SHA}...${SHA}" \
-              --jq '.commits[] | "- " + (.commit.message | split("\n")[0] | sub(" \\(#[0-9]+\\)$"; "")) + " ([" + .sha[0:7] + "](" + .html_url + "))"')
+              --jq '.commits[] | "- " + (.commit.message | split("\n")[0] | sub(" \\(#[0-9]+\\)$"; ""))')
           elif [ "${PREVIOUS_SHA}" = "${SHA}" ]; then
             CHANGELOG="- (no new commits since last dev build)"
           else
             BASE_LABEL="Initial dev build"
-            CHANGELOG=$(printf -- '- Current commit ([%s](https://github.com/%s/commit/%s))' "${SHORT_SHA}" "${REPO}" "${SHA}")
+            CHANGELOG="- No previous dev build to compare"
           fi
           if [ -z "${CHANGELOG}" ]; then
             CHANGELOG="- (no new commits since last dev build)"

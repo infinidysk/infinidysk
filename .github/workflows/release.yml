@@ -162,6 +162,10 @@ jobs:
             }
             seen { print }
           ' CHANGELOG.md)
+          RELEASE_NOTES=$(printf '%s\n' "${RELEASE_NOTES}" | sed -E \
+            -e 's/ \(\[#[0-9]+\]\(https:\/\/github\.com\/[^)]+\/issues\/[0-9]+\)\)//g' \
+            -e 's/ \(\[[0-9a-f]+\]\(https:\/\/github\.com\/[^)]+\/commit\/[^)]+\)\)//g' \
+            -e 's/, closes \[#[0-9]+\]\(https:\/\/github\.com\/[^)]+\/issues\/[0-9]+\)//g')
 
           ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**%s' "${VERSION}" "${RELEASE_NOTES}")
 
