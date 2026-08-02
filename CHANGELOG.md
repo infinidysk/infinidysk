@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.5](https://github.com/nzbdav/nzbdav/compare/v0.9.4...v0.9.5) (2026-08-02)
+
+
+### Features
+
+* **ui:** add header user avatar menu for logout ([#742](https://github.com/nzbdav/nzbdav/issues/742)) ([08e3a9a](https://github.com/nzbdav/nzbdav/commit/08e3a9a43a3a35215fc56f450ce749cabc72735a))
+
+
+### Bug Fixes
+
+* **arr:** blocklist grabbed history during repairs ([#745](https://github.com/nzbdav/nzbdav/issues/745)) ([533b0b7](https://github.com/nzbdav/nzbdav/commit/533b0b73b99c17d5d0f203ca75a3a5d5fb2762a8))
+* **deps:** Bump the github-actions group with 2 updates ([#744](https://github.com/nzbdav/nzbdav/issues/744)) ([7045a45](https://github.com/nzbdav/nzbdav/commit/7045a458e58e7e6de5516f48923e9124e74828b3))
+* **deps:** Bump the npm-minor-and-patch group ([#743](https://github.com/nzbdav/nzbdav/issues/743)) ([99fba04](https://github.com/nzbdav/nzbdav/commit/99fba041033b4f5ade33bdf15126887e35628cd3))
+* **health:** keep initial scan progress accurate ([#739](https://github.com/nzbdav/nzbdav/issues/739)) ([e9a66b3](https://github.com/nzbdav/nzbdav/commit/e9a66b36da611885cf9f3764b6eacdbe1013c933))
+* **ui:** close header dropdowns when clicking outside ([3c77ed3](https://github.com/nzbdav/nzbdav/commit/3c77ed34e751f353efed9cd55c38d3c810995b76))
+* **ui:** close other header dropdowns when opening one ([8657fba](https://github.com/nzbdav/nzbdav/commit/8657fba02840e65108472e6edc624ae120d8aa5f))
+* **ui:** toggle header dropdowns closed on second click ([9068060](https://github.com/nzbdav/nzbdav/commit/9068060fc6f8f58efda7d9a5db0f159e079023a0))
+* **usenet:** release the article body fetched during playback verification ([#746](https://github.com/nzbdav/nzbdav/issues/746)) ([8de2202](https://github.com/nzbdav/nzbdav/commit/8de2202371641a89dca10fdfbc98aac7fbb4a2f7))
+
 ## [0.9.4](https://github.com/nzbdav/nzbdav/compare/v0.9.3...v0.9.4) (2026-07-31)
 
 
