@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
 using NzbWebDAV.Api.SabControllers;
@@ -34,7 +35,7 @@ using Serilog.Templates.Themes;
 
 namespace NzbWebDAV;
 
-class Program
+public partial class Program
 {
     static async Task Main(string[] args)
     {
@@ -151,7 +152,13 @@ class Program
                 return;
             }
 
-            RunYencNativeSelfTest();
+            // WebApplicationFactory runs from the test output directory, where the
+            // backend's published rapidyenc native asset is not present.
+            if (!string.Equals(
+                    EnvironmentUtil.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+                    "Testing",
+                    StringComparison.OrdinalIgnoreCase))
+                RunYencNativeSelfTest();
 
             // Assign stable ProviderIds (persisting if needed) before the streaming
             // client is built. Cheap and non-fatal; the heavy legacy-metrics remap
@@ -314,7 +321,10 @@ class Program
             app.MapControllers();
             app.UseWebdavBasicAuthentication();
             app.UseNWebDav();
-            app.Lifetime.ApplicationStopping.Register(SigtermUtil.Cancel);
+            // TestServer hosts share a process, so stopping one must not trip the
+            // process-wide SIGTERM token used by later integration tests.
+            if (!app.Environment.IsEnvironment("Testing"))
+                app.Lifetime.ApplicationStopping.Register(SigtermUtil.Cancel);
             // Remap legacy host-keyed metrics rows onto ProviderIds after the app is
             // serving. This can rewrite a lot of rows on old databases and must never
             // delay the /health endpoint: blocking startup on it caused a container
