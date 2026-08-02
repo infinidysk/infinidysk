@@ -166,13 +166,13 @@ public sealed class RealSymlinkOps : ISymlinkOps
 
     public void DeleteSymlink(string libraryRoot, string path, string expectedTarget)
     {
+        // First pass: resolve and validate the path, then classify what is on disk.
         var safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, path);
-        // This first read classifies presence before the parent chain is checked
-        // again; current below is the authoritative target read after revalidation.
         var existing = ReadLinkUnchecked(safePath);
 
-        // Match ReplaceSymlink's final parent and leaf checks so a path swap cannot
-        // turn an approved link deletion into removal of an unrelated filesystem entry.
+        // Second pass (TOCTOU hardening): re-validate the parent chain so a
+        // concurrent path swap between the first check and the delete cannot turn
+        // an approved link deletion into removal of an unrelated filesystem entry.
         safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, safePath);
         if (existing is null)
         {

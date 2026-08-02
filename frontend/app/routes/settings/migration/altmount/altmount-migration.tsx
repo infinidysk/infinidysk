@@ -232,6 +232,7 @@ function ConnectStep({ m }: { m: Hook }) {
         }
     }, []);
 
+    // Invalidate any in-flight detection on unmount so stale setState calls are ignored.
     useEffect(() => () => {
         detectionGeneration.current++;
     }, []);
