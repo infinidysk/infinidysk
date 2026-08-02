@@ -16,6 +16,7 @@ import { ItemMenu } from "./item-menu/item-menu";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { classNames } from "~/utils/styling";
 import { Icon, Checkbox, Button } from "~/components/ui";
+import { useIsReadOnly } from "~/auth/authorization";
 
 const ITEM_MENU_CLASS =
     "flex select-none items-center self-stretch rounded-r-lg px-5 py-[15px]";
@@ -79,6 +80,7 @@ export default function Explore({ loaderData }: Route.ComponentProps) {
 }
 
 function Body(props: ExplorePageData) {
+    const isReadOnly = useIsReadOnly();
     const location = useLocation();
     const navigation = useNavigation();
     const revalidator = useRevalidator();
@@ -88,7 +90,7 @@ function Body(props: ExplorePageData) {
     const parentDirectories = isNavigating
         ? getParentDirectories(getWebdavPathDecoded(navigation.location!.pathname))
         : props.parentDirectories;
-    const canDelete = isDeletable(parentDirectories);
+    const canDelete = !isReadOnly && isDeletable(parentDirectories);
 
     const [query, setQuery] = useState("");
     const [sortKey, setSortKey] = useState<SortKey>("name");

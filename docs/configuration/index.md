@@ -16,7 +16,7 @@ For **authoritative headless** configuration of those same Settings keys via `NZ
 -   **Playback & automation** — [Watchdog](watchdog.md) · [Preflight](preflight.md) · [Watchtower](watchtower.md) · [Warden](warden.md)
 -   **Integrations** — [SABnzbd](sabnzbd.md) · [WebDAV](webdav.md) · [Radarr/Sonarr](arrs.md) · [Rclone](rclone.md)
 -   **System** — [Repairs](repairs.md) · [Maintenance](maintenance.md) · [Backup](backup.md) · [Support](support.md)
--   **Headless / ops** — [Headless ENV config](headless.md) · [Environment variables](environment-variables.md)
+-   **Headless / ops** — [OIDC / SSO](oidc.md) · [Headless ENV config](headless.md) · [Environment variables](environment-variables.md)
 
 </div>
 

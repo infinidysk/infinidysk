@@ -53,6 +53,7 @@ nav = [
     { "Warden" = "configuration/warden.md" },
     { "SABnzbd" = "configuration/sabnzbd.md" },
     { "WebDAV" = "configuration/webdav.md" },
+    { "OIDC / SSO" = "configuration/oidc.md" },
     { "Radarr/Sonarr" = "configuration/arrs.md" },
     { "Rclone" = "configuration/rclone.md" },
     { "Repairs" = "configuration/repairs.md" },

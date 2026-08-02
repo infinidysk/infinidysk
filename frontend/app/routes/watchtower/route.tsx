@@ -5,6 +5,7 @@ import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { Alert, Badge, Button, Icon, NativeForm as Form } from "~/components/ui";
 import { Checkbox } from "~/components/ui/form";
 import { backendClient, type WatchtowerData, type WatchtowerItem, type WatchtowerSource } from "~/clients/backend-client.server";
+import { useIsReadOnly } from "~/auth/authorization";
 
 const POLL_INTERVAL_MS = 5000;
 const PAGE_SIZE = 100;
@@ -55,6 +56,7 @@ export async function action({ request }: Route.ActionArgs) {
 type PendingRemove = "bulk" | "filter";
 
 export default function Watchtower({ loaderData }: Route.ComponentProps) {
+    const isReadOnly = useIsReadOnly();
     const addFetcher = useFetcher<typeof action>();
     const discoverFetcher = useFetcher<typeof action>();
     const bulkFetcher = useFetcher<typeof action>();
@@ -317,7 +319,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
         : `Remove ${selectedItems.size} item${selectedItems.size === 1 ? "" : "s"} from Watchtower?`;
 
     return (
-        <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-4 text-sm text-base-content/70 md:px-8">
+        <div className={`mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-4 text-sm text-base-content/70 md:px-8 ${isReadOnly ? "[&_form]:hidden" : ""}`}>
             <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                     <h2 className="text-xl font-semibold tracking-tight text-base-content">Watchtower</h2>
@@ -549,7 +551,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                                     type="button"
                                     size="xsmall"
                                     variant="danger"
-                                    disabled={filterBusy}
+                                    disabled={filterBusy || isReadOnly}
                                     onClick={() => setPendingRemove("filter")}
                                 >
                                     <Icon name="delete" className="!text-[16px]" />
@@ -576,7 +578,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                                     type="button"
                                     size="xsmall"
                                     variant="danger"
-                                    disabled={bulkBusy}
+                                    disabled={bulkBusy || isReadOnly}
                                     onClick={() => setPendingRemove("bulk")}
                                 >
                                     <Icon name="delete" className="!text-[16px]" />

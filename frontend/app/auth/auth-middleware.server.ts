@@ -9,6 +9,8 @@ const PUBLIC_PATHS = [
   "/login.data",
   "/onboarding",
   "/onboarding.data",
+  "/auth/oidc/login",
+  "/auth/oidc/callback",
 ];
 
 export async function authMiddleware(

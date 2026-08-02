@@ -16,6 +16,7 @@ import {
 import { applyCanonicalForwardedHeaders } from "./forwarded-headers";
 import { backendProxyTimeoutOptions } from "./backend-proxy-options";
 import { handleBackendProxyResponse } from "./backend-proxy-response";
+import { oidcRouter } from "./oidc-routes";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -77,11 +78,15 @@ const forwardToBackend = createProxyMiddleware({
   },
 });
 
-const credentialPaths = new Set([
+const credentialPostPaths = new Set([
   "/login",
   "/login.data",
   "/onboarding",
   "/onboarding.data",
+]);
+const oidcGetPaths = new Set([
+  "/auth/oidc/login",
+  "/auth/oidc/callback",
 ]);
 const credentialRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -96,10 +101,15 @@ const credentialRateLimiter = rateLimit({
     return remoteAddress ? ipKeyGenerator(remoteAddress) : "unknown";
   },
   skip: (req) => {
-    if (req.method.toUpperCase() !== "POST") return true;
     // Malformed encoding is not a credential path; must not throw (see #217).
     const decodedPath = safeDecodePath(req.path);
-    return decodedPath === null || !credentialPaths.has(decodedPath);
+    if (decodedPath === null) return true;
+
+    const method = req.method.toUpperCase();
+    return !(
+      (method === "POST" && credentialPostPaths.has(decodedPath))
+      || (method === "GET" && oidcGetPaths.has(decodedPath))
+    );
   },
   handler: (req, res, _next, options) => {
     logger.warn(
@@ -119,6 +129,9 @@ app.use(async (req, res, next) => {
 
 // Limit credential attempts without throttling WebDAV, API, or regular UI traffic.
 app.use(credentialRateLimiter);
+
+// OIDC endpoints must remain public so the provider can complete the callback.
+app.use(oidcRouter);
 
 // Require authentication for all React Router routes
 app.use(authMiddleware);

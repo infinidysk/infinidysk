@@ -21,7 +21,7 @@ function formatRemaining(expiresAtUnixMs: number, nowMs: number): string {
     return `${totalMinutes}m left`;
 }
 
-export function StreamTracingBanner() {
+export function StreamTracingBanner({ isReadOnly = false }: { isReadOnly?: boolean }) {
     const [status, setStatus] = useState<StreamTracingStatus | null>(null);
     const [now, setNow] = useState(() => Date.now());
     const [busy, setBusy] = useState(false);
@@ -79,7 +79,7 @@ export function StreamTracingBanner() {
                     Tracing uses RAM only and resets on restart.
                 </span>
             </div>
-            <Button
+            {!isReadOnly && <Button
                 variant="ghost"
                 size="small"
                 className="shrink-0 text-warning-content hover:bg-warning-content/10"
@@ -87,7 +87,7 @@ export function StreamTracingBanner() {
                 onClick={() => void turnOff()}
             >
                 Turn off
-            </Button>
+            </Button>}
         </Alert>
     );
 }

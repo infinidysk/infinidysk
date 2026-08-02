@@ -11,6 +11,7 @@ import { Pagination } from "../pagination/pagination"
 import { DropdownOptions } from "~/routes/explore/dropdown-options/dropdown-options"
 import { ExportNzb, Remove } from "~/routes/explore/item-menu/item-menu"
 import { canRetryHistorySlot, retryHistoryItem, shouldAcceptRetryClick } from "./history-retry"
+import { useIsReadOnly } from "~/auth/authorization"
 
 export type HistoryTableProps = {
     historySlots: PresentationHistorySlot[],
@@ -41,6 +42,7 @@ export function HistoryTable({
     onIsRemovingChanged,
     onRemoved,
 }: HistoryTableProps) {
+    const isReadOnly = useIsReadOnly();
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
     const selectedCount = historySlots.filter(x => !!x.isSelected).length;
     const headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === historySlots.length ? 'all' : 'some';
@@ -84,7 +86,7 @@ export function HistoryTable({
     const sectionTitle = (
         <div className="flex items-center gap-2.5">
             <h2 className="text-xl font-semibold text-base-content">History</h2>
-            {headerCheckboxState !== 'none' &&
+            {!isReadOnly && headerCheckboxState !== 'none' &&
                 <ActionButton type="delete" onClick={onRemove} />
             }
         </div>
@@ -110,7 +112,13 @@ export function HistoryTable({
             title={sectionTitle}
             badgeText={totalHistoryCount > 0 ? String(totalHistoryCount) : undefined}
         >
-            <PageTable headerCheckboxState={headerCheckboxState} onHeaderCheckboxChange={onSelectAll} footer={footer} showCompleted>
+            <PageTable
+                headerCheckboxState={headerCheckboxState}
+                onHeaderCheckboxChange={onSelectAll}
+                footer={footer}
+                showCompleted
+                selectable={!isReadOnly}
+            >
                 {historySlots.map(slot =>
                     <HistoryRow
                         key={slot.nzo_id}
@@ -142,6 +150,7 @@ type HistoryRowProps = {
 }
 
 export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onRemoved }: HistoryRowProps) {
+    const isReadOnly = useIsReadOnly();
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
     const [isRetrying, setIsRetrying] = useState(false);
@@ -224,6 +233,7 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
                     </div>
                 }
                 onRowSelectionChanged={isSelected => onIsSelectedChanged(slot.nzo_id, isSelected)}
+                selectable={!isReadOnly}
                 indexer={slot.indexer}
                 providers={slot.providers}
             />
@@ -250,6 +260,7 @@ export function Actions({
     onRemove: () => void,
     onRetry?: () => void,
 }) {
+    const isReadOnly = useIsReadOnly();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     const folderLink = getExploreContentLink(slot.storage, slot.category);
@@ -280,7 +291,7 @@ export function Actions({
 
     return (
         <>
-            {showRetry &&
+            {!isReadOnly && showRetry &&
                 <ActionButton
                     type="retry"
                     disabled={!!slot.isRemoving || isRetrying}
@@ -295,7 +306,7 @@ export function Actions({
             {(isFolderDisabled || !folderLink) &&
                 <ActionButton type="explore" disabled />
             }
-            <div className="relative">
+            {(!isReadOnly || !!nzbDownloadUrl) && <div className="relative">
                 <ActionButton
                     type="menu"
                     disabled={!!slot.isRemoving || isRetrying}
@@ -307,9 +318,11 @@ export function Actions({
                     onClose={() => setIsMenuOpen(false)}
                     options={[
                         !!nzbDownloadUrl ? { option: <ExportNzb />, linkTo: nzbDownloadUrl } : undefined,
-                        { option: <Remove />, onSelect: onRemoveSelected, variant: "danger" },
+                        !isReadOnly
+                            ? { option: <Remove />, onSelect: onRemoveSelected, variant: "danger" }
+                            : undefined,
                     ]} />
-            </div>
+            </div>}
         </>
     );
 }

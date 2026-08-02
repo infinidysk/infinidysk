@@ -23,6 +23,7 @@ import { checkForUpdate } from "./utils/update-check.server";
 import { backendClient } from "./clients/backend-client.server";
 import { MigrationBoundary } from "./components/migration-progress";
 import { StreamTracingBanner } from "./components/stream-tracing-banner";
+import { isOidcEnabled } from "../server/oidc.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
   // Single-fetch navigation/revalidation uses internal `.data` URLs
@@ -46,6 +47,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     updateAvailable: await checkForUpdate(version),
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
     username: sessionUser?.username ?? null,
+    role: sessionUser?.role ?? null,
+    isOidcEnabled: isOidcEnabled(),
     hasUsenetProviders: hasConfiguredUsenetProviders(
       config.find(item => item.configName === "usenet.providers")?.configValue
     ),
@@ -125,6 +128,8 @@ export default function App({ loaderData }: Route.ComponentProps) {
     updateAvailable,
     isFrontendAuthDisabled,
     username,
+    role,
+    isOidcEnabled,
     hasUsenetProviders,
     isWatchdogEnabled,
   } = loaderData;
@@ -139,6 +144,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
   const showLoading = isNavigating && !(isCurrentExplorePage && isNextExplorePage);
   const hideShell =
     location.pathname === "/login" || location.pathname === "/onboarding";
+  const outlet = <Outlet context={{ role, isOidcEnabled }} />;
 
   if (useLayout && !hideShell) {
     return (
@@ -156,9 +162,9 @@ export default function App({ loaderData }: Route.ComponentProps) {
         bodyChild={showLoading ? <Loading /> : (
           <>
             <div className="px-4 pt-4 md:px-8">
-              <StreamTracingBanner />
+              <StreamTracingBanner isReadOnly={role === "readonly"} />
             </div>
-            <Outlet />
+            {outlet}
           </>
         )}
         leftNavChild={
@@ -168,7 +174,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
     );
   }
 
-  return <Outlet />;
+  return outlet;
 }
 
 // Root ErrorBoundary catches loader/component throws that aren't handled closer

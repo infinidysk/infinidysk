@@ -19,11 +19,12 @@ import { isWardenSettingsUpdated, WardenSettings } from "./warden/warden";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { SupportSettings } from "./support/support";
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { useBlocker, useSearchParams } from "react-router";
+import { useBlocker, useOutletContext, useSearchParams } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { getAppVersion } from "~/utils/version.server";
 import { parseSettingsTab, getSettingsTabItem } from "./settings-tabs";
 import { Icon } from "~/components/ui";
+import type { UserRole } from "~/auth/authentication.server";
 
 const defaultConfig = {
     "general.base-url": "",
@@ -186,6 +187,8 @@ type BodyProps = {
 };
 
 function Body(props: BodyProps) {
+    const { role } = useOutletContext<{ role: UserRole | null }>();
+    const isReadOnly = role === "readonly";
     const [searchParams] = useSearchParams();
     const activeTab = parseSettingsTab(searchParams.get("tab"));
     const activeTabItem = getSettingsTabItem(activeTab);
@@ -333,6 +336,12 @@ function Body(props: BodyProps) {
                         </span>
                     </Alert>
                 )}
+                {isReadOnly && (
+                    <Alert variant="info" className="mb-6 text-sm">
+                        You are signed in with read-only access. Settings and maintenance actions are disabled.
+                    </Alert>
+                )}
+                <fieldset className="contents" disabled={isReadOnly}>
                 {activeTab === "usenet" && (
                     <UsenetSettings
                         config={newConfig}
@@ -354,6 +363,7 @@ function Body(props: BodyProps) {
                 {activeTab === "maintenance" && <Maintenance savedConfig={config} config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "backup" && <BackupSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "support" && <SupportSettings />}
+                </fieldset>
             </SettingsPanel>
 
             {saveError && (
@@ -361,7 +371,7 @@ function Body(props: BodyProps) {
                     {saveError}
                 </Alert>
             )}
-            {(activeTab !== "support" || isUpdated) && <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-base-content/10 bg-base-300/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
+            {!isReadOnly && (activeTab !== "support" || isUpdated) && <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-base-content/10 bg-base-300/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
                 {isUpdated && <Button
                     className="min-w-28"
                     variant="outline"
