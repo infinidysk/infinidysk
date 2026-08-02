@@ -20,6 +20,7 @@ import {
     useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useSearchParams } from "react-router";
 
 const USAGE_POLL_INTERVAL_MS = 10_000;
 
@@ -109,6 +110,126 @@ type ConnectionDetails = {
     BytesUsedResetAt?: number;
 };
 
+const DEMO_PROVIDERS: ConnectionDetails[] = [
+    {
+        ProviderId: "demo-primary",
+        Type: ProviderType.Pooled,
+        Host: "news.omicron.example",
+        Port: 563,
+        UseSsl: true,
+        User: "alice",
+        Pass: "",
+        MaxConnections: 40,
+        Priority: 0,
+        Nickname: "Primary",
+        StorageGroup: "omicron",
+    },
+    {
+        ProviderId: "demo-omicron-backup",
+        Type: ProviderType.BackupAndStats,
+        Host: "news.omicron.example",
+        Port: 563,
+        UseSsl: true,
+        User: "bob",
+        Pass: "",
+        MaxConnections: 20,
+        Priority: 1,
+        Nickname: "",
+        StorageGroup: "omicron",
+    },
+    {
+        ProviderId: "demo-omicron-third",
+        Type: ProviderType.Pooled,
+        Host: "news2.omicron.example",
+        Port: 563,
+        UseSsl: true,
+        User: "grace",
+        Pass: "",
+        MaxConnections: 15,
+        Priority: 2,
+        Nickname: "Omicron Two",
+        StorageGroup: "omicron",
+    },
+    {
+        ProviderId: "demo-omicron-fourth",
+        Type: ProviderType.BackupOnly,
+        Host: "backup2.omicron.example",
+        Port: 563,
+        UseSsl: true,
+        User: "heidi",
+        Pass: "",
+        MaxConnections: 10,
+        Priority: 3,
+        Nickname: "",
+        StorageGroup: "omicron",
+    },
+    {
+        ProviderId: "demo-omicron-fifth",
+        Type: ProviderType.Disabled,
+        Host: "archive.omicron.example",
+        Port: 119,
+        UseSsl: false,
+        User: "ivan",
+        Pass: "",
+        MaxConnections: 5,
+        Priority: 4,
+        Nickname: "Omicron Archive",
+        StorageGroup: "omicron",
+    },
+    {
+        ProviderId: "demo-eweka",
+        Type: ProviderType.Pooled,
+        Host: "news.eweka.example",
+        Port: 563,
+        UseSsl: true,
+        User: "carol",
+        Pass: "",
+        MaxConnections: 30,
+        Priority: 5,
+        Nickname: "Eweka",
+        StorageGroup: "eweka",
+    },
+    {
+        ProviderId: "demo-eweka-backup",
+        Type: ProviderType.BackupOnly,
+        Host: "backup.eweka.example",
+        Port: 563,
+        UseSsl: true,
+        User: "dave",
+        Pass: "",
+        MaxConnections: 10,
+        Priority: 6,
+        Nickname: "",
+        StorageGroup: "eweka",
+    },
+    {
+        ProviderId: "demo-disabled",
+        Type: ProviderType.Disabled,
+        Host: "news.other.example",
+        Port: 119,
+        UseSsl: false,
+        User: "erin",
+        Pass: "",
+        MaxConnections: 5,
+        Priority: 7,
+        Nickname: "Idle",
+        StorageGroup: "",
+    },
+    {
+        ProviderId: "demo-solo",
+        Type: ProviderType.Pooled,
+        Host: "news.solo.example",
+        Port: 563,
+        UseSsl: true,
+        User: "frank",
+        Pass: "",
+        MaxConnections: 25,
+        Priority: 8,
+        Nickname: "",
+        StorageGroup: "",
+    },
+];
+
 // camelCase matches the JSON wire format — ASP.NET Core MVC defaults to
 // camelCase serialization, so we mirror that here instead of fighting it.
 type ProviderUsage = {
@@ -187,13 +308,6 @@ type ConnectionCounts = {
 
 type UsenetProviderConfig = {
     Providers: ConnectionDetails[];
-};
-
-const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
-    [ProviderType.Disabled]: "Disabled",
-    [ProviderType.Pooled]: "Pool Connections",
-    [ProviderType.BackupAndStats]: "Backup & Health Checks",
-    [ProviderType.BackupOnly]: "Backup Only",
 };
 
 function providerCardTone(type: ProviderType): string {
@@ -295,19 +409,25 @@ function SortableItem({ id, disabled, children }: { id: string; disabled: boolea
 
 export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: UsenetSettingsProps) {
     // state
+    const [searchParams] = useSearchParams();
+    const isDemoPreview = searchParams.get("demoProviders") === "1";
     const [showModal, setShowModal] = useState(false);
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
     const [connections, setConnections] = useState<{[index: number]: ConnectionCounts}>({});
     const [usage, setUsage] = useState<{[index: number]: ProviderUsage}>({});
     const providersJson = config["usenet.providers"];
     const providerConfig = useMemo(() => parseProviderConfig(providersJson), [providersJson]);
+    const displayedProviderConfig = useMemo(
+        () => isDemoPreview ? { Providers: DEMO_PROVIDERS } : providerConfig,
+        [isDemoPreview, providerConfig],
+    );
     const cascadeEnabled = config["usenet.cascade.enabled"] === "true";
 
     // Display-sort by type then priority when cascade is off. Cascade mode keeps
     // array/drag order so dnd-kit and #N badges stay coherent. Mutations still
     // use the original config index — this never rewrites persisted order.
     const displayedProviders = useMemo(() => {
-        const items = providerConfig.Providers.map((provider, index) => ({ provider, index }));
+        const items = displayedProviderConfig.Providers.map((provider, index) => ({ provider, index }));
         if (cascadeEnabled) return items;
         return items.sort((a, b) => {
             const getGroup = (type: ProviderType) => {
@@ -321,7 +441,7 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
             if (prioDiff !== 0) return prioDiff;
             return a.index - b.index;
         });
-    }, [providerConfig.Providers, cascadeEnabled]);
+    }, [displayedProviderConfig.Providers, cascadeEnabled]);
 
     const storagePartitions = useMemo(
         () => partitionByStorageGroup(displayedProviders),
@@ -481,16 +601,15 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
     const renderProviderCard = (provider: ConnectionDetails, index: number) => {
         const isDisabled = provider.Type === ProviderType.Disabled;
         const displayName = provider.Nickname?.trim() || provider.Host;
-        const storageGroupLabel = provider.StorageGroup?.trim() || "";
-        const liveConnections = connections[index]?.live ?? 0;
+        const liveConnections = isDemoPreview ? 0 : connections[index]?.live ?? 0;
 
         return (
-            <SortableItem key={providerKey(provider)} id={providerKey(provider)} disabled={!cascadeEnabled}>
+            <SortableItem key={providerKey(provider)} id={providerKey(provider)} disabled={!cascadeEnabled || isDemoPreview}>
                 {({ setNodeRef, setActivatorNodeRef, attributes, listeners, style, isDragging }) => (
                     <div
                         ref={setNodeRef}
                         style={style}
-                        className={`overflow-hidden rounded-lg border ${providerCardTone(provider.Type)}`}
+                        className={`w-full max-w-md overflow-hidden rounded-lg border ${providerCardTone(provider.Type)}`}
                     >
                         <div className="space-y-3 p-3.5">
                             <div className="flex items-start justify-between gap-3">
@@ -507,9 +626,9 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                                         )}
                                     </div>
                                     <div className="mt-0.5 break-all text-xs text-base-content/60">
-                                        {provider.Nickname?.trim()
-                                            ? `${provider.Host}:${provider.Port}`
-                                            : `Port ${provider.Port}`}
+                                        {provider.User
+                                            ? `${provider.User}@${provider.Host}:${provider.Port}`
+                                            : `${provider.Host}:${provider.Port}`}
                                     </div>
                                 </div>
                                 <div className="flex shrink-0 gap-0.5">
@@ -521,6 +640,7 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                                             style={{ cursor: isDragging ? "grabbing" : "grab", touchAction: "none" }}
                                             title="Drag to reorder"
                                             aria-label="Drag to reorder"
+                                            disabled={isDemoPreview}
                                             {...attributes}
                                             {...listeners}
                                         >
@@ -535,8 +655,9 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                                         type="button"
                                         className={`btn btn-ghost btn-sm btn-square ${isDisabled ? "text-base-content/40" : "text-success"}`}
                                         onClick={() => handleToggleProvider(index)}
-                                        title={isDisabled ? "Enable Provider" : "Disable Provider"}
+                                        title={isDemoPreview ? "Disabled in demo preview" : isDisabled ? "Enable Provider" : "Disable Provider"}
                                         aria-pressed={!isDisabled}
+                                        disabled={isDemoPreview}
                                     >
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
@@ -547,7 +668,8 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                                         type="button"
                                         className="btn btn-ghost btn-sm btn-square"
                                         onClick={() => handleEditProvider(index)}
-                                        title="Edit Provider"
+                                        title={isDemoPreview ? "Disabled in demo preview" : "Edit Provider"}
+                                        disabled={isDemoPreview}
                                     >
                                         <Icon name="edit" className="!text-[14px]" />
                                     </button>
@@ -555,7 +677,8 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                                         type="button"
                                         className="btn btn-ghost btn-sm btn-square hover:text-error"
                                         onClick={() => handleDeleteProvider(index)}
-                                        title="Delete Provider"
+                                        title={isDemoPreview ? "Disabled in demo preview" : "Delete Provider"}
+                                        disabled={isDemoPreview}
                                     >
                                         <Icon name="delete" className="!text-[14px]" />
                                     </button>
@@ -563,36 +686,20 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                             </div>
 
                             <div className="border-t border-base-content/10 pt-2.5">
-                                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                                    <ProviderCardMeta
-                                        icon="person"
-                                        label="Username"
-                                        value={provider.User}
-                                    />
+                                <div>
                                     <ProviderCardMeta
                                         icon="hub"
                                         label="Connections"
                                         value={`${liveConnections} / ${provider.MaxConnections} max`}
                                         emphasize
                                     />
-                                    <ProviderCardMeta
-                                        icon="account_tree"
-                                        label="Behavior"
-                                        value={PROVIDER_TYPE_LABELS[provider.Type]}
-                                    />
-                                    {storageGroupLabel && (
-                                        <ProviderCardMeta
-                                            icon="storage"
-                                            label="Storage group"
-                                            value={storageGroupLabel}
-                                        />
-                                    )}
                                 </div>
 
                                 <UsageRow
                                     provider={provider}
-                                    usage={usage[index]}
+                                    usage={isDemoPreview ? undefined : usage[index]}
                                     onReset={() => handleResetUsage(index)}
+                                    resetDisabled={isDemoPreview}
                                 />
                             </div>
                         </div>
@@ -751,17 +858,29 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="badge badge-ghost badge-sm shrink-0">
-                            {providerConfig.Providers.length}{" "}
-                            {providerConfig.Providers.length === 1 ? "provider" : "providers"}
+                            {displayedProviderConfig.Providers.length}{" "}
+                            {displayedProviderConfig.Providers.length === 1 ? "provider" : "providers"}
                         </span>
-                        <Button variant="primary" size="small" onClick={handleAddProvider}>
+                        <Button
+                            variant="primary"
+                            size="small"
+                            onClick={handleAddProvider}
+                            disabled={isDemoPreview}
+                            title={isDemoPreview ? "Disabled in demo preview" : undefined}
+                        >
                             <Icon name="add" className="!text-[18px]" />
                             Add
                         </Button>
                     </div>
                 </div>
 
-                {providerConfig.Providers.length === 0 ? (
+                {isDemoPreview && (
+                    <Alert variant="info">
+                        Demo providers (preview only). Provider actions are disabled and demo data is never saved.
+                    </Alert>
+                )}
+
+                {displayedProviderConfig.Providers.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-base-content/15 bg-base-200/20 px-4 py-8 text-center">
                         <Icon name="cloud_off" className="!text-[28px] text-base-content/35" />
                         <p className="mt-2 text-sm text-base-content/55">No Usenet providers configured.</p>
@@ -771,10 +890,10 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                     </div>
                 ) : (
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                    <SortableContext items={providerConfig.Providers.map(providerKey)} strategy={rectSortingStrategy}>
+                    <SortableContext items={displayedProviderConfig.Providers.map(providerKey)} strategy={rectSortingStrategy}>
                     <div className="space-y-3">
                         {storagePartitions.ungrouped.length > 0 && (
-                            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                            <div className="flex max-w-full flex-wrap gap-3">
                                 {storagePartitions.ungrouped.map(({ provider, index }) =>
                                     renderProviderCard(provider, index),
                                 )}
@@ -783,7 +902,7 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                         {storagePartitions.groups.map(({ name, items }) => (
                             <div
                                 key={name}
-                                className="rounded-lg bg-gradient-to-br from-primary via-secondary to-accent p-px"
+                                className="w-full rounded-lg bg-gradient-to-br from-primary via-secondary to-accent p-px"
                             >
                                 <div className="space-y-2 rounded-[calc(var(--radius-box)-1px)] bg-base-200/90 p-2.5">
                                     <div className="flex items-center gap-2 px-1">
@@ -796,7 +915,7 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                                             {items.length === 1 ? "provider" : "providers"}
                                         </span>
                                     </div>
-                                    <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                                    <div className="flex max-w-full flex-wrap gap-2">
                                         {items.map(({ provider, index }) =>
                                             renderProviderCard(provider, index),
                                         )}
@@ -828,6 +947,7 @@ type UsageRowProps = {
     provider: ConnectionDetails;
     usage: ProviderUsage | undefined;
     onReset: () => void;
+    resetDisabled?: boolean;
 };
 
 function ProviderCardMeta({
@@ -868,7 +988,7 @@ function ProviderCardMeta({
     );
 }
 
-function UsageRow({ provider, usage, onReset }: UsageRowProps) {
+function UsageRow({ provider, usage, onReset, resetDisabled = false }: UsageRowProps) {
     const limit = provider.ByteLimit ?? null;
     const used = usage?.bytesUsed ?? 0;
     const hasLimit = limit !== null && limit > 0;
@@ -909,7 +1029,8 @@ function UsageRow({ provider, usage, onReset }: UsageRowProps) {
                     type="button"
                     className="btn btn-ghost btn-xs"
                     onClick={onReset}
-                    title="Reset the counter to zero (e.g. after buying a new block)"
+                    title={resetDisabled ? "Disabled in demo preview" : "Reset the counter to zero (e.g. after buying a new block)"}
+                    disabled={resetDisabled}
                 >
                     Reset
                 </button>
