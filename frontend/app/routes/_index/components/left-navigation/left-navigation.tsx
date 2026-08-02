@@ -1,30 +1,41 @@
-import { Link, useLocation, useNavigation } from "react-router";
+import { Link, useLocation, useNavigate, useNavigation } from "react-router";
 import type React from "react";
 import { useEffect, useState } from "react";
 import { Icon } from "~/components/ui";
+import { ServiceProviderNotice } from "~/components/service-provider-notice";
 import {
     SETTINGS_TAB_GROUPS,
     parseSettingsTab,
     settingsPath,
     type SettingsTab,
 } from "~/routes/settings/settings-tabs";
+import {
+    isFeatureDisabled,
+    isSettingsTabDisabled,
+    type NavFeatureId,
+    type ServiceProviderConfig,
+} from "~/utils/service-provider";
 
 export type LeftNavigationProps = {
     isWatchdogEnabled?: boolean,
+    serviceProvider?: ServiceProviderConfig | null,
 }
 
 type NavItem = {
     target: string;
     icon: string;
     label: string;
+    featureId: NavFeatureId;
 };
 
 const SETTINGS_ITEMS = SETTINGS_TAB_GROUPS.flatMap((group) => group.items);
 
 export function LeftNavigation({
     isWatchdogEnabled,
+    serviceProvider,
 }: LeftNavigationProps) {
     const location = useLocation();
+    const navigate = useNavigate();
     const navigation = useNavigation();
     const pathname = navigation.location?.pathname ?? location.pathname;
     const search = navigation.location?.search ?? location.search;
@@ -34,22 +45,28 @@ export function LeftNavigation({
         : null;
 
     const [settingsOpen, setSettingsOpen] = useState(isSettingsRoute);
+    const [providerNoticeOpen, setProviderNoticeOpen] = useState(false);
     useEffect(() => {
         if (isSettingsRoute) setSettingsOpen(true);
     }, [isSettingsRoute]);
 
     const items: NavItem[] = [
-        { target: "/overview", icon: "dashboard", label: "Overview" },
-        { target: "/queue", icon: "list_alt", label: "Queue" },
+        { target: "/overview", icon: "dashboard", label: "Overview", featureId: "overview" },
+        { target: "/queue", icon: "list_alt", label: "Queue", featureId: "queue" },
         ...(isWatchdogEnabled
-            ? [{ target: "/watchdog", icon: "monitor_heart", label: "Watchdog" }]
+            ? [{ target: "/watchdog", icon: "monitor_heart", label: "Watchdog", featureId: "watchdog" as const }]
             : []),
-        { target: "/watchtower", icon: "cell_tower", label: "Watchtower" },
-        { target: "/explore", icon: "folder_open", label: "Files" },
-        { target: "/health", icon: "health_and_safety", label: "Health" },
-        { target: "/logs", icon: "description", label: "Logs" },
-        { target: "/search", icon: "search", label: "Search" },
+        { target: "/watchtower", icon: "cell_tower", label: "Watchtower", featureId: "watchtower" },
+        { target: "/explore", icon: "folder_open", label: "Files", featureId: "explore" },
+        { target: "/health", icon: "health_and_safety", label: "Health", featureId: "health" },
+        { target: "/logs", icon: "description", label: "Logs", featureId: "logs" },
+        { target: "/search", icon: "search", label: "Search", featureId: "search" },
     ];
+
+    const closeProviderNotice = () => {
+        setProviderNoticeOpen(false);
+        navigate("/overview");
+    };
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4 text-base-content">
@@ -61,6 +78,8 @@ export function LeftNavigation({
                             target={item.target}
                             icon={item.icon}
                             pathname={pathname}
+                            disabled={isFeatureDisabled(serviceProvider, item.featureId)}
+                            onDisabledClick={() => setProviderNoticeOpen(true)}
                         >
                             {item.label}
                         </Item>
@@ -89,12 +108,21 @@ export function LeftNavigation({
                             tab={item.id}
                             icon={item.icon}
                             activeTab={activeSettingsTab}
+                            disabled={isSettingsTabDisabled(serviceProvider, item.id)}
+                            onDisabledClick={() => setProviderNoticeOpen(true)}
                         >
                             {item.label}
                         </SettingsItem>
                     ))}
                 </ul>
             </nav>
+            {serviceProvider && (
+                <ServiceProviderNotice
+                    open={providerNoticeOpen}
+                    serviceProvider={serviceProvider}
+                    onClose={closeProviderNotice}
+                />
+            )}
         </div>
     );
 }
@@ -104,23 +132,43 @@ function Item({
     icon,
     children,
     pathname,
+    disabled,
+    onDisabledClick,
 }: {
     target: string;
     icon: string;
     children: React.ReactNode;
     pathname: string;
+    disabled: boolean;
+    onDisabledClick: () => void;
 }) {
     const isSelected = pathname.startsWith(target);
+    const content = (
+        <>
+            <Icon name={icon} filled={isSelected} className="!text-[22px]" />
+            <span className="flex-1 text-left">{children}</span>
+        </>
+    );
     return (
         <li>
-            <Link
-                to={target}
-                aria-current={isSelected ? "page" : undefined}
-                className={isSelected ? "menu-active" : undefined}
-            >
-                <Icon name={icon} filled={isSelected} className="!text-[22px]" />
-                <span className="flex-1 text-left">{children}</span>
-            </Link>
+            {disabled ? (
+                <button
+                    type="button"
+                    aria-disabled="true"
+                    className="opacity-50"
+                    onClick={onDisabledClick}
+                >
+                    {content}
+                </button>
+            ) : (
+                <Link
+                    to={target}
+                    aria-current={isSelected ? "page" : undefined}
+                    className={isSelected ? "menu-active" : undefined}
+                >
+                    {content}
+                </Link>
+            )}
         </li>
     );
 }
@@ -130,23 +178,43 @@ function SettingsItem({
     icon,
     activeTab,
     children,
+    disabled,
+    onDisabledClick,
 }: {
     tab: SettingsTab;
     icon: string;
     activeTab: SettingsTab | null;
     children: React.ReactNode;
+    disabled: boolean;
+    onDisabledClick: () => void;
 }) {
     const isSelected = activeTab === tab;
+    const content = (
+        <>
+            <Icon name={icon} filled={isSelected} className="!text-[18px]" />
+            <span className="flex-1 text-left">{children}</span>
+        </>
+    );
     return (
         <li className="ms-3 border-s border-base-content/10 ps-1">
-            <Link
-                to={settingsPath(tab)}
-                aria-current={isSelected ? "page" : undefined}
-                className={`text-sm ${isSelected ? "menu-active" : ""}`}
-            >
-                <Icon name={icon} filled={isSelected} className="!text-[18px]" />
-                <span className="flex-1 text-left">{children}</span>
-            </Link>
+            {disabled ? (
+                <button
+                    type="button"
+                    aria-disabled="true"
+                    className="text-sm opacity-50"
+                    onClick={onDisabledClick}
+                >
+                    {content}
+                </button>
+            ) : (
+                <Link
+                    to={settingsPath(tab)}
+                    aria-current={isSelected ? "page" : undefined}
+                    className={`text-sm ${isSelected ? "menu-active" : ""}`}
+                >
+                    {content}
+                </Link>
+            )}
         </li>
     );
 }

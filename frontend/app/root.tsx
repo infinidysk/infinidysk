@@ -22,15 +22,17 @@ import { getAppVersion } from "./utils/version.server";
 import { checkForUpdate } from "./utils/update-check.server";
 import { backendClient } from "./clients/backend-client.server";
 import { MigrationBoundary } from "./components/migration-progress";
+import { ServiceProviderGate } from "./components/service-provider-gate";
 import { StreamTracingBanner } from "./components/stream-tracing-banner";
 import { isOidcEnabled } from "../server/oidc.server";
+import { getServiceProvider } from "./utils/service-provider.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
   // Single-fetch navigation/revalidation uses internal `.data` URLs
   // (e.g. /login.data), so strip that suffix before the layout check.
   let path = new URL(request.url).pathname.replace(/\.data$/, "");
   if (path === "/login" || path === "/onboarding") {
-    return { useLayout: false };
+    return { useLayout: false, serviceProvider: null };
   }
 
   const config = await backendClient.getConfig([
@@ -40,6 +42,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const version = await getAppVersion();
   const sessionUser = await getSessionUser(request);
+  const serviceProvider = getServiceProvider();
 
   return {
     useLayout: true,
@@ -54,6 +57,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     ),
     isWatchdogEnabled:
       config.find(item => item.configName === "play.watchdog-enabled")?.configValue?.toLowerCase() !== "false",
+    serviceProvider,
   };
 }
 
@@ -132,6 +136,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
     isOidcEnabled,
     hasUsenetProviders,
     isWatchdogEnabled,
+    serviceProvider,
   } = loaderData;
   const location = useLocation();
   const navigation = useNavigation();
@@ -144,7 +149,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
   const showLoading = isNavigating && !(isCurrentExplorePage && isNextExplorePage);
   const hideShell =
     location.pathname === "/login" || location.pathname === "/onboarding";
-  const outlet = <Outlet context={{ role, isOidcEnabled }} />;
+  const outlet = <Outlet context={{ role, isOidcEnabled, serviceProvider }} />;
 
   if (useLayout && !hideShell) {
     return (
@@ -159,18 +164,26 @@ export default function App({ loaderData }: Route.ComponentProps) {
             hasUsenetProviders={hasUsenetProviders}
           />
         )}
-        bodyChild={showLoading ? <Loading /> : (
-          <>
-            <div className="px-4 pt-4 md:px-8">
-              <StreamTracingBanner isReadOnly={role === "readonly"} />
-            </div>
-            {outlet}
-          </>
-        )}
+        bodyChild={
+          <ServiceProviderGate serviceProvider={serviceProvider}>
+            {showLoading ? <Loading /> : (
+              <>
+                <div className="px-4 pt-4 md:px-8">
+                  <StreamTracingBanner isReadOnly={role === "readonly"} />
+                </div>
+                {outlet}
+              </>
+            )}
+          </ServiceProviderGate>
+        }
         leftNavChild={
           <LeftNavigation
-            isWatchdogEnabled={isWatchdogEnabled} />
-        } />
+            isWatchdogEnabled={isWatchdogEnabled}
+            serviceProvider={serviceProvider}
+          />
+        }
+        serviceProvider={serviceProvider}
+      />
     );
   }
 

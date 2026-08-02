@@ -19,12 +19,14 @@ import { isWardenSettingsUpdated, WardenSettings } from "./warden/warden";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { SupportSettings } from "./support/support";
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { useBlocker, useOutletContext, useSearchParams } from "react-router";
+import { useBlocker, useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
+import { ServiceProviderNotice } from "~/components/service-provider-notice";
 import { getAppVersion } from "~/utils/version.server";
-import { parseSettingsTab, getSettingsTabItem } from "./settings-tabs";
+import { parseSettingsTab, getSettingsTabItem, type SettingsTab } from "./settings-tabs";
 import { Icon } from "~/components/ui";
-import type { UserRole } from "~/auth/authentication.server";
+import type { AppOutletContext } from "~/auth/authorization";
+import { isSettingsTabDisabled } from "~/utils/service-provider";
 
 const defaultConfig = {
     "general.base-url": "",
@@ -175,8 +177,27 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function Settings(props: Route.ComponentProps) {
+    const { serviceProvider } = useOutletContext<AppOutletContext>();
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const activeTab = parseSettingsTab(searchParams.get("tab"));
+
+    // The root-level ServiceProviderGate (app/components/service-provider-gate.tsx)
+    // already intercepts disabled settings tabs before this route renders. This
+    // guard is defense-in-depth in case Settings is ever rendered outside that
+    // wrapper (e.g. a future layout change or isolated test).
+    if (serviceProvider && isSettingsTabDisabled(serviceProvider, activeTab)) {
+        return (
+            <ServiceProviderNotice
+                open
+                serviceProvider={serviceProvider}
+                onClose={() => navigate("/overview", { replace: true })}
+            />
+        );
+    }
+
     return (
-        <Body {...props.loaderData} />
+        <Body {...props.loaderData} activeTab={activeTab} />
     );
 }
 
@@ -184,13 +205,13 @@ type BodyProps = {
     config: Record<string, string>,
     managedEnv: ManagedEnvMap,
     appVersion: string,
+    activeTab: SettingsTab,
 };
 
 function Body(props: BodyProps) {
-    const { role } = useOutletContext<{ role: UserRole | null }>();
+    const { role } = useOutletContext<AppOutletContext>();
     const isReadOnly = role === "readonly";
-    const [searchParams] = useSearchParams();
-    const activeTab = parseSettingsTab(searchParams.get("tab"));
+    const activeTab = props.activeTab;
     const activeTabItem = getSettingsTabItem(activeTab);
     const [config, setConfig] = useState(props.config);
     const [newConfig, setNewConfigState] = useState(config);
