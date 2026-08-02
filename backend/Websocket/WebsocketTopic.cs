@@ -34,6 +34,8 @@ public class WebsocketTopic
     public static readonly WebsocketTopic DatabaseBackupTaskProgress = new("dbbk", TopicType.State);
     public static readonly WebsocketTopic DatabaseRestoreTaskProgress = new("dbrs", TopicType.State);
 
+    private static readonly Dictionary<string, WebsocketTopic> ByName = new(StringComparer.Ordinal);
+
     public readonly string Name;
     public readonly TopicType Type;
 
@@ -41,7 +43,11 @@ public class WebsocketTopic
     {
         Name = name;
         Type = type;
+        ByName[name] = this;
     }
+
+    public static bool TryGetByName(string name, out WebsocketTopic? topic) =>
+        ByName.TryGetValue(name, out topic);
 
     public enum TopicType
     {
