@@ -2,6 +2,8 @@
 
 public class WebsocketTopic
 {
+    private static readonly Dictionary<string, WebsocketTopic> ByName = new(StringComparer.Ordinal);
+
     // Stateful topics
     public static readonly WebsocketTopic UsenetConnections = new("cxs", TopicType.State);
     public static readonly WebsocketTopic ActiveReads = new("ar", TopicType.State);
@@ -33,8 +35,6 @@ public class WebsocketTopic
     // Database backup / restore progress
     public static readonly WebsocketTopic DatabaseBackupTaskProgress = new("dbbk", TopicType.State);
     public static readonly WebsocketTopic DatabaseRestoreTaskProgress = new("dbrs", TopicType.State);
-
-    private static readonly Dictionary<string, WebsocketTopic> ByName = new(StringComparer.Ordinal);
 
     public readonly string Name;
     public readonly TopicType Type;

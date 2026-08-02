@@ -8,6 +8,7 @@ import {
     nextBackendReconnectDelayMs,
     parseSubscriptionTopics,
     sendToBrowserClient,
+    UpstreamSubscriptionForwarder,
 } from "./websocket.server";
 
 describe("parseSubscriptionTopics", () => {
@@ -75,6 +76,88 @@ describe("nextBackendReconnectDelayMs", () => {
 
     it("uses full jitter so a zero draw yields zero delay", () => {
         expect(nextBackendReconnectDelayMs(3, () => 0)).toBe(0);
+    });
+});
+
+describe("UpstreamSubscriptionForwarder", () => {
+    function createMockSocket() {
+        const sent: string[] = [];
+        return {
+            socket: {
+                readyState: WebSocket.OPEN,
+                send: (data: string) => sent.push(data),
+            } as unknown as WebSocket,
+            sent,
+        };
+    }
+
+    it("sends sub when a topic gains its first subscriber", () => {
+        const subscriptions = new Map<string, Set<WebSocket>>();
+        const forwarder = new UpstreamSubscriptionForwarder(subscriptions);
+        const { socket, sent } = createMockSocket();
+        forwarder.setBackendSocket(socket);
+
+        subscriptions.set("ls", new Set([{} as WebSocket]));
+        forwarder.syncAfterBrowserChange([]);
+
+        expect(sent).toHaveLength(1);
+        expect(JSON.parse(sent[0])).toEqual({ sub: ["ls"] });
+    });
+
+    it("sends unsub when a topic loses its last subscriber", () => {
+        const subscriptions = new Map<string, Set<WebSocket>>();
+        subscriptions.set("ls", new Set([{} as WebSocket]));
+        const forwarder = new UpstreamSubscriptionForwarder(subscriptions);
+        const { socket, sent } = createMockSocket();
+        forwarder.setBackendSocket(socket);
+        forwarder.sendFullSubscriptionSet();
+        sent.length = 0;
+
+        subscriptions.get("ls")!.clear();
+        forwarder.syncAfterBrowserChange(["ls"]);
+
+        expect(sent).toHaveLength(1);
+        expect(JSON.parse(sent[0])).toEqual({ unsub: ["ls"] });
+    });
+
+    it("sends full subscription set on reconnect", () => {
+        const subscriptions = new Map<string, Set<WebSocket>>();
+        subscriptions.set("ls", new Set([{} as WebSocket]));
+        subscriptions.set("cxs", new Set([{} as WebSocket]));
+        const forwarder = new UpstreamSubscriptionForwarder(subscriptions);
+        const { socket, sent } = createMockSocket();
+        forwarder.setBackendSocket(socket);
+
+        forwarder.sendFullSubscriptionSet();
+
+        expect(sent).toHaveLength(1);
+        const parsed = JSON.parse(sent[0]);
+        expect(parsed.sub.sort()).toEqual(["cxs", "ls"]);
+    });
+
+    it("does not send when backend socket is not connected", () => {
+        const subscriptions = new Map<string, Set<WebSocket>>();
+        subscriptions.set("ls", new Set([{} as WebSocket]));
+        const forwarder = new UpstreamSubscriptionForwarder(subscriptions);
+
+        forwarder.syncAfterBrowserChange([]);
+        // No error, just no-op
+    });
+
+    it("does not send redundant sub/unsub messages", () => {
+        const subscriptions = new Map<string, Set<WebSocket>>();
+        subscriptions.set("ls", new Set([{} as WebSocket]));
+        const forwarder = new UpstreamSubscriptionForwarder(subscriptions);
+        const { socket, sent } = createMockSocket();
+        forwarder.setBackendSocket(socket);
+        forwarder.sendFullSubscriptionSet();
+        sent.length = 0;
+
+        // Add a second subscriber to "ls" — topic was already active, no message needed
+        subscriptions.get("ls")!.add({} as WebSocket);
+        forwarder.syncAfterBrowserChange([]);
+
+        expect(sent).toHaveLength(0);
     });
 });
 
