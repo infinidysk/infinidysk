@@ -38,6 +38,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
     private readonly SubmissionReconciler _reconciler;
     private readonly SymlinkPlanner _symlinkPlanner;
     private readonly SymlinkRewriter _symlinkRewriter;
+    private readonly SymlinkOrphanRemover _symlinkOrphanRemover;
     private readonly SymlinkRestoreService _symlinkRestoreService;
     private readonly SubmissionOperationGate _scanGate = new();
     private readonly SubmissionOperationGate _submissionGate = new();
@@ -57,6 +58,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
         _reconciler = new SubmissionReconciler(store);
         _symlinkPlanner = new SymlinkPlanner(store, configManager);
         _symlinkRewriter = new SymlinkRewriter(store, configManager);
+        _symlinkOrphanRemover = new SymlinkOrphanRemover(store);
         _symlinkRestoreService = new SymlinkRestoreService(store);
     }
 
@@ -74,6 +76,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
     internal SubmissionReconciler ReconcilerForTests => _reconciler;
     internal SymlinkPlanner SymlinkPlannerForTests => _symlinkPlanner;
     internal SymlinkRewriter SymlinkRewriterForTests => _symlinkRewriter;
+    internal SymlinkOrphanRemover SymlinkOrphanRemoverForTests => _symlinkOrphanRemover;
     internal SymlinkRestoreService SymlinkRestoreServiceForTests => _symlinkRestoreService;
     internal Task TickOnceForTestsAsync(CancellationToken ct = default) => TickAsync(ct);
 
@@ -208,6 +211,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
             case "linking":
                 await RunStep6OperationAsync(
                         "symlink plan",
+                        "linking",
                         token => _symlinkPlanner.PlanAsync(token),
                         MigrationSessionTransition.CompleteLinkPlan,
                         ct)
@@ -217,8 +221,19 @@ public sealed class UsenetMigrationRunner : BackgroundService
             case "applying":
                 await RunStep6OperationAsync(
                         "symlink apply",
+                        "applying",
                         token => _symlinkRewriter.ApplyAsync(token),
                         MigrationSessionTransition.CompleteApply,
+                        ct)
+                    .ConfigureAwait(false);
+                break;
+
+            case "removing_orphans":
+                await RunStep6OperationAsync(
+                        "orphan symlink removal",
+                        "removing_orphans",
+                        token => _symlinkOrphanRemover.RemoveAsync(token),
+                        MigrationSessionTransition.CompleteOrphanRemoval,
                         ct)
                     .ConfigureAwait(false);
                 break;
@@ -241,11 +256,20 @@ public sealed class UsenetMigrationRunner : BackgroundService
 
     private async Task RunStep6OperationAsync<T>(
         string operationName,
+        string requiredStatus,
         Func<CancellationToken, Task<T>> operation,
         MigrationSessionTransition completionTransition,
         CancellationToken ct)
     {
         using var linkOperation = _linkGate.Begin(ct);
+        // Cancellation or a competing request can move the durable state after
+        // TickAsync selected a case but before this operation boundary became active.
+        // Apply this guard to every Step 6 operation, including the existing plan
+        // and rewrite flows, so they receive the same race protection.
+        var session = await _store.GetSessionAsync(ct).ConfigureAwait(false);
+        if (session.Status != requiredStatus)
+            return;
+
         try
         {
             await operation(linkOperation.Token).ConfigureAwait(false);

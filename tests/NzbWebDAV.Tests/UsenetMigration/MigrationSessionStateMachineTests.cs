@@ -32,6 +32,9 @@ public sealed class MigrationSessionStateMachineTests
             [MigrationSessionTransition.StartApply] = new("applying", "linked"),
             [MigrationSessionTransition.CompleteApply] = new("linked", "applying"),
             [MigrationSessionTransition.CancelApply] = new("linked", "applying"),
+            [MigrationSessionTransition.StartOrphanRemoval] = new("removing_orphans", "linked"),
+            [MigrationSessionTransition.CompleteOrphanRemoval] = new("linked", "removing_orphans"),
+            [MigrationSessionTransition.CancelOrphanRemoval] = new("linked", "removing_orphans"),
             [MigrationSessionTransition.StartRestore] = new("restoring", "linked"),
             [MigrationSessionTransition.CompleteRestore] = new("linked", "restoring"),
         };
@@ -71,6 +74,7 @@ public sealed class MigrationSessionStateMachineTests
     [InlineData("cancelling", true)]
     [InlineData("linking", true)]
     [InlineData("applying", true)]
+    [InlineData("removing_orphans", true)]
     [InlineData("restoring", true)]
     [InlineData("idle", false)]
     [InlineData("connected", false)]
@@ -195,11 +199,13 @@ public sealed class MigrationSessionStateMachineTests
         var results = await Task.WhenAll(
             h.Store.TryTransitionSessionAsync(MigrationSessionTransition.StartLinkPlan),
             h.Store.TryTransitionSessionAsync(MigrationSessionTransition.StartApply),
+            h.Store.TryTransitionSessionAsync(MigrationSessionTransition.StartOrphanRemoval),
             h.Store.TryTransitionSessionAsync(MigrationSessionTransition.StartRestore));
 
         Assert.Single(results, r => r.Outcome == MigrationSessionTransitionOutcome.Applied);
-        Assert.Equal(2, results.Count(r => r.Outcome == MigrationSessionTransitionOutcome.Rejected));
-        Assert.Contains((await h.Store.GetSessionAsync()).Status, new[] { "linking", "applying", "restoring" });
+        Assert.Equal(3, results.Count(r => r.Outcome == MigrationSessionTransitionOutcome.Rejected));
+        Assert.Contains((await h.Store.GetSessionAsync()).Status,
+            new[] { "linking", "applying", "removing_orphans", "restoring" });
     }
 
     private sealed record ExpectedRule(string TargetStatus, params string[] SourceStatuses);

@@ -28,6 +28,14 @@ public class SymlinkRewriterTests
             Links[path] = newTarget;
         }
 
+        public void DeleteSymlink(string libraryRoot, string path, string expectedTarget)
+        {
+            if (!Links.TryGetValue(path, out var current)
+                || !string.Equals(current, expectedTarget, StringComparison.Ordinal))
+                throw new IOException($"Refusing to delete '{path}' because its symlink target changed during removal.");
+            Links.Remove(path);
+        }
+
         public void CreateSymlink(string libraryRoot, string path, string target)
         {
             if (Links.ContainsKey(path))

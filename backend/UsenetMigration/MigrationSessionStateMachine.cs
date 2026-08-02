@@ -17,6 +17,7 @@ internal static class MigrationSessionStatus
     internal const string Linking = "linking";
     internal const string Linked = "linked";
     internal const string Applying = "applying";
+    internal const string RemovingOrphans = "removing_orphans";
     internal const string Restoring = "restoring";
 
     internal static IReadOnlyList<string> All { get; } =
@@ -35,6 +36,7 @@ internal static class MigrationSessionStatus
         Linking,
         Linked,
         Applying,
+        RemovingOrphans,
         Restoring,
     ];
 }
@@ -65,6 +67,9 @@ internal enum MigrationSessionTransition
     StartApply,
     CompleteApply,
     CancelApply,
+    StartOrphanRemoval,
+    CompleteOrphanRemoval,
+    CancelOrphanRemoval,
     StartRestore,
     CompleteRestore,
 }
@@ -103,6 +108,7 @@ internal static class MigrationSessionStateMachine
         MigrationSessionStatus.Cancelling,
         MigrationSessionStatus.Linking,
         MigrationSessionStatus.Applying,
+        MigrationSessionStatus.RemovingOrphans,
         MigrationSessionStatus.Restoring,
     ];
 
@@ -188,6 +194,15 @@ internal static class MigrationSessionStateMachine
             MigrationSessionTransition.CancelApply => new(
                 MigrationSessionStatus.Linked,
                 [MigrationSessionStatus.Applying]),
+            MigrationSessionTransition.StartOrphanRemoval => new(
+                MigrationSessionStatus.RemovingOrphans,
+                [MigrationSessionStatus.Linked]),
+            MigrationSessionTransition.CompleteOrphanRemoval => new(
+                MigrationSessionStatus.Linked,
+                [MigrationSessionStatus.RemovingOrphans]),
+            MigrationSessionTransition.CancelOrphanRemoval => new(
+                MigrationSessionStatus.Linked,
+                [MigrationSessionStatus.RemovingOrphans]),
             MigrationSessionTransition.StartRestore => new(
                 MigrationSessionStatus.Restoring,
                 [MigrationSessionStatus.Linked]),

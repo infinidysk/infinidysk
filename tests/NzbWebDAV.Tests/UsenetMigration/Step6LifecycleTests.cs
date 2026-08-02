@@ -34,6 +34,11 @@ public sealed class Step6LifecycleTests
             currentTarget = target;
         }
 
+        public void DeleteSymlink(string libraryRoot, string candidatePath, string expectedTarget)
+        {
+            currentTarget = null!;
+        }
+
         public void CreateSymlink(string libraryRoot, string candidatePath, string target)
         {
             currentTarget = target;
@@ -367,6 +372,115 @@ public sealed class Step6LifecycleTests
             Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousApiKey);
             Environment.SetEnvironmentVariable("CONFIG_PATH", previousConfig);
             configDir.Delete(true);
+        }
+    }
+
+    [Fact]
+    public async Task RemoveOrphans_RequiresConfirmationAndClaimsBackgroundOperation()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var library = Directory.CreateTempSubdirectory("altmig-library-");
+        var backups = Directory.CreateTempSubdirectory("altmig-backups-");
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.Status = "linked";
+            s.SymlinkLibraryRoot = library.FullName;
+            s.SymlinkBackupDir = backups.FullName;
+        });
+        await using (var migration = h.Mig())
+        {
+            migration.SymlinkRewrites.Add(new MigrationSymlinkRewrite
+            {
+                SymlinkPath = Path.Combine(library.FullName, "orphan.mkv"),
+                OldTarget = "/mnt/altmount/orphan.mkv",
+                Status = "orphan",
+                UpdatedAt = DateTime.UtcNow,
+            });
+            await migration.SaveChangesAsync();
+        }
+
+        const string apiKey = "step6-orphan-removal-key";
+        var previousApiKey = Environment.GetEnvironmentVariable("FRONTEND_BACKEND_API_KEY");
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", apiKey);
+        try
+        {
+            var config = new ConfigManager();
+            using var queueManager = CreateQueueManager();
+            var runner = new UsenetMigrationRunner(
+                h.Store, queueManager, config, new WebsocketManager());
+            using var services = new ServiceCollection()
+                .AddSingleton(config)
+                .AddSingleton(h.Store)
+                .BuildServiceProvider();
+            var httpContext = new DefaultHttpContext { RequestServices = services };
+            httpContext.Request.Headers["x-api-key"] = apiKey;
+            var controller = new UsenetMigrationController(h.Store, runner)
+            {
+                ControllerContext = new ControllerContext { HttpContext = httpContext },
+            };
+
+            var rejected = Assert.IsType<BadRequestObjectResult>(
+                await controller.RemoveOrphanSymlinks(new SymlinkOrphanRemovalRequest(null)));
+            Assert.Contains("explicit confirmation", Assert.IsType<BaseApiResponse>(rejected.Value).Error!);
+            Assert.Equal("linked", (await h.Store.GetSessionAsync()).Status);
+
+            Assert.IsType<OkObjectResult>(
+                await controller.RemoveOrphanSymlinks(new SymlinkOrphanRemovalRequest(true)));
+            Assert.Equal("removing_orphans", (await h.Store.GetSessionAsync()).Status);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousApiKey);
+            library.Delete(recursive: true);
+            backups.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Runner_OrphanRemovalCompletesAndReturnsToLinked()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var library = Directory.CreateTempSubdirectory("altmig-library-");
+        var backups = Directory.CreateTempSubdirectory("altmig-backups-");
+        var link = Path.Combine(library.FullName, "orphan.mkv");
+        const string target = "/mnt/altmount/orphan.mkv";
+        await h.Store.UpdateSessionAsync(s =>
+        {
+            s.Status = "removing_orphans";
+            s.SymlinkLibraryRoot = library.FullName;
+            s.SymlinkBackupDir = backups.FullName;
+        });
+        await using (var migration = h.Mig())
+        {
+            migration.SymlinkRewrites.Add(new MigrationSymlinkRewrite
+            {
+                SymlinkPath = link,
+                OldTarget = target,
+                Status = "orphan",
+                UpdatedAt = DateTime.UtcNow,
+            });
+            await migration.SaveChangesAsync();
+        }
+
+        try
+        {
+            using var queueManager = CreateQueueManager();
+            var runner = new UsenetMigrationRunner(
+                h.Store, queueManager, new ConfigManager(), new WebsocketManager());
+            runner.SymlinkOrphanRemoverForTests.Ops = new TestSymlinkOps(link, target);
+
+            await runner.TickOnceForTestsAsync();
+
+            Assert.Equal("linked", (await h.Store.GetSessionAsync()).Status);
+            await using var verify = h.Mig();
+            Assert.Equal("removed", (await verify.SymlinkRewrites.SingleAsync()).Status);
+            Assert.Single(Directory.EnumerateFiles(
+                backups.FullName, "altmount-orphan-symlink-backup-*.tar.gz"));
+        }
+        finally
+        {
+            library.Delete(recursive: true);
+            backups.Delete(recursive: true);
         }
     }
 

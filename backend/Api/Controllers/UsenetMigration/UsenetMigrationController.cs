@@ -21,10 +21,9 @@ namespace NzbWebDAV.Api.Controllers.UsenetMigration;
 /// <see cref="UsenetMigrationRunner"/>, which reacts to Status changes. Progress
 /// is surfaced by polling <c>status</c>/<c>summary</c> rather than websockets.
 ///
-/// Symlink continuity (<c>symlinks/plan|apply</c>) is the optional Step 6: it
-/// runs against a completed migration and, like scan/run, is status-driven —
-/// <c>plan</c> flips Status to <c>linking</c> and <c>apply</c> (confirm-gated) to
-/// <c>applying</c>; the runner performs the work and returns to <c>linked</c>.
+/// Symlink continuity is the optional Step 6. Planning, applying rewrites, and
+/// removing orphaned links are status-driven; destructive actions are explicitly
+/// confirm-gated, and the runner returns completed work to <c>linked</c>.
 /// </summary>
 public sealed class UsenetMigrationController(
     UsenetMigrationStore store,
@@ -652,8 +651,8 @@ public sealed class UsenetMigrationController(
     [HttpPost("api/migration/altmount/symlinks/apply")]
     public Task<IActionResult> ApplySymlinks([FromBody] SymlinkApplyRequest request) => GuardedAsync(async () =>
     {
-        // Apply is the only Step 6 action that mutates the library, so require
-        // explicit confirmation and a reviewed plan.
+        // Rewrite apply mutates matched library links, so require explicit
+        // confirmation and a reviewed plan.
         if (request.Confirm != true)
             throw new BadHttpRequestException("Applying symlink rewrites requires explicit confirmation.");
 
@@ -690,6 +689,42 @@ public sealed class UsenetMigrationController(
         return Ok(new { status = true, state = "applying" });
     });
 
+    [HttpPost("api/migration/altmount/symlinks/orphans/remove")]
+    public Task<IActionResult> RemoveOrphanSymlinks(
+        [FromBody] SymlinkOrphanRemovalRequest request) => GuardedAsync(async () =>
+    {
+        if (request.Confirm != true)
+            throw new BadHttpRequestException("Removing orphaned symlinks requires explicit confirmation.");
+
+        var session = await store.GetSessionAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        if (session.Status is not "linked")
+            throw new BadHttpRequestException("Build and review a symlink plan before removing orphaned links.");
+        if (string.IsNullOrEmpty(session.SymlinkLibraryRoot)
+            || string.IsNullOrEmpty(session.SymlinkBackupDir))
+        {
+            throw new BadHttpRequestException(
+                "No library root or backup directory is configured; re-run the plan step.");
+        }
+
+        await using (var ctx = store.NewContext())
+        {
+            var orphans = await ctx.SymlinkRewrites.AsNoTracking()
+                .CountAsync(r => r.Status == "orphan", HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+            if (orphans == 0)
+                throw new BadHttpRequestException("The current plan has no orphaned symlinks to remove.");
+        }
+
+        var transition = await store.TryTransitionSessionAsync(
+                MigrationSessionTransition.StartOrphanRemoval, HttpContext.RequestAborted)
+            .ConfigureAwait(false);
+        if (transition.Outcome != MigrationSessionTransitionOutcome.Applied)
+            throw new BadHttpRequestException(
+                $"Cannot remove orphaned symlinks while migration operation '{transition.CurrentStatus}' is active.");
+
+        return Ok(new { status = true, state = "removing_orphans" });
+    });
+
     [HttpDelete("api/migration/altmount/symlinks/operation")]
     public Task<IActionResult> CancelSymlinkOperation() => GuardedAsync(async () =>
     {
@@ -698,15 +733,16 @@ public sealed class UsenetMigrationController(
         {
             "linking" => MigrationSessionTransition.CancelLinkPlan,
             "applying" => MigrationSessionTransition.CancelApply,
+            "removing_orphans" => MigrationSessionTransition.CancelOrphanRemoval,
             _ => throw new BadHttpRequestException(
-                $"Only an active symlink plan or apply can be cancelled; current state is '{session.Status}'."),
+                $"Only an active symlink plan, apply, or orphan removal can be cancelled; current state is '{session.Status}'."),
         };
 
         var transition = await store.TryTransitionSessionAsync(transitionKind, HttpContext.RequestAborted)
             .ConfigureAwait(false);
         if (!transition.Succeeded)
             throw new BadHttpRequestException(
-                $"Only an active symlink plan or apply can be cancelled; current state is '{transition.CurrentStatus}'.");
+                $"Only an active symlink plan, apply, or orphan removal can be cancelled; current state is '{transition.CurrentStatus}'.");
 
         runner.InterruptStep6();
         return Ok(new { status = true, state = "linked" });
@@ -1057,6 +1093,8 @@ public sealed record ForgetMigrationDataRequest(bool? Confirm);
 public sealed record SymlinkPlanRequest(string? LibraryRoot, string? BackupDir);
 
 public sealed record SymlinkApplyRequest(bool? Confirm, bool? AcknowledgeUnreadable);
+
+public sealed record SymlinkOrphanRemovalRequest(bool? Confirm);
 
 public sealed record SymlinkRestoreRequest(string? FileName, bool? Confirm);
 

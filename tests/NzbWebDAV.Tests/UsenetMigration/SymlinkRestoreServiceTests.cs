@@ -20,6 +20,14 @@ public class SymlinkRestoreServiceTests
             Links[path] = newTarget;
         }
 
+        public void DeleteSymlink(string libraryRoot, string path, string expectedTarget)
+        {
+            if (!Links.TryGetValue(path, out var current)
+                || !string.Equals(current, expectedTarget, StringComparison.Ordinal))
+                throw new IOException($"Refusing to delete '{path}' because its symlink target changed during removal.");
+            Links.Remove(path);
+        }
+
         public void CreateSymlink(string libraryRoot, string path, string target)
         {
             if (Links.ContainsKey(path))
@@ -207,8 +215,131 @@ public class SymlinkRestoreServiceTests
         Directory.Delete(root, recursive: true);
     }
 
+    [Fact]
+    public async Task Restore_OrphanRemovalArchiveRecreatesMissingLinkAndRestoresPlanStatus()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var root = Directory.CreateTempSubdirectory("altmig-library-");
+        var backupDir = Directory.CreateTempSubdirectory("altmig-backups-");
+        var link = Path.Combine(root.FullName, "orphan.mkv");
+        const string target = "/mnt/altmount/orphan.mkv";
+        var archiveName = "altmount-orphan-symlink-backup-20260720-120005.tar.gz";
+        try
+        {
+            await h.Store.UpdateSessionAsync(s =>
+            {
+                s.Status = "linked";
+                s.SymlinkLibraryRoot = root.FullName;
+                s.SymlinkBackupDir = backupDir.FullName;
+            });
+            await using (var migration = h.Mig())
+            {
+                migration.SymlinkRewrites.Add(new MigrationSymlinkRewrite
+                {
+                    SymlinkPath = link,
+                    OldTarget = target,
+                    Status = "removed",
+                    UpdatedAt = DateTime.UtcNow,
+                });
+                await migration.SaveChangesAsync();
+            }
+            await SymlinkBackup.WriteAsync(
+                Path.Combine(backupDir.FullName, archiveName),
+                [new SymlinkBackup.Entry(
+                    link,
+                    target,
+                    Operation: SymlinkBackup.OrphanRemovalOperation)]);
+            var ops = new FakeSymlinkOps();
+
+            var result = await new SymlinkRestoreService(h.Store) { Ops = ops }
+                .RestoreAsync(archiveName);
+
+            Assert.Equal(1, result.Restored);
+            Assert.Equal(1, result.OrphansRestored);
+            Assert.Equal(0, result.Requeued);
+            Assert.Equal(target, ops.Links[link]);
+            await using var verify = h.Mig();
+            var row = await verify.SymlinkRewrites.SingleAsync();
+            Assert.Equal("orphan", row.Status);
+            Assert.Null(row.NewTarget);
+        }
+        finally
+        {
+            backupDir.Delete(recursive: true);
+            root.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task List_LabelsRewriteAndOrphanRemovalArchives()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var backupDir = Directory.CreateTempSubdirectory("altmig-backups-");
+        try
+        {
+            await h.Store.UpdateSessionAsync(s => s.SymlinkBackupDir = backupDir.FullName);
+            await SymlinkBackup.WriteAsync(
+                Path.Combine(backupDir.FullName, "altmount-symlink-backup-20260720-120006.tar.gz"),
+                [new SymlinkBackup.Entry("/lib/rewrite.mkv", "/alt/rewrite.mkv", "/nzbdav/rewrite.mkv")]);
+            await SymlinkBackup.WriteAsync(
+                Path.Combine(backupDir.FullName, "altmount-orphan-symlink-backup-20260720-120007.tar.gz"),
+                [new SymlinkBackup.Entry(
+                    "/lib/orphan.mkv",
+                    "/alt/orphan.mkv",
+                    Operation: SymlinkBackup.OrphanRemovalOperation)]);
+
+            var backups = await new SymlinkRestoreService(h.Store).ListAsync();
+
+            Assert.Equal("rewrite", backups.Single(b => b.FileName.Contains("120006")).Kind);
+            var orphan = backups.Single(b => b.FileName.Contains("120007"));
+            Assert.Equal("orphan-removal", orphan.Kind);
+            Assert.Equal(0, orphan.LegacyEntryCount);
+        }
+        finally
+        {
+            backupDir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task List_InvalidArchiveErrorNamesTheArchive()
+    {
+        await using var h = await MigrationTestHarness.CreateAsync();
+        var backupDir = Directory.CreateTempSubdirectory("altmig-backups-");
+        const string archiveName = "altmount-symlink-backup-20260720-120009.tar.gz";
+        try
+        {
+            await h.Store.UpdateSessionAsync(s => s.SymlinkBackupDir = backupDir.FullName);
+            await SymlinkBackup.WriteAsync(
+                Path.Combine(backupDir.FullName, archiveName),
+                [new SymlinkBackup.Entry(
+                    "/lib/orphan.mkv",
+                    "/alt/orphan.mkv",
+                    Operation: SymlinkBackup.OrphanRemovalOperation)]);
+
+            var backup = Assert.Single(await new SymlinkRestoreService(h.Store).ListAsync());
+
+            Assert.False(backup.IsValid);
+            Assert.Contains(archiveName, backup.Error);
+        }
+        finally
+        {
+            backupDir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveArchivePath_AcceptsOrphanRemovalArchive()
+    {
+        const string name = "altmount-orphan-symlink-backup-20260720-120008.tar.gz";
+        Assert.Equal(
+            Path.GetFullPath(Path.Combine(Path.GetTempPath(), name)),
+            SymlinkRestoreService.ResolveArchivePath(Path.GetTempPath(), name));
+    }
+
     [Theory]
     [InlineData("../altmount-symlink-backup-20260720.tar.gz")]
+    [InlineData("../altmount-orphan-symlink-backup-20260720.tar.gz")]
     [InlineData("other.tar.gz")]
     [InlineData("")]
     public void ResolveArchivePath_RejectsUntrustedNames(string fileName)

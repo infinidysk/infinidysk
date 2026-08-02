@@ -3,8 +3,8 @@ using Serilog;
 namespace NzbWebDAV.UsenetMigration.Symlinks;
 
 /// <summary>
-/// The minimal filesystem surface needed to apply symlink rewrites while preserving
-/// backup-first, drift-guard, idempotency, and never-delete behavior.
+/// The minimal filesystem surface needed to rewrite, remove, and restore symlinks
+/// while preserving backup-first, drift-guard, and idempotency behavior.
 /// </summary>
 public interface ISymlinkOps
 {
@@ -23,6 +23,13 @@ public interface ISymlinkOps
     /// old link before rethrowing.
     /// </summary>
     void ReplaceSymlink(string libraryRoot, string path, string expectedOldTarget, string newTarget);
+
+    /// <summary>
+    /// Delete the symlink at <paramref name="path"/> only when its current target
+    /// still equals <paramref name="expectedTarget"/>. Removes only the link inode,
+    /// never its target, and refuses real files or directories.
+    /// </summary>
+    void DeleteSymlink(string libraryRoot, string path, string expectedTarget);
 
     /// <summary>
     /// Create a symlink at an entirely absent path. Refuses if anything already
@@ -155,6 +162,43 @@ public sealed class RealSymlinkOps : ISymlinkOps
 
         safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, safePath);
         File.CreateSymbolicLink(safePath, target);
+    }
+
+    public void DeleteSymlink(string libraryRoot, string path, string expectedTarget)
+    {
+        var safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, path);
+        // This first read classifies presence before the parent chain is checked
+        // again; current below is the authoritative target read after revalidation.
+        var existing = ReadLinkUnchecked(safePath);
+
+        // Match ReplaceSymlink's final parent and leaf checks so a path swap cannot
+        // turn an approved link deletion into removal of an unrelated filesystem entry.
+        safePath = SymlinkPathGuard.RequireSafeParentChain(libraryRoot, safePath);
+        if (existing is null)
+        {
+            if (File.Exists(safePath) || Directory.Exists(safePath))
+                throw new IOException($"Refusing to delete non-symlink at '{safePath}'.");
+            throw new IOException($"Refusing to delete '{safePath}' because no symlink is present.");
+        }
+
+        BeforeFinalLeafValidation?.Invoke(safePath);
+        var current = ReadLinkUnchecked(safePath);
+        if (current is null)
+        {
+            throw new IOException(
+                $"Refusing to delete '{safePath}' because it is no longer the expected symlink.");
+        }
+        if (!string.Equals(current, expectedTarget, SymlinkPathGuard.PathComparison))
+        {
+            throw new IOException(
+                $"Refusing to delete '{safePath}' because its symlink target changed during removal.");
+        }
+
+        var attrs = File.GetAttributes(safePath);
+        if ((attrs & FileAttributes.Directory) != 0)
+            Directory.Delete(safePath);
+        else
+            File.Delete(safePath);
     }
 
     private static string? ReadLinkUnchecked(string path)

@@ -6,17 +6,23 @@ namespace NzbWebDAV.UsenetMigration.Symlinks;
 
 /// <summary>
 /// A restore <c>.tar.gz</c> whose single entry is a
-/// JSON manifest of the symlinks' pre-rewrite state (path → original Altmount target).
-/// The wizard writes this <b>before</b> any rewrite so the exact prior state can be
-/// replayed. A manifest (rather than raw symlink tar entries) keeps entry names safe
-/// and restore fully deterministic and testable.
+/// JSON manifest of symlinks' prior state (path → original Altmount target).
+/// The wizard writes this <b>before</b> any rewrite or orphan removal so the exact
+/// prior state can be replayed. A manifest (rather than raw symlink tar entries)
+/// keeps entry names safe and restore fully deterministic and testable.
 /// </summary>
 public static class SymlinkBackup
 {
     private const string ManifestEntryName = "symlinks.json";
     private const long MaxManifestBytes = 64L * 1024 * 1024;
 
-    public sealed record Entry(string Path, string Target, string? ReplacementTarget = null);
+    public const string OrphanRemovalOperation = "remove-orphan";
+
+    public sealed record Entry(
+        string Path,
+        string Target,
+        string? ReplacementTarget = null,
+        string? Operation = null);
 
     public static async Task WriteAsync(
         string backupFilePath, IReadOnlyList<Entry> entries, CancellationToken ct = default)

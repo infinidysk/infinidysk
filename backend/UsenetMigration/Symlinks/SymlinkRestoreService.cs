@@ -10,6 +10,7 @@ public sealed record SymlinkBackupInfo(
     long SizeBytes,
     int EntryCount,
     int LegacyEntryCount,
+    string Kind,
     bool IsValid,
     string? Error);
 
@@ -23,20 +24,20 @@ public sealed class SymlinkRestoreSummary
     public int AlreadyRestored { get; init; }
     public int Failed { get; init; }
     public int Requeued { get; init; }
+    public int OrphansRestored { get; init; }
     public IReadOnlyList<SymlinkRestoreIssue> Issues { get; init; } = [];
 }
 
 /// <summary>
-/// Lists and restores the archives created before Step 6 rewrites. Restore is
-/// confined to the configured library and refuses links whose targets have
-/// changed since the archive was written.
+/// Lists and restores the archives created before Step 6 rewrites and orphan
+/// removals. Restore is confined to the configured library and refuses paths
+/// whose contents have changed since the archive was written.
 /// </summary>
 public sealed class SymlinkRestoreService(UsenetMigrationStore store)
 {
     internal const string DefaultArchivePrefix = "altmount-symlink-backup-";
+    internal const string OrphanRemovalArchivePrefix = "altmount-orphan-symlink-backup-";
 
-    /// <summary>Archive filename prefix; override for a future migration source with distinct archives.</summary>
-    internal string ArchivePrefix { get; set; } = DefaultArchivePrefix;
     internal const string ArchiveSuffix = ".tar.gz";
 
     internal ISymlinkOps Ops { get; set; } = RealSymlinkOps.Instance;
@@ -52,19 +53,28 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
             return [];
 
         var archives = new List<SymlinkBackupInfo>();
-        foreach (var path in Directory.EnumerateFiles(backupDir, $"{ArchivePrefix}*{ArchiveSuffix}"))
+        var archivePaths = Directory
+            .EnumerateFiles(backupDir, $"{DefaultArchivePrefix}*{ArchiveSuffix}")
+            .Concat(Directory.EnumerateFiles(
+                backupDir, $"{OrphanRemovalArchivePrefix}*{ArchiveSuffix}"));
+        foreach (var path in archivePaths)
         {
             ct.ThrowIfCancellationRequested();
             var fileName = Path.GetFileName(path);
+            if (!TryGetArchiveKind(fileName, out var fileKind))
+                continue;
             try
             {
                 var entries = await SymlinkBackup.ReadAsync(path, ct).ConfigureAwait(false);
+                var kind = ClassifyArchive(entries, fileKind, fileName);
                 archives.Add(new SymlinkBackupInfo(
                     fileName,
                     GetLastWriteTimeUtc(path),
                     GetFileLength(path),
                     entries.Count,
-                    entries.Count(e => string.IsNullOrWhiteSpace(e.ReplacementTarget)),
+                    entries.Count(e => string.IsNullOrWhiteSpace(e.ReplacementTarget)
+                                       && string.IsNullOrWhiteSpace(e.Operation)),
+                    kind,
                     true,
                     null));
             }
@@ -75,7 +85,8 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
                     path, e.Message);
                 Log.Debug(e, "Unreadable symlink restore archive {ArchivePath} failure stack", path);
                 archives.Add(new SymlinkBackupInfo(
-                    fileName, GetLastWriteTimeUtc(path), GetFileLength(path), 0, 0, false, e.Message));
+                    fileName, GetLastWriteTimeUtc(path), GetFileLength(path), 0, 0,
+                    fileKind, false, e.Message));
             }
         }
 
@@ -96,6 +107,8 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
         var entries = await SymlinkBackup.ReadAsync(archivePath, ct).ConfigureAwait(false);
         if (entries.Count == 0)
             throw new InvalidDataException("The selected archive does not contain any symlinks.");
+        TryGetArchiveKind(fileName, out var fileKind);
+        _ = ClassifyArchive(entries, fileKind, fileName);
 
         // Load plan rows then release the SQLite connection before filesystem work.
         // Holding an open context across CreateOrReplaceSymlink deadlocks callers that
@@ -112,7 +125,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
 
         var issues = new List<SymlinkRestoreIssue>();
         var seenPaths = new HashSet<string>(PathComparer);
-        var pendingRequeues = new List<(string Path, string OldTarget, string NewTarget)>();
+        var pendingPlanUpdates = new List<PendingPlanUpdate>();
         int restored = 0, alreadyRestored = 0;
 
         foreach (var entry in entries)
@@ -135,10 +148,14 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
             }
 
             var planRow = planRows.FirstOrDefault(r => PathsEqual(r.SymlinkPath, entry.Path));
-            var expectedReplacement = entry.ReplacementTarget
-                                      ?? (planRow is not null && PathsEqual(planRow.OldTarget, entry.Target)
-                                          ? planRow.NewTarget
-                                          : null);
+            var isOrphanRemoval = string.Equals(
+                entry.Operation, SymlinkBackup.OrphanRemovalOperation, StringComparison.Ordinal);
+            var expectedReplacement = isOrphanRemoval
+                ? null
+                : entry.ReplacementTarget
+                  ?? (planRow is not null && PathsEqual(planRow.OldTarget, entry.Target)
+                      ? planRow.NewTarget
+                      : null);
 
             try
             {
@@ -156,13 +173,20 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
 
                     Ops.CreateSymlink(libraryRoot, entry.Path, entry.Target);
                     restored++;
-                    TryQueueRequeue(pendingRequeues, entry, expectedReplacement);
+                    QueuePlanUpdate(pendingPlanUpdates, entry, expectedReplacement, isOrphanRemoval);
                     continue;
                 }
                 if (PathsEqual(current, entry.Target))
                 {
                     alreadyRestored++;
-                    TryQueueRequeue(pendingRequeues, entry, expectedReplacement);
+                    QueuePlanUpdate(pendingPlanUpdates, entry, expectedReplacement, isOrphanRemoval);
+                    continue;
+                }
+                if (isOrphanRemoval)
+                {
+                    issues.Add(new SymlinkRestoreIssue(
+                        entry.Path,
+                        $"A different symlink now exists at this path (target '{current}'); it was left untouched."));
                     continue;
                 }
                 if (string.IsNullOrWhiteSpace(expectedReplacement))
@@ -182,7 +206,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
 
                 Ops.ReplaceSymlink(libraryRoot, entry.Path, expectedReplacement, entry.Target);
                 restored++;
-                TryQueueRequeue(pendingRequeues, entry, expectedReplacement);
+                QueuePlanUpdate(pendingPlanUpdates, entry, expectedReplacement, isOrphanRemoval);
             }
             catch (Exception e)
             {
@@ -207,11 +231,12 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
         }
 
         var requeued = 0;
-        if (pendingRequeues.Count > 0)
+        var orphansRestored = 0;
+        if (pendingPlanUpdates.Count > 0)
         {
             await using var ctx = store.NewContext();
             var rows = await ctx.SymlinkRewrites.ToListAsync(ct).ConfigureAwait(false);
-            foreach (var pending in pendingRequeues)
+            foreach (var pending in pendingPlanUpdates)
             {
                 var row = rows.FirstOrDefault(r => PathsEqual(r.SymlinkPath, pending.Path));
                 if (row is null)
@@ -226,10 +251,13 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
 
                 row.OldTarget = pending.OldTarget;
                 row.NewTarget = pending.NewTarget;
-                row.Status = "rewrite";
+                row.Status = pending.Status;
                 row.Error = null;
                 row.UpdatedAt = DateTime.UtcNow;
-                requeued++;
+                if (pending.Status == "orphan")
+                    orphansRestored++;
+                else
+                    requeued++;
             }
 
             await ctx.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -247,6 +275,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
             AlreadyRestored = alreadyRestored,
             Failed = issues.Count,
             Requeued = requeued,
+            OrphansRestored = orphansRestored,
             Issues = issues,
         };
     }
@@ -255,8 +284,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
     {
         if (string.IsNullOrWhiteSpace(fileName)
             || !string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal)
-            || !fileName.StartsWith(DefaultArchivePrefix, StringComparison.Ordinal)
-            || !fileName.EndsWith(ArchiveSuffix, StringComparison.Ordinal))
+            || !TryGetArchiveKind(fileName, out _))
             throw new InvalidDataException("The selected symlink restore archive name is invalid.");
 
         var root = Path.GetFullPath(backupDir);
@@ -275,16 +303,75 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
                && !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
     }
 
-    private static bool TryQueueRequeue(
-        List<(string Path, string OldTarget, string NewTarget)> pending,
+    private static void QueuePlanUpdate(
+        List<PendingPlanUpdate> pending,
         SymlinkBackup.Entry entry,
-        string? replacementTarget)
+        string? replacementTarget,
+        bool isOrphanRemoval)
     {
-        if (string.IsNullOrWhiteSpace(replacementTarget))
-            return false;
-        pending.Add((entry.Path, entry.Target, replacementTarget));
-        return true;
+        if (isOrphanRemoval)
+        {
+            pending.Add(new PendingPlanUpdate(entry.Path, entry.Target, null, "orphan"));
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(replacementTarget))
+            pending.Add(new PendingPlanUpdate(entry.Path, entry.Target, replacementTarget, "rewrite"));
     }
+
+    private static string ClassifyArchive(
+        IReadOnlyList<SymlinkBackup.Entry> entries,
+        string fileKind,
+        string fileName)
+    {
+        if (entries.Any(e => !string.IsNullOrWhiteSpace(e.Operation)
+                             && !string.Equals(
+                                 e.Operation,
+                                 SymlinkBackup.OrphanRemovalOperation,
+                                 StringComparison.Ordinal)))
+        {
+            throw new InvalidDataException(
+                $"The archive '{fileName}' contains an unsupported symlink operation.");
+        }
+        var hasOrphanEntries = entries.Any(e => string.Equals(
+            e.Operation, SymlinkBackup.OrphanRemovalOperation, StringComparison.Ordinal));
+        var hasOtherEntries = entries.Any(e => !string.Equals(
+            e.Operation, SymlinkBackup.OrphanRemovalOperation, StringComparison.Ordinal));
+        if (hasOrphanEntries && hasOtherEntries)
+            throw new InvalidDataException(
+                $"The archive '{fileName}' mixes rewrite and orphan-removal entries.");
+        if (fileKind == "orphan-removal" && !hasOrphanEntries)
+            throw new InvalidDataException(
+                $"The orphan-removal archive '{fileName}' does not contain orphan-removal entries.");
+        if (fileKind == "rewrite" && hasOrphanEntries)
+            throw new InvalidDataException(
+                $"The rewrite archive '{fileName}' contains orphan-removal entries.");
+        return fileKind;
+    }
+
+    private static bool TryGetArchiveKind(string fileName, out string kind)
+    {
+        kind = "";
+        if (!fileName.EndsWith(ArchiveSuffix, StringComparison.Ordinal))
+            return false;
+        if (fileName.StartsWith(OrphanRemovalArchivePrefix, StringComparison.Ordinal))
+        {
+            kind = "orphan-removal";
+            return true;
+        }
+        if (fileName.StartsWith(DefaultArchivePrefix, StringComparison.Ordinal))
+        {
+            kind = "rewrite";
+            return true;
+        }
+        return false;
+    }
+
+    private sealed record PendingPlanUpdate(
+        string Path,
+        string OldTarget,
+        string? NewTarget,
+        string Status);
 
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase

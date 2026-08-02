@@ -14,6 +14,7 @@ import {
     loadTableLatest,
     loadTableRetainingLastGood,
     requestAltmountPathDetection,
+    requestOrphanSymlinkRemoval,
     requestSymlinkApply,
     runUiMutation,
     type SessionStatus,
@@ -192,6 +193,30 @@ describe("requestSymlinkApply", () => {
     });
 });
 
+describe("requestOrphanSymlinkRemoval", () => {
+    it("requires explicit confirmation in the removal request", async () => {
+        const originalFetch = globalThis.fetch;
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+            new Response(JSON.stringify({ status: true }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            }),
+        );
+        globalThis.fetch = fetchMock;
+        try {
+            await requestOrphanSymlinkRemoval();
+
+            expect(fetchMock).toHaveBeenCalledOnce();
+            const [url, init] = fetchMock.mock.calls[0];
+            expect(url).toBe("/api/migration/altmount/symlinks/orphans/remove");
+            expect(init?.method).toBe("POST");
+            expect(JSON.parse(String(init?.body))).toEqual({ confirm: true });
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+});
+
 describe("beginLatestRequest", () => {
     it("invalidates older request tickets when a newer refresh starts", () => {
         const generation = { current: 0 };
@@ -213,7 +238,7 @@ describe("beginLatestRequest", () => {
 });
 
 describe("isMigrationWorkActive", () => {
-    it.each<SessionStatus>(["scanning", "scan_cancelling", "running", "paused", "cancelling", "linking", "applying", "restoring"])(
+    it.each<SessionStatus>(["scanning", "scan_cancelling", "running", "paused", "cancelling", "linking", "applying", "removing_orphans", "restoring"])(
         "blocks destructive wizard actions while status is %s",
         (status) => expect(isMigrationWorkActive(status)).toBe(true),
     );
@@ -229,7 +254,7 @@ describe("isMigrationWorkActive", () => {
 });
 
 describe("canResetMigration", () => {
-    it.each<SessionStatus>(["scanning", "scan_cancelling", "running", "paused", "cancelling", "linking", "applying", "restoring"])(
+    it.each<SessionStatus>(["scanning", "scan_cancelling", "running", "paused", "cancelling", "linking", "applying", "removing_orphans", "restoring"])(
         "blocks Reset Wizard while status is %s",
         (status) => expect(canResetMigration(status, null)).toBe(false),
     );
@@ -247,7 +272,7 @@ describe("review mutation state guards", () => {
         (status) => expect(canConnectMigration(status)).toBe(true),
     );
 
-    it.each<SessionStatus>(["scanning", "scan_cancelling", "running", "paused", "cancelling", "linking", "applying", "restoring"])(
+    it.each<SessionStatus>(["scanning", "scan_cancelling", "running", "paused", "cancelling", "linking", "applying", "removing_orphans", "restoring"])(
         "blocks Connect during active state %s",
         (status) => expect(canConnectMigration(status)).toBe(false),
     );
@@ -257,7 +282,7 @@ describe("review mutation state guards", () => {
         (status) => expect(canStartScanMigration(status)).toBe(true),
     );
 
-    it.each<SessionStatus>(["idle", "scanning", "scan_cancelling", "running", "paused", "cancelling", "linking", "applying", "restoring"])(
+    it.each<SessionStatus>(["idle", "scanning", "scan_cancelling", "running", "paused", "cancelling", "linking", "applying", "removing_orphans", "restoring"])(
         "blocks Scan from illegal state %s",
         (status) => expect(canStartScanMigration(status)).toBe(false),
     );
@@ -267,7 +292,7 @@ describe("review mutation state guards", () => {
         (status) => expect(canEditCategoryMappings(status)).toBe(true),
     );
 
-    it.each<SessionStatus>(["idle", "scanning", "scan_cancelling", "running", "paused", "cancelling", "complete", "cancelled", "linking", "linked", "applying", "restoring"])(
+    it.each<SessionStatus>(["idle", "scanning", "scan_cancelling", "running", "paused", "cancelling", "complete", "cancelled", "linking", "linked", "applying", "removing_orphans", "restoring"])(
         "locks category mapping edits while status is %s",
         (status) => expect(canEditCategoryMappings(status)).toBe(false),
     );
@@ -275,7 +300,7 @@ describe("review mutation state guards", () => {
     it("allows release selection edits only for a completed scan", () => {
         const statuses: (SessionStatus | undefined)[] = [
             undefined, "idle", "connected", "mapped", "scanning", "scan_cancelling", "running", "paused", "cancelling",
-            "complete", "cancelled", "linking", "linked", "applying", "restoring",
+            "complete", "cancelled", "linking", "linked", "applying", "removing_orphans", "restoring",
         ];
         expect(canEditReleaseSelection("scanned")).toBe(true);
         statuses.forEach((status) => expect(canEditReleaseSelection(status)).toBe(false));
@@ -285,7 +310,7 @@ describe("review mutation state guards", () => {
 describe("hasScanData", () => {
     it.each<SessionStatus>([
         "scanned", "running", "paused", "cancelling", "complete", "cancelled",
-        "linking", "linked", "applying", "restoring",
+        "linking", "linked", "applying", "removing_orphans", "restoring",
     ])("reports scan data available for status %s", (status) => {
         expect(hasScanData(status)).toBe(true);
     });

@@ -16,15 +16,14 @@ public sealed class RewriteSummary
 }
 
 /// <summary>
-/// Applies the Step 6 plan. It is the only component that mutates the arr/Plex
-/// library, and it does so with three guarantees:
+/// Applies the Step 6 rewrite plan. It retargets matched links with three guarantees:
 /// <list type="number">
 /// <item><b>Backup first.</b> A restore tarball of every to-be-changed symlink's prior
 ///   state is written before the first rewrite.</item>
 /// <item><b>Retarget only, never delete.</b> Each rewrite replaces a symlink's target
 ///   via <see cref="ISymlinkOps"/>, which removes only the link inode; migrated content
 ///   and any real (non-symlink) file are never touched. Orphan / not-altmount /
-///   already-nzbdav rows are never loaded, so they are untouched by construction.</item>
+///   already-nzbdav rows are never loaded, so they are untouched by rewrite apply.</item>
 /// <item><b>Drift-guarded and idempotent.</b> A row is rewritten only if the on-disk
 ///   target still equals the planned <c>OldTarget</c>; a symlink already pointing at
 ///   <c>NewTarget</c> is a no-op success, so re-running apply is safe.</item>

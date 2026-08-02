@@ -18,12 +18,14 @@ export type SessionStatus =
     | "linking"
     | "linked"
     | "applying"
+    | "removing_orphans"
     | "restoring";
 
 export function isMigrationWorkActive(status: SessionStatus | undefined): boolean {
     return status === "scanning" || status === "scan_cancelling"
         || status === "running" || status === "paused" || status === "cancelling"
-        || status === "linking" || status === "applying" || status === "restoring";
+        || status === "linking" || status === "applying" || status === "removing_orphans"
+        || status === "restoring";
 }
 
 export function canConnectMigration(status: SessionStatus | undefined): boolean {
@@ -59,6 +61,7 @@ export function hasScanData(status: SessionStatus | undefined): boolean {
         || status === "linking"
         || status === "linked"
         || status === "applying"
+        || status === "removing_orphans"
         || status === "restoring";
 }
 
@@ -203,6 +206,7 @@ export type SymlinkBackupInfo = {
     sizeBytes: number;
     entryCount: number;
     legacyEntryCount: number;
+    kind: "rewrite" | "orphan-removal";
     isValid: boolean;
     error?: string | null;
 };
@@ -216,6 +220,7 @@ export type SymlinkRestoreSummary = {
     alreadyRestored: number;
     failed: number;
     requeued: number;
+    orphansRestored: number;
     issues: SymlinkRestoreIssue[];
 };
 
@@ -319,6 +324,13 @@ export async function requestSymlinkApply(acknowledgeUnreadable = false): Promis
     await apiJson(
         `${BASE}/symlinks/apply`,
         jsonInit("POST", { confirm: true, acknowledgeUnreadable }),
+    );
+}
+
+export async function requestOrphanSymlinkRemoval(): Promise<void> {
+    await apiJson(
+        `${BASE}/symlinks/orphans/remove`,
+        jsonInit("POST", { confirm: true }),
     );
 }
 
@@ -432,7 +444,7 @@ export function useAltmountMigration() {
         void loadCategories();
     }, [refresh, loadCategories]);
 
-    // Poll while background work is in progress (scan, run, or Step 6 link/apply).
+    // Poll while background work is in progress (scan, run, or a Step 6 operation).
     const sessionStatus = status?.sessionStatus;
     const previousSessionStatus = useRef<SessionStatus | undefined>(undefined);
     useEffect(() => {
@@ -585,6 +597,11 @@ export function useAltmountMigration() {
         await refresh();
     }), [withBusy, refresh]);
 
+    const removeOrphanSymlinks = useCallback(() => withBusy("symlink-orphan-remove", async () => {
+        await requestOrphanSymlinkRemoval();
+        await refresh();
+    }), [withBusy, refresh]);
+
     const loadSymlinkBackups = useCallback(async (): Promise<SymlinkBackupInfo[]> => {
         const data = await apiJson<{ backups: SymlinkBackupInfo[] }>(`${BASE}/symlinks/backups`);
         return data.backups;
@@ -647,6 +664,7 @@ export function useAltmountMigration() {
         cancelSymlinkOperation,
         loadSymlinks,
         applySymlinks,
+        removeOrphanSymlinks,
         loadSymlinkBackups,
         restoreSymlinks,
         symlinkCsvHref,
@@ -681,6 +699,7 @@ export function useAltmountMigration() {
         cancelSymlinkOperation,
         loadSymlinks,
         applySymlinks,
+        removeOrphanSymlinks,
         loadSymlinkBackups,
         restoreSymlinks,
         symlinkCsvHref,

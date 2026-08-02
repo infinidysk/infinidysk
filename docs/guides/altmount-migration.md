@@ -44,7 +44,7 @@ services:
 3. **Scan** — NzbDAV groups metadata by store, verifies the referenced `.nzbz` data, estimates fetch cost, and checks whether the release is already present.
 4. **Review** — inspect red/amber findings, exclusions, filename changes, and collisions. Blocking collisions must be resolved before the run can start.
 5. **Run** — the wizard reconstructs NZBs and submits them through NzbDAV's normal import pipeline. Progress survives restarts. Pause or cancel stops before the next submission; an individual submission already crossing the queue boundary is allowed to finish and is recorded safely.
-6. **Links (optional)** — build a dry-run plan for library symlinks that still target Altmount. Review every status before applying. NzbDAV writes a restore archive first, changes symlinks only, and leaves real files, unmatched links, and drifted links untouched.
+6. **Links (optional)** — build a dry-run plan for library symlinks that still target Altmount. Review every status before applying. NzbDAV writes a restore archive first, changes symlinks only, and leaves real files, unmatched links, and drifted links untouched. If you want a clean break from Altmount, you can separately remove links classified as `orphan`; that action writes its own restore archive first.
 
 The wizard can be reset after work reaches a non-active state. Resetting clears the current scan and plan but retains completed migration mappings so later symlink scans can identify releases imported in earlier runs.
 
@@ -52,7 +52,7 @@ The wizard can be reset after work reaches a non-active state. Resetting clears 
 
 Set **Library Root** to the media library containing the links. **Backup Directory** defaults to `/config/migration-backups` (do not place it on the AltMount mount you are about to decommission). Apply and restore are confined to the Library Root and reject symlinked or reparse-point parent directories. If a link target changes after planning, the drift guard leaves it untouched.
 
-Pause *Arr import automation while Apply runs — a rename race with Sonarr/Radarr during rewrite can leave a drifted link. Restored (and rewritten) symlinks are owned by the NzbDAV process user.
+Pause *Arr import automation while Apply or orphan removal runs — a rename race with Sonarr/Radarr can leave a drifted link. Restored (and rewritten) symlinks are owned by the NzbDAV process user.
 
 You can download a **shell script** of rewrite rows to run on the host (or any container where the library paths are visible). That path does not update the wizard status table; in-container Apply with the restore archive remains the recommended path when the library is mounted.
 
@@ -67,8 +67,17 @@ The dry-run plan classifies every symlink found during the library walk:
 | `not-altmount` | Does not correlate to scanned Altmount content and is left unchanged. |
 | `applied` | Successfully repointed to NzbDAV. |
 | `failed` | A verified rewrite was attempted but could not be completed. |
+| `removed` | An orphaned Altmount symlink was removed after its original target was backed up. |
 
-Use **Restore previous rewrite** to select a generated archive. Restore verifies that each link still points to the replacement recorded by that archive before restoring its original target.
+Use **Restore Symlinks** to select a generated archive. Rewrite restores verify that each link still points to the recorded NzbDAV replacement; orphan-removal restores require the path to remain absent. Both restore the original Altmount target without overwriting changed library entries.
+
+### Remove orphaned Altmount links
+
+After reviewing the plan, **Remove orphaned links** can delete only the library symlink entries classified as `orphan`. It does not delete the files those links point to, remove Altmount or NzbDAV data, touch real files, or act on `unreadable` and unrelated links. Each link target is checked again immediately before removal, and a separately labelled orphan-removal archive is written and verified before the first link is deleted.
+
+This cleanup does **not** ask Sonarr or Radarr to search for replacements. After removing orphaned links, run **Refresh & Scan** for each affected series or movie (or trigger the corresponding refresh job) so the Arr application detects the deleted paths and marks those files as missing. You can then initiate or schedule re-grabs according to your Arr configuration.
+
+Orphan-removal archives appear in the same **Restore Symlinks** control as rewrite archives. Restoring one recreates an absent link with its original Altmount target, but never overwrites a real file, directory, or differently targeted symlink that now occupies that path.
 
 ## Troubleshooting
 
@@ -81,6 +90,7 @@ Use **Restore previous rewrite** to select a generated archive. Restore verifies
 | Start migration is disabled | Resolve blocking collisions, map or exclude every category, and successfully refresh the review tables. |
 | Reset is disabled | Cancel active work and wait for the session to reach a non-active state. A paused run is still active. |
 | A symlink is `orphan`, `unreadable`, or `failed` | Review its match/target details. The wizard will not guess or overwrite a link that cannot be verified safely. |
+| Removed links are still shown as present in Sonarr or Radarr | Run the relevant **Refresh & Scan** or refresh job so the Arr detects the missing paths before starting re-grabs. |
 | Many releases show `evicted` or `failed` after restoring a database backup | The migration ledger is ahead of the restored main database. Use Reset (or Forget migration data), then re-scan; releases that already imported are re-detected and not resubmitted. |
 
 ## Extending to other sources

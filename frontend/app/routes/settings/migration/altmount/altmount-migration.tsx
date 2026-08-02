@@ -57,6 +57,7 @@ const SYMLINK_STATUS_HELP: Record<string, string> = {
     "not-altmount": "Does not point to Altmount and will be left unchanged.",
     applied: "Successfully repointed to NzbDAV.",
     failed: "A rewrite was attempted but could not be completed.",
+    removed: "The orphaned Altmount symlink was removed after its original target was backed up.",
 };
 
 const SYMLINK_STATUS_LABELS: Record<string, string> = {
@@ -67,6 +68,7 @@ const SYMLINK_STATUS_LABELS: Record<string, string> = {
     "not-altmount": "Other",
     applied: "Applied",
     failed: "Failed",
+    removed: "Removed",
 };
 
 const MATCH_METHODS: Record<string, { label: string; help: string }> = {
@@ -95,7 +97,7 @@ const MATCH_METHODS: Record<string, { label: string; help: string }> = {
 /** True once the migration has finished, so the optional Links step is available. */
 function canLinkStep(status: SessionStatus | undefined): boolean {
     return status === "complete" || status === "linking" || status === "linked"
-        || status === "applying" || status === "restoring";
+        || status === "applying" || status === "removing_orphans" || status === "restoring";
 }
 
 function stepForStatus(status: SessionStatus | undefined): number {
@@ -111,10 +113,11 @@ function stepForStatus(status: SessionStatus | undefined): number {
         case "complete":
         case "cancelled": return 4;
         // Step 6 is opt-in: it does not auto-advance from "complete", but once the
-        // user enters it the linking/applying/linked statuses live on the Links step.
+        // user enters it, all Step 6 operation statuses live on the Links step.
         case "linking":
         case "linked":
         case "applying":
+        case "removing_orphans":
         case "restoring": return LINK_STEP;
         default: return 0; // idle
     }
@@ -1013,10 +1016,11 @@ function SymlinkStep({ m }: { m: Hook }) {
 
     const linking = status === "linking";
     const applying = status === "applying";
+    const removingOrphans = status === "removing_orphans";
     const restoring = status === "restoring";
     const linked = status === "linked";
     const busyPlan = m.busy === "symlink-plan";
-    const step6Active = linking || applying || restoring || m.busy !== null;
+    const step6Active = linking || applying || removingOrphans || restoring || m.busy !== null;
     const canPlan = form.libraryRoot.trim().length > 0 && !step6Active;
 
     return (
@@ -1029,7 +1033,7 @@ function SymlinkStep({ m }: { m: Hook }) {
                 <Alert className="alert-soft mb-4 text-sm" variant="info">
                     <Icon name="info" className="!text-[18px]" />
                     This is the only step that changes your media library. A restore tarball is written before any
-                    rewrite, orphans are left pointing at Altmount, and real files are never touched.
+                    rewrite or optional orphan removal, and real files and symlink targets are never touched.
                 </Alert>
 
                 <div className="space-y-4">
@@ -1054,7 +1058,7 @@ function SymlinkStep({ m }: { m: Hook }) {
                             {(busyPlan || linking) ? <Spinner className="h-4 w-4" /> : <Icon name="search" className="!text-[18px]" />}
                             {linked ? "Rebuild plan" : "Build plan"}
                         </Button>
-                        {(linking || applying) && (
+                        {(linking || applying || removingOrphans) && (
                             <Button
                                 variant="outline"
                                 size="small"
@@ -1067,6 +1071,7 @@ function SymlinkStep({ m }: { m: Hook }) {
                         )}
                         {linking && <span className="text-xs text-base-content/60">Scanning the library and matching symlinks… updates automatically.</span>}
                         {applying && <span className="flex items-center gap-2 text-xs text-base-content/60"><Spinner className="h-4 w-4" /> Applying rewrites…</span>}
+                        {removingOrphans && <span className="flex items-center gap-2 text-xs text-base-content/60"><Spinner className="h-4 w-4" /> Removing orphaned Altmount symlinks…</span>}
                         {restoring && <span className="flex items-center gap-2 text-xs text-base-content/60"><Spinner className="h-4 w-4" /> Restoring symlinks…</span>}
                     </div>
                 </div>
@@ -1085,6 +1090,7 @@ function SymlinkResults({ m }: { m: Hook }) {
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [confirmApply, setConfirmApply] = useState(false);
+    const [confirmOrphanRemoval, setConfirmOrphanRemoval] = useState(false);
     const loadGeneration = useRef(0);
 
     useEffect(() => {
@@ -1112,10 +1118,13 @@ function SymlinkResults({ m }: { m: Hook }) {
 
     const counts = data.counts;
     const rewrites = counts["rewrite"] ?? 0;
+    const orphans = counts["orphan"] ?? 0;
     const unreadable = counts["unreadable"] ?? 0;
     const applied = counts["applied"] ?? 0;
+    const removed = counts["removed"] ?? 0;
     const failed = counts["failed"] ?? 0;
     const canApply = !loading && loadError === null && rewrites > 0 && m.busy === null;
+    const canRemoveOrphans = !loading && loadError === null && orphans > 0 && m.busy === null;
     const pages = Math.max(1, Math.ceil(data.total / filters.pageSize));
 
     const doApply = (acknowledgeUnreadable?: boolean) => {
@@ -1123,8 +1132,13 @@ function SymlinkResults({ m }: { m: Hook }) {
         void m.applySymlinks(acknowledgeUnreadable === true);
     };
 
+    const doRemoveOrphans = () => {
+        setConfirmOrphanRemoval(false);
+        void m.removeOrphanSymlinks();
+    };
+
     return (
-        <Section icon="rule" title="Rewrite plan" subtitle="Review before applying. Only 'rewrite' rows change; the rest are informational.">
+        <Section icon="rule" title="Symlink plan" subtitle="Review first. Rewrites and optional orphan cleanup are separate confirmed actions.">
             {loadError && (
                 <Alert className="alert-soft mb-4 text-sm" variant="danger">
                     <Icon name="error" className="!text-[18px]" />
@@ -1133,13 +1147,14 @@ function SymlinkResults({ m }: { m: Hook }) {
                 </Alert>
             )}
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
                 <StatTile label="Rewrite" value={rewrites} tone="success" help={SYMLINK_STATUS_HELP.rewrite} />
-                <StatTile label="Orphan" value={counts["orphan"] ?? 0} tone={(counts["orphan"] ?? 0) > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.orphan} />
+                <StatTile label="Orphan" value={orphans} tone={orphans > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.orphan} />
                 {unreadable > 0 && <StatTile label="Unreadable" value={unreadable} tone="error" help={SYMLINK_STATUS_HELP.unreadable} />}
                 <StatTile label="NzbDAV" value={counts["already-nzbdav"] ?? 0} help={SYMLINK_STATUS_HELP["already-nzbdav"]} />
                 <StatTile label="Other" value={counts["not-altmount"] ?? 0} help={SYMLINK_STATUS_HELP["not-altmount"]} />
                 <StatTile label="Applied" value={applied} tone={applied > 0 ? "success" : undefined} help={SYMLINK_STATUS_HELP.applied} />
+                <StatTile label="Removed" value={removed} tone={removed > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.removed} />
                 <StatTile label="Failed" value={failed} tone={failed > 0 ? "error" : undefined} help={SYMLINK_STATUS_HELP.failed} />
             </div>
 
@@ -1147,6 +1162,10 @@ function SymlinkResults({ m }: { m: Hook }) {
                 <Button variant="primary" disabled={!canApply} onClick={() => setConfirmApply(true)}>
                     {m.busy === "symlink-apply" ? <Spinner className="h-4 w-4" /> : <Icon name="published_with_changes" className="!text-[18px]" />}
                     Apply {rewrites} rewrite(s)
+                </Button>
+                <Button variant="danger" disabled={!canRemoveOrphans} onClick={() => setConfirmOrphanRemoval(true)}>
+                    {m.busy === "symlink-orphan-remove" ? <Spinner className="h-4 w-4" /> : <Icon name="link_off" className="!text-[18px]" />}
+                    Remove {orphans} orphaned link(s)
                 </Button>
                 {!loading && !loadError && rewrites === 0 && applied === 0 && (
                     unreadable > 0
@@ -1157,6 +1176,11 @@ function SymlinkResults({ m }: { m: Hook }) {
                     <span className="text-xs text-success">
                         {applied} symlink(s) rewritten. A restore tarball is in your backup directory.
                         {unreadable > 0 && <span className="ml-1 text-error">{unreadable} unreadable symlink(s) remain unchanged.</span>}
+                    </span>
+                )}
+                {removed > 0 && (
+                    <span className="text-xs text-warning">
+                        {removed} orphaned symlink(s) removed. Use the restore archive if you need to recreate them.
                     </span>
                 )}
             </div>
@@ -1175,6 +1199,7 @@ function SymlinkResults({ m }: { m: Hook }) {
                     <option value="not-altmount">Other</option>
                     <option value="applied">Applied</option>
                     <option value="failed">Failed</option>
+                    <option value="removed">Removed</option>
                 </Select>
                 <Input
                     className="input-sm w-56"
@@ -1259,6 +1284,32 @@ function SymlinkResults({ m }: { m: Hook }) {
                 onCancel={() => setConfirmApply(false)}
                 onConfirm={doApply}
             />
+
+            <ConfirmModal
+                show={confirmOrphanRemoval}
+                title="Remove orphaned Altmount symlinks"
+                message={
+                    <>
+                        This deletes {orphans} symlink entry(s) from your media library, so those paths will appear
+                        missing to Sonarr, Radarr, Plex, and other applications. It does not delete files stored by
+                        Altmount or NzbDAV, and it does not tell your Arr applications to search or re-grab them.
+                        A verified restore archive is written first, and only links still pointing to the Altmount
+                        target recorded by this plan are removed. Real files, changed links, unreadable links, and
+                        target data remain untouched.
+                        <span className="mt-2 block font-semibold">
+                            After removal, run a Refresh &amp; Scan job in each affected Arr application so it detects
+                            the deleted links and marks those files as missing before you initiate or schedule re-grabs.
+                        </span>
+                    </>
+                }
+                checkboxMessage="I understand these library paths will remain missing until my Arr applications re-grab them or I restore the backup"
+                requireCheckbox
+                errorMessage="This cleanup is optional. Cancel if you need to keep Altmount serving any unmatched files."
+                cancelText="Cancel"
+                confirmText="Remove orphaned links"
+                onCancel={() => setConfirmOrphanRemoval(false)}
+                onConfirm={doRemoveOrphans}
+            />
         </Section>
     );
 }
@@ -1312,7 +1363,8 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
                 <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-semibold">Restore Symlinks</h3>
                     <p className="mt-1 text-xs text-base-content/60">
-                        Roll back a previous rewrite using its archive. Links changed since that rewrite are left untouched.
+                        Roll back a previous rewrite or recreate links removed by orphan cleanup. Real files and changed
+                        links are left untouched.
                     </p>
 
                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1325,7 +1377,7 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
                             {backups.length === 0 && <option value="">No restore archives found</option>}
                             {backups.map((backup) => (
                                 <option key={backup.fileName} value={backup.fileName} disabled={!backup.isValid}>
-                                    {new Date(backup.createdAt).toLocaleString()} — {backup.entryCount} link(s){backup.isValid ? "" : " — unreadable"}
+                                    {backup.kind === "orphan-removal" ? "Orphan removal" : "Rewrite"} — {new Date(backup.createdAt).toLocaleString()} — {backup.entryCount} link(s){backup.isValid ? "" : " — unreadable"}
                                 </option>
                             ))}
                         </Select>
@@ -1346,6 +1398,7 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
                     {archive && (
                         <div className="mt-2 text-[11px] text-base-content/50">
                             <span className="font-mono">{archive.fileName}</span> · {formatBytes(archive.sizeBytes)}
+                            <span className="ml-2">{archive.kind === "orphan-removal" ? "orphan-removal backup" : "rewrite backup"}</span>
                             {archive.legacyEntryCount > 0 && (
                                 <span className="ml-2 text-warning">
                                     {archive.legacyEntryCount} older-format link(s) require the current rewrite plan for verification.
@@ -1361,6 +1414,7 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
                             <div>
                                 Restored {result.restored}; already restored {result.alreadyRestored}; failed {result.failed}.
                                 {result.requeued > 0 && ` ${result.requeued} link(s) are ready to rewrite again.`}
+                                {result.orphansRestored > 0 && ` ${result.orphansRestored} orphaned link(s) were returned to the plan.`}
                                 {result.issues.length > 0 && (
                                     <ul className="mt-2 list-disc space-y-1 pl-4">
                                         {result.issues.map((issue, index) => (
@@ -1380,11 +1434,18 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
                 show={confirm}
                 title="Restore symlinks"
                 message={
-                    <>
-                        Restore {archive?.entryCount ?? 0} symlink(s) from <span className="font-mono">{archive?.fileName}</span>?
-                        Only links still pointing at their recorded NzbDAV targets will be changed. Real files, link targets,
-                        and links changed after the rewrite are never overwritten.
-                    </>
+                    archive?.kind === "orphan-removal" ? (
+                        <>
+                            Recreate {archive.entryCount} symlink(s) removed by orphan cleanup from <span className="font-mono">{archive.fileName}</span>?
+                            Only absent paths are recreated. Real files, directories, and differently targeted links are never overwritten.
+                        </>
+                    ) : (
+                        <>
+                            Restore {archive?.entryCount ?? 0} symlink(s) from <span className="font-mono">{archive?.fileName}</span>?
+                            Links still pointing at their recorded NzbDAV targets are restored, and missing links can be recreated.
+                            Real files, link targets, and links changed after the rewrite are never overwritten.
+                        </>
+                    )
                 }
                 cancelText="Cancel"
                 confirmText="Restore"
@@ -1449,6 +1510,7 @@ function SymlinkStatusBadge({ status }: { status: string }) {
     const cls = status === "rewrite" ? "badge-info"
         : status === "applied" ? "badge-success"
         : status === "failed" || status === "unreadable" ? "badge-error"
+        : status === "removed" ? "badge-warning"
         : status === "orphan" ? "badge-warning"
         : "badge-ghost";
     const badge = <Badge className={`badge-sm ${cls} badge-soft cursor-help`}>{SYMLINK_STATUS_LABELS[status] ?? status}</Badge>;

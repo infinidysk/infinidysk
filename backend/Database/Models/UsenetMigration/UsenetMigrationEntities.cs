@@ -28,7 +28,7 @@ public sealed class MigrationSessionState
     /// <summary>Root of the arr/Plex library whose symlinks point at Altmount.</summary>
     public string? SymlinkLibraryRoot { get; set; }
 
-    /// <summary>Where the wizard writes the restore tarball before rewriting.</summary>
+    /// <summary>Where the wizard writes restore tarballs before Step 6 mutations.</summary>
     public string? SymlinkBackupDir { get; set; }
 
     public int MaxQueueDepth { get; set; } = 20;
@@ -270,8 +270,8 @@ public sealed class MigratedFile
 /// <summary>
 /// One planned or applied symlink rewrite for Step 6.
 /// The plan is built dry-run (Status in rewrite|already-nzbdav|not-altmount|orphan),
-/// then apply flips matched rows to applied|failed. The wizard only ever retargets;
-/// it never deletes links or their targets.
+/// then apply flips matched rows to applied|failed. Optional orphan cleanup marks
+/// successfully removed link entries as removed; it never deletes their targets.
 /// </summary>
 public sealed class MigrationSymlinkRewrite
 {
@@ -286,7 +286,7 @@ public sealed class MigrationSymlinkRewrite
     /// <summary>Computed .ids/…/&lt;guid&gt; target; null until matched.</summary>
     public string? NewTarget { get; set; }
 
-    /// <summary>rewrite|already-nzbdav|not-altmount|orphan|unreadable|applied|failed.</summary>
+    /// <summary>rewrite|already-nzbdav|not-altmount|orphan|unreadable|applied|failed|removed.</summary>
     public string Status { get; set; } = "";
 
     /// <summary>relative-path|exact|unique-size|single-leaf-fallback; null when unmatched.</summary>

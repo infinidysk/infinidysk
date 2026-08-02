@@ -19,6 +19,7 @@ public class MigrationRunStateTests
     [InlineData("cancelling", false)]
     [InlineData("linking", false)]
     [InlineData("applying", false)]
+    [InlineData("removing_orphans", false)]
     [InlineData("restoring", false)]
     public void Connect_IsAllowedOnlyFromRestingStates(string status, bool expected) =>
         Assert.Equal(expected, UsenetMigrationController.CanConnect(status));
@@ -75,6 +76,7 @@ public class MigrationRunStateTests
     [InlineData("scan_cancelling", false)]
     [InlineData("linking", false)]
     [InlineData("applying", false)]
+    [InlineData("removing_orphans", false)]
     [InlineData("restoring", false)]
     [InlineData("complete", true)]
     [InlineData("cancelled", true)]
@@ -113,6 +115,7 @@ public class MigrationRunStateTests
     [InlineData("scan_cancelling", true)]
     [InlineData("linking", true)]
     [InlineData("applying", true)]
+    [InlineData("removing_orphans", true)]
     [InlineData("restoring", true)]
     [InlineData("idle", false)]
     [InlineData("connected", false)]
