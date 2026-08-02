@@ -23,7 +23,6 @@ export function DropdownOptions({ className, style, isOpen = true, options, onCl
 
         function handleClick(e: MouseEvent) {
             if (ref.current && !ref.current.contains(e.target as Node)) {
-                e.preventDefault();
                 onClose?.();
             }
         }
