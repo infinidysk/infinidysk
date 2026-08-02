@@ -51,6 +51,46 @@ public class ProviderCircuitBreakerConnectionFailureTests
     }
 
     [Fact]
+    public async Task MultiProvider_ConcurrentRequestsAfterConnectionFailure_UseHealthyFallback()
+    {
+        var primaryAttempts = 0;
+        var primaryBreaker = new ProviderCircuitBreaker("unreachable");
+        using var primaryPool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ =>
+            {
+                Interlocked.Increment(ref primaryAttempts);
+                throw new IOException("Primary provider is unreachable.");
+            });
+        using var backupPool = new ConnectionPool<INntpClient>(
+            maxConnections: 8,
+            _ => ValueTask.FromResult<INntpClient>(new SuccessfulStatClient()));
+        using var primary = new MultiConnectionNntpClient(
+            primaryPool,
+            ProviderType.Pooled,
+            primaryBreaker,
+            "unreachable");
+        using var backup = new MultiConnectionNntpClient(
+            backupPool,
+            ProviderType.BackupOnly,
+            new ProviderCircuitBreaker("healthy-backup"),
+            "healthy-backup");
+        using var client = new MultiProviderNntpClient([primary, backup]);
+
+        var firstResponse = await client.StatAsync("first", CancellationToken.None);
+        Assert.True(firstResponse.ArticleExists);
+        Assert.Equal(2, primaryAttempts);
+        Assert.Equal(ProviderCircuitState.Open, primaryBreaker.GetSnapshot().State);
+
+        var responses = await Task.WhenAll(
+            Enumerable.Range(0, 32)
+                .Select(i => client.StatAsync($"concurrent-{i}", CancellationToken.None)));
+
+        Assert.All(responses, response => Assert.True(response.ArticleExists));
+        Assert.Equal(2, primaryAttempts);
+    }
+
+    [Fact]
     public void RecordConnectionFailure_OnClosedCircuit_UsesExistingCooldownLadder()
     {
         var transitions = new List<ProviderCircuitTransition>();
@@ -163,6 +203,63 @@ public class ProviderCircuitBreakerConnectionFailureTests
         public override Task<UsenetStatResponse> StatAsync(
             SegmentId segmentId, CancellationToken cancellationToken) =>
             throw new IOException("Provider disconnected during STAT.");
+
+        public override Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override void Dispose()
+        {
+        }
+    }
+
+    private sealed class SuccessfulStatClient : NntpClient
+    {
+        public override Task ConnectAsync(
+            string host, int port, bool useSsl, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public override Task<UsenetResponse> AuthenticateAsync(
+            string user, string pass, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetStatResponse> StatAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            Task.FromResult(new UsenetStatResponse
+            {
+                ResponseCode = (int)UsenetResponseType.ArticleExists,
+                ResponseMessage = $"223 0 0 <{segmentId}>",
+                ArticleExists = true,
+            });
 
         public override Task<UsenetHeadResponse> HeadAsync(
             SegmentId segmentId, CancellationToken cancellationToken) =>
