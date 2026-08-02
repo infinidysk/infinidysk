@@ -70,6 +70,8 @@ export async function getOidcConfiguration(): Promise<oidc.Configuration> {
     new URL(settings.issuer),
     settings.clientId,
     settings.clientSecret,
+    undefined,
+    { execute: [oidc.enableNonRepudiationChecks] },
   ).catch((error: unknown) => {
     discoveryPromise = undefined;
     throw error;
