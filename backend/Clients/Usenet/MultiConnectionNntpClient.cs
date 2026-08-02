@@ -439,7 +439,7 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e)
             {
-                circuitBreaker.RecordFailure($"get-connection-{e.GetType().Name}");
+                circuitBreaker.RecordConnectionFailure($"get-connection-{e.GetType().Name}");
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
                 if (retryCount > 0)
@@ -547,8 +547,8 @@ public class MultiConnectionNntpClient(
             {
                 deferredCallback.Discard();
                 var wasReused = connectionLock?.WasReused ?? false;
-                // stat, head, and date do not feed the circuit breaker. The success path
-                // already skips them so a failure recorded here would never be reset.
+                // STAT, HEAD, and DATE failures do not feed a closed circuit because their
+                // successes intentionally do not reset its BODY failure sampling window.
                 if (!wasReused && IsBodyCommand(name))
                     circuitBreaker.RecordFailure($"cmd-setup-{name}-{e.GetType().Name}");
                 LogException(() => connectionLock?.Replace());
@@ -568,6 +568,12 @@ public class MultiConnectionNntpClient(
                     retryCount--;
                     continue;
                 }
+
+                // A non-BODY command selected while the provider was half-open is a
+                // recovery probe. Once its retries are exhausted, release the probe slot
+                // and reopen the circuit instead of leaving it claimed until timeout.
+                if (!IsBodyCommand(name) && circuitBreaker.IsLatched)
+                    circuitBreaker.RecordFailure($"cmd-{name}-{e.GetType().Name}");
 
                 e.LogWarningKnownOrStack(
                     "Error executing nntp {Command} command for provider {Provider}.", name, providerName);
