@@ -104,13 +104,20 @@ public static class AltmountConfigReader
             var raw = lines[i];
             if (IsBlankOrComment(raw)) continue;
             var indent = LeadingSpaces(raw);
-
-            // Dedent back to or past the categories key ends the sequence.
-            if (indent <= categoriesIndent) break;
-
             var trimmed = raw.Trim();
+            var isItemMarker = trimmed.StartsWith("- ", StringComparison.Ordinal) || trimmed == "-";
 
-            if (trimmed.StartsWith("- ", StringComparison.Ordinal) || trimmed == "-")
+            // YAML permits an "indentless sequence", where list markers align
+            // with their parent key. PyYAML emits that valid form by default,
+            // and DUMB can therefore persist `categories:` and `- name:` at the
+            // same indentation. A same-indent non-item is the next sabnzbd key.
+            if (indent < categoriesIndent
+                || (indent == categoriesIndent && !isItemMarker))
+            {
+                break;
+            }
+
+            if (isItemMarker)
             {
                 Flush();
                 haveItem = true;

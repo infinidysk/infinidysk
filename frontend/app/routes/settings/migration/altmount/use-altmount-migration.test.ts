@@ -6,14 +6,161 @@ import {
     canEditReleaseSelection,
     canResetMigration,
     canStartScanMigration,
+    connectFormWithDetectedPaths,
+    connectFormWithStatusPaths,
     hasScanData,
+    inferStandardAltmountRoot,
     isMigrationWorkActive,
     loadTableLatest,
     loadTableRetainingLastGood,
+    requestAltmountPathDetection,
     requestSymlinkApply,
     runUiMutation,
     type SessionStatus,
 } from "./use-altmount-migration";
+
+describe("requestAltmountPathDetection", () => {
+    it("asks the backend to inspect the trimmed container path", async () => {
+        const originalFetch = globalThis.fetch;
+        const response = {
+            detected: true,
+            root: "/altmount-data/config",
+            metadataRoot: "/altmount-data/config/metadata",
+            configPath: "/altmount-data/config/config.yaml",
+            storeRoot: "/altmount-data/config",
+            reason: null,
+        };
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+            new Response(JSON.stringify(response), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            }),
+        );
+        globalThis.fetch = fetchMock;
+        try {
+            await expect(requestAltmountPathDetection("  /altmount-data/config  "))
+                .resolves.toEqual(response);
+
+            expect(fetchMock).toHaveBeenCalledOnce();
+            const [url, init] = fetchMock.mock.calls[0];
+            expect(url).toBe("/api/migration/altmount/detect");
+            expect(init?.method).toBe("POST");
+            expect(JSON.parse(String(init?.body))).toEqual({ root: "/altmount-data/config" });
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    it("sends an explicit null root when requesting default detection", async () => {
+        const originalFetch = globalThis.fetch;
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+            new Response(JSON.stringify({
+                detected: false,
+                root: "/altmount",
+                metadataRoot: "/altmount/metadata",
+                configPath: "/altmount/config.yaml",
+                storeRoot: "/altmount",
+                reason: "The selected directory does not match the standard Altmount layout.",
+            }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            }),
+        );
+        globalThis.fetch = fetchMock;
+        try {
+            await requestAltmountPathDetection();
+
+            const [, init] = fetchMock.mock.calls[0];
+            expect(JSON.parse(String(init?.body))).toEqual({ root: null });
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+});
+
+describe("standard Altmount path helpers", () => {
+    it("recognizes saved paths that share the basic-mode layout", () => {
+        expect(inferStandardAltmountRoot({
+            altmountMetadataRoot: "/altmount-data/config/metadata/",
+            altmountConfigPath: "/altmount-data/config/config.yaml",
+            altmountStoreRoot: "/altmount-data/config/",
+        })).toBe("/altmount-data/config");
+
+        expect(inferStandardAltmountRoot({
+            altmountMetadataRoot: String.raw`C:\altmount\metadata`,
+            altmountConfigPath: String.raw`C:\altmount\config.yaml`,
+            altmountStoreRoot: String.raw`C:\altmount`,
+        })).toBe(String.raw`C:\altmount`);
+    });
+
+    it("rejects split or incomplete advanced-mode paths", () => {
+        expect(inferStandardAltmountRoot({
+            altmountMetadataRoot: "/metadata",
+            altmountConfigPath: "/config/config.yaml",
+            altmountStoreRoot: "/stores",
+        })).toBeNull();
+        expect(inferStandardAltmountRoot({
+            altmountMetadataRoot: "/altmount/metadata",
+            altmountConfigPath: null,
+            altmountStoreRoot: "/altmount",
+        })).toBeNull();
+    });
+
+    it("applies detected paths without resetting queue tuning", () => {
+        expect(connectFormWithDetectedPaths(
+            {
+                metadataRoot: "/old/metadata",
+                configPath: "/old/config.yaml",
+                storeRoot: "/old",
+                maxQueueDepth: 73,
+                submitWorkers: 4,
+            },
+            {
+                detected: true,
+                root: "/altmount-data/config",
+                metadataRoot: "/altmount-data/config/metadata",
+                configPath: "/altmount-data/config/config.yaml",
+                storeRoot: "/altmount-data/config",
+                reason: null,
+            },
+        )).toEqual({
+            metadataRoot: "/altmount-data/config/metadata",
+            configPath: "/altmount-data/config/config.yaml",
+            storeRoot: "/altmount-data/config",
+            maxQueueDepth: 73,
+            submitWorkers: 4,
+        });
+    });
+
+    it("restores status paths without resetting queue tuning", () => {
+        const form = {
+            metadataRoot: "/detected/metadata",
+            configPath: "/detected/config.yaml",
+            storeRoot: "/detected",
+            maxQueueDepth: 73,
+            submitWorkers: 4,
+        };
+
+        expect(connectFormWithStatusPaths(form, {
+            altmountMetadataRoot: "/saved/metadata",
+            altmountConfigPath: "/saved/config.yaml",
+            altmountStoreRoot: "/saved",
+        })).toEqual({
+            metadataRoot: "/saved/metadata",
+            configPath: "/saved/config.yaml",
+            storeRoot: "/saved",
+            maxQueueDepth: 73,
+            submitWorkers: 4,
+        });
+        expect(connectFormWithStatusPaths(form, undefined)).toEqual({
+            metadataRoot: "",
+            configPath: "",
+            storeRoot: "",
+            maxQueueDepth: 73,
+            submitWorkers: 4,
+        });
+    });
+});
 
 describe("requestSymlinkApply", () => {
     it.each([

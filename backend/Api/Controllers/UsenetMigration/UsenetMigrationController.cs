@@ -46,9 +46,21 @@ public sealed class UsenetMigrationController(
         var categories = new List<AltmountCategory>();
         if (configPath is not null)
         {
-            var config = await AltmountConfigReader.ReadAsync(configPath, HttpContext.RequestAborted)
-                .ConfigureAwait(false);
+            AltmountConfigReader.AltmountSabConfig config;
+            try
+            {
+                config = await AltmountConfigReader
+                    .ReadAsync(configPath, HttpContext.RequestAborted)
+                    .ConfigureAwait(false);
+            }
+            catch (AltmountConfigException e)
+            {
+                throw new BadHttpRequestException(AltmountPathDetector.InvalidConfigReason, e);
+            }
+
             categories = config.Categories.ToList();
+            if (categories.Count == 0)
+                throw new BadHttpRequestException(AltmountPathDetector.NoCategoriesReason);
         }
 
         var transition = await store.ApplyConnectionAsync(
@@ -66,6 +78,34 @@ public sealed class UsenetMigrationController(
                 $"Cannot connect while migration operation '{transition.CurrentStatus}' is active.");
 
         return Ok(new { status = true, categoryCount = categories.Count, categories });
+    });
+
+    /// <summary>
+    /// Read-only probe sent as POST so container paths stay out of query strings,
+    /// access logs, browser history, and intermediary caches.
+    /// </summary>
+    [HttpPost("api/migration/altmount/detect")]
+    public Task<IActionResult> DetectPaths([FromBody] DetectPathsRequest request) => GuardedAsync(async () =>
+    {
+        if (request is null)
+        {
+            // GuardedAsync maps this client-input exception to the standard 400 response envelope.
+            throw new BadHttpRequestException("Request body is required.");
+        }
+
+        var detection = await AltmountPathDetector
+            .DetectAsync(request.Root, HttpContext.RequestAborted)
+            .ConfigureAwait(false);
+        return Ok(new
+        {
+            status = true,
+            detection.Detected,
+            detection.Root,
+            detection.MetadataRoot,
+            detection.ConfigPath,
+            detection.StoreRoot,
+            detection.Reason,
+        });
     });
 
     // --- categories --------------------------------------------------------
@@ -1001,6 +1041,8 @@ public sealed record ConnectRequest(
     string? StoreRoot,
     int? MaxQueueDepth,
     int? SubmitWorkers);
+
+public sealed record DetectPathsRequest(string? Root);
 
 public sealed record CategoryMapRequest(List<CategoryMapEntry>? Mappings);
 

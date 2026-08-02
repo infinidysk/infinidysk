@@ -19,7 +19,7 @@ Altmount does **not** have to be running for this process.
 
 - Configure and test the Usenet providers NzbDAV will use.
 - Create the destination NzbDAV categories expected by Radarr and Sonarr.
-- Mount **exactly one** new path into the NzbDAV container: the AltMount data directory, read-only (for example `- /host/path/altmount:/altmount:ro`). Values entered in the wizard are **container paths**, not host paths.
+- Mount **exactly one** new path into the NzbDAV container: the AltMount data directory, read-only (for example `- /host/path/altmount:/altmount:ro`). Basic mode automatically detects this recommended `/altmount` layout. Values entered in the wizard are **container paths**, not host paths.
 - **No rclone configuration changes** are required for any part of the migration.
 - Locate the metadata tree containing `.meta` files and the store tree containing `.nzbs/*.nzbz` files (often under the same AltMount data mount).
 - Keep Altmount's `config.yaml` available if you want its SABnzbd category list discovered automatically.
@@ -39,7 +39,7 @@ services:
 
 ## Run the wizard
 
-1. **Connect** — enter the metadata root. Add `config.yaml` when available and the store root when recorded store paths are not directly readable. **Submit Workers** controls how many imports may cross the queue boundary concurrently; keep it at `1` unless you have a specific reason to increase it. **Max Queue Depth** limits how many imports NzbDAV queues at once.
+1. **Connect** — Basic mode checks `/altmount` automatically and resolves `/altmount/metadata`, `/altmount/config.yaml`, and `/altmount` as the store root. If you mounted the same directory somewhere else, enter that one container path and select **Detect paths**. Use **Advanced mode** when metadata, `config.yaml`, and the store tree are mounted separately or do not follow that layout. Advanced mode also exposes **Submit Workers** and **Max Queue Depth**; keep Submit Workers at `1` unless you have a specific reason to increase it.
 2. **Categories** — map every discovered Altmount category to an existing NzbDAV category, or exclude it.
 3. **Scan** — NzbDAV groups metadata by store, verifies the referenced `.nzbz` data, estimates fetch cost, and checks whether the release is already present.
 4. **Review** — inspect red/amber findings, exclusions, filename changes, and collisions. Blocking collisions must be resolved before the run can start.
@@ -74,6 +74,7 @@ Use **Restore previous rewrite** to select a generated archive. Restore verifies
 
 | Symptom | Check |
 |---------|-------|
+| Basic mode cannot detect Altmount | Confirm the entered container directory contains `metadata/` and `config.yaml`. If the paths are split or `config.yaml` is unavailable, use Advanced mode. |
 | No categories discovered | Supply Altmount's `config.yaml`, or continue to Scan so categories can be discovered from stores. |
 | `store_missing` | Mount the `.nzbs` tree and set **Altmount Store Root** to the directory that contains `.nzbs`. |
 | A release is already migrated | It is not resubmitted; retained provenance can still be used for symlink matching. |

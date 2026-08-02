@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Badge, Spinner, Tooltip } from "~/components/ui/feedback";
 import { Button } from "~/components/ui/button";
-import { Input, Select } from "~/components/ui/form";
+import { Input, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { SettingsIntro } from "~/components/ui";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { Modal } from "~/components/ui/modal";
 import {
+    type AltmountPathDetection,
     type CategoryMapRow,
     type CollisionGroup,
     type ConnectForm,
@@ -19,14 +20,19 @@ import {
     type SymlinkBackupInfo,
     type SymlinkPlanForm,
     type SymlinkRow,
+    DEFAULT_ALTMOUNT_ROOT,
     canConnectMigration,
     canEditCategoryMappings,
     canEditReleaseSelection,
     canResetMigration,
     canStartScanMigration,
+    connectFormWithDetectedPaths,
+    connectFormWithStatusPaths,
     hasScanData,
+    inferStandardAltmountRoot,
     isMigrationWorkActive,
     loadTableLatest,
+    requestAltmountPathDetection,
     useAltmountMigration,
 } from "./use-altmount-migration";
 
@@ -188,6 +194,13 @@ type Hook = ReturnType<typeof useAltmountMigration>;
 
 function ConnectStep({ m }: { m: Hook }) {
     const roots = m.status?.roots;
+    const [advancedMode, setAdvancedMode] = useState(false);
+    const [basicRoot, setBasicRoot] = useState(DEFAULT_ALTMOUNT_ROOT);
+    const [detection, setDetection] = useState<AltmountPathDetection | null>(null);
+    const [detectionError, setDetectionError] = useState<string | null>(null);
+    const [detecting, setDetecting] = useState(false);
+    const detectionGeneration = useRef(0);
+    const initialDetectionStarted = useRef(false);
     const [form, setForm] = useState<ConnectForm>({
         metadataRoot: roots?.altmountMetadataRoot ?? "",
         configPath: roots?.altmountConfigPath ?? "",
@@ -195,6 +208,53 @@ function ConnectStep({ m }: { m: Hook }) {
         maxQueueDepth: m.status?.maxQueueDepth ?? 20,
         submitWorkers: m.status?.submitWorkers ?? 1,
     });
+
+    const detectPaths = useCallback(async (candidateRoot: string) => {
+        const generation = ++detectionGeneration.current;
+        setDetecting(true);
+        setDetection(null);
+        setDetectionError(null);
+        try {
+            const result = await requestAltmountPathDetection(candidateRoot);
+            if (generation !== detectionGeneration.current) return;
+            setDetection(result);
+            setBasicRoot(result.root);
+            if (result.detected)
+                setForm((current) => connectFormWithDetectedPaths(current, result));
+        } catch (error) {
+            if (generation !== detectionGeneration.current) return;
+            setDetectionError(error instanceof Error ? error.message : String(error));
+        } finally {
+            if (generation === detectionGeneration.current) setDetecting(false);
+        }
+    }, []);
+
+    useEffect(() => () => {
+        detectionGeneration.current++;
+    }, []);
+
+    // Wait for status so saved standard-layout paths take precedence over the default.
+    useEffect(() => {
+        if (!m.status || initialDetectionStarted.current) return;
+        initialDetectionStarted.current = true;
+
+        const savedRoot = inferStandardAltmountRoot(m.status.roots);
+        const hasSavedPaths = Boolean(
+            m.status.roots.altmountMetadataRoot
+            || m.status.roots.altmountConfigPath
+            || m.status.roots.altmountStoreRoot,
+        );
+        if (hasSavedPaths && !savedRoot) {
+            setDetectionError(
+                "Your saved paths use a non-standard layout. Enter a standard Altmount data directory below, or turn on Advanced mode to keep editing them.",
+            );
+            return;
+        }
+
+        const candidateRoot = savedRoot ?? DEFAULT_ALTMOUNT_ROOT;
+        setBasicRoot(candidateRoot);
+        void detectPaths(candidateRoot);
+    }, [m.status, detectPaths]);
 
     // Sync once the initial status loads.
     useEffect(() => {
@@ -210,53 +270,150 @@ function ConnectStep({ m }: { m: Hook }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [m.status?.sessionStatus]);
 
-    const canSubmit = form.metadataRoot.trim().length > 0
+    const canSubmit = (advancedMode
+        ? form.metadataRoot.trim().length > 0
+        : detection?.detected === true)
         && canConnectMigration(m.status?.sessionStatus)
         && m.busy !== "connect";
 
+    const toggleAdvancedMode = (enabled: boolean) => {
+        setAdvancedMode(enabled);
+        if (enabled && detecting) {
+            detectionGeneration.current++;
+            setDetecting(false);
+        }
+    };
+
+    const connect = () => {
+        const values = !advancedMode && detection?.detected
+            ? connectFormWithDetectedPaths(form, detection)
+            : form;
+        void m.connect(values);
+    };
+
     return (
-        <Section icon="link" title="Connect to Altmount" subtitle="Point NzbDAV at the Altmount config volume it can read.">
+        <Section icon="link" title="Connect to Altmount" subtitle="Detect the recommended single-mount layout, or configure each path manually.">
             <div className="space-y-4">
-                <PathField
-                    label="Altmount Metadata Root"
-                    required
-                    help="Directory containing Altmount's .meta files (the virtual-file metadata tree)."
-                    value={form.metadataRoot}
-                    onChange={(v) => setForm({ ...form, metadataRoot: v })}
-                />
-                <PathField
-                    label="Path to Altmount config.yaml"
-                    help="Altmount config file — read to discover SABnzbd categories. Optional but recommended."
-                    value={form.configPath}
-                    onChange={(v) => setForm({ ...form, configPath: v })}
-                />
-                <PathField
-                    label="Altmount Store Root"
-                    help="Directory holding the .nzbs/ store tree. Used to locate stores when the recorded path differs."
-                    value={form.storeRoot}
-                    onChange={(v) => setForm({ ...form, storeRoot: v })}
-                />
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <NumberField
-                        label="Max Queue Depth"
-                        help="Upper bound on releases queued into NzbDAV at once."
-                        value={form.maxQueueDepth}
-                        min={1}
-                        max={500}
-                        onChange={(v) => setForm({ ...form, maxQueueDepth: v })}
-                    />
-                    <NumberField
-                        label="Submit Workers"
-                        help="Recommended to keep at 1 — concurrent submissions can trip queue-key eviction."
-                        value={form.submitWorkers}
-                        min={1}
-                        max={16}
-                        onChange={(v) => setForm({ ...form, submitWorkers: v })}
+                <div className="flex justify-end">
+                    <Toggle
+                        id="altmount-connect-advanced"
+                        className="cursor-pointer gap-2"
+                        checked={advancedMode}
+                        onChange={(event) => toggleAdvancedMode(event.target.checked)}
+                        label={<span className="text-sm font-medium text-base-content">Advanced mode</span>}
                     />
                 </div>
 
+                {advancedMode ? (
+                    <>
+                        <PathField
+                            label="Altmount Metadata Root"
+                            required
+                            help="Directory containing Altmount's .meta files (the virtual-file metadata tree)."
+                            value={form.metadataRoot}
+                            onChange={(v) => setForm({ ...form, metadataRoot: v })}
+                        />
+                        <PathField
+                            label="Path to Altmount config.yaml"
+                            help="Altmount config file — read to discover SABnzbd categories. Optional but recommended."
+                            value={form.configPath}
+                            onChange={(v) => setForm({ ...form, configPath: v })}
+                        />
+                        <PathField
+                            label="Altmount Store Root"
+                            help="Directory holding the .nzbs/ store tree. Used to locate stores when the recorded path differs."
+                            value={form.storeRoot}
+                            onChange={(v) => setForm({ ...form, storeRoot: v })}
+                        />
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <NumberField
+                                label="Max Queue Depth"
+                                help="Upper bound on releases queued into NzbDAV at once."
+                                value={form.maxQueueDepth}
+                                min={1}
+                                max={500}
+                                onChange={(v) => setForm({ ...form, maxQueueDepth: v })}
+                            />
+                            <NumberField
+                                label="Submit Workers"
+                                help="Recommended to keep at 1 — concurrent submissions can trip queue-key eviction."
+                                value={form.submitWorkers}
+                                min={1}
+                                max={16}
+                                onChange={(v) => setForm({ ...form, submitWorkers: v })}
+                            />
+                        </div>
+                    </>
+                ) : detecting ? (
+                    <div className="flex items-center gap-3 rounded-lg border border-base-content/10 bg-base-200/30 p-4 text-sm text-base-content/65">
+                        <Spinner className="h-4 w-4" />
+                        <span>
+                            Checking the Altmount layout at <span className="font-mono">{basicRoot}</span>
+                        </span>
+                    </div>
+                ) : detection?.detected ? (
+                    <div className="space-y-3 rounded-lg border border-success/25 bg-success/5 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 text-sm font-medium text-success">
+                                <Icon name="check_circle" className="!text-[20px]" />
+                                Altmount paths detected
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="xsmall"
+                                onClick={() => {
+                                    detectionGeneration.current++;
+                                    setDetecting(false);
+                                    setDetection(null);
+                                    setDetectionError(null);
+                                    setForm((current) =>
+                                        connectFormWithStatusPaths(current, m.status?.roots));
+                                }}
+                            >
+                                Change directory
+                            </Button>
+                        </div>
+                        <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-[auto_1fr]">
+                            <dt className="text-base-content/50">Metadata root</dt>
+                            <dd className="break-all font-mono text-base-content">{detection.metadataRoot}</dd>
+                            <dt className="text-base-content/50">config.yaml</dt>
+                            <dd className="break-all font-mono text-base-content">{detection.configPath}</dd>
+                            <dt className="text-base-content/50">Store root</dt>
+                            <dd className="break-all font-mono text-base-content">{detection.storeRoot}</dd>
+                        </dl>
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        {(detection?.reason || detectionError) && (
+                            <Alert className="alert-soft text-sm" variant="warning">
+                                <Icon name="warning" className="!text-[18px]" />
+                                {detection?.reason || detectionError}
+                            </Alert>
+                        )}
+                        <PathField
+                            label="Altmount Data Directory"
+                            required
+                            help="Container path containing Altmount's metadata/ directory and config.yaml. The store root will use this same directory."
+                            value={basicRoot}
+                            onChange={(value) => {
+                                setBasicRoot(value);
+                                setDetection(null);
+                                setDetectionError(null);
+                            }}
+                        />
+                        <Button
+                            variant="outline"
+                            disabled={!basicRoot.trim()}
+                            onClick={() => void detectPaths(basicRoot)}
+                        >
+                            <Icon name="search" className="!text-[18px]" />
+                            Detect paths
+                        </Button>
+                    </div>
+                )}
+
                 <div className="flex items-center gap-3">
-                    <Button variant="primary" disabled={!canSubmit} onClick={() => void m.connect(form)}>
+                    <Button variant="primary" disabled={!canSubmit} onClick={connect}>
                         {m.busy === "connect" ? <Spinner className="h-4 w-4" /> : <Icon name="link" className="!text-[18px]" />}
                         Connect
                     </Button>

@@ -227,6 +227,61 @@ export type ConnectForm = {
     submitWorkers: number;
 };
 
+export type AltmountPathDetection = {
+    detected: boolean;
+    root: string;
+    metadataRoot: string;
+    configPath: string;
+    storeRoot: string;
+    reason?: string | null;
+};
+
+export const DEFAULT_ALTMOUNT_ROOT = "/altmount";
+
+// Production runs in Linux, but a directly hosted development backend can persist
+// Windows paths. Normalize both separators when recognizing those saved sessions.
+function comparablePath(path: string): string {
+    return path.trim().replaceAll("\\", "/").replace(/\/+$/, "");
+}
+
+/** Returns the shared root when saved paths use the standard single-mount layout. */
+export function inferStandardAltmountRoot(roots: StatusResponse["roots"] | undefined): string | null {
+    const metadataRoot = roots?.altmountMetadataRoot?.trim();
+    const configPath = roots?.altmountConfigPath?.trim();
+    const storeRoot = roots?.altmountStoreRoot?.trim();
+    if (!metadataRoot || !configPath || !storeRoot) return null;
+
+    const comparableRoot = comparablePath(storeRoot);
+    if (!comparableRoot) return null;
+    if (comparablePath(metadataRoot) !== `${comparableRoot}/metadata`) return null;
+    if (comparablePath(configPath) !== `${comparableRoot}/config.yaml`) return null;
+    return storeRoot.replace(/[\\/]+$/, "");
+}
+
+export function connectFormWithDetectedPaths(
+    form: ConnectForm,
+    detection: AltmountPathDetection,
+): ConnectForm {
+    return {
+        ...form,
+        metadataRoot: detection.metadataRoot,
+        configPath: detection.configPath,
+        storeRoot: detection.storeRoot,
+    };
+}
+
+export function connectFormWithStatusPaths(
+    form: ConnectForm,
+    roots: StatusResponse["roots"] | undefined,
+): ConnectForm {
+    return {
+        ...form,
+        metadataRoot: roots?.altmountMetadataRoot ?? "",
+        configPath: roots?.altmountConfigPath ?? "",
+        storeRoot: roots?.altmountStoreRoot ?? "",
+    };
+}
+
 export type ReleaseFilters = {
     page: number;
     pageSize: number;
@@ -264,6 +319,13 @@ export async function requestSymlinkApply(acknowledgeUnreadable = false): Promis
     await apiJson(
         `${BASE}/symlinks/apply`,
         jsonInit("POST", { confirm: true, acknowledgeUnreadable }),
+    );
+}
+
+export async function requestAltmountPathDetection(root?: string): Promise<AltmountPathDetection> {
+    return apiJson<AltmountPathDetection>(
+        `${BASE}/detect`,
+        jsonInit("POST", { root: root?.trim() || null }),
     );
 }
 

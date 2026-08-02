@@ -59,6 +59,52 @@ public class AltmountConfigReaderTests
     }
 
     [Fact]
+    public void Parse_AcceptsDumbStyleIndentlessCategories()
+    {
+        var cfg = AltmountConfigReader.Parse(new[]
+        {
+            "sabnzbd:",
+            "  enabled: true",
+            "  complete_dir: '/'",
+            "  categories:",
+            "  - name: 'movies'",
+            "    order: 1",
+            "    priority: -100",
+            "    dir: 'movies'",
+            "    type: 'radarr'",
+            "  - name: 'tv'",
+            "    order: 2",
+            "    dir: 'tv'",
+            "    type: 'sonarr'",
+            "  fallback_host: ''",
+        });
+
+        Assert.Equal(2, cfg.Categories.Count);
+        Assert.Equal("movies", cfg.Categories[0].Name);
+        Assert.Equal("radarr", cfg.Categories[0].Type);
+        Assert.Equal(-100, cfg.Categories[0].Priority);
+        Assert.Equal("tv", cfg.Categories[1].Name);
+        Assert.Equal("sonarr", cfg.Categories[1].Type);
+    }
+
+    [Fact]
+    public void Parse_StopsIndentlessCategoriesAtNextSabnzbdKey()
+    {
+        var cfg = AltmountConfigReader.Parse(new[]
+        {
+            "sabnzbd:",
+            "  categories:",
+            "  - name: 'movies'",
+            "    dir: 'movies'",
+            "  fallback_host: 'http://sabnzbd:8080'",
+            "  - name: 'not-a-category'",
+        });
+
+        var category = Assert.Single(cfg.Categories);
+        Assert.Equal("movies", category.Name);
+    }
+
+    [Fact]
     public void Parse_NoSabnzbdBlock_ReturnsEmpty()
     {
         var cfg = AltmountConfigReader.Parse(new[] { "webdav:", "  port: 8080" });
