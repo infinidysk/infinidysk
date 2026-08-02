@@ -21,6 +21,7 @@ public sealed class CountingYencStream : YencStream
     private readonly ActiveReadRegistry? _activeReadRegistry;
     private long _bytes;
     private long _activeReadTicks;
+    private int _recorded;
 
     public CountingYencStream(
         YencStream inner,
@@ -54,9 +55,11 @@ public sealed class CountingYencStream : YencStream
 
     protected override void Dispose(bool disposing)
     {
+        // Teardown releases a body the consumer may have released already, and the sample
+        // feeds a provider-selection average, so record it once regardless.
         if (disposing)
         {
-            if (_bytes > 0 && _activeReadTicks > 0)
+            if (_bytes > 0 && _activeReadTicks > 0 && Interlocked.Exchange(ref _recorded, 1) == 0)
             {
                 var activeMs = _activeReadTicks * 1000.0 / Stopwatch.Frequency;
                 _tracker.RecordSegmentThroughput(_providerKey, _bytes, activeMs);

@@ -97,6 +97,30 @@ public class StreamHelperTests
     }
 
     [Fact]
+    public async Task CountingYencStream_DisposedTwice_RecordsOneThroughputSample()
+    {
+        var tracker = new ProviderBytesTracker();
+        var stream = new CountingYencStream(
+            new CachedYencStream(Header(partSize: 3), new TrackingMemoryStream([1, 2, 3])),
+            tracker,
+            "provider");
+
+        Assert.Equal(3, await stream.ReadAsync(new byte[8]));
+        stream.Dispose();
+        Assert.True(tracker.GetBytesPerMs("provider") > 0, "the first dispose should record a sample");
+
+        // Another body for the same provider moves the average. Without it the replay is
+        // harmless, since re-applying a sample the average already sits on is a no-op.
+        tracker.RecordSegmentThroughput("provider", 1_000_000, 1);
+        var afterSecondSample = tracker.GetBytesPerMs("provider");
+
+        // Replaying the stale sample now would drag provider selection backwards.
+        stream.Dispose();
+
+        Assert.Equal(afterSecondSample, tracker.GetBytesPerMs("provider"));
+    }
+
+    [Fact]
     public void CountingYencStream_DisposesInnerStream()
     {
         var innerBytes = new TrackingMemoryStream([1]);
