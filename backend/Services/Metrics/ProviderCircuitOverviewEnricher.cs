@@ -26,6 +26,8 @@ internal static class ProviderCircuitOverviewEnricher
                     BytesFetched = existing.BytesFetched,
                     Errors = existing.Errors,
                     Retries = existing.Retries,
+                    SpeedMbPerSec = existing.SpeedMbPerSec,
+                    SpeedSpark = existing.SpeedSpark,
                     AvgDurationMs = existing.AvgDurationMs,
                     ErrorRate = existing.ErrorRate,
                     Spark = existing.Spark,

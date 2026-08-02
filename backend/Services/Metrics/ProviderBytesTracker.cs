@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace NzbWebDAV.Services.Metrics;
 
@@ -23,6 +24,7 @@ public sealed class ProviderBytesTracker
     private long _lifetimeAll;
 
     private readonly ConcurrentDictionary<string, double> _bytesPerMs = new();
+    private readonly ConcurrentDictionary<string, long> _speedRecordedAt = new();
     private const double SpeedEwmaAlpha = 0.3;
 
     public void Add(string providerKey, long bytes)
@@ -62,12 +64,23 @@ public sealed class ProviderBytesTracker
         if (string.IsNullOrEmpty(providerKey) || bytes <= 0 || activeMs <= 0) return;
         var sample = bytes / activeMs;
         _bytesPerMs.AddOrUpdate(providerKey, sample, (_, prev) => prev + SpeedEwmaAlpha * (sample - prev));
+        _speedRecordedAt[providerKey] = Stopwatch.GetTimestamp();
     }
 
     public double GetBytesPerMs(string providerKey)
     {
         if (string.IsNullOrEmpty(providerKey)) return 0;
         return _bytesPerMs.TryGetValue(providerKey, out var v) ? v : 0;
+    }
+
+    public double GetRecentBytesPerMs(string providerKey, TimeSpan maxAge)
+    {
+        if (maxAge <= TimeSpan.Zero ||
+            !_speedRecordedAt.TryGetValue(providerKey, out var recordedAt))
+            return 0;
+
+        var elapsed = Stopwatch.GetElapsedTime(recordedAt);
+        return elapsed <= maxAge ? GetBytesPerMs(providerKey) : 0;
     }
 
     /// <summary>

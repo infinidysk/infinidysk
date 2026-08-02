@@ -1,6 +1,35 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { OutageBuckets, Sparkline } from "./provider-scoreboard";
+import type { ProviderRow } from "~/clients/backend-client.server";
+import { OutageBuckets, ProviderScoreboard, Sparkline } from "./provider-scoreboard";
+
+const provider = (speedMbPerSec: number | null): ProviderRow => ({
+    provider: "provider-1",
+    articles: 10,
+    bytesFetched: 1_000_000,
+    errors: 0,
+    retries: 0,
+    speedMbPerSec,
+    speedSpark: speedMbPerSec == null ? [] : [speedMbPerSec],
+    avgDurationMs: 100,
+    errorRate: 0,
+    spark: [10],
+});
+
+describe("ProviderScoreboard", () => {
+    it("shows sustained speed and an em dash when speed is unavailable", () => {
+        const active = renderToStaticMarkup(
+            <ProviderScoreboard providers={[provider(12.34)]} window="1h" />,
+        );
+        const idle = renderToStaticMarkup(
+            <ProviderScoreboard providers={[provider(null)]} window="1h" />,
+        );
+
+        expect(active).toContain(">MB/s<");
+        expect(active).toContain(">12.3<");
+        expect(idle).toContain(">—<");
+    });
+});
 
 describe("OutageBuckets", () => {
     it("keeps a brief trip inside its single time bucket", () => {

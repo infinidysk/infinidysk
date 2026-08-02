@@ -68,6 +68,9 @@ public class GetOverviewStatsResponse
         public long BytesFetched { get; init; }
         public long Errors { get; init; }
         public long Retries { get; init; }
+        /// <summary>Decimal megabytes fetched per second over the selected window.</summary>
+        public double? SpeedMbPerSec { get; set; }
+        public List<double> SpeedSpark { get; init; } = new();
         /// <summary>
         /// Mean duration of successful (Ok) fetches only. Includes connection-pool wait
         /// inside the provider call; not pure wire RTT. Misses/errors are excluded.

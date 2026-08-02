@@ -21,12 +21,14 @@ public class GetOverviewStatsController(
     ConfigManager configManager,
     IndexerHitTracker hitTracker,
     UsenetStreamingClient usenetStreamingClient,
-    InFlightArticleBudget inFlightArticleBudget
+    InFlightArticleBudget inFlightArticleBudget,
+    ProviderBytesTracker providerBytesTracker
 ) : BaseApiController
 {
     private const long OneMinute = 60_000;
     private const long OneHour = 60 * OneMinute;
     private const long OneDay = 24 * OneHour;
+    private static readonly TimeSpan LiveSpeedMaxAge = TimeSpan.FromMinutes(1);
 
     // Log-scale latency buckets in milliseconds. Last bucket is a catch-all up to int.MaxValue.
     private static readonly int[] LatencyBucketEdges =
@@ -351,6 +353,7 @@ public class GetOverviewStatsController(
             providers,
             usenetStreamingClient.GetProviderCircuitSnapshots(),
             labelsByMetricsKey);
+        ApplyLiveSpeedFallback(providers);
         var circuitEvents = await circuitEventsTask.ConfigureAwait(false);
         ApplyOutageSparks(
             providers,
@@ -772,6 +775,8 @@ public class GetOverviewStatsController(
                 acc.Spark[idx] += m.Articles;
                 acc.ErrorSpark[idx] += m.Errors;
                 acc.RetrySpark[idx] += m.Retries;
+                acc.BytesSpark[idx] += m.BytesFetched;
+                acc.DurationSpark[idx] += m.SumDurationMs;
             }
             byProvider[m.Provider] = acc;
         }
@@ -789,6 +794,8 @@ public class GetOverviewStatsController(
                     BytesFetched = kv.Value.Bytes,
                     Errors = kv.Value.Errors,
                     Retries = kv.Value.Retries,
+                    SpeedMbPerSec = CalculateSpeedMbPerSec(kv.Value.Bytes, kv.Value.SumDurationMs),
+                    SpeedSpark = BuildSpeedSpark(kv.Value.BytesSpark, kv.Value.DurationSpark),
                     // SumDurationMs is Ok-only from rollup; divide by Ok count, not all attempts.
                     AvgDurationMs = okArticles > 0 ? (double)kv.Value.SumDurationMs / okArticles : 0,
                     ErrorRate = kv.Value.Articles > 0 ? (double)kv.Value.Errors / kv.Value.Articles : 0,
@@ -831,6 +838,8 @@ public class GetOverviewStatsController(
                 acc.Spark[idx] += (long)h.Articles;
                 acc.ErrorSpark[idx] += (long)h.Errors;
                 acc.RetrySpark[idx] += (long)h.Retries;
+                acc.BytesSpark[idx] += (long)h.BytesFetched;
+                acc.DurationSpark[idx] += (long)h.SumDurationMs;
             }
             byProvider[host] = acc;
         }
@@ -848,6 +857,8 @@ public class GetOverviewStatsController(
                     BytesFetched = kv.Value.Bytes,
                     Errors = kv.Value.Errors,
                     Retries = kv.Value.Retries,
+                    SpeedMbPerSec = CalculateSpeedMbPerSec(kv.Value.Bytes, kv.Value.SumDurationMs),
+                    SpeedSpark = BuildSpeedSpark(kv.Value.BytesSpark, kv.Value.DurationSpark),
                     AvgDurationMs = okArticles > 0 ? (double)kv.Value.SumDurationMs / okArticles : 0,
                     ErrorRate = kv.Value.Articles > 0 ? (double)kv.Value.Errors / kv.Value.Articles : 0,
                     Spark = kv.Value.Spark.ToList(),
@@ -859,17 +870,44 @@ public class GetOverviewStatsController(
             .ToList();
     }
 
+    private void ApplyLiveSpeedFallback(IEnumerable<GetOverviewStatsResponse.ProviderRow> providers)
+    {
+        foreach (var provider in providers)
+        {
+            if (provider.SpeedMbPerSec is not null) continue;
+            var bytesPerMs = providerBytesTracker.GetRecentBytesPerMs(provider.Provider, LiveSpeedMaxAge);
+            if (bytesPerMs > 0)
+                provider.SpeedMbPerSec = bytesPerMs * 1000 / 1_000_000;
+        }
+    }
+
+    private static double? CalculateSpeedMbPerSec(long bytes, long durationMs) =>
+        bytes > 0 && durationMs > 0
+            ? bytes * 1000d / durationMs / 1_000_000d
+            : null;
+
+    private static List<double> BuildSpeedSpark(
+        IReadOnlyList<long> bytes,
+        IReadOnlyList<long> durations) =>
+        bytes.Select((value, index) =>
+                CalculateSpeedMbPerSec(value, durations[index]) ?? 0)
+            .ToList();
+
     private sealed class ProviderAccumulator
     {
         public long Articles, Misses, Errors, Retries, SumDurationMs, Bytes;
         public readonly long[] Spark;
         public readonly long[] ErrorSpark;
         public readonly long[] RetrySpark;
+        public readonly long[] BytesSpark;
+        public readonly long[] DurationSpark;
         public ProviderAccumulator(int n)
         {
             Spark = new long[n];
             ErrorSpark = new long[n];
             RetrySpark = new long[n];
+            BytesSpark = new long[n];
+            DurationSpark = new long[n];
         }
     }
 

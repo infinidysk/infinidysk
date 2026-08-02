@@ -1,5 +1,5 @@
 import type { OverviewWindow, ProviderCircuitState, ProviderRow } from "~/clients/backend-client.server";
-import { formatBytes, formatNumber, formatPercent } from "../../utils/format";
+import { formatBytes, formatNumber, formatPercent, formatSpeed } from "../../utils/format";
 
 export type ProviderScoreboardProps = {
     providers: ProviderRow[],
@@ -24,7 +24,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                     <p className="py-6 text-center text-xs text-base-content/50">No providers configured.</p>
                 ) : (
                     <div className="overflow-x-auto">
-                        <table className="table table-sm min-w-[680px]">
+                        <table className="table table-sm min-w-[800px]">
                             <thead>
                                 <tr>
                                     <th>Provider</th>
@@ -37,6 +37,11 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                     <th>Articles</th>
                                     <th>Read</th>
                                     <th>Share</th>
+                                    <th
+                                        className="w-[120px]"
+                                        title="Sustained download throughput (bytes fetched / successful fetch duration) over the selected window. Fetch duration includes connection-pool wait.">
+                                        MB/s
+                                    </th>
                                     <th className="w-[120px]">Errors</th>
                                     <th className="w-[120px]">Retries</th>
                                     <th
@@ -76,6 +81,14 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                             <td className="font-mono tabular-nums">{formatBytes(p.bytesFetched)}</td>
                                             <td>
                                                 <ShareBar share={share} />
+                                            </td>
+                                            <td title="Sustained download throughput over the selected window">
+                                                <div className="flex flex-col gap-0.5">
+                                                    <Sparkline values={p.speedSpark ?? []} tone="success" />
+                                                    <div className="font-mono text-[11px] tabular-nums text-base-content/60">
+                                                        {formatSpeed(p.speedMbPerSec)}
+                                                    </div>
+                                                </div>
                                             </td>
                                             <td>
                                                 <div className="flex flex-col gap-0.5">
