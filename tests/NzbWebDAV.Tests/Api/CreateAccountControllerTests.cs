@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Primitives;
 using NzbWebDAV.Api.Controllers.CreateAccount;
@@ -113,6 +114,51 @@ public sealed class CreateAccountControllerTests : IAsyncLifetime
 
         Assert.True(response.Status);
         Assert.Equal(2, await _context.Accounts.CountAsync(a => a.Type == Account.AccountType.WebDav));
+    }
+
+    [Fact]
+    public async Task CreateAccountAsync_DuplicateWebDavUsername_ReturnsFriendlyBadRequest()
+    {
+        await Invoke(CreateController(), "alice", "hunter2", "WebDav");
+
+        await using var duplicateContext = new DavDatabaseContext(_options);
+        var duplicateController = new CreateAccountController(new DavDatabaseClient(duplicateContext));
+        var ex = await Assert.ThrowsAsync<BadHttpRequestException>(
+            () => Invoke(duplicateController, "alice", "swordfish", "WebDav"));
+
+        Assert.Contains("account with that username already exists", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(await duplicateContext.Accounts
+            .Where(a => a.Type == Account.AccountType.WebDav)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task SingleAdminMigration_ExistingDuplicates_KeepsEarliestAdmin()
+    {
+        var migrationDbPath = Path.Combine(_configRoot, "duplicate-admin-migration.sqlite");
+        var migrationOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite($"Data Source={migrationDbPath}")
+            .AddInterceptors(new SqliteForeignKeyEnabler())
+            .ReplaceService<
+                IMigrationsSqlGenerator,
+                SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
+            .Options;
+
+        await using var migrationContext = new DavDatabaseContext(migrationOptions);
+        var migrator = migrationContext.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260718000000_Add-NzbResolutionGroups-Table");
+        await migrationContext.Database.ExecuteSqlRawAsync("""
+            INSERT INTO Accounts (Type, Username, PasswordHash, RandomSalt)
+            VALUES (1, 'alice', 'hash', 'salt');
+            INSERT INTO Accounts (Type, Username, PasswordHash, RandomSalt)
+            VALUES (1, 'mallory', 'hash', 'salt');
+            """);
+
+        await migrator.MigrateAsync();
+
+        var admin = await migrationContext.Accounts
+            .SingleAsync(a => a.Type == Account.AccountType.Admin);
+        Assert.Equal("alice", admin.Username);
     }
 
     private CreateAccountController CreateController() => new(_dbClient);

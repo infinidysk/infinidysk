@@ -48,6 +48,10 @@ public class CreateAccountController(DavDatabaseClient dbClient) : BaseApiContro
             // rejected the insert. Report it the same way as the pre-check above.
             throw new BadHttpRequestException("An admin account already exists.");
         }
+        catch (DbUpdateException ex) when (IsAccountPrimaryKeyUniqueViolation(ex))
+        {
+            throw new BadHttpRequestException("An account with that username already exists.");
+        }
         return new CreateAccountResponse() { Status = true };
     }
 
@@ -62,7 +66,25 @@ public class CreateAccountController(DavDatabaseClient dbClient) : BaseApiContro
             if (message.Contains("IX_Accounts_SingleAdmin", StringComparison.OrdinalIgnoreCase))
                 return true;
             if (message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-                && message.Contains("Accounts.Type", StringComparison.OrdinalIgnoreCase))
+                && message.Contains("Accounts.Type", StringComparison.OrdinalIgnoreCase)
+                && !message.Contains("Accounts.Username", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    internal static bool IsAccountPrimaryKeyUniqueViolation(DbUpdateException ex)
+    {
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is not SqliteException sqlite) continue;
+            if (sqlite.SqliteErrorCode is not 19) continue; // SQLITE_CONSTRAINT
+
+            var message = sqlite.Message;
+            if (message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
+                && message.Contains("Accounts.Type", StringComparison.OrdinalIgnoreCase)
+                && message.Contains("Accounts.Username", StringComparison.OrdinalIgnoreCase))
                 return true;
         }
 
