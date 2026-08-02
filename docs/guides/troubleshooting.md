@@ -6,6 +6,28 @@
 - Ensure `CONFIG_PATH` (`/config`) is writable by `PUID`/`PGID`.
 - Frontend `/healthz` should pass during long migrations; backend `/health` must eventually succeed.
 
+## Streaming readiness (`/ready`) [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+
+The backend readiness endpoint reports whether NzbDAV can make progress on new streams. It returns
+`503 Service Unavailable` when Article RAM remains at least 90% leased with no active reads for 30
+seconds. A high Article RAM value while reads are active is normal backpressure and remains ready.
+
+`/ready` is separate from the cheap liveness endpoints (`/health` on the backend and `/healthz` on
+the frontend). The default container healthcheck stays on `/healthz`, so temporary streaming load
+does not trigger restarts. To opt into readiness for routing or monitoring, probe the backend port:
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "curl -fsSL http://localhost:8080/ready > /dev/null || exit 1"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 60s
+```
+
+Use `/ready` as a restart trigger only if restarting a streaming-wedged container is the intended
+policy. This check detects a stuck in-flight article budget; it does not test provider connectivity.
+
 ## WebDAV or playback fails
 
 - Confirm WebDAV username/password.

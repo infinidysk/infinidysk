@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -172,7 +173,10 @@ class Program
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
             builder.Services.AddControllers();
-            builder.Services.AddHealthChecks();
+            builder.Services.AddHealthChecks()
+                .AddCheck<StreamingReadinessCheck>(
+                    "streaming_readiness",
+                    tags: ["ready"]);
             builder.Services.Configure<ForwardedHeadersOptions>(options =>
             {
                 options.ForwardedHeaders = ForwardedHeaders.XForwardedFor
@@ -211,6 +215,7 @@ class Program
                 .AddSingleton<NzbWebDAV.Services.Benchmark.BenchmarkRunControl>()
                 .AddHostedService<LogBroadcaster>()
                 .AddSingleton<ActiveReadRegistry>()
+                .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())
                 .AddHostedService<RuntimeUsageSampler>()
                 .AddSingleton<ProviderUsageTracker>(sp =>
@@ -309,7 +314,14 @@ class Program
             app.UseForwardedHeaders();
             app.UseMiddleware<ExceptionMiddleware>();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
-            app.MapHealthChecks("/health");
+            app.MapHealthChecks("/health", new HealthCheckOptions
+            {
+                Predicate = check => !check.Tags.Contains("ready"),
+            });
+            app.MapHealthChecks("/ready", new HealthCheckOptions
+            {
+                Predicate = check => check.Tags.Contains("ready"),
+            });
             app.Map("/ws", websocketManager.HandleRoute);
             app.MapControllers();
             app.UseWebdavBasicAuthentication();
