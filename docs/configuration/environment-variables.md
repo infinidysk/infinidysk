@@ -41,8 +41,8 @@ Advanced reference for **process / container** wiring and **legacy Settings fall
 
 Hosted NzbDAV services can identify the service provider and mark selected
 navigation destinations as unavailable. Disabled destinations remain visible in
-the sidebar; selecting one explains that the provider does not support the
-feature and links to the provider's website. The provider attribution also
+the sidebar; selecting one explains that the feature is disabled by the provider
+and links to the provider's website. The provider attribution also
 appears in the page footer.
 
 Set `SERVICE_PROVIDER` to a JSON object on the frontend process:

@@ -1,4 +1,4 @@
-import { Link, useLocation, useNavigate, useNavigation } from "react-router";
+import { Link, useLocation, useNavigation } from "react-router";
 import type React from "react";
 import { useEffect, useState } from "react";
 import { Icon } from "~/components/ui";
@@ -35,7 +35,6 @@ export function LeftNavigation({
     serviceProvider,
 }: LeftNavigationProps) {
     const location = useLocation();
-    const navigate = useNavigate();
     const navigation = useNavigation();
     const pathname = navigation.location?.pathname ?? location.pathname;
     const search = navigation.location?.search ?? location.search;
@@ -63,9 +62,11 @@ export function LeftNavigation({
         { target: "/search", icon: "search", label: "Search", featureId: "search" },
     ];
 
+    // Sidebar clicks open the notice without navigating away from the current
+    // page, so Close only dismisses the dialog. Deep-link gates use replace to
+    // /overview instead (see ServiceProviderGate / Settings).
     const closeProviderNotice = () => {
         setProviderNoticeOpen(false);
-        navigate("/overview");
     };
 
     return (
@@ -79,6 +80,7 @@ export function LeftNavigation({
                             icon={item.icon}
                             pathname={pathname}
                             disabled={isFeatureDisabled(serviceProvider, item.featureId)}
+                            providerName={serviceProvider?.name}
                             onDisabledClick={() => setProviderNoticeOpen(true)}
                         >
                             {item.label}
@@ -109,6 +111,7 @@ export function LeftNavigation({
                             icon={item.icon}
                             activeTab={activeSettingsTab}
                             disabled={isSettingsTabDisabled(serviceProvider, item.id)}
+                            providerName={serviceProvider?.name}
                             onDisabledClick={() => setProviderNoticeOpen(true)}
                         >
                             {item.label}
@@ -133,6 +136,7 @@ function Item({
     children,
     pathname,
     disabled,
+    providerName,
     onDisabledClick,
 }: {
     target: string;
@@ -140,6 +144,7 @@ function Item({
     children: React.ReactNode;
     pathname: string;
     disabled: boolean;
+    providerName?: string;
     onDisabledClick: () => void;
 }) {
     const isSelected = pathname.startsWith(target);
@@ -155,6 +160,11 @@ function Item({
                 <button
                     type="button"
                     aria-disabled="true"
+                    aria-label={
+                        typeof children === "string"
+                            ? `${children} (disabled by ${providerName ?? "your service provider"})`
+                            : undefined
+                    }
                     className="opacity-50"
                     onClick={onDisabledClick}
                 >
@@ -179,6 +189,7 @@ function SettingsItem({
     activeTab,
     children,
     disabled,
+    providerName,
     onDisabledClick,
 }: {
     tab: SettingsTab;
@@ -186,6 +197,7 @@ function SettingsItem({
     activeTab: SettingsTab | null;
     children: React.ReactNode;
     disabled: boolean;
+    providerName?: string;
     onDisabledClick: () => void;
 }) {
     const isSelected = activeTab === tab;
@@ -201,6 +213,11 @@ function SettingsItem({
                 <button
                     type="button"
                     aria-disabled="true"
+                    aria-label={
+                        typeof children === "string"
+                            ? `${children} (disabled by ${providerName ?? "your service provider"})`
+                            : undefined
+                    }
                     className="text-sm opacity-50"
                     onClick={onDisabledClick}
                 >
