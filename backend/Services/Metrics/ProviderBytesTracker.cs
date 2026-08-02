@@ -25,7 +25,17 @@ public sealed class ProviderBytesTracker
 
     private readonly ConcurrentDictionary<string, double> _bytesPerMs = new();
     private readonly ConcurrentDictionary<string, long> _speedRecordedAt = new();
+    private readonly Func<long> _timestampProvider;
     private const double SpeedEwmaAlpha = 0.3;
+
+    public ProviderBytesTracker() : this(Stopwatch.GetTimestamp)
+    {
+    }
+
+    internal ProviderBytesTracker(Func<long> timestampProvider)
+    {
+        _timestampProvider = timestampProvider;
+    }
 
     public void Add(string providerKey, long bytes)
     {
@@ -64,7 +74,7 @@ public sealed class ProviderBytesTracker
         if (string.IsNullOrEmpty(providerKey) || bytes <= 0 || activeMs <= 0) return;
         var sample = bytes / activeMs;
         _bytesPerMs.AddOrUpdate(providerKey, sample, (_, prev) => prev + SpeedEwmaAlpha * (sample - prev));
-        _speedRecordedAt[providerKey] = Stopwatch.GetTimestamp();
+        _speedRecordedAt[providerKey] = _timestampProvider();
     }
 
     public double GetBytesPerMs(string providerKey)
@@ -79,7 +89,7 @@ public sealed class ProviderBytesTracker
             !_speedRecordedAt.TryGetValue(providerKey, out var recordedAt))
             return 0;
 
-        var elapsed = Stopwatch.GetElapsedTime(recordedAt);
+        var elapsed = Stopwatch.GetElapsedTime(recordedAt, _timestampProvider());
         return elapsed <= maxAge ? GetBytesPerMs(providerKey) : 0;
     }
 

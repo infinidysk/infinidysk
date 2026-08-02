@@ -27,6 +27,7 @@ describe("ProviderScoreboard", () => {
 
         expect(active).toContain(">MB/s<");
         expect(active).toContain(">12.3<");
+        expect(active).toContain("not wall-clock aggregate bandwidth");
         expect(idle).toContain(">—<");
     });
 });

@@ -268,7 +268,12 @@ public class GetOverviewStatsController(
                 hours.Select(h => (h.Hour, h.Articles, h.Misses, h.Errors, h.BytesFetched)),
                 sessions.Select(s => (s.EndedAt, s.BytesServed)),
                 bucketSize);
-            providers = BuildProvidersFromHourly(hours, windowStart, bucketSize, nowMs, labelsByMetricsKey);
+            providers = BuildProvidersFromHourly(
+                hours.Select(h => (h.Hour, h.Provider, h.Articles, h.BytesFetched, h.Misses, h.Errors, h.Retries, h.SumDurationMs)),
+                windowStart,
+                bucketSize,
+                nowMs,
+                labelsByMetricsKey);
             totalArticles = hours.Sum(h => h.Articles);
             totalMisses = hours.Sum(h => h.Misses);
             totalErrors = hours.Sum(h => h.Errors);
@@ -808,8 +813,8 @@ public class GetOverviewStatsController(
             .ToList();
     }
 
-    private static List<GetOverviewStatsResponse.ProviderRow> BuildProvidersFromHourly(
-        IEnumerable<dynamic> hours,
+    internal static List<GetOverviewStatsResponse.ProviderRow> BuildProvidersFromHourly(
+        IEnumerable<(long Hour, string Provider, long Articles, long BytesFetched, long Misses, long Errors, long Retries, long SumDurationMs)> hours,
         long windowStart,
         long bucketSize,
         long nowMs,
@@ -823,23 +828,23 @@ public class GetOverviewStatsController(
         var byProvider = new Dictionary<string, ProviderAccumulator>();
         foreach (var h in hours)
         {
-            string host = h.Provider;
+            var host = h.Provider;
             if (!byProvider.TryGetValue(host, out var acc))
                 acc = new ProviderAccumulator(sparkBuckets);
-            acc.Articles += (long)h.Articles;
-            acc.Misses += (long)h.Misses;
-            acc.Errors += (long)h.Errors;
-            acc.Retries += (long)h.Retries;
-            acc.SumDurationMs += (long)h.SumDurationMs;
-            acc.Bytes += (long)h.BytesFetched;
-            var idx = (int)(((long)h.Hour - sparkStart) / sparkSize);
+            acc.Articles += h.Articles;
+            acc.Misses += h.Misses;
+            acc.Errors += h.Errors;
+            acc.Retries += h.Retries;
+            acc.SumDurationMs += h.SumDurationMs;
+            acc.Bytes += h.BytesFetched;
+            var idx = (int)((h.Hour - sparkStart) / sparkSize);
             if (idx >= 0 && idx < sparkBuckets)
             {
-                acc.Spark[idx] += (long)h.Articles;
-                acc.ErrorSpark[idx] += (long)h.Errors;
-                acc.RetrySpark[idx] += (long)h.Retries;
-                acc.BytesSpark[idx] += (long)h.BytesFetched;
-                acc.DurationSpark[idx] += (long)h.SumDurationMs;
+                acc.Spark[idx] += h.Articles;
+                acc.ErrorSpark[idx] += h.Errors;
+                acc.RetrySpark[idx] += h.Retries;
+                acc.BytesSpark[idx] += h.BytesFetched;
+                acc.DurationSpark[idx] += h.SumDurationMs;
             }
             byProvider[host] = acc;
         }

@@ -9,6 +9,7 @@ export type ProviderScoreboardProps = {
 export function ProviderScoreboard({ providers, window }: ProviderScoreboardProps) {
     const total = providers.reduce((s, p) => s + p.articles, 0);
     const outageHelp = `Circuit-open time per ${outageIntervalLabel(window)} interval on a fixed 0–100% scale. Brief trips use a minimum-height tick.`;
+    const speedHelp = "Historical average: bytes fetched divided by summed successful fetch durations over the selected window. Durations include connection-pool wait and overlap across concurrent fetches, so this is not wall-clock aggregate bandwidth. Use the provider benchmark for line-rate calibration.";
 
     return (
         <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
@@ -39,7 +40,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                     <th>Share</th>
                                     <th
                                         className="w-[120px]"
-                                        title="Sustained download throughput (bytes fetched / successful fetch duration) over the selected window. Fetch duration includes connection-pool wait.">
+                                        title={speedHelp}>
                                         MB/s
                                     </th>
                                     <th className="w-[120px]">Errors</th>
@@ -82,7 +83,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                             <td>
                                                 <ShareBar share={share} />
                                             </td>
-                                            <td title="Sustained download throughput over the selected window">
+                                            <td title={speedHelp}>
                                                 <div className="flex flex-col gap-0.5">
                                                     <Sparkline values={p.speedSpark ?? []} tone="success" />
                                                     <div className="font-mono text-[11px] tabular-nums text-base-content/60">
