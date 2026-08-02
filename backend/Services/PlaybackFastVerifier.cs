@@ -125,9 +125,26 @@ public class PlaybackFastVerifier
         if (mode == "body")
         {
             var resp = await _usenetClient.DecodedBodyAsync(messageId, ct).ConfigureAwait(false);
-            return resp.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows
+            var verdict = resp.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows
                 ? Verdict.Available
                 : Verdict.Dead;
+
+            // The response code decides the verdict, but the body still arrives, and an unread
+            // one holds the connection for the life of the process. Releasing it must not be
+            // able to turn a verified article into a failure.
+            if (resp.Stream != null)
+            {
+                try
+                {
+                    await resp.Stream.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    Log.Debug(e, "Failed to release verified article body for {SegmentId}", messageId);
+                }
+            }
+
+            return verdict;
         }
 
         var stat = await _usenetClient.StatAsync(messageId, ct).ConfigureAwait(false);
