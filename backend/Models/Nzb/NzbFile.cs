@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Database.Models;
 using Serilog;
 
 namespace NzbWebDAV.Models.Nzb;
@@ -7,6 +9,48 @@ public class NzbFile
 {
     public required string Subject { get; init; }
     public List<NzbSegment> Segments { get; } = [];
+
+    public GeometrySource GeometrySource { get; set; }
+    public bool IsUniformSegmentSize { get; set; }
+    public long UniformSegmentSize { get; set; }
+
+    /// <summary>
+    /// Probes the second segment's yEnc headers to detect whether all non-final
+    /// segments are uniform in size (SmartProbed). Requires that segment[0].ByteRange
+    /// is already set (from FetchFirstSegmentsStep). Files with fewer than 3 segments
+    /// are left as Inferred since there is no "middle" to validate.
+    /// </summary>
+    public async Task ProbeSecondSegmentGeometryAsync(INntpClient client, CancellationToken ct)
+    {
+        if (Segments.Count < 3) return;
+
+        var firstRange = Segments[0].ByteRange;
+        if (firstRange is null || firstRange.Count <= 0) return;
+
+        try
+        {
+            var headers = await client.GetYencHeadersAsync(Segments[1].MessageId, ct).ConfigureAwait(false);
+            Segments[1].ByteRange = LongRange.FromStartAndSize(headers.PartOffset, headers.PartSize);
+
+            if (headers.PartSize == firstRange.Count)
+            {
+                GeometrySource = GeometrySource.SmartProbed;
+                IsUniformSegmentSize = true;
+                UniformSegmentSize = firstRange.Count;
+            }
+            else
+            {
+                GeometrySource = GeometrySource.SmartProbed;
+                IsUniformSegmentSize = false;
+                UniformSegmentSize = 0;
+            }
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            Log.Debug(e, "Second segment geometry probe failed for {FileName}; leaving as Inferred",
+                GetSubjectFileName());
+        }
+    }
 
     /// <summary>
     /// Sort by segment number (when all present) and drop duplicates so every

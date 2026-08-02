@@ -19,13 +19,17 @@ public class FileProcessor(
     {
         try
         {
+            var fileSize = fileInfo.FileSize ?? await usenetClient
+                .GetFileSizeAsync(fileInfo.NzbFile, ct)
+                .ConfigureAwait(false);
+
+            await fileInfo.NzbFile.ProbeSecondSegmentGeometryAsync(usenetClient, ct).ConfigureAwait(false);
+
             return new Result()
             {
                 NzbFile = fileInfo.NzbFile,
                 FileName = fileInfo.FileName,
-                FileSize = fileInfo.FileSize ?? await usenetClient
-                    .GetFileSizeAsync(fileInfo.NzbFile, ct)
-                    .ConfigureAwait(false),
+                FileSize = fileSize,
                 ReleaseDate = fileInfo.ReleaseDate,
             };
         }
