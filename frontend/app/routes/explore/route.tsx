@@ -550,11 +550,7 @@ function CheckCell(props: { name: string, checked: boolean, onToggle: (name: str
         >
             <Checkbox
                 checked={props.checked}
-                onClick={e => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    props.onToggle(props.name, e.shiftKey);
-                }}
+                onChange={e => props.onToggle(props.name, e.nativeEvent instanceof MouseEvent && e.nativeEvent.shiftKey)}
                 onKeyDown={e => {
                     if (e.key === " " || e.key === "Enter") {
                         e.preventDefault();
