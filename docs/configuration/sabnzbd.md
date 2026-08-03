@@ -24,6 +24,7 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | Fail downloads without video | `api.ensure-importable-video` | on | Reject non-video NZBs |
 | Fail when non-video missing articles | inverse of `api.skip-non-video-on-missing-articles` | skip non-video by default | |
 | Article health check categories | `api.ensure-article-existence-categories` | empty (off) | Per-category; may be slow |
+| Article health check mode | `api.article-existence-check-mode` | `full` | Full or per-file sampled verification |
 | Maximum queued jobs | `queue.max-items` | `0` (unlimited) | Reject new submissions at this queue depth |
 | Queue resume threshold | `queue.resume-threshold` | `0` (same as maximum) | Resume admission at or below this depth |
 | Always send full History | `api.ignore-history-limit` | on | Ignore client history limit |
@@ -50,3 +51,17 @@ not increase queue depth.
 For reference, see the
 [SABnzbd API response format](https://sabnzbd.org/wiki/advanced/api) and
 [Sonarr's SABnzbd response handling](https://github.com/Sonarr/Sonarr/blob/develop/src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdProxy.cs).
+
+## Sampled article checks [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+
+Categories selected under `api.ensure-article-existence-categories` use a full
+article check by default, preserving existing behavior. Set
+`api.article-existence-check-mode` to `sampled` to check the first and last
+segments plus an evenly spaced selection of middle segments in each important
+file. Sampling is applied per file so every file's tail is covered; this catches
+common truncated or partially removed releases without a full STAT sweep.
+
+Small files (currently up to roughly 8,000 segments) are still checked in full.
+The sampled mode uses the same standard-depth selection as background health
+checks. It is a screen rather than a guarantee: urgent repair remains the
+backstop if an article disappears later or STAT succeeds while BODY fails.

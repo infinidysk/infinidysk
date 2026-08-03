@@ -382,6 +382,10 @@ public class ConfigManager
                     RequireOneOf(item.ConfigName, value, "standard", "enhanced", "deep", "complete");
                     break;
 
+                case ConfigKeys.ApiArticleExistenceCheckMode:
+                    RequireOneOf(item.ConfigName, value, "full", "sampled");
+                    break;
+
                 case ConfigKeys.UsenetMaxQueueConnectionsPreset:
                     RequireOneOf(item.ConfigName, value, "low", "medium", "high", "max");
                     break;
@@ -932,6 +936,12 @@ public class ConfigManager
             .Select(x => x.ToLower())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .ToHashSet();
+    }
+
+    public string GetArticleExistenceCheckMode()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiArticleExistenceCheckMode));
+        return configured?.ToLowerInvariant() == "sampled" ? "sampled" : "full";
     }
 
     public bool IsPlaybackWatchdogEnabled()

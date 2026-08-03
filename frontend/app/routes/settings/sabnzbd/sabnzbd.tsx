@@ -310,13 +310,38 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                     <span>{`Perform article health check during downloads`}</span>
                 </label>
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="ensure-article-existence-help">
-                    Whether to check for the existence of all articles within an NZB during queue processing. This process may be slow.
+                    Check article availability in the selected categories before mounting the NZB.
                 </p>
                 <MultiCheckboxInput
                     options={ensureArticleExistanceSetting.categories}
                     value={config["api.ensure-article-existence-categories"] ?? ""}
                     onChange={value => setNewConfig({ ...config, "api.ensure-article-existence-categories": value })}
                 />
+            </div>
+            </ManagedSetting>
+            <ManagedSetting configKey="api.article-existence-check-mode">
+            <div className="ml-4 mt-4 space-y-2 border-l border-base-content/10 pl-4">
+                <label className="block text-sm font-medium text-base-content" htmlFor="article-existence-check-mode-input">
+                    Article health check mode
+                </label>
+                <Select
+                    className="w-full"
+                    id="article-existence-check-mode-input"
+                    aria-describedby="article-existence-check-mode-help"
+                    value={config["api.article-existence-check-mode"] ?? "full"}
+                    disabled={ensureArticleExistanceSetting.areNoneSelected}
+                    onChange={e => setNewConfig({
+                        ...config,
+                        "api.article-existence-check-mode": e.target.value
+                    })}
+                >
+                    <option value="full">Full — check every segment</option>
+                    <option value="sampled">Sampled — first, last, and evenly spaced segments per file</option>
+                </Select>
+                <p className="text-[11px] leading-relaxed text-base-content/45" id="article-existence-check-mode-help">
+                    Sampled mode reduces import time for large files while still detecting common truncated
+                    or partially removed releases. Files below the sampling threshold are checked in full.
+                </p>
             </div>
             </ManagedSetting>
             <hr />
@@ -447,6 +472,7 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
         || config["api.ensure-importable-video"] !== newConfig["api.ensure-importable-video"]
         || config["api.skip-non-video-on-missing-articles"] !== newConfig["api.skip-non-video-on-missing-articles"]
         || config["api.ensure-article-existence-categories"] !== newConfig["api.ensure-article-existence-categories"]
+        || config["api.article-existence-check-mode"] !== newConfig["api.article-existence-check-mode"]
         || config["api.ignore-history-limit"] !== newConfig["api.ignore-history-limit"]
         || config["api.duplicate-nzb-behavior"] !== newConfig["api.duplicate-nzb-behavior"]
         || config["api.download-file-blocklist"] !== newConfig["api.download-file-blocklist"]

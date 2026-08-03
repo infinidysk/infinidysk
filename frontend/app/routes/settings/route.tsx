@@ -36,6 +36,7 @@ const defaultConfig = {
     "api.ensure-importable-video": "true",
     "api.skip-non-video-on-missing-articles": "true",
     "api.ensure-article-existence-categories": "",
+    "api.article-existence-check-mode": "full",
     "api.ignore-history-limit": "true",
     "api.download-file-blocklist": "*.nfo, *.par2, *.sfv, *sample.mkv, *unpack.mkv, *.unpack.mp4",
     "api.duplicate-nzb-behavior": "increment",
