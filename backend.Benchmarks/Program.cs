@@ -46,27 +46,28 @@ public class SegmentBufferPoolBenchmarks
 
     private long DrainSegments(ISegmentBufferPool pool, BufferPoolDiagnostics diagnostics)
     {
+        if (ConcurrentStreams == 1)
+            return DrainStream(pool, diagnostics);
+
+        long totalBytesRead = 0;
+        Parallel.For(0, ConcurrentStreams, _ =>
+        {
+            var bytesRead = DrainStream(pool, diagnostics);
+            Interlocked.Add(ref totalBytesRead, bytesRead);
+        });
+        return totalBytesRead;
+    }
+
+    private long DrainStream(ISegmentBufferPool pool, BufferPoolDiagnostics diagnostics)
+    {
         long bytesRead = 0;
         for (var segment = 0; segment < SegmentsPerStream; segment++)
         {
-            var buffers = Enumerable.Range(0, ConcurrentStreams)
-                .Select(_ => new PooledBufferStream(SegmentSize, pool, diagnostics))
-                .ToArray();
-            try
-            {
-                foreach (var buffer in buffers)
-                {
-                    buffer.Write(_payload);
-                    buffer.Position = 0;
-                    buffer.CopyTo(Stream.Null);
-                    bytesRead += buffer.Length;
-                }
-            }
-            finally
-            {
-                foreach (var buffer in buffers)
-                    buffer.Dispose();
-            }
+            using var buffer = new PooledBufferStream(SegmentSize, pool, diagnostics);
+            buffer.Write(_payload);
+            buffer.Position = 0;
+            buffer.CopyTo(Stream.Null);
+            bytesRead += buffer.Length;
         }
         return bytesRead;
     }
