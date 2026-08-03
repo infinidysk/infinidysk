@@ -31,7 +31,7 @@ public class NzbFileStream(
     private readonly LongRange[]? _segmentByteRanges =
         AreSegmentByteRangesValid(segmentByteRanges, fileSegmentIds.Length, fileSize)
             ? segmentByteRanges
-            : null;
+            : LogInvalidAndDiscard(segmentByteRanges, fileSegmentIds.Length, fileSize, fileName);
 
     private long[]? _exactSegmentSizes;
 
@@ -206,6 +206,21 @@ public class NzbFileStream(
         }
 
         return true;
+    }
+
+    private static LongRange[]? LogInvalidAndDiscard(
+        LongRange[]? ranges, int segmentCount, long expectedFileSize, string? fileName)
+    {
+        if (ranges is not null)
+        {
+            Log.Warning(
+                "Discarding invalid segment byte ranges for {FileName} " +
+                "(rangeCount={RangeCount}, segmentCount={SegmentCount}, fileSize={FileSize}); " +
+                "falling back to NNTP header probes for seeking",
+                fileName ?? "unknown", ranges.Length, segmentCount, expectedFileSize);
+        }
+
+        return null;
     }
 
     private async Task<Stream> GetFileStream(long rangeStart, CancellationToken cancellationToken)

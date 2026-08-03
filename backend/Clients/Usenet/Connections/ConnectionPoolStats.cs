@@ -85,6 +85,9 @@ public class ConnectionPoolStats
         // so events arriving after the snapshot are never lost.
         Volatile.Write(ref _flushScheduled, 0);
 
+        if (!_websocketManager.HasSubscribers(WebsocketTopic.UsenetConnections))
+            return;
+
         lock (_lock)
         {
             // Publish while holding the same lock used by Deactivate(). SendMessage is
