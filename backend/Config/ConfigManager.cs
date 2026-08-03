@@ -342,6 +342,7 @@ public class ConfigManager
                     break;
 
                 case ConfigKeys.ApiEnsureImportableVideo:
+                case ConfigKeys.ApiSampleFilterEnabled:
                 case ConfigKeys.ApiIgnoreHistoryLimit:
                 case ConfigKeys.ApiLazyRarParsing:
                 case ConfigKeys.ApiNzbBackupEnabled:

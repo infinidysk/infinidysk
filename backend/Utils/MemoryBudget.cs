@@ -89,7 +89,7 @@ public static class MemoryBudget
     public static void LogInFlightBudget(int effectiveBudgetMb)
     {
         Log.Information(
-            "[MemoryBudget] Heap limit {HeapMB}MB -> default in-flight article budget {BudgetMB}MB (unset uses this; explicit usenet.in-flight-article-budget-mb still wins).",
+            "[MemoryBudget] Heap limit {HeapMB}MB -> in-flight article budget {BudgetMB}MB (derived when unset; explicit usenet.in-flight-article-budget-mb still wins).",
             HeapLimitBytes / Mb,
             effectiveBudgetMb);
     }
