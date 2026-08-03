@@ -323,7 +323,7 @@ function Body(props: ExplorePageData) {
                 />
             )}
             {!showSkeleton && visibleItems.length > 0 &&
-                <div className="flex flex-col overflow-hidden rounded-lg border border-base-content/10 divide-y divide-base-content/10">
+                <div className="flex flex-col rounded-lg border border-base-content/10 divide-y divide-base-content/10">
                     {visibleItems.filter(x => x.isDirectory).map((x, index) => {
                         const checked = selected.has(x.name);
                         return (
@@ -662,6 +662,7 @@ function isDeletable(parentDirectories: string[]): boolean {
 function getClassName(item: DirectoryItem | ExploreFile, isSelected: boolean) {
     return classNames([
         "relative flex bg-base-200 transition-colors duration-100",
+        "first:rounded-t-lg last:rounded-b-lg",
         "has-[a:hover]:bg-base-100 has-[a:active]:bg-base-300",
         "[@media(hover:hover)]:has-[a:hover]:cursor-pointer",
         item.name.startsWith(".") && "opacity-50",
