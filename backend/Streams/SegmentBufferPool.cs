@@ -60,8 +60,6 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
             {
                 var idle = bucket.Dequeue();
                 _idleBytes -= idle.Buffer.Length;
-                if (bucket.Count == 0)
-                    _buckets.Remove(sizeClass);
                 _checkedOut.Add(idle.Buffer);
                 _rentCount++;
                 _reuseCount++;
@@ -125,6 +123,7 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
         lock (_gate)
         {
             var classes = _buckets
+                .Where(x => x.Value.Count > 0)
                 .OrderBy(x => x.Key)
                 .Select(x => new SegmentBufferPoolClassSnapshot(
                     x.Key, x.Value.Count, (long)x.Key * x.Value.Count))
@@ -164,17 +163,21 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
     {
         while (_idleBytes + incomingBytes > _maxIdleBytes)
         {
-            var oldest = _buckets
-                .Where(x => x.Value.Count > 0)
-                .OrderBy(x => x.Value.Peek().ReturnedAt)
-                .FirstOrDefault();
-            if (oldest.Value is null) return;
+            Queue<IdleBuffer>? oldest = null;
+            foreach (var bucket in _buckets.Values)
+            {
+                if (bucket.Count == 0) continue;
+                if (oldest is null ||
+                    bucket.Peek().ReturnedAt < oldest.Peek().ReturnedAt)
+                {
+                    oldest = bucket;
+                }
+            }
 
-            var evicted = oldest.Value.Dequeue();
+            if (oldest is null) return;
+            var evicted = oldest.Dequeue();
             _idleBytes -= evicted.Buffer.Length;
             _trimmedBytes += evicted.Buffer.Length;
-            if (oldest.Value.Count == 0)
-                _buckets.Remove(oldest.Key);
         }
     }
 
@@ -182,7 +185,7 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
     {
         if (_buckets.Count == 0) return;
         var cutoff = now - _staleAfter;
-        foreach (var (sizeClass, bucket) in _buckets.ToArray())
+        foreach (var bucket in _buckets.Values)
         {
             while (bucket.Count > 0 && bucket.Peek().ReturnedAt <= cutoff)
             {
@@ -190,13 +193,10 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
                 _idleBytes -= evicted.Buffer.Length;
                 _trimmedBytes += evicted.Buffer.Length;
             }
-
-            if (bucket.Count == 0)
-                _buckets.Remove(sizeClass);
         }
     }
 
-    private sealed record IdleBuffer(byte[] Buffer, DateTimeOffset ReturnedAt);
+    private readonly record struct IdleBuffer(byte[] Buffer, DateTimeOffset ReturnedAt);
 }
 
 public readonly record struct SegmentBufferPoolSnapshot(
