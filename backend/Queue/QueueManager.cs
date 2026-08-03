@@ -22,6 +22,7 @@ public class QueueManager : IDisposable
     private readonly CancellationTokenSource? _cancellationTokenSource;
     private readonly SemaphoreSlim _stateLock = new(1, 1);
     private readonly SemaphoreSlim _finalizeLock = new(1, 1);
+    private readonly Lock _admissionLock = new();
     private readonly ConfigManager _configManager;
     private readonly WebsocketManager _websocketManager;
     private readonly ProviderUsageTracker _providerUsageTracker;
@@ -34,6 +35,8 @@ public class QueueManager : IDisposable
     private int _loopStarted;
     private Task? _coordinatorTask;
     private Guid? _primaryId;
+    private int _pendingAdmissions;
+    private bool _admissionPaused;
 
     // Overridable in tests so persistent-failure / idle-sleep behaviour can be
     // exercised without a real database.
@@ -99,6 +102,57 @@ public class QueueManager : IDisposable
 
     /// <summary>True while any NZB queue item is actively processing.</summary>
     public bool HasActiveQueueItems => !_inProgress.IsEmpty;
+
+    internal IDisposable? TryReserveQueueSlot(
+        int persistedCount,
+        int maxItems,
+        int resumeThreshold)
+    {
+        if (maxItems <= 0) return new QueueAdmissionReservation(static () => { });
+
+        lock (_admissionLock)
+        {
+            var effectiveCount = (long)Math.Max(0, persistedCount) + _pendingAdmissions;
+            var effectiveResumeThreshold = resumeThreshold <= 0
+                ? maxItems
+                : Math.Min(resumeThreshold, maxItems);
+
+            if (_admissionPaused)
+            {
+                if (effectiveCount > effectiveResumeThreshold)
+                    return null;
+                _admissionPaused = false;
+            }
+
+            if (effectiveCount >= maxItems)
+            {
+                _admissionPaused = true;
+                return null;
+            }
+
+            _pendingAdmissions++;
+            return new QueueAdmissionReservation(ReleaseQueueSlotReservation);
+        }
+    }
+
+    private void ReleaseQueueSlotReservation()
+    {
+        lock (_admissionLock)
+        {
+            if (_pendingAdmissions > 0)
+                _pendingAdmissions--;
+        }
+    }
+
+    private sealed class QueueAdmissionReservation(Action release) : IDisposable
+    {
+        private Action? _release = release;
+
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref _release, null)?.Invoke();
+        }
+    }
 
     /// <summary>
     /// Immutable snapshot of every in-flight queue item and its progress.

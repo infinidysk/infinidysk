@@ -44,6 +44,8 @@ public static class ConfigKeys
     public const string UsenetMaxDownloadConnectionsPerStreamPreset = "usenet.max-download-connections-per-stream-preset";
     public const string UsenetMaxQueueConnections = "usenet.max-queue-connections";
     public const string UsenetMaxQueueConnectionsPreset = "usenet.max-queue-connections-preset";
+    public const string QueueMaxItems = "queue.max-items";
+    public const string QueueResumeThreshold = "queue.resume-threshold";
     public const string QueueWorkerCount = "queue.worker-count";
     public const string QueuePaused = "queue.paused";
     public const string QueueSpeedLimitKbps = "queue.speed-limit-kbps";

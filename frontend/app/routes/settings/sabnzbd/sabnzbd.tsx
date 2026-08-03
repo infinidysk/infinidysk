@@ -21,6 +21,9 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
 
     const ensureArticleExistanceSetting =
         useEnsureArticleExistanceSetting(config, setNewConfig);
+    const queueMaxItems = parseNonNegativeInteger(config["queue.max-items"]);
+    const queueResumeThreshold = parseNonNegativeInteger(config["queue.resume-threshold"]);
+    const queueAdmissionValid = isValidQueueAdmission(config);
 
     return (
         <SettingsPage>
@@ -75,6 +78,54 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="manual-category-help">
                     The category to use for manual uploads through the Queue page on the UI.
                 </p>
+            </div>
+            </ManagedSetting>
+            <hr />
+            <ManagedSetting configKeys={["queue.max-items", "queue.resume-threshold"]}>
+            <div className="space-y-4">
+                <div className="space-y-2">
+                    <label className="block text-sm font-medium text-base-content" htmlFor="queue-max-items-input">
+                        Maximum queued jobs
+                    </label>
+                    <Input
+                        className={`w-full ${queueAdmissionValid ? "" : "input-error"}`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        id="queue-max-items-input"
+                        aria-describedby="queue-max-items-help"
+                        aria-invalid={!queueAdmissionValid}
+                        value={config["queue.max-items"] ?? "0"}
+                        onChange={e => setNewConfig({ ...config, "queue.max-items": e.target.value })} />
+                    <p className="text-[11px] leading-relaxed text-base-content/45" id="queue-max-items-help">
+                        Reject new SAB submissions when this many jobs are queued. Radarr and Sonarr keep
+                        rejected grabs pending and retry later. Use <code>0</code> for no limit.
+                    </p>
+                </div>
+                <div className="space-y-2">
+                    <label className="block text-sm font-medium text-base-content" htmlFor="queue-resume-threshold-input">
+                        Resume threshold
+                    </label>
+                    <Input
+                        className={`w-full ${queueAdmissionValid ? "" : "input-error"}`}
+                        type="number"
+                        min={0}
+                        max={queueMaxItems ?? undefined}
+                        step={1}
+                        id="queue-resume-threshold-input"
+                        aria-describedby="queue-resume-threshold-help"
+                        aria-invalid={!queueAdmissionValid}
+                        value={config["queue.resume-threshold"] ?? "0"}
+                        disabled={queueMaxItems === 0}
+                        onChange={e => setNewConfig({ ...config, "queue.resume-threshold": e.target.value })} />
+                    <p className="text-[11px] leading-relaxed text-base-content/45" id="queue-resume-threshold-help">
+                        After the limit is reached, accept submissions again at or below this queue depth.
+                        Use <code>0</code> to resume immediately below the maximum.
+                        {queueResumeThreshold !== null && queueMaxItems !== null && queueResumeThreshold > queueMaxItems
+                            ? " The threshold cannot exceed the maximum."
+                            : ""}
+                    </p>
+                </div>
             </div>
             </ManagedSetting>
             <hr />
@@ -390,6 +441,8 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
     return config["api.key"] !== newConfig["api.key"]
         || config["api.categories"] !== newConfig["api.categories"]
         || config["api.manual-category"] !== newConfig["api.manual-category"]
+        || config["queue.max-items"] !== newConfig["queue.max-items"]
+        || config["queue.resume-threshold"] !== newConfig["queue.resume-threshold"]
         || config["rclone.mount-dir"] !== newConfig["rclone.mount-dir"]
         || config["api.ensure-importable-video"] !== newConfig["api.ensure-importable-video"]
         || config["api.skip-non-video-on-missing-articles"] !== newConfig["api.skip-non-video-on-missing-articles"]
@@ -409,7 +462,8 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
 
 export function isSabnzbdSettingsValid(newConfig: Record<string, string>) {
     return isValidCategories(newConfig["api.categories"])
-        && isValidNzbBackupLocation(newConfig);
+        && isValidNzbBackupLocation(newConfig)
+        && isValidQueueAdmission(newConfig);
 }
 
 export function generateNewApiKey(): string {
@@ -425,6 +479,20 @@ function isValidCategories(categories: string): boolean {
 function isValidNzbBackupLocation(config: Record<string, string>) {
     return config["api.nzb-backup-enabled"] !== "true"
         || !!config["api.nzb-backup-location"]?.trim();
+}
+
+function isValidQueueAdmission(config: Record<string, string>) {
+    const maxItems = parseNonNegativeInteger(config["queue.max-items"]);
+    const resumeThreshold = parseNonNegativeInteger(config["queue.resume-threshold"]);
+    if (maxItems === null || resumeThreshold === null) return false;
+    return maxItems === 0 || resumeThreshold === 0 || resumeThreshold <= maxItems;
+}
+
+function parseNonNegativeInteger(value: string | undefined): number | null {
+    if (value === undefined || value.trim() === "") return 0;
+    if (!/^\d+$/.test(value)) return null;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function isAlphaNumericWithDashes(input: string): boolean {
