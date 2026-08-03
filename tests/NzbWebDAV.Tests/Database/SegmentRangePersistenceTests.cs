@@ -3,6 +3,8 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
+using NzbWebDAV.Queue.FileProcessors;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Database;
@@ -122,18 +124,55 @@ public class SegmentRangePersistenceTests
         Assert.Null(nzbFile.GetSegmentByteRanges());
     }
 
-    private static NzbFile CreateFourSegmentFile()
+    [Fact]
+    public async Task MultipartMkvProcessor_ValidatesInferenceBeforePersistingPartRanges()
+    {
+        var uniform = CreateFourSegmentFile("a-");
+        var nonUniform = CreateFourSegmentFile("b-");
+        var client = new HeaderProbeNntpClient(new Dictionary<string, LongRange>
+        {
+            ["a-seg1"] = new LongRange(700_000, 1_400_000), // confirms the uniform split
+            ["b-seg1"] = new LongRange(700_000, 1_350_000), // rejects the inference
+        });
+        var processor = new MultipartMkvProcessor(
+            [
+                new GetFileInfosStep.FileInfo
+                {
+                    NzbFile = uniform,
+                    FileName = "movie.mkv.001",
+                    ReleaseDate = DateTimeOffset.UtcNow,
+                    FileSize = 2_300_000,
+                },
+                new GetFileInfosStep.FileInfo
+                {
+                    NzbFile = nonUniform,
+                    FileName = "movie.mkv.002",
+                    ReleaseDate = DateTimeOffset.UtcNow,
+                    FileSize = 2_300_000,
+                },
+            ],
+            client,
+            CancellationToken.None);
+
+        var result = Assert.IsType<MultipartMkvProcessor.Result>(await processor.ProcessAsync());
+
+        Assert.Equal(2, client.HeaderRequestCount);
+        Assert.NotNull(result.Parts[0].SegmentByteRanges);
+        Assert.Null(result.Parts[1].SegmentByteRanges);
+    }
+
+    private static NzbFile CreateFourSegmentFile(string prefix = "")
     {
         var nzbFile = new NzbFile { Subject = "\"test.mkv\"" };
         nzbFile.Segments.Add(new NzbSegment
         {
-            MessageId = "seg0",
+            MessageId = $"{prefix}seg0",
             Bytes = 700_000,
             ByteRange = new LongRange(0, 700_000),
         });
-        nzbFile.Segments.Add(new NzbSegment { MessageId = "seg1", Bytes = 700_000 });
-        nzbFile.Segments.Add(new NzbSegment { MessageId = "seg2", Bytes = 700_000 });
-        nzbFile.Segments.Add(new NzbSegment { MessageId = "seg3", Bytes = 200_000 });
+        nzbFile.Segments.Add(new NzbSegment { MessageId = $"{prefix}seg1", Bytes = 700_000 });
+        nzbFile.Segments.Add(new NzbSegment { MessageId = $"{prefix}seg2", Bytes = 700_000 });
+        nzbFile.Segments.Add(new NzbSegment { MessageId = $"{prefix}seg3", Bytes = 200_000 });
         return nzbFile;
     }
 

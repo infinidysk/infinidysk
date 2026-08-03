@@ -21,6 +21,12 @@ public class RarProcessor(
     {
         await using var stream = await GetNzbFileStream().ConfigureAwait(false);
         var headers = await RarUtil.GetRarHeadersAsync(stream, password, ct).ConfigureAwait(false);
+        // Validate the uniform-size inference before StoredFileSegments flow into
+        // RarAggregator (or NestedRarExpansionStep), which persists the part's
+        // segment byte ranges. Probing after header reading reuses any range the
+        // article cache learned while parsing.
+        await fileInfo.NzbFile.ProbeSecondSegmentRangeAsync(usenetClient, stream.Length, ct)
+            .ConfigureAwait(false);
         var archiveName = GetArchiveName();
         var partNumber = GetPartNumber(headers);
         return new Result()

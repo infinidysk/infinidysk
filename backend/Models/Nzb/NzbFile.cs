@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Extensions;
 using Serilog;
 
 namespace NzbWebDAV.Models.Nzb;
@@ -59,7 +60,11 @@ public class NzbFile
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            Log.Debug(e, "Second segment range probe failed for {FileName}; using existing seek fallback",
+            // Known transport failures get a single human-friendly Warning line;
+            // unexpected failures keep the stack. Playback still works either way,
+            // it just falls back to header probes when seeking.
+            e.LogWarningKnownOrStack(
+                "Second segment range probe failed for {FileName}; seeking will fall back to NNTP header probes.",
                 GetSubjectFileName());
         }
     }
