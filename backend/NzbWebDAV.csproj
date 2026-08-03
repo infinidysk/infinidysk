@@ -28,6 +28,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\libs\SharpCompress\SharpCompress.csproj" />
+      <ProjectReference Include="..\libs\RapidYencSharp\RapidYencSharp.csproj" />
       <ProjectReference Include="..\libs\UsenetSharp\UsenetSharp.csproj" />
     </ItemGroup>
 
