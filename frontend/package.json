@@ -59,7 +59,7 @@
     "daisyui": "^5.7.0",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.0",
     "tailwindcss": "^4.2.1",
     "tsx": "^4.22.5",
     "typescript": "^6.0.3",
