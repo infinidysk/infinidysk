@@ -112,10 +112,32 @@ describe("getServiceProvider", () => {
   });
 
   it.each([
+    ["unsafe supportUrl", "javascript:alert(1)"],
+    ["non-string supportUrl", 42],
+    ["empty supportUrl", "   "],
+  ])("drops %s but keeps feature gating active", (_description, supportUrl) => {
+    process.env.SERVICE_PROVIDER = JSON.stringify({
+      name: "Example",
+      url: "https://example.com",
+      supportUrl,
+      disabledFeatures: ["search"],
+    });
+
+    expect(getServiceProvider()).toEqual({
+      name: "Example",
+      url: "https://example.com/",
+      disabledFeatures: ["search"],
+    });
+    expect(warnMock).toHaveBeenCalledOnce();
+    expect(warnMock.mock.calls[0][0]).toContain(
+      'SERVICE_PROVIDER "supportUrl" is invalid and will be ignored',
+    );
+  });
+
+  it.each([
     ["malformed JSON", "{"],
     ["missing name", JSON.stringify({ url: "https://example.com", disabledFeatures: [] })],
     ["unsafe URL", JSON.stringify({ name: "Example", url: "javascript:alert(1)", disabledFeatures: [] })],
-    ["unsafe supportUrl", JSON.stringify({ name: "Example", url: "https://example.com", supportUrl: "javascript:alert(1)", disabledFeatures: [] })],
     ["invalid feature list", JSON.stringify({ name: "Example", url: "https://example.com", disabledFeatures: "search" })],
   ])("ignores %s", (_description, rawValue) => {
     process.env.SERVICE_PROVIDER = rawValue;

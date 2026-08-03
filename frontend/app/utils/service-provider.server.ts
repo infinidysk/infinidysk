@@ -10,6 +10,7 @@ type ParsedServiceProvider = {
   config: ServiceProviderConfig;
   ignoredFeatures: string[];
   rejectedFeatures: string[];
+  supportUrlError?: string;
 };
 
 let cachedRawValue: string | undefined;
@@ -58,17 +59,28 @@ function parseConfig(rawValue: string): ParsedServiceProvider {
     }
   }
 
+  // supportUrl is optional; a bad value must not discard the whole config,
+  // otherwise a typo would silently turn off all feature gating.
+  let supportUrl: string | undefined;
+  let supportUrlError: string | undefined;
+  if (candidate.supportUrl !== undefined) {
+    try {
+      supportUrl = parseUrl(candidate.supportUrl, "supportUrl");
+    } catch (error) {
+      supportUrlError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
   return {
     config: {
       name: candidate.name.trim(),
       url: parseUrl(candidate.url),
-      ...(candidate.supportUrl !== undefined
-        ? { supportUrl: parseUrl(candidate.supportUrl, "supportUrl") }
-        : {}),
+      ...(supportUrl !== undefined ? { supportUrl } : {}),
       disabledFeatures,
     },
     ignoredFeatures,
     rejectedFeatures,
+    ...(supportUrlError !== undefined ? { supportUrlError } : {}),
   };
 }
 
@@ -85,8 +97,13 @@ export function getServiceProvider(): ServiceProviderConfig | null {
   }
 
   try {
-    const { config, ignoredFeatures, rejectedFeatures } = parseConfig(rawValue);
+    const { config, ignoredFeatures, rejectedFeatures, supportUrlError } = parseConfig(rawValue);
     cachedConfig = config;
+    if (supportUrlError) {
+      logger.warn(
+        `SERVICE_PROVIDER "supportUrl" is invalid and will be ignored (feature gating stays active). Reason: ${supportUrlError}`,
+      );
+    }
     if (rejectedFeatures.length > 0) {
       logger.warn(
         `SERVICE_PROVIDER cannot disable "${NON_DISABLEABLE_FEATURE_ID}" because it is the fallback landing page; ignoring.`,
