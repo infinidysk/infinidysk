@@ -87,14 +87,44 @@ public class SegmentBufferPoolTests
     }
 
     [Fact]
-    public void Return_RejectsForeignOrDuplicateBuffers()
+    public void Return_IgnoresAndCountsForeignOrDuplicateBuffers()
     {
         var pool = new SegmentBufferPool(maxIdleBytes: 1024 * 1024);
         var buffer = pool.Rent(256 * 1024);
         pool.Return(buffer);
 
-        Assert.Throws<InvalidOperationException>(() => pool.Return(buffer));
-        Assert.Throws<InvalidOperationException>(() => pool.Return(new byte[256 * 1024]));
+        // A caller bug must not crash a stream, and the duplicate must not be
+        // pooled a second time (that would hand one array to two renters).
+        pool.Return(buffer);
+        pool.Return(new byte[256 * 1024]);
+
+        var snapshot = pool.Snapshot();
+        Assert.Equal(2, snapshot.RejectedReturnCount);
+        Assert.Equal(1, snapshot.ReturnCount);
+        Assert.Equal(256 * 1024, snapshot.IdleBytes);
+        Assert.Equal(1, snapshot.SizeClasses.Single().BufferCount);
+    }
+
+    [Fact]
+    public void LeakedBuffer_IsNotRootedByThePool()
+    {
+        var pool = new SegmentBufferPool(maxIdleBytes: 1024 * 1024);
+        var weakBuffer = RentAndDropBuffer(pool);
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        Assert.False(weakBuffer.IsAlive);
+        // The leak stays visible in diagnostics even though nothing is rooted.
+        Assert.Equal(256 * 1024, pool.Snapshot().CheckedOutBytes);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference RentAndDropBuffer(SegmentBufferPool pool)
+    {
+        return new WeakReference(pool.Rent(256 * 1024));
     }
 
     [Fact]

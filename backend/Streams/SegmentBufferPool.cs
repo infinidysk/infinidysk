@@ -1,14 +1,21 @@
+using System.Runtime.CompilerServices;
+
 namespace NzbWebDAV.Streams;
 
 /// <summary>
 /// Evaluation pool for Usenet segment drains. Uses 256 KiB size classes, strictly
 /// bounds idle retention, reclaims across classes, and expires stale buffers.
+/// Checked-out buffers are tracked weakly so a caller that leaks a rented buffer
+/// costs only that allocation — the pool never roots it. Returning a buffer the
+/// pool does not recognize (foreign or already returned) is counted and ignored
+/// rather than thrown, matching what production streaming code could tolerate.
 /// </summary>
 public sealed class SegmentBufferPool : ISegmentBufferPool
 {
     internal const int SizeClassGranularity = 256 * 1024;
     private const int DefaultMaxBuffersPerClass = 64;
     private static readonly TimeSpan DefaultStaleAfter = TimeSpan.FromMinutes(2);
+    private static readonly object CheckedOutMarker = new();
 
     private readonly object _gate = new();
     private readonly long _maxIdleBytes;
@@ -16,12 +23,14 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
     private readonly TimeSpan _staleAfter;
     private readonly TimeProvider _timeProvider;
     private readonly Dictionary<int, Queue<IdleBuffer>> _buckets = [];
-    private readonly HashSet<byte[]> _checkedOut = new(ReferenceEqualityComparer.Instance);
+    private readonly ConditionalWeakTable<byte[], object> _checkedOut = new();
 
     private long _idleBytes;
     private long _trimmedBytes;
+    private long _checkedOutBytes;
     private long _rentCount;
     private long _returnCount;
+    private long _rejectedReturnCount;
     private long _reuseCount;
     private long _allocationCount;
 
@@ -60,7 +69,8 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
             {
                 var idle = bucket.Dequeue();
                 _idleBytes -= idle.Buffer.Length;
-                _checkedOut.Add(idle.Buffer);
+                _checkedOut.Add(idle.Buffer, CheckedOutMarker);
+                _checkedOutBytes += idle.Buffer.Length;
                 _rentCount++;
                 _reuseCount++;
                 return idle.Buffer;
@@ -70,7 +80,8 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
         var allocated = new byte[sizeClass];
         lock (_gate)
         {
-            _checkedOut.Add(allocated);
+            _checkedOut.Add(allocated, CheckedOutMarker);
+            _checkedOutBytes += allocated.Length;
             _rentCount++;
             _allocationCount++;
         }
@@ -86,9 +97,15 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
         lock (_gate)
         {
             if (!_checkedOut.Remove(buffer))
-                throw new InvalidOperationException(
-                    "The segment buffer was not rented from this pool or was already returned.");
+            {
+                // Foreign or double-returned buffer. Pooling it anyway would hand
+                // the same array to two renters, so drop it — but never throw:
+                // a caller bug must not escalate into a stream-crashing exception.
+                _rejectedReturnCount++;
+                return;
+            }
 
+            _checkedOutBytes -= buffer.Length;
             _returnCount++;
             TrimStaleLocked(now);
 
@@ -131,9 +148,10 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
             return new SegmentBufferPoolSnapshot(
                 _idleBytes,
                 _trimmedBytes,
-                _checkedOut.Sum(x => (long)x.Length),
+                _checkedOutBytes,
                 _rentCount,
                 _returnCount,
+                _rejectedReturnCount,
                 _reuseCount,
                 _allocationCount,
                 classes);
@@ -199,12 +217,21 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
     private readonly record struct IdleBuffer(byte[] Buffer, DateTimeOffset ReturnedAt);
 }
 
+/// <param name="CheckedOutBytes">
+/// Bytes rented and not yet returned. Buffers a caller leaked (never returned)
+/// remain counted here even after the GC collects them, so sustained growth is
+/// a leak signal rather than rooted memory.
+/// </param>
+/// <param name="RejectedReturnCount">
+/// Returns ignored because the buffer was foreign to the pool or already returned.
+/// </param>
 public readonly record struct SegmentBufferPoolSnapshot(
     long IdleBytes,
     long TrimmedBytes,
     long CheckedOutBytes,
     long RentCount,
     long ReturnCount,
+    long RejectedReturnCount,
     long ReuseCount,
     long AllocationCount,
     IReadOnlyList<SegmentBufferPoolClassSnapshot> SizeClasses);
