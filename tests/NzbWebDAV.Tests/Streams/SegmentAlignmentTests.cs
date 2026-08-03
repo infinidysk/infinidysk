@@ -34,21 +34,23 @@ public class SegmentAlignmentTests
         Assert.Contains("two", client.IndividualRequests);
     }
 
-    [Fact]
-    public async Task ExhaustedRetries_ZeroFillExactlyOneSegment_KeepingFollowingOffsets()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExhaustedRetries_ThrowsRetryableDownloadException(bool usePipelinedBodyRequests)
     {
         var client = CreateClient();
         client.BatchFailures["two"] = int.MaxValue;
         client.IndividualFailures["two"] = int.MaxValue;
 
-        await using var stream = CreateStream(client, exactSizes: [5, 7, 5]);
-        var output = await ReadAllAsync(stream);
+        await using var stream = CreateStream(client, exactSizes: [5, 7, 5],
+            usePipelinedBodyRequests: usePipelinedBodyRequests);
 
-        // The middle segment is 7 bytes, not the 5.66-byte average of this file.
-        Assert.Equal(17, output.Length);
-        Assert.Equal("aaaaa", Encoding.ASCII.GetString(output, 0, 5));
-        Assert.Equal(new byte[7], output[5..12]);
-        Assert.Equal("ccccc", Encoding.ASCII.GetString(output, 12, 5));
+        var failure = await Assert.ThrowsAsync<RetryableDownloadException>(
+            () => ReadAllAsync(stream));
+
+        Assert.Contains("two", failure.Message, StringComparison.Ordinal);
+        Assert.IsType<TimeoutException>(failure.InnerException);
     }
 
     [Fact]
@@ -271,14 +273,15 @@ public class SegmentAlignmentTests
         Assert.Equal(readBudget, total);
     }
 
-    private static Stream CreateStream(ScriptedNntpClient client, long[] exactSizes) =>
+    private static Stream CreateStream(
+        ScriptedNntpClient client, long[] exactSizes, bool usePipelinedBodyRequests = true) =>
         MultiSegmentStream.Create(
             new[] { "one", "two", "three" }.AsMemory(),
             client,
             articleBufferSize: 4,
             estimatedSegmentSize: 6,
             failFastOnFirstSegment: false,
-            usePipelinedBodyRequests: true,
+            usePipelinedBodyRequests: usePipelinedBodyRequests,
             cancellationToken: CancellationToken.None,
             fileName: "alignment.bin",
             exactSegmentSizes: exactSizes);

@@ -451,9 +451,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     throw;
                 }
 
-                return ZeroFillSegment(
-                    "Segment {SegmentId} unavailable after retries while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
-                    segmentId, segmentIndex, e);
+                throw CreateTransientSegmentFailure(segmentId, segmentIndex, e);
             }
             finally
             {
@@ -535,9 +533,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 return SegmentDownloadResult.Success(rescued, estimate);
 
             if (_failFastOnFirstSegment && isFirstSegment) throw;
-            return ZeroFillSegment(
-                "Segment {SegmentId} unavailable after retries while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
-                segmentId, segmentIndex, e);
+            throw CreateTransientSegmentFailure(segmentId, segmentIndex, e);
         }
         finally
         {
@@ -744,6 +740,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         return failure.IsNonRetryableDownloadException()
             ? new NonRetryableDownloadException(message, failure)
             : new RetryableDownloadException(message, failure);
+    }
+
+    private RetryableDownloadException CreateTransientSegmentFailure(
+        string segmentId, int segmentIndex, Exception failure)
+    {
+        var message =
+            $"Segment {segmentIndex + 1} of {_segmentIds.Length} ({segmentId}) could not be downloaded " +
+            $"while reading \"{_fileName}\" after all retry attempts were exhausted. " +
+            "The client should retry this range request.";
+        return new RetryableDownloadException(message, failure);
     }
 
     private async Task<Stream> DrainSegmentAsync(
