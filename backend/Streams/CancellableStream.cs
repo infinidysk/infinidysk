@@ -32,6 +32,9 @@ public class CancellableStream(Stream innerStream, CancellationToken token) : Fa
     public override int Read(byte[] buffer, int offset, int count)
     {
         CheckDisposed();
+        // SharpCompress exposes synchronous RAR/7z header readers. Those readers run
+        // inside Task.Run in RarUtil/SevenZipUtil, and this bridge preserves the
+        // operation token until the library offers an async header-enumeration path.
         return ReadAsync(buffer, offset, count, token)
             .GetAwaiter()
             .GetResult();
@@ -40,6 +43,8 @@ public class CancellableStream(Stream innerStream, CancellationToken token) : Fa
     public override int Read(Span<byte> buffer)
     {
         CheckDisposed();
+        // Keep the construction token here too; FastReadOnlyStream's fallback uses
+        // CancellationToken.None and would make synchronous archive scans uncancellable.
         var array = ArrayPool<byte>.Shared.Rent(buffer.Length);
         try
         {

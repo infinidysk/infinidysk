@@ -21,6 +21,20 @@ public class AesDecoderStreamTests
         Assert.Equal(plaintext.Length, stream.Position);
     }
 
+    [Fact]
+    public void Read_RejectsSynchronousWebDavReads()
+    {
+        var plaintext = Enumerable.Range(0, 16).Select(index => (byte)index).ToArray();
+        var (ciphertext, parameters) = Encrypt(plaintext);
+        using var stream = new AesDecoderStream(
+            new MemoryStream(ciphertext), parameters);
+
+        Assert.Throws<NotSupportedException>(
+            () => stream.Read(new byte[16], 0, 16));
+        Assert.Throws<NotSupportedException>(
+            () => stream.Read(new Span<byte>(new byte[16])));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

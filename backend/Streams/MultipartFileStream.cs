@@ -20,11 +20,6 @@ public class MultipartFileStream(MultipartFile multipartFile, INntpClient usenet
         set => Seek(value, SeekOrigin.Begin);
     }
 
-    public override int Read(byte[] buffer, int offset, int count)
-    {
-        return ReadAsync(buffer, offset, count).GetAwaiter().GetResult();
-    }
-
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         if (buffer.Length == 0) return 0;

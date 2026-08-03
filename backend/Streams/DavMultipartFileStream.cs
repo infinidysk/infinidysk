@@ -4,10 +4,14 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using Serilog;
+using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
-public class DavMultipartFileStream : Stream
+// Nested RAR expansion still passes this stream to SharpCompress's synchronous
+// header reader. FastReadOnlyStream centralizes that compatibility fallback while
+// WebDAV GET/range handlers use the Memory<byte> async path below.
+public class DavMultipartFileStream : FastReadOnlyStream
 {
     private readonly DavMultipartFile _mpf;
     private readonly INntpClient _usenetClient;
@@ -83,15 +87,12 @@ public class DavMultipartFileStream : Stream
         _innerStream?.Flush();
     }
 
-    public override int Read(byte[] buffer, int offset, int count)
-    {
-        return ReadAsync(buffer, offset, count).GetAwaiter().GetResult();
-    }
-
-    public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    public override async ValueTask<int> ReadAsync(
+        Memory<byte> buffer,
+        CancellationToken cancellationToken = default)
     {
         _innerStream ??= await GetFileStreamAsync(_position, cancellationToken).ConfigureAwait(false);
-        var read = await _innerStream.ReadAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
+        var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         _position += read;
         return read;
     }
