@@ -102,6 +102,53 @@ public class NzbFileStreamTests
         Assert.Equal(offset + read, stream.Position);
     }
 
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(4, true)]
+    public async Task SeekToMissingTsSegment_UsesFileAlignedNullPacket(
+        int articleBufferSize,
+        bool usePipelinedBodyRequests)
+    {
+        string[] segmentIds = ["one", "two", "three"];
+        var firstPacket = Enumerable.Repeat((byte)'a', 188).ToArray();
+        var thirdPacket = Enumerable.Repeat((byte)'c', 188).ToArray();
+        var segmentRanges = new[]
+        {
+            new LongRange(0, 188),
+            new LongRange(188, 376),
+            new LongRange(376, 564),
+        };
+        var rangesById = segmentIds
+            .Zip(segmentRanges)
+            .ToDictionary(pair => pair.First, pair => pair.Second);
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["one"] = firstPacket,
+                ["three"] = thirdPacket,
+            },
+            useCachedYencStreams: true,
+            segmentRanges: rangesById);
+        await using var stream = new NzbFileStream(
+            segmentIds,
+            564,
+            client,
+            articleBufferSize,
+            segmentRanges,
+            usePipelinedBodyRequests,
+            fileName: "movie.ts",
+            useContainerAwareFill: true);
+        stream.Seek(188, SeekOrigin.Begin);
+        var buffer = new byte[188];
+
+        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true);
+
+        Assert.Equal(188, read);
+        Assert.Equal(new byte[] { 0x47, 0x1F, 0xFF, 0x10 }, buffer[..4]);
+        Assert.All(buffer[4..], value => Assert.Equal(0xFF, value));
+        Assert.Equal(376, stream.Position);
+    }
+
     [Fact]
     public void Seek_RejectsPositionsOutsideFile()
     {

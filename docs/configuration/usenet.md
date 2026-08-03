@@ -74,13 +74,12 @@ provider or fallback Message-ID, NzbDAV normally emits the same number of zero b
 keep every later file offset correct. Enable **Container-aware gap fill** to emit
 format-native discard markers instead for supported direct files:
 
-- Matroska (`.mkv`, `.mk3d`, `.webm`): dense EBML Void elements.
 - MPEG-TS (`.ts`, `.m2ts`, `.mts`): packet-aligned null packets when exact segment
   offsets are available.
 
 This may help compatible players resynchronize sooner, but it cannot restore the missing
-audio or video data. MP4/MOV and archive-backed files retain zero-fill because inserting
-container boxes into media or compressed payload would not be valid.
+audio or video data. Matroska, MP4/MOV, and archive-backed files retain zero-fill because
+arbitrary article boundaries do not provide safe container-element boundaries.
 
 The setting is experimental and defaults to off. It does not affect transient transport
 failures: after their retries are exhausted, the current HTTP response fails so the player

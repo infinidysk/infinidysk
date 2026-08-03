@@ -4,18 +4,6 @@ namespace NzbWebDAV.Tests.Streams;
 
 public sealed class ContainerAwareFillStreamTests
 {
-    [Theory]
-    [InlineData(6, new byte[] { 0xEC, 0x80, 0xEC, 0x80, 0xEC, 0x80 })]
-    [InlineData(7, new byte[] { 0xEC, 0x81, 0x00, 0xEC, 0x80, 0xEC, 0x80 })]
-    public async Task MatroskaFill_TilesExactLengthWithVoidElements(long length, byte[] expected)
-    {
-        await using var stream = ContainerAwareFillStream.Create("movie.mkv", length, fileOffset: null);
-
-        var output = await ReadWithSmallBufferAsync(stream);
-
-        Assert.Equal(expected, output);
-    }
-
     [Fact]
     public async Task TransportStreamFill_EmitsOnlyCompleteAlignedNullPackets()
     {
@@ -45,8 +33,8 @@ public sealed class ContainerAwareFillStreamTests
     [Theory]
     [InlineData("movie.mp4", 16)]
     [InlineData("movie.avi", 16)]
-    [InlineData("movie.mkv", 1)]
-    public async Task UnsupportedOrTinyFill_RetainsZeroFill(string fileName, long length)
+    [InlineData("movie.mkv", 16)]
+    public async Task UnsupportedFill_RetainsZeroFill(string fileName, long length)
     {
         await using var stream = ContainerAwareFillStream.Create(fileName, length, fileOffset: 0);
 

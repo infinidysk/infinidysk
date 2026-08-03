@@ -856,9 +856,9 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                                 <Badge className="badge-warning badge-outline badge-xs">Experimental</Badge>
                             </div>
                             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-base-content/60">
-                                For permanently missing data in direct MKV/WebM and MPEG-TS files, emit native discard
-                                markers instead of raw zeros so compatible players can resynchronize sooner. Archive-backed
-                                files and unsupported containers keep the existing zero-fill behavior.
+                                For permanently missing data in direct MPEG-TS files, emit packet-aligned null packets
+                                instead of raw zeros so compatible players can resynchronize sooner. Archive-backed files
+                                and unsupported containers keep the existing zero-fill behavior.
                             </p>
                         </div>
                         <Tooltip content="Experimental. Applies only after all missing/corrupt article fallbacks are exhausted; transient transport failures still abort so the player can retry the range.">

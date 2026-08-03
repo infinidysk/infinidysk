@@ -9,7 +9,6 @@ internal sealed class ContainerAwareFillStream : Stream
 {
     private enum FillFormat
     {
-        Matroska,
         TransportStream188,
         TransportStream192,
     }
@@ -35,8 +34,6 @@ internal sealed class ContainerAwareFillStream : Stream
         var extension = Path.GetExtension(fileName)?.ToLowerInvariant() ?? string.Empty;
         return extension switch
         {
-            ".mkv" or ".mk3d" or ".webm" when length >= 2 =>
-                new ContainerAwareFillStream(length, fileOffset ?? 0, FillFormat.Matroska),
             ".ts" when fileOffset is >= 0 =>
                 new ContainerAwareFillStream(length, fileOffset.Value, FillFormat.TransportStream188),
             ".m2ts" or ".mts" when fileOffset is >= 0 =>
@@ -91,9 +88,6 @@ internal sealed class ContainerAwareFillStream : Stream
         var destination = buffer[..toRead];
         switch (_format)
         {
-            case FillFormat.Matroska:
-                FillMatroska(destination);
-                break;
             case FillFormat.TransportStream188:
                 FillTransportStream(destination, packetSize: 188, transportHeaderOffset: 0);
                 break;
@@ -148,31 +142,6 @@ internal sealed class ContainerAwareFillStream : Stream
     {
         _disposed = true;
         base.Dispose(disposing);
-    }
-
-    private void FillMatroska(Span<byte> destination)
-    {
-        // Tile the gap with valid global Void elements rather than one large Void.
-        // A gap usually begins inside a Block, so dense element boundaries give an
-        // EBML parser another resync target after it abandons the damaged Block.
-        var oddLength = (_length & 1) != 0;
-        for (var i = 0; i < destination.Length; i++)
-        {
-            var position = _position + i;
-            if (oddLength && position < 3)
-            {
-                destination[i] = position switch
-                {
-                    0 => 0xEC, // Void element ID
-                    1 => 0x81, // one-byte payload
-                    _ => 0x00,
-                };
-                continue;
-            }
-
-            var pairPosition = oddLength ? position - 3 : position;
-            destination[i] = (pairPosition & 1) == 0 ? (byte)0xEC : (byte)0x80;
-        }
     }
 
     private void FillTransportStream(

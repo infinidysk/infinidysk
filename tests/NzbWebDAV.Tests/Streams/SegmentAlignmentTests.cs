@@ -109,33 +109,36 @@ public class SegmentAlignmentTests
     }
 
     [Fact]
-    public async Task ContainerAwareFill_UsesMatroskaVoidWithoutChangingFollowingOffsets()
+    public async Task ContainerAwareFill_UsesAlignedTsNullPacketWithoutChangingFollowingOffsets()
     {
+        var firstPacket = Enumerable.Repeat((byte)'a', 188).ToArray();
+        var thirdPacket = Enumerable.Repeat((byte)'c', 188).ToArray();
         var client = CreateClient(new Dictionary<string, byte[]>
         {
-            ["one"] = First,
-            ["three"] = Third,
+            ["one"] = firstPacket,
+            ["three"] = thirdPacket,
         });
 
         await using var stream = MultiSegmentStream.Create(
             new[] { "one", "two", "three" }.AsMemory(),
             client,
             articleBufferSize: 4,
-            estimatedSegmentSize: 6,
+            estimatedSegmentSize: 188,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: true,
             cancellationToken: CancellationToken.None,
-            fileName: "movie.mkv",
-            exactSegmentSizes: new long[] { 5, 7, 5 },
+            fileName: "movie.ts",
+            exactSegmentSizes: new long[] { 188, 188, 188 },
             useContainerAwareFill: true,
             firstSegmentFileOffset: 0);
 
         var output = await ReadAllAsync(stream);
 
-        Assert.Equal(17, output.Length);
-        Assert.Equal("aaaaa", Encoding.ASCII.GetString(output, 0, 5));
-        Assert.Equal(new byte[] { 0xEC, 0x81, 0x00, 0xEC, 0x80, 0xEC, 0x80 }, output[5..12]);
-        Assert.Equal("ccccc", Encoding.ASCII.GetString(output, 12, 5));
+        Assert.Equal(564, output.Length);
+        Assert.Equal(firstPacket, output[..188]);
+        Assert.Equal(new byte[] { 0x47, 0x1F, 0xFF, 0x10 }, output[188..192]);
+        Assert.All(output[192..376], value => Assert.Equal(0xFF, value));
+        Assert.Equal(thirdPacket, output[376..]);
     }
 
     [Fact]
