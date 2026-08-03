@@ -375,10 +375,14 @@ public partial class Program
     /// </summary>
     private static void RunYencNativeSelfTest()
     {
-        Log.Information("Running yEnc native self-test (rapidyenc {Version:X})",
-            RapidYencSharp.Version.GetVersion());
         try
         {
+            RapidYencSharp.YencEncoder.EnsureInitialized();
+            RapidYencSharp.YencDecoder.EnsureInitialized();
+            RapidYencSharp.Crc32.EnsureInitialized();
+            Log.Information("Running yEnc native self-test (rapidyenc {Version:X})",
+                RapidYencSharp.Version.GetVersion());
+
             ReadOnlySpan<byte> sample = "nzbdav rapidyenc startup self-test"u8;
             var encoded = RapidYencSharp.YencEncoder.Encode(sample);
             var decoded = RapidYencSharp.YencDecoder.Decode(encoded);
