@@ -1,2 +1,5 @@
 * text=auto
 * text eol=lf
+
+# Binary test archives — do not CRLF-convert
+tests/TestArchives/** binary
