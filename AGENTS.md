@@ -105,6 +105,9 @@ cd frontend && npm run typecheck && npm run build && npm test
 
 # Backend (from repository root)
 dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
+
+# SharpCompress (from repository root; stress tests run manually)
+dotnet test tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release --filter "format!=stress"
 ```
 
 Backend tests use xUnit and live in `tests/NzbWebDAV.Tests/`. They cover streams,

@@ -147,7 +147,11 @@ jobs:
         run: dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore --collect:"XPlat Code Coverage" --results-directory ./TestResults
 
       - name: Test SharpCompress
-        run: dotnet test tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release --no-restore
+        timeout-minutes: 10
+        run: >
+          dotnet test tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release --no-restore
+          --blame-hang-timeout 120s
+          --filter "format!=stress"
 
       - name: Test RapidYencSharp
         env:
