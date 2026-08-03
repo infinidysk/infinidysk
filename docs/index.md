@@ -195,7 +195,7 @@ Discord community transition started **July 21**. After joining, use the channel
 
 ## Ecosystem
 
-NzbDAV owns the streaming stack end to end. Complementary managed libraries — **UsenetSharp**, **RapidYencSharp**, **rapidyenc**, and **SharpCompress** — land connection, decode, and archive fixes in the right layer so playback improvements ship with the product.
+NzbDAV owns the streaming stack end to end. UsenetSharp, RapidYencSharp, and SharpCompress are developed in-tree under [`libs/`](https://github.com/nzbdav/nzbdav/tree/main/libs); the native **rapidyenc** library remains a [standalone submodule](https://github.com/nzbdav/rapidyenc) so connection, decode, and archive fixes land with the product.
 
 [About the project](community/about.md){ .md-button }
 

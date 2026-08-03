@@ -37,6 +37,8 @@ nzbdav/
 │   ├── WebDav/              # NWebDav store implementation (virtual FS)
 │   ├── Websocket/           # Live updates to frontend
 │   └── Program.cs           # App entry point
+├── libs/                    # In-tree .NET libraries (SharpCompress, UsenetSharp, RapidYencSharp)
+│   └── rapidyenc/           # git submodule → nzbdav/rapidyenc (native yEnc; build via scripts/build-rapidyenc.sh)
 ├── frontend/
 │   ├── app/
 │   │   ├── routes/          # React Router pages (queue, health, settings, explore, …)
@@ -81,7 +83,7 @@ export FRONTEND_BACKEND_API_KEY=$(head -c 32 /dev/urandom | hexdump -ve '1/1 "%.
 export BACKEND_URL=http://localhost:5000
 ```
 
-Preferred: `./scripts/run-backend.sh` (Terminal 1) + `cd frontend && npm run dev` (Terminal 2; `predev` runs `scripts/sync-dev-env.sh`). Manual alternative:
+Preferred: `./scripts/run-backend.sh` (Terminal 1) + `cd frontend && npm run dev` (Terminal 2; `predev` runs `scripts/sync-dev-env.sh`). After clone, initialize the rapidyenc submodule once (`git submodule update --init libs/rapidyenc`). Manual alternative:
 
 ```bash
 # Terminal 1 — backend
@@ -111,18 +113,21 @@ database behavior. Frontend tests use Vitest and are colocated as `*.test.ts`.
 Performance benchmarks live in `backend.Benchmarks/` and are run manually with
 `dotnet run --project backend.Benchmarks -c Release`; do not run benchmarks in CI.
 
-## UsenetSharp / SharpCompress integration
+## In-tree libraries (UsenetSharp / SharpCompress / RapidYencSharp)
 
-NzbDAV consumes the public `NzbDav.UsenetSharp` and `NzbDav.SharpCompress` packages from NuGet.org.
+NzbDAV develops these libraries **in this repository** under `libs/` and consumes them via `ProjectReference`. They are not published to NuGet from this repo.
 
-- Publish and verify the package before bumping `backend/NzbWebDAV.csproj`. A release tag can exist without a package if the publish workflow fails before its pack/push steps.
-- Repository CI restores anonymously from NuGet.org and is the authoritative package-consumption check.
-- After bumping either package, build and test the backend:
+| Library | Path | Notes |
+|---------|------|-------|
+| SharpCompress | `libs/SharpCompress` | Archive read/write |
+| UsenetSharp | `libs/UsenetSharp` | NNTP client + yEnc streaming |
+| RapidYencSharp | `libs/RapidYencSharp` | Managed P/Invoke bindings |
+| rapidyenc | `libs/rapidyenc` (submodule) | Native C++ yEnc; still a standalone active repo |
 
-```bash
-dotnet build backend/NzbWebDAV.csproj
-dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
-```
+- Change library code in `libs/` and land it with the application in one PR; CI builds natives and runs library + backend tests together.
+- Build host natives with `scripts/build-rapidyenc.sh` (auto-invoked by `scripts/run-backend.sh`). Docker/CI build musl natives from the submodule for Alpine images.
+- Upstream ports: SharpCompress (adamhathcock) and rapidyenc (animetosho) changes are cherry-picked/ported; bump the submodule pin for rapidyenc updates.
+- Provenance for vendored snapshots: [`libs/README.md`](libs/README.md).
 
 ### Streaming lifecycle invariants
 
@@ -139,7 +144,9 @@ dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
 | SABnzbd API behavior | `backend/Api/SabControllers/` |
 | Admin/settings API | `backend/Api/Controllers/` |
 | WebDAV paths, streaming, archives | `backend/WebDav/`, `backend/Queue/`, `backend/Streams/` |
-| Usenet connections / providers | `backend/Clients/Usenet/` |
+| Usenet connections / providers | `backend/Clients/Usenet/`, `libs/UsenetSharp/` |
+| yEnc native / bindings | `libs/rapidyenc/` (submodule), `libs/RapidYencSharp/`, `scripts/build-rapidyenc.sh` |
+| Archive formats (RAR/7z/zip/…) | `libs/SharpCompress/`, `backend/Queue/`, `backend/Streams/` |
 | Sonarr/Radarr automation | `backend/Clients/RadarrSonarr/`, `backend/Services/ArrMonitoringService.cs` |
 | Background jobs / cleanup | `backend/Services/`, `backend/Tasks/` |
 | DB schema | `backend/Database/Migrations/` (see below) |
@@ -354,7 +361,7 @@ When a task that changed the repo is done (unless the user explicitly said not t
 
 ### Never merge pull requests
 
-**Agents must never merge a pull request** — not with `gh pr merge`, the GitHub UI/API, auto-merge, squash/rebase merge, or any equivalent — **in this repository or any sibling NzbDAV ecosystem repo** (including `sharpcompress`, `UsenetSharp`, and related packages).
+**Agents must never merge a pull request** — not with `gh pr merge`, the GitHub UI/API, auto-merge, squash/rebase merge, or any equivalent — **in this repository or any sibling NzbDAV ecosystem repo** (including `rapidyenc` and related packages).
 
 - Opening a PR and reporting its URL is the end of the handoff.
 - Do **not** merge even if CI is green, the user seems impatient, a release is blocked on the merge, or merging would unblock downstream work.
@@ -449,7 +456,7 @@ else
 - **Env mismatch:** frontend and backend must share `CONFIG_PATH`, `FRONTEND_BACKEND_API_KEY`, and `BACKEND_URL`.
 - **Proxy paths:** new WebDAV mount points must be added to the proxy allowlists in `frontend/server/app.ts` and compression skip list in `frontend/server.ts`.
 - **Editing CHANGELOG.md:** it is generated — commit messages are the source of truth.
-- **Package release ordering:** do not bump `NzbDav.UsenetSharp` or `NzbDav.SharpCompress` merely because a release/tag exists; confirm the package publish job completed and NuGet.org lists the version.
+- **Submodule / natives:** after clone run `git submodule update --init libs/rapidyenc`. Prefer `scripts/run-backend.sh` so the host rapidyenc native is built and `RAPIDYENC_LIBRARY_PATH` is set (required for yEnc on macOS and for local Linux without Docker).
 - **Breaking upgrades:** irreversible schema changes ship as ordinary EF migrations that auto-apply on startup and surface through the migration-progress splash; there is no `UPGRADE` env-var interlock. Advise a `/config` backup before upgrading across such a migration. Commits that add migrations **must** use a breaking conventional-commit marker (`!` or `BREAKING CHANGE`) so release-please bumps as breaking.
 - **Test fixtures:** prefer deterministic generated data and `FakeNntpClient`; do not require live Usenet providers in the automated suite.
 - **Streaming changes:** run the focused backend tests and retain manual range, rclone scrubbing, and encrypted-archive playback checks for behavior not covered by automation.

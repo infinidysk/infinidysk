@@ -26,11 +26,25 @@ You need some packages in order to run the project:
 - aspnet-runtime
 - nodejs
 - npm
+- cmake and ninja (to build the rapidyenc native library from the submodule)
 
 Example installation for Arch based systems:
 
 ```bash
-sudo pacman -S dotnet-sdk aspnet-runtime nodejs npm
+sudo pacman -S dotnet-sdk aspnet-runtime nodejs npm cmake ninja
+```
+
+On macOS (Homebrew):
+
+```bash
+brew install --cask dotnet-sdk
+brew install node cmake ninja
+```
+
+After cloning, initialize the rapidyenc submodule:
+
+```bash
+git submodule update --init libs/rapidyenc
 ```
 
 ## Preferred local workflow
@@ -38,7 +52,7 @@ sudo pacman -S dotnet-sdk aspnet-runtime nodejs npm
 Use the helper scripts so the frontend and backend share env automatically:
 
 ```bash
-# Terminal 1 — backend (builds, migrates, writes frontend/.env)
+# Terminal 1 — backend (builds rapidyenc if needed, migrates, writes frontend/.env)
 ./scripts/run-backend.sh
 
 # Terminal 2 — frontend (`predev` runs scripts/sync-dev-env.sh)
@@ -51,7 +65,7 @@ cd frontend && npm install && npm run dev
 
 Stream tracing is **opt-in** and off by default. Toggle it from **Settings → Support** for 15/30/60 minutes (no restart; it auto-expires and never survives a restart), or set `STREAM_TRACE_EVENTS` to a positive value for an always-on capture from startup. When tracing is off, no trace events are recorded and the trace APIs report `enabled: false`.
 
-yEnc-decoding tests are skipped on platforms where the rapidyenc native library is unavailable (currently macOS arm64); they run in Linux CI.
+`scripts/run-backend.sh` builds the host rapidyenc native (via `scripts/build-rapidyenc.sh`) when missing and exports `RAPIDYENC_LIBRARY_PATH`. With that in place, yEnc-decoding tests run on macOS and Linux; without a native library they are skipped.
 
 ## Real-provider playback testing
 
@@ -80,10 +94,16 @@ Writes JSON under `swap/` (gitignored), including the correlated range/seek/segm
 
 ## Build / run backend
 
-The `NzbDav.UsenetSharp` dependency is published on NuGet.org and restores without
-additional credentials.
+UsenetSharp, RapidYencSharp, and SharpCompress live under `libs/` and are
+referenced as project references. Prefer `./scripts/run-backend.sh`, which
+initializes the host rapidyenc native and env for you. Manual flow:
 
 ```bash
+git submodule update --init libs/rapidyenc
+./scripts/build-rapidyenc.sh   # host RID (osx-arm64, linux-x64, …)
+# Point RAPIDYENC_LIBRARY_PATH at the built dylib/so under
+# libs/RapidYencSharp/runtimes/<rid>/native/ (run-backend.sh does this).
+
 cd backend
 
 # Build (release)
@@ -96,6 +116,7 @@ mkdir -p $CONFIG_PATH
 # Run backend
 ./publish/NzbWebDAV
 ```
+
 
 ## Build / serve frontend
 
