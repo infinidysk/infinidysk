@@ -169,7 +169,7 @@ public class NzbFileStreamTests
                 e.Level == LogEventLevel.Warning &&
                 e.RenderMessage().Contains(fileName, StringComparison.Ordinal) &&
                 e.RenderMessage().Contains(segmentId, StringComparison.Ordinal) &&
-                e.RenderMessage().Contains("Zero-filling", StringComparison.Ordinal));
+                e.RenderMessage().Contains("Filling the 5-byte gap", StringComparison.Ordinal));
         }
         finally
         {
@@ -210,11 +210,11 @@ public class NzbFileStreamTests
             Assert.Equal(5, await stream.ReadAsync(buffer));
             Assert.Equal(5, await stream.ReadAsync(buffer));
 
-            var zeroFillWarnings = sink.Events.Count(e =>
+            var gapFillWarnings = sink.Events.Count(e =>
                 e.Level == LogEventLevel.Warning &&
                 e.RenderMessage().Contains(fileName, StringComparison.Ordinal) &&
-                e.RenderMessage().Contains("Zero-filling", StringComparison.Ordinal));
-            Assert.Equal(1, zeroFillWarnings);
+                e.RenderMessage().Contains("Filling the 5-byte gap", StringComparison.Ordinal));
+            Assert.Equal(1, gapFillWarnings);
         }
         finally
         {
