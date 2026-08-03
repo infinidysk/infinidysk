@@ -96,7 +96,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Verify formatting
-        run: dotnet format whitespace --verify-no-changes --folder backend && dotnet format whitespace --verify-no-changes --folder tests
+        run: |
+          dotnet format whitespace --verify-no-changes --folder backend
+          dotnet format whitespace --verify-no-changes --folder tests
+          dotnet format whitespace --verify-no-changes --folder libs
 
       - name: Cache NuGet packages
         uses: actions/cache@v6
@@ -107,7 +110,10 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Restore backend
-        run: dotnet restore backend/NzbWebDAV.csproj && dotnet restore tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj
+        run: |
+          dotnet restore backend/NzbWebDAV.csproj
+          dotnet restore tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj
+          dotnet restore tests/SharpCompress.Tests/SharpCompress.Tests.csproj
 
       - name: Verify NuGet vulnerability gate fixtures
         run: bash scripts/test-nuget-vulnerability-gate.sh
@@ -128,6 +134,9 @@ jobs:
 
       - name: Test backend
         run: dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore --collect:"XPlat Code Coverage" --results-directory ./TestResults
+
+      - name: Test SharpCompress
+        run: dotnet test tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release --no-restore
 
       - name: Upload backend coverage
         uses: actions/upload-artifact@v7
@@ -197,6 +206,7 @@ jobs:
             entrypoint.sh \
             backend/NzbWebDAV.csproj \
             backend/nuget.config \
+            libs/ \
             frontend/package.json \
             frontend/package-lock.json; then
             echo "build=false" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,157 @@
+﻿//
+// ADC.cs
+//
+// Author:
+//       Natalia Portillo <claunia@claunia.com>
+//
+// Copyright (c) 2016 © Claunia.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using SharpCompress.Compressors.ADC;
+using SharpCompress.Compressors.Deflate;
+using SharpCompress.Crypto;
+using Xunit;
+
+namespace SharpCompress.Test;
+
+public class AdcTest : TestBase
+{
+    [Fact]
+    public void TestBuffer()
+    {
+        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        var decompressed = new byte[decFs.Length];
+        decFs.Read(decompressed, 0, decompressed.Length);
+
+        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        var compressed = new byte[cmpFs.Length];
+        cmpFs.Read(compressed, 0, compressed.Length);
+
+        ADCBase.Decompress(compressed, out var test);
+
+        Assert.Equal(decompressed, test);
+    }
+
+    [Fact]
+    public void TestBaseStream()
+    {
+        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        var decompressed = new byte[decFs.Length];
+        decFs.Read(decompressed, 0, decompressed.Length);
+
+        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+
+        ADCBase.Decompress(cmpFs, out var test);
+
+        Assert.Equal(decompressed, test);
+    }
+
+    [Fact]
+    public void TestAdcStreamWholeChunk()
+    {
+        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        var decompressed = new byte[decFs.Length];
+        decFs.Read(decompressed, 0, decompressed.Length);
+
+        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        using var decStream = new ADCStream(cmpFs);
+        var test = new byte[262144];
+
+        decStream.Read(test, 0, test.Length);
+
+        Assert.Equal(decompressed, test);
+    }
+
+    [Fact]
+    public void TestAdcStream()
+    {
+        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        var decompressed = new byte[decFs.Length];
+        decFs.Read(decompressed, 0, decompressed.Length);
+
+        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        using var decStream = new ADCStream(cmpFs);
+        using var decMs = new MemoryStream();
+        var test = new byte[512];
+        var count = 0;
+
+        do
+        {
+            count = decStream.Read(test, 0, test.Length);
+            decMs.Write(test, 0, count);
+        } while (count > 0);
+
+        Assert.Equal(decompressed, decMs.ToArray());
+    }
+
+    [Fact]
+    public void TestCrc32Stream()
+    {
+        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var crc32 = new CRC32().GetCrc32(decFs);
+        decFs.Seek(0, SeekOrigin.Begin);
+
+        var memory = new MemoryStream();
+        var crcStream = new Crc32Stream(memory, 0xEDB88320, 0xFFFFFFFF);
+        decFs.CopyTo(crcStream);
+
+        decFs.Seek(0, SeekOrigin.Begin);
+
+        var crc32A = crcStream.Crc;
+
+        var crc32B = Crc32Stream.Compute(memory.ToArray());
+
+        Assert.Equal(crc32, crc32A);
+        Assert.Equal(crc32, crc32B);
+    }
+
+    [Fact]
+    public async Task TestCrc32StreamWriteAsync()
+    {
+        var buffer = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var crc32 = Crc32Stream.Compute(buffer);
+
+        using var memory = new MemoryStream();
+        using var crcStream = new Crc32Stream(memory, 0xEDB88320, 0xFFFFFFFF);
+
+        await crcStream.WriteAsync(buffer, 0, buffer.Length, CancellationToken.None);
+
+        Assert.Equal(buffer, memory.ToArray());
+        Assert.Equal(crc32, crcStream.Crc);
+    }
+
+    [Fact]
+    public async Task TestCrc32StreamWriteMemoryAsync()
+    {
+        var buffer = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var crc32 = Crc32Stream.Compute(buffer);
+
+        using var memory = new MemoryStream();
+        using var crcStream = new Crc32Stream(memory, 0xEDB88320, 0xFFFFFFFF);
+
+        await crcStream.WriteAsync(buffer.AsMemory(), CancellationToken.None);
+
+        Assert.Equal(buffer, memory.ToArray());
+        Assert.Equal(crc32, crcStream.Crc);
+    }
+}

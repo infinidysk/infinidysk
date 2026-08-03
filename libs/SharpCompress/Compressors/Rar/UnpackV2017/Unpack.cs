@@ -1,0 +1,222 @@
+using System;
+using System.Buffers;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using SharpCompress.Common.Rar.Headers;
+using size_t = System.UInt32;
+
+namespace SharpCompress.Compressors.Rar.UnpackV2017;
+
+internal partial class Unpack : IRarUnpack
+{
+    // 64 KB stored-file copy block, inherited from unrar.
+    private const int UnstoreBlockSize = 0x10000;
+
+    private FileHeader fileHeader = null!;
+    private Stream readStream = null!;
+    private Stream writeStream = null!;
+
+    private void _UnpackCtor()
+    {
+        for (var i = 0; i < AudV.Length; i++)
+        {
+            AudV[i] = new AudioVariables();
+        }
+    }
+
+    private int UnpIO_UnpRead(byte[] buf, int offset, int count) =>
+        // NOTE: caller has logic to check for -1 for error we throw instead.
+        readStream.Read(buf, offset, count);
+
+    private async ValueTask<int> UnpIO_UnpReadAsync(
+        byte[] buf,
+        int offset,
+        int count,
+        CancellationToken cancellationToken = default
+    ) =>
+        // NOTE: caller has logic to check for -1 for error we throw instead.
+        await readStream
+            .ReadAsync(buf.AsMemory(offset, count), cancellationToken)
+            .ConfigureAwait(false);
+
+    private void UnpIO_UnpWrite(byte[] buf, size_t offset, uint count) =>
+        writeStream.Write(buf, checked((int)offset), checked((int)count));
+
+    private async ValueTask UnpIO_UnpWriteAsync(
+        byte[] buf,
+        size_t offset,
+        uint count,
+        CancellationToken cancellationToken = default
+    ) =>
+        await writeStream
+            .WriteAsync(buf, checked((int)offset), checked((int)count), cancellationToken)
+            .ConfigureAwait(false);
+
+    public void DoUnpack(FileHeader fileHeader, Stream readStream, Stream writeStream)
+    {
+        // as of 12/2017 .NET limits array indexing to using a signed integer
+        // MaxWinSize causes unpack to use a fragmented window when the file
+        // window size exceeds MaxWinSize
+        // uggh, that's not how this variable is used, it's the size of the currently allocated window buffer
+        //x MaxWinSize = ((uint)int.MaxValue) + 1;
+
+        // may be long.MaxValue which could indicate unknown size (not present in header)
+        DestUnpSize = fileHeader.UncompressedSize;
+        this.fileHeader = fileHeader;
+        this.readStream = readStream;
+        this.writeStream = writeStream;
+        if (!fileHeader.IsStored)
+        {
+            Init(fileHeader.WindowSize, fileHeader.IsSolid);
+        }
+        Suspended = false;
+        DoUnpack();
+    }
+
+    public async ValueTask DoUnpackAsync(
+        FileHeader fileHeader,
+        Stream readStream,
+        Stream writeStream,
+        CancellationToken cancellationToken = default
+    )
+    {
+        DestUnpSize = fileHeader.UncompressedSize;
+        this.fileHeader = fileHeader;
+        this.readStream = readStream;
+        this.writeStream = writeStream;
+        if (!fileHeader.IsStored)
+        {
+            Init(fileHeader.WindowSize, fileHeader.IsSolid);
+        }
+        Suspended = false;
+        await DoUnpackAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public void DoUnpack()
+    {
+        if (fileHeader.IsStored)
+        {
+            UnstoreFile();
+        }
+        else
+        {
+            DoUnpack(fileHeader.CompressionAlgorithm, fileHeader.IsSolid);
+        }
+    }
+
+    public async ValueTask DoUnpackAsync(CancellationToken cancellationToken = default)
+    {
+        if (fileHeader.IsStored)
+        {
+            await UnstoreFileAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // Async dispatch is complete for methods 15/20/26/50; method 29 is
+            // intentionally not implemented here (RAR3 routes to UnpackV1).
+            await DoUnpackAsync(
+                    fileHeader.CompressionAlgorithm,
+                    fileHeader.IsSolid,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+    }
+
+    private void UnstoreFile()
+    {
+        var size = (int)Math.Min(UnstoreBlockSize, DestUnpSize);
+        var buffer = ArrayPool<byte>.Shared.Rent(size);
+        try
+        {
+            do
+            {
+                var n = readStream.Read(buffer, 0, size);
+                if (n == 0)
+                {
+                    break;
+                }
+                writeStream.Write(buffer, 0, n);
+                DestUnpSize -= n;
+            } while (!Suspended);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private async ValueTask UnstoreFileAsync(CancellationToken cancellationToken = default)
+    {
+        var size = (int)Math.Min(UnstoreBlockSize, DestUnpSize);
+        var buffer = ArrayPool<byte>.Shared.Rent(size);
+        try
+        {
+            do
+            {
+                var n = await readStream
+                    .ReadAsync(buffer.AsMemory(0, size), cancellationToken)
+                    .ConfigureAwait(false);
+                if (n == 0)
+                {
+                    break;
+                }
+                await writeStream
+                    .WriteAsync(buffer.AsMemory(0, n), cancellationToken)
+                    .ConfigureAwait(false);
+                DestUnpSize -= n;
+            } while (!Suspended);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    public bool Suspended { get; set; }
+
+    public long DestSize => DestUnpSize;
+
+    public int ReadChar()
+    {
+        // Refill when near end of buffer; the MAX_SIZE-30 threshold is ported from V1/UnRAR and not independently derived.
+        if (InAddr > MAX_SIZE - 30)
+        {
+            UnpReadBuf();
+        }
+        return InBuf[InAddr++];
+    }
+
+    public async ValueTask<int> ReadCharAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // Refill when near end of buffer; the MAX_SIZE-30 threshold is ported from V1/UnRAR and not independently derived.
+        if (InAddr > MAX_SIZE - 30)
+        {
+            await UnpReadBufAsync(cancellationToken).ConfigureAwait(false);
+        }
+        return InBuf[InAddr++];
+    }
+
+    public int PpmEscChar
+    {
+        get => PPMEscChar;
+        set => PPMEscChar = value;
+    }
+
+    private byte[] EnsureCapacity(byte[] array, int length)
+    {
+        if (array.Length >= length)
+        {
+            return array;
+        }
+
+        var newArray = ArrayPool<byte>.Shared.Rent(length);
+        if (array.Length != 0)
+        {
+            ArrayPool<byte>.Shared.Return(array);
+        }
+        return newArray;
+    }
+}

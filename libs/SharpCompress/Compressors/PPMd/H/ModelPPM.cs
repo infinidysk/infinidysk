@@ -1,0 +1,1304 @@
+using System;
+using System.Buffers;
+using System.IO;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using SharpCompress.Compressors.Rar;
+using Decoder = SharpCompress.Compressors.LZMA.RangeCoder.Decoder;
+
+namespace SharpCompress.Compressors.PPMd.H;
+
+internal class ModelPpm : IDisposable
+{
+    private const int SEE2_CONTEXT_ROWS = 25;
+    private const int SEE2_CONTEXT_COLUMNS = 16;
+    private const int SEE2_CONTEXT_SIZE = SEE2_CONTEXT_ROWS * SEE2_CONTEXT_COLUMNS;
+    private const int BIN_SUMM_ROWS = 128;
+    private const int BIN_SUMM_COLUMNS = 64;
+    private const int BIN_SUMM_SIZE = BIN_SUMM_ROWS * BIN_SUMM_COLUMNS;
+
+    private void InitBlock()
+    {
+        for (var i = 0; i < SEE2_CONTEXT_SIZE; i++)
+        {
+            _see2Cont[i] = new See2Context();
+        }
+
+        _binSumm = ArrayPool<int>.Shared.Rent(BIN_SUMM_SIZE);
+    }
+
+    public SubAllocator SubAlloc { get; } = new();
+
+    public virtual See2Context DummySee2Cont => _dummySee2Cont;
+
+    public virtual int InitRl => _initRl;
+
+    public virtual int EscCount
+    {
+        get => _escCount;
+        set => _escCount = value & 0xff;
+    }
+
+    public virtual int[] CharMask => _charMask;
+
+    public virtual int NumMasked
+    {
+        get => _numMasked;
+        set => _numMasked = value;
+    }
+
+    public virtual int PrevSuccess
+    {
+        get => _prevSuccess;
+        set => _prevSuccess = value & 0xff;
+    }
+
+    public virtual int InitEsc
+    {
+        get => _initEsc;
+        set => _initEsc = value;
+    }
+
+    public virtual int RunLength
+    {
+        get => _runLength;
+        set => _runLength = value;
+    }
+
+    public virtual int HiBitsFlag
+    {
+        get => _hiBitsFlag;
+        set => _hiBitsFlag = value & 0xff;
+    }
+
+    internal RangeCoder Coder { get; private set; } = null!;
+
+    internal State FoundState { get; private set; } = null!;
+
+    public virtual byte[]? Heap => SubAlloc.Heap;
+
+    public virtual int OrderFall => _orderFall;
+
+    public const int MAX_O = 64; /* maximum allowed model order */
+
+    public const int INT_BITS = 7;
+
+    public const int PERIOD_BITS = 7;
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'TOT_BITS '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    public static readonly int TOT_BITS = INT_BITS + PERIOD_BITS;
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'INTERVAL '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    public static readonly int INTERVAL = 1 << INT_BITS;
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'BIN_SCALE '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    public static readonly int BIN_SCALE = 1 << TOT_BITS;
+
+    public const int MAX_FREQ = 124;
+
+    private readonly See2Context[] _see2Cont = new See2Context[SEE2_CONTEXT_SIZE];
+
+    private readonly See2Context _dummySee2Cont = new();
+
+    private PpmContext _minContext = null!; //medContext
+
+    private PpmContext _maxContext = null!;
+
+    private int _numMasked,
+        _initEsc,
+        _orderFall,
+        _maxOrder,
+        _runLength,
+        _initRl;
+
+    private readonly int[] _charMask = new int[256];
+
+    // byte EscCount, PrevSuccess, HiBitsFlag;
+    private int _escCount,
+        _prevSuccess,
+        _hiBitsFlag;
+
+    private int[] _binSumm = null!; // binary SEE-contexts
+
+    private static readonly int[] INIT_BIN_ESC =
+    {
+        0x3CDD,
+        0x1F3F,
+        0x59BF,
+        0x48F3,
+        0x64A1,
+        0x5ABC,
+        0x6632,
+        0x6051,
+    };
+
+    private static readonly int[] NS2_INDX = CreateNs2Indx();
+
+    private static readonly int[] NS2_BS_INDX = CreateNs2BsIndx();
+
+    private static readonly int[] HB2_FLAG = CreateHb2Flag();
+
+    private static int[] CreateNs2Indx()
+    {
+        var result = new int[256];
+        int i,
+            k,
+            m,
+            step;
+        for (i = 0; i < 3; i++)
+        {
+            result[i] = i;
+        }
+        for (m = i, k = 1, step = 1; i < 256; i++)
+        {
+            result[i] = m;
+            if (--k == 0)
+            {
+                k = ++step;
+                m++;
+            }
+        }
+        return result;
+    }
+
+    private static int[] CreateNs2BsIndx()
+    {
+        var result = new int[256];
+        result[0] = 0;
+        result[1] = 2;
+        for (var j = 0; j < 9; j++)
+        {
+            result[2 + j] = 4;
+        }
+        for (var j = 0; j < 256 - 11; j++)
+        {
+            result[11 + j] = 6;
+        }
+        return result;
+    }
+
+    private static int[] CreateHb2Flag()
+    {
+        var result = new int[256];
+        for (var j = 0; j < 0x100 - 0x40; j++)
+        {
+            result[0x40 + j] = 0x08;
+        }
+        return result;
+    }
+
+    // Temp fields
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempState1 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly State _tempState1 = new(null);
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempState2 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly State _tempState2 = new(null);
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempState3 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly State _tempState3 = new(null);
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempState4 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly State _tempState4 = new(null);
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempStateRef1 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly StateRef _tempStateRef1 = new();
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempStateRef2 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly StateRef _tempStateRef2 = new();
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempPPMContext1 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly PpmContext _tempPpmContext1 = new(null);
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempPPMContext2 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly PpmContext _tempPpmContext2 = new(null);
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempPPMContext3 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly PpmContext _tempPpmContext3 = new(null);
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'tempPPMContext4 '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly PpmContext _tempPpmContext4 = new(null);
+
+    //UPGRADE_NOTE: Final was removed from the declaration of 'ps '. "ms-help://MS.VSCC.v80/dv_commoner/local/redirect.htm?index='!DefaultContextWindowIndex'&keyword='jlca1003'"
+    private readonly int[] _ps = new int[MAX_O];
+
+    private bool _isDisposed;
+
+    public ModelPpm()
+    {
+        InitBlock();
+        _minContext = null!;
+        _maxContext = null!;
+
+        //medContext = null;
+    }
+
+    public void Dispose()
+    {
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        _isDisposed = true;
+        SubAlloc.StopSubAllocator();
+        var binSumm = _binSumm;
+        if (binSumm is not null)
+        {
+            _binSumm = null!;
+            ArrayPool<int>.Shared.Return(binSumm, clearArray: true);
+        }
+    }
+
+    private void RestartModelRare()
+    {
+        new Span<int>(_charMask).Clear();
+        SubAlloc.InitSubAllocator();
+        _initRl = -(_maxOrder < 12 ? _maxOrder : 12) - 1;
+        var addr = SubAlloc.AllocContext();
+        _minContext.Address = addr;
+        _maxContext.Address = addr;
+        _minContext.SetSuffix(0);
+        _orderFall = _maxOrder;
+        _minContext.NumStats = 256;
+        _minContext.FreqData.SummFreq = _minContext.NumStats + 1;
+
+        addr = SubAlloc.AllocUnits(256 / 2);
+        FoundState.Address = addr;
+        _minContext.FreqData.SetStats(addr);
+
+        var state = new State(SubAlloc.Heap);
+        addr = _minContext.FreqData.GetStats();
+        _runLength = _initRl;
+        _prevSuccess = 0;
+        for (var i = 0; i < 256; i++)
+        {
+            state.Address = addr + (i * State.SIZE);
+            state.Symbol = i;
+            state.Freq = 1;
+            state.SetSuccessor(0);
+        }
+
+        for (var i = 0; i < BIN_SUMM_ROWS; i++)
+        {
+            for (var k = 0; k < 8; k++)
+            {
+                for (var m = 0; m < BIN_SUMM_COLUMNS; m += 8)
+                {
+                    SetBinSumm(i, k + m, BIN_SCALE - (INIT_BIN_ESC[k] / (i + 2)));
+                }
+            }
+        }
+        for (var i = 0; i < SEE2_CONTEXT_ROWS; i++)
+        {
+            for (var k = 0; k < SEE2_CONTEXT_COLUMNS; k++)
+            {
+                GetSee2Cont(i, k).Initialize((5 * i) + 10);
+            }
+        }
+    }
+
+    private void StartModelRare(int maxOrder)
+    {
+        _escCount = 1;
+        _maxOrder = maxOrder;
+        RestartModelRare();
+        _dummySee2Cont.Shift = PERIOD_BITS;
+    }
+
+    private void ClearMask()
+    {
+        _escCount = 1;
+        new Span<int>(_charMask).Clear();
+    }
+
+    internal bool DecodeInit(IRarUnpack unpackRead, int escChar)
+    {
+        var maxOrder = unpackRead.ReadChar() & 0xff;
+        var reset = ((maxOrder & 0x20) != 0);
+
+        var maxMb = 0;
+        if (reset)
+        {
+            maxMb = unpackRead.ReadChar();
+        }
+        else
+        {
+            if (SubAlloc.GetAllocatedMemory() == 0)
+            {
+                return (false);
+            }
+        }
+        if ((maxOrder & 0x40) != 0)
+        {
+            escChar = unpackRead.ReadChar();
+            unpackRead.PpmEscChar = escChar;
+        }
+        Coder = new RangeCoder(unpackRead);
+        if (reset)
+        {
+            maxOrder = (maxOrder & 0x1f) + 1;
+            if (maxOrder > 16)
+            {
+                maxOrder = 16 + ((maxOrder - 16) * 3);
+            }
+            if (maxOrder == 1)
+            {
+                SubAlloc.StopSubAllocator();
+                return (false);
+            }
+            SubAlloc.StartSubAllocator((maxMb + 1) << 20);
+            _minContext = new PpmContext(Heap);
+
+            //medContext = new PPMContext(Heap);
+            _maxContext = new PpmContext(Heap);
+            FoundState = new State(Heap);
+            StartModelRare(maxOrder);
+        }
+        return (_minContext.Address != 0);
+    }
+
+    internal async ValueTask<bool> DecodeInitAsync(
+        IRarUnpack unpackRead,
+        int escChar,
+        CancellationToken cancellationToken = default
+    )
+    {
+        var maxOrder =
+            await unpackRead.ReadCharAsync(cancellationToken).ConfigureAwait(false) & 0xff;
+        var reset = ((maxOrder & 0x20) != 0);
+
+        var maxMb = 0;
+        if (reset)
+        {
+            maxMb = await unpackRead.ReadCharAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            if (SubAlloc.GetAllocatedMemory() == 0)
+            {
+                return false;
+            }
+        }
+        if ((maxOrder & 0x40) != 0)
+        {
+            escChar = await unpackRead.ReadCharAsync(cancellationToken).ConfigureAwait(false);
+            unpackRead.PpmEscChar = escChar;
+        }
+        Coder = new RangeCoder();
+        await Coder.InitAsync(unpackRead, cancellationToken).ConfigureAwait(false);
+        if (reset)
+        {
+            maxOrder = (maxOrder & 0x1f) + 1;
+            if (maxOrder > 16)
+            {
+                maxOrder = 16 + ((maxOrder - 16) * 3);
+            }
+            if (maxOrder == 1)
+            {
+                SubAlloc.StopSubAllocator();
+                return false;
+            }
+            SubAlloc.StartSubAllocator((maxMb + 1) << 20);
+            _minContext = new PpmContext(Heap);
+
+            _maxContext = new PpmContext(Heap);
+            FoundState = new State(Heap);
+            StartModelRare(maxOrder);
+        }
+        return _minContext.Address != 0;
+    }
+
+    public virtual int DecodeChar()
+    {
+        // Debug
+        //subAlloc.dumpHeap();
+
+        if (_minContext.Address <= SubAlloc.PText || _minContext.Address > SubAlloc.HeapEnd)
+        {
+            return (-1);
+        }
+
+        if (_minContext.NumStats != 1)
+        {
+            if (
+                _minContext.FreqData.GetStats() <= SubAlloc.PText
+                || _minContext.FreqData.GetStats() > SubAlloc.HeapEnd
+            )
+            {
+                return (-1);
+            }
+            if (!_minContext.DecodeSymbol1(this))
+            {
+                return (-1);
+            }
+        }
+        else
+        {
+            _minContext.DecodeBinSymbol(this);
+        }
+        Coder.Decode();
+        while (FoundState.Address == 0)
+        {
+            Coder.AriDecNormalize();
+            do
+            {
+                _orderFall++;
+                _minContext.Address = _minContext.GetSuffix(); // =MinContext->Suffix;
+                if (_minContext.Address <= SubAlloc.PText || _minContext.Address > SubAlloc.HeapEnd)
+                {
+                    return (-1);
+                }
+            } while (_minContext.NumStats == _numMasked);
+            if (!_minContext.DecodeSymbol2(this))
+            {
+                return (-1);
+            }
+            Coder.Decode();
+        }
+        var symbol = FoundState.Symbol;
+        if ((_orderFall == 0) && FoundState.GetSuccessor() > SubAlloc.PText)
+        {
+            // MinContext=MaxContext=FoundState->Successor;
+            var addr = FoundState.GetSuccessor();
+            _minContext.Address = addr;
+            _maxContext.Address = addr;
+        }
+        else
+        {
+            UpdateModel();
+
+            if (_escCount == 0)
+            {
+                ClearMask();
+            }
+        }
+        Coder.AriDecNormalize(); // ARI_DEC_NORMALIZE(Coder.code,Coder.low,Coder.range,Coder.UnpackRead);
+        return (symbol);
+    }
+
+    public virtual async ValueTask<int> DecodeCharAsync(
+        CancellationToken cancellationToken = default
+    )
+    {
+        // Debug
+        //subAlloc.dumpHeap();
+
+        if (_minContext.Address <= SubAlloc.PText || _minContext.Address > SubAlloc.HeapEnd)
+        {
+            return (-1);
+        }
+
+        if (_minContext.NumStats != 1)
+        {
+            if (
+                _minContext.FreqData.GetStats() <= SubAlloc.PText
+                || _minContext.FreqData.GetStats() > SubAlloc.HeapEnd
+            )
+            {
+                return (-1);
+            }
+            if (!_minContext.DecodeSymbol1(this))
+            {
+                return (-1);
+            }
+        }
+        else
+        {
+            _minContext.DecodeBinSymbol(this);
+        }
+        Coder.Decode();
+        while (FoundState.Address == 0)
+        {
+            await Coder.AriDecNormalizeAsync(cancellationToken).ConfigureAwait(false);
+            do
+            {
+                _orderFall++;
+                _minContext.Address = _minContext.GetSuffix(); // =MinContext->Suffix;
+                if (_minContext.Address <= SubAlloc.PText || _minContext.Address > SubAlloc.HeapEnd)
+                {
+                    return (-1);
+                }
+            } while (_minContext.NumStats == _numMasked);
+            if (!_minContext.DecodeSymbol2(this))
+            {
+                return (-1);
+            }
+            Coder.Decode();
+        }
+        var symbol = FoundState.Symbol;
+        if ((_orderFall == 0) && FoundState.GetSuccessor() > SubAlloc.PText)
+        {
+            // MinContext=MaxContext=FoundState->Successor;
+            var addr = FoundState.GetSuccessor();
+            _minContext.Address = addr;
+            _maxContext.Address = addr;
+        }
+        else
+        {
+            UpdateModel();
+
+            if (_escCount == 0)
+            {
+                ClearMask();
+            }
+        }
+        await Coder.AriDecNormalizeAsync(cancellationToken).ConfigureAwait(false); // ARI_DEC_NORMALIZE(Coder.code,Coder.low,Coder.range,Coder.UnpackRead);
+        return (symbol);
+    }
+
+    public virtual See2Context GetSee2Cont(int row, int column) =>
+        _see2Cont[(row * SEE2_CONTEXT_COLUMNS) + column];
+
+    public virtual int GetBinSumm(int row, int column) =>
+        _binSumm[(row * BIN_SUMM_COLUMNS) + column];
+
+    public virtual void SetBinSumm(int row, int column, int value) =>
+        _binSumm[(row * BIN_SUMM_COLUMNS) + column] = value;
+
+    public virtual void IncEscCount(int dEscCount) => EscCount += dEscCount;
+
+    public virtual void IncRunLength(int dRunLength) => RunLength += dRunLength;
+
+    public virtual int[] GetHb2Flag() => HB2_FLAG;
+
+    public virtual int[] GetNs2BsIndx() => NS2_BS_INDX;
+
+    public virtual int[] GetNs2Indx() => NS2_INDX;
+
+    private int CreateSuccessors(bool skip, State p1)
+    {
+        //State upState = tempState1.Initialize(null);
+        var upState = _tempStateRef2;
+        var tempState = _tempState1.Initialize(Heap);
+
+        // PPM_CONTEXT* pc=MinContext, * UpBranch=FoundState->Successor;
+        var pc = _tempPpmContext1.Initialize(Heap);
+        pc.Address = _minContext.Address;
+        var upBranch = _tempPpmContext2.Initialize(Heap);
+        upBranch.Address = FoundState.GetSuccessor();
+
+        // STATE * p, * ps[MAX_O], ** pps=ps;
+        var p = _tempState2.Initialize(Heap);
+        var pps = 0;
+
+        var noLoop = false;
+
+        if (!skip)
+        {
+            _ps[pps++] = FoundState.Address; // *pps++ = FoundState;
+            if (pc.GetSuffix() == 0)
+            {
+                noLoop = true;
+            }
+        }
+        if (!noLoop)
+        {
+            var loopEntry = false;
+            if (p1.Address != 0)
+            {
+                p.Address = p1.Address;
+                pc.Address = pc.GetSuffix(); // =pc->Suffix;
+                loopEntry = true;
+            }
+            do
+            {
+                if (!loopEntry)
+                {
+                    pc.Address = pc.GetSuffix(); // pc=pc->Suffix;
+                    if (pc.NumStats != 1)
+                    {
+                        p.Address = pc.FreqData.GetStats(); // p=pc->U.Stats
+                        if (p.Symbol != FoundState.Symbol)
+                        {
+                            do
+                            {
+                                p.IncrementAddress();
+                            } while (p.Symbol != FoundState.Symbol);
+                        }
+                    }
+                    else
+                    {
+                        p.Address = pc.GetOneState().Address; // p=&(pc->OneState);
+                    }
+                } // LOOP_ENTRY:
+                loopEntry = false;
+                if (p.GetSuccessor() != upBranch.Address)
+                {
+                    pc.Address = p.GetSuccessor(); // =p->Successor;
+                    break;
+                }
+                _ps[pps++] = p.Address;
+            } while (pc.GetSuffix() != 0);
+        } // NO_LOOP:
+        if (pps == 0)
+        {
+            return pc.Address;
+        }
+        upState.Symbol = Heap.NotNull()[upBranch.Address]; // UpState.Symbol=*(byte*)
+
+        // UpBranch;
+        // UpState.Successor=(PPM_CONTEXT*) (((byte*) UpBranch)+1);
+        upState.SetSuccessor(upBranch.Address + 1); // successor is byte after upBranch; +1 matches upstream PPMd port (necessity not independently verified).
+        if (pc.NumStats != 1)
+        {
+            if (pc.Address <= SubAlloc.PText)
+            {
+                return (0);
+            }
+            p.Address = pc.FreqData.GetStats();
+            if (p.Symbol != upState.Symbol)
+            {
+                do
+                {
+                    p.IncrementAddress();
+                } while (p.Symbol != upState.Symbol);
+            }
+            var cf = p.Freq - 1;
+            var s0 = pc.FreqData.SummFreq - pc.NumStats - cf;
+
+            // UpState.Freq=1+((2*cf <= s0)?(5*cf > s0):((2*cf+3*s0-1)/(2*s0)));
+            upState.Freq =
+                1
+                + ((2 * cf <= s0) ? (5 * cf > s0 ? 1 : 0) : (((2 * cf) + (3 * s0) - 1) / (2 * s0)));
+        }
+        else
+        {
+            upState.Freq = pc.GetOneState().Freq; // UpState.Freq=pc->OneState.Freq;
+        }
+        do
+        {
+            // pc = pc->createChild(this,*--pps,UpState);
+            tempState.Address = _ps[--pps];
+            pc.Address = pc.CreateChild(this, tempState, upState);
+            if (pc.Address == 0)
+            {
+                return 0;
+            }
+        } while (pps != 0);
+        return pc.Address;
+    }
+
+    private void UpdateModelRestart()
+    {
+        RestartModelRare();
+        _escCount = 0;
+    }
+
+    private void UpdateModel()
+    {
+        //System.out.println("ModelPPM.updateModel()");
+        // STATE fs = *FoundState, *p = NULL;
+        var fs = _tempStateRef1;
+        fs.Values = FoundState;
+        var p = _tempState3.Initialize(Heap);
+        var tempState = _tempState4.Initialize(Heap);
+
+        var pc = _tempPpmContext3.Initialize(Heap);
+        var successor = _tempPpmContext4.Initialize(Heap);
+
+        int ns1,
+            ns,
+            cf,
+            sf,
+            s0;
+        pc.Address = _minContext.GetSuffix();
+        if (fs.Freq < MAX_FREQ / 4 && pc.Address != 0)
+        {
+            if (pc.NumStats != 1)
+            {
+                p.Address = pc.FreqData.GetStats();
+                if (p.Symbol != fs.Symbol)
+                {
+                    do
+                    {
+                        p.IncrementAddress();
+                    } while (p.Symbol != fs.Symbol);
+                    tempState.Address = p.Address - State.SIZE;
+                    if (p.Freq >= tempState.Freq)
+                    {
+                        State.PpmdSwap(p, tempState);
+                        p.DecrementAddress();
+                    }
+                }
+                if (p.Freq < MAX_FREQ - 9)
+                {
+                    p.IncrementFreq(2);
+                    pc.FreqData.IncrementSummFreq(2);
+                }
+            }
+            else
+            {
+                p.Address = pc.GetOneState().Address;
+                if (p.Freq < 32)
+                {
+                    p.IncrementFreq(1);
+                }
+            }
+        }
+        if (_orderFall == 0)
+        {
+            FoundState.SetSuccessor(CreateSuccessors(true, p));
+            _minContext.Address = FoundState.GetSuccessor();
+            _maxContext.Address = FoundState.GetSuccessor();
+            if (_minContext.Address == 0)
+            {
+                UpdateModelRestart();
+                return;
+            }
+            return;
+        }
+        SubAlloc.Heap.NotNull()[SubAlloc.PText] = (byte)fs.Symbol;
+        SubAlloc.IncPText();
+        successor.Address = SubAlloc.PText;
+        if (SubAlloc.PText >= SubAlloc.FakeUnitsStart)
+        {
+            UpdateModelRestart();
+            return;
+        }
+
+        //        // Debug
+        //        subAlloc.dumpHeap();
+        if (fs.GetSuccessor() != 0)
+        {
+            if (fs.GetSuccessor() <= SubAlloc.PText)
+            {
+                fs.SetSuccessor(CreateSuccessors(false, p));
+                if (fs.GetSuccessor() == 0)
+                {
+                    UpdateModelRestart();
+                    return;
+                }
+            }
+            if (--_orderFall == 0)
+            {
+                successor.Address = fs.GetSuccessor();
+                if (_maxContext.Address != _minContext.Address)
+                {
+                    SubAlloc.DecPText(1);
+                }
+            }
+        }
+        else
+        {
+            FoundState.SetSuccessor(successor.Address);
+            fs.SetSuccessor(_minContext);
+        }
+
+        //        // Debug
+        //        subAlloc.dumpHeap();
+        ns = _minContext.NumStats;
+        s0 = _minContext.FreqData.SummFreq - (ns) - (fs.Freq - 1);
+        for (
+            pc.Address = _maxContext.Address;
+            pc.Address != _minContext.Address;
+            pc.Address = pc.GetSuffix()
+        )
+        {
+            if ((ns1 = pc.NumStats) != 1)
+            {
+                if ((ns1 & 1) == 0)
+                {
+                    //System.out.println(ns1);
+                    pc.FreqData.SetStats(SubAlloc.ExpandUnits(pc.FreqData.GetStats(), ns1 >>> 1));
+                    if (pc.FreqData.GetStats() == 0)
+                    {
+                        UpdateModelRestart();
+                        return;
+                    }
+                }
+
+                // bug fixed
+                //				int sum = ((2 * ns1 < ns) ? 1 : 0) +
+                //                        2 * ((4 * ((ns1 <= ns) ? 1 : 0)) & ((pc.getFreqData()
+                //								.getSummFreq() <= 8 * ns1) ? 1 : 0));
+                var sum =
+                    ((2 * ns1 < ns) ? 1 : 0)
+                    + (
+                        2
+                        * (((4 * ns1 <= ns) ? 1 : 0) & ((pc.FreqData.SummFreq <= 8 * ns1) ? 1 : 0))
+                    );
+                pc.FreqData.IncrementSummFreq(sum);
+            }
+            else
+            {
+                p.Address = SubAlloc.AllocUnits(1);
+                if (p.Address == 0)
+                {
+                    UpdateModelRestart();
+                    return;
+                }
+                p.SetValues(pc.GetOneState());
+                pc.FreqData.SetStats(p);
+                if (p.Freq < (MAX_FREQ / 4) - 1)
+                {
+                    p.IncrementFreq(p.Freq);
+                }
+                else
+                {
+                    p.Freq = MAX_FREQ - 4;
+                }
+                pc.FreqData.SummFreq = (p.Freq + _initEsc + (ns > 3 ? 1 : 0));
+            }
+            cf = 2 * fs.Freq * (pc.FreqData.SummFreq + 6);
+            sf = s0 + pc.FreqData.SummFreq;
+            if (cf < 6 * sf)
+            {
+                cf = 1 + (cf > sf ? 1 : 0) + (cf >= 4 * sf ? 1 : 0);
+                pc.FreqData.IncrementSummFreq(3);
+            }
+            else
+            {
+                cf = 4 + (cf >= 9 * sf ? 1 : 0) + (cf >= 12 * sf ? 1 : 0) + (cf >= 15 * sf ? 1 : 0);
+                pc.FreqData.IncrementSummFreq(cf);
+            }
+            p.Address = pc.FreqData.GetStats() + (ns1 * State.SIZE);
+            p.SetSuccessor(successor);
+            p.Symbol = fs.Symbol;
+            p.Freq = cf;
+            pc.NumStats = ++ns1;
+        }
+
+        var address = fs.GetSuccessor();
+        _maxContext.Address = address;
+        _minContext.Address = address;
+    }
+
+    // Debug
+    public override string ToString()
+    {
+        var buffer = new StringBuilder();
+        buffer.Append("ModelPPM[");
+        buffer.Append("\n  numMasked=");
+        buffer.Append(_numMasked);
+        buffer.Append("\n  initEsc=");
+        buffer.Append(_initEsc);
+        buffer.Append("\n  orderFall=");
+        buffer.Append(_orderFall);
+        buffer.Append("\n  maxOrder=");
+        buffer.Append(_maxOrder);
+        buffer.Append("\n  runLength=");
+        buffer.Append(_runLength);
+        buffer.Append("\n  initRL=");
+        buffer.Append(_initRl);
+        buffer.Append("\n  escCount=");
+        buffer.Append(_escCount);
+        buffer.Append("\n  prevSuccess=");
+        buffer.Append(_prevSuccess);
+        buffer.Append("\n  foundState=");
+        buffer.Append(FoundState);
+        buffer.Append("\n  coder=");
+        buffer.Append(Coder);
+        buffer.Append("\n  subAlloc=");
+        buffer.Append(SubAlloc);
+        buffer.Append("\n]");
+        return buffer.ToString();
+    }
+
+    // Debug
+    //    public void dumpHeap() {
+    //        subAlloc.dumpHeap();
+    //    }
+
+    internal bool DecodeInit(Stream? stream, int maxOrder, int maxMemory)
+    {
+        if (stream != null)
+        {
+            Coder = new RangeCoder(stream);
+        }
+
+        if (maxOrder == 1)
+        {
+            SubAlloc.StopSubAllocator();
+            return (false);
+        }
+        SubAlloc.StartSubAllocator(maxMemory);
+        _minContext = new PpmContext(Heap);
+
+        //medContext = new PPMContext(Heap);
+        _maxContext = new PpmContext(Heap);
+        FoundState = new State(Heap);
+        StartModelRare(maxOrder);
+
+        return (_minContext.Address != 0);
+    }
+
+    internal async ValueTask<bool> DecodeInitAsync(
+        Stream? stream,
+        int maxOrder,
+        int maxMemory,
+        CancellationToken cancellationToken = default
+    )
+    {
+        if (stream != null)
+        {
+            Coder = new RangeCoder();
+            await Coder.InitAsync(stream, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (maxOrder == 1)
+        {
+            SubAlloc.StopSubAllocator();
+            return (false);
+        }
+        SubAlloc.StartSubAllocator(maxMemory);
+        _minContext = new PpmContext(Heap);
+
+        //medContext = new PPMContext(Heap);
+        _maxContext = new PpmContext(Heap);
+        FoundState = new State(Heap);
+        StartModelRare(maxOrder);
+
+        return (_minContext.Address != 0);
+    }
+
+    internal void NextContext()
+    {
+        var addr = FoundState.GetSuccessor();
+        if (_orderFall == 0 && addr > SubAlloc.PText)
+        {
+            _minContext.Address = addr;
+            _maxContext.Address = addr;
+        }
+        else
+        {
+            UpdateModel();
+        }
+    }
+
+    public int DecodeChar(Decoder decoder)
+    {
+        if (_minContext.NumStats != 1)
+        {
+            var s = _tempState1.Initialize(Heap);
+            s.Address = _minContext.FreqData.GetStats();
+            int i;
+            int count,
+                hiCnt;
+            if (
+                (count = (int)decoder.GetThreshold((uint)_minContext.FreqData.SummFreq))
+                < (hiCnt = s.Freq)
+            )
+            {
+                byte symbol;
+                decoder.Decode(0, (uint)s.Freq);
+                symbol = (byte)s.Symbol;
+                _minContext.update1_0(this, s.Address);
+                NextContext();
+                return symbol;
+            }
+            _prevSuccess = 0;
+            i = _minContext.NumStats - 1;
+            do
+            {
+                s.IncrementAddress();
+                if ((hiCnt += s.Freq) > count)
+                {
+                    byte symbol;
+                    decoder.Decode((uint)(hiCnt - s.Freq), (uint)s.Freq);
+                    symbol = (byte)s.Symbol;
+                    _minContext.Update1(this, s.Address);
+                    NextContext();
+                    return symbol;
+                }
+            } while (--i > 0);
+            if (count >= _minContext.FreqData.SummFreq)
+            {
+                return -2;
+            }
+            _hiBitsFlag = GetHb2Flag()[FoundState.Symbol];
+            decoder.Decode((uint)hiCnt, (uint)(_minContext.FreqData.SummFreq - hiCnt));
+            for (i = 0; i < 256; i++)
+            {
+                _charMask[i] = -1;
+            }
+            _charMask[s.Symbol] = 0;
+            i = _minContext.NumStats - 1;
+            do
+            {
+                s.DecrementAddress();
+                _charMask[s.Symbol] = 0;
+            } while (--i > 0);
+        }
+        else
+        {
+            var rs = _tempState1.Initialize(Heap);
+            rs.Address = _minContext.GetOneState().Address;
+            _hiBitsFlag = GetHb2Flag()[FoundState.Symbol];
+            var off1 = rs.Freq - 1;
+            var off2 = _minContext.GetArrayIndex(this, rs);
+            var bs = GetBinSumm(off1, off2);
+            if (decoder.DecodeBit((uint)bs, 14) == 0)
+            {
+                byte symbol;
+                SetBinSumm(
+                    off1,
+                    off2,
+                    (bs + INTERVAL - _minContext.GetMean(bs, PERIOD_BITS, 2)) & 0xFFFF
+                );
+                FoundState.Address = rs.Address;
+                symbol = (byte)rs.Symbol;
+                rs.IncrementFreq((rs.Freq < 128) ? 1 : 0);
+                _prevSuccess = 1;
+                IncRunLength(1);
+                NextContext();
+                return symbol;
+            }
+            bs = (bs - _minContext.GetMean(bs, PERIOD_BITS, 2)) & 0xFFFF;
+            SetBinSumm(off1, off2, bs);
+            _initEsc = PpmContext.EXP_ESCAPE[bs >>> 10];
+            int i;
+            for (i = 0; i < 256; i++)
+            {
+                _charMask[i] = -1;
+            }
+            _charMask[rs.Symbol] = 0;
+            _prevSuccess = 0;
+        }
+        for (; ; )
+        {
+            var s = _tempState1.Initialize(Heap);
+            int i;
+            int count,
+                hiCnt;
+            See2Context see;
+            int num,
+                numMasked = _minContext.NumStats;
+            do
+            {
+                _orderFall++;
+                _minContext.Address = _minContext.GetSuffix();
+                if (_minContext.Address <= SubAlloc.PText || _minContext.Address > SubAlloc.HeapEnd)
+                {
+                    return -1;
+                }
+            } while (_minContext.NumStats == numMasked);
+            hiCnt = 0;
+            s.Address = _minContext.FreqData.GetStats();
+            i = 0;
+            num = _minContext.NumStats - numMasked;
+            do
+            {
+                var k = _charMask[s.Symbol];
+                hiCnt += s.Freq & k;
+                _minContext._ps[i] = s.Address;
+                s.IncrementAddress();
+                i -= k;
+            } while (i != num);
+
+            see = _minContext.MakeEscFreq(this, numMasked, out var freqSum);
+            freqSum += hiCnt;
+            count = (int)decoder.GetThreshold((uint)freqSum);
+
+            if (count < hiCnt)
+            {
+                byte symbol;
+                var ps = _tempState2.Initialize(Heap);
+                for (
+                    hiCnt = 0, i = 0, ps.Address = _minContext._ps[i];
+                    (hiCnt += ps.Freq) <= count;
+                    i++, ps.Address = _minContext._ps[i]
+                )
+                {
+                    ;
+                }
+                s.Address = ps.Address;
+                decoder.Decode((uint)(hiCnt - s.Freq), (uint)s.Freq);
+                see.Update();
+                symbol = (byte)s.Symbol;
+                _minContext.Update2(this, s.Address);
+                UpdateModel();
+                return symbol;
+            }
+            if (count >= freqSum)
+            {
+                return -2;
+            }
+            decoder.Decode((uint)hiCnt, (uint)(freqSum - hiCnt));
+            see.Summ += freqSum;
+            do
+            {
+                s.Address = _minContext._ps[--i];
+                _charMask[s.Symbol] = 0;
+            } while (i != 0);
+        }
+    }
+
+    public async ValueTask<int> DecodeCharAsync(
+        Decoder decoder,
+        CancellationToken cancellationToken = default
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (_minContext.NumStats != 1)
+        {
+            var s = _tempState1.Initialize(Heap);
+            s.Address = _minContext.FreqData.GetStats();
+            int i;
+            int count,
+                hiCnt;
+            if (
+                (count = (int)decoder.GetThreshold((uint)_minContext.FreqData.SummFreq))
+                < (hiCnt = s.Freq)
+            )
+            {
+                byte symbol;
+                await decoder.DecodeAsync(0, (uint)s.Freq, cancellationToken).ConfigureAwait(false);
+                symbol = (byte)s.Symbol;
+                _minContext.update1_0(this, s.Address);
+                NextContext();
+                return symbol;
+            }
+            _prevSuccess = 0;
+            i = _minContext.NumStats - 1;
+            do
+            {
+                s.IncrementAddress();
+                if ((hiCnt += s.Freq) > count)
+                {
+                    byte symbol;
+                    await decoder
+                        .DecodeAsync((uint)(hiCnt - s.Freq), (uint)s.Freq, cancellationToken)
+                        .ConfigureAwait(false);
+                    symbol = (byte)s.Symbol;
+                    _minContext.Update1(this, s.Address);
+                    NextContext();
+                    return symbol;
+                }
+            } while (--i > 0);
+            if (count >= _minContext.FreqData.SummFreq)
+            {
+                return -2;
+            }
+            _hiBitsFlag = GetHb2Flag()[FoundState.Symbol];
+            await decoder
+                .DecodeAsync(
+                    (uint)hiCnt,
+                    (uint)(_minContext.FreqData.SummFreq - hiCnt),
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+            for (i = 0; i < 256; i++)
+            {
+                _charMask[i] = -1;
+            }
+            _charMask[s.Symbol] = 0;
+            i = _minContext.NumStats - 1;
+            do
+            {
+                s.DecrementAddress();
+                _charMask[s.Symbol] = 0;
+            } while (--i > 0);
+        }
+        else
+        {
+            var rs = _tempState1.Initialize(Heap);
+            rs.Address = _minContext.GetOneState().Address;
+            _hiBitsFlag = GetHb2Flag()[FoundState.Symbol];
+            var off1 = rs.Freq - 1;
+            var off2 = _minContext.GetArrayIndex(this, rs);
+            var bs = GetBinSumm(off1, off2);
+            if (
+                await decoder.DecodeBitAsync((uint)bs, 14, cancellationToken).ConfigureAwait(false)
+                == 0
+            )
+            {
+                byte symbol;
+                SetBinSumm(
+                    off1,
+                    off2,
+                    (bs + INTERVAL - _minContext.GetMean(bs, PERIOD_BITS, 2)) & 0xFFFF
+                );
+                FoundState.Address = rs.Address;
+                symbol = (byte)rs.Symbol;
+                rs.IncrementFreq((rs.Freq < 128) ? 1 : 0);
+                _prevSuccess = 1;
+                IncRunLength(1);
+                NextContext();
+                return symbol;
+            }
+            bs = (bs - _minContext.GetMean(bs, PERIOD_BITS, 2)) & 0xFFFF;
+            SetBinSumm(off1, off2, bs);
+            _initEsc = PpmContext.EXP_ESCAPE[bs >>> 10];
+            int i;
+            for (i = 0; i < 256; i++)
+            {
+                _charMask[i] = -1;
+            }
+            _charMask[rs.Symbol] = 0;
+            _prevSuccess = 0;
+        }
+        for (; ; )
+        {
+            var s = _tempState1.Initialize(Heap);
+            int i;
+            int count,
+                hiCnt;
+            See2Context see;
+            int num,
+                numMasked = _minContext.NumStats;
+            do
+            {
+                _orderFall++;
+                _minContext.Address = _minContext.GetSuffix();
+                if (_minContext.Address <= SubAlloc.PText || _minContext.Address > SubAlloc.HeapEnd)
+                {
+                    return -1;
+                }
+            } while (_minContext.NumStats == numMasked);
+            hiCnt = 0;
+            s.Address = _minContext.FreqData.GetStats();
+            i = 0;
+            num = _minContext.NumStats - numMasked;
+            do
+            {
+                var k = _charMask[s.Symbol];
+                hiCnt += s.Freq & k;
+                _minContext._ps[i] = s.Address;
+                s.IncrementAddress();
+                i -= k;
+            } while (i != num);
+
+            see = _minContext.MakeEscFreq(this, numMasked, out var freqSum);
+            freqSum += hiCnt;
+            count = (int)decoder.GetThreshold((uint)freqSum);
+
+            if (count < hiCnt)
+            {
+                byte symbol;
+                var ps = _tempState2.Initialize(Heap);
+                for (
+                    hiCnt = 0, i = 0, ps.Address = _minContext._ps[i];
+                    (hiCnt += ps.Freq) <= count;
+                    i++, ps.Address = _minContext._ps[i]
+                )
+                {
+                    ;
+                }
+                s.Address = ps.Address;
+                await decoder
+                    .DecodeAsync((uint)(hiCnt - s.Freq), (uint)s.Freq, cancellationToken)
+                    .ConfigureAwait(false);
+                see.Update();
+                symbol = (byte)s.Symbol;
+                _minContext.Update2(this, s.Address);
+                UpdateModel();
+                return symbol;
+            }
+            if (count >= freqSum)
+            {
+                return -2;
+            }
+            await decoder
+                .DecodeAsync((uint)hiCnt, (uint)(freqSum - hiCnt), cancellationToken)
+                .ConfigureAwait(false);
+            see.Summ += freqSum;
+            do
+            {
+                s.Address = _minContext._ps[--i];
+                _charMask[s.Symbol] = 0;
+            } while (i != 0);
+        }
+    }
+}
