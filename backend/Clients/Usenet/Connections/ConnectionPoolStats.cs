@@ -85,9 +85,11 @@ public class ConnectionPoolStats
         // so events arriving after the snapshot are never lost.
         Volatile.Write(ref _flushScheduled, 0);
 
-        if (!_websocketManager.HasSubscribers(WebsocketTopic.UsenetConnections))
-            return;
-
+        // Intentionally no HasSubscribers gate here: SendMessage records the
+        // latest message for state replay before skipping delivery, so flushing
+        // while unsubscribed keeps the replayed connection counts fresh for the
+        // next browser that subscribes. The messages are tiny strings, so there
+        // is no meaningful work to save by gating earlier.
         lock (_lock)
         {
             // Publish while holding the same lock used by Deactivate(). SendMessage is

@@ -61,13 +61,26 @@ public class LiveStatsBroadcaster(
         }
     }
 
-    private async Task BroadcastAsync()
+    internal async Task BroadcastAsync()
     {
-        if (!websocketManager.HasSubscribers(WebsocketTopic.LiveStats))
-            return;
-
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var sinceMs = nowMs - WindowMs;
+
+        // Roll the bytes-served window forward. First sample after startup
+        // yields a delta of 0 (nothing to compare to), which is correct.
+        // This must run even with zero subscribers: the Overview page's
+        // initial HTTP load reads BytesServedLastMinute, so the window has
+        // to stay warm while no browser is connected. Only the DB queries
+        // and serialization below are gated on subscribers.
+        var totalBytes = registry.TotalBytesServed;
+        _byteSamples.Enqueue((nowMs, totalBytes));
+        while (_byteSamples.Count > 0 && _byteSamples.Peek().TsMs < sinceMs)
+            _byteSamples.Dequeue();
+        var bytesPerMinute = _byteSamples.Count > 0 ? totalBytes - _byteSamples.Peek().Total : 0;
+        Interlocked.Exchange(ref _bytesServedLastMinute, bytesPerMinute);
+
+        if (!websocketManager.HasSubscribers(WebsocketTopic.LiveStats))
+            return;
 
         await using var db = new MetricsDbContext();
         var articles = await db.SegmentFetches
@@ -79,15 +92,6 @@ public class LiveStatsBroadcaster(
                         && x.Status != SegmentFetch.FetchStatus.Ok
                         && x.Status != SegmentFetch.FetchStatus.Missing)
             .CountAsync().ConfigureAwait(false);
-
-        // Roll the bytes-served window forward. First sample after startup
-        // yields a delta of 0 (nothing to compare to), which is correct.
-        var totalBytes = registry.TotalBytesServed;
-        _byteSamples.Enqueue((nowMs, totalBytes));
-        while (_byteSamples.Count > 0 && _byteSamples.Peek().TsMs < sinceMs)
-            _byteSamples.Dequeue();
-        var bytesPerMinute = _byteSamples.Count > 0 ? totalBytes - _byteSamples.Peek().Total : 0;
-        Interlocked.Exchange(ref _bytesServedLastMinute, bytesPerMinute);
 
         var labelsByMetricsKey = ProviderUsageHelper.BuildLabelsByMetricsKey(
             configManager.GetUsenetProviderConfig().Providers);
