@@ -249,14 +249,18 @@ public class NzbFileStreamTests
 
     // These fast-seek tests use CachedYencStream (pre-parsed headers over decoded
     // bytes), so they run even where the rapidyenc native library is unavailable.
-    [Fact]
-    public async Task ColdStartSeek_PersistedRangesAvoidHeaderProbeAfterFastPathFallback()
+    [Theory]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    public async Task ColdStartSeek_UsesPersistedRangesInsteadOfHeaderProbesAfterFastPathFallback(
+        bool persistRanges,
+        int expectedHeaderProbes)
     {
         var stored = new DavNzbFile
         {
             Id = Guid.NewGuid(),
             SegmentIds = SegmentIds,
-            SegmentByteRanges = SegmentRanges,
+            SegmentByteRanges = persistRanges ? SegmentRanges : null,
         };
         var blob = MemoryPackSerializer.Serialize(stored);
         var restored = MemoryPackSerializer.Deserialize<DavNzbFile>(blob)!;
@@ -277,7 +281,8 @@ public class NzbFileStreamTests
             buffer, buffer.Length, throwOnEndOfStream: false);
 
         Assert.Equal("hij", Encoding.ASCII.GetString(buffer, 0, read));
-        Assert.Equal(0, client.HeaderProbeCount);
+        Assert.True(client.BodyRequestCounts["two"] >= 2);
+        Assert.Equal(expectedHeaderProbes, client.HeaderProbeCount);
     }
 
     [Fact]
