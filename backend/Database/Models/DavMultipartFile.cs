@@ -63,15 +63,6 @@ public partial class DavMultipartFile
 
         [MemoryPackOrder(4)]
         public string[][]? SegmentFallbackIds { get; set; }
-
-        [MemoryPackOrder(5)]
-        public GeometrySource GeometrySource { get; set; }
-
-        [MemoryPackOrder(6)]
-        public bool IsUniformSegmentSize { get; set; }
-
-        [MemoryPackOrder(7)]
-        public long UniformSegmentSize { get; set; }
     }
 
     // A RAR part whose internal byte range hasn't been parsed yet.

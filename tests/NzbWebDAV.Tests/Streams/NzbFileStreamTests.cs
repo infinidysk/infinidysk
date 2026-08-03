@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Text;
+using MemoryPack;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
@@ -248,6 +250,37 @@ public class NzbFileStreamTests
     // These fast-seek tests use CachedYencStream (pre-parsed headers over decoded
     // bytes), so they run even where the rapidyenc native library is unavailable.
     [Fact]
+    public async Task ColdStartSeek_PersistedRangesAvoidHeaderProbeAfterFastPathFallback()
+    {
+        var stored = new DavNzbFile
+        {
+            Id = Guid.NewGuid(),
+            SegmentIds = SegmentIds,
+            SegmentByteRanges = SegmentRanges,
+        };
+        var blob = MemoryPackSerializer.Serialize(stored);
+        var restored = MemoryPackSerializer.Deserialize<DavNzbFile>(blob)!;
+        var client = CreateFlakyClient(
+            () => new ThrowingReadStream(
+                () => new TimeoutException("Timeout reading from NNTP stream.")));
+        await using var stream = new NzbFileStream(
+            restored.SegmentIds,
+            15,
+            client,
+            2,
+            restored.SegmentByteRanges,
+            usePipelinedBodyRequests: false);
+        stream.Seek(7, SeekOrigin.Begin);
+        var buffer = new byte[3];
+
+        var read = await stream.ReadAtLeastAsync(
+            buffer, buffer.Length, throwOnEndOfStream: false);
+
+        Assert.Equal("hij", Encoding.ASCII.GetString(buffer, 0, read));
+        Assert.Equal(0, client.HeaderProbeCount);
+    }
+
+    [Fact]
     public async Task FastSeek_BodyReadTimeout_FallsBackToSlowSeekPath()
     {
         var client = CreateFlakyClient(
@@ -466,8 +499,10 @@ public class NzbFileStreamTests
         Func<Stream> firstFlakyBody) : NntpClient
     {
         private int _flakyBodiesServed;
+        private int _headerProbeCount;
 
         public ConcurrentDictionary<string, int> BodyRequestCounts { get; } = new(StringComparer.Ordinal);
+        public int HeaderProbeCount => Volatile.Read(ref _headerProbeCount);
 
         public override Task ConnectAsync(
             string host, int port, bool useSsl, CancellationToken cancellationToken) =>
@@ -513,6 +548,14 @@ public class NzbFileStreamTests
                 ResponseMessage = "222 cached body",
                 Stream = new CachedYencStream(headers, inner),
             });
+        }
+
+        public override Task<UsenetYencHeader> GetYencHeadersAsync(
+            string segmentId,
+            CancellationToken ct)
+        {
+            Interlocked.Increment(ref _headerProbeCount);
+            return base.GetYencHeadersAsync(segmentId, ct);
         }
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(

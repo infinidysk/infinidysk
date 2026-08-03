@@ -23,7 +23,8 @@ public class FileProcessor(
                 .GetFileSizeAsync(fileInfo.NzbFile, ct)
                 .ConfigureAwait(false);
 
-            await fileInfo.NzbFile.ProbeSecondSegmentGeometryAsync(usenetClient, ct).ConfigureAwait(false);
+            await fileInfo.NzbFile.ProbeSecondSegmentRangeAsync(
+                usenetClient, fileSize, ct).ConfigureAwait(false);
 
             return new Result()
             {

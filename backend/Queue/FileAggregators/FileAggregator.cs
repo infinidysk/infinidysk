@@ -25,9 +25,6 @@ public class FileAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, 
                 SegmentIds = result.NzbFile.GetSegmentIds(),
                 SegmentByteRanges = result.NzbFile.GetSegmentByteRanges(),
                 SegmentFallbackIds = result.NzbFile.GetSegmentFallbackIds(),
-                GeometrySource = result.NzbFile.GeometrySource,
-                IsUniformSegmentSize = result.NzbFile.IsUniformSegmentSize,
-                UniformSegmentSize = result.NzbFile.UniformSegmentSize,
             };
 
             var davItem = DavItem.New(
