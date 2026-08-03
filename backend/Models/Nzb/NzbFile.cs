@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using NzbWebDAV.Clients.Usenet;
 using Serilog;
 
 namespace NzbWebDAV.Models.Nzb;
@@ -7,6 +8,61 @@ public class NzbFile
 {
     public required string Subject { get; init; }
     public List<NzbSegment> Segments { get; } = [];
+    private bool _rejectInferredSegmentByteRanges;
+
+    /// <summary>
+    /// Records the second segment's exact yEnc range so <see cref="GetSegmentByteRanges"/>
+    /// validates its uniform-size inference against more than the first and final segment.
+    /// Files with fewer than three segments need no middle-segment validation.
+    /// </summary>
+    public async Task ProbeSecondSegmentRangeAsync(
+        INntpClient client,
+        long fileSize,
+        CancellationToken ct)
+    {
+        if (Segments.Count < 3) return;
+
+        var firstRange = Segments[0].ByteRange;
+        if (firstRange is null || firstRange.Count <= 0) return;
+
+        // From this point, do not persist first+last inference unless the middle
+        // probe succeeds and confirms the expected uniform split.
+        _rejectInferredSegmentByteRanges = true;
+
+        try
+        {
+            var secondRange = Segments[1].ByteRange;
+            if (secondRange is null)
+            {
+                var headers = await client.GetYencHeadersAsync(
+                    Segments[1].MessageId, ct).ConfigureAwait(false);
+                secondRange = LongRange.FromStartAndSize(headers.PartOffset, headers.PartSize);
+                Segments[1].ByteRange = secondRange;
+            }
+
+            if (secondRange.StartInclusive != firstRange.EndExclusive ||
+                secondRange.Count != firstRange.Count)
+                return;
+
+            _rejectInferredSegmentByteRanges = false;
+
+            // A PAR2 descriptor can provide fileSize without fetching the final article.
+            // Materialize its range when first + second establish the usual uniform split,
+            // allowing the existing contiguous-range validator to persist all offsets.
+            if (Segments[^1].ByteRange is null)
+            {
+                var finalStart = checked(firstRange.Count * (Segments.Count - 1));
+                var finalSize = fileSize - finalStart;
+                if (finalSize is > 0 && finalSize <= firstRange.Count)
+                    Segments[^1].ByteRange = LongRange.FromStartAndSize(finalStart, finalSize);
+            }
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            Log.Debug(e, "Second segment range probe failed for {FileName}; using existing seek fallback",
+                GetSubjectFileName());
+        }
+    }
 
     /// <summary>
     /// Sort by segment number (when all present) and drop duplicates so every
@@ -117,6 +173,8 @@ public class NzbFile
 
         if (ranges.All(x => x is not null))
             return ValidateSegmentByteRanges(ranges.Select(x => x!).ToArray());
+
+        if (_rejectInferredSegmentByteRanges) return null;
 
         var firstRange = ranges[0];
         var lastRange = ranges[^1];

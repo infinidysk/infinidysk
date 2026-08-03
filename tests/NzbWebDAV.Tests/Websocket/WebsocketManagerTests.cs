@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Tests.Websocket;
@@ -11,6 +12,7 @@ public class WebsocketManagerTests
     public async Task SendMessage_DoesNotLetSlowSocketBlockFastSocket()
     {
         var manager = new WebsocketManager();
+        manager.SimulateSubscribe(WebsocketTopic.LiveStats);
         using var slowSocket = new TestWebSocket(blockSends: true);
         using var fastSocket = new TestWebSocket();
         var detachSlow = manager.AttachAuthenticatedSocketForTests(slowSocket);
@@ -29,6 +31,7 @@ public class WebsocketManagerTests
         }
         finally
         {
+            manager.SimulateUnsubscribe(WebsocketTopic.LiveStats);
             await detachSlow();
             await detachFast();
         }
@@ -38,6 +41,8 @@ public class WebsocketManagerTests
     public async Task StateMessages_CoalescePerTopic()
     {
         var manager = new WebsocketManager();
+        manager.SimulateSubscribe(WebsocketTopic.LiveStats);
+        manager.SimulateSubscribe(WebsocketTopic.UsenetConnections);
         using var socket = new TestWebSocket(blockSends: true);
         var detach = manager.AttachAuthenticatedSocketForTests(socket);
 
@@ -64,6 +69,8 @@ public class WebsocketManagerTests
         }
         finally
         {
+            manager.SimulateUnsubscribe(WebsocketTopic.LiveStats);
+            manager.SimulateUnsubscribe(WebsocketTopic.UsenetConnections);
             await detach();
         }
     }
@@ -72,6 +79,8 @@ public class WebsocketManagerTests
     public async Task EventQueueOverflow_DropsOldestEventsAndKeepsSocketConnected()
     {
         var manager = new WebsocketManager();
+        manager.SimulateSubscribe(WebsocketTopic.LiveStats);
+        manager.SimulateSubscribe(WebsocketTopic.QueueItemAdded);
         using var socket = new TestWebSocket(blockSends: true);
         var detach = manager.AttachAuthenticatedSocketForTests(socket);
 
@@ -96,6 +105,8 @@ public class WebsocketManagerTests
         }
         finally
         {
+            manager.SimulateUnsubscribe(WebsocketTopic.LiveStats);
+            manager.SimulateUnsubscribe(WebsocketTopic.QueueItemAdded);
             await detach();
         }
     }
@@ -111,9 +122,128 @@ public class WebsocketManagerTests
     }
 
     [Fact]
+    public async Task SendMessage_SkipsSerializationWhenNoTopicSubscribers()
+    {
+        var manager = new WebsocketManager();
+        using var socket = new TestWebSocket();
+        var detach = manager.AttachAuthenticatedSocketForTests(socket);
+
+        try
+        {
+            await manager.SendMessage(WebsocketTopic.LiveStats, "nobody-listening");
+            await Task.Delay(100);
+
+            Assert.Empty(socket.Messages);
+            Assert.Equal("nobody-listening", manager.PeekLastMessage(WebsocketTopic.LiveStats));
+            Assert.True(manager.SkippedPublishes > 0);
+        }
+        finally
+        {
+            await detach();
+        }
+    }
+
+    [Fact]
+    public async Task SendMessage_DeliversWhenTopicHasSubscribers()
+    {
+        var manager = new WebsocketManager();
+        using var socket = new TestWebSocket();
+        var detach = manager.AttachAuthenticatedSocketForTests(socket);
+        manager.SimulateSubscribe(WebsocketTopic.LiveStats);
+
+        try
+        {
+            await manager.SendMessage(WebsocketTopic.LiveStats, "with-subscriber");
+            await WaitUntil(() => socket.Messages.Count == 1);
+
+            var msg = Parse(socket.Messages.Single());
+            Assert.Equal("with-subscriber", msg.Message);
+        }
+        finally
+        {
+            manager.SimulateUnsubscribe(WebsocketTopic.LiveStats);
+            await detach();
+        }
+    }
+
+    [Fact]
+    public void HasSubscribers_IncrementAndDecrement()
+    {
+        var manager = new WebsocketManager();
+
+        Assert.False(manager.HasSubscribers(WebsocketTopic.ActiveReads));
+
+        manager.SimulateSubscribe(WebsocketTopic.ActiveReads);
+        Assert.True(manager.HasSubscribers(WebsocketTopic.ActiveReads));
+
+        manager.SimulateSubscribe(WebsocketTopic.ActiveReads);
+        Assert.True(manager.HasSubscribers(WebsocketTopic.ActiveReads));
+
+        manager.SimulateUnsubscribe(WebsocketTopic.ActiveReads);
+        Assert.True(manager.HasSubscribers(WebsocketTopic.ActiveReads));
+
+        manager.SimulateUnsubscribe(WebsocketTopic.ActiveReads);
+        Assert.False(manager.HasSubscribers(WebsocketTopic.ActiveReads));
+    }
+
+    [Fact]
+    public async Task StateTopicReplay_ServesLastMessage_EvenWhenSkippedSerialize()
+    {
+        var manager = new WebsocketManager();
+
+        // Send a message with no subscribers — skips serialization but updates _lastMessage
+        await manager.SendMessage(WebsocketTopic.LiveStats, "stale-value");
+        Assert.Equal("stale-value", manager.PeekLastMessage(WebsocketTopic.LiveStats));
+
+        // Now attach a socket with replayState — should still get the stale value
+        using var socket = new TestWebSocket();
+        var detach = manager.AttachAuthenticatedSocketForTests(socket, replayState: true);
+
+        try
+        {
+            await WaitUntil(() => socket.Messages.Count == 1);
+
+            var replay = Parse(socket.Messages.Single());
+            Assert.Equal(WebsocketTopic.LiveStats.Name, replay.Topic);
+            Assert.Equal("stale-value", replay.Message);
+        }
+        finally
+        {
+            await detach();
+        }
+    }
+
+    [Fact]
+    public async Task StreamTraceStatusTransitionWhileIdle_ReplaysToLateSubscriber()
+    {
+        var manager = new WebsocketManager();
+        var broadcaster = new StreamTraceStatusBroadcaster(manager);
+
+        await broadcaster.BroadcastAsync("""{"enabled":false}""");
+
+        using var socket = new TestWebSocket();
+        var detach = manager.AttachAuthenticatedSocketForTests(socket, replayState: true);
+
+        try
+        {
+            await WaitUntil(() => socket.Messages.Count == 1);
+
+            var replay = Parse(socket.Messages.Single());
+            Assert.Equal(WebsocketTopic.StreamTracing.Name, replay.Topic);
+            Assert.Equal("""{"enabled":false}""", replay.Message);
+        }
+        finally
+        {
+            await detach();
+        }
+    }
+
+    [Fact]
     public async Task NewSocket_ReplaysLatestStateButNotEvents()
     {
         var manager = new WebsocketManager();
+        manager.SimulateSubscribe(WebsocketTopic.LiveStats);
+        manager.SimulateSubscribe(WebsocketTopic.QueueItemAdded);
         await manager.SendMessage(WebsocketTopic.LiveStats, "latest");
         await manager.SendMessage(WebsocketTopic.QueueItemAdded, "old-event");
         using var socket = new TestWebSocket();
@@ -129,6 +259,8 @@ public class WebsocketManagerTests
         }
         finally
         {
+            manager.SimulateUnsubscribe(WebsocketTopic.LiveStats);
+            manager.SimulateUnsubscribe(WebsocketTopic.QueueItemAdded);
             await detach();
         }
     }

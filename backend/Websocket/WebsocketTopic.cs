@@ -2,6 +2,8 @@
 
 public class WebsocketTopic
 {
+    private static readonly Dictionary<string, WebsocketTopic> ByName = new(StringComparer.Ordinal);
+
     // Stateful topics
     public static readonly WebsocketTopic UsenetConnections = new("cxs", TopicType.State);
     public static readonly WebsocketTopic ActiveReads = new("ar", TopicType.State);
@@ -41,7 +43,11 @@ public class WebsocketTopic
     {
         Name = name;
         Type = type;
+        ByName[name] = this;
     }
+
+    public static bool TryGetByName(string name, out WebsocketTopic? topic) =>
+        ByName.TryGetValue(name, out topic);
 
     public enum TopicType
     {

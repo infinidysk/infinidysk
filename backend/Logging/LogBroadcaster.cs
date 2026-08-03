@@ -55,8 +55,11 @@ public sealed class LogBroadcaster(
                     }
                 }
 
-                var payload = JsonSerializer.Serialize(new { entries = pending }, JsonOptions);
-                await websocketManager.SendMessage(WebsocketTopic.LogEntryAdded, payload).ConfigureAwait(false);
+                if (websocketManager.HasSubscribers(WebsocketTopic.LogEntryAdded))
+                {
+                    var payload = JsonSerializer.Serialize(new { entries = pending }, JsonOptions);
+                    await websocketManager.SendMessage(WebsocketTopic.LogEntryAdded, payload).ConfigureAwait(false);
+                }
                 pending.Clear();
             }
             catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered() || stoppingToken.IsCancellationRequested)

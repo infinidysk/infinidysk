@@ -64,7 +64,12 @@ function initializeWebsocketServer(wss: WebSocketServer) {
     const websockets = new Map<TrackedSocket, Record<string, TopicKind>>();
     const subscriptions = new Map<string, Set<TrackedSocket>>();
     const lastMessage = new Map<string, string>();
-    initializeWebsocketClient(subscriptions, lastMessage);
+
+    // Tracks which topics have at least one browser subscriber, and forwards
+    // aggregate changes upstream to the backend so it can skip serialization
+    // for topics with zero listeners.
+    const upstreamSubscriptions = new UpstreamSubscriptionForwarder(subscriptions);
+    initializeWebsocketClient(subscriptions, lastMessage, upstreamSubscriptions);
 
     const heartbeat = setInterval(() => {
         for (const client of wss.clients) {
@@ -117,6 +122,8 @@ function initializeWebsocketServer(wss: WebSocketServer) {
                     if (messageToSend) sendToBrowserClient(ws, messageToSend);
                 }
             }
+
+            upstreamSubscriptions.syncAfterBrowserChange();
         };
 
         ws.onmessage = (event: WebSocket.MessageEvent) => {
@@ -137,6 +144,7 @@ function initializeWebsocketServer(wss: WebSocketServer) {
                     const topicSubscriptions = subscriptions.get(topic);
                     if (topicSubscriptions) topicSubscriptions.delete(ws);
                 }
+                upstreamSubscriptions.syncAfterBrowserChange();
             }
             if (authenticated) {
                 logger.info(
@@ -166,7 +174,11 @@ function initializeWebsocketServer(wss: WebSocketServer) {
     });
 }
 
-export function initializeWebsocketClient(subscriptions: Map<string, Set<WebSocket>>, lastMessage: Map<string, string>) {
+export function initializeWebsocketClient(
+    subscriptions: Map<string, Set<WebSocket>>,
+    lastMessage: Map<string, string>,
+    upstreamForwarder?: UpstreamSubscriptionForwarder,
+) {
     let reconnectTimeout: NodeJS.Timeout | null = null;
     let connected = false;
     let connectionFailures = 0;
@@ -220,6 +232,11 @@ export function initializeWebsocketClient(subscriptions: Map<string, Set<WebSock
             }
 
             socket.send(Buffer.from(process.env.FRONTEND_BACKEND_API_KEY!, "utf-8"), { binary: false });
+
+            if (upstreamForwarder) {
+                upstreamForwarder.setBackendSocket(socket);
+                upstreamForwarder.sendFullSubscriptionSet();
+            }
         };
 
         socket.onmessage = (event: WebSocket.MessageEvent) => {
@@ -248,6 +265,7 @@ export function initializeWebsocketClient(subscriptions: Map<string, Set<WebSock
             // mass browser reconnect (see #515).
             const wasConnected = connected;
             connected = false;
+            if (upstreamForwarder) upstreamForwarder.setBackendSocket(null);
             const retryDelayMs = nextBackendReconnectDelayMs(connectionFailures);
             if (wasConnected) {
                 logConnectionFailure(
@@ -270,6 +288,70 @@ export function initializeWebsocketClient(subscriptions: Map<string, Set<WebSock
     }
 
     connect();
+}
+
+/**
+ * Forwards the aggregate set of browser-subscribed topics upstream to the backend
+ * so the backend can skip serialization for topics nobody is listening to. Only sends
+ * a diff when the set of topics with >0 subscribers actually changes.
+ */
+export class UpstreamSubscriptionForwarder {
+    private _backendSocket: WebSocket | null = null;
+    private _lastSentTopics = new Set<string>();
+    private readonly _subscriptions: Map<string, Set<WebSocket>>;
+
+    constructor(subscriptions: Map<string, Set<WebSocket>>) {
+        this._subscriptions = subscriptions;
+    }
+
+    setBackendSocket(socket: WebSocket | null): void {
+        this._backendSocket = socket;
+        if (!socket) this._lastSentTopics.clear();
+    }
+
+    /** Called after any browser subscribe/unsubscribe to diff and forward changes. */
+    syncAfterBrowserChange(): void {
+        if (!this._backendSocket || this._backendSocket.readyState !== WebSocket.OPEN) return;
+
+        const currentActive = this._getActiveTopics();
+        const toSub: string[] = [];
+        const toUnsub: string[] = [];
+
+        for (const topic of currentActive) {
+            if (!this._lastSentTopics.has(topic)) toSub.push(topic);
+        }
+        for (const topic of this._lastSentTopics) {
+            if (!currentActive.has(topic)) toUnsub.push(topic);
+        }
+
+        if (toSub.length > 0) {
+            this._backendSocket.send(JSON.stringify({ sub: toSub }));
+        }
+        if (toUnsub.length > 0) {
+            this._backendSocket.send(JSON.stringify({ unsub: toUnsub }));
+        }
+
+        this._lastSentTopics = currentActive;
+    }
+
+    /** Resend the full subscription set on reconnect. */
+    sendFullSubscriptionSet(): void {
+        if (!this._backendSocket || this._backendSocket.readyState !== WebSocket.OPEN) return;
+
+        const active = this._getActiveTopics();
+        if (active.size > 0) {
+            this._backendSocket.send(JSON.stringify({ sub: [...active] }));
+        }
+        this._lastSentTopics = active;
+    }
+
+    private _getActiveTopics(): Set<string> {
+        const active = new Set<string>();
+        for (const [topic, subs] of this._subscriptions) {
+            if (subs.size > 0) active.add(topic);
+        }
+        return active;
+    }
 }
 
 function getBackendWebsocketUrl() {
