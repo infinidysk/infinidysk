@@ -53,6 +53,38 @@ describe("getServiceProvider", () => {
     expect(warnMock).not.toHaveBeenCalled();
   });
 
+  it("parses an optional supportUrl when provided", () => {
+    process.env.SERVICE_PROVIDER = JSON.stringify({
+      name: "ElfHosted",
+      url: "https://elfhosted.com",
+      supportUrl: "https://support.elfhosted.com/help",
+      disabledFeatures: [],
+    });
+
+    expect(getServiceProvider()).toEqual({
+      name: "ElfHosted",
+      url: "https://elfhosted.com/",
+      supportUrl: "https://support.elfhosted.com/help",
+      disabledFeatures: [],
+    });
+    expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it("omits supportUrl when it is not provided", () => {
+    process.env.SERVICE_PROVIDER = JSON.stringify({
+      name: "ElfHosted",
+      url: "https://elfhosted.com",
+      disabledFeatures: [],
+    });
+
+    expect(getServiceProvider()).toEqual({
+      name: "ElfHosted",
+      url: "https://elfhosted.com/",
+      disabledFeatures: [],
+    });
+    expect(getServiceProvider()).not.toHaveProperty("supportUrl");
+  });
+
   it("ignores unknown feature identifiers without discarding the provider", () => {
     process.env.SERVICE_PROVIDER = JSON.stringify({
       name: "Example Hosting",
@@ -83,6 +115,7 @@ describe("getServiceProvider", () => {
     ["malformed JSON", "{"],
     ["missing name", JSON.stringify({ url: "https://example.com", disabledFeatures: [] })],
     ["unsafe URL", JSON.stringify({ name: "Example", url: "javascript:alert(1)", disabledFeatures: [] })],
+    ["unsafe supportUrl", JSON.stringify({ name: "Example", url: "https://example.com", supportUrl: "javascript:alert(1)", disabledFeatures: [] })],
     ["invalid feature list", JSON.stringify({ name: "Example", url: "https://example.com", disabledFeatures: "search" })],
   ])("ignores %s", (_description, rawValue) => {
     process.env.SERVICE_PROVIDER = rawValue;

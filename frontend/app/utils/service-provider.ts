@@ -31,6 +31,7 @@ export type NavFeatureId = (typeof NAV_FEATURE_IDS)[number];
 export type ServiceProviderConfig = {
   name: string;
   url: string;
+  supportUrl?: string;
   disabledFeatures: NavFeatureId[];
 };
 

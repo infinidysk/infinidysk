@@ -42,22 +42,27 @@ Advanced reference for **process / container** wiring and **legacy Settings fall
 Hosted NzbDAV services can identify the service provider and mark selected
 navigation destinations as unavailable. Disabled destinations remain visible in
 the sidebar; selecting one explains that the feature is disabled by the provider
-and links to the provider's website. The provider attribution also
-appears in the page footer.
+and links to the provider's support page (or website). The provider attribution
+also appears in the page footer.
 
 Set `SERVICE_PROVIDER` to a JSON object on the frontend process:
 
 ```yaml
 environment:
   SERVICE_PROVIDER: >-
-    {"name":"ElfHosted","url":"https://elfhosted.com","disabledFeatures":["watchtower","search","settings.indexers","settings.profiles","settings.watchtower","settings.warden","settings.rclone"]}
+    {"name":"ElfHosted","url":"https://elfhosted.com","supportUrl":"https://docs.elfhosted.com","disabledFeatures":["watchtower","search","settings.indexers","settings.profiles","settings.watchtower","settings.warden","settings.rclone"]}
 ```
 
 The object requires:
 
 - `name`: service provider name shown in the dialog and footer
-- `url`: provider website using `http` or `https`
+- `url`: provider website using `http` or `https` (used in the footer link)
 - `disabledFeatures`: navigation identifiers to make unavailable
+
+Optional:
+
+- `supportUrl`: support page using `http` or `https`, used for the "Contact"
+  link in the disabled-feature dialog; falls back to `url` when omitted
 
 Top-level navigation identifiers are `overview`, `queue`, `watchdog`,
 `watchtower`, `explore`, `health`, `logs`, and `search`. `overview` cannot be

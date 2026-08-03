@@ -66,7 +66,7 @@ export function PageLayout(props: PageLayoutProps) {
                                             >
                                                 NzbDAV
                                             </a>{" "}
-                                            is provided by{" "}
+                                            is powered by{" "}
                                             <a
                                                 href={props.serviceProvider.url}
                                                 target="_blank"
