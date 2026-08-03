@@ -15,14 +15,14 @@ type ParsedServiceProvider = {
 let cachedRawValue: string | undefined;
 let cachedConfig: ServiceProviderConfig | null = null;
 
-function parseUrl(value: unknown): string {
+function parseUrl(value: unknown, fieldName = "url"): string {
   if (typeof value !== "string" || !value.trim()) {
-    throw new Error('"url" must be a non-empty string');
+    throw new Error(`"${fieldName}" must be a non-empty string`);
   }
 
   const url = new URL(value.trim());
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error('"url" must use http or https');
+    throw new Error(`"${fieldName}" must use http or https`);
   }
 
   return url.toString();
@@ -62,6 +62,9 @@ function parseConfig(rawValue: string): ParsedServiceProvider {
     config: {
       name: candidate.name.trim(),
       url: parseUrl(candidate.url),
+      ...(candidate.supportUrl !== undefined
+        ? { supportUrl: parseUrl(candidate.supportUrl, "supportUrl") }
+        : {}),
       disabledFeatures,
     },
     ignoredFeatures,

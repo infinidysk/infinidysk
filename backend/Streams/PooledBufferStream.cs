@@ -1,27 +1,39 @@
-using System.Buffers;
-
 namespace NzbWebDAV.Streams;
 
 /// <summary>
-/// Seekable read/write stream over an <see cref="ArrayPool{T}"/>-rented array.
+/// Seekable read/write stream over an <see cref="ISegmentBufferPool"/>-rented array.
 /// Logical <see cref="Length"/> is independent of rented capacity so lease accounting
 /// and segment alignment stay on decoded byte counts, not pool bucket sizes.
 /// </summary>
 public sealed class PooledBufferStream : Stream
 {
+    private readonly ISegmentBufferPool _pool;
+    private readonly BufferPoolDiagnostics _diagnostics;
     private byte[]? _buffer;
     private int _length;
     private int _position;
     private bool _disposed;
 
-    public PooledBufferStream(int capacityHint)
+    public PooledBufferStream(
+        int capacityHint,
+        ISegmentBufferPool? pool = null,
+        BufferPoolDiagnostics? diagnostics = null)
     {
         if (capacityHint < 0)
             throw new ArgumentOutOfRangeException(nameof(capacityHint));
 
-        _buffer = capacityHint > 0
-            ? ArrayPool<byte>.Shared.Rent(capacityHint)
-            : [];
+        _pool = pool ?? SharedArrayPoolAdapter.Instance;
+        _diagnostics = diagnostics ?? BufferPoolDiagnostics.Shared;
+
+        if (capacityHint > 0)
+        {
+            _buffer = RentBuffer(capacityHint);
+            _diagnostics.RecordRent(capacityHint, _buffer.Length);
+        }
+        else
+        {
+            _buffer = [];
+        }
     }
 
     public override bool CanRead => !_disposed;
@@ -154,8 +166,6 @@ public sealed class PooledBufferStream : Stream
         if (newLength > _length)
         {
             EnsureCapacity(newLength);
-            // Rented arrays are dirty; MemoryStream would zero here and AlignDrainedSegment
-            // depends on that guarantee when padding short bodies.
             _buffer.AsSpan(_length, newLength - _length).Clear();
         }
 
@@ -185,15 +195,14 @@ public sealed class PooledBufferStream : Stream
         var current = _buffer!;
         if (required <= current.Length) return;
 
-        // Rent exactly what is needed so a small overshoot of a good hint does not
-        // jump the Shared pool's 1 MiB bucket and lose pooling.
-        var next = ArrayPool<byte>.Shared.Rent(required);
+        var next = RentBuffer(required);
         if (_length > 0)
             current.AsSpan(0, _length).CopyTo(next);
 
         if (current.Length > 0)
-            ArrayPool<byte>.Shared.Return(current);
+            _pool.Return(current);
 
+        _diagnostics.RecordGrowth(required, current.Length, next.Length);
         _buffer = next;
     }
 
@@ -201,10 +210,24 @@ public sealed class PooledBufferStream : Stream
     {
         var buffer = Interlocked.Exchange(ref _buffer, null);
         if (buffer is { Length: > 0 })
-            ArrayPool<byte>.Shared.Return(buffer);
+        {
+            _diagnostics.RecordReturn(buffer.Length);
+            _pool.Return(buffer);
+        }
 
         _length = 0;
         _position = 0;
+    }
+
+    private byte[] RentBuffer(int minimumLength)
+    {
+        var buffer = _pool.Rent(minimumLength);
+        if (buffer.Length >= minimumLength) return buffer;
+
+        if (buffer.Length > 0)
+            _pool.Return(buffer);
+        throw new InvalidOperationException(
+            $"Segment buffer pool returned {buffer.Length} bytes for a {minimumLength}-byte request.");
     }
 
     private void ThrowIfDisposed()

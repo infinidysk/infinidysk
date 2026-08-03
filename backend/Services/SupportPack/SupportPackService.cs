@@ -258,6 +258,7 @@ public sealed class SupportPackService(
         var streamTracing = streamTraceBuffer.GetStatus();
         var usage = runtimeUsage.Snapshot();
         var concurrentReads = concurrentReadTracker?.Snapshot() ?? default;
+        var bufferPool = BufferPoolDiagnostics.Shared.Snapshot();
         var cpu = await BuildCpuDiagnosticsAsync(usage, uptime, cancellationToken).ConfigureAwait(false);
 
         return new
@@ -298,6 +299,13 @@ public sealed class SupportPackService(
                 concurrentReadStartRangeStarts = concurrentReads.StartRangeReads,
                 concurrentReadOffsetRangeStarts = concurrentReads.OffsetRangeReads,
                 concurrentReadSuffixRangeStarts = concurrentReads.SuffixRangeReads,
+                segmentBufferRents = bufferPool.Rents,
+                segmentBufferReturns = bufferPool.Returns,
+                segmentBufferGrowths = bufferPool.Growths,
+                segmentBufferCheckedOutBytes = bufferPool.CheckedOutBytes,
+                segmentBufferRequestedBytes = bufferPool.RequestedBytes,
+                segmentBufferRentedBytes = bufferPool.RentedBytes,
+                segmentBufferBucketWasteBytes = bufferPool.BucketWasteBytes,
                 timeZone = TimeZoneInfo.Local.Id,
             },
             runtimeSampler = BuildRuntimeSamplerDiagnostics(usage),

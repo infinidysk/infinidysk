@@ -31,7 +31,7 @@ export function ServiceProviderNotice({
           <strong className="font-semibold text-base-content">{serviceProvider.name}</strong>.
         </p>
         <a
-          href={serviceProvider.url}
+          href={serviceProvider.supportUrl ?? serviceProvider.url}
           target="_blank"
           rel="noreferrer"
           className="link link-primary inline-flex items-center gap-1"
