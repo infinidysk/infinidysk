@@ -23,7 +23,7 @@ const GITHUB_COMPARE_URL_PREFIX =
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const FETCH_TIMEOUT_MS = 5_000;
 const RELEASES_FALLBACK_URL = "https://github.com/nzbdav/nzbdav/releases";
-const COMPARE_FALLBACK_URL = "https://github.com/nzbdav/nzbdav/commits/main";
+const COMMITS_URL_PREFIX = "https://github.com/nzbdav/nzbdav/commits/";
 
 type CachedRelease = {
   latestVersion: string;
@@ -34,8 +34,13 @@ type CachedRelease = {
 type CachedCompare = {
   commitsBehind: number;
   compareUrl: string;
+  trackRef: string;
   checkedAt: number;
 };
+
+function compareFallbackUrl(trackRef: string): string {
+  return `${COMMITS_URL_PREFIX}${encodeURIComponent(trackRef)}`;
+}
 
 let releaseCache: CachedRelease | null = null;
 let releaseInFlight: Promise<CachedRelease | null> | null = null;
@@ -124,19 +129,21 @@ async function getCachedLatestRelease(): Promise<CachedRelease | null> {
  */
 async function fetchCompare(
   sha: string,
-  branch: string,
+  trackRef: string,
 ): Promise<CachedCompare | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const fallbackUrl = compareFallbackUrl(trackRef);
 
   const noUpdate: CachedCompare = {
     commitsBehind: 0,
-    compareUrl: COMPARE_FALLBACK_URL,
+    compareUrl: fallbackUrl,
+    trackRef,
     checkedAt: Date.now(),
   };
 
   try {
-    const url = `${GITHUB_COMPARE_URL_PREFIX}${encodeURIComponent(sha)}...${encodeURIComponent(branch)}`;
+    const url = `${GITHUB_COMPARE_URL_PREFIX}${encodeURIComponent(sha)}...${encodeURIComponent(trackRef)}`;
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
@@ -156,7 +163,7 @@ async function fetchCompare(
       html_url?: string;
     };
 
-    // We only notify when main is ahead of the running commit.
+    // We only notify when the track ref is ahead of the running commit.
     if (data.status !== "ahead") return noUpdate;
 
     const aheadBy = data.ahead_by ?? 0;
@@ -164,7 +171,8 @@ async function fetchCompare(
 
     return {
       commitsBehind: aheadBy,
-      compareUrl: data.html_url?.trim() || COMPARE_FALLBACK_URL,
+      compareUrl: data.html_url?.trim() || fallbackUrl,
+      trackRef,
       checkedAt: Date.now(),
     };
   } catch {
@@ -232,12 +240,14 @@ async function checkForDevUpdate(
     kind: "dev",
     commitsBehind: compare.commitsBehind,
     compareUrl: compare.compareUrl,
+    trackRef: build.branch,
   };
 }
 
 /**
  * Returns update metadata when a newer stable GitHub release exists than
- * `currentVersion`, or when a non-release build is behind commits on `main`.
+ * `currentVersion`, or when a non-release build is behind commits on its
+ * track ref (`main` for source/`main-<sha>` builds, `dev` for `:dev` images).
  * Failures yield null.
  */
 export async function checkForUpdate(

@@ -38,6 +38,9 @@ export async function getAppVersion(): Promise<string | undefined> {
  *
  * Non-main branches and detached HEAD return undefined so feature-branch /
  * fork checkouts do not produce false update notifications.
+ *
+ * Env builds use a track ref derived from the version label: `dev-*` images
+ * compare against the movable `dev` tag (which tracks `:dev`), not `main`.
  */
 export async function getBuildCommit(
   options: BuildCommitOptions = {},
@@ -46,13 +49,27 @@ export async function getBuildCommit(
 
   const envSha = process.env.NZBDAV_COMMIT_SHA?.trim();
   if (envSha && isValidSha(envSha)) {
-    return { sha: envSha.toLowerCase(), branch: "main", source: "env" };
+    return {
+      sha: envSha.toLowerCase(),
+      branch: resolveTrackRef(version),
+      source: "env",
+    };
   }
 
   const local = await readLocalMainCommit(gitDir);
   if (local) return local;
 
   return parseBuildCommitFromVersion(version);
+}
+
+/**
+ * GitHub compare target for a build. Docker `:dev` images (`dev-<sha>`) track
+ * the movable `dev` tag; everything else compares against `main`.
+ */
+export function resolveTrackRef(version?: string | null): string {
+  const label = (version ?? process.env.NZBDAV_VERSION)?.trim() ?? "";
+  if (/^dev-/i.test(label)) return "dev";
+  return "main";
 }
 
 /** Parse a commit SHA embedded in a `main-<sha>` version label. */

@@ -227,6 +227,7 @@ describe("checkForUpdate", () => {
       kind: "dev",
       commitsBehind: 2,
       compareUrl: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+      trackRef: "main",
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -285,6 +286,7 @@ describe("checkForUpdate", () => {
       kind: "dev",
       commitsBehind: 2,
       compareUrl: "https://github.com/nzbdav/nzbdav/compare/e0eef520...main",
+      trackRef: "main",
     });
     expect(getBuildCommitMock).toHaveBeenCalledWith({ version: "main-e0eef520" });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/compare/e0eef520...main");
@@ -297,27 +299,43 @@ describe("checkForUpdate (dev builds)", () => {
   beforeEach(() => {
     getBuildCommitMock.mockResolvedValue({
       sha: buildSha,
-      branch: "main",
+      branch: "dev",
       source: "env",
     });
   });
 
-  it("returns commits behind for dev builds when main is ahead", async () => {
+  it("returns commits behind for :dev images when the dev tag is ahead", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         status: "ahead",
         ahead_by: 3,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
       }),
     );
 
     await expect(checkForUpdate("dev-e0eef52")).resolves.toEqual({
       kind: "dev",
       commitsBehind: 3,
-      compareUrl: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+      compareUrl: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+      trackRef: "dev",
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      `/compare/${encodeURIComponent(buildSha)}...main`,
+      `/compare/${encodeURIComponent(buildSha)}...dev`,
+    );
+  });
+
+  it("returns null when the running :dev image matches the dev tag tip", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        status: "identical",
+        ahead_by: 0,
+        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+      }),
+    );
+
+    await expect(checkForUpdate("dev-e0eef52")).resolves.toBeNull();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      `/compare/${encodeURIComponent(buildSha)}...dev`,
     );
   });
 
@@ -326,7 +344,7 @@ describe("checkForUpdate (dev builds)", () => {
       jsonResponse({
         status: "identical",
         ahead_by: 0,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
       }),
     );
 
@@ -339,7 +357,7 @@ describe("checkForUpdate (dev builds)", () => {
         status: "behind",
         ahead_by: 0,
         behind_by: 2,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
       }),
     );
 
@@ -352,7 +370,7 @@ describe("checkForUpdate (dev builds)", () => {
         status: "diverged",
         ahead_by: 1,
         behind_by: 1,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
       }),
     );
 
@@ -369,7 +387,7 @@ describe("checkForUpdate (dev builds)", () => {
       jsonResponse({
         status: "identical",
         ahead_by: 0,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
       }),
     );
 
@@ -395,13 +413,14 @@ describe("checkForUpdate (dev builds)", () => {
         jsonResponse({
           status: "ahead",
           ahead_by: 2,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
         }),
       );
 
     await expect(checkForUpdate("pre-42")).resolves.toBeNull();
     await expect(checkForUpdate("pre-42")).resolves.toMatchObject({
       commitsBehind: 2,
+      trackRef: "dev",
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -414,13 +433,14 @@ describe("checkForUpdate (dev builds)", () => {
         jsonResponse({
           status: "ahead",
           ahead_by: 1,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
         }),
       );
 
     await expect(checkForUpdate("pre-42")).resolves.toBeNull();
     await expect(checkForUpdate("pre-42")).resolves.toMatchObject({
       commitsBehind: 1,
+      trackRef: "dev",
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -432,14 +452,14 @@ describe("checkForUpdate (dev builds)", () => {
         jsonResponse({
           status: "identical",
           ahead_by: 0,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           status: "ahead",
           ahead_by: 4,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
         }),
       );
 
@@ -449,6 +469,7 @@ describe("checkForUpdate (dev builds)", () => {
 
     await expect(checkForUpdate("pre-42")).resolves.toMatchObject({
       commitsBehind: 4,
+      trackRef: "dev",
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -464,7 +485,8 @@ describe("checkForUpdate (dev builds)", () => {
     await expect(checkForUpdate("pre-42")).resolves.toEqual({
       kind: "dev",
       commitsBehind: 1,
-      compareUrl: "https://github.com/nzbdav/nzbdav/commits/main",
+      compareUrl: "https://github.com/nzbdav/nzbdav/commits/dev",
+      trackRef: "dev",
     });
   });
 
@@ -473,7 +495,7 @@ describe("checkForUpdate (dev builds)", () => {
       jsonResponse({
         status: "ahead",
         ahead_by: 2,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
       }),
     );
 
@@ -489,25 +511,27 @@ describe("checkForUpdate (dev builds)", () => {
         jsonResponse({
           status: "ahead",
           ahead_by: 2,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           status: "ahead",
           ahead_by: 5,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
         }),
       );
 
     await expect(checkForUpdate("pre-42")).resolves.toMatchObject({
       commitsBehind: 2,
+      trackRef: "dev",
     });
 
     vi.advanceTimersByTime(60 * 60 * 1000);
 
     await expect(checkForUpdate("pre-42")).resolves.toMatchObject({
       commitsBehind: 5,
+      trackRef: "dev",
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

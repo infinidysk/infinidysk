@@ -140,8 +140,8 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
                 >
                   <Icon name="arrow_circle_up" className="!text-[18px]" />
                   {updateAvailable.commitsBehind === 1
-                    ? "1 new commit on main"
-                    : `${updateAvailable.commitsBehind} new commits on main`}
+                    ? `1 new commit on ${updateAvailable.trackRef}`
+                    : `${updateAvailable.commitsBehind} new commits on ${updateAvailable.trackRef}`}
                 </a>
               </li>
             )}
