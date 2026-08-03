@@ -1,117 +1,312 @@
-using System.Collections.Concurrent;
-
 namespace NzbWebDAV.Services;
 
 /// <summary>
-/// Tracks concurrent read sessions on the same content path to measure potential
-/// gains from shared streams or segment-fetch deduplication. This is instrumentation
-/// only — it does not alter streaming behavior.
+/// Measures opportunities a hypothetical shared stream could serve. It does not
+/// alter streaming behavior: every overlapping request still uses a private stream.
 /// </summary>
-public sealed class ConcurrentReadTracker
+public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null)
 {
-    private readonly ConcurrentDictionary<string, PathState> _paths = new(StringComparer.Ordinal);
+    private readonly object _gate = new();
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly Dictionary<string, PathState> _paths = new(StringComparer.Ordinal);
+    private readonly AsyncLocal<ReadContext?> _currentRead = new();
+    private long _nextReaderId;
+    private long _readerStarts;
     private long _overlapEvents;
-    private long _duplicateSegmentFetches;
+    private long _privateFallbacksNoRegistry;
+    private long _duplicateInFlightSegmentFetches;
     private long _peakConcurrentReaders;
+    private long _completedReads;
+    private long _totalReadLifetimeMs;
+    private long _maxReadLifetimeMs;
+    private long _startDistanceSamples;
+    private long _totalStartDistanceBytes;
+    private long _maxStartDistanceBytes;
+    private readonly long[] _regionStarts = new long[Enum.GetValues<ConcurrentReadRegion>().Length];
 
-    /// <summary>Number of times a new reader joined a path that already had active readers.</summary>
-    public long OverlapEvents => Interlocked.Read(ref _overlapEvents);
+    public ReadScope BeginRead(
+        string path,
+        long? startOffset,
+        ConcurrentReadRegion region)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (startOffset < 0)
+            throw new ArgumentOutOfRangeException(nameof(startOffset));
+        path = "/" + path.TrimStart('/');
+
+        var readerId = Interlocked.Increment(ref _nextReaderId);
+        var previous = _currentRead.Value;
+        var startedAt = _timeProvider.GetUtcNow();
+        lock (_gate)
+        {
+            if (!_paths.TryGetValue(path, out var state))
+            {
+                state = new PathState();
+                _paths.Add(path, state);
+            }
+
+            var overlaps = state.Readers.Count > 0;
+            var reader = new ReaderState(startOffset, overlaps);
+            state.Readers.Add(readerId, reader);
+            _readerStarts++;
+            _regionStarts[(int)region]++;
+
+            if (overlaps)
+            {
+                _overlapEvents++;
+                _privateFallbacksNoRegistry++;
+                RecordStartDistanceLocked(state, readerId, reader);
+            }
+
+            _peakConcurrentReaders = Math.Max(_peakConcurrentReaders, state.Readers.Count);
+        }
+
+        var context = new ReadContext(path, readerId);
+        _currentRead.Value = context;
+        return new ReadScope(this, context, previous, startedAt);
+    }
 
     /// <summary>
-    /// Segment fetches that would have been deduplicatable if a shared stream existed
-    /// (same segment ID fetched while another reader on the same path was also active).
+    /// Marks one logical segment transfer as in flight. A duplicate is counted only
+    /// when another reader for the same path is simultaneously fetching that segment.
     /// </summary>
-    public long DuplicateSegmentFetches => Interlocked.Read(ref _duplicateSegmentFetches);
-
-    /// <summary>Highest concurrent reader count observed on any single path.</summary>
-    public long PeakConcurrentReaders => Interlocked.Read(ref _peakConcurrentReaders);
-
-    /// <summary>Register a reader starting on a path. Returns a disposable scope.</summary>
-    public IDisposable BeginRead(string path)
+    public IDisposable BeginSegmentFetch(string segmentId)
     {
-        var state = _paths.GetOrAdd(path, _ => new PathState());
-        var count = Interlocked.Increment(ref state.ActiveReaders);
+        ArgumentException.ThrowIfNullOrWhiteSpace(segmentId);
+        var context = _currentRead.Value;
+        if (context is null) return NoopScope.Instance;
 
-        if (count > 1)
-            Interlocked.Increment(ref _overlapEvents);
-
-        UpdatePeak(count);
-        return new ReadScope(this, path);
-    }
-
-    /// <summary>Record a segment fetch on a path that has concurrent readers.</summary>
-    public void RecordSegmentFetch(string path, string segmentId)
-    {
-        if (!_paths.TryGetValue(path, out var state)) return;
-        if (Volatile.Read(ref state.ActiveReaders) <= 1) return;
-
-        var seenSet = state.RecentSegments;
-        if (!seenSet.TryAdd(segmentId, Environment.TickCount64))
+        lock (_gate)
         {
-            Interlocked.Increment(ref _duplicateSegmentFetches);
+            if (!_paths.TryGetValue(context.Path, out var state) ||
+                !state.Readers.ContainsKey(context.ReaderId))
+            {
+                return NoopScope.Instance;
+            }
+
+            if (!state.InFlightSegments.TryGetValue(segmentId, out var readers))
+            {
+                readers = [];
+                state.InFlightSegments.Add(segmentId, readers);
+            }
+
+            if (readers.Keys.Any(x => x != context.ReaderId))
+                _duplicateInFlightSegmentFetches++;
+
+            readers.TryGetValue(context.ReaderId, out var count);
+            readers[context.ReaderId] = count + 1;
         }
 
-        TrimOldSegments(seenSet);
+        return new SegmentFetchScope(this, context, segmentId);
     }
 
-    /// <summary>Current snapshot for diagnostics/support packs.</summary>
-    public ConcurrentReadSnapshot Snapshot() => new(
-        OverlapEvents,
-        DuplicateSegmentFetches,
-        PeakConcurrentReaders,
-        _paths.Count(kv => Volatile.Read(ref kv.Value.ActiveReaders) > 1));
-
-    private void EndRead(string path)
+    public ConcurrentReadSnapshot Snapshot()
     {
-        if (!_paths.TryGetValue(path, out var state)) return;
-        var remaining = Interlocked.Decrement(ref state.ActiveReaders);
-        if (remaining <= 0)
+        lock (_gate)
         {
-            state.RecentSegments.Clear();
-            _paths.TryRemove(path, out _);
-        }
-    }
-
-    private void UpdatePeak(long current)
-    {
-        while (true)
-        {
-            var peak = Interlocked.Read(ref _peakConcurrentReaders);
-            if (current <= peak) return;
-            if (Interlocked.CompareExchange(ref _peakConcurrentReaders, current, peak) == peak) return;
+            return new ConcurrentReadSnapshot(
+                _readerStarts,
+                _overlapEvents,
+                _privateFallbacksNoRegistry,
+                _duplicateInFlightSegmentFetches,
+                _peakConcurrentReaders,
+                _paths.Count(x => x.Value.Readers.Count > 1),
+                _paths.Sum(x => x.Value.InFlightSegments.Sum(
+                    segment => segment.Value.Values.Sum())),
+                _completedReads,
+                _totalReadLifetimeMs,
+                _maxReadLifetimeMs,
+                _startDistanceSamples,
+                _totalStartDistanceBytes,
+                _maxStartDistanceBytes,
+                _regionStarts[(int)ConcurrentReadRegion.Full],
+                _regionStarts[(int)ConcurrentReadRegion.StartRange],
+                _regionStarts[(int)ConcurrentReadRegion.OffsetRange],
+                _regionStarts[(int)ConcurrentReadRegion.SuffixRange]);
         }
     }
 
-    private static void TrimOldSegments(ConcurrentDictionary<string, long> segments)
+    private void UpdateStart(ReadContext context, long startOffset)
     {
-        if (segments.Count <= 256) return;
-        var cutoff = Environment.TickCount64 - 30_000;
-        foreach (var kv in segments)
+        ArgumentOutOfRangeException.ThrowIfNegative(startOffset);
+        lock (_gate)
         {
-            if (kv.Value < cutoff)
-                segments.TryRemove(kv);
+            if (!_paths.TryGetValue(context.Path, out var state) ||
+                !state.Readers.TryGetValue(context.ReaderId, out var reader))
+            {
+                return;
+            }
+
+            reader.StartOffset = startOffset;
+            RecordStartDistanceLocked(state, context.ReaderId, reader);
         }
     }
 
-    private sealed class PathState
+    private void RecordStartDistanceLocked(
+        PathState state,
+        long readerId,
+        ReaderState reader)
     {
-        public int ActiveReaders;
-        public readonly ConcurrentDictionary<string, long> RecentSegments = new(StringComparer.Ordinal);
+        if (!reader.JoinedOverlap ||
+            reader.DistanceRecorded ||
+            reader.StartOffset is not { } start)
+        {
+            return;
+        }
+
+        var otherStarts = state.Readers
+            .Where(x => x.Key != readerId && x.Value.StartOffset.HasValue)
+            .Select(x => x.Value.StartOffset!.Value)
+            .ToArray();
+        if (otherStarts.Length == 0) return;
+
+        var distance = otherStarts.Min(x => start >= x ? start - x : x - start);
+        reader.DistanceRecorded = true;
+        _startDistanceSamples++;
+        _totalStartDistanceBytes += distance;
+        _maxStartDistanceBytes = Math.Max(_maxStartDistanceBytes, distance);
     }
 
-    private sealed class ReadScope(ConcurrentReadTracker tracker, string path) : IDisposable
+    private void EndRead(ReadScope scope)
+    {
+        lock (_gate)
+        {
+            if (_paths.TryGetValue(scope.Context.Path, out var state))
+            {
+                state.Readers.Remove(scope.Context.ReaderId);
+                RemovePathIfIdleLocked(scope.Context.Path, state);
+            }
+
+            var elapsed = _timeProvider.GetUtcNow() - scope.StartedAt;
+            var elapsedMs = Math.Max(0, (long)elapsed.TotalMilliseconds);
+            _completedReads++;
+            _totalReadLifetimeMs += elapsedMs;
+            _maxReadLifetimeMs = Math.Max(_maxReadLifetimeMs, elapsedMs);
+        }
+    }
+
+    private void EndSegmentFetch(ReadContext context, string segmentId)
+    {
+        lock (_gate)
+        {
+            if (!_paths.TryGetValue(context.Path, out var state) ||
+                !state.InFlightSegments.TryGetValue(segmentId, out var readers) ||
+                !readers.TryGetValue(context.ReaderId, out var count))
+            {
+                return;
+            }
+
+            if (count == 1)
+                readers.Remove(context.ReaderId);
+            else
+                readers[context.ReaderId] = count - 1;
+            if (readers.Count == 0)
+                state.InFlightSegments.Remove(segmentId);
+            RemovePathIfIdleLocked(context.Path, state);
+        }
+    }
+
+    private void RemovePathIfIdleLocked(string path, PathState state)
+    {
+        if (state.Readers.Count == 0 && state.InFlightSegments.Count == 0)
+            _paths.Remove(path);
+    }
+
+    public sealed class ReadScope : IDisposable
+    {
+        private readonly ConcurrentReadTracker _tracker;
+        private readonly ReadContext? _previous;
+        private int _disposed;
+
+        internal ReadScope(
+            ConcurrentReadTracker tracker,
+            ReadContext context,
+            ReadContext? previous,
+            DateTimeOffset startedAt)
+        {
+            _tracker = tracker;
+            Context = context;
+            _previous = previous;
+            StartedAt = startedAt;
+        }
+
+        internal ReadContext Context { get; }
+        internal DateTimeOffset StartedAt { get; }
+
+        public void UpdateStart(long startOffset)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            _tracker.UpdateStart(Context, startOffset);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            _tracker._currentRead.Value = _previous;
+            _tracker.EndRead(this);
+        }
+    }
+
+    private sealed class SegmentFetchScope(
+        ConcurrentReadTracker tracker,
+        ReadContext context,
+        string segmentId) : IDisposable
     {
         private int _disposed;
+
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
-                tracker.EndRead(path);
+                tracker.EndSegmentFetch(context, segmentId);
         }
+    }
+
+    private sealed class NoopScope : IDisposable
+    {
+        public static NoopScope Instance { get; } = new();
+        public void Dispose() { }
+    }
+
+    internal sealed record ReadContext(string Path, long ReaderId);
+
+    private sealed class PathState
+    {
+        public Dictionary<long, ReaderState> Readers { get; } = [];
+        public Dictionary<string, Dictionary<long, int>> InFlightSegments { get; } =
+            new(StringComparer.Ordinal);
+    }
+
+    private sealed class ReaderState(long? startOffset, bool joinedOverlap)
+    {
+        public long? StartOffset { get; set; } = startOffset;
+        public bool JoinedOverlap { get; } = joinedOverlap;
+        public bool DistanceRecorded { get; set; }
     }
 }
 
+public enum ConcurrentReadRegion
+{
+    Full,
+    StartRange,
+    OffsetRange,
+    SuffixRange,
+}
+
 public readonly record struct ConcurrentReadSnapshot(
+    long ReaderStarts,
     long OverlapEvents,
-    long DuplicateSegmentFetches,
+    long PrivateFallbacksNoRegistry,
+    long DuplicateInFlightSegmentFetches,
     long PeakConcurrentReaders,
-    long CurrentOverlappingPaths);
+    long CurrentOverlappingPaths,
+    long CurrentInFlightSegmentFetches,
+    long CompletedReads,
+    long TotalReadLifetimeMs,
+    long MaxReadLifetimeMs,
+    long StartDistanceSamples,
+    long TotalStartDistanceBytes,
+    long MaxStartDistanceBytes,
+    long FullReads,
+    long StartRangeReads,
+    long OffsetRangeReads,
+    long SuffixRangeReads);

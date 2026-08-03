@@ -222,6 +222,7 @@ public partial class Program
                 .AddSingleton<NzbWebDAV.Services.Benchmark.BenchmarkRunControl>()
                 .AddHostedService<LogBroadcaster>()
                 .AddSingleton<ActiveReadRegistry>()
+                .AddSingleton<ConcurrentReadTracker>()
                 .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())
                 .AddHostedService<RuntimeUsageSampler>()
