@@ -46,7 +46,7 @@ public class SegmentAlignmentTests
         await using var stream = CreateStream(client, exactSizes: [5, 7, 5],
             usePipelinedBodyRequests: usePipelinedBodyRequests);
 
-        var failure = await Assert.ThrowsAsync<RetryableDownloadException>(
+        var failure = await Assert.ThrowsAsync<TransientSegmentExhaustionException>(
             () => ReadAllAsync(stream));
 
         Assert.Contains("two", failure.Message, StringComparison.Ordinal);
@@ -106,6 +106,35 @@ public class SegmentAlignmentTests
         Assert.Equal(15, output.Length);
         Assert.Equal(new byte[5], output[5..10]);
         Assert.Equal("ccccc", Encoding.ASCII.GetString(output, 10, 5));
+    }
+
+    [Fact]
+    public async Task BatchFailure_RescueConfirmsMissing_GapFillsInsteadOfThrowing()
+    {
+        var client = CreateClient(new Dictionary<string, byte[]>
+        {
+            ["one"] = First,
+            ["three"] = Third,
+        });
+        client.BatchFailures["two"] = 1;
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "one", "two", "three" }.AsMemory(),
+            client,
+            articleBufferSize: 4,
+            estimatedSegmentSize: 6,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            cancellationToken: CancellationToken.None,
+            fileName: "alignment.bin",
+            exactSegmentSizes: new long[] { 5, 7, 5 });
+
+        var output = await ReadAllAsync(stream);
+
+        Assert.Equal(17, output.Length);
+        Assert.Equal("aaaaa", Encoding.ASCII.GetString(output, 0, 5));
+        Assert.Equal(new byte[7], output[5..12]);
+        Assert.Equal("ccccc", Encoding.ASCII.GetString(output, 12, 5));
     }
 
     [Fact]

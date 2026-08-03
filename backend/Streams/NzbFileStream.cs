@@ -241,7 +241,7 @@ public class NzbFileStream(
         {
             // The segment that should contain this offset delivered fewer bytes than the
             // index says it holds. Returning the exhausted stream would answer the range
-                // request with placeholder bytes or nothing at all, so report the seek as impossible.
+            // request with placeholder bytes or nothing at all, so report the seek as impossible.
             await stream.DisposeAsync().ConfigureAwait(false);
             throw new SeekPositionNotFoundException(
                 $"Byte position {rangeStart} of \"{fileName ?? "unknown"}\" is past the data " +

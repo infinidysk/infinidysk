@@ -541,8 +541,24 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             // dropped socket takes out unrelated segments with it. Re-request this
             // segment on its own first, which is what gives provider failover and the
             // streaming-timeout retries a chance before any data is degraded.
-            var rescued = await TryRescueSegmentAsync(segmentId, segmentIndex, e, cancellationToken)
-                .ConfigureAwait(false);
+            Stream? rescued;
+            try
+            {
+                rescued = await TryRescueSegmentAsync(segmentId, segmentIndex, e, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (UsenetArticleNotFoundException notFound)
+            {
+                // Rescue confirmed the article is genuinely missing — gap-fill
+                // instead of treating it as a transient transport failure.
+                if (_failFastOnFirstSegment && isFirstSegment) throw;
+                return ZeroFillSegment(
+                    "Article {SegmentId} missing on all providers while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
+                    notFound.SegmentId,
+                    segmentIndex,
+                    notFound);
+            }
+
             if (rescued is not null)
                 return SegmentDownloadResult.Success(rescued, estimate);
 
@@ -557,8 +573,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
     /// <summary>
     /// Re-requests a segment individually after its pipelined response failed. Returns
-    /// null once the retries are spent, or as soon as the article is known to be missing
-    /// rather than unreachable.
+    /// null once the retries are spent. Throws <see cref="UsenetArticleNotFoundException"/>
+    /// if rescue confirms the article is genuinely missing, so the caller can gap-fill
+    /// rather than treating it as a transient transport failure.
     /// </summary>
     private async Task<Stream?> TryRescueSegmentAsync(
         string segmentId,
@@ -587,7 +604,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch (UsenetArticleNotFoundException)
             {
-                return null;
+                throw;
             }
             catch (Exception e) when (!cancellationToken.IsCancellationRequested)
             {
@@ -786,14 +803,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             : new RetryableDownloadException(message, failure);
     }
 
-    private RetryableDownloadException CreateTransientSegmentFailure(
+    private TransientSegmentExhaustionException CreateTransientSegmentFailure(
         string segmentId, int segmentIndex, Exception failure)
     {
         var message =
             $"Segment {segmentIndex + 1} of {_segmentIds.Length} ({segmentId}) could not be downloaded " +
             $"while reading \"{_fileName}\" after all retry attempts were exhausted. " +
             "The client should retry this range request.";
-        return new RetryableDownloadException(message, failure);
+        return new TransientSegmentExhaustionException(message, failure);
     }
 
     private async Task<Stream> DrainSegmentAsync(

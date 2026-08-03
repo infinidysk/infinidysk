@@ -11,10 +11,10 @@ public sealed class ContainerAwareFillStreamTests
 
         var output = await ReadWithSmallBufferAsync(stream);
 
-        Assert.All(output[..178], value => Assert.Equal(0xFF, value));
+        Assert.All(output[..178], value => Assert.Equal(0x00, value));
         Assert.Equal(new byte[] { 0x47, 0x1F, 0xFF, 0x10 }, output[178..182]);
         Assert.All(output[182..366], value => Assert.Equal(0xFF, value));
-        Assert.All(output[366..], value => Assert.Equal(0xFF, value));
+        Assert.All(output[366..], value => Assert.Equal(0x00, value));
     }
 
     [Fact]

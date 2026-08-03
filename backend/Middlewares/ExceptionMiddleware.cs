@@ -253,9 +253,13 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             // reserve full stack traces for unexpected failures.
             var isKnown = IsKnownDownloadException(e, out var knownError);
             var reason = isKnown ? knownError : e.GetType().Name;
-            // Data that was never posted completely is a repairable state of the item,
-            // not a fault in serving it, so it warns rather than errors.
-            var knownLevel = isIncompleteData ? LogEventLevel.Warning : LogEventLevel.Error;
+            // Transient segment exhaustion (all retries spent, player will retry the range)
+            // and incomplete multipart data are expected operational conditions, so they
+            // warn rather than error. Other retryable failures (e.g. unknown-length
+            // segments that need repair) stay at Error.
+            var knownLevel = isIncompleteData || e is TransientSegmentExhaustionException
+                ? LogEventLevel.Warning
+                : LogEventLevel.Error;
             var dedupeKey = $"{filePath}|{seekPosition}|{reason}";
             LogWithDedup(RecentReadErrors, dedupeKey, suppressed =>
             {

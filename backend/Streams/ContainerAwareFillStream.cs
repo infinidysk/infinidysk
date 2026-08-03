@@ -149,7 +149,7 @@ internal sealed class ContainerAwareFillStream : Stream
         int packetSize,
         int transportHeaderOffset)
     {
-        destination.Fill(0xFF);
+        destination.Clear();
         var gapEnd = checked(_fileOffset + _length);
         for (var i = 0; i < destination.Length; i++)
         {
