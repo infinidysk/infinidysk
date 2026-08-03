@@ -76,6 +76,56 @@ public class WebsocketManagerTests
     }
 
     [Fact]
+    public async Task KeyedStateMessages_CoalesceToLatestValuePerItem()
+    {
+        var manager = new WebsocketManager();
+        manager.SimulateSubscribe(WebsocketTopic.LiveStats);
+        manager.SimulateSubscribe(WebsocketTopic.QueueItemProgress);
+        manager.SimulateSubscribe(WebsocketTopic.HealthItemProgress);
+        using var socket = new TestWebSocket(blockSends: true);
+        var detach = manager.AttachAuthenticatedSocketForTests(socket);
+
+        try
+        {
+            await manager.SendMessage(WebsocketTopic.LiveStats, "blocked");
+            await socket.SendStarted.WaitAsync(TimeSpan.FromSeconds(1));
+
+            await manager.SendMessage(WebsocketTopic.QueueItemProgress, "queue-a|10");
+            await manager.SendMessage(WebsocketTopic.QueueItemProgress, "queue-b|20");
+            await manager.SendMessage(WebsocketTopic.QueueItemProgress, "queue-a|90");
+            await manager.SendMessage(WebsocketTopic.QueueItemProgress, "queue-b|100");
+            await manager.SendMessage(WebsocketTopic.HealthItemProgress, "health-a|25");
+            await manager.SendMessage(WebsocketTopic.HealthItemProgress, "health-b|50");
+            await manager.SendMessage(WebsocketTopic.HealthItemProgress, "health-a|done");
+            await manager.SendMessage(WebsocketTopic.HealthItemProgress, "health-b|done");
+
+            socket.ReleaseSends();
+            await WaitUntil(() => socket.Messages.Count == 5);
+
+            var messages = socket.Messages.Select(Parse).ToList();
+            Assert.Equal(
+                ["queue-a|90", "queue-b|100"],
+                messages
+                    .Where(x => x.Topic == WebsocketTopic.QueueItemProgress.Name)
+                    .Select(x => x.Message)
+                    .Order());
+            Assert.Equal(
+                ["health-a|done", "health-b|done"],
+                messages
+                    .Where(x => x.Topic == WebsocketTopic.HealthItemProgress.Name)
+                    .Select(x => x.Message)
+                    .Order());
+        }
+        finally
+        {
+            manager.SimulateUnsubscribe(WebsocketTopic.LiveStats);
+            manager.SimulateUnsubscribe(WebsocketTopic.QueueItemProgress);
+            manager.SimulateUnsubscribe(WebsocketTopic.HealthItemProgress);
+            await detach();
+        }
+    }
+
+    [Fact]
     public async Task EventQueueOverflow_DropsOldestEventsAndKeepsSocketConnected()
     {
         var manager = new WebsocketManager();

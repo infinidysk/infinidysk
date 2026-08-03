@@ -91,8 +91,9 @@ public class WebsocketManager
         }
 
         var bytes = SerializeMessage(topic, message);
+        var messageKey = GetMessageKey(topic, message);
         foreach (var session in sessions)
-            session.TryEnqueue(topic, bytes);
+            session.TryEnqueue(topic, messageKey, bytes);
 
         return Task.CompletedTask;
     }
@@ -250,7 +251,7 @@ public class WebsocketManager
             if (!_lastMessage.TryGetValue(topic, out lastMsg)) return;
         }
 
-        session.TryEnqueue(topic, SerializeMessage(topic, lastMsg));
+        session.TryEnqueue(topic, GetMessageKey(topic, lastMsg), SerializeMessage(topic, lastMsg));
     }
 
     private SocketSession AddSocket(WebSocket socket, bool replayState = false)
@@ -272,7 +273,10 @@ public class WebsocketManager
 
             foreach (var message in _lastMessage)
                 if (message.Key.Type == WebsocketTopic.TopicType.State)
-                    session.TryEnqueue(message.Key, SerializeMessage(message.Key, message.Value));
+                    session.TryEnqueue(
+                        message.Key,
+                        GetMessageKey(message.Key, message.Value),
+                        SerializeMessage(message.Key, message.Value));
         }
 
         return session;
@@ -401,6 +405,13 @@ public class WebsocketManager
         return new ArraySegment<byte>(Encoding.UTF8.GetBytes(topicMessage.ToJson()));
     }
 
+    private static string? GetMessageKey(WebsocketTopic topic, string message)
+    {
+        if (!topic.IsKeyed) return null;
+        var separator = message.IndexOf('|');
+        return separator > 0 ? message[..separator] : null;
+    }
+
     private sealed class TopicMessage(WebsocketTopic topic, string message)
     {
         public string Topic { get; } = topic.Name;
@@ -411,6 +422,7 @@ public class WebsocketManager
     {
         private readonly object _stateLock = new();
         private readonly Dictionary<WebsocketTopic, ArraySegment<byte>> _pendingState = new();
+        private readonly Dictionary<(WebsocketTopic Topic, string Key), ArraySegment<byte>> _pendingKeyedState = new();
         private readonly Channel<ArraySegment<byte>> _eventMessages;
         private readonly Channel<bool> _workSignal =
             Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
@@ -465,7 +477,7 @@ public class WebsocketManager
             }
         }
 
-        public bool TryEnqueue(WebsocketTopic topic, ArraySegment<byte> message)
+        public bool TryEnqueue(WebsocketTopic topic, string? messageKey, ArraySegment<byte> message)
         {
             if (Volatile.Read(ref _stopped) != 0) return false;
 
@@ -474,7 +486,10 @@ public class WebsocketManager
                 lock (_stateLock)
                 {
                     if (_stopped != 0) return false;
-                    _pendingState[topic] = message;
+                    if (topic.IsKeyed && messageKey is not null)
+                        _pendingKeyedState[(topic, messageKey)] = message;
+                    else
+                        _pendingState[topic] = message;
                 }
             }
             else if (!_eventMessages.Writer.TryWrite(message))
@@ -496,8 +511,12 @@ public class WebsocketManager
         {
             lock (_stateLock)
             {
-                var messages = _pendingState.Values.ToList();
+                var messages = new List<ArraySegment<byte>>(
+                    _pendingState.Count + _pendingKeyedState.Count);
+                messages.AddRange(_pendingState.Values);
+                messages.AddRange(_pendingKeyedState.Values);
                 _pendingState.Clear();
+                _pendingKeyedState.Clear();
                 return messages;
             }
         }
