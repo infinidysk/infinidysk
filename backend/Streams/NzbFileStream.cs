@@ -20,7 +20,8 @@ public class NzbFileStream(
     bool usePipelinedBodyRequests = true,
     string? fileName = null,
     string[][]? segmentFallbacks = null,
-    InFlightArticleBudget? inFlightArticleBudget = null
+    InFlightArticleBudget? inFlightArticleBudget = null,
+    bool useContainerAwareFill = false
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
@@ -172,7 +173,7 @@ public class NzbFileStream(
                     // The probe segment itself is missing — fall back to a
                     // synthetic uniform-size range so interpolation can still
                     // converge. The actual body read of this segment (if it
-                    // turns out to be the seek target) gets zero-filled by
+                    // turns out to be the seek target) gets a same-length gap from
                     // MultiSegmentStream.
                     Log.Warning(
                         "Seek probe hit missing article {SegmentId} (segment index {Index}) while reading {FileName}. Using estimated range.",
@@ -240,7 +241,7 @@ public class NzbFileStream(
         {
             // The segment that should contain this offset delivered fewer bytes than the
             // index says it holds. Returning the exhausted stream would answer the range
-            // request with zeros or nothing at all, so report the seek as impossible.
+                // request with placeholder bytes or nothing at all, so report the seek as impossible.
             await stream.DisposeAsync().ConfigureAwait(false);
             throw new SeekPositionNotFoundException(
                 $"Byte position {rangeStart} of \"{fileName ?? "unknown"}\" is past the data " +
@@ -330,8 +331,8 @@ public class NzbFileStream(
                 {
                     // The guess was right (headers matched) but the body read failed,
                     // e.g. a mid-stream NNTP read timeout. Fall back to the slow seek
-                    // path, whose MultiSegmentStream retries and zero-fills instead of
-                    // surfacing a hard error to the WebDAV client.
+                    // path, whose MultiSegmentStream applies the normal retry and
+                    // failure policy for the segment.
                     var displayName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
                     if (e.TryGetKnownErrorMessage(out var reason))
                     {
@@ -397,6 +398,7 @@ public class NzbFileStream(
         var exactSizes = ExactSegmentSizes is { } sizes
             ? sizes.AsMemory(firstSegmentIndex)
             : default;
+        var firstSegmentFileOffset = _segmentByteRanges?[firstSegmentIndex].StartInclusive;
 
         return MultiSegmentStream.Create(
             segmentIds,
@@ -409,7 +411,9 @@ public class NzbFileStream(
             fileName,
             segmentFallbacks: fallbacks,
             exactSegmentSizes: exactSizes,
-            inFlightArticleBudget: inFlightArticleBudget);
+            inFlightArticleBudget: inFlightArticleBudget,
+            useContainerAwareFill: useContainerAwareFill,
+            firstSegmentFileOffset: firstSegmentFileOffset);
     }
 
     protected override void Dispose(bool disposing)

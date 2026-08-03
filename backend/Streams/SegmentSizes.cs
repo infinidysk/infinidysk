@@ -2,7 +2,7 @@ namespace NzbWebDAV.Streams;
 
 /// <summary>
 /// Tracks how many bytes each segment of a file must contribute to the reconstructed
-/// stream. A segment that fails may only be replaced with zeros when its length is
+/// stream. A segment that fails may only be replaced with gap bytes when its length is
 /// known precisely: any other length shifts every following byte in the file, which
 /// corrupts playback far beyond the segment that actually failed.
 /// </summary>

@@ -37,6 +37,7 @@ public static class ConfigKeys
     public const string UsenetArticleBufferSize = "usenet.article-buffer-size";
     public const string UsenetArticleMissCacheTtlSeconds = "usenet.article-miss-cache-ttl-seconds";
     public const string UsenetArticleMissCacheMaxEntries = "usenet.article-miss-cache-max-entries";
+    public const string UsenetContainerAwareFill = "usenet.container-aware-fill";
     public const string UsenetInFlightArticleBudgetMb = "usenet.in-flight-article-budget-mb";
     public const string UsenetCascadeEnabled = "usenet.cascade.enabled";
     public const string UsenetCascadeRetryPrimaryOnMiss = "usenet.cascade.retry-primary-on-miss";

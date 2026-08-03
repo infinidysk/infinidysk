@@ -109,6 +109,36 @@ public class SegmentAlignmentTests
     }
 
     [Fact]
+    public async Task ContainerAwareFill_UsesMatroskaVoidWithoutChangingFollowingOffsets()
+    {
+        var client = CreateClient(new Dictionary<string, byte[]>
+        {
+            ["one"] = First,
+            ["three"] = Third,
+        });
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "one", "two", "three" }.AsMemory(),
+            client,
+            articleBufferSize: 4,
+            estimatedSegmentSize: 6,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            cancellationToken: CancellationToken.None,
+            fileName: "movie.mkv",
+            exactSegmentSizes: new long[] { 5, 7, 5 },
+            useContainerAwareFill: true,
+            firstSegmentFileOffset: 0);
+
+        var output = await ReadAllAsync(stream);
+
+        Assert.Equal(17, output.Length);
+        Assert.Equal("aaaaa", Encoding.ASCII.GetString(output, 0, 5));
+        Assert.Equal(new byte[] { 0xEC, 0x81, 0x00, 0xEC, 0x80, 0xEC, 0x80 }, output[5..12]);
+        Assert.Equal("ccccc", Encoding.ASCII.GetString(output, 12, 5));
+    }
+
+    [Fact]
     public async Task ResponseForAnotherSegment_IsRejectedAndRefetched()
     {
         var client = CreateClient();

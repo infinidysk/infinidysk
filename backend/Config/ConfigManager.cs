@@ -355,6 +355,7 @@ public class ConfigManager
                 case ConfigKeys.UsenetPipeliningEnabled:
                 case ConfigKeys.UsenetCascadeEnabled:
                 case ConfigKeys.UsenetCascadeRetryPrimaryOnMiss:
+                case ConfigKeys.UsenetContainerAwareFill:
                 case ConfigKeys.UsenetPipelinedBodyRequests:
                 case ConfigKeys.UsenetSegmentCacheEnabled:
                 case ConfigKeys.PlayWatchdogEnabled:
@@ -853,6 +854,13 @@ public class ConfigManager
         var configValue = StringUtil.EmptyToNull(
             GetConfigValue(ConfigKeys.UsenetPipelinedBodyRequests));
         return configValue == null || bool.Parse(configValue);
+    }
+
+    public bool IsContainerAwareFillEnabled()
+    {
+        var configValue = StringUtil.EmptyToNull(
+            GetConfigValue(ConfigKeys.UsenetContainerAwareFill));
+        return configValue != null && bool.Parse(configValue);
     }
 
     public bool IsSegmentCacheEnabled()

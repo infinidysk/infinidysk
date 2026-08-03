@@ -66,3 +66,26 @@ re-probing the same provider for the same article until the TTL expires. Transie
 | Miss-cache max entries | `usenet.article-miss-cache-max-entries` | `10000` | Cap before oldest entries are evicted (clamped 100–1000000) |
 
 The cache clears automatically when Usenet providers are reconfigured.
+
+## Experimental container-aware gap fill [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+
+When a confirmed-missing or persistently corrupt article cannot be recovered from any
+provider or fallback Message-ID, NzbDAV normally emits the same number of zero bytes to
+keep every later file offset correct. Enable **Container-aware gap fill** to emit
+format-native discard markers instead for supported direct files:
+
+- Matroska (`.mkv`, `.mk3d`, `.webm`): dense EBML Void elements.
+- MPEG-TS (`.ts`, `.m2ts`, `.mts`): packet-aligned null packets when exact segment
+  offsets are available.
+
+This may help compatible players resynchronize sooner, but it cannot restore the missing
+audio or video data. MP4/MOV and archive-backed files retain zero-fill because inserting
+container boxes into media or compressed payload would not be valid.
+
+The setting is experimental and defaults to off. It does not affect transient transport
+failures: after their retries are exhausted, the current HTTP response fails so the player
+can request the range again.
+
+| Control | Config key | Default |
+|---------|------------|---------|
+| Container-aware gap fill | `usenet.container-aware-fill` | off |

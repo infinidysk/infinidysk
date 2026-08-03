@@ -26,6 +26,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly long _estimatedSegmentSize;
     private readonly SegmentSizes _segmentSizes;
     private readonly bool _failFastOnFirstSegment;
+    private readonly bool _useContainerAwareFill;
+    private readonly long? _firstSegmentFileOffset;
     private readonly string _fileName;
     private readonly Channel<Task<SegmentDownloadResult>> _streamTasks;
     private readonly int _bodyPipelineBatchSize;
@@ -64,7 +66,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         string? fileName = null,
         long? readBudget = null,
         string[][]? segmentFallbacks = null,
-        InFlightArticleBudget? inFlightArticleBudget = null)
+        InFlightArticleBudget? inFlightArticleBudget = null,
+        bool useContainerAwareFill = false,
+        long? firstSegmentFileOffset = null)
     {
         return Create(
             segmentIds,
@@ -77,7 +81,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             fileName,
             readBudget,
             segmentFallbacks,
-            inFlightArticleBudget: inFlightArticleBudget);
+            inFlightArticleBudget: inFlightArticleBudget,
+            useContainerAwareFill: useContainerAwareFill,
+            firstSegmentFileOffset: firstSegmentFileOffset);
     }
 
     /// <param name="estimatedSegmentSize">
@@ -88,7 +94,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// <param name="exactSegmentSizes">
     /// Exact decoded size of each segment in <paramref name="segmentIds"/>, in the same
     /// order. Supplied when the import recorded per-segment byte ranges, and required
-    /// before a failed segment may be replaced with zeros.
+    /// before a failed segment may be replaced with same-length gap bytes.
     /// </param>
     public static Stream Create
     (
@@ -103,13 +109,15 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         long? readBudget = null,
         string[][]? segmentFallbacks = null,
         ReadOnlyMemory<long> exactSegmentSizes = default,
-        InFlightArticleBudget? inFlightArticleBudget = null
+        InFlightArticleBudget? inFlightArticleBudget = null,
+        bool useContainerAwareFill = false,
+        long? firstSegmentFileOffset = null
     )
     {
         return articleBufferSize == 0
             ? new UnbufferedMultiSegmentStream(
                 segmentIds, usenetClient, estimatedSegmentSize, fileName, segmentFallbacks,
-                exactSegmentSizes)
+                exactSegmentSizes, useContainerAwareFill, firstSegmentFileOffset)
             : new MultiSegmentStream(
                 segmentIds,
                 usenetClient,
@@ -122,7 +130,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 readBudget,
                 segmentFallbacks,
                 exactSegmentSizes,
-                inFlightArticleBudget);
+                inFlightArticleBudget,
+                useContainerAwareFill,
+                firstSegmentFileOffset);
     }
 
     private MultiSegmentStream
@@ -138,7 +148,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         long? readBudget,
         string[][]? segmentFallbacks,
         ReadOnlyMemory<long> exactSegmentSizes,
-        InFlightArticleBudget? inFlightArticleBudget
+        InFlightArticleBudget? inFlightArticleBudget,
+        bool useContainerAwareFill,
+        long? firstSegmentFileOffset
     )
     {
         _segmentIds = segmentIds;
@@ -147,6 +159,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _estimatedSegmentSize = estimatedSegmentSize;
         _segmentSizes = new SegmentSizes(exactSegmentSizes, segmentIds.Length);
         _failFastOnFirstSegment = failFastOnFirstSegment;
+        _useContainerAwareFill = useContainerAwareFill;
+        _firstSegmentFileOffset = firstSegmentFileOffset;
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
         _readBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
         _budget = inFlightArticleBudget ?? InFlightArticleBudget.Current;
@@ -386,7 +400,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 }
 
                 return ZeroFillSegment(
-                    "Article {SegmentId} missing on all providers while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
+                    "Article {SegmentId} missing on all providers while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
                     e.SegmentId,
                     segmentIndex,
                     e);
@@ -412,7 +426,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     }
 
                     return ZeroFillSegment(
-                        "Article {SegmentId} persistently corrupt while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
+                        "Article {SegmentId} persistently corrupt while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
                         segmentId,
                         segmentIndex,
                         e);
@@ -492,7 +506,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
             if (_failFastOnFirstSegment && isFirstSegment) throw;
             return ZeroFillSegment(
-                "Article {SegmentId} missing on all providers while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
+                "Article {SegmentId} missing on all providers while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
                 e.SegmentId,
                 segmentIndex,
                 e);
@@ -512,7 +526,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 if (_failFastOnFirstSegment && isFirstSegment) throw;
                 return ZeroFillSegment(
-                    "Article {SegmentId} persistently corrupt while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
+                    "Article {SegmentId} persistently corrupt while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
                     segmentId,
                     segmentIndex,
                     persistent);
@@ -701,10 +715,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     }
 
     /// <summary>
-    /// Substitutes zeros for a segment that could not be downloaded, but only for its
-    /// exact length. Every byte after this segment is positioned by how many bytes it
-    /// contributes, so a wrong length corrupts the rest of the file instead of just the
-    /// part that failed — better to fail the read and let the player retry or report it.
+    /// Substitutes a bounded gap for a segment that could not be downloaded, but only for
+    /// a known fill length. Every byte after this segment is positioned by how many bytes
+    /// it contributes, so a wrong length corrupts the rest of the file instead of just
+    /// the part that failed — better to fail the read and let the player retry or report it.
     /// </summary>
     private SegmentDownloadResult ZeroFillSegment(
         string messageTemplate,
@@ -723,12 +737,42 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
 
         return SegmentDownloadResult.ZeroFill(
-            new ZeroStream(fill),
+            CreateGapFillStream(fill, segmentIndex),
             messageTemplate,
             segmentId,
             fill,
             exception,
             GetPlannedSegmentBytes(segmentIndex));
+    }
+
+    private Stream CreateGapFillStream(long fill, int segmentIndex)
+    {
+        if (!_useContainerAwareFill)
+            return new ZeroStream(fill);
+
+        long? fileOffset = _firstSegmentFileOffset;
+        if (fileOffset is not null)
+        {
+            try
+            {
+                for (var i = 0; i < segmentIndex; i++)
+                {
+                    if (!_segmentSizes.TryGetExactSize(i, out var size))
+                    {
+                        fileOffset = null;
+                        break;
+                    }
+
+                    fileOffset = checked(fileOffset.Value + size);
+                }
+            }
+            catch (OverflowException)
+            {
+                fileOffset = null;
+            }
+        }
+
+        return ContainerAwareFillStream.Create(_fileName, fill, fileOffset);
     }
 
     private Exception CreateUnknownLengthFailure(string segmentId, int segmentIndex, Exception failure)
@@ -1020,7 +1064,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         result.Stream.Dispose();
         _cts.Cancel();
         ExceptionDispatchInfo.Capture(result.Failure!).Throw();
-        throw new InvalidOperationException("Unreachable after rethrowing a zero-fill failure.");
+        throw new InvalidOperationException("Unreachable after rethrowing a gap-fill failure.");
     }
 
     private void ThrowIfDisposed()

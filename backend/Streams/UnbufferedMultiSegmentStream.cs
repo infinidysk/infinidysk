@@ -16,6 +16,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly INntpClient _usenetClient;
     private readonly SegmentSizes _segmentSizes;
     private readonly string _fileName;
+    private readonly bool _useContainerAwareFill;
+    private readonly long? _firstSegmentFileOffset;
     private Stream? _stream;
     private int _currentIndex;
     private int _openSegmentIndex = -1;
@@ -31,13 +33,17 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         long estimatedSegmentSize,
         string? fileName = null,
         string[][]? segmentFallbacks = null,
-        ReadOnlyMemory<long> exactSegmentSizes = default)
+        ReadOnlyMemory<long> exactSegmentSizes = default,
+        bool useContainerAwareFill = false,
+        long? firstSegmentFileOffset = null)
     {
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
         _usenetClient = usenetClient;
         _segmentSizes = new SegmentSizes(exactSegmentSizes, segmentIds.Length);
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
+        _useContainerAwareFill = useContainerAwareFill;
+        _firstSegmentFileOffset = firstSegmentFileOffset;
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
@@ -96,7 +102,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
 
                         _consecutiveZeroFills++;
                         ZeroFillLogLimiter.Write(
-                            "Article {SegmentId} missing on all providers while reading {FileName}. Zero-filling {Bytes} bytes to keep playback alive.",
+                            "Article {SegmentId} missing on all providers while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
                             e.SegmentId,
                             _fileName,
                             fill,
@@ -106,7 +112,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                         if (_consecutiveZeroFills >= MaxConsecutiveZeroFills)
                             throw;
 
-                        _stream = new ZeroStream(fill);
+                        _stream = CreateGapFillStream(fill, segmentIndex);
                     }
                 }
             }
@@ -148,6 +154,36 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
 
             await FinishOpenSegmentAsync().ConfigureAwait(false);
         }
+    }
+
+    private Stream CreateGapFillStream(long fill, int segmentIndex)
+    {
+        if (!_useContainerAwareFill)
+            return new ZeroStream(fill);
+
+        long? fileOffset = _firstSegmentFileOffset;
+        if (fileOffset is not null)
+        {
+            try
+            {
+                for (var i = 0; i < segmentIndex; i++)
+                {
+                    if (!_segmentSizes.TryGetExactSize(i, out var size))
+                    {
+                        fileOffset = null;
+                        break;
+                    }
+
+                    fileOffset = checked(fileOffset.Value + size);
+                }
+            }
+            catch (OverflowException)
+            {
+                fileOffset = null;
+            }
+        }
+
+        return ContainerAwareFillStream.Create(_fileName, fill, fileOffset);
     }
 
     private bool TryGetRemainingExactBytes(out long remaining)

@@ -847,6 +847,36 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
             </section>
             </ManagedSetting>
 
+            <ManagedSetting configKey="usenet.container-aware-fill">
+                <section className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <h2 className="text-sm font-semibold text-base-content">Container-aware gap fill</h2>
+                                <Badge className="badge-warning badge-outline badge-xs">Experimental</Badge>
+                            </div>
+                            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-base-content/60">
+                                For permanently missing data in direct MKV/WebM and MPEG-TS files, emit native discard
+                                markers instead of raw zeros so compatible players can resynchronize sooner. Archive-backed
+                                files and unsupported containers keep the existing zero-fill behavior.
+                            </p>
+                        </div>
+                        <Tooltip content="Experimental. Applies only after all missing/corrupt article fallbacks are exhausted; transient transport failures still abort so the player can retry the range.">
+                            <Toggle
+                                id="container-aware-fill"
+                                className="shrink-0 cursor-pointer gap-2 p-0"
+                                checked={config["usenet.container-aware-fill"] === "true"}
+                                onChange={(e) => setNewConfig({
+                                    ...config,
+                                    "usenet.container-aware-fill": e.target.checked ? "true" : "false",
+                                })}
+                                label={<span className="text-sm text-base-content">Enable</span>}
+                            />
+                        </Tooltip>
+                    </div>
+                </section>
+            </ManagedSetting>
+
             <ManagedSetting configKey="usenet.providers">
             <section className="space-y-3">
                 <div className="flex items-end justify-between gap-4">
@@ -2248,6 +2278,7 @@ export function isUsenetSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.cascade.retry-primary-on-miss"] !== newConfig["usenet.cascade.retry-primary-on-miss"]
         || config["usenet.article-miss-cache-ttl-seconds"] !== newConfig["usenet.article-miss-cache-ttl-seconds"]
         || config["usenet.article-miss-cache-max-entries"] !== newConfig["usenet.article-miss-cache-max-entries"]
+        || config["usenet.container-aware-fill"] !== newConfig["usenet.container-aware-fill"]
 }
 
 export function isPositiveInteger(value: string) {

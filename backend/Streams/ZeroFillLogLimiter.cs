@@ -5,7 +5,7 @@ using Serilog;
 namespace NzbWebDAV.Streams;
 
 /// <summary>
-/// Coalesces zero-fill warnings by file so a release with many unavailable
+/// Coalesces gap-fill warnings by file so a release with many unavailable
 /// articles cannot flood the application log.
 /// </summary>
 internal static class ZeroFillLogLimiter
@@ -53,7 +53,7 @@ internal static class ZeroFillLogLimiter
             if (suppressed > 0)
             {
                 Log.Warning(
-                    "Suppressed {SuppressedCount} additional zero-fill warnings for {FileName} in the previous 60 seconds.",
+                    "Suppressed {SuppressedCount} additional gap-fill warnings for {FileName} in the previous 60 seconds.",
                     suppressed,
                     fileName);
             }

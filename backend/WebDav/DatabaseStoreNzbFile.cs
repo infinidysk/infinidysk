@@ -45,7 +45,8 @@ public class DatabaseStoreNzbFile(
             configManager.IsPipelinedBodyRequestsEnabled(),
             davNzbFile.Path,
             nzbFile.SegmentFallbackIds,
-            inFlightArticleBudget
+            inFlightArticleBudget,
+            useContainerAwareFill: configManager.IsContainerAwareFillEnabled()
         );
     }
 }
