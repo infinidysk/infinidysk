@@ -349,8 +349,21 @@ public class MultiConnectionNntpClient(
             {
                 deferredCallback.Discard();
                 var wasReused = connectionLock?.WasReused ?? false;
-                if (!wasReused)
+                if (connectionLock is null)
+                {
+                    // The failure happened while establishing a connection. Trip
+                    // immediately (mirrors RunWithConnection) so an unreachable
+                    // provider hit through streaming fails over without burning
+                    // connect timeouts until the sampling window fills. A client
+                    // abort mid-connect can surface as an IOException rather than
+                    // a cancellation exception, so it is filtered here too.
+                    if (!ct.IsCancellationRequested)
+                        circuitBreaker.RecordConnectionFailure($"pipeline-get-connection-{e.GetType().Name}");
+                }
+                else if (!wasReused)
+                {
                     circuitBreaker.RecordFailure($"pipeline-setup-{e.GetType().Name}");
+                }
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
 
@@ -439,7 +452,11 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e)
             {
-                circuitBreaker.RecordConnectionFailure($"get-connection-{e.GetType().Name}");
+                // A client abort (seek/stop) mid-connect can surface as an
+                // IOException/SocketException rather than a cancellation
+                // exception; it must not trip a healthy provider.
+                if (!ct.IsCancellationRequested)
+                    circuitBreaker.RecordConnectionFailure($"get-connection-{e.GetType().Name}");
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
                 if (retryCount > 0)
@@ -661,10 +678,11 @@ public class MultiConnectionNntpClient(
 
     /// <summary>
     /// STAT pipeline lease: inherits download priority from the caller's token (High for
-    /// playback verification, Low for hosted health), no circuit-breaker updates (matching
-    /// single StatAsync). Still replaces the connection on hard failure because UsenetSharp
-    /// poisons it mid-batch. Acquisition goes through the shared helper so the pool wait
-    /// is instrumented and arbitrated like every other command.
+    /// playback verification, Low for hosted health), no circuit-breaker updates for STAT
+    /// outcomes (matching single StatAsync) — connection-establishment failures still trip
+    /// because they are command-agnostic. Still replaces the connection on hard failure
+    /// because UsenetSharp poisons it mid-batch. Acquisition goes through the shared helper
+    /// so the pool wait is instrumented and arbitrated like every other command.
     /// </summary>
     private async IAsyncEnumerable<PipelinedStatResult> RunPipelinedStatAsync(
         Func<INntpClient, IAsyncEnumerable<PipelinedStatResult>> batchFactory,
@@ -672,7 +690,7 @@ public class MultiConnectionNntpClient(
     {
         var workload = DownloadWorkloadClassifier.Classify(cancellationToken);
         var operation = NntpOperation.PipelinedStat;
-        var connectionLock = await AcquireConnectionLockAsync(
+        var connectionLock = await AcquireConnectionLockRecordingFailureAsync(
                 GetDownloadPriority(cancellationToken), workload, operation, cancellationToken)
             .ConfigureAwait(false);
         var completed = false;
@@ -725,7 +743,7 @@ public class MultiConnectionNntpClient(
     {
         var workload = DownloadWorkloadClassifier.Classify(cancellationToken);
         var priority = GetDownloadPriority(cancellationToken);
-        var connectionLock = await AcquireConnectionLockAsync(
+        var connectionLock = await AcquireConnectionLockRecordingFailureAsync(
                 priority, workload, operation, cancellationToken)
             .ConfigureAwait(false);
         var completed = false;
@@ -803,6 +821,38 @@ public class MultiConnectionNntpClient(
         latencyTracker?.Record(MetricsKey, LatencyPhase.PoolWait, workload, operation, elapsed);
         StreamTrace.TryConnectionAcquired(traceRange, elapsed, connectionLock.WasReused);
         return connectionLock;
+    }
+
+    /// <summary>
+    /// Acquisition wrapper for the pipelined enumerable paths, which have no retry loop
+    /// of their own: a connection-establishment failure trips the breaker immediately
+    /// (mirrors RunWithConnection) so an unreachable provider fails over instead of
+    /// burning full connect timeouts on every batch. Caller cancellation and pool
+    /// retirement are not provider-health failures and pass through untouched.
+    /// </summary>
+    private async Task<ConnectionLock<INntpClient>> AcquireConnectionLockRecordingFailureAsync(
+        SemaphorePriority priority,
+        DownloadWorkload workload,
+        NntpOperation operation,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await AcquireConnectionLockAsync(priority, workload, operation, ct)
+                .ConfigureAwait(false);
+        }
+        catch (NntpClientRetiredException)
+        {
+            throw;
+        }
+        catch (Exception e) when (!e.IsCancellationException())
+        {
+            // A client abort mid-connect can surface as an IOException rather than
+            // a cancellation exception; it must not trip a healthy provider.
+            if (!ct.IsCancellationRequested)
+                circuitBreaker.RecordConnectionFailure($"pipelined-get-connection-{e.GetType().Name}");
+            throw;
+        }
     }
 
     /// <summary>

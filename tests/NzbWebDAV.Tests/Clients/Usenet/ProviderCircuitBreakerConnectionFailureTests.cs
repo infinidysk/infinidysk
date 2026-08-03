@@ -51,6 +51,91 @@ public class ProviderCircuitBreakerConnectionFailureTests
     }
 
     [Fact]
+    public async Task RunWithConnection_ClientAbortMidConnect_DoesNotTripBreaker()
+    {
+        var breaker = new ProviderCircuitBreaker("aborted");
+        using var cts = new CancellationTokenSource();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ =>
+            {
+                // A client abort (seek/stop) mid-connect can surface as a
+                // transport error rather than a cancellation exception.
+                cts.Cancel();
+                throw new IOException("Connection aborted.");
+            });
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            breaker,
+            "aborted");
+
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => client.StatAsync("segment", cts.Token));
+
+        Assert.Equal(ProviderCircuitState.Closed, breaker.GetSnapshot().State);
+        Assert.Equal(0, breaker.GetSnapshot().TripCount);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_ConnectionFailureTripsImmediately()
+    {
+        var attempts = 0;
+        var breaker = new ProviderCircuitBreaker("unreachable-batch");
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ =>
+            {
+                Interlocked.Increment(ref attempts);
+                throw new IOException("Provider is unreachable.");
+            });
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            breaker,
+            "unreachable-batch");
+
+        await Assert.ThrowsAsync<IOException>(
+            () => client.DecodedBodiesAsync(
+                new List<SegmentId> { "segment" },
+                onConnectionReadyAgain: null,
+                CancellationToken.None));
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(2, attempts);
+        Assert.Equal(ProviderCircuitState.Open, snapshot.State);
+        Assert.Equal(1, snapshot.FailureCount);
+        Assert.Equal(1, snapshot.TripCount);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesPipelinedAsync_ConnectionFailureTripsImmediately()
+    {
+        var breaker = new ProviderCircuitBreaker("unreachable-pipelined");
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => throw new IOException("Provider is unreachable."));
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            breaker,
+            "unreachable-pipelined");
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+        {
+            await foreach (var _ in client.DecodedBodiesPipelinedAsync(
+                               ["segment"], depth: 1, CancellationToken.None))
+            {
+            }
+        });
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(ProviderCircuitState.Open, snapshot.State);
+        Assert.Equal(1, snapshot.FailureCount);
+        Assert.Equal(1, snapshot.TripCount);
+    }
+
+    [Fact]
     public async Task MultiProvider_ConcurrentRequestsAfterConnectionFailure_UseHealthyFallback()
     {
         var primaryAttempts = 0;
