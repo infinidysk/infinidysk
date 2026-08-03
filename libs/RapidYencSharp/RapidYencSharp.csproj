@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Authors>RapidYencSharp Contributors</Authors>
+    <Description>NzbDav .NET bindings for rapidyenc, a high-performance yEnc encoding and decoding library.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Native libs produced by scripts/build-rapidyenc.sh into runtimes/<rid>/native/ -->
+    <None Include="runtimes/**/*" CopyToOutputDirectory="PreserveNewest" Condition="Exists('runtimes')" />
+  </ItemGroup>
+
+</Project>

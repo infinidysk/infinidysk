@@ -89,16 +89,26 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          submodules: true
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6.0.0
         with:
           dotnet-version: 10.0.x
 
+      - name: Install native build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
+
+      - name: Build rapidyenc (linux-x64)
+        run: scripts/build-rapidyenc.sh linux-x64
+
       - name: Verify formatting
         run: |
           dotnet format whitespace --verify-no-changes --folder backend
           dotnet format whitespace --verify-no-changes --folder tests
+          dotnet format whitespace --verify-no-changes --folder libs/UsenetSharp
+          dotnet format whitespace --verify-no-changes --folder libs/RapidYencSharp
 
       - name: Cache NuGet packages
         uses: actions/cache@v6
@@ -108,11 +118,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      - name: Restore backend
+      - name: Restore backend and library tests
         run: |
           dotnet restore backend/NzbWebDAV.csproj
           dotnet restore tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj
           dotnet restore tests/SharpCompress.Tests/SharpCompress.Tests.csproj
+          dotnet restore tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj
+          dotnet restore tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj
 
       - name: Verify NuGet vulnerability gate fixtures
         run: bash scripts/test-nuget-vulnerability-gate.sh
@@ -137,12 +149,63 @@ jobs:
       - name: Test SharpCompress
         run: dotnet test tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release --no-restore
 
+      - name: Test RapidYencSharp
+        env:
+          RAPIDYENC_LIBRARY_PATH: ${{ github.workspace }}/libs/RapidYencSharp/runtimes/linux-x64/native/librapidyenc.so
+        run: dotnet test tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj -c Release --no-restore
+
+      - name: Test UsenetSharp (deterministic)
+        env:
+          RAPIDYENC_LIBRARY_PATH: ${{ github.workspace }}/libs/RapidYencSharp/runtimes/linux-x64/native/librapidyenc.so
+        run: >
+          dotnet test tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj -c Release --no-restore
+          --filter "TestCategory!=Integration"
+
       - name: Upload backend coverage
         uses: actions/upload-artifact@v7
         with:
           name: backend-coverage
           path: TestResults/**/coverage.cobertura.xml
           if-no-files-found: ignore
+
+  macos-yenc:
+    name: macOS yEnc / library tests
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install native build tools
+        run: brew install cmake ninja
+
+      - name: Build rapidyenc (osx-arm64)
+        run: scripts/build-rapidyenc.sh osx-arm64
+
+      - name: Restore library tests
+        run: |
+          dotnet restore tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj
+          dotnet restore tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj
+
+      - name: Test RapidYencSharp
+        env:
+          RAPIDYENC_LIBRARY_PATH: ${{ github.workspace }}/libs/RapidYencSharp/runtimes/osx-arm64/native/librapidyenc.dylib
+        run: dotnet test tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj -c Release
+
+      - name: Test UsenetSharp (deterministic)
+        env:
+          RAPIDYENC_LIBRARY_PATH: ${{ github.workspace }}/libs/RapidYencSharp/runtimes/osx-arm64/native/librapidyenc.dylib
+        run: >
+          dotnet test tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj -c Release
+          --filter "TestCategory!=Integration"
 
   alpine-yenc:
     runs-on: ubuntu-latest
@@ -151,6 +214,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          submodules: true
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6.0.0
@@ -165,6 +230,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
+      - name: Build rapidyenc musl-x64 native
+        run: |
+          docker run --rm \
+            -v "$PWD/libs/rapidyenc:/src:ro" \
+            -v "$PWD/libs/RapidYencSharp/runtimes:/out" \
+            alpine:3.21 \
+            sh -c '
+              apk add --no-cache build-base cmake ninja >/dev/null
+              cmake -S /src -B /tmp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+              cmake --build /tmp/build --config Release --target rapidyenc_shared
+              mkdir -p /out/linux-musl-x64/native
+              lib_path="$(find /tmp/build -name librapidyenc.so -type f | head -n 1)"
+              test -n "$lib_path"
+              cp "$lib_path" /out/linux-musl-x64/native/librapidyenc.so
+            '
+
       - name: Publish backend for linux-musl-x64
         run: |
           dotnet publish backend/NzbWebDAV.csproj \
@@ -172,6 +253,7 @@ jobs:
             -r linux-musl-x64 \
             --self-contained false \
             -o ./publish-musl
+          cp libs/RapidYencSharp/runtimes/linux-musl-x64/native/librapidyenc.so ./publish-musl/
 
       - name: yEnc native self-test on Alpine
         run: |
@@ -192,6 +274,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          submodules: true
 
       - name: Detect runtime image changes
         id: changes
@@ -206,6 +289,7 @@ jobs:
             backend/NzbWebDAV.csproj \
             backend/nuget.config \
             libs/ \
+            .gitmodules \
             frontend/package.json \
             frontend/package-lock.json; then
             echo "build=false" >> "$GITHUB_OUTPUT"

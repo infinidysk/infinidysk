@@ -41,3 +41,10 @@ db.sqlite-wal
 metrics.sqlite
 metrics.sqlite-shm
 metrics.sqlite-wal
+
+#######################
+# In-tree native libs #
+#######################
+
+libs/RapidYencSharp/runtimes/
+libs/rapidyenc/build/
