@@ -175,7 +175,7 @@ services:
 
     Use **PascalCase** property names exactly as the Settings UI persists them (`Providers`, `Type`, `Host`, `RadarrInstances`, `Indexers`, `Profiles`, …). camelCase or misspelled keys abort startup with an error naming the JSON path of the offending property, so a typo cannot leave you with empty or partial configuration.
 
-    Provider `Type` for **Pool Connections** is `1` (`0` = Disabled, `2` = BackupAndStats, `3` = BackupOnly — see [Usenet](usenet.md)). Omit `ProviderId` in ENV JSON — NzbDAV preserves matching SQLite ids by host/port/user, or assigns new ones. Pure ENV-only first installs (no matching SQLite row) get new IDs each restart until a SQLite match exists, so metrics keys may drift.
+    Provider `Type` for **Pool Connections** is `1` (`0` = Disabled, `2` = BackupAndStats, `3` = BackupOnly — see [Usenet](usenet.md)). Omit `ProviderId` in ENV JSON — NzbDAV preserves matching SQLite ids by host/port/user, and otherwise derives one from host, port and user, so a pure ENV-only install keeps the same ids across restarts.
 
     Passwords containing `"`, `\`, or `$` can break JSON after Compose substitution; prefer `.env` values without those characters or inject secrets outside inline JSON.
 
