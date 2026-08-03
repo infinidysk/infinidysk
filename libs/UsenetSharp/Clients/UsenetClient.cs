@@ -1,10 +1,20 @@
 using System.IO.Pipelines;
+using RapidYencSharp;
 
 namespace UsenetSharp.Clients;
 
 public partial class UsenetClient : IUsenetClient, IDisposable, IAsyncDisposable
 {
     private int _disposeState;
+
+    static UsenetClient()
+    {
+        // Native *_init mutates global dispatch state and is not thread-safe across
+        // subsystems. Serialize encode/decode/CRC init before any concurrent first use.
+        YencEncoder.EnsureInitialized();
+        YencDecoder.EnsureInitialized();
+        Crc32.EnsureInitialized();
+    }
 
     public UsenetClient()
         : this(new UsenetClientOptions(), TimeProvider.System)

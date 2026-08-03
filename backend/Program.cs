@@ -375,6 +375,8 @@ public partial class Program
     /// </summary>
     private static void RunYencNativeSelfTest()
     {
+        // Log before native init so a hard crash during dispatch setup still leaves a breadcrumb.
+        Log.Information("Initializing yEnc native dispatch (rapidyenc)");
         try
         {
             RapidYencSharp.YencEncoder.EnsureInitialized();
