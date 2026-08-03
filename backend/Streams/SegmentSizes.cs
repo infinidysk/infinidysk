@@ -86,5 +86,20 @@ internal sealed class SegmentSizes(ReadOnlyMemory<long> exactSizes, int segmentC
         return false;
     }
 
+    /// <summary>
+    /// The uniform non-final segment size learned during this read session, or null if
+    /// no uniform size was established (no observations, non-uniform, or file already had
+    /// exact sizes from import).
+    /// </summary>
+    public long? LearnedUniformSize
+    {
+        get
+        {
+            if (!_exactSizes.IsEmpty) return null;
+            var observed = Interlocked.Read(ref _observedSize);
+            return observed > 0 ? observed : null;
+        }
+    }
+
     private bool IsFinalSegment(int segmentIndex) => segmentIndex == segmentCount - 1;
 }
