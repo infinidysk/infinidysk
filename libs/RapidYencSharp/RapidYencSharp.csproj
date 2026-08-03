@@ -10,11 +10,28 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <Authors>RapidYencSharp Contributors</Authors>
     <Description>NzbDav .NET bindings for rapidyenc, a high-performance yEnc encoding and decoding library.</Description>
+    <RapidYencRuntimeIdentifier Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</RapidYencRuntimeIdentifier>
+    <RapidYencRuntimeIdentifier Condition="'$(RapidYencRuntimeIdentifier)' == '' and '$(NETCoreSdkRuntimeIdentifier)' != ''">$(NETCoreSdkRuntimeIdentifier)</RapidYencRuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Native libs produced by scripts/build-rapidyenc.sh into runtimes/<rid>/native/ -->
-    <None Include="runtimes/**/*" CopyToOutputDirectory="PreserveNewest" Condition="Exists('runtimes')" />
+    <None Include="runtimes/**/*" CopyToOutputDirectory="PreserveNewest" />
+    <RapidYencMuslNative Include="runtimes/linux-musl-*/native/librapidyenc.so" />
   </ItemGroup>
+
+  <Target Name="EnsureRapidYencNative"
+          BeforeTargets="BeforeBuild"
+          Condition="'$(DesignTimeBuild)' != 'true'
+            and '$(SkipRapidYencNativeEnsure)' != 'true'
+            and '@(RapidYencMuslNative)' == ''">
+    <Exec Condition="'$(RapidYencRuntimeIdentifier)' == ''"
+          Command="bash &quot;$(MSBuildProjectDirectory)/../../scripts/ensure-rapidyenc-native.sh&quot;" />
+    <Exec Condition="'$(RapidYencRuntimeIdentifier)' != ''"
+          Command="bash &quot;$(MSBuildProjectDirectory)/../../scripts/ensure-rapidyenc-native.sh&quot; &quot;$(RapidYencRuntimeIdentifier)&quot;" />
+    <ItemGroup>
+      <!-- Refresh after the ensure step because MSBuild evaluates top-level globs before targets run. -->
+      <None Include="runtimes/**/*" Exclude="@(None)" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
 
 </Project>

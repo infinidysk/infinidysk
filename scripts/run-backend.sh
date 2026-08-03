@@ -124,10 +124,7 @@ ensure_rapidyenc_native() {
   esac
 
   lib_path="$ROOT_DIR/libs/RapidYencSharp/runtimes/$rid/native/$lib_name"
-  if [[ ! -f "$lib_path" ]]; then
-    echo "Building rapidyenc native library for $rid..."
-    "$ROOT_DIR/scripts/build-rapidyenc.sh" "$rid"
-  fi
+  "$ROOT_DIR/scripts/ensure-rapidyenc-native.sh" "$rid"
   if [[ ! -f "$lib_path" ]]; then
     echo "Error: expected native library missing at $lib_path" >&2
     exit 1
