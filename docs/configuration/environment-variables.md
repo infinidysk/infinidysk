@@ -35,6 +35,48 @@ Advanced reference for **process / container** wiring and **legacy Settings fall
 | `LOG_LEVEL` | `info` (prod) | Frontend log verbosity |
 | `VITE_ALLOWED_HOSTS` | unset | Dev/build host allowlist |
 | `NZBDAV_VERSION` / `NZBDAV_COMMIT_SHA` | image build | Version display |
+| `SERVICE_PROVIDER` | unset | Hosted-service branding and UI navigation feature gating |
+
+## `SERVICE_PROVIDER` [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+
+Hosted NzbDAV services can identify the service provider and mark selected
+navigation destinations as unavailable. Disabled destinations remain visible in
+the sidebar; selecting one explains that the feature is disabled by the provider
+and links to the provider's support page (or website). The provider attribution
+also appears in the page footer.
+
+Set `SERVICE_PROVIDER` to a JSON object on the frontend process:
+
+```yaml
+environment:
+  SERVICE_PROVIDER: >-
+    {"name":"ElfHosted","url":"https://elfhosted.com","supportUrl":"https://docs.elfhosted.com","disabledFeatures":["watchtower","search","settings.indexers","settings.profiles","settings.watchtower","settings.warden","settings.rclone"]}
+```
+
+The object requires:
+
+- `name`: service provider name shown in the dialog and footer
+- `url`: provider website using `http` or `https` (used in the footer link)
+- `disabledFeatures`: navigation identifiers to make unavailable
+
+Optional:
+
+- `supportUrl`: support page using `http` or `https`, used for the "Contact"
+  link in the disabled-feature dialog; falls back to `url` when omitted
+
+Top-level navigation identifiers are `overview`, `queue`, `watchdog`,
+`watchtower`, `explore`, `health`, `logs`, and `search`. `overview` cannot be
+disabled — it is the app's landing page and the fallback destination when
+closing the "feature not available" dialog, so it always stays reachable.
+
+Settings navigation identifiers are `settings.usenet`, `settings.indexers`,
+`settings.profiles`, `settings.watchdog`, `settings.preflight`,
+`settings.watchtower`, `settings.warden`, `settings.sabnzbd`,
+`settings.webdav`, `settings.arrs`, `settings.repairs`, `settings.rclone`,
+`settings.maintenance`, `settings.backup`, and `settings.support`.
+
+This controls frontend presentation only. Providers must separately configure
+or restrict backend capabilities when enforcement is required.
 
 ## Backend (.NET)
 

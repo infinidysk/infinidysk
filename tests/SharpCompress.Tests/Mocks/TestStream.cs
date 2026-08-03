@@ -1,0 +1,66 @@
+﻿using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace SharpCompress.Test.Mocks;
+
+public class TestStream(Stream stream, bool read, bool write, bool seek) : Stream
+{
+    public TestStream(Stream stream)
+        : this(stream, stream.CanRead, stream.CanWrite, stream.CanSeek) { }
+
+    public bool IsDisposed { get; private set; }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        stream.Dispose();
+        IsDisposed = true;
+    }
+
+    public override bool CanRead { get; } = read;
+
+    public override bool CanSeek { get; } = seek;
+
+    public override bool CanWrite { get; } = write;
+
+    public override void Flush() => stream.Flush();
+
+    public override long Length => stream.Length;
+
+    public override long Position
+    {
+        get => stream.Position;
+        set => stream.Position = value;
+    }
+
+    public override int Read(byte[] buffer, int offset, int count) =>
+        stream.Read(buffer, offset, count);
+
+    public override Task<int> ReadAsync(
+        byte[] buffer,
+        int offset,
+        int count,
+        CancellationToken cancellationToken
+    ) => stream.ReadAsync(buffer, offset, count, cancellationToken);
+
+    public override ValueTask<int> ReadAsync(
+        Memory<byte> buffer,
+        CancellationToken cancellationToken = default
+    ) => stream.ReadAsync(buffer, cancellationToken);
+
+    public override async ValueTask DisposeAsync()
+    {
+        await base.DisposeAsync();
+        await stream.DisposeAsync();
+        IsDisposed = true;
+    }
+
+    public override long Seek(long offset, SeekOrigin origin) => stream.Seek(offset, origin);
+
+    public override void SetLength(long value) => stream.SetLength(value);
+
+    public override void Write(byte[] buffer, int offset, int count) =>
+        stream.Write(buffer, offset, count);
+}

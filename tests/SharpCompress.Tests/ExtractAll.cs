@@ -1,0 +1,44 @@
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using SharpCompress.Archives;
+using SharpCompress.Common;
+using SharpCompress.Readers;
+using Xunit;
+
+namespace SharpCompress.Test;
+
+public class ExtractAllTests : TestBase
+{
+    [Theory]
+    [InlineData("Zip.deflate.zip")]
+    [InlineData("Rar5.rar")]
+    [InlineData("Rar.rar")]
+    [InlineData("Rar.solid.rar")]
+    [InlineData("7Zip.solid.7z")]
+    [InlineData("7Zip.nonsolid.7z")]
+    [InlineData("7Zip.LZMA.7z")]
+    public async ValueTask ExtractAllEntriesAsync(string archivePath)
+    {
+        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, archivePath);
+
+        await using var archive = await ArchiveFactory.OpenAsyncArchive(testArchive);
+        await archive.WriteToDirectoryAsync(SCRATCH_FILES_PATH);
+    }
+
+    [Theory]
+    [InlineData("Zip.deflate.zip")]
+    [InlineData("Rar5.rar")]
+    [InlineData("Rar.rar")]
+    [InlineData("Rar.solid.rar")]
+    [InlineData("7Zip.solid.7z")]
+    [InlineData("7Zip.nonsolid.7z")]
+    [InlineData("7Zip.LZMA.7z")]
+    public void ExtractAllEntriesSync(string archivePath)
+    {
+        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, archivePath);
+
+        using var archive = ArchiveFactory.OpenArchive(testArchive);
+        archive.WriteToDirectory(SCRATCH_FILES_PATH);
+    }
+}

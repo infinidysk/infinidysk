@@ -16,7 +16,7 @@ public class RadarrSonarrClientTests
         using var httpClient = new HttpClient(CreateHandler(
             ("GET /api/v3/series", JsonResponse("""[{"id":101,"path":"/library/tv/Stale Show"}]""")),
             ("GET /api/v3/episodefile?seriesId=101", JsonResponse($"[{{\"id\":201,\"seriesId\":101,\"path\":\"{filePath}\"}}]")),
-            ($"GET /api/v3/history?downloadId={downloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[{"id":401}]}""")),
             ("DELETE /api/v3/episodefile/201", new HttpResponseMessage(HttpStatusCode.OK)),
             ("POST /api/v3/history/failed/401", JsonResponse("{}")),
@@ -40,7 +40,7 @@ public class RadarrSonarrClientTests
         var downloadId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
         using var httpClient = new HttpClient(CreateHandler(
             ("GET /api/v3/movie", JsonResponse($"[{{\"id\":101,\"movieFile\":{{\"id\":201,\"path\":\"{filePath}\"}}}}]")),
-            ($"GET /api/v3/history?downloadId={downloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[{"id":401}]}""")),
             ("DELETE /api/v3/moviefile/201", new HttpResponseMessage(HttpStatusCode.OK)),
             ("POST /api/v3/history/failed/401", JsonResponse("{}")),
@@ -69,9 +69,9 @@ public class RadarrSonarrClientTests
                 JsonResponse($"[{{\"id\":203,\"seriesId\":103,\"path\":\"{filePath}\"}}]")),
             ("GET /api/v3/episodefile?seriesId=103",
                 JsonResponse($"[{{\"id\":204,\"seriesId\":103,\"path\":\"{filePath}\"}}]")),
-            ($"GET /api/v3/history?downloadId={firstDownloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={firstDownloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[{"id":403}]}""")),
-            ($"GET /api/v3/history?downloadId={secondDownloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={secondDownloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[{"id":404}]}""")),
             ("DELETE /api/v3/episodefile/203", new HttpResponseMessage(HttpStatusCode.OK)),
             ("DELETE /api/v3/episodefile/204", new HttpResponseMessage(HttpStatusCode.OK)),
@@ -99,7 +99,7 @@ public class RadarrSonarrClientTests
             ("GET /api/v3/series", JsonResponse($"[{{\"id\":102,\"path\":\"{seriesPath}\"}}]")),
             ("GET /api/v3/episodefile?seriesId=102",
                 JsonResponse($"[{{\"id\":202,\"seriesId\":102,\"path\":\"{filePath}\"}}]")),
-            ($"GET /api/v3/history?downloadId={downloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[]}"""))));
         var client = new TestSonarrClient(httpClient);
 
@@ -119,14 +119,14 @@ public class RadarrSonarrClientTests
         using var firstHttpClient = new HttpClient(CreateHandler(
             ("GET /api/v3/movie", JsonResponse(
                 $"[{{\"id\":101,\"movieFile\":{{\"id\":201,\"path\":\"{filePath}\"}}}}]")),
-            ($"GET /api/v3/history?downloadId={firstDownloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={firstDownloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[{"id":401}]}""")),
             ("DELETE /api/v3/moviefile/201", new HttpResponseMessage(HttpStatusCode.OK)),
             ("POST /api/v3/history/failed/401", JsonResponse("{}"))));
         using var secondHttpClient = new HttpClient(CreateHandler(
             ("GET /api/v3/movie", JsonResponse(
                 $"[{{\"id\":102,\"movieFile\":{{\"id\":202,\"path\":\"{filePath}\"}}}}]")),
-            ($"GET /api/v3/history?downloadId={secondDownloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={secondDownloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[{"id":402}]}""")),
             ("DELETE /api/v3/moviefile/202", new HttpResponseMessage(HttpStatusCode.OK)),
             ("POST /api/v3/history/failed/402", JsonResponse("{}"))));
@@ -154,7 +154,7 @@ public class RadarrSonarrClientTests
             ("GET /api/v3/series", JsonResponse($"[{{\"id\":101,\"path\":\"{seriesPath}\"}}]")),
             ("GET /api/v3/episodefile?seriesId=101",
                 JsonResponse($"[{{\"id\":201,\"seriesId\":101,\"path\":\"{filePath}\"}}]")),
-            ($"GET /api/v3/history?downloadId={firstDownloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={firstDownloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[{"id":401}]}""")),
             ("DELETE /api/v3/episodefile/201", new HttpResponseMessage(HttpStatusCode.OK)),
             ("POST /api/v3/history/failed/401", JsonResponse("{}"))));
@@ -162,7 +162,7 @@ public class RadarrSonarrClientTests
             ("GET /api/v3/series", JsonResponse($"[{{\"id\":102,\"path\":\"{seriesPath}\"}}]")),
             ("GET /api/v3/episodefile?seriesId=102",
                 JsonResponse($"[{{\"id\":202,\"seriesId\":102,\"path\":\"{filePath}\"}}]")),
-            ($"GET /api/v3/history?downloadId={secondDownloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={secondDownloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[{"id":402}]}""")),
             ("DELETE /api/v3/episodefile/202", new HttpResponseMessage(HttpStatusCode.OK)),
             ("POST /api/v3/history/failed/402", JsonResponse("{}"))));
@@ -186,7 +186,7 @@ public class RadarrSonarrClientTests
         using var seedHttpClient = new HttpClient(CreateHandler(
             ("GET /api/v3/movie", JsonResponse(
                 $"[{{\"id\":101,\"movieFile\":{{\"id\":201,\"path\":\"{filePath}\"}}}}]")),
-            ($"GET /api/v3/history?downloadId={seedDownloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            ($"GET /api/v3/history?downloadId={seedDownloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[{"id":401}]}""")),
             ("DELETE /api/v3/moviefile/201", new HttpResponseMessage(HttpStatusCode.OK)),
             ("POST /api/v3/history/failed/401", JsonResponse("{}"))));

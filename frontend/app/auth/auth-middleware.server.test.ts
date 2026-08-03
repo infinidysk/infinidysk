@@ -30,6 +30,8 @@ describe("authMiddleware", () => {
     "/login.data",
     "/onboarding",
     "/onboarding.data",
+    "/auth/oidc/login",
+    "/auth/oidc/callback",
     "/__manifest",
   ])("allows public path %s without auth", async (path) => {
     const next = vi.fn();

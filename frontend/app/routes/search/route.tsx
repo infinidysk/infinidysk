@@ -3,6 +3,7 @@ import { Form, useFetcher, useNavigation } from "react-router";
 import { backendClient, type SearchIndexersResponse } from "~/clients/backend-client.server";
 import { Badge, Button, Input, Spinner } from "~/components/ui";
 import { formatFileSize } from "~/utils/file-size";
+import { useIsReadOnly } from "~/auth/authorization";
 
 export async function loader({ request }: Route.LoaderArgs) {
     const url = new URL(request.url);
@@ -92,6 +93,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
 }
 
 function ResultRow({ result }: { result: { indexer: string; title: string; nzbUrl: string; size: number; posted: string | null } }) {
+    const isReadOnly = useIsReadOnly();
     const fetcher = useFetcher<typeof action>();
     const submitting = fetcher.state !== "idle";
     const done = fetcher.data?.ok === true;
@@ -106,7 +108,7 @@ function ResultRow({ result }: { result: { indexer: string; title: string; nzbUr
                     {result.posted && ` · ${new Date(result.posted).toLocaleDateString()}`}
                 </div>
             </div>
-            <fetcher.Form method="post">
+            {!isReadOnly && <fetcher.Form method="post">
                 <input type="hidden" name="nzbUrl" value={result.nzbUrl} />
                 <input type="hidden" name="nzbName" value={result.title} />
                 <Button
@@ -122,7 +124,7 @@ function ResultRow({ result }: { result: { indexer: string; title: string; nzbUr
                         : failed ? "Failed"
                         : "Mount"}
                 </Button>
-            </fetcher.Form>
+            </fetcher.Form>}
         </li>
     );
 }

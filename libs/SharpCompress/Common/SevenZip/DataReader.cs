@@ -1,0 +1,175 @@
+﻿using System;
+using System.IO;
+using System.Text;
+using SharpCompress.Compressors.LZMA;
+
+namespace SharpCompress.Common.SevenZip;
+
+internal class DataReader
+{
+    #region Static Methods
+
+    public static uint Get32(byte[] buffer, int offset) =>
+        buffer[offset]
+        + ((uint)buffer[offset + 1] << 8)
+        + ((uint)buffer[offset + 2] << 16)
+        + ((uint)buffer[offset + 3] << 24);
+
+    public static ulong Get64(byte[] buffer, int offset) =>
+        buffer[offset]
+        + ((ulong)buffer[offset + 1] << 8)
+        + ((ulong)buffer[offset + 2] << 16)
+        + ((ulong)buffer[offset + 3] << 24)
+        + ((ulong)buffer[offset + 4] << 32)
+        + ((ulong)buffer[offset + 5] << 40)
+        + ((ulong)buffer[offset + 6] << 48)
+        + ((ulong)buffer[offset + 7] << 56);
+
+    #endregion
+
+    #region Variables
+
+    private readonly byte[] _buffer;
+    private readonly int _ending;
+
+    #endregion
+
+    #region Public Methods
+
+    public DataReader(byte[] buffer, int offset, int length)
+    {
+        _buffer = buffer;
+        Offset = offset;
+        _ending = offset + length;
+    }
+
+    public int Offset { get; private set; }
+
+    public byte ReadByte()
+    {
+        if (Offset >= _ending)
+        {
+            throw new IncompleteArchiveException("Unexpected end of stream.");
+        }
+
+        return _buffer[Offset++];
+    }
+
+    public void ReadBytes(byte[] buffer, int offset, int length)
+    {
+        if (length > _ending - Offset)
+        {
+            throw new IncompleteArchiveException("Unexpected end of stream.");
+        }
+
+        while (length-- > 0)
+        {
+            buffer[offset++] = _buffer[Offset++];
+        }
+    }
+
+    public void SkipData(long size)
+    {
+        if (size > _ending - Offset)
+        {
+            throw new IncompleteArchiveException("Unexpected end of stream.");
+        }
+
+        Offset += (int)size;
+    }
+
+    public void SkipData() => SkipData(checked((long)ReadNumber()));
+
+    public ulong ReadNumber()
+    {
+        if (Offset >= _ending)
+        {
+            throw new IncompleteArchiveException("Unexpected end of stream.");
+        }
+
+        var firstByte = _buffer[Offset++];
+        byte mask = 0x80;
+        ulong value = 0;
+
+        for (var i = 0; i < 8; i++)
+        {
+            if ((firstByte & mask) == 0)
+            {
+                ulong highPart = firstByte & (mask - 1u);
+                value += highPart << (i * 8);
+                return value;
+            }
+
+            if (Offset >= _ending)
+            {
+                throw new IncompleteArchiveException("Unexpected end of stream.");
+            }
+
+            value |= (ulong)_buffer[Offset++] << (8 * i);
+            mask >>= 1;
+        }
+
+        return value;
+    }
+
+    public int ReadNum()
+    {
+        var value = ReadNumber();
+        if (value > int.MaxValue)
+        {
+            throw new NotSupportedException();
+        }
+
+        return (int)value;
+    }
+
+    public uint ReadUInt32()
+    {
+        if (Offset + 4 > _ending)
+        {
+            throw new IncompleteArchiveException("Unexpected end of stream.");
+        }
+
+        var res = Get32(_buffer, Offset);
+        Offset += 4;
+        return res;
+    }
+
+    public ulong ReadUInt64()
+    {
+        if (Offset + 8 > _ending)
+        {
+            throw new IncompleteArchiveException("Unexpected end of stream.");
+        }
+
+        var res = Get64(_buffer, Offset);
+        Offset += 8;
+        return res;
+    }
+
+    public string ReadString()
+    {
+        var ending = Offset;
+
+        for (; ; )
+        {
+            if (ending + 2 > _ending)
+            {
+                throw new IncompleteArchiveException("Unexpected end of stream.");
+            }
+
+            if (_buffer[ending] == 0 && _buffer[ending + 1] == 0)
+            {
+                break;
+            }
+
+            ending += 2;
+        }
+
+        var str = Encoding.Unicode.GetString(_buffer, Offset, ending - Offset);
+        Offset = ending + 2;
+        return str;
+    }
+
+    #endregion
+}

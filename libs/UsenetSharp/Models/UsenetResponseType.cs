@@ -1,0 +1,30 @@
+namespace UsenetSharp.Models;
+
+public enum UsenetResponseType
+{
+    Unknown = 0,
+    CapabilityListFollows = 101,
+    DateAndTime = 111,
+    ServerReadyPostingAllowed = 200,
+    ServerReadyNoPostingAllowed = 201,
+    ConnectionClosing = 205,
+    ArticleRetrievedHeadAndBodyFollow = 220,
+    ArticleRetrievedHeadFollows = 221,
+    ArticleRetrievedBodyFollows = 222,
+    ArticleExists = 223,
+    AuthenticationAccepted = 281,
+    PasswordRequired = 381,
+    ServiceDiscontinued = 400,
+    NoGroupSelected = 412,
+    CurrentArticleInvalid = 420,
+    NoArticleWithThatNumber = 423,
+    NoArticleWithThatMessageId = 430,
+    AuthenticationRequired = 480,
+    AuthenticationRejected = 481,
+    AuthenticationOutOfSequence = 482,
+    EncryptionRequired = 483,
+    CommandNotRecognized = 500,
+    CommandSyntaxError = 501,
+    AccessPermanentlyForbidden = 502,
+    FeatureNotSupported = 503,
+}

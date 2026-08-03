@@ -267,6 +267,11 @@ public abstract class NntpClient : INntpClient
         if (segmentIds.Count == 0) yield break;
 
         depth = Math.Max(1, depth);
+
+        // Download priority and the streaming deadline are keyed by token identity, so a plain
+        // linked token silently drops both. Scoped to the enumeration because the reader
+        // outlives a single batch iteration.
+        using var batchCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         for (var batchStart = 0; batchStart < segmentIds.Count; batchStart += depth)
         {
             var batchSize = Math.Min(depth, segmentIds.Count - batchStart);
@@ -275,12 +280,70 @@ public abstract class NntpClient : INntpClient
                 batchIds[index] = segmentIds[batchStart + index];
 
             var batch = await DecodedBodiesAsync(
-                batchIds, onConnectionReadyAgain: null, cancellationToken).ConfigureAwait(false);
-            for (var index = 0; index < batch.Responses.Count; index++)
+                batchIds, onConnectionReadyAgain: null, batchCts.Token).ConfigureAwait(false);
+            var position = 0;
+            try
             {
-                var segmentId = segmentIds[batchStart + index];
-                yield return await MapPipelinedBodyResultAsync(
-                    batch.Responses[index], segmentId, cancellationToken).ConfigureAwait(false);
+                for (; position < batch.Responses.Count; position++)
+                {
+                    var segmentId = segmentIds[batchStart + position];
+                    yield return await MapPipelinedBodyResultAsync(
+                        batch.Responses[position], segmentId, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                // A fully drained batch belongs to the consumer, and cancelling would tear
+                // down streams it still holds.
+                if (position < batch.Responses.Count)
+                {
+                    try
+                    {
+                        await batchCts.CancelAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception e)
+                    {
+                        // Releasing the bodies matters more than the cancellation succeeding.
+                        Log.Debug(e, "Failed to cancel an abandoned pipelined BODY batch");
+                    }
+
+                    await ReleaseRemainingBodiesAsync(batch.Responses, position).ConfigureAwait(false);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Releases an abandoned batch from the response the loop stopped on, which the consumer
+    /// may or may not have received. The batch shares one connection that is returned only
+    /// once every response is read. Cancel first, or awaiting a response drives the fetch the
+    /// consumer walked away from.
+    /// </summary>
+    private static async Task ReleaseRemainingBodiesAsync
+    (
+        IReadOnlyList<Task<UsenetDecodedBodyResponse>> responses,
+        int startIndex
+    )
+    {
+        for (var index = startIndex; index < responses.Count; index++)
+        {
+            try
+            {
+                var response = await responses[index].ConfigureAwait(false);
+                if (response.Stream != null)
+                    await response.Stream.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected: cancelling the batch faults every response still in flight.
+            }
+            catch (UsenetArticleNotFoundException)
+            {
+                // Expected: a definitive miss is the usual reason a consumer stops early.
+            }
+            catch (Exception e)
+            {
+                Log.Debug(e, "Failed to release abandoned pipelined BODY response");
             }
         }
     }

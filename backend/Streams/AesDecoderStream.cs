@@ -1,10 +1,11 @@
 ﻿using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using NzbWebDAV.Models;
+using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams
 {
-    internal sealed class AesDecoderStream : Stream
+    internal sealed class AesDecoderStream : FastReadOnlyStream
     {
         private readonly Stream _mStream;
         private Aes _aes; // keep Aes alive for transform lifetime
@@ -86,18 +87,11 @@ namespace NzbWebDAV.Streams
         public override bool CanRead => true;
         public override bool CanSeek => true;
 
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            return ReadAsync(buffer, offset, count).GetAwaiter().GetResult();
-        }
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException("AesDecoderStream supports asynchronous reads only.");
 
-        public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
-        {
-            if (buffer == null) throw new ArgumentNullException(nameof(buffer));
-            if (offset < 0 || count < 0 || offset + count > buffer.Length) throw new ArgumentOutOfRangeException();
-
-            return await ReadAsync(buffer.AsMemory(offset, count), ct).ConfigureAwait(false);
-        }
+        public override int Read(Span<byte> buffer) =>
+            throw new NotSupportedException("AesDecoderStream supports asynchronous reads only.");
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer,
             CancellationToken ct = default)

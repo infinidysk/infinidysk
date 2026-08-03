@@ -99,6 +99,57 @@ public class GetOverviewStatsProviderFilterTests
     }
 
     [Fact]
+    public void BuildProvidersFromMinutes_ComputesAggregateAndBucketSpeeds()
+    {
+        var windowStart = 1_700_000_000_000L;
+        var minutes = new[]
+        {
+            (windowStart, ConfiguredKey, 10L, 2_000_000L, 0L, 0L, 0L, 1_000L),
+            (windowStart + 60_000, ConfiguredKey, 10L, 1_000_000L, 0L, 0L, 0L, 1_000L),
+        };
+
+        var rows = GetOverviewStatsController.BuildProvidersFromMinutes(
+            minutes,
+            windowStart,
+            GetOverviewStatsRequest.OverviewWindow.Last1Hour,
+            Labels);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(1.5, row.SpeedMbPerSec);
+        Assert.Equal(60, row.SpeedSpark.Count);
+        Assert.Equal(2.0, row.SpeedSpark[0]);
+        Assert.Equal(1.0, row.SpeedSpark[1]);
+        Assert.Equal(0.0, row.SpeedSpark[2]);
+    }
+
+    [Fact]
+    public void BuildProvidersFromHourly_ComputesDailySpeedBuckets()
+    {
+        const long oneHour = 3_600_000;
+        const long oneDay = 86_400_000;
+        var windowStart = 1_700_000_000_000L - (1_700_000_000_000L % oneDay);
+        var hours = new[]
+        {
+            (windowStart, ConfiguredKey, 10L, 2_000_000L, 0L, 0L, 0L, 1_000L),
+            (windowStart + oneDay, ConfiguredKey, 10L, 1_000_000L, 0L, 0L, 0L, 1_000L),
+        };
+
+        var rows = GetOverviewStatsController.BuildProvidersFromHourly(
+            hours,
+            windowStart,
+            oneHour,
+            windowStart + (2 * oneDay),
+            Labels);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(1.5, row.SpeedMbPerSec);
+        Assert.Equal(3, row.SpeedSpark.Count);
+        Assert.Equal(2.0, row.SpeedSpark[0]);
+        Assert.Equal(1.0, row.SpeedSpark[1]);
+        Assert.Equal(0.0, row.SpeedSpark[2]);
+    }
+
+    [Fact]
     public void BuildFailover_OmitsDeletedProvidersFromListsButKeepsAggregateTotals()
     {
         var at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();

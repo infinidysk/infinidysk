@@ -59,7 +59,7 @@ public class ArrClient(string host, string apiKey)
     protected async Task<int?> GetHistoryRecordId(Guid downloadId, CancellationToken ct = default)
     {
         var history = await Get<ArrHistory>(
-            $"/history?downloadId={downloadId:D}&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+            $"/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
             ct).ConfigureAwait(false);
         return history.Records.FirstOrDefault()?.Id;
     }

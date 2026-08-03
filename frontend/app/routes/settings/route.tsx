@@ -20,11 +20,14 @@ import { isWardenSettingsUpdated, WardenSettings } from "./warden/warden";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { SupportSettings } from "./support/support";
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { useBlocker, useSearchParams } from "react-router";
+import { useBlocker, useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
+import { ServiceProviderNotice } from "~/components/service-provider-notice";
 import { getAppVersion } from "~/utils/version.server";
-import { parseSettingsTab, getSettingsTabItem } from "./settings-tabs";
+import { parseSettingsTab, getSettingsTabItem, type SettingsTab } from "./settings-tabs";
 import { Icon } from "~/components/ui";
+import type { AppOutletContext } from "~/auth/authorization";
+import { isSettingsTabDisabled } from "~/utils/service-provider";
 
 const defaultConfig = {
     "general.base-url": "",
@@ -32,10 +35,12 @@ const defaultConfig = {
     "api.categories": "",
     "api.manual-category": "uncategorized",
     "api.ensure-importable-video": "true",
+    "api.sample-filter-enabled": "true",
     "api.skip-non-video-on-missing-articles": "true",
     "api.ensure-article-existence-categories": "",
+    "api.article-existence-check-mode": "full",
     "api.ignore-history-limit": "true",
-    "api.download-file-blocklist": "*.nfo, *.par2, *.sfv, *sample.mkv, *unpack.mkv, *.unpack.mp4",
+    "api.download-file-blocklist": "*.nfo, *.par2, *.sfv, *unpack.mkv, *.unpack.mp4",
     "api.duplicate-nzb-behavior": "increment",
     "api.import-strategy": "symlinks",
     "api.completed-downloads-dir": "",
@@ -47,13 +52,15 @@ const defaultConfig = {
     "usenet.max-download-connections-per-stream": "false",
     "usenet.max-download-connections-per-stream-preset": "high",
     "usenet.max-queue-connections": "",
+    "queue.max-items": "0",
+    "queue.resume-threshold": "0",
     "queue.worker-count": "1",
     "usenet.streaming-priority": "80",
     "usenet.streaming-segment-timeout-seconds": "8",
     "usenet.streaming-read-timeout-seconds": "30",
     "usenet.streaming-segment-retries": "3",
     "usenet.article-buffer-size": "40",
-    "usenet.in-flight-article-budget-mb": "512",
+    "usenet.in-flight-article-budget-mb": "",
     "usenet.idle-connection-timeout-seconds": "60",
     "usenet.pipelined-body-requests": "true",
     "usenet.segment-cache.enabled": "false",
@@ -175,8 +182,27 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function Settings(props: Route.ComponentProps) {
+    const { serviceProvider } = useOutletContext<AppOutletContext>();
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const activeTab = parseSettingsTab(searchParams.get("tab"));
+
+    // The root-level ServiceProviderGate (app/components/service-provider-gate.tsx)
+    // already intercepts disabled settings tabs before this route renders. This
+    // guard is defense-in-depth in case Settings is ever rendered outside that
+    // wrapper (e.g. a future layout change or isolated test).
+    if (serviceProvider && isSettingsTabDisabled(serviceProvider, activeTab)) {
+        return (
+            <ServiceProviderNotice
+                open
+                serviceProvider={serviceProvider}
+                onClose={() => navigate("/overview", { replace: true })}
+            />
+        );
+    }
+
     return (
-        <Body {...props.loaderData} />
+        <Body {...props.loaderData} activeTab={activeTab} />
     );
 }
 
@@ -184,11 +210,13 @@ type BodyProps = {
     config: Record<string, string>,
     managedEnv: ManagedEnvMap,
     appVersion: string,
+    activeTab: SettingsTab,
 };
 
 function Body(props: BodyProps) {
-    const [searchParams] = useSearchParams();
-    const activeTab = parseSettingsTab(searchParams.get("tab"));
+    const { role } = useOutletContext<AppOutletContext>();
+    const isReadOnly = role === "readonly";
+    const activeTab = props.activeTab;
     const activeTabItem = getSettingsTabItem(activeTab);
     const [config, setConfig] = useState(props.config);
     const [newConfig, setNewConfigState] = useState(config);
@@ -334,6 +362,12 @@ function Body(props: BodyProps) {
                         </span>
                     </Alert>
                 )}
+                {isReadOnly && (
+                    <Alert variant="info" className="mb-6 text-sm">
+                        You are signed in with read-only access. Settings and maintenance actions are disabled.
+                    </Alert>
+                )}
+                <fieldset className="contents" disabled={isReadOnly}>
                 {activeTab === "usenet" && (
                     <UsenetSettings
                         config={newConfig}
@@ -356,6 +390,7 @@ function Body(props: BodyProps) {
                 {activeTab === "backup" && <BackupSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "support" && <SupportSettings />}
                 {activeTab === "migration" && <Migration />}
+                </fieldset>
             </SettingsPanel>
 
             {saveError && (
@@ -363,7 +398,7 @@ function Body(props: BodyProps) {
                     {saveError}
                 </Alert>
             )}
-            {((activeTab !== "support" && activeTab !== "migration") || isUpdated) && <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-base-content/10 bg-base-300/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
+            {!isReadOnly && ((activeTab !== "support" && activeTab !== "migration") || isUpdated) && <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-base-content/10 bg-base-300/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
                 {isUpdated && <Button
                     className="min-w-28"
                     variant="outline"

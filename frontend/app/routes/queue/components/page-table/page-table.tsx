@@ -18,18 +18,19 @@ export type PageTableProps = {
     onHeaderCheckboxChange: (isChecked: boolean) => void,
     footer?: ReactNode,
     showCompleted?: boolean,
+    selectable?: boolean,
 }
 
-export function PageTable({ children, headerCheckboxState, onHeaderCheckboxChange, footer, showCompleted }: PageTableProps) {
+export function PageTable({ children, headerCheckboxState, onHeaderCheckboxChange, footer, showCompleted, selectable = true }: PageTableProps) {
     return (
         <div className="-mx-4 overflow-x-auto sm:-mx-6">
             <table className="table table-zebra table-sm mb-0 w-full min-w-0 text-base-content min-[900px]:min-w-[880px]">
                 <thead>
                     <tr className="border-base-content/10 [&_th]:bg-base-200 [&_th]:text-base-content/70">
                         <th className="min-[900px]:w-1/2 w-auto py-4 pl-0 text-left text-xs font-semibold uppercase tracking-wide">
-                            <TriCheckbox state={headerCheckboxState} onChange={onHeaderCheckboxChange}>
-                                Name
-                            </TriCheckbox>
+                            {selectable
+                                ? <TriCheckbox state={headerCheckboxState} onChange={onHeaderCheckboxChange}>Name</TriCheckbox>
+                                : "Name"}
                         </th>
                         <th className={desktopHeaderClass}>Category</th>
                         <th className={desktopHeaderClass}>Indexer</th>
@@ -68,7 +69,8 @@ export type PageRowProps = {
     actions: ReactNode,
     indexer?: string | null,
     providers?: ProviderUsage[] | null,
-    onRowSelectionChanged: (isSelected: boolean) => void
+    onRowSelectionChanged: (isSelected: boolean) => void,
+    selectable?: boolean,
 }
 export function PageRow(props: PageRowProps) {
     const nameContent = props.nameHref
@@ -79,21 +81,15 @@ export function PageRow(props: PageRowProps) {
     return (
         <tr className={`${props.isRemoving ? "opacity-20" : ""} ${props.isUploading ? "bg-primary/5 [&+tr]:border-t-[3px] [&+tr]:border-base-300" : ""}`}>
             <td className="max-w-[200px] whitespace-nowrap py-3 pl-0 pr-1 text-left align-middle min-[900px]:max-w-[200px] max-[899px]:max-w-none max-[899px]:whitespace-normal">
-                <TriCheckbox state={props.isSelected} onChange={props.onRowSelectionChanged}>
+                {props.selectable === false ? (
+                    <>
+                        <Truncate>{nameContent}</Truncate>
+                        <MobileRowDetails {...props} completedLabel={completedLabel} />
+                    </>
+                ) : <TriCheckbox state={props.isSelected} onChange={props.onRowSelectionChanged}>
                     <Truncate>{nameContent}</Truncate>
-                    <div className="block min-[900px]:hidden">
-                        <div className="mb-1 mt-1 flex flex-wrap gap-2.5">
-                            <StatusBadge status={props.status} percentage={props.percentage} error={props.error} />
-                            <CategoryBadge category={props.category} />
-                            {props.indexer && <IndexerBadge indexer={props.indexer} />}
-                            {props.providers && props.providers.length > 0 && <ProvidersBadge providers={props.providers} />}
-                        </div>
-                        <div className="font-mono text-xs text-base-content/60">{formatFileSize(props.fileSizeBytes)}</div>
-                        {props.showCompleted && completedLabel &&
-                            <div className="font-mono text-xs text-base-content/60" title={completedLabel.full}>{completedLabel.short}</div>
-                        }
-                    </div>
-                </TriCheckbox>
+                    <MobileRowDetails {...props} completedLabel={completedLabel} />
+                </TriCheckbox>}
             </td>
             <td className={desktopCellClass}>
                 <CategoryBadge category={props.category} />
@@ -123,6 +119,25 @@ export function PageRow(props: PageRowProps) {
                 </div>
             </td>
         </tr>
+    );
+}
+
+function MobileRowDetails(
+    props: PageRowProps & { completedLabel: ReturnType<typeof formatCompleted> },
+) {
+    return (
+        <div className="block min-[900px]:hidden">
+            <div className="mb-1 mt-1 flex flex-wrap gap-2.5">
+                <StatusBadge status={props.status} percentage={props.percentage} error={props.error} />
+                <CategoryBadge category={props.category} />
+                {props.indexer && <IndexerBadge indexer={props.indexer} />}
+                {props.providers && props.providers.length > 0 && <ProvidersBadge providers={props.providers} />}
+            </div>
+            <div className="font-mono text-xs text-base-content/60">{formatFileSize(props.fileSizeBytes)}</div>
+            {props.showCompleted && props.completedLabel &&
+                <div className="font-mono text-xs text-base-content/60" title={props.completedLabel.full}>{props.completedLabel.short}</div>
+            }
+        </div>
     );
 }
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { backendClient, type WatchdogEntry, type WatchdogOutcome } from "~/clients/backend-client.server";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { Alert, Badge, Icon } from "~/components/ui";
+import { useIsReadOnly } from "~/auth/authorization";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -31,6 +32,7 @@ const FILTER_OPTIONS: { key: FilterKey, label: string }[] = [
 ];
 
 export default function Watchdog({ loaderData }: Route.ComponentProps) {
+    const isReadOnly = useIsReadOnly();
     const [attempts, setAttempts] = useState<WatchdogEntry[]>(loaderData.entries);
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [filter, setFilter] = useState<FilterKey>("all");
@@ -131,7 +133,7 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
                                 />
                                 Refresh
                             </button>
-                            <button
+                            {!isReadOnly && <button
                                 type="button"
                                 className="btn btn-sm btn-error join-item gap-2"
                                 onClick={() => setShowClearConfirm(true)}
@@ -139,7 +141,7 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
                                 title="Permanently delete all watchdog entries.">
                                 <Icon name="delete" className="!text-[16px]" />
                                 {clearing ? "Clearing…" : "Clear log"}
-                            </button>
+                            </button>}
                         </div>
                     </div>
 

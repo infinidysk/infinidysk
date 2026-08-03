@@ -23,6 +23,20 @@ internal static class VideoSelection
         name.Contains("rickroll", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// True when this candidate should be skipped as a sample relative to the other videos.
+    /// Uses size ratio when sizes are known; falls back to whole-word name matching when not.
+    /// </summary>
+    internal static bool IsSampleCandidate(DavItem candidate, IReadOnlyList<DavItem> videos)
+    {
+        var largest = videos.Select(v => v.FileSize ?? 0).DefaultIfEmpty(0).Max();
+        if (largest > 0 && candidate.FileSize is > 0)
+            return FileFilterUtil.IsSampleFile(candidate.Name, candidate.FileSize, largest);
+
+        // Unknown size: still skip whole-word sample names so playback does not prefer them.
+        return FileFilterUtil.LooksLikeSampleName(candidate.Name);
+    }
+
+    /// <summary>
     /// Selects the best video among <paramref name="videos"/> (already filtered to
     /// video-content-type files).
     /// </summary>
@@ -54,7 +68,7 @@ internal static class VideoSelection
         long bestSize = -1;
         foreach (var v in videos)
         {
-            if (v.Name.Contains("sample", StringComparison.OrdinalIgnoreCase)) continue;
+            if (IsSampleCandidate(v, videos)) continue;
             if (IsProbablyDecoy(v.Name)) continue;
             var fileTokens = TokenizeName(Path.GetFileNameWithoutExtension(v.Name));
             if (fileTokens.Count == 0) continue;
@@ -76,7 +90,7 @@ internal static class VideoSelection
         long bestSize = -1;
         foreach (var v in videos)
         {
-            if (v.Name.Contains("sample", StringComparison.OrdinalIgnoreCase)) continue;
+            if (IsSampleCandidate(v, videos)) continue;
             if (IsProbablyDecoy(v.Name)) continue;
             if (FilenameMatcher.ParseEpisode(v.Name) is not { } tag) continue;
             if (tag.Season != season) continue;
@@ -101,7 +115,7 @@ internal static class VideoSelection
     /// </summary>
     private static DavItem PickFallback(IReadOnlyList<DavItem> videos)
     {
-        var nonDecoy = videos.Where(v => !IsProbablyDecoy(v.Name)).ToList();
+        var nonDecoy = videos.Where(v => !IsProbablyDecoy(v.Name) && !IsSampleCandidate(v, videos)).ToList();
         var pool = nonDecoy.Count > 0 ? nonDecoy : videos;
         return pool.Count == 1 ? pool[0] : pool.OrderByDescending(x => x.FileSize ?? 0).First();
     }

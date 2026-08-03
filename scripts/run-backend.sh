@@ -92,6 +92,49 @@ mkdir -p "$CONFIG_PATH"
 
 "$ROOT_DIR/scripts/sync-dev-env.sh"
 
+ensure_rapidyenc_native() {
+  local rid lib_name lib_path
+  case "$(uname -s)" in
+    Darwin)
+      case "$(uname -m)" in
+        arm64) rid=osx-arm64 ;;
+        x86_64) rid=osx-x64 ;;
+        *)
+          echo "Unsupported macOS arch: $(uname -m)" >&2
+          exit 1
+          ;;
+      esac
+      lib_name=librapidyenc.dylib
+      ;;
+    Linux)
+      case "$(uname -m)" in
+        x86_64|amd64) rid=linux-x64 ;;
+        aarch64|arm64) rid=linux-arm64 ;;
+        *)
+          echo "Unsupported Linux arch: $(uname -m)" >&2
+          exit 1
+          ;;
+      esac
+      lib_name=librapidyenc.so
+      ;;
+    *)
+      # Windows local-dev is uncommon; leave RAPIDYENC_LIBRARY_PATH to the user.
+      return 0
+      ;;
+  esac
+
+  lib_path="$ROOT_DIR/libs/RapidYencSharp/runtimes/$rid/native/$lib_name"
+  "$ROOT_DIR/scripts/ensure-rapidyenc-native.sh" "$rid"
+  if [[ ! -f "$lib_path" ]]; then
+    echo "Error: expected native library missing at $lib_path" >&2
+    exit 1
+  fi
+  export RAPIDYENC_LIBRARY_PATH="$lib_path"
+  echo "Using rapidyenc native library: $RAPIDYENC_LIBRARY_PATH"
+}
+
+ensure_rapidyenc_native
+
 needs_build=0
 if [[ ! -x "$BINARY" ]]; then
   needs_build=1

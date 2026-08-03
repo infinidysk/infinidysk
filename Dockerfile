@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
+ARG ALPINE_VERSION=3.21
+
 # -------- Stage 1: Build frontend --------
 FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-build
 
@@ -12,17 +14,43 @@ RUN npm run build
 RUN npm run build:server
 RUN npm prune --omit=dev
 
-# -------- Stage 2: Build backend --------
+# -------- Stage 2a: Build rapidyenc musl native for the target arch --------
+# Built on the target platform so linux-musl-* consumers (Alpine .NET images)
+# get a real musl binary rather than a glibc fallback via the RID graph.
+FROM alpine:${ALPINE_VERSION} AS rapidyenc-musl
+RUN apk add --no-cache build-base cmake ninja
+WORKDIR /src
+COPY ./libs/rapidyenc/ ./
+RUN cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release --target rapidyenc_shared \
+    && mkdir -p /out \
+    && lib_path="$(find build -name 'librapidyenc.so' -type f | head -n 1)" \
+    && test -n "$lib_path" \
+    && cp "$lib_path" /out/librapidyenc.so
+
+# -------- Stage 2b: Build backend --------
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS backend-build
 
-WORKDIR /backend
+WORKDIR /src
 
 # Accept build-time architecture as ARG (e.g., x64 or arm64)
 ARG TARGETARCH
-COPY ./backend/NzbWebDAV.csproj ./backend/nuget.config ./
-RUN dotnet restore NzbWebDAV.csproj -r linux-musl-${TARGETARCH}
-COPY ./backend ./
-RUN dotnet publish NzbWebDAV.csproj -c Release -r linux-musl-${TARGETARCH} -o ./publish --no-restore
+COPY ./backend/NzbWebDAV.csproj ./backend/nuget.config ./backend/
+COPY ./libs/SharpCompress/SharpCompress.csproj ./libs/SharpCompress/
+COPY ./libs/UsenetSharp/UsenetSharp.csproj ./libs/UsenetSharp/
+COPY ./libs/RapidYencSharp/RapidYencSharp.csproj ./libs/RapidYencSharp/
+RUN dotnet restore backend/NzbWebDAV.csproj -r linux-musl-${TARGETARCH}
+
+COPY ./backend ./backend
+COPY ./libs ./libs
+
+# Place the musl native where RapidYencSharp copies runtimes into the publish output.
+RUN mkdir -p libs/RapidYencSharp/runtimes/linux-musl-${TARGETARCH}/native
+COPY --from=rapidyenc-musl /out/librapidyenc.so \
+    libs/RapidYencSharp/runtimes/linux-musl-${TARGETARCH}/native/librapidyenc.so
+
+RUN dotnet publish backend/NzbWebDAV.csproj -c Release -r linux-musl-${TARGETARCH} -o ./backend/publish --no-restore \
+    && cp libs/RapidYencSharp/runtimes/linux-musl-${TARGETARCH}/native/librapidyenc.so ./backend/publish/
 
 # -------- Stage 3: Combined runtime image --------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine
@@ -44,7 +72,7 @@ COPY --from=frontend-build /frontend/dist-node/server ./frontend/dist-node/serve
 COPY --from=frontend-build /frontend/build ./frontend/build
 
 # Copy backend
-COPY --from=backend-build /backend/publish ./backend
+COPY --from=backend-build /src/backend/publish ./backend
 
 # Entry and runtime setup
 COPY entrypoint.sh /entrypoint.sh

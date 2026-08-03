@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -23,7 +24,9 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     private readonly MetricsWriter? _metricsWriter;
     private readonly ConcurrentDictionary<string, CacheEntry> _index = new();
     private readonly object _evictLock = new();
+    private readonly Func<IEnumerable<string>> _enumerateCacheFiles;
     private long _currentBytes;
+    private int _catalogReady;
 
     private static readonly JsonSerializerOptions HeaderJsonOptions = new() { IncludeFields = true };
 
@@ -32,15 +35,32 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         string cacheDir,
         long maxBytes,
         ProviderUsageTracker? usageTracker = null,
-        MetricsWriter? metricsWriter = null) : base(inner)
+        MetricsWriter? metricsWriter = null)
+        : this(inner, cacheDir, maxBytes, usageTracker, metricsWriter, enumerateCacheFiles: null)
+    {
+    }
+
+    internal SegmentCacheNntpClient(
+        INntpClient inner,
+        string cacheDir,
+        long maxBytes,
+        ProviderUsageTracker? usageTracker,
+        MetricsWriter? metricsWriter,
+        Func<IEnumerable<string>>? enumerateCacheFiles) : base(inner)
     {
         _dir = cacheDir;
         _maxBytes = maxBytes;
         _usageTracker = usageTracker;
         _metricsWriter = metricsWriter;
         Directory.CreateDirectory(_dir);
-        LoadIndex();
+        _enumerateCacheFiles = enumerateCacheFiles
+                               ?? (() => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
+        CatalogLoadTask = Task.Run(LoadIndex);
     }
+
+    public bool IsCatalogReady => Volatile.Read(ref _catalogReady) != 0;
+    internal Task CatalogLoadTask { get; }
+    internal long CurrentBytes => Interlocked.Read(ref _currentBytes);
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId, CancellationToken ct)
     {
@@ -68,7 +88,9 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     public override async Task<UsenetExclusiveConnection> AcquireExclusiveConnectionAsync(
         string segmentId, CancellationToken ct)
     {
-        if (MultiProviderNntpClient.AttributionContext.Value == null && _index.ContainsKey(Hash(segmentId)))
+        if (MultiProviderNntpClient.AttributionContext.Value == null
+            && IsCatalogReady
+            && _index.ContainsKey(Hash(segmentId)))
             return new UsenetExclusiveConnection(onConnectionReadyAgain: null);
         return await base.AcquireExclusiveConnectionAsync(segmentId, ct).ConfigureAwait(false);
     }
@@ -116,6 +138,8 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     private bool TryServeFromCache(string id, out UsenetDecodedBodyResponse? response)
     {
         response = null;
+        if (!IsCatalogReady) return false;
+
         var hash = Hash(id);
         if (!_index.TryGetValue(hash, out var entry)) return false;
 
@@ -189,7 +213,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
 
     private void EvictIfNeeded()
     {
-        if (_currentBytes <= _maxBytes) return;
+        if (Interlocked.Read(ref _currentBytes) <= _maxBytes) return;
         lock (_evictLock)
         {
             if (_currentBytes <= _maxBytes) return;
@@ -206,9 +230,10 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
 
     private void LoadIndex()
     {
+        var stopwatch = Stopwatch.StartNew();
         try
         {
-            foreach (var file in Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories))
+            foreach (var file in _enumerateCacheFiles())
             {
                 if (file.EndsWith(".tmp", StringComparison.Ordinal))
                 {
@@ -219,20 +244,38 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                 if (file.EndsWith(".h", StringComparison.Ordinal)) continue;
                 var info = new FileInfo(file);
                 if (!info.Exists) continue;
-                _index[Path.GetFileName(file)] = new CacheEntry
+                var entry = new CacheEntry
                 {
                     Size = info.Length,
                     LastAccessTicks = info.LastWriteTimeUtc.Ticks,
                 };
-                _currentBytes += info.Length;
+
+                lock (_evictLock)
+                {
+                    if (_index.TryAdd(Path.GetFileName(file), entry))
+                        _currentBytes += info.Length;
+                }
             }
         }
         catch (Exception e)
         {
             Log.Warning(e, "Segment cache: failed to scan {Dir}; starting empty.", _dir);
         }
-
-        EvictIfNeeded();
+        finally
+        {
+            try
+            {
+                EvictIfNeeded();
+            }
+            finally
+            {
+                Volatile.Write(ref _catalogReady, 1);
+                stopwatch.Stop();
+                Log.Information(
+                    "Segment cache catalog loaded: {Count} entries, {Size} bytes in {Elapsed}ms.",
+                    _index.Count, Interlocked.Read(ref _currentBytes), stopwatch.ElapsedMilliseconds);
+            }
+        }
     }
 
     private string BlobPath(string hash) => Path.Combine(_dir, hash[..2], hash);

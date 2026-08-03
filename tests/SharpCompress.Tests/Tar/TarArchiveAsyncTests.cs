@@ -1,0 +1,507 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using SharpCompress.Archives;
+using SharpCompress.Archives.Tar;
+using SharpCompress.Common;
+using SharpCompress.Readers;
+using SharpCompress.Test.Mocks;
+using SharpCompress.Writers;
+using SharpCompress.Writers.Tar;
+using Xunit;
+
+namespace SharpCompress.Test.Tar;
+
+public class TarArchiveAsyncTests : ArchiveTests
+{
+    public TarArchiveAsyncTests() => UseExtensionInsteadOfNameToVerify = true;
+
+    [Fact]
+    public async ValueTask TarArchiveStreamRead_Async() => await ArchiveStreamReadAsync("Tar.tar");
+
+    [Fact]
+    public async ValueTask TarArchiveOpenAsyncStream_Throws_On_NonSeekable_Stream()
+    {
+        using Stream stream = new ForwardOnlyStream(
+            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"))
+        );
+
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await TarArchive.OpenAsyncArchive(new AsyncOnlyStream(stream))
+        );
+    }
+
+    [Theory]
+    [InlineData("Tar.tar.gz")]
+    [InlineData("Tar.tar.bz2")]
+    [InlineData("Tar.tar.lz")]
+    [InlineData("Tar.tar.xz")]
+    [InlineData("Tar.tar.zst")]
+    [InlineData("Tar.tar.Z")]
+    public async ValueTask TarArchiveOpenAsyncArchive_RejectsCompressedTar(string archiveName)
+    {
+        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+
+        await Assert.ThrowsAsync<InvalidFormatException>(async () =>
+            await TarArchive.OpenAsyncArchive(stream)
+        );
+    }
+
+    [Theory]
+    [InlineData("Tar.tar.gz")]
+    [InlineData("Tar.tar.bz2")]
+    [InlineData("Tar.tar.lz")]
+    [InlineData("Tar.tar.xz")]
+    [InlineData("Tar.tar.zst")]
+    [InlineData("Tar.tar.Z")]
+    public async ValueTask ArchiveFactoryOpenAsyncArchive_RejectsCompressedTar(string archiveName)
+    {
+        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+
+        await Assert.ThrowsAsync<ArchiveOperationException>(async () =>
+            await ArchiveFactory.OpenAsyncArchive(stream)
+        );
+    }
+
+    [Fact]
+    public async ValueTask TarArchiveOpenAsyncStream_Throws_On_Unreadable_Stream()
+    {
+        using var stream = new TestStream(new MemoryStream(), false, true, true);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            TarArchive.OpenAsyncArchive(stream).AsTask()
+        );
+    }
+
+    [Fact]
+    public async ValueTask Tar_FileName_Exactly_100_Characters_Async()
+    {
+        var archive = "Tar_FileName_Exactly_100_Characters.tar";
+
+        // create the 100 char filename
+        var filename =
+            "filename_with_exactly_100_characters_______________________________________________________________X";
+
+        // Step 1: create a tar file containing a file with the test name
+        using (Stream stream = File.OpenWrite(Path.Combine(SCRATCH2_FILES_PATH, archive)))
+        {
+            await using (
+                var writer = await WriterFactory.OpenAsyncWriter(
+                    new AsyncOnlyStream(stream),
+                    ArchiveType.Tar,
+                    new WriterOptions(CompressionType.None) { LeaveStreamOpen = false }
+                )
+            )
+            using (Stream inputStream = new MemoryStream())
+            {
+                var sw = new StreamWriter(inputStream);
+                await sw.WriteAsync("dummy filecontent");
+                await sw.FlushAsync();
+
+                inputStream.Position = 0;
+                await writer.WriteAsync(filename, inputStream, null);
+            }
+        }
+
+        // Step 2: check if the written tar file can be read correctly
+        var unmodified = Path.Combine(SCRATCH2_FILES_PATH, archive);
+        await using (
+            var archive2 = await TarArchive.OpenAsyncArchive(
+                new AsyncOnlyStream(File.OpenRead(unmodified)),
+                ReaderOptions.ForExternalStream.WithLeaveStreamOpen(false)
+            )
+        )
+        {
+            Assert.Equal(1, await archive2.EntriesAsync.CountAsync());
+            Assert.Contains(
+                filename,
+                await archive2.EntriesAsync.Select(entry => entry.Key).ToListAsync()
+            );
+
+            await foreach (var entry in archive2.EntriesAsync)
+            {
+                using (var sr = new StreamReader(await entry.OpenEntryStreamAsync()))
+                {
+                    Assert.Equal("dummy filecontent", await sr.ReadLineAsync());
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async ValueTask Tar_VeryLongFilepathReadback_Async()
+    {
+        var archive = "Tar_VeryLongFilepathReadback.tar";
+
+        // create a very long filename
+        var longFilename = "";
+        for (var i = 0; i < 600; i = longFilename.Length)
+        {
+            longFilename += i.ToString("D10") + "-";
+        }
+
+        longFilename += ".txt";
+
+        // Step 1: create a tar file containing a file with a long name
+        using (Stream stream = File.OpenWrite(Path.Combine(SCRATCH2_FILES_PATH, archive)))
+        await using (
+            var writer = await WriterFactory.OpenAsyncWriter(
+                new AsyncOnlyStream(stream),
+                ArchiveType.Tar,
+                new WriterOptions(CompressionType.None) { LeaveStreamOpen = false }
+            )
+        )
+        using (Stream inputStream = new MemoryStream())
+        {
+            var sw = new StreamWriter(inputStream);
+            await sw.WriteAsync("dummy filecontent");
+            await sw.FlushAsync();
+
+            inputStream.Position = 0;
+            await writer.WriteAsync(longFilename, inputStream, null);
+        }
+
+        // Step 2: check if the written tar file can be read correctly
+        var unmodified = Path.Combine(SCRATCH2_FILES_PATH, archive);
+        await using (
+            var archive2 = await TarArchive.OpenAsyncArchive(
+                new AsyncOnlyStream(File.OpenRead(unmodified)),
+                ReaderOptions.ForExternalStream.WithLeaveStreamOpen(false)
+            )
+        )
+        {
+            Assert.Equal(1, await archive2.EntriesAsync.CountAsync());
+            Assert.Contains(
+                longFilename,
+                await archive2.EntriesAsync.Select(entry => entry.Key).ToListAsync()
+            );
+
+            await foreach (var entry in archive2.EntriesAsync)
+            {
+                using (var sr = new StreamReader(await entry.OpenEntryStreamAsync()))
+                {
+                    Assert.Equal("dummy filecontent", await sr.ReadLineAsync());
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async ValueTask Tar_Create_New_Async()
+    {
+        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "Tar.tar");
+        var unmodified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.noEmptyDirs.tar");
+
+        await using (var archive = await TarArchive.CreateAsyncArchive())
+        {
+            await archive.AddAllFromDirectoryAsync(ORIGINAL_FILES_PATH);
+            var twopt = new TarWriterOptions(CompressionType.None, true)
+            {
+                ArchiveEncoding = new ArchiveEncoding { Default = Encoding.GetEncoding(866) },
+            };
+            await archive.SaveToAsync(scratchPath, twopt);
+        }
+        CompareArchivesByPath(unmodified, scratchPath);
+    }
+
+    [Fact]
+    public async ValueTask Tar_Async_Dispose_Closes_New_Entry_Stream()
+    {
+        var entryStream = new TestStream(new MemoryStream(Encoding.UTF8.GetBytes("test")));
+
+        await using (var archive = await TarArchive.CreateAsyncArchive())
+        {
+            await archive.AddEntryAsync(
+                "test.txt",
+                entryStream,
+                closeStream: true,
+                size: entryStream.Length
+            );
+            await archive.SaveToAsync(
+                new MemoryStream(),
+                new TarWriterOptions(CompressionType.None, true)
+            );
+        }
+
+        Assert.True(entryStream.IsDisposed);
+    }
+
+    [Fact]
+    public async ValueTask Tar_Random_Write_Add_Async()
+    {
+        var jpg = Path.Combine(ORIGINAL_FILES_PATH, "jpg", "test.jpg");
+        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "Tar.mod.tar");
+        var unmodified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.mod.tar");
+        var modified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.noEmptyDirs.tar");
+
+        await using (var archive = await TarArchive.OpenAsyncArchive(unmodified))
+        {
+            await archive.AddEntryAsync("jpg\\test.jpg", jpg);
+            await archive.SaveToAsync(
+                scratchPath,
+                new TarWriterOptions(CompressionType.None, true)
+            );
+        }
+        CompareArchivesByPath(modified, scratchPath);
+    }
+
+    [Fact]
+    public async ValueTask Tar_Random_Write_Remove_Async()
+    {
+        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "Tar.mod.tar");
+        var modified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.mod.tar");
+        var unmodified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.noEmptyDirs.tar");
+
+        await using (var archive = await TarArchive.OpenAsyncArchive(unmodified))
+        {
+            var entry = await archive.EntriesAsync.SingleAsync(x =>
+                x.Key.NotNull().EndsWith("jpg", StringComparison.OrdinalIgnoreCase)
+            );
+            await archive.RemoveEntryAsync(entry);
+            await archive.SaveToAsync(
+                scratchPath,
+                new TarWriterOptions(CompressionType.None, true)
+            );
+        }
+        CompareArchivesByPath(modified, scratchPath);
+    }
+
+    [Theory]
+    [InlineData(10)]
+    [InlineData(128)]
+    public async ValueTask Tar_Japanese_Name_Async(int length)
+    {
+        using var mstm = new MemoryStream();
+        var enc = new ArchiveEncoding { Default = Encoding.UTF8 };
+        var twopt = new TarWriterOptions(CompressionType.None, true) { ArchiveEncoding = enc };
+        var fname = new string((char)0x3042, length);
+        using (var tw = new TarWriter(mstm, twopt))
+        using (var input = new MemoryStream(new byte[32]))
+        {
+            await tw.WriteAsync(fname, input, null);
+        }
+        using (var inputMemory = new MemoryStream(mstm.ToArray()))
+        {
+            var tropt = ReaderOptions.ForExternalStream.WithArchiveEncoding(enc);
+            await using (
+                var tr = await ReaderFactory.OpenAsyncReader(
+                    new AsyncOnlyStream(inputMemory),
+                    tropt
+                )
+            )
+            {
+                while (await tr.MoveToNextEntryAsync())
+                {
+                    Assert.Equal(fname, tr.Entry.Key);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async ValueTask Tar_Read_One_At_A_Time_Async()
+    {
+        var archiveEncoding = new ArchiveEncoding { Default = Encoding.UTF8 };
+        var tarWriterOptions = new TarWriterOptions(CompressionType.None, true)
+        {
+            ArchiveEncoding = archiveEncoding,
+        };
+        var testBytes = Encoding.UTF8.GetBytes("This is a test.");
+
+        using var memoryStream = new MemoryStream();
+        using (var tarWriter = new TarWriter(memoryStream, tarWriterOptions))
+        using (var testFileStream = new MemoryStream(testBytes))
+        {
+            await tarWriter.WriteAsync("test1.txt", testFileStream, null);
+            testFileStream.Position = 0;
+            await tarWriter.WriteAsync("test2.txt", testFileStream, null);
+        }
+
+        memoryStream.Position = 0;
+
+        var numberOfEntries = 0;
+
+        await using (
+            var archiveFactory = await ArchiveFactory.OpenAsyncArchive(
+                new AsyncOnlyStream(memoryStream)
+            )
+        )
+        {
+            await foreach (var entry in archiveFactory.EntriesAsync)
+            {
+                ++numberOfEntries;
+
+                await using var tarEntryStream = await entry.OpenEntryStreamAsync();
+                using var testFileStream = new MemoryStream();
+                await tarEntryStream.CopyToAsync(testFileStream);
+                Assert.Equal(testBytes.Length, testFileStream.Length);
+            }
+        }
+
+        Assert.Equal(2, numberOfEntries);
+    }
+
+    [Fact]
+    public async ValueTask Tar_PaxLocalHeader_Archive_Async()
+    {
+        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.tar");
+        await using var archive = await TarArchive.OpenAsyncArchive(
+            new AsyncOnlyStream(File.OpenRead(archivePath))
+        );
+
+        var firstEntry = (TarArchiveEntry)
+            await archive.EntriesAsync.SingleAsync(entry => entry.Key == "pax/overridden-name.txt");
+        Assert.Equal(10, firstEntry.Size);
+        Assert.Equal(1234, firstEntry.UserID);
+        Assert.Equal(2345, firstEntry.GroupId);
+        Assert.Equal(Convert.ToInt64("640", 8), firstEntry.Mode);
+
+        var expectedTime = DateTimeOffset.FromUnixTimeSeconds(1700000000).LocalDateTime;
+        Assert.Equal(expectedTime, firstEntry.LastModifiedTime);
+
+        var secondEntry = (TarArchiveEntry)
+            await archive.EntriesAsync.SingleAsync(entry => entry.Key == "second.txt");
+        Assert.Equal(2, secondEntry.Size);
+        Assert.Equal(11, secondEntry.UserID);
+        Assert.Equal(22, secondEntry.GroupId);
+        Assert.Equal(Convert.ToInt64("644", 8), secondEntry.Mode);
+    }
+
+    [Fact]
+    public async ValueTask Tar_PaxLocalHeader_Link_Archive_Async()
+    {
+        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.Link.tar");
+        await using var archive = await TarArchive.OpenAsyncArchive(
+            new AsyncOnlyStream(File.OpenRead(archivePath))
+        );
+
+        var entry = (TarArchiveEntry)await archive.EntriesAsync.SingleAsync();
+        Assert.Equal("pax/link-entry", entry.Key);
+        Assert.Equal("pax/target-entry", entry.LinkTarget);
+    }
+
+    [Fact]
+    public async ValueTask Tar_PaxGlobalHeader_Archive_Async()
+    {
+        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.tar");
+        await using var archive = await TarArchive.OpenAsyncArchive(
+            new AsyncOnlyStream(File.OpenRead(archivePath))
+        );
+
+        var globalTime = DateTimeOffset.FromUnixTimeSeconds(1700000100).LocalDateTime;
+        var localOverrideTime = DateTimeOffset.FromUnixTimeSeconds(1700000200).LocalDateTime;
+
+        var firstEntry = (TarArchiveEntry)
+            await archive.EntriesAsync.SingleAsync(entry => entry.Key == "global-one.txt");
+        Assert.Equal(4000, firstEntry.UserID);
+        Assert.Equal(5000, firstEntry.GroupId);
+        Assert.Equal(Convert.ToInt64("640", 8), firstEntry.Mode);
+        Assert.Equal(globalTime, firstEntry.LastModifiedTime);
+
+        var secondEntry = (TarArchiveEntry)
+            await archive.EntriesAsync.SingleAsync(entry =>
+                entry.Key == "global-local-override.txt"
+            );
+        Assert.Equal(4010, secondEntry.UserID);
+        Assert.Equal(5010, secondEntry.GroupId);
+        Assert.Equal(Convert.ToInt64("600", 8), secondEntry.Mode);
+        Assert.Equal(localOverrideTime, secondEntry.LastModifiedTime);
+
+        var thirdEntry = (TarArchiveEntry)
+            await archive.EntriesAsync.SingleAsync(entry => entry.Key == "global-three.txt");
+        Assert.Equal(4000, thirdEntry.UserID);
+        Assert.Equal(5000, thirdEntry.GroupId);
+        Assert.Equal(Convert.ToInt64("640", 8), thirdEntry.Mode);
+        Assert.Equal(globalTime, thirdEntry.LastModifiedTime);
+    }
+
+    [Fact]
+    public async ValueTask Tar_PaxGlobalHeader_Link_Archive_Async()
+    {
+        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.Link.tar");
+        await using var archive = await TarArchive.OpenAsyncArchive(
+            new AsyncOnlyStream(File.OpenRead(archivePath))
+        );
+
+        var globalLink = (TarArchiveEntry)
+            await archive.EntriesAsync.SingleAsync(entry => entry.Key == "global-link");
+        Assert.Equal("global-target", globalLink.LinkTarget);
+        Assert.Equal(4100, globalLink.UserID);
+        Assert.Equal(5100, globalLink.GroupId);
+        Assert.Equal(Convert.ToInt64("777", 8), globalLink.Mode);
+
+        var localOverrideLink = (TarArchiveEntry)
+            await archive.EntriesAsync.SingleAsync(entry => entry.Key == "local-link-override");
+        Assert.Equal("local-target", localOverrideLink.LinkTarget);
+        Assert.Equal(4100, localOverrideLink.UserID);
+        Assert.Equal(5100, localOverrideLink.GroupId);
+        Assert.Equal(Convert.ToInt64("777", 8), localOverrideLink.Mode);
+    }
+
+    [Fact]
+    public async ValueTask Tar_Read_One_At_A_Time_Without_Disposing_Entry_Stream_Async()
+    {
+        var archiveEncoding = new ArchiveEncoding { Default = Encoding.UTF8 };
+        var tarWriterOptions = new TarWriterOptions(CompressionType.None, true)
+        {
+            ArchiveEncoding = archiveEncoding,
+        };
+        var testBytes = Encoding.UTF8.GetBytes("This is a test.");
+
+        using var memoryStream = new MemoryStream();
+        using (var tarWriter = new TarWriter(memoryStream, tarWriterOptions))
+        using (var testFileStream = new MemoryStream(testBytes))
+        {
+            await tarWriter.WriteAsync("file0.txt", testFileStream, null);
+            testFileStream.Position = 0;
+            await tarWriter.WriteAsync("file1.txt", testFileStream, null);
+            tarWriter.WriteDirectory("folder0", null);
+            testFileStream.Position = 0;
+            await tarWriter.WriteAsync("folder0/file_in_folder0.txt", testFileStream, null);
+        }
+
+        memoryStream.Position = 0;
+
+        var entryKeys = new List<string?>();
+        var openEntryStreams = new List<Stream>();
+
+        await using (
+            var archive = await TarArchive.OpenAsyncArchive(
+                new AsyncOnlyStream(memoryStream),
+                ReaderOptions.ForExternalStream
+            )
+        )
+        {
+            await foreach (var entry in archive.EntriesAsync)
+            {
+                entryKeys.Add(entry.Key);
+                if (entry.IsDirectory)
+                {
+                    continue;
+                }
+
+                var tarEntryStream = await entry.OpenEntryStreamAsync();
+                openEntryStreams.Add(tarEntryStream);
+
+                using var testFileStream = new MemoryStream();
+                await tarEntryStream.CopyToAsync(testFileStream);
+                Assert.Equal(testBytes.Length, testFileStream.Length);
+            }
+
+            Assert.Equal(4, await archive.EntriesAsync.CountAsync());
+        }
+
+        foreach (var stream in openEntryStreams)
+        {
+            stream.Dispose();
+        }
+
+        Assert.Equal(
+            ["file0.txt", "file1.txt", "folder0/", "folder0/file_in_folder0.txt"],
+            entryKeys
+        );
+    }
+}

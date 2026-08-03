@@ -51,6 +51,32 @@ public class DavMultipartFileStreamTests
     }
 
     [Fact]
+    public void Read_PreservesSynchronousArchiveParserCompatibility()
+    {
+        var volumeBytes = Enumerable.Range(0, 16).Select(x => (byte)x).ToArray();
+        using var client = new FakeNntpClient(new Dictionary<string, byte[]>
+        {
+            ["segment"] = volumeBytes,
+        }, useCachedYencStreams: true);
+        var multipart = MultipartFile(
+            segmentRange: LongRange.FromStartAndSize(0, 8),
+            fileRange: LongRange.FromStartAndSize(4, 12));
+        using var stream = new DavMultipartFileStream(
+            multipart,
+            client,
+            articleBufferSize: 0,
+            resolver: null,
+            usePipelinedBodyRequests: false,
+            fileName: "movie.mkv");
+
+        var buffer = new byte[12];
+        var bytesRead = stream.Read(buffer, 0, buffer.Length);
+
+        Assert.Equal(buffer.Length, bytesRead);
+        Assert.Equal(volumeBytes[4..], buffer);
+    }
+
+    [Fact]
     public async Task ReadAsync_InvalidSegmentRangeThrowsKnownSeekError()
     {
         using var client = new FakeNntpClient(new Dictionary<string, byte[]>());

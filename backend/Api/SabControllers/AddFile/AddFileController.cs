@@ -44,10 +44,46 @@ public class AddFileController(
 
     public async Task<AddFileResponse> AddFileAsync(AddFileRequest request)
     {
+        await using var sourceStream = request.NzbFileStream;
         var id = request.NzoId ?? Guid.NewGuid();
         var category = StringUtil.EmptyToNull(request.Category)
                        ?? configManager.GetManualUploadCategory();
 
+        var replacesExisting = await dbClient.Ctx.QueueItems
+            .AnyAsync(
+                x => x.FileName == request.FileName && x.Category == category,
+                request.CancellationToken)
+            .ConfigureAwait(false);
+
+        IDisposable? admissionReservation = null;
+        if (!replacesExisting)
+        {
+            var maxItems = configManager.GetQueueMaxItems();
+            if (maxItems > 0)
+            {
+                var currentCount = await dbClient.Ctx.QueueItems
+                    .CountAsync(request.CancellationToken)
+                    .ConfigureAwait(false);
+                var resumeThreshold = configManager.GetQueueResumeThreshold();
+                admissionReservation = queueManager.TryReserveQueueSlot(
+                    currentCount, maxItems, resumeThreshold);
+                if (admissionReservation is null)
+                {
+                    Log.Warning(
+                        "Rejected NZB submission because the queue has {QueueCount} of {QueueLimit} items. " +
+                        "Admission resumes at or below {ResumeThreshold} items.",
+                        currentCount, maxItems, resumeThreshold);
+                    return new AddFileResponse
+                    {
+                        Status = false,
+                        Error = $"Queue is full ({currentCount} of {maxItems} items); " +
+                                $"submissions resume at or below {resumeThreshold}.",
+                    };
+                }
+            }
+        }
+
+        using var queueSlotReservation = admissionReservation;
         await HandleExistingQueueItemAsync(
                 request.FileName,
                 category,
@@ -57,7 +93,6 @@ public class AddFileController(
         if (AfterDuplicatePreCheckHook is not null)
             await AfterDuplicatePreCheckHook().ConfigureAwait(false);
 
-        await using var sourceStream = request.NzbFileStream;
         QueueItem? queueItem;
         try
         {

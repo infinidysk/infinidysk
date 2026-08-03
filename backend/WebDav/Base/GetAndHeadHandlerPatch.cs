@@ -34,6 +34,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
     private readonly ConfigManager _configManager;
     private readonly ProviderUsageTracker _providerUsageTracker;
     private readonly ActiveReadRegistry _activeReadRegistry;
+    private readonly ConcurrentReadTracker _concurrentReadTracker;
     private readonly StreamTraceBuffer _streamTrace;
     private readonly StreamingFailureTracker _failureTracker;
 
@@ -42,6 +43,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         ConfigManager configManager,
         ProviderUsageTracker providerUsageTracker,
         ActiveReadRegistry activeReadRegistry,
+        ConcurrentReadTracker concurrentReadTracker,
         StreamTraceBuffer streamTrace,
         StreamingFailureTracker failureTracker)
     {
@@ -49,6 +51,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         _configManager = configManager;
         _providerUsageTracker = providerUsageTracker;
         _activeReadRegistry = activeReadRegistry;
+        _concurrentReadTracker = concurrentReadTracker;
         _streamTrace = streamTrace;
         _failureTracker = failureTracker;
     }
@@ -129,6 +132,17 @@ public class GetAndHeadHandlerPatch : IRequestHandler
             response.SetStatus(DavStatusCode.NotFound);
             return true;
         }
+
+        var path = request.GetUri().AbsolutePath;
+        // Key the shared-stream audit by the decoded store path (the same form
+        // /view passes), otherwise overlap between the two entry points on the
+        // same file is missed whenever the path needs percent-encoding.
+        using var concurrentReadScope = isHeadRequest
+            ? null
+            : _concurrentReadTracker.BeginRead(
+                Uri.UnescapeDataString(path),
+                range?.Start ?? (range is null ? 0 : null),
+                ResolveReadRegion(range));
 
         // ETag might be used for a conditional request
         string? etag = null;
@@ -234,13 +248,14 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                 // HEAD method doesn't require the actual item data
                 if (!isHeadRequest)
                 {
+                    concurrentReadScope!.UpdateStart(copyStart);
+
                     // Cap segment prefetch at the range end (open-ended ranges leave budget null).
                     if (copyEnd.HasValue)
                         RangeContext.SetReadBudget(copyEnd.Value - copyStart + 1);
                     else
                         RangeContext.SetReadBudget(null);
 
-                    var path = request.GetUri().AbsolutePath;
                     var userAgent = request.Headers.UserAgent.ToString();
                     var clientIp = httpContext.Connection.RemoteIpAddress?.ToString();
                     var clientKey = $"{clientIp}|{userAgent}";
@@ -297,6 +312,15 @@ public class GetAndHeadHandlerPatch : IRequestHandler
             }
         }
         return true;
+    }
+
+    private static ConcurrentReadRegion ResolveReadRegion(NWebDav.Server.Helpers.Range? range)
+    {
+        if (range is null) return ConcurrentReadRegion.Full;
+        if (!range.Start.HasValue) return ConcurrentReadRegion.SuffixRange;
+        return range.Start.Value == 0
+            ? ConcurrentReadRegion.StartRange
+            : ConcurrentReadRegion.OffsetRange;
     }
 
     internal static bool ClearStreamingFailureAfterCompletedRead(

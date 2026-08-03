@@ -16,6 +16,7 @@ import { ItemMenu } from "./item-menu/item-menu";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { classNames } from "~/utils/styling";
 import { Icon, Checkbox, Button } from "~/components/ui";
+import { useIsReadOnly } from "~/auth/authorization";
 
 const ITEM_MENU_CLASS =
     "flex select-none items-center self-stretch rounded-r-lg px-5 py-[15px]";
@@ -79,6 +80,7 @@ export default function Explore({ loaderData }: Route.ComponentProps) {
 }
 
 function Body(props: ExplorePageData) {
+    const isReadOnly = useIsReadOnly();
     const location = useLocation();
     const navigation = useNavigation();
     const revalidator = useRevalidator();
@@ -88,7 +90,7 @@ function Body(props: ExplorePageData) {
     const parentDirectories = isNavigating
         ? getParentDirectories(getWebdavPathDecoded(navigation.location!.pathname))
         : props.parentDirectories;
-    const canDelete = isDeletable(parentDirectories);
+    const canDelete = !isReadOnly && isDeletable(parentDirectories);
 
     const [query, setQuery] = useState("");
     const [sortKey, setSortKey] = useState<SortKey>("name");
@@ -321,7 +323,7 @@ function Body(props: ExplorePageData) {
                 />
             )}
             {!showSkeleton && visibleItems.length > 0 &&
-                <div className="flex flex-col overflow-hidden rounded-lg border border-base-content/10 divide-y divide-base-content/10">
+                <div className="flex flex-col rounded-lg border border-base-content/10 divide-y divide-base-content/10">
                     {visibleItems.filter(x => x.isDirectory).map((x, index) => {
                         const checked = selected.has(x.name);
                         return (
@@ -548,11 +550,7 @@ function CheckCell(props: { name: string, checked: boolean, onToggle: (name: str
         >
             <Checkbox
                 checked={props.checked}
-                onClick={e => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    props.onToggle(props.name, e.shiftKey);
-                }}
+                onChange={e => props.onToggle(props.name, e.nativeEvent instanceof MouseEvent && e.nativeEvent.shiftKey)}
                 onKeyDown={e => {
                     if (e.key === " " || e.key === "Enter") {
                         e.preventDefault();
@@ -664,6 +662,7 @@ function isDeletable(parentDirectories: string[]): boolean {
 function getClassName(item: DirectoryItem | ExploreFile, isSelected: boolean) {
     return classNames([
         "relative flex bg-base-200 transition-colors duration-100",
+        "first:rounded-t-lg last:rounded-b-lg",
         "has-[a:hover]:bg-base-100 has-[a:active]:bg-base-300",
         "[@media(hover:hover)]:has-[a:hover]:cursor-pointer",
         item.name.startsWith(".") && "opacity-50",

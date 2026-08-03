@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
@@ -34,13 +37,12 @@ public static class UsenetProviderIdentity
         var assigned = EnsureProviderIds(providerConfig);
         if (!assigned) return;
 
-        // ENV-managed provider JSON is authoritative and must stay out of SQLite.
-        // IDs are normalized when the overlay loads; any remaining in-memory
-        // assignments above are kept until restart without persisting.
+        // ENV-managed provider JSON is authoritative and must stay out of SQLite. Ids are
+        // already assigned by the time this runs, so nothing here fires in practice.
         if (configManager.IsEnvironmentManaged(ConfigKeys.UsenetProviders))
         {
             Log.Information(
-                "Assigned ProviderId for {Count} ENV-managed usenet provider(s) in memory only.",
+                "Assigned ProviderId for {Count} ENV-managed usenet provider(s) without persisting.",
                 assignedCount);
             return;
         }
@@ -63,24 +65,79 @@ public static class UsenetProviderIdentity
         config.Providers.Count(provider => provider.ProviderId == Guid.Empty);
 
     /// <summary>
-    /// Assigns a Guid to every provider missing one. Returns true when any id was created.
+    /// Assigns an id to every provider missing one. Returns true when any id was created.
     /// </summary>
     public static bool EnsureProviderIds(UsenetProviderConfig config)
     {
+        var taken = config.Providers
+            .Where(provider => provider.ProviderId != Guid.Empty)
+            .Select(provider => provider.ProviderId)
+            .ToHashSet();
+
         var assigned = false;
         foreach (var provider in config.Providers)
         {
             if (provider.ProviderId != Guid.Empty) continue;
-            provider.ProviderId = Guid.NewGuid();
+            provider.ProviderId = AssignProviderId(provider, taken);
             assigned = true;
         }
         return assigned;
     }
 
     /// <summary>
+    /// Derives the id from the account instead of generating one, so a config that is never
+    /// written back still comes up with the same id. Host casing is folded to match how a
+    /// stored id is matched on save. The password is left out, so rotating it keeps the history.
+    /// </summary>
+    /// <param name="occurrence">
+    /// Separates repeated entries for one account. It sits ahead of the free-text fields, so a
+    /// newline inside a username cannot be read as a different occurrence.
+    /// </param>
+    internal static Guid DeriveProviderId(
+        UsenetProviderConfig.ConnectionDetails provider,
+        int occurrence = 0
+    )
+    {
+        // Nulls are guarded because a hand-edited row never passed through validation.
+        var canonical = string.Join('\n',
+            "nzbdav:usenet-provider",
+            occurrence.ToString(CultureInfo.InvariantCulture),
+            (provider.Host ?? "").ToLowerInvariant(),
+            provider.Port.ToString(CultureInfo.InvariantCulture),
+            provider.User ?? "");
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
+        var bytes = hash[..16];
+        // Version 8 is the RFC 9562 slot for custom derivations, then the RFC 4122 variant.
+        bytes[6] = (byte)((bytes[6] & 0x0F) | 0x80);
+        bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
+        return new Guid(bytes, bigEndian: true);
+    }
+
+    /// <summary>
+    /// Gives a repeated account its own id rather than a shared counter. The loop is bounded,
+    /// and the random tail covers the case where every candidate was already taken.
+    /// </summary>
+    private static Guid AssignProviderId(
+        UsenetProviderConfig.ConnectionDetails provider,
+        HashSet<Guid> taken
+    )
+    {
+        for (var occurrence = 0; occurrence <= taken.Count; occurrence++)
+        {
+            var candidate = DeriveProviderId(provider, occurrence);
+            if (taken.Add(candidate)) return candidate;
+        }
+
+        var fallback = Guid.NewGuid();
+        taken.Add(fallback);
+        return fallback;
+    }
+
+    /// <summary>
     /// When saving usenet.providers, preserve ProviderIds from the stored config for
-    /// entries that omit them (match by Host+Port+User). Generates a new Guid when
-    /// no match exists. Mutates <paramref name="incoming"/> in place.
+    /// entries that omit them (match by Host+Port+User). Derives one when no match
+    /// exists. Mutates <paramref name="incoming"/> in place.
     /// </summary>
     public static void NormalizeProviderIdsOnSave(
         UsenetProviderConfig incoming,
@@ -89,6 +146,13 @@ public static class UsenetProviderIdentity
         var unusedExisting = existing?.Providers
             .Where(p => p.ProviderId != Guid.Empty)
             .ToList() ?? [];
+
+        // A stored id can be recovered further down the loop, so it is spoken for already.
+        var taken = incoming.Providers
+            .Where(p => p.ProviderId != Guid.Empty)
+            .Select(p => p.ProviderId)
+            .Concat(unusedExisting.Select(p => p.ProviderId))
+            .ToHashSet();
 
         foreach (var provider in incoming.Providers)
         {
@@ -106,7 +170,7 @@ public static class UsenetProviderIdentity
             }
             else
             {
-                provider.ProviderId = Guid.NewGuid();
+                provider.ProviderId = AssignProviderId(provider, taken);
             }
         }
     }

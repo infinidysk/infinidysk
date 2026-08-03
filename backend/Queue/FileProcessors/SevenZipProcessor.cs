@@ -88,6 +88,10 @@ public class SevenZipProcessor : BaseProcessor
             var fileSize = fileInfo.FileSize ?? await _usenetClient
                 .GetFileSizeAsync(nzbFile, _ct)
                 .ConfigureAwait(false);
+            // Validate the uniform-size inference before GetDavMultipartFileMeta
+            // persists this part's segment byte ranges.
+            await nzbFile.ProbeSecondSegmentRangeAsync(_usenetClient, fileSize, _ct)
+                .ConfigureAwait(false);
             var endExclusive = startInclusive + fileSize;
             fileParts.Add(new MultipartFile.FilePart()
             {

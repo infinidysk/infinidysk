@@ -40,6 +40,7 @@ public class UpdateConfigController(DavDatabaseClient dbClient, ConfigManager co
         // background task. Run before webdav.pass hashing so validation sees the raw
         // submitted value.
         ConfigManager.ValidateConfigItems(request.ConfigItems);
+        configManager.ValidateQueueAdmissionSettings(request.ConfigItems);
 
         var configNames = request.ConfigItems.Select(x => x.ConfigName).ToHashSet();
         var existingItems = await dbClient.Ctx.ConfigItems

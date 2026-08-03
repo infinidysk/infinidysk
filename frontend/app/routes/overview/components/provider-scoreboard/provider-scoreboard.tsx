@@ -1,5 +1,5 @@
 import type { OverviewWindow, ProviderCircuitState, ProviderRow } from "~/clients/backend-client.server";
-import { formatBytes, formatNumber, formatPercent } from "../../utils/format";
+import { formatBytes, formatNumber, formatPercent, formatSpeed } from "../../utils/format";
 
 export type ProviderScoreboardProps = {
     providers: ProviderRow[],
@@ -9,6 +9,7 @@ export type ProviderScoreboardProps = {
 export function ProviderScoreboard({ providers, window }: ProviderScoreboardProps) {
     const total = providers.reduce((s, p) => s + p.articles, 0);
     const outageHelp = `Circuit-open time per ${outageIntervalLabel(window)} interval on a fixed 0–100% scale. Brief trips use a minimum-height tick.`;
+    const speedHelp = "Historical average: bytes fetched divided by summed successful fetch durations over the selected window. Durations include connection-pool wait and overlap across concurrent fetches, so this is not wall-clock aggregate bandwidth. Use the provider benchmark for line-rate calibration.";
 
     return (
         <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
@@ -24,7 +25,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                     <p className="py-6 text-center text-xs text-base-content/50">No providers configured.</p>
                 ) : (
                     <div className="overflow-x-auto">
-                        <table className="table table-sm min-w-[680px]">
+                        <table className="table table-sm min-w-[800px]">
                             <thead>
                                 <tr>
                                     <th>Provider</th>
@@ -37,6 +38,11 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                     <th>Articles</th>
                                     <th>Read</th>
                                     <th>Share</th>
+                                    <th
+                                        className="w-[120px]"
+                                        title={speedHelp}>
+                                        MB/s
+                                    </th>
                                     <th className="w-[120px]">Errors</th>
                                     <th className="w-[120px]">Retries</th>
                                     <th
@@ -76,6 +82,14 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                                             <td className="font-mono tabular-nums">{formatBytes(p.bytesFetched)}</td>
                                             <td>
                                                 <ShareBar share={share} />
+                                            </td>
+                                            <td title={speedHelp}>
+                                                <div className="flex flex-col gap-0.5">
+                                                    <Sparkline values={p.speedSpark ?? []} tone="success" />
+                                                    <div className="font-mono text-[11px] tabular-nums text-base-content/60">
+                                                        {formatSpeed(p.speedMbPerSec)}
+                                                    </div>
+                                                </div>
                                             </td>
                                             <td>
                                                 <div className="flex flex-col gap-0.5">

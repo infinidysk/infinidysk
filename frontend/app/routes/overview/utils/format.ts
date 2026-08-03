@@ -9,6 +9,10 @@ export function formatBytes(bytes: number): string {
     return v >= 100 ? `${v.toFixed(0)} ${units[i]}` : `${v.toFixed(1)} ${units[i]}`;
 }
 
+export function formatSpeed(mbPerSec: number | null | undefined): string {
+    return mbPerSec == null || !isFinite(mbPerSec) ? "—" : mbPerSec.toFixed(1);
+}
+
 export function formatNumber(n: number): string {
     return n.toLocaleString();
 }

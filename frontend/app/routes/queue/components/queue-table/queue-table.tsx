@@ -9,6 +9,7 @@ import { Pagination } from "../pagination/pagination"
 import { EmptyQueue } from "../empty-queue/empty-queue"
 import { SimpleDropdown } from "../simple-dropdown/simple-dropdown"
 import { Tooltip } from "~/components/ui"
+import { useIsReadOnly } from "~/auth/authorization"
 
 export type QueueTableProps = {
     queueSlots: PresentationQueueSlot[],
@@ -66,6 +67,7 @@ export function QueueTable({
     onMovedToTop,
     onUploadClicked,
 }: QueueTableProps) {
+    const isReadOnly = useIsReadOnly();
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
     const selectedCount = queueSlots.filter(x => !!x.isSelected).length;
     const headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === queueSlots.length ? 'all' : 'some';
@@ -144,18 +146,21 @@ export function QueueTable({
 
 
     // view
-    const categoryDropdown = useMemo(() => (
+    const categoryDropdown = useMemo(() => isReadOnly ? null : (
         <Tooltip content="Choose the category for manual nzb uploads.">
             <SimpleDropdown options={categories} valueRef={manualCategoryRef} />
         </Tooltip>
-    ), [categories]);
+    ), [categories, isReadOnly, manualCategoryRef]);
 
     const sectionTitle = (
         <div className="flex items-center gap-2.5">
-            <h2 className="cursor-pointer text-xl font-semibold text-base-content" onClick={onUploadClicked}>
+            <h2
+                className={`${isReadOnly ? "" : "cursor-pointer"} text-xl font-semibold text-base-content`}
+                onClick={isReadOnly ? undefined : onUploadClicked}
+            >
                 Queue
             </h2>
-            {headerCheckboxState !== 'none' &&
+            {!isReadOnly && headerCheckboxState !== 'none' &&
                 <>
                     {selectedMovableIds.length > 0 &&
                         <Tooltip content="Move selected to top of queue">
@@ -199,9 +204,14 @@ export function QueueTable({
             badgeText={totalQueueCount > 0 ? String(totalQueueCount) : undefined}
         >
             {queueSlots?.length == 0 ? (
-                <EmptyQueue onUploadClicked={onUploadClicked} />
+                <EmptyQueue onUploadClicked={isReadOnly ? undefined : onUploadClicked} />
             ) : (
-                <PageTable headerCheckboxState={headerCheckboxState} onHeaderCheckboxChange={onSelectAll} footer={footer}>
+                <PageTable
+                    headerCheckboxState={headerCheckboxState}
+                    onHeaderCheckboxChange={onSelectAll}
+                    footer={footer}
+                    selectable={!isReadOnly}
+                >
                     {queueSlots.map(slot =>
                         <QueueRow
                             key={slot.nzo_id}
@@ -234,6 +244,7 @@ type QueueRowProps = {
 }
 
 export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, onRemoved, onMovedToTop }: QueueRowProps) => {
+    const isReadOnly = useIsReadOnly();
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
     const [isMoving, setIsMoving] = useState(false);
@@ -296,7 +307,7 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
                 status={slot.status}
                 percentage={slot.true_percentage}
                 fileSizeBytes={Number(slot.mb) * 1024 * 1024}
-                actions={
+                actions={isReadOnly ? null : (
                     <div className="flex items-center justify-center gap-1">
                         {!slot.isUploading &&
                             <Tooltip content="Move to top">
@@ -309,8 +320,9 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
                         }
                         <ActionButton type="delete" disabled={!!slot.isRemoving || isActivelyUploading} onClick={onRemove} />
                     </div>
-                }
+                )}
                 onRowSelectionChanged={isSelected => onIsSelectedChanged(slot.nzo_id, isSelected)}
+                selectable={!isReadOnly}
                 error={slot.error}
                 indexer={slot.indexer}
                 providers={slot.providers}

@@ -4,7 +4,7 @@ NzbDAV is a single product: a WebDAV + SABnzbd-compatible Usenet streaming serve
 
 ## Ecosystem
 
-Playback quality depends on the full stack. NzbDAV complements and ships with managed libraries in the same ecosystem — **UsenetSharp**, **RapidYencSharp**, **rapidyenc**, and **SharpCompress** — so connection, yEnc, and archive fixes land in the right layer instead of waiting on a fragmented dependency chain.
+Playback quality depends on the full stack. UsenetSharp, RapidYencSharp, and SharpCompress are developed in this repository under `libs/`; the native **rapidyenc** library remains a [standalone repo](https://github.com/nzbdav/rapidyenc) consumed as a git submodule. Connection, yEnc, and archive fixes land with the product instead of waiting on a fragmented NuGet publish cycle.
 
 ## Heritage
 

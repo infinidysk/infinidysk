@@ -144,6 +144,35 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_ReportsConcurrentReadAuditCounters()
+    {
+        var tracker = new ConcurrentReadTracker();
+        using (var first = tracker.BeginRead("/movie.mkv", 0, ConcurrentReadRegion.StartRange))
+        using (var firstFetch = tracker.BeginSegmentFetch("segment-1"))
+        using (var second = tracker.BeginRead("/movie.mkv", 1_000_000, ConcurrentReadRegion.OffsetRange))
+        using (var secondFetch = tracker.BeginSegmentFetch("segment-1"))
+        {
+            Assert.Equal(1, tracker.Snapshot().DuplicateInFlightSegmentFetches);
+        }
+
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)),
+            concurrentReadTracker: tracker);
+
+        using var environment = JsonDocument.Parse(entries["environment.json"]);
+        var runtime = environment.RootElement.GetProperty("runtime");
+        Assert.Equal(2, runtime.GetProperty("concurrentReadStarts").GetInt64());
+        Assert.Equal(1, runtime.GetProperty("concurrentReadOverlapEvents").GetInt64());
+        Assert.Equal(
+            1,
+            runtime.GetProperty("concurrentReadDuplicateInFlightSegmentFetches").GetInt64());
+        Assert.Equal(
+            1_000_000,
+            runtime.GetProperty("concurrentReadMaxStartDistanceBytes").GetInt64());
+    }
+
+    [Fact]
     public async Task Pack_ReportsPeakCpuAttributedToPlaybackRatherThanOnlyAnIdleSnapshot()
     {
         // Packs are collected after the symptom has passed, so an instantaneous sample
@@ -354,14 +383,21 @@ public sealed class SupportPackContentsTests : IDisposable
     private static Task<Dictionary<string, string>> ReadPackEntriesAsync(
         LogBufferSink logBuffer,
         WarningLogBuffer warningBuffer,
-        RuntimeUsageTracker? runtimeUsage = null) =>
-        ReadPackEntriesAsync(logBuffer, warningBuffer, new StreamTraceBuffer(100, enabled: false), runtimeUsage);
+        RuntimeUsageTracker? runtimeUsage = null,
+        ConcurrentReadTracker? concurrentReadTracker = null) =>
+        ReadPackEntriesAsync(
+            logBuffer,
+            warningBuffer,
+            new StreamTraceBuffer(100, enabled: false),
+            runtimeUsage,
+            concurrentReadTracker);
 
     private static async Task<Dictionary<string, string>> ReadPackEntriesAsync(
         LogBufferSink logBuffer,
         WarningLogBuffer warningBuffer,
         StreamTraceBuffer streamTraceBuffer,
-        RuntimeUsageTracker? runtimeUsage = null)
+        RuntimeUsageTracker? runtimeUsage = null,
+        ConcurrentReadTracker? concurrentReadTracker = null)
     {
         var configManager = new ConfigManager();
         var websocketManager = new WebsocketManager();
@@ -385,7 +421,8 @@ public sealed class SupportPackContentsTests : IDisposable
             new ArticleMissNegativeCache(configManager),
             new InFlightArticleBudget(64 * 1024 * 1024),
             streamTraceBuffer,
-            runtimeUsage ?? new RuntimeUsageTracker());
+            runtimeUsage ?? new RuntimeUsageTracker(),
+            concurrentReadTracker);
 
         using var memory = new MemoryStream();
         await service.WriteAsync(memory, CancellationToken.None);

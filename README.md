@@ -28,7 +28,7 @@ It also exposes a **SABnzbd-compatible API**, so Sonarr, Radarr, and similar too
 
 Please add feature requests and issues over on our [Issue Tracker](https://github.com/nzbdav/nzbdav/issues) or join our [Discord](https://discord.gg/DAya7W6QMa) to chat with us!
 
-> Discord community transition started **July 21**. After joining, use the channel and role selector to enable **NzbDAV - SuperFork** for release notifications and development channels.
+> After joining, use the channel and role selector to enable **NzbDAV - SuperFork** for release notifications and development channels.
 
 ## Why another fork?
 
@@ -38,14 +38,16 @@ Read the full story in the [about page](https://nzbdav.com/community/about/).
 
 ## Special thanks
 
-Special thanks to the forks and contributors whose ideas we absorbed:
+Special thanks to the forks and contributors whose ideas we consolidated:
 
 * [@Nzbdav-dev](https://github.com/Nzbdav-dev)
 * [@Pukabyte](https://github.com/Pukabyte)
 * [@elfhosted](https://github.com/elfhosted)
 * [@kha-kis](https://github.com/kha-kis)
 * [@mrghxst](https://github.com/mrghxst)
-* [qooode/nzbdavex](https://github.com/qooode/nzbdavex)
+* [@qooode](https://github.com/qooode)
+* [@dgherman](https://github.com/dgherman)
+* [@loambit](http://github.com/loambit)
 
 ## Features
 

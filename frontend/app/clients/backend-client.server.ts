@@ -744,6 +744,8 @@ export type ProviderRow = {
     bytesFetched: number,
     errors: number,
     retries: number,
+    speedMbPerSec?: number | null,
+    speedSpark?: number[],
     avgDurationMs: number,
     errorRate: number,
     spark: number[],

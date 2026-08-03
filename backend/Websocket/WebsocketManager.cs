@@ -1,6 +1,8 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Extensions;
@@ -12,10 +14,23 @@ namespace NzbWebDAV.Websocket;
 public class WebsocketManager
 {
     private const int EventQueueCapacity = 64;
+    private const int MaxSubscriptionMessageSize = 4096;
     private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(30);
 
     private readonly Dictionary<WebSocket, SocketSession> _sessions = new();
     private readonly Dictionary<WebsocketTopic, string> _lastMessage = new();
+    private readonly ConcurrentDictionary<WebsocketTopic, int> _subscriberCounts = new();
+    private long _skippedPublishes;
+
+    /// <summary>
+    /// Whether at least one downstream browser client is subscribed to the given topic.
+    /// Publishers should check this before performing expensive work (DB queries, serialization).
+    /// </summary>
+    public bool HasSubscribers(WebsocketTopic topic) =>
+        _subscriberCounts.TryGetValue(topic, out var count) && count > 0;
+
+    /// <summary>Total number of publish calls skipped due to zero subscribers.</summary>
+    public long SkippedPublishes => Interlocked.Read(ref _skippedPublishes);
 
     public async Task HandleRoute(HttpContext context)
     {
@@ -39,8 +54,7 @@ public class WebsocketManager
 
             try
             {
-                // wait for the socket to disconnect
-                await WaitForDisconnected(webSocket).ConfigureAwait(false);
+                await ReceiveSubscriptions(session).ConfigureAwait(false);
             }
             finally
             {
@@ -70,9 +84,16 @@ public class WebsocketManager
         lock (_sessions) sessions = _sessions.Values.ToList();
         if (sessions.Count == 0) return Task.CompletedTask;
 
+        if (!HasSubscribers(topic))
+        {
+            Interlocked.Increment(ref _skippedPublishes);
+            return Task.CompletedTask;
+        }
+
         var bytes = SerializeMessage(topic, message);
+        var messageKey = GetMessageKey(topic, message);
         foreach (var session in sessions)
-            session.TryEnqueue(topic, bytes);
+            session.TryEnqueue(topic, messageKey, bytes);
 
         return Task.CompletedTask;
     }
@@ -89,6 +110,16 @@ public class WebsocketManager
         return () => RemoveSocket(session);
     }
 
+    internal void SimulateSubscribe(WebsocketTopic topic)
+    {
+        _subscriberCounts.AddOrUpdate(topic, 1, (_, c) => c + 1);
+    }
+
+    internal void SimulateUnsubscribe(WebsocketTopic topic)
+    {
+        _subscriberCounts.AddOrUpdate(topic, 0, (_, c) => Math.Max(0, c - 1));
+    }
+
     /// <summary>
     /// Ensure a websocket sends a valid api key.
     /// </summary>
@@ -101,30 +132,126 @@ public class WebsocketManager
     }
 
     /// <summary>
-    /// Ignore all messages from the websocket and
-    /// wait for it to disconnect.
+    /// Receive frames from the connected relay, parsing subscription messages. Waits until
+    /// the socket disconnects or the application shuts down. Malformed messages are logged
+    /// and tolerated — the connection is never dropped over a parse error.
     /// </summary>
-    /// <param name="socket">The websocket to wait for disconnect.</param>
-    private static async Task WaitForDisconnected(WebSocket socket)
+    private async Task ReceiveSubscriptions(SocketSession session)
     {
+        var buffer = new byte[MaxSubscriptionMessageSize];
+        using var messageBuffer = new MemoryStream(MaxSubscriptionMessageSize);
+        var discardCurrentMessage = false;
         try
         {
-            var buffer = new byte[1024];
-            WebSocketReceiveResult? result = null;
-            while (result is not { CloseStatus: not null })
-                result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), SigtermUtil.GetCancellationToken()).ConfigureAwait(false);
-            await socket.CloseAsync(result.CloseStatus.Value, result.CloseStatusDescription, CancellationToken.None).ConfigureAwait(false);
+            while (true)
+            {
+                var result = await session.Socket.ReceiveAsync(
+                    new ArraySegment<byte>(buffer), SigtermUtil.GetCancellationToken()).ConfigureAwait(false);
+
+                if (result.CloseStatus is not null)
+                {
+                    await session.Socket.CloseAsync(
+                        result.CloseStatus.Value, result.CloseStatusDescription, CancellationToken.None).ConfigureAwait(false);
+                    return;
+                }
+
+                if (result.MessageType != WebSocketMessageType.Text)
+                {
+                    discardCurrentMessage = true;
+                }
+                else if (!discardCurrentMessage)
+                {
+                    if (messageBuffer.Length + result.Count > MaxSubscriptionMessageSize)
+                    {
+                        discardCurrentMessage = true;
+                        messageBuffer.SetLength(0);
+                        Log.Debug(
+                            "Ignoring websocket subscription message larger than {MaxBytes} bytes",
+                            MaxSubscriptionMessageSize);
+                    }
+                    else
+                    {
+                        messageBuffer.Write(buffer, 0, result.Count);
+                    }
+                }
+
+                if (!result.EndOfMessage) continue;
+
+                if (!discardCurrentMessage)
+                {
+                    var text = Encoding.UTF8.GetString(
+                        messageBuffer.GetBuffer(), 0, checked((int)messageBuffer.Length));
+                    ProcessSubscriptionMessage(session, text);
+                }
+
+                messageBuffer.SetLength(0);
+                discardCurrentMessage = false;
+            }
         }
         catch (OperationCanceledException)
         {
-            // Application is shutting down - send a proper close frame
-            if (socket.State == WebSocketState.Open)
-                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server shutting down", CancellationToken.None).ConfigureAwait(false);
+            if (session.Socket.State == WebSocketState.Open)
+                await session.Socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server shutting down", CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception e)
         {
             Log.Warning(e, "Websocket receive loop failed");
         }
+    }
+
+    private void ProcessSubscriptionMessage(SocketSession session, string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("sub", out var subArray) && subArray.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var element in subArray.EnumerateArray())
+                {
+                    var name = element.GetString();
+                    if (name is not null && WebsocketTopic.TryGetByName(name, out var topic) && topic is not null)
+                    {
+                        if (session.AddSubscription(topic))
+                        {
+                            _subscriberCounts.AddOrUpdate(topic, 1, (_, c) => c + 1);
+                            ReplayStateForNewSubscription(session, topic);
+                        }
+                    }
+                }
+            }
+
+            if (root.TryGetProperty("unsub", out var unsubArray) && unsubArray.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var element in unsubArray.EnumerateArray())
+                {
+                    var name = element.GetString();
+                    if (name is not null && WebsocketTopic.TryGetByName(name, out var topic) && topic is not null)
+                    {
+                        if (session.RemoveSubscription(topic))
+                            _subscriberCounts.AddOrUpdate(topic, 0, (_, c) => Math.Max(0, c - 1));
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            Log.Debug("Ignoring malformed subscription message from websocket client");
+        }
+    }
+
+    private void ReplayStateForNewSubscription(SocketSession session, WebsocketTopic topic)
+    {
+        if (topic.Type != WebsocketTopic.TopicType.State) return;
+
+        string? lastMsg;
+        lock (_lastMessage)
+        {
+            if (!_lastMessage.TryGetValue(topic, out lastMsg)) return;
+        }
+
+        session.TryEnqueue(topic, GetMessageKey(topic, lastMsg), SerializeMessage(topic, lastMsg));
     }
 
     private SocketSession AddSocket(WebSocket socket, bool replayState = false)
@@ -146,7 +273,10 @@ public class WebsocketManager
 
             foreach (var message in _lastMessage)
                 if (message.Key.Type == WebsocketTopic.TopicType.State)
-                    session.TryEnqueue(message.Key, SerializeMessage(message.Key, message.Value));
+                    session.TryEnqueue(
+                        message.Key,
+                        GetMessageKey(message.Key, message.Value),
+                        SerializeMessage(message.Key, message.Value));
         }
 
         return session;
@@ -206,6 +336,9 @@ public class WebsocketManager
             if (_sessions.TryGetValue(session.Socket, out var current) && ReferenceEquals(current, session))
                 _sessions.Remove(session.Socket);
         }
+
+        foreach (var topic in session.TakeAllSubscriptions())
+            _subscriberCounts.AddOrUpdate(topic, 0, (_, c) => Math.Max(0, c - 1));
 
         session.Stop();
         await session.DrainTask.ConfigureAwait(false);
@@ -272,6 +405,13 @@ public class WebsocketManager
         return new ArraySegment<byte>(Encoding.UTF8.GetBytes(topicMessage.ToJson()));
     }
 
+    private static string? GetMessageKey(WebsocketTopic topic, string message)
+    {
+        if (!topic.IsKeyed) return null;
+        var separator = message.IndexOf('|');
+        return separator > 0 ? message[..separator] : null;
+    }
+
     private sealed class TopicMessage(WebsocketTopic topic, string message)
     {
         public string Topic { get; } = topic.Name;
@@ -282,6 +422,7 @@ public class WebsocketManager
     {
         private readonly object _stateLock = new();
         private readonly Dictionary<WebsocketTopic, ArraySegment<byte>> _pendingState = new();
+        private readonly Dictionary<(WebsocketTopic Topic, string Key), ArraySegment<byte>> _pendingKeyedState = new();
         private readonly Channel<ArraySegment<byte>> _eventMessages;
         private readonly Channel<bool> _workSignal =
             Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
@@ -292,6 +433,7 @@ public class WebsocketManager
             });
         private readonly CancellationTokenSource _cancellation =
             CancellationTokenSource.CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
+        private readonly HashSet<WebsocketTopic> _subscriptions = new();
         private long _droppedEventMessageCount;
         private long _lastDroppedEventWarningTimestamp;
         private int _stopped;
@@ -313,7 +455,29 @@ public class WebsocketManager
         public CancellationToken CancellationToken => _cancellation.Token;
         public Task DrainTask { get; set; } = Task.CompletedTask;
 
-        public bool TryEnqueue(WebsocketTopic topic, ArraySegment<byte> message)
+        public bool AddSubscription(WebsocketTopic topic)
+        {
+            lock (_stateLock)
+                return _subscriptions.Add(topic);
+        }
+
+        public bool RemoveSubscription(WebsocketTopic topic)
+        {
+            lock (_stateLock)
+                return _subscriptions.Remove(topic);
+        }
+
+        public List<WebsocketTopic> TakeAllSubscriptions()
+        {
+            lock (_stateLock)
+            {
+                var topics = _subscriptions.ToList();
+                _subscriptions.Clear();
+                return topics;
+            }
+        }
+
+        public bool TryEnqueue(WebsocketTopic topic, string? messageKey, ArraySegment<byte> message)
         {
             if (Volatile.Read(ref _stopped) != 0) return false;
 
@@ -322,7 +486,10 @@ public class WebsocketManager
                 lock (_stateLock)
                 {
                     if (_stopped != 0) return false;
-                    _pendingState[topic] = message;
+                    if (topic.IsKeyed && messageKey is not null)
+                        _pendingKeyedState[(topic, messageKey)] = message;
+                    else
+                        _pendingState[topic] = message;
                 }
             }
             else if (!_eventMessages.Writer.TryWrite(message))
@@ -344,8 +511,12 @@ public class WebsocketManager
         {
             lock (_stateLock)
             {
-                var messages = _pendingState.Values.ToList();
+                var messages = new List<ArraySegment<byte>>(
+                    _pendingState.Count + _pendingKeyedState.Count);
+                messages.AddRange(_pendingState.Values);
+                messages.AddRange(_pendingKeyedState.Values);
                 _pendingState.Clear();
+                _pendingKeyedState.Clear();
                 return messages;
             }
         }

@@ -35,6 +35,11 @@ public class MultipartMkvProcessor : BaseProcessor
                 .GetFileSizeAsync(fileInfo.NzbFile, _ct)
                 .ConfigureAwait(false);
 
+            // Validate the uniform-size inference before persisting this part's
+            // segment byte ranges.
+            await fileInfo.NzbFile.ProbeSecondSegmentRangeAsync(_usenetClient, partSize, _ct)
+                .ConfigureAwait(false);
+
             fileParts.Add(new DavMultipartFile.FilePart
             {
                 SegmentIds = fileInfo.NzbFile.GetSegmentIds(),

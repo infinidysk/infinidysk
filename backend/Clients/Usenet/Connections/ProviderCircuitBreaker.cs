@@ -187,6 +187,36 @@ public class ProviderCircuitBreaker
         }
     }
 
+    /// <summary>
+    /// Records a connection-establishment failure. Unlike command failures, one failed
+    /// connect is enough to trip because concurrent retries would otherwise consume the
+    /// provider's connection capacity while it is unreachable.
+    /// </summary>
+    public void RecordConnectionFailure(string? reason = null)
+    {
+        lock (_lock)
+        {
+            var now = Environment.TickCount64;
+
+            // Ignore failures already in flight when the provider first tripped.
+            if (_trippedUntilMs > 0 && now < _trippedUntilMs)
+                return;
+
+            var wasHalfOpen = Volatile.Read(ref _halfOpenProbeInFlight) == 1
+                              || _trippedUntilMs > 0;
+            Volatile.Write(ref _halfOpenProbeInFlight, 0);
+            Volatile.Write(ref _probeStartedMs, 0);
+            Interlocked.Increment(ref _failureCount);
+
+            var failureReason = wasHalfOpen
+                ? "half-open connection failure"
+                : "connection failure";
+            Trip(now, reason is null
+                ? failureReason
+                : $"{failureReason} ({reason})");
+        }
+    }
+
     public void RecordFailure(string? reason = null)
     {
         lock (_lock)

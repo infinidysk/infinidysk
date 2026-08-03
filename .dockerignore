@@ -6,3 +6,4 @@
 backend/publish
 frontend/build
 frontend/dist-node
+tests/

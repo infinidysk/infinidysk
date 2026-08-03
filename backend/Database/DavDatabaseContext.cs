@@ -28,7 +28,14 @@ public sealed class DavDatabaseContext : DbContext
     public static string ConfigPath => EnvironmentUtil.GetEnvironmentVariable("CONFIG_PATH") ?? "/config";
     public static string DatabaseFilePath => Path.Join(ConfigPath, "db.sqlite");
 
-    private static readonly Lazy<DbContextOptions<DavDatabaseContext>> Options = new(() =>
+    private static Lazy<DbContextOptions<DavDatabaseContext>> Options = CreateOptions();
+
+    internal static void ResetOptionsForTests()
+    {
+        Options = CreateOptions();
+    }
+
+    private static Lazy<DbContextOptions<DavDatabaseContext>> CreateOptions() => new(() =>
         new DbContextOptionsBuilder<DavDatabaseContext>()
             .UseSqlite(new SqliteConnectionStringBuilder
             {
@@ -124,6 +131,15 @@ public sealed class DavDatabaseContext : DbContext
 
             e.Property(i => i.RandomSalt)
                 .IsRequired();
+
+            // At most one Admin account ever - the frontend's onboarding check-then-act
+            // (isOnboarding() then createAccount()) is not itself race-safe, so this is
+            // the authoritative backstop against two concurrent onboarding submissions
+            // both creating an admin account.
+            e.HasIndex(i => i.Type)
+                .IsUnique()
+                .HasFilter($"\"Type\" = {(int)Account.AccountType.Admin}")
+                .HasDatabaseName("IX_Accounts_SingleAdmin");
         });
 
         // DavItem

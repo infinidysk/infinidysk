@@ -9,6 +9,7 @@ import { useQueueHistoryWebsocket } from "./controllers/websocket-controller";
 import { useUploadController } from "./controllers/nzb-upload-controller";
 import { useQueueDropzone } from "./controllers/dropzone-controller";
 import { Alert } from "~/components/ui";
+import { useIsReadOnly } from "~/auth/authorization";
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 250] as const;
 const DEFAULT_PAGE_SIZE = 100;
@@ -60,6 +61,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function Queue(props: Route.ComponentProps) {
+    const isReadOnly = useIsReadOnly();
     const { queuePageSize, historyPageSize, queuePage, historyPage } = props.loaderData;
     const [queueSlots, setQueueSlots] = useState<PresentationQueueSlot[]>(props.loaderData.queueSlots);
     const [historySlots, setHistorySlots] = useState<PresentationHistorySlot[]>(props.loaderData.historySlots);
@@ -142,9 +144,9 @@ export default function Queue(props: Route.ComponentProps) {
 
             {/* queue */}
             <div className="min-h-[413.9px] min-[450px]:min-h-[382.9px]">
-                <div className="relative" {...dropzone.getRootProps()}>
+                <div className="relative" {...(isReadOnly ? {} : dropzone.getRootProps())}>
                     {dropzone.isDragActive && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border-2 border-dashed border-primary bg-primary/10" />}
-                    <input {...dropzone.getInputProps()} />
+                    {!isReadOnly && <input {...dropzone.getInputProps()} />}
                     <QueueTable
                         queueSlots={combinedQueueSlots}
                         totalQueueCount={totalQueueCount + uploadingFiles.length}
@@ -161,7 +163,7 @@ export default function Queue(props: Route.ComponentProps) {
                         onIsRemovingChanged={queueEvents.onRemovingQueueSlots}
                         onRemoved={queueEvents.onRemoveQueueSlots}
                         onMovedToTop={queueEvents.onMoveQueueSlotsToTop}
-                        onUploadClicked={dropzone.open}
+                        onUploadClicked={isReadOnly ? undefined : dropzone.open}
                     />
                 </div>
             </div>

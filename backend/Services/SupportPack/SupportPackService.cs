@@ -29,7 +29,8 @@ public sealed class SupportPackService(
     ArticleMissNegativeCache articleMissCache,
     InFlightArticleBudget inFlightArticleBudget,
     StreamTraceBuffer streamTraceBuffer,
-    RuntimeUsageTracker runtimeUsage)
+    RuntimeUsageTracker runtimeUsage,
+    ConcurrentReadTracker? concurrentReadTracker = null)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -256,6 +257,8 @@ public sealed class SupportPackService(
         var uptime = ProcessUptime();
         var streamTracing = streamTraceBuffer.GetStatus();
         var usage = runtimeUsage.Snapshot();
+        var concurrentReads = concurrentReadTracker?.Snapshot() ?? default;
+        var bufferPool = BufferPoolDiagnostics.Shared.Snapshot();
         var cpu = await BuildCpuDiagnosticsAsync(usage, uptime, cancellationToken).ConfigureAwait(false);
 
         return new
@@ -277,6 +280,32 @@ public sealed class SupportPackService(
                 inFlightArticleBytes = inFlightArticleBudget.LeasedBytes,
                 inFlightArticleBudgetBytes = inFlightArticleBudget.CapBytes,
                 inFlightArticleThrottleEvents = inFlightArticleBudget.ThrottleEvents,
+                concurrentReadStarts = concurrentReads.ReaderStarts,
+                concurrentReadOverlapEvents = concurrentReads.OverlapEvents,
+                concurrentReadPrivateFallbacksNoRegistry = concurrentReads.PrivateFallbacksNoRegistry,
+                concurrentReadDuplicateInFlightSegmentFetches =
+                    concurrentReads.DuplicateInFlightSegmentFetches,
+                concurrentReadPeakReadersPerPath = concurrentReads.PeakConcurrentReaders,
+                concurrentReadCurrentOverlappingPaths = concurrentReads.CurrentOverlappingPaths,
+                concurrentReadCurrentInFlightSegmentFetches =
+                    concurrentReads.CurrentInFlightSegmentFetches,
+                concurrentReadCompleted = concurrentReads.CompletedReads,
+                concurrentReadTotalLifetimeMs = concurrentReads.TotalReadLifetimeMs,
+                concurrentReadMaxLifetimeMs = concurrentReads.MaxReadLifetimeMs,
+                concurrentReadStartDistanceSamples = concurrentReads.StartDistanceSamples,
+                concurrentReadTotalStartDistanceBytes = concurrentReads.TotalStartDistanceBytes,
+                concurrentReadMaxStartDistanceBytes = concurrentReads.MaxStartDistanceBytes,
+                concurrentReadFullStarts = concurrentReads.FullReads,
+                concurrentReadStartRangeStarts = concurrentReads.StartRangeReads,
+                concurrentReadOffsetRangeStarts = concurrentReads.OffsetRangeReads,
+                concurrentReadSuffixRangeStarts = concurrentReads.SuffixRangeReads,
+                segmentBufferRents = bufferPool.Rents,
+                segmentBufferReturns = bufferPool.Returns,
+                segmentBufferGrowths = bufferPool.Growths,
+                segmentBufferCheckedOutBytes = bufferPool.CheckedOutBytes,
+                segmentBufferRequestedBytes = bufferPool.RequestedBytes,
+                segmentBufferRentedBytes = bufferPool.RentedBytes,
+                segmentBufferBucketWasteBytes = bufferPool.BucketWasteBytes,
                 timeZone = TimeZoneInfo.Local.Id,
             },
             runtimeSampler = BuildRuntimeSamplerDiagnostics(usage),

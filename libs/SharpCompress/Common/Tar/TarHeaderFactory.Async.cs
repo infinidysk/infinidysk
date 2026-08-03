@@ -1,0 +1,59 @@
+using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
+using SharpCompress.Common.Tar.Headers;
+using SharpCompress.IO;
+
+namespace SharpCompress.Common.Tar;
+
+internal static partial class TarHeaderFactory
+{
+    internal static async IAsyncEnumerable<TarHeader?> ReadHeaderAsync(
+        StreamingMode mode,
+        Stream stream,
+        IArchiveEncoding archiveEncoding
+    )
+    {
+        await using var reader = new AsyncBinaryReader(stream, leaveOpen: true);
+
+        var globalPaxMetadata = new TarHeader.PaxMetadata();
+
+        while (true)
+        {
+            TarHeader? header = null;
+            try
+            {
+                header = new TarHeader(archiveEncoding);
+                if (!await header.ReadAsync(reader, globalPaxMetadata).ConfigureAwait(false))
+                {
+                    yield break;
+                }
+                switch (mode)
+                {
+                    case StreamingMode.Seekable:
+                        {
+                            header.DataStartPosition = stream.Position;
+
+                            //skip to nearest 512
+                            stream.Position += PadTo512(header.Size);
+                        }
+                        break;
+                    case StreamingMode.Streaming:
+                        {
+                            header.PackedStream = new TarReadOnlySubStream(stream, header.Size);
+                        }
+                        break;
+                    default:
+                    {
+                        throw new InvalidFormatException("Invalid StreamingMode");
+                    }
+                }
+            }
+            catch
+            {
+                header = null;
+            }
+            yield return header;
+        }
+    }
+}

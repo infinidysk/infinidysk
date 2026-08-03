@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyTitle>SharpCompress - Pure C# Decompression/Compression</AssemblyTitle>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <Authors>Adam Hathcock; nzbdav contributors</Authors>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>SharpCompress</AssemblyName>
+    <AssemblyOriginatorKeyFile>../SharpCompress.snk</AssemblyOriginatorKeyFile>
+    <SignAssembly>true</SignAssembly>
+    <Copyright>Copyright (c) 2014 Adam Hathcock</Copyright>
+    <GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
+    <GenerateAssemblyProductAttribute>false</GenerateAssemblyProductAttribute>
+    <Description>SharpCompress is a pure C# compression library for .NET 10 that can unrar, decompress 7zip, decompress xz, zip/unzip, tar/untar, lzip/unlzip, bzip2/unbzip2, gzip/ungzip, and zstandard with forward-only reading and file random access APIs. Write support for zip/tar/bzip2/gzip/lzip/zstandard/7zip is implemented.</Description>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsPackable>false</IsPackable>
+    <!-- Keep local library builds usable without the upstream repo's Directory.Build.props. -->
+    <NoWarn>$(NoWarn);CS1591;IDE0051</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Hashing" Version="10.0.10" />
+  </ItemGroup>
+</Project>

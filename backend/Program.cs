@@ -1,10 +1,12 @@
 ﻿using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
 using NzbWebDAV.Api.SabControllers;
@@ -34,7 +36,7 @@ using Serilog.Templates.Themes;
 
 namespace NzbWebDAV;
 
-class Program
+public partial class Program
 {
     static async Task Main(string[] args)
     {
@@ -151,7 +153,13 @@ class Program
                 return;
             }
 
-            RunYencNativeSelfTest();
+            // WebApplicationFactory runs from the test output directory, where the
+            // backend's published rapidyenc native asset is not present.
+            if (!string.Equals(
+                    EnvironmentUtil.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+                    "Testing",
+                    StringComparison.OrdinalIgnoreCase))
+                RunYencNativeSelfTest();
 
             // Assign stable ProviderIds (persisting if needed) before the streaming
             // client is built. Cheap and non-fatal; the heavy legacy-metrics remap
@@ -172,7 +180,10 @@ class Program
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
             builder.Services.AddControllers();
-            builder.Services.AddHealthChecks();
+            builder.Services.AddHealthChecks()
+                .AddCheck<StreamingReadinessCheck>(
+                    "streaming_readiness",
+                    tags: ["ready"]);
             builder.Services.Configure<ForwardedHeadersOptions>(options =>
             {
                 options.ForwardedHeaders = ForwardedHeaders.XForwardedFor
@@ -197,6 +208,8 @@ class Program
                 .AddSingleton(sp =>
                 {
                     var cfg = sp.GetRequiredService<ConfigManager>();
+                    var budgetMb = cfg.GetInFlightArticleBudgetMb();
+                    MemoryBudget.LogInFlightBudget(budgetMb);
                     var budget = new InFlightArticleBudget(cfg.GetInFlightArticleBudgetBytes());
                     InFlightArticleBudget.Current = budget;
                     cfg.OnConfigChanged += (_, args) =>
@@ -211,6 +224,8 @@ class Program
                 .AddSingleton<NzbWebDAV.Services.Benchmark.BenchmarkRunControl>()
                 .AddHostedService<LogBroadcaster>()
                 .AddSingleton<ActiveReadRegistry>()
+                .AddSingleton<ConcurrentReadTracker>()
+                .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())
                 .AddHostedService<RuntimeUsageSampler>()
                 .AddSingleton<ProviderUsageTracker>(sp =>
@@ -312,12 +327,22 @@ class Program
             app.UseForwardedHeaders();
             app.UseMiddleware<ExceptionMiddleware>();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
-            app.MapHealthChecks("/health");
+            app.MapHealthChecks("/health", new HealthCheckOptions
+            {
+                Predicate = check => !check.Tags.Contains("ready"),
+            });
+            app.MapHealthChecks("/ready", new HealthCheckOptions
+            {
+                Predicate = check => check.Tags.Contains("ready"),
+            });
             app.Map("/ws", websocketManager.HandleRoute);
             app.MapControllers();
             app.UseWebdavBasicAuthentication();
             app.UseNWebDav();
-            app.Lifetime.ApplicationStopping.Register(SigtermUtil.Cancel);
+            // TestServer hosts share a process, so stopping one must not trip the
+            // process-wide SIGTERM token used by later integration tests.
+            if (!app.Environment.IsEnvironment("Testing"))
+                app.Lifetime.ApplicationStopping.Register(SigtermUtil.Cancel);
             // Remap legacy host-keyed metrics rows onto ProviderIds after the app is
             // serving. This can rewrite a lot of rows on old databases and must never
             // delay the /health endpoint: blocking startup on it caused a container
@@ -355,10 +380,16 @@ class Program
     /// </summary>
     private static void RunYencNativeSelfTest()
     {
-        Log.Information("Running yEnc native self-test (rapidyenc {Version:X})",
-            RapidYencSharp.Version.GetVersion());
+        // Log before native init so a hard crash during dispatch setup still leaves a breadcrumb.
+        Log.Information("Initializing yEnc native dispatch (rapidyenc)");
         try
         {
+            RapidYencSharp.YencEncoder.EnsureInitialized();
+            RapidYencSharp.YencDecoder.EnsureInitialized();
+            RapidYencSharp.Crc32.EnsureInitialized();
+            Log.Information("Running yEnc native self-test (rapidyenc {Version:X})",
+                RapidYencSharp.Version.GetVersion());
+
             ReadOnlySpan<byte> sample = "nzbdav rapidyenc startup self-test"u8;
             var encoded = RapidYencSharp.YencEncoder.Encode(sample);
             var decoded = RapidYencSharp.YencDecoder.Decode(encoded);

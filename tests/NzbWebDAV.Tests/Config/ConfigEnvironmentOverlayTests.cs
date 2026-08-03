@@ -161,6 +161,17 @@ public class ConfigEnvironmentOverlayTests
         Assert.True(overlay.TryGetValue(ConfigKeys.UsenetProviders, out var normalized));
         var parsed = JsonSerializer.Deserialize<UsenetProviderConfig>(normalized)!;
         Assert.NotEqual(Guid.Empty, parsed.Providers[0].ProviderId);
+
+        // The same env JSON on the next start has to land on the same id, or per-provider
+        // usage totals begin again from zero on every boot.
+        var restarted = ConfigEnvironmentOverlay.LoadFromEnvironment(new Hashtable
+        {
+            ["NZBDAV_CONFIG__USENET__PROVIDERS"] = incoming,
+        });
+
+        Assert.True(restarted.TryGetValue(ConfigKeys.UsenetProviders, out var afterRestart));
+        var parsedAgain = JsonSerializer.Deserialize<UsenetProviderConfig>(afterRestart)!;
+        Assert.Equal(parsed.Providers[0].ProviderId, parsedAgain.Providers[0].ProviderId);
     }
 
     [Fact]

@@ -1,0 +1,866 @@
+using System;
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.IO.Compression;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace SharpCompress.Common.Tar.Headers;
+
+internal sealed partial class TarHeader
+{
+    private static ReadOnlyMemory<byte> ZeroBlock { get; } = new byte[512];
+
+    internal static readonly DateTime EPOCH = new(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    public TarHeader(
+        IArchiveEncoding archiveEncoding,
+        TarHeaderWriteFormat writeFormat = TarHeaderWriteFormat.GNU_TAR_LONG_LINK
+    )
+    {
+        ArchiveEncoding = archiveEncoding;
+        WriteFormat = writeFormat;
+    }
+
+    internal TarHeaderWriteFormat WriteFormat { get; set; }
+    internal string? Name { get; set; }
+    internal string? LinkName { get; set; }
+
+    internal long Mode { get; set; }
+    internal long UserId { get; set; }
+    internal long GroupId { get; set; }
+    internal long Size { get; set; }
+    internal DateTime LastModifiedTime { get; set; }
+    internal EntryType EntryType { get; set; }
+    internal Stream? PackedStream { get; set; }
+    internal IArchiveEncoding ArchiveEncoding { get; }
+
+    internal const int BLOCK_SIZE = 512;
+
+    // Maximum size for long name/link headers to prevent memory exhaustion attacks
+    // This is generous enough for most real-world scenarios (32KB)
+    private const int MAX_LONG_NAME_SIZE = 32768;
+    private const int MAX_PAX_HEADER_SIZE = 65536;
+
+    internal sealed class PaxMetadata
+    {
+        internal string? Name { get; set; }
+        internal string? LinkName { get; set; }
+        internal long? Mode { get; set; }
+        internal long? UserId { get; set; }
+        internal long? GroupId { get; set; }
+        internal long? Size { get; set; }
+        internal DateTime? LastModifiedTime { get; set; }
+
+        internal PaxMetadata Clone() =>
+            new()
+            {
+                Name = Name,
+                LinkName = LinkName,
+                Mode = Mode,
+                UserId = UserId,
+                GroupId = GroupId,
+                Size = Size,
+                LastModifiedTime = LastModifiedTime,
+            };
+
+        internal void ApplyTo(TarHeader header)
+        {
+            if (Name is not null)
+            {
+                header.Name = Name;
+            }
+
+            if (LinkName is not null)
+            {
+                header.LinkName = LinkName;
+            }
+
+            if (Size.HasValue)
+            {
+                header.Size = Size.Value;
+            }
+
+            if (LastModifiedTime.HasValue)
+            {
+                header.LastModifiedTime = LastModifiedTime.Value;
+            }
+
+            if (Mode.HasValue)
+            {
+                header.Mode = Mode.Value;
+            }
+
+            if (UserId.HasValue)
+            {
+                header.UserId = UserId.Value;
+            }
+
+            if (GroupId.HasValue)
+            {
+                header.GroupId = GroupId.Value;
+            }
+        }
+    }
+
+    internal void Write(Stream output)
+    {
+        switch (WriteFormat)
+        {
+            case TarHeaderWriteFormat.GNU_TAR_LONG_LINK:
+                WriteGnuTarLongLink(output);
+                break;
+            case TarHeaderWriteFormat.USTAR:
+                WriteUstar(output);
+                break;
+            default:
+                throw new ArchiveOperationException("This should be impossible...");
+        }
+    }
+
+    internal void WriteUstar(Stream output)
+    {
+        var buffer = new byte[BLOCK_SIZE];
+        FormatUstar(buffer);
+        output.Write(buffer, 0, buffer.Length);
+    }
+
+    // IO-free core that lays out a USTAR header into a 512-byte block. Shared by the
+    // sync WriteUstar and async WriteUstarAsync wrappers, which only differ in how
+    // the finished block is written to the stream.
+    private void FormatUstar(Span<byte> buffer)
+    {
+        WriteOctalBytes(511, buffer, 100, 8); // file mode
+        WriteOctalBytes(0, buffer, 108, 8); // owner ID
+        WriteOctalBytes(0, buffer, 116, 8); // group ID
+
+        //ArchiveEncoding.UTF8.GetBytes("magic").CopyTo(buffer, 257);
+        var nameByteCount = ArchiveEncoding
+            .GetEncoding()
+            .GetByteCount(Name.NotNull("Name is null"));
+
+        if (nameByteCount > 100)
+        {
+            // if name is longer, try to split it into name and namePrefix
+
+            string fullName = Name.NotNull("Name is null");
+
+            // find all directory separators
+            List<int> dirSeps = new List<int>();
+            for (int i = 0; i < fullName.Length; i++)
+            {
+                if (fullName[i] == Path.DirectorySeparatorChar)
+                {
+                    dirSeps.Add(i);
+                }
+            }
+
+            // find the right place to split the name
+            int splitIndex = -1;
+            for (int i = 0; i < dirSeps.Count; i++)
+            {
+                int count = ArchiveEncoding
+                    .GetEncoding()
+                    .GetByteCount(fullName.AsSpan(0, dirSeps[i]));
+                if (count < 155)
+                {
+                    splitIndex = dirSeps[i];
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            if (splitIndex == -1)
+            {
+                throw new InvalidFormatException(
+                    $"Tar header USTAR format can not fit file name \"{fullName}\" of length {nameByteCount}! Directory separator not found! Try using GNU Tar format instead!"
+                );
+            }
+
+            string namePrefix = fullName.Substring(0, splitIndex);
+            string name = fullName.Substring(splitIndex + 1);
+
+            if (this.ArchiveEncoding.GetEncoding().GetByteCount(namePrefix) >= 155)
+            {
+                throw new InvalidFormatException(
+                    $"Tar header USTAR format can not fit file name \"{fullName}\" of length {nameByteCount}! Try using GNU Tar format instead!"
+                );
+            }
+
+            if (this.ArchiveEncoding.GetEncoding().GetByteCount(name) >= 100)
+            {
+                throw new InvalidFormatException(
+                    $"Tar header USTAR format can not fit file name \"{fullName}\" of length {nameByteCount}! Try using GNU Tar format instead!"
+                );
+            }
+
+            // write name prefix
+            WriteStringBytes(ArchiveEncoding.Encode(namePrefix), buffer, 345, 100);
+            // write partial name
+            WriteStringBytes(ArchiveEncoding.Encode(name), buffer, 100);
+        }
+        else
+        {
+            WriteStringBytes(ArchiveEncoding.Encode(Name.NotNull("Name is null")), buffer, 100);
+        }
+
+        WriteOctalBytes(Size, buffer, 124, 12);
+        var time = (long)(LastModifiedTime.ToUniversalTime() - EPOCH).TotalSeconds;
+        WriteOctalBytes(time, buffer, 136, 12);
+        buffer[156] = (byte)EntryType;
+
+        // write ustar magic field
+        WriteStringBytes(Encoding.ASCII.GetBytes("ustar"), buffer, 257, 6);
+        // write ustar version "00"
+        buffer[263] = 0x30;
+        buffer[264] = 0x30;
+
+        var crc = RecalculateChecksum(buffer);
+        WriteOctalBytes(crc, buffer, 148, 8);
+    }
+
+    internal void WriteGnuTarLongLink(Stream output)
+    {
+        var buffer = new byte[BLOCK_SIZE];
+        var nameByteCount = FormatGnuTarLongLinkHeader(buffer);
+        output.Write(buffer, 0, buffer.Length);
+
+        if (nameByteCount > 100)
+        {
+            WriteLongFilenameHeader(output);
+            // update to short name lower than 100 - [max bytes of one character].
+            // subtracting bytes is needed because preventing infinite loop(example code is here).
+            //
+            // var bytes = Encoding.UTF8.GetBytes(new string(0x3042, 100));
+            // var truncated = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(bytes, 0, 100));
+            //
+            // and then infinite recursion is occured in WriteLongFilenameHeader because truncated.Length is 102.
+            Name = ArchiveEncoding.Decode(
+                ArchiveEncoding.Encode(Name.NotNull("Name is null")),
+                0,
+                100 - ArchiveEncoding.GetEncoding().GetMaxByteCount(1)
+            );
+            WriteGnuTarLongLink(output);
+        }
+    }
+
+    // IO-free core that lays out the GNU long-link header block. Returns the encoded
+    // name byte count so the sync/async wrappers can decide whether the long-name
+    // payload block(s) must still be written to the stream.
+    private int FormatGnuTarLongLinkHeader(Span<byte> buffer)
+    {
+        WriteOctalBytes(511, buffer, 100, 8); // file mode
+        WriteOctalBytes(0, buffer, 108, 8); // owner ID
+        WriteOctalBytes(0, buffer, 116, 8); // group ID
+
+        //ArchiveEncoding.UTF8.GetBytes("magic").CopyTo(buffer, 257);
+        var nameByteCount = ArchiveEncoding
+            .GetEncoding()
+            .GetByteCount(Name.NotNull("Name is null"));
+        if (nameByteCount > 100)
+        {
+            // Set mock filename and filetype to indicate the next block is the actual name of the file
+            WriteStringBytes("././@LongLink", buffer, 0, 100);
+            buffer[156] = (byte)EntryType.LongName;
+            WriteOctalBytes(nameByteCount + 1, buffer, 124, 12);
+        }
+        else
+        {
+            WriteStringBytes(ArchiveEncoding.Encode(Name.NotNull("Name is null")), buffer, 100);
+            WriteOctalBytes(Size, buffer, 124, 12);
+            var time = (long)(LastModifiedTime.ToUniversalTime() - EPOCH).TotalSeconds;
+            WriteOctalBytes(time, buffer, 136, 12);
+            buffer[156] = (byte)EntryType;
+
+            if (Size >= 0x1FFFFFFFF)
+            {
+                Span<byte> bytes12 = stackalloc byte[12];
+                BinaryPrimitives.WriteInt64BigEndian(bytes12.Slice(4), Size);
+                bytes12[0] |= 0x80;
+                bytes12.CopyTo(buffer.Slice(124));
+            }
+        }
+
+        var crc = RecalculateChecksum(buffer);
+        WriteOctalBytes(crc, buffer, 148, 8);
+        return nameByteCount;
+    }
+
+    private void WriteLongFilenameHeader(Stream output)
+    {
+        var nameBytes = ArchiveEncoding.Encode(Name.NotNull("Name is null"));
+        output.Write(nameBytes, 0, nameBytes.Length);
+
+        // pad to multiple of BlockSize bytes, and make sure a terminating null is added
+        var numPaddingBytes = BLOCK_SIZE - (nameBytes.Length % BLOCK_SIZE);
+        if (numPaddingBytes == 0)
+        {
+            numPaddingBytes = BLOCK_SIZE;
+        }
+        output.Write(stackalloc byte[numPaddingBytes]);
+    }
+
+    internal bool Read(BinaryReader reader, PaxMetadata? globalPaxMetadata = null)
+    {
+        globalPaxMetadata ??= new PaxMetadata();
+        var pendingMetadata = globalPaxMetadata.Clone();
+        byte[] buffer;
+        EntryType entryType;
+
+        while (true)
+        {
+            buffer = ReadBlock(reader);
+
+            if (buffer.Length == 0)
+            {
+                return false;
+            }
+
+            entryType = ReadEntryType(buffer);
+
+            // LongName and LongLink headers can follow each other and need
+            // to apply to the header that follows them.
+            if (entryType == EntryType.LongName)
+            {
+                pendingMetadata.Name = ReadLongName(reader, buffer);
+                continue;
+            }
+
+            if (entryType == EntryType.LongLink)
+            {
+                pendingMetadata.LinkName = ReadLongName(reader, buffer);
+                continue;
+            }
+
+            if (entryType == EntryType.LocalExtendedHeader)
+            {
+                ReadPaxMetadata(reader, buffer, pendingMetadata);
+                continue;
+            }
+
+            if (entryType == EntryType.GlobalExtendedHeader)
+            {
+                ReadPaxMetadata(reader, buffer, globalPaxMetadata);
+                pendingMetadata = globalPaxMetadata.Clone();
+                continue;
+            }
+
+            break;
+        }
+
+        return ParseCore(buffer, entryType, pendingMetadata);
+    }
+
+    // IO-free core that decodes every field of a fully-read 512-byte header block:
+    // checksum validation, name/prefix, octal numeric fields, typeflag-derived
+    // link name, and applied PAX/GNU metadata. This is shared verbatim by the sync
+    // Read and async ReadAsync paths, which only differ in how they fill the block
+    // (and any preceding long-name/PAX payload blocks).
+    private bool ParseCore(
+        ReadOnlySpan<byte> block,
+        EntryType entryType,
+        PaxMetadata pendingMetadata
+    )
+    {
+        // Check header checksum
+        if (!checkChecksum(block))
+        {
+            return false;
+        }
+
+        Name = DecodeString(block, 0, 100);
+        EntryType = entryType;
+        Size = ReadSize(block);
+        LinkName = null;
+
+        // for symlinks, additionally read the linkname
+        if (entryType == EntryType.SymLink || entryType == EntryType.HardLink)
+        {
+            LinkName = DecodeString(block, 157, 100);
+        }
+
+        Mode = ReadAsciiInt64Base8(block, 100, 7);
+        UserId = ReadAsciiInt64Base8oldGnu(block, 108, 7);
+        GroupId = ReadAsciiInt64Base8oldGnu(block, 116, 7);
+
+        var unixTimeStamp = ReadAsciiInt64Base8(block, 136, 11);
+
+        LastModifiedTime = EPOCH.AddSeconds(unixTimeStamp).ToLocalTime();
+        Magic = DecodeString(block, 257, 6);
+
+        if (!string.IsNullOrEmpty(Magic) && "ustar".Equals(Magic, StringComparison.Ordinal))
+        {
+            var namePrefix = DecodeString(block, 345, 157);
+
+            if (!string.IsNullOrEmpty(namePrefix))
+            {
+                Name = namePrefix + "/" + Name;
+            }
+        }
+
+        pendingMetadata.ApplyTo(this);
+
+        if (entryType == EntryType.Directory)
+        {
+            Mode |= 0b1_000_000_000;
+        }
+
+        if (entryType != EntryType.LongName && Name.Length == 0)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    // Decodes a field slice from a header block. ArchiveEncoding.Decode works on
+    // byte[] (to support IArchiveEncoding.CustomDecoder), so the slice is copied out
+    // of the block before decoding.
+    private string DecodeString(ReadOnlySpan<byte> block, int start, int length)
+    {
+        var bytes = block.Slice(start, length).ToArray();
+        return ArchiveEncoding.Decode(bytes, 0, bytes.Length).TrimNulls();
+    }
+
+    private string ReadLongName(BinaryReader reader, byte[] buffer)
+    {
+        var nameBytes = ReadMetadataPayload(reader, buffer, MAX_LONG_NAME_SIZE, "Long name");
+        return ArchiveEncoding.Decode(nameBytes, 0, nameBytes.Length).TrimNulls();
+    }
+
+    private void ReadPaxMetadata(BinaryReader reader, byte[] buffer, PaxMetadata pendingMetadata)
+    {
+        var payload = ReadMetadataPayload(reader, buffer, MAX_PAX_HEADER_SIZE, "PAX header");
+        ParsePaxRecords(payload, pendingMetadata);
+    }
+
+    private byte[] ReadMetadataPayload(
+        BinaryReader reader,
+        byte[] buffer,
+        int maxSize,
+        string payloadName
+    )
+    {
+        var size = ReadSize(buffer);
+
+        // Validate size to prevent memory exhaustion from malformed headers
+        if (size < 0 || size > maxSize)
+        {
+            throw new InvalidFormatException(
+                $"{payloadName} size {size} is invalid or exceeds maximum allowed size of {maxSize} bytes"
+            );
+        }
+
+        var payloadLength = (int)size;
+        var payload = reader.ReadBytes(payloadLength);
+
+        if (payload.Length != payloadLength)
+        {
+            throw new InvalidFormatException($"{payloadName} data is truncated.");
+        }
+
+        SkipMetadataPadding(reader, payloadLength);
+        return payload;
+    }
+
+    private static void SkipMetadataPadding(BinaryReader reader, int payloadLength)
+    {
+        var paddingLength = GetPaddingLength(payloadLength);
+        if (paddingLength == 0)
+        {
+            return;
+        }
+
+        var padding = reader.ReadBytes(paddingLength);
+        if (padding.Length != paddingLength)
+        {
+            throw new InvalidFormatException("Metadata payload padding is truncated.");
+        }
+    }
+
+    private static int GetPaddingLength(int payloadLength)
+    {
+        var remainder = payloadLength % BLOCK_SIZE;
+        return remainder == 0 ? 0 : BLOCK_SIZE - remainder;
+    }
+
+    private static void ParsePaxRecords(byte[] payload, PaxMetadata pendingMetadata)
+    {
+        var index = 0;
+        while (index < payload.Length)
+        {
+            var spaceIndex = Array.IndexOf(payload, (byte)' ', index);
+            if (spaceIndex <= index)
+            {
+                throw new InvalidFormatException("Invalid PAX record: missing length separator.");
+            }
+
+            var recordLength = ParsePaxRecordLength(payload, index, spaceIndex - index);
+            if (recordLength <= 0 || recordLength > payload.Length - index)
+            {
+                throw new InvalidFormatException(
+                    "Invalid PAX record: record length exceeds payload."
+                );
+            }
+
+            var recordEnd = index + recordLength;
+            if (payload[recordEnd - 1] != (byte)'\n')
+            {
+                throw new InvalidFormatException(
+                    "Invalid PAX record: record does not end with newline."
+                );
+            }
+
+            var keyValueStart = spaceIndex + 1;
+            var keyValueLength = recordEnd - keyValueStart - 1;
+            var equalsIndex = Array.IndexOf(payload, (byte)'=', keyValueStart, keyValueLength);
+            if (equalsIndex <= keyValueStart)
+            {
+                throw new InvalidFormatException(
+                    "Invalid PAX record: missing key/value separator."
+                );
+            }
+
+            var key = Encoding.UTF8.GetString(payload, keyValueStart, equalsIndex - keyValueStart);
+            var valueStart = equalsIndex + 1;
+            var valueLength = recordEnd - valueStart - 1;
+            var value = Encoding.UTF8.GetString(payload, valueStart, valueLength);
+
+            ApplyPaxKeyValue(pendingMetadata, key, value);
+            index = recordEnd;
+        }
+    }
+
+    private static int ParsePaxRecordLength(byte[] payload, int offset, int length)
+    {
+        var lengthText = Encoding.ASCII.GetString(payload, offset, length);
+        if (
+            !int.TryParse(
+                lengthText,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var value
+            )
+        )
+        {
+            throw new InvalidFormatException($"Invalid PAX record length '{lengthText}'.");
+        }
+
+        if (value <= 0)
+        {
+            throw new InvalidFormatException("Invalid PAX record length: value must be positive.");
+        }
+
+        return value;
+    }
+
+    private static void ApplyPaxKeyValue(PaxMetadata pendingMetadata, string key, string value)
+    {
+        switch (key)
+        {
+            case "path":
+                pendingMetadata.Name = value;
+                break;
+            case "linkpath":
+                pendingMetadata.LinkName = value;
+                break;
+            case "size":
+                pendingMetadata.Size = ParsePaxInt64(value, key, allowNegative: false);
+                break;
+            case "mtime":
+                pendingMetadata.LastModifiedTime = ParsePaxTimestamp(value, key);
+                break;
+            case "uid":
+                pendingMetadata.UserId = ParsePaxInt64(value, key);
+                break;
+            case "gid":
+                pendingMetadata.GroupId = ParsePaxInt64(value, key);
+                break;
+            case "mode":
+                pendingMetadata.Mode = ParsePaxMode(value);
+                break;
+        }
+    }
+
+    private static long ParsePaxMode(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidFormatException("Invalid PAX value for 'mode': value is empty.");
+        }
+
+        if (IsOctalDigitsOnly(value))
+        {
+            return Convert.ToInt64(value, 8);
+        }
+
+        return ParsePaxInt64(value, "mode", allowNegative: false);
+    }
+
+    private static bool IsOctalDigitsOnly(string value)
+    {
+        foreach (var ch in value)
+        {
+            if (ch < '0' || ch > '7')
+            {
+                return false;
+            }
+        }
+
+        return value.Length > 0;
+    }
+
+    private static long ParsePaxInt64(string value, string key, bool allowNegative = true)
+    {
+        if (
+            !long.TryParse(
+                value,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out var parsed
+            )
+        )
+        {
+            throw new InvalidFormatException($"Invalid PAX value for '{key}': '{value}'.");
+        }
+
+        if (!allowNegative && parsed < 0)
+        {
+            throw new InvalidFormatException($"Invalid PAX value for '{key}': '{value}'.");
+        }
+
+        return parsed;
+    }
+
+    private static DateTime ParsePaxTimestamp(string value, string key)
+    {
+        if (
+            !double.TryParse(
+                value,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var seconds
+            )
+        )
+        {
+            throw new InvalidFormatException($"Invalid PAX value for '{key}': '{value}'.");
+        }
+
+        try
+        {
+            return EPOCH.AddSeconds(seconds).ToLocalTime();
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            throw new InvalidFormatException($"Invalid PAX value for '{key}': '{value}'.", ex);
+        }
+    }
+
+    private static EntryType ReadEntryType(ReadOnlySpan<byte> buffer) => (EntryType)buffer[156];
+
+    private long ReadSize(ReadOnlySpan<byte> buffer)
+    {
+        if ((buffer[124] & 0x80) == 0x80) // if size in binary
+        {
+            return BinaryPrimitives.ReadInt64BigEndian(buffer.Slice(0x80));
+        }
+
+        return ReadAsciiInt64Base8(buffer, 124, 11);
+    }
+
+    private static byte[] ReadBlock(BinaryReader reader)
+    {
+        var buffer = reader.ReadBytes(BLOCK_SIZE);
+
+        if (buffer.Length != 0 && buffer.Length < BLOCK_SIZE)
+        {
+            throw new InvalidFormatException("Buffer is invalid size");
+        }
+        return buffer;
+    }
+
+    private static void WriteStringBytes(ReadOnlySpan<byte> name, Span<byte> buffer, int length)
+    {
+        name.CopyTo(buffer);
+        var i = Math.Min(length, name.Length);
+        buffer.Slice(i, length - i).Clear();
+    }
+
+    private static void WriteStringBytes(
+        ReadOnlySpan<byte> name,
+        Span<byte> buffer,
+        int offset,
+        int length
+    )
+    {
+        name.CopyTo(buffer.Slice(offset));
+        var i = Math.Min(length, name.Length);
+        buffer.Slice(offset + i, length - i).Clear();
+    }
+
+    private static void WriteStringBytes(string name, Span<byte> buffer, int offset, int length)
+    {
+        int i;
+
+        for (i = 0; i < length && i < name.Length; ++i)
+        {
+            buffer[offset + i] = (byte)name[i];
+        }
+
+        for (; i < length; ++i)
+        {
+            buffer[offset + i] = 0;
+        }
+    }
+
+    private static void WriteOctalBytes(long value, Span<byte> buffer, int offset, int length)
+    {
+        var val = Convert.ToString(value, 8);
+        var shift = length - val.Length - 1;
+        for (var i = 0; i < shift; i++)
+        {
+            buffer[offset + i] = (byte)' ';
+        }
+        for (var i = 0; i < val.Length; i++)
+        {
+            buffer[offset + i + shift] = (byte)val[i];
+        }
+    }
+
+    private static int ReadAsciiInt32Base8(byte[] buffer, int offset, int count)
+    {
+        var s = Encoding.UTF8.GetString(buffer, offset, count).TrimNulls();
+        if (string.IsNullOrEmpty(s))
+        {
+            return 0;
+        }
+        return Convert.ToInt32(s, 8);
+    }
+
+    private static long ReadAsciiInt64Base8(ReadOnlySpan<byte> buffer, int offset, int count)
+    {
+        var s = Encoding.UTF8.GetString(buffer.Slice(offset, count)).TrimNulls();
+        if (string.IsNullOrEmpty(s))
+        {
+            return 0;
+        }
+        return Convert.ToInt64(s, 8);
+    }
+
+    private static long ReadAsciiInt64Base8oldGnu(ReadOnlySpan<byte> buffer, int offset, int count)
+    {
+        if (buffer[offset] == 0x80 && buffer[offset + 1] == 0x00)
+        {
+            return buffer[offset + 4] << 24
+                | buffer[offset + 5] << 16
+                | buffer[offset + 6] << 8
+                | buffer[offset + 7];
+        }
+        var s = Encoding.UTF8.GetString(buffer.Slice(offset, count)).TrimNulls();
+
+        if (string.IsNullOrEmpty(s))
+        {
+            return 0;
+        }
+        return Convert.ToInt64(s, 8);
+    }
+
+    private static long ReadAsciiInt64(byte[] buffer, int offset, int count)
+    {
+        var s = Encoding.UTF8.GetString(buffer, offset, count).TrimNulls();
+        if (string.IsNullOrEmpty(s))
+        {
+            return 0;
+        }
+        return Convert.ToInt64(s, Constants.DefaultCultureInfo);
+    }
+
+    private static readonly byte[] eightSpaces =
+    {
+        (byte)' ',
+        (byte)' ',
+        (byte)' ',
+        (byte)' ',
+        (byte)' ',
+        (byte)' ',
+        (byte)' ',
+        (byte)' ',
+    };
+
+    internal static bool checkChecksum(ReadOnlySpan<byte> buf)
+    {
+        const int eightSpacesChksum = 256;
+        var buffer = buf.Slice(0, 512);
+        int posix_sum = eightSpacesChksum;
+        int sun_sum = eightSpacesChksum;
+
+        foreach (byte b in buffer)
+        {
+            posix_sum += b;
+            sun_sum += unchecked((sbyte)b);
+        }
+
+        // Special case, empty file header
+        if (posix_sum == eightSpacesChksum)
+        {
+            return true;
+        }
+
+        // Remove current checksum from calculation
+        foreach (byte b in buffer.Slice(148, 8))
+        {
+            posix_sum -= b;
+            sun_sum -= unchecked((sbyte)b);
+        }
+
+        // Read and compare checksum for header
+        var crc = ReadAsciiInt64Base8(buf, 148, 7);
+        if (crc != posix_sum && crc != sun_sum)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    internal static int RecalculateChecksum(Span<byte> buf)
+    {
+        // Set default value for checksum. That is 8 spaces.
+        eightSpaces.CopyTo(buf.Slice(148));
+
+        // Calculate checksum
+        var headerChecksum = 0;
+        foreach (var b in buf)
+        {
+            headerChecksum += b;
+        }
+        return headerChecksum;
+    }
+
+    internal static int RecalculateAltChecksum(byte[] buf)
+    {
+        eightSpaces.CopyTo(buf, 148);
+        var headerChecksum = 0;
+        foreach (var b in buf)
+        {
+            if ((b & 0x80) == 0x80)
+            {
+                headerChecksum -= b ^ 0x80;
+            }
+            else
+            {
+                headerChecksum += b;
+            }
+        }
+        return headerChecksum;
+    }
+
+    public long? DataStartPosition { get; set; }
+
+    public string? Magic { get; set; }
+}

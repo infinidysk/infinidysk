@@ -207,4 +207,16 @@ public class BasicStreamTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             async () => await stream.ReadAsync(new byte[1]));
     }
+
+    [Fact]
+    public void CancellableStream_SynchronousArchiveReadHonorsConstructionToken()
+    {
+        using var cts = new CancellationTokenSource();
+        using var stream = new CancellableStream(
+            new MemoryStream(new byte[] { 1, 2, 3 }), cts.Token);
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(
+            () => stream.Read(new byte[1], 0, 1));
+    }
 }

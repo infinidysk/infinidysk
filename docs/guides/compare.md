@@ -15,7 +15,7 @@ NzbDAV is intended for **legally obtained or public domain** content only.
 | Stack | .NET + React admin UI | Go (+ built-in rclone/FUSE options) | Python / C++ download clients |
 | Best when | You want a deep ops UI, automation (Watchtower/Warden/Watchdog), STRM without FUSE, owned streaming libraries | You want a lean Go binary, built-in mount/rclone, built-in Stremio addon | You want offline PAR2 repair, portable files, and the traditional Usenet workflow |
 
-Upstream [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav) is the project this tree forked from. NzbDAV continues that model while owning the UsenetSharp / RapidYenc / SharpCompress stack end to end. Treat community forks such as [Pukabyte/nzbdav](https://github.com/Pukabyte/nzbdav) and [NzbDavEx](https://github.com/qooode/nzbdavex) as siblings in the same idea-space — and see [Migration paths](../getting-started/migration.md) if you are moving an existing `/config` to this build.
+Upstream [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav) is the project this tree forked from. NzbDAV continues that model while owning the UsenetSharp / RapidYenc / SharpCompress stack in-tree. Treat community forks such as [Pukabyte/nzbdav](https://github.com/Pukabyte/nzbdav) and [NzbDavEx](https://github.com/qooode/nzbdavex) as siblings in the same idea-space — and see [Migration paths](../getting-started/migration.md) if you are moving an existing `/config` to this build.
 
 ## Feature comparison
 

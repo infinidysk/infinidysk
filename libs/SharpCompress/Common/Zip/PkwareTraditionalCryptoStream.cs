@@ -1,0 +1,101 @@
+using System;
+using System.IO;
+
+namespace SharpCompress.Common.Zip;
+
+internal enum CryptoMode
+{
+    Encrypt,
+    Decrypt,
+}
+
+internal partial class PkwareTraditionalCryptoStream : Stream
+{
+    private readonly PkwareTraditionalEncryptionData _encryptor;
+    private readonly CryptoMode _mode;
+    private readonly Stream _stream;
+    private bool _isDisposed;
+
+    public PkwareTraditionalCryptoStream(
+        Stream stream,
+        PkwareTraditionalEncryptionData encryptor,
+        CryptoMode mode
+    )
+    {
+        _encryptor = encryptor;
+        _stream = stream;
+        _mode = mode;
+    }
+
+    public override bool CanRead => (_mode == CryptoMode.Decrypt);
+
+    public override bool CanSeek => false;
+
+    public override bool CanWrite => (_mode == CryptoMode.Encrypt);
+
+    public override long Length => throw new NotSupportedException();
+
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        if (_mode == CryptoMode.Encrypt)
+        {
+            throw new NotSupportedException("This stream does not encrypt via Read()");
+        }
+
+        ThrowHelper.ThrowIfNull(buffer);
+
+        var readBytes = _stream.Read(buffer, offset, count);
+        _encryptor.Decrypt(buffer.AsSpan(offset, readBytes));
+        return readBytes;
+    }
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        if (_mode == CryptoMode.Decrypt)
+        {
+            throw new NotSupportedException("This stream does not Decrypt via Write()");
+        }
+
+        if (count == 0)
+        {
+            return;
+        }
+
+        byte[] plaintext;
+        if (offset != 0)
+        {
+            plaintext = new byte[count];
+            Buffer.BlockCopy(buffer, offset, plaintext, 0, count);
+        }
+        else
+        {
+            plaintext = buffer;
+        }
+
+        var encrypted = _encryptor.Encrypt(plaintext, count);
+        _stream.Write(encrypted, 0, encrypted.Length);
+    }
+
+    public override void Flush() { }
+
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (_isDisposed)
+        {
+            return;
+        }
+        _isDisposed = true;
+        base.Dispose(disposing);
+        _stream.Dispose();
+    }
+}

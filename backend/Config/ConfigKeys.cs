@@ -13,7 +13,9 @@ public static class ConfigKeys
     public const string ApiCategories = "api.categories";
     public const string ApiCompletedDownloadsDir = "api.completed-downloads-dir";
     public const string ApiDownloadFileBlocklist = "api.download-file-blocklist";
+    public const string ApiSampleFilterEnabled = "api.sample-filter-enabled";
     public const string ApiDuplicateNzbBehavior = "api.duplicate-nzb-behavior";
+    public const string ApiArticleExistenceCheckMode = "api.article-existence-check-mode";
     public const string ApiEnsureArticleExistenceCategories = "api.ensure-article-existence-categories";
     public const string ApiEnsureImportableVideo = "api.ensure-importable-video";
     public const string ApiIgnoreHistoryLimit = "api.ignore-history-limit";
@@ -44,6 +46,8 @@ public static class ConfigKeys
     public const string UsenetMaxDownloadConnectionsPerStreamPreset = "usenet.max-download-connections-per-stream-preset";
     public const string UsenetMaxQueueConnections = "usenet.max-queue-connections";
     public const string UsenetMaxQueueConnectionsPreset = "usenet.max-queue-connections-preset";
+    public const string QueueMaxItems = "queue.max-items";
+    public const string QueueResumeThreshold = "queue.resume-threshold";
     public const string QueueWorkerCount = "queue.worker-count";
     public const string QueuePaused = "queue.paused";
     public const string QueueSpeedLimitKbps = "queue.speed-limit-kbps";

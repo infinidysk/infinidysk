@@ -1,0 +1,241 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using SharpCompress.Common;
+using SharpCompress.Common.Options;
+using SharpCompress.IO;
+using SharpCompress.Writers;
+
+namespace SharpCompress.Archives;
+
+public abstract partial class AbstractWritableArchive<TEntry, TVolume, TOptions>
+    : AbstractArchive<TEntry, TVolume>,
+        IWritableArchive<TOptions>,
+        IWritableAsyncArchive<TOptions>
+    where TEntry : IArchiveEntry
+    where TVolume : IVolume
+    where TOptions : IWriterOptions
+{
+    private class RebuildPauseDisposable : IDisposable
+    {
+        private readonly AbstractWritableArchive<TEntry, TVolume, TOptions> archive;
+
+        public RebuildPauseDisposable(AbstractWritableArchive<TEntry, TVolume, TOptions> archive)
+        {
+            this.archive = archive;
+            archive.pauseRebuilding = true;
+        }
+
+        public void Dispose()
+        {
+            archive.pauseRebuilding = false;
+            archive.RebuildModifiedCollection();
+        }
+    }
+
+    private readonly List<TEntry> newEntries = new();
+    private readonly List<TEntry> removedEntries = new();
+
+    private readonly List<TEntry> modifiedEntries = new();
+    private bool hasModifications;
+    private bool pauseRebuilding;
+
+    internal AbstractWritableArchive(ArchiveType type)
+        : base(type) { }
+
+    internal AbstractWritableArchive(ArchiveType type, SourceStream sourceStream)
+        : base(type, sourceStream) { }
+
+    public override ICollection<TEntry> Entries
+    {
+        get
+        {
+            if (hasModifications)
+            {
+                return modifiedEntries;
+            }
+            return base.Entries;
+        }
+    }
+
+    public IDisposable PauseEntryRebuilding() => new RebuildPauseDisposable(this);
+
+    private void RebuildModifiedCollection()
+    {
+        if (pauseRebuilding)
+        {
+            return;
+        }
+        hasModifications = true;
+        newEntries.RemoveAll(v => removedEntries.Contains(v));
+        modifiedEntries.Clear();
+        modifiedEntries.AddRange(OldEntries.Concat(newEntries));
+    }
+
+    private IEnumerable<TEntry> OldEntries => base.Entries.Where(x => !removedEntries.Contains(x));
+
+    public void RemoveEntry(TEntry entry)
+    {
+        if (!removedEntries.Contains(entry))
+        {
+            removedEntries.Add(entry);
+            RebuildModifiedCollection();
+        }
+    }
+
+    void IWritableArchive.RemoveEntry(IArchiveEntry entry) => RemoveEntry((TEntry)entry);
+
+    public TEntry AddEntry(string key, Stream source, long size = 0, DateTime? modified = null) =>
+        AddEntry(key, source, false, size, modified);
+
+    IArchiveEntry IWritableArchive.AddEntry(
+        string key,
+        Stream source,
+        bool closeStream,
+        long size,
+        DateTime? modified
+    ) => AddEntry(key, source, closeStream, size, modified);
+
+    IArchiveEntry IWritableArchive.AddDirectoryEntry(string key, DateTime? modified) =>
+        AddDirectoryEntry(key, modified);
+
+    public TEntry AddEntry(
+        string key,
+        Stream source,
+        bool closeStream,
+        long size = 0,
+        DateTime? modified = null
+    )
+    {
+        if (key.Length > 0 && key[0] is '/' or '\\')
+        {
+            key = key.Substring(1);
+        }
+        if (DoesKeyMatchExisting(key))
+        {
+            throw new ArchiveException("Cannot add entry with duplicate key: " + key);
+        }
+        var entry = CreateEntry(key, source, size, modified, closeStream);
+        newEntries.Add(entry);
+        RebuildModifiedCollection();
+        return entry;
+    }
+
+    private bool DoesKeyMatchExisting(string key)
+    {
+        foreach (var path in Entries.Select(x => x.Key))
+        {
+            if (path is null)
+            {
+                continue;
+            }
+            var p = path.Replace('/', '\\');
+            if (p.Length > 0 && p[0] == '\\')
+            {
+                p = p.Substring(1);
+            }
+            return string.Equals(p, key, StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
+    }
+
+    ValueTask IWritableAsyncArchive.RemoveEntryAsync(IArchiveEntry entry) =>
+        RemoveEntryAsync((TEntry)entry);
+
+    async ValueTask<IArchiveEntry> IWritableAsyncArchive.AddEntryAsync(
+        string key,
+        Stream source,
+        bool closeStream,
+        long size,
+        DateTime? modified,
+        CancellationToken cancellationToken
+    ) =>
+        await AddEntryAsync(key, source, closeStream, size, modified, cancellationToken)
+            .ConfigureAwait(false);
+
+    async ValueTask<IArchiveEntry> IWritableAsyncArchive.AddDirectoryEntryAsync(
+        string key,
+        DateTime? modified,
+        CancellationToken cancellationToken
+    ) => await AddDirectoryEntryAsync(key, modified, cancellationToken).ConfigureAwait(false);
+
+    public TEntry AddDirectoryEntry(string key, DateTime? modified = null)
+    {
+        if (key.Length > 0 && key[0] is '/' or '\\')
+        {
+            key = key.Substring(1);
+        }
+        if (DoesKeyMatchExisting(key))
+        {
+            throw new ArchiveException("Cannot add entry with duplicate key: " + key);
+        }
+        var entry = CreateDirectoryEntry(key, modified);
+        newEntries.Add(entry);
+        RebuildModifiedCollection();
+        return entry;
+    }
+
+    public void SaveTo(Stream stream, TOptions options)
+    {
+        //reset streams of new entries
+        foreach (var x in newEntries.Cast<IWritableArchiveEntry>())
+        {
+            x.Stream.Seek(0, SeekOrigin.Begin);
+        }
+        SaveTo(stream, options, OldEntries, newEntries);
+    }
+
+    protected TEntry CreateEntry(
+        string key,
+        Stream source,
+        long size,
+        DateTime? modified,
+        bool closeStream
+    )
+    {
+        if (!source.CanRead || !source.CanSeek)
+        {
+            throw new ArchiveException(
+                "Streams must be readable and seekable to use the Writing Archive API"
+            );
+        }
+        return CreateEntryInternal(key, source, size, modified, closeStream);
+    }
+
+    protected abstract TEntry CreateEntryInternal(
+        string key,
+        Stream source,
+        long size,
+        DateTime? modified,
+        bool closeStream
+    );
+
+    protected abstract TEntry CreateDirectoryEntry(string key, DateTime? modified);
+
+    protected abstract void SaveTo(
+        Stream stream,
+        TOptions options,
+        IEnumerable<TEntry> oldEntries,
+        IEnumerable<TEntry> newEntries
+    );
+
+    public override void Dispose()
+    {
+        base.Dispose();
+        foreach (var x in newEntries.Cast<Entry>())
+        {
+            x.Close();
+        }
+        foreach (var x in removedEntries.Cast<Entry>())
+        {
+            x.Close();
+        }
+        foreach (var x in modifiedEntries.Cast<Entry>())
+        {
+            x.Close();
+        }
+    }
+}

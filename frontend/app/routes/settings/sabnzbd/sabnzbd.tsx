@@ -21,6 +21,9 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
 
     const ensureArticleExistanceSetting =
         useEnsureArticleExistanceSetting(config, setNewConfig);
+    const queueMaxItems = parseNonNegativeInteger(config["queue.max-items"]);
+    const queueResumeThreshold = parseNonNegativeInteger(config["queue.resume-threshold"]);
+    const queueAdmissionValid = isValidQueueAdmission(config);
 
     return (
         <SettingsPage>
@@ -75,6 +78,54 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="manual-category-help">
                     The category to use for manual uploads through the Queue page on the UI.
                 </p>
+            </div>
+            </ManagedSetting>
+            <hr />
+            <ManagedSetting configKeys={["queue.max-items", "queue.resume-threshold"]}>
+            <div className="space-y-4">
+                <div className="space-y-2">
+                    <label className="block text-sm font-medium text-base-content" htmlFor="queue-max-items-input">
+                        Maximum queued jobs
+                    </label>
+                    <Input
+                        className={`w-full ${queueAdmissionValid ? "" : "input-error"}`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        id="queue-max-items-input"
+                        aria-describedby="queue-max-items-help"
+                        aria-invalid={!queueAdmissionValid}
+                        value={config["queue.max-items"] ?? "0"}
+                        onChange={e => setNewConfig({ ...config, "queue.max-items": e.target.value })} />
+                    <p className="text-[11px] leading-relaxed text-base-content/45" id="queue-max-items-help">
+                        Reject new SAB submissions when this many jobs are queued. Radarr and Sonarr keep
+                        rejected grabs pending and retry later. Use <code>0</code> for no limit.
+                    </p>
+                </div>
+                <div className="space-y-2">
+                    <label className="block text-sm font-medium text-base-content" htmlFor="queue-resume-threshold-input">
+                        Resume threshold
+                    </label>
+                    <Input
+                        className={`w-full ${queueAdmissionValid ? "" : "input-error"}`}
+                        type="number"
+                        min={0}
+                        max={queueMaxItems ?? undefined}
+                        step={1}
+                        id="queue-resume-threshold-input"
+                        aria-describedby="queue-resume-threshold-help"
+                        aria-invalid={!queueAdmissionValid}
+                        value={config["queue.resume-threshold"] ?? "0"}
+                        disabled={queueMaxItems === 0}
+                        onChange={e => setNewConfig({ ...config, "queue.resume-threshold": e.target.value })} />
+                    <p className="text-[11px] leading-relaxed text-base-content/45" id="queue-resume-threshold-help">
+                        After the limit is reached, accept submissions again at or below this queue depth.
+                        Use <code>0</code> to resume immediately below the maximum.
+                        {queueResumeThreshold !== null && queueMaxItems !== null && queueResumeThreshold > queueMaxItems
+                            ? " The threshold cannot exceed the maximum."
+                            : ""}
+                    </p>
+                </div>
             </div>
             </ManagedSetting>
             <hr />
@@ -155,13 +206,25 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                     className={'w-full'}
                     id="ignored-files-input"
                     aria-describedby="ignored-files-help"
-                    placeholder="*.nfo, *.par2, *.sfv, *sample.mkv"
+                    placeholder="*.nfo, *.par2, *.sfv, *unpack.mkv"
                     value={config["api.download-file-blocklist"]}
                     onChange={value => setNewConfig({ ...config, "api.download-file-blocklist": value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="ignored-files-help">
-                    Files that match these patterns will be ignored and not mounted onto the webdav when processing an nzb. Wildcards (*) are supported.
+                    Files that match these patterns will be ignored and not mounted onto the webdav when processing an nzb. Wildcards (* and ?) are supported. Sample videos are filtered separately (see below).
                 </p>
             </div>
+            </ManagedSetting>
+            <hr />
+            <ManagedSetting configKey="api.sample-filter-enabled">
+            <Tooltip content="Discard video files whose name contains 'sample' as a whole word and that are under 20% of the largest video in the same NZB. Prevents Sonarr/Radarr from importing samples in STRM mode.">
+                <Toggle
+                    id="sample-filter-enabled-checkbox"
+                    className="cursor-pointer gap-2 p-0"
+                    checked={config["api.sample-filter-enabled"] !== "false"}
+                    onChange={e => setNewConfig({ ...config, "api.sample-filter-enabled": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Filter sample videos from downloads</span>}
+                />
+            </Tooltip>
             </ManagedSetting>
             <hr />
             <ManagedSetting configKey="api.duplicate-nzb-behavior">
@@ -259,13 +322,38 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                     <span>{`Perform article health check during downloads`}</span>
                 </label>
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="ensure-article-existence-help">
-                    Whether to check for the existence of all articles within an NZB during queue processing. This process may be slow.
+                    Check article availability in the selected categories before mounting the NZB.
                 </p>
                 <MultiCheckboxInput
                     options={ensureArticleExistanceSetting.categories}
                     value={config["api.ensure-article-existence-categories"] ?? ""}
                     onChange={value => setNewConfig({ ...config, "api.ensure-article-existence-categories": value })}
                 />
+            </div>
+            </ManagedSetting>
+            <ManagedSetting configKey="api.article-existence-check-mode">
+            <div className="ml-4 mt-4 space-y-2 border-l border-base-content/10 pl-4">
+                <label className="block text-sm font-medium text-base-content" htmlFor="article-existence-check-mode-input">
+                    Article health check mode
+                </label>
+                <Select
+                    className="w-full"
+                    id="article-existence-check-mode-input"
+                    aria-describedby="article-existence-check-mode-help"
+                    value={config["api.article-existence-check-mode"] ?? "full"}
+                    disabled={ensureArticleExistanceSetting.areNoneSelected}
+                    onChange={e => setNewConfig({
+                        ...config,
+                        "api.article-existence-check-mode": e.target.value
+                    })}
+                >
+                    <option value="full">Full — check every segment</option>
+                    <option value="sampled">Sampled — first, last, and evenly spaced segments per file</option>
+                </Select>
+                <p className="text-[11px] leading-relaxed text-base-content/45" id="article-existence-check-mode-help">
+                    Sampled mode reduces import time for large files while still detecting common truncated
+                    or partially removed releases. Files below the sampling threshold are checked in full.
+                </p>
             </div>
             </ManagedSetting>
             <hr />
@@ -390,10 +478,14 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
     return config["api.key"] !== newConfig["api.key"]
         || config["api.categories"] !== newConfig["api.categories"]
         || config["api.manual-category"] !== newConfig["api.manual-category"]
+        || config["queue.max-items"] !== newConfig["queue.max-items"]
+        || config["queue.resume-threshold"] !== newConfig["queue.resume-threshold"]
         || config["rclone.mount-dir"] !== newConfig["rclone.mount-dir"]
         || config["api.ensure-importable-video"] !== newConfig["api.ensure-importable-video"]
+        || config["api.sample-filter-enabled"] !== newConfig["api.sample-filter-enabled"]
         || config["api.skip-non-video-on-missing-articles"] !== newConfig["api.skip-non-video-on-missing-articles"]
         || config["api.ensure-article-existence-categories"] !== newConfig["api.ensure-article-existence-categories"]
+        || config["api.article-existence-check-mode"] !== newConfig["api.article-existence-check-mode"]
         || config["api.ignore-history-limit"] !== newConfig["api.ignore-history-limit"]
         || config["api.duplicate-nzb-behavior"] !== newConfig["api.duplicate-nzb-behavior"]
         || config["api.download-file-blocklist"] !== newConfig["api.download-file-blocklist"]
@@ -409,7 +501,8 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
 
 export function isSabnzbdSettingsValid(newConfig: Record<string, string>) {
     return isValidCategories(newConfig["api.categories"])
-        && isValidNzbBackupLocation(newConfig);
+        && isValidNzbBackupLocation(newConfig)
+        && isValidQueueAdmission(newConfig);
 }
 
 export function generateNewApiKey(): string {
@@ -425,6 +518,20 @@ function isValidCategories(categories: string): boolean {
 function isValidNzbBackupLocation(config: Record<string, string>) {
     return config["api.nzb-backup-enabled"] !== "true"
         || !!config["api.nzb-backup-location"]?.trim();
+}
+
+function isValidQueueAdmission(config: Record<string, string>) {
+    const maxItems = parseNonNegativeInteger(config["queue.max-items"]);
+    const resumeThreshold = parseNonNegativeInteger(config["queue.resume-threshold"]);
+    if (maxItems === null || resumeThreshold === null) return false;
+    return maxItems === 0 || resumeThreshold === 0 || resumeThreshold <= maxItems;
+}
+
+function parseNonNegativeInteger(value: string | undefined): number | null {
+    if (value === undefined || value.trim() === "") return 0;
+    if (!/^\d+$/.test(value)) return null;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function isAlphaNumericWithDashes(input: string): boolean {

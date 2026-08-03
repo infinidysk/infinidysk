@@ -23,7 +23,6 @@ export function DropdownOptions({ className, style, isOpen = true, options, onCl
 
         function handleClick(e: MouseEvent) {
             if (ref.current && !ref.current.contains(e.target as Node)) {
-                e.preventDefault();
                 onClose?.();
             }
         }
@@ -45,7 +44,7 @@ export function DropdownOptions({ className, style, isOpen = true, options, onCl
                         <a
                             href={option.linkTo}
                             className={option.variant === "danger" ? "text-error" : undefined}
-                            onClick={() => option.onSelect?.()}
+                            onClick={() => { option.onSelect?.(); onClose?.(); }}
                         >
                             {option.option}
                         </a>
@@ -53,7 +52,7 @@ export function DropdownOptions({ className, style, isOpen = true, options, onCl
                         <button
                             type="button"
                             className={option.variant === "danger" ? "text-error" : undefined}
-                            onClick={() => option.onSelect?.()}
+                            onClick={() => { option.onSelect?.(); onClose?.(); }}
                         >
                             {option.option}
                         </button>

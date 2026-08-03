@@ -12,6 +12,68 @@ using UsenetSharp.Streams;
 BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
 
 [MemoryDiagnoser]
+public class SegmentBufferPoolBenchmarks
+{
+    private const int SegmentsPerStream = 20;
+    private byte[] _payload = null!;
+    private SegmentBufferPool _segmentPool = null!;
+    private BufferPoolDiagnostics _sharedDiagnostics = null!;
+    private BufferPoolDiagnostics _segmentDiagnostics = null!;
+
+    [Params(700_000, 750_000, 800_000)]
+    public int SegmentSize { get; set; }
+
+    [Params(1, 8)]
+    public int ConcurrentStreams { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _payload = new byte[SegmentSize];
+        new Random(42).NextBytes(_payload);
+        _segmentPool = new SegmentBufferPool(128 * 1024 * 1024);
+        _sharedDiagnostics = new BufferPoolDiagnostics();
+        _segmentDiagnostics = new BufferPoolDiagnostics();
+    }
+
+    [Benchmark(Baseline = true)]
+    public long ArrayPoolShared() =>
+        DrainSegments(SharedArrayPoolAdapter.Instance, _sharedDiagnostics);
+
+    [Benchmark]
+    public long SegmentBufferPool_128MB() =>
+        DrainSegments(_segmentPool, _segmentDiagnostics);
+
+    private long DrainSegments(ISegmentBufferPool pool, BufferPoolDiagnostics diagnostics)
+    {
+        if (ConcurrentStreams == 1)
+            return DrainStream(pool, diagnostics);
+
+        long totalBytesRead = 0;
+        Parallel.For(0, ConcurrentStreams, _ =>
+        {
+            var bytesRead = DrainStream(pool, diagnostics);
+            Interlocked.Add(ref totalBytesRead, bytesRead);
+        });
+        return totalBytesRead;
+    }
+
+    private long DrainStream(ISegmentBufferPool pool, BufferPoolDiagnostics diagnostics)
+    {
+        long bytesRead = 0;
+        for (var segment = 0; segment < SegmentsPerStream; segment++)
+        {
+            using var buffer = new PooledBufferStream(SegmentSize, pool, diagnostics);
+            buffer.Write(_payload);
+            buffer.Position = 0;
+            buffer.CopyTo(Stream.Null);
+            bytesRead += buffer.Length;
+        }
+        return bytesRead;
+    }
+}
+
+[MemoryDiagnoser]
 public class YencDecodeBenchmarks
 {
     private byte[] _decoded = null!;

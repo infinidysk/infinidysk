@@ -62,6 +62,9 @@ public class DatabaseStoreCategoryWatchFolder(
             CancellationToken = request.CancellationToken
         };
         var response = await controller.AddFileAsync(addFileRequest).ConfigureAwait(false);
+        if (!response.Status)
+            return new StoreItemResult(DavStatusCode.InsufficientStorage);
+
         var queueItem = dbClient.Ctx.ChangeTracker
             .Entries<QueueItem>()
             .Select(x => x.Entity)

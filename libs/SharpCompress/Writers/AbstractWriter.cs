@@ -1,0 +1,80 @@
+using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using SharpCompress.Common;
+using SharpCompress.Common.Options;
+using SharpCompress.IO;
+
+namespace SharpCompress.Writers;
+
+public abstract partial class AbstractWriter(ArchiveType type, IWriterOptions writerOptions)
+    : IWriter,
+        IAsyncWriter
+{
+    protected bool _isDisposed;
+
+    //always initializes the stream
+
+    protected void InitializeStream(Stream stream) => OutputStream = stream;
+
+    protected Stream? OutputStream { get; private set; }
+
+    public ArchiveType Type { get; } = type;
+
+    protected IWriterOptions WriterOptions { get; } = writerOptions;
+
+    /// <summary>
+    /// Wraps the source stream with a progress-reporting stream if progress reporting is enabled.
+    /// </summary>
+    /// <param name="source">The source stream to wrap.</param>
+    /// <param name="entryPath">The path of the entry being written.</param>
+    /// <returns>A stream that reports progress, or the original stream if progress is not enabled.</returns>
+    protected Stream WrapWithProgress(Stream source, string entryPath)
+    {
+        if (WriterOptions.Progress is null)
+        {
+            return source;
+        }
+
+        long? totalBytes = source.CanSeek ? source.Length : null;
+        return new ProgressReportingStream(
+            source,
+            WriterOptions.Progress,
+            entryPath,
+            totalBytes,
+            leaveOpen: true
+        );
+    }
+
+    public abstract void Write(string filename, Stream source, DateTime? modificationTime);
+
+    public abstract void WriteDirectory(string directoryName, DateTime? modificationTime);
+
+    protected virtual void Dispose(bool isDisposing)
+    {
+        if (isDisposing)
+        {
+            OutputStream?.Dispose();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (!_isDisposed)
+        {
+            GC.SuppressFinalize(this);
+            Dispose(true);
+            _isDisposed = true;
+        }
+    }
+
+    ~AbstractWriter()
+    {
+        if (!_isDisposed)
+        {
+            Dispose(false);
+            _isDisposed = true;
+        }
+    }
+}

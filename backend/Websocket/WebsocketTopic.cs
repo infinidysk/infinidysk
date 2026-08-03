@@ -2,6 +2,8 @@
 
 public class WebsocketTopic
 {
+    private static readonly Dictionary<string, WebsocketTopic> ByName = new(StringComparer.Ordinal);
+
     // Stateful topics
     public static readonly WebsocketTopic UsenetConnections = new("cxs", TopicType.State);
     public static readonly WebsocketTopic ActiveReads = new("ar", TopicType.State);
@@ -10,11 +12,11 @@ public class WebsocketTopic
     public static readonly WebsocketTopic RenameWindowsInvalidPathsProgress = new("rwip", TopicType.State);
     public static readonly WebsocketTopic StrmToSymlinksTaskProgress = new("st2sy", TopicType.State);
     public static readonly WebsocketTopic RecreateStrmTaskProgress = new("rstm", TopicType.State);
-    public static readonly WebsocketTopic QueueItemStatus = new("qs", TopicType.State);
-    public static readonly WebsocketTopic QueueItemProgress = new("qp", TopicType.State);
-    public static readonly WebsocketTopic QueueItemProviders = new("qpv", TopicType.State);
-    public static readonly WebsocketTopic HealthItemStatus = new("hs", TopicType.State);
-    public static readonly WebsocketTopic HealthItemProgress = new("hp", TopicType.State);
+    public static readonly WebsocketTopic QueueItemStatus = new("qs", TopicType.State, isKeyed: true);
+    public static readonly WebsocketTopic QueueItemProgress = new("qp", TopicType.State, isKeyed: true);
+    public static readonly WebsocketTopic QueueItemProviders = new("qpv", TopicType.State, isKeyed: true);
+    public static readonly WebsocketTopic HealthItemStatus = new("hs", TopicType.State, isKeyed: true);
+    public static readonly WebsocketTopic HealthItemProgress = new("hp", TopicType.State, isKeyed: true);
     public static readonly WebsocketTopic LiveStats = new("ls", TopicType.State);
     public static readonly WebsocketTopic BenchmarkProgress = new("bench", TopicType.State);
     public static readonly WebsocketTopic StreamTracing = new("strt", TopicType.State);
@@ -36,12 +38,18 @@ public class WebsocketTopic
 
     public readonly string Name;
     public readonly TopicType Type;
+    public readonly bool IsKeyed;
 
-    private WebsocketTopic(string name, TopicType type)
+    private WebsocketTopic(string name, TopicType type, bool isKeyed = false)
     {
         Name = name;
         Type = type;
+        IsKeyed = isKeyed;
+        ByName[name] = this;
     }
+
+    public static bool TryGetByName(string name, out WebsocketTopic? topic) =>
+        ByName.TryGetValue(name, out topic);
 
     public enum TopicType
     {

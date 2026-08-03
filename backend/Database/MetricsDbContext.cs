@@ -17,7 +17,14 @@ public sealed class MetricsDbContext : DbContext
 {
     public static string DatabaseFilePath => Path.Join(DavDatabaseContext.ConfigPath, "metrics.sqlite");
 
-    private static readonly Lazy<DbContextOptions<MetricsDbContext>> Options = new(() =>
+    private static Lazy<DbContextOptions<MetricsDbContext>> Options = CreateOptions();
+
+    internal static void ResetOptionsForTests()
+    {
+        Options = CreateOptions();
+    }
+
+    private static Lazy<DbContextOptions<MetricsDbContext>> CreateOptions() => new(() =>
         new DbContextOptionsBuilder<MetricsDbContext>()
             .UseSqlite($"Data Source={DatabaseFilePath}")
             .AddInterceptors(new SqliteMetricsPragmas())

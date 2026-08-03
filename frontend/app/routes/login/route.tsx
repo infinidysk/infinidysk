@@ -2,26 +2,35 @@ import type { Route } from "./+types/route";
 import { isAuthenticated, login } from "~/auth/authentication.server";
 import { Form, redirect, useNavigation } from "react-router";
 import { backendClient } from "~/clients/backend-client.server";
-import { Alert, Button, Input, Spinner } from "~/components/ui";
+import { Alert, Button, Icon, Input, Spinner } from "~/components/ui";
+import { isOidcEnabled } from "../../../server/oidc.server";
 
 type LoginPageData = {
-    loginError: string
+    loginError: string | null;
+    isOidcEnabled: boolean;
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
     if (await isAuthenticated(request)) return redirect("/");
 
-    const isOnboarding = await backendClient.isOnboarding();
-    if (isOnboarding) return redirect("/onboarding");
+    const oidcEnabled = isOidcEnabled();
+    if (!oidcEnabled) {
+        const isOnboarding = await backendClient.isOnboarding();
+        if (isOnboarding) return redirect("/onboarding");
+    }
 
-    return { loginError: null };
+    const error = new URL(request.url).searchParams.get("error");
+    return {
+        loginError: getOidcErrorMessage(error),
+        isOidcEnabled: oidcEnabled,
+    } satisfies LoginPageData;
 }
 
 export default function Index({ loaderData, actionData }: Route.ComponentProps) {
     const navigation = useNavigation();
     const isLoading = navigation.state == "submitting";
-    const pageData = actionData || loaderData;
-    const showError = !!pageData.loginError;
+    const loginError = actionData?.loginError ?? loaderData.loginError;
+    const showError = !!loginError;
     const submitButtonDisabled = isLoading;
     const submitButtonText = isLoading ? "Logging in..." : "Login";
 
@@ -41,7 +50,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                             </div>
                         </div>
 
-                        {showError && <Alert variant="danger">{pageData.loginError}</Alert>}
+                        {showError && <Alert variant="danger">{loginError}</Alert>}
 
                         <fieldset className="fieldset space-y-3">
                             <label className="floating-label">
@@ -77,11 +86,36 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                             {isLoading && <Spinner />}
                             {submitButtonText}
                         </Button>
+
+                        {loaderData.isOidcEnabled && (
+                            <>
+                                <div className="divider my-0 text-xs uppercase text-base-content/50">
+                                    or
+                                </div>
+                                <a
+                                    className="btn btn-outline w-full gap-2"
+                                    href="/auth/oidc/login"
+                                >
+                                    <Icon name="login" className="!text-[18px]" />
+                                    Sign in with SSO
+                                </a>
+                            </>
+                        )}
                     </div>
                 </Form>
             </div>
         </main>
     );
+}
+
+function getOidcErrorMessage(error: string | null): string | null {
+    if (error === "oidc_not_configured") {
+        return "OIDC sign-in is not configured. Use your local account instead.";
+    }
+    if (error === "oidc_failed") {
+        return "SSO sign-in failed. Try again or use your local account.";
+    }
+    return null;
 }
 
 export async function action({ request }: Route.ActionArgs) {

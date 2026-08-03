@@ -10,6 +10,13 @@ public static class RapidYenc
     {
         try
         {
+            var explicitPath = Environment.GetEnvironmentVariable("RAPIDYENC_LIBRARY_PATH");
+            if (!string.IsNullOrWhiteSpace(explicitPath) &&
+                NativeLibrary.TryLoad(explicitPath, out _))
+            {
+                return true;
+            }
+
             return NativeLibrary.TryLoad("rapidyenc", typeof(RapidYenc).Assembly, null, out _);
         }
         catch

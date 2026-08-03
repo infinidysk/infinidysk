@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Authors>UsenetSharp Contributors</Authors>
+    <Description>Asynchronous, read-only NNTP access and streaming yEnc decoding for .NET 10.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RapidYencSharp\RapidYencSharp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="UsenetSharpTest" />
+    <InternalsVisibleTo Include="UsenetSharp.Benchmarks" />
+  </ItemGroup>
+
+</Project>

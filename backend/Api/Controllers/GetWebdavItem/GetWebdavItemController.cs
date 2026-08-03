@@ -27,6 +27,7 @@ public class GetWebdavItemController(
     ConfigManager configManager,
     ProviderUsageTracker providerUsageTracker,
     ActiveReadRegistry activeReadRegistry,
+    ConcurrentReadTracker concurrentReadTracker,
     CandidateNegativeCache negativeCache,
     StreamTraceBuffer streamTrace
 ) : ControllerBase
@@ -151,6 +152,10 @@ public class GetWebdavItemController(
         {
             HttpContext.Items["configManager"] = configManager;
             var request = new GetWebdavItemRequest(HttpContext);
+            using var concurrentReadScope = concurrentReadTracker.BeginRead(
+                request.Item,
+                request.SuffixLength.HasValue ? null : request.RangeStart ?? 0,
+                ResolveReadRegion(request));
             var sessionId = TrackReadSession(request.Item);
             HttpContext.Items["readSessionId"] = sessionId;
             using var scope = providerUsageTracker.BeginScope(sessionId);
@@ -170,6 +175,7 @@ public class GetWebdavItemController(
                 if (response == Stream.Null)
                     return;
                 var effectiveStart = (long)(HttpContext.Items["effectiveRangeStart"] ?? 0L);
+                concurrentReadScope.UpdateStart(effectiveStart);
                 var rangeEnd = HttpContext.Items["effectiveRangeEnd"] as long?;
                 traceRange = streamTrace.RangeOpen(
                     sessionId,
@@ -214,6 +220,15 @@ public class GetWebdavItemController(
         {
             Response.StatusCode = 401;
         }
+    }
+
+    private static ConcurrentReadRegion ResolveReadRegion(GetWebdavItemRequest request)
+    {
+        if (request.SuffixLength.HasValue) return ConcurrentReadRegion.SuffixRange;
+        if (!request.RangeStart.HasValue) return ConcurrentReadRegion.Full;
+        return request.RangeStart.Value == 0
+            ? ConcurrentReadRegion.StartRange
+            : ConcurrentReadRegion.OffsetRange;
     }
 
     private void FinishRange(

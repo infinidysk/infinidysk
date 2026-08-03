@@ -76,6 +76,9 @@ public class ActiveReadsBroadcaster(
             });
         }
 
+        if (!websocketManager.HasSubscribers(WebsocketTopic.ActiveReads))
+            return;
+
         var entries = registry.Snapshot();
 
         // Common case: nothing active, nothing was active. Skip serialization entirely.

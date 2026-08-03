@@ -29,7 +29,8 @@ public class MultiProviderNntpClient(
     StreamTraceBuffer? streamTrace = null,
     ActiveReadRegistry? activeReadRegistry = null,
     ArticleMissNegativeCache? articleMissCache = null,
-    ConnectionPoolStats? connectionPoolStats = null
+    ConnectionPoolStats? connectionPoolStats = null,
+    ConcurrentReadTracker? concurrentReadTracker = null
 ) : NntpClient, INntpConnectionStats
 {
     /// <summary>
@@ -183,13 +184,32 @@ public class MultiProviderNntpClient(
         CancellationToken cancellationToken
     )
     {
-        return await RunStreamingFromPoolWithBackup(
-            (provider, callback) =>
-                provider.DecodedBodyAsync(segmentId, callback, cancellationToken),
-            UsenetResponseType.ArticleRetrievedBodyFollows,
-            segmentId,
-            onConnectionReadyAgain,
-            cancellationToken).ConfigureAwait(false);
+        var fetchScope = concurrentReadTracker?.BeginSegmentFetch(segmentId);
+        try
+        {
+            return await RunStreamingFromPoolWithBackup(
+                (provider, callback) =>
+                    provider.DecodedBodyAsync(segmentId, callback, cancellationToken),
+                UsenetResponseType.ArticleRetrievedBodyFollows,
+                segmentId,
+                result =>
+                {
+                    try
+                    {
+                        InvokeCompletionCallback(onConnectionReadyAgain, result);
+                    }
+                    finally
+                    {
+                        fetchScope?.Dispose();
+                    }
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            fetchScope?.Dispose();
+            throw;
+        }
     }
 
     public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync
@@ -199,82 +219,113 @@ public class MultiProviderNntpClient(
         CancellationToken cancellationToken
     )
     {
-        ExceptionDispatchInfo? lastException = null;
-        var orderedProviders = SelectOrderedProviders(out var reserved);
-        using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending());
-        for (var providerIndex = 0; providerIndex < orderedProviders.Count; providerIndex++)
+        var fetchScopes = concurrentReadTracker is null
+            ? []
+            : segmentIds.Select(x => concurrentReadTracker.BeginSegmentFetch(x)).ToArray();
+
+        void CompleteBatchFetches(ArticleBodyResult result)
         {
-            var provider = orderedProviders[providerIndex];
-            var deferredCallback = new DeferredArticleBodyCallback();
             try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var primaryBatch = await provider.DecodedBodiesAsync(
-                    segmentIds, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
-                var coordinator = new BatchCallbackCoordinator(
-                    primaryBatch.Responses.Count, onConnectionReadyAgain);
-                deferredCallback.Activate(coordinator.CompleteTransfer);
-                var fallbackProviders = orderedProviders
-                    .Skip(providerIndex + 1)
-                    .ToArray();
-                var responses =
-                    new Task<UsenetDecodedBodyResponse>[primaryBatch.Responses.Count];
-                // Admission (start-order) is separate from transfer completion so segment
-                // N+1 can begin its fallback walk after N has admitted/started, without
-                // waiting for N's body stream to finish. Concurrent starts are bounded by
-                // _batchFallbackStartGate until each transfer's body callback fires.
-                Task previousFallbackAdmission = Task.CompletedTask;
-                for (var index = 0; index < responses.Length; index++)
-                {
-                    var fallbackAdmission = new TaskCompletionSource(
-                        TaskCreationOptions.RunContinuationsAsynchronously);
-                    responses[index] = ResolveBatchResponseAsync(
-                        primaryBatch.Responses[index],
-                        segmentIds[index],
-                        provider,
-                        fallbackProviders,
-                        previousFallbackAdmission,
-                        fallbackAdmission,
-                        coordinator,
-                        cancellationToken);
-                    previousFallbackAdmission = fallbackAdmission.Task;
-                }
-                return new UsenetDecodedBodyBatch { Responses = responses };
+                InvokeCompletionCallback(onConnectionReadyAgain, result);
             }
-            catch (NntpClientRetiredException)
+            finally
             {
-                // Every provider in this client belongs to the same retired generation.
-                // Do not walk the remaining disposed pools or record network failures.
-                deferredCallback.Discard();
-                InvokeCompletionCallback(
-                    onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
-                throw;
-            }
-            catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _))
-            {
-                // Invalid / permanently missing segment ids are invalid on every provider.
-                deferredCallback.Discard();
-                InvokeCompletionCallback(
-                    onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
-                throw;
-            }
-            catch (Exception e) when (!e.IsCancellationException(cancellationToken))
-            {
-                deferredCallback.Discard();
-                lastException = ExceptionDispatchInfo.Capture(e);
-            }
-            catch
-            {
-                deferredCallback.Discard();
-                InvokeCompletionCallback(
-                    onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
-                throw;
+                foreach (var fetchScope in fetchScopes)
+                    fetchScope.Dispose();
             }
         }
 
-        InvokeCompletionCallback(onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
-        lastException?.Throw();
-        throw new Exception("There are no usenet providers configured.");
+        try
+        {
+            return await DecodedBodiesCoreAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            foreach (var fetchScope in fetchScopes)
+                fetchScope.Dispose();
+            throw;
+        }
+
+        async Task<UsenetDecodedBodyBatch> DecodedBodiesCoreAsync()
+        {
+            ExceptionDispatchInfo? lastException = null;
+            var orderedProviders = SelectOrderedProviders(out var reserved);
+            using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending());
+            for (var providerIndex = 0; providerIndex < orderedProviders.Count; providerIndex++)
+            {
+                var provider = orderedProviders[providerIndex];
+                var deferredCallback = new DeferredArticleBodyCallback();
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var primaryBatch = await provider.DecodedBodiesAsync(
+                        segmentIds, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
+                    var coordinator = new BatchCallbackCoordinator(
+                    primaryBatch.Responses.Count, CompleteBatchFetches);
+                    deferredCallback.Activate(coordinator.CompleteTransfer);
+                    var fallbackProviders = orderedProviders
+                        .Skip(providerIndex + 1)
+                        .ToArray();
+                    var responses =
+                        new Task<UsenetDecodedBodyResponse>[primaryBatch.Responses.Count];
+                    // Admission (start-order) is separate from transfer completion so segment
+                    // N+1 can begin its fallback walk after N has admitted/started, without
+                    // waiting for N's body stream to finish. Concurrent starts are bounded by
+                    // _batchFallbackStartGate until each transfer's body callback fires.
+                    Task previousFallbackAdmission = Task.CompletedTask;
+                    for (var index = 0; index < responses.Length; index++)
+                    {
+                        var fallbackAdmission = new TaskCompletionSource(
+                            TaskCreationOptions.RunContinuationsAsynchronously);
+                        responses[index] = ResolveBatchResponseAsync(
+                            primaryBatch.Responses[index],
+                            segmentIds[index],
+                            provider,
+                            fallbackProviders,
+                            previousFallbackAdmission,
+                            fallbackAdmission,
+                            coordinator,
+                            cancellationToken);
+                        previousFallbackAdmission = fallbackAdmission.Task;
+                    }
+                    return new UsenetDecodedBodyBatch { Responses = responses };
+                }
+                catch (NntpClientRetiredException)
+                {
+                    // Every provider in this client belongs to the same retired generation.
+                    // Do not walk the remaining disposed pools or record network failures.
+                    deferredCallback.Discard();
+                    InvokeCompletionCallback(
+                        CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
+                    throw;
+                }
+                catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _))
+                {
+                    // Invalid / permanently missing segment ids are invalid on every provider.
+                    deferredCallback.Discard();
+                    InvokeCompletionCallback(
+                        CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
+                    throw;
+                }
+                catch (Exception e) when (!e.IsCancellationException(cancellationToken))
+                {
+                    deferredCallback.Discard();
+                    lastException = ExceptionDispatchInfo.Capture(e);
+                }
+                catch
+                {
+                    deferredCallback.Discard();
+                    InvokeCompletionCallback(
+                        CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
+                    throw;
+                }
+            }
+
+            InvokeCompletionCallback(CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
+            lastException?.Throw();
+            throw new Exception("There are no usenet providers configured.");
+        }
     }
 
     private async Task<UsenetDecodedBodyResponse> ResolveBatchResponseAsync(

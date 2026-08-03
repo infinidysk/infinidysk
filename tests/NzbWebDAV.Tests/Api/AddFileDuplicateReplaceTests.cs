@@ -228,6 +228,63 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AddFileAsync_RejectsAtLimit_AndResumesAtThreshold()
+    {
+        ConfigureAdmission(maxItems: 2, resumeThreshold: 1);
+        await SeedQueueItem("first.nzb", "tv");
+        await SeedQueueItem("second.nzb", "tv");
+
+        var rejected = await CreateController().AddFileAsync(CreateRequest("third.nzb", "tv"));
+
+        Assert.False(rejected.Status);
+        Assert.Empty(rejected.NzoIds);
+        Assert.Contains("Queue is full", rejected.Error);
+        Assert.Equal(2, await _context.QueueItems.CountAsync());
+
+        var first = await _context.QueueItems.SingleAsync(x => x.FileName == "first.nzb");
+        _context.QueueItems.Remove(first);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var accepted = await CreateController().AddFileAsync(CreateRequest("third.nzb", "tv"));
+
+        Assert.True(accepted.Status);
+        Assert.Single(accepted.NzoIds);
+        Assert.Equal(2, await _context.QueueItems.CountAsync());
+    }
+
+    [Fact]
+    public async Task AddFileAsync_AllowsDuplicateReplacementWhileQueueIsFull()
+    {
+        ConfigureAdmission(maxItems: 2, resumeThreshold: 1);
+        await SeedQueueItem("replace-me.nzb", "tv");
+        await SeedQueueItem("other.nzb", "tv");
+
+        var response = await CreateController()
+            .AddFileAsync(CreateRequest("replace-me.nzb", "tv"));
+
+        Assert.True(response.Status);
+        Assert.Single(response.NzoIds);
+        Assert.Equal(2, await _context.QueueItems.CountAsync());
+        Assert.Single(await _context.QueueItems
+            .Where(x => x.FileName == "replace-me.nzb" && x.Category == "tv")
+            .ToListAsync());
+    }
+
+    [Fact]
+    public void QueueAdmission_AccountsForConcurrentPendingReservations()
+    {
+        using var first = _queueManager.TryReserveQueueSlot(
+            persistedCount: 0, maxItems: 1, resumeThreshold: 1);
+
+        var second = _queueManager.TryReserveQueueSlot(
+            persistedCount: 0, maxItems: 1, resumeThreshold: 1);
+
+        Assert.NotNull(first);
+        Assert.Null(second);
+    }
+
+    [Fact]
     public void IsCategoryFileNameUniqueViolation_DetectsSqliteConstraintMessage()
     {
         var sqlite = new Microsoft.Data.Sqlite.SqliteException(
@@ -251,12 +308,34 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
         return controller;
     }
 
+    private void ConfigureAdmission(int maxItems, int resumeThreshold)
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.QueueMaxItems,
+                ConfigValue = maxItems.ToString(),
+            },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.QueueResumeThreshold,
+                ConfigValue = resumeThreshold.ToString(),
+            },
+        ]);
+    }
+
     private async Task SeedQueueItemAsync(Guid id, string fileName, string category)
     {
         _context.QueueItems.Add(CreateQueueItem(id, fileName, category));
         _context.NzbNames.Add(new NzbName { Id = id, FileName = fileName });
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
+    }
+
+    private async Task SeedQueueItem(string fileName, string category)
+    {
+        await SeedQueueItemAsync(Guid.NewGuid(), fileName, category);
     }
 
     private static QueueItem CreateQueueItem(Guid id, string fileName, string category) =>

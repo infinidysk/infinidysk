@@ -72,6 +72,17 @@ public class QueueItemProcessor(
     private const int MaxProviderRetryAttempts = 20;
     private static readonly TimeSpan StageWarningInterval = TimeSpan.FromMinutes(15);
 
+    internal static List<string> SelectArticlesForExistenceCheck(
+        IEnumerable<IReadOnlyList<string>> segmentsByFile,
+        string mode)
+    {
+        var files = segmentsByFile.ToList();
+        return mode == "sampled"
+            ? files.SelectMany(segments =>
+                HealthCheckService.SampleSegments(segments.ToList())).ToList()
+            : files.SelectMany(segments => segments).ToList();
+    }
+
     private static TimeSpan GetProviderRetryBackoff(int attempt)
     {
         var seconds = Math.Min(60d, 10d * Math.Pow(2, attempt - 1));
@@ -366,10 +377,21 @@ public class QueueItemProcessor(
         var healthCheckCategories = configManager.GetEnsureArticleExistenceCategories();
         if (healthCheckCategories.Contains(queueItem.Category.ToLower()))
         {
-            var articlesToCheck = fileInfos
+            var segmentsByFile = fileInfos
                 .Where(x => x.IsRar || FilenameUtil.IsImportantFileType(x.FileName))
-                .SelectMany(x => x.NzbFile.GetSegmentIds())
+                .Select(x => (IReadOnlyList<string>)x.NzbFile.GetSegmentIds().ToList())
                 .ToList();
+            var totalArticles = segmentsByFile.Sum(x => x.Count);
+            var checkMode = configManager.GetArticleExistenceCheckMode();
+            var articlesToCheck = SelectArticlesForExistenceCheck(segmentsByFile, checkMode);
+            if (checkMode == "sampled")
+            {
+                Log.Information(
+                    "Article existence check sampled {SampledCount}/{TotalCount} segments across {FileCount} files " +
+                    "for queue item {QueueItemId}.",
+                    articlesToCheck.Count, totalArticles, segmentsByFile.Count, queueItem.Id);
+            }
+
             var part3Progress = progress
                 .Offset(100)
                 .ToPercentage(articlesToCheck.Count);
@@ -405,7 +427,7 @@ public class QueueItemProcessor(
 
             // post-processing
             new RenameDuplicatesPostProcessor(dbClient).RenameDuplicates();
-            new BlocklistedFilePostProcessor(configManager, dbClient).RemoveBlocklistedFiles();
+            new BlocklistedFilePostProcessor(configManager, dbClient).RemoveFilteredFiles();
 
             // validate video files found
             if (configManager.IsEnsureImportableVideoEnabled())

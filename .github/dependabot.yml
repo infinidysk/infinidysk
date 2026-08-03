@@ -2,7 +2,16 @@ version: 2
 
 updates:
   - package-ecosystem: nuget
-    directory: /backend
+    directories:
+      - /backend
+      - /libs/SharpCompress
+      - /libs/UsenetSharp
+      - /libs/RapidYencSharp
+      - /tests/NzbWebDAV.Tests
+      - /tests/SharpCompress.Tests
+      - /tests/UsenetSharp.Tests
+      - /tests/RapidYencSharp.Tests
+      - /backend.Benchmarks
     schedule:
       interval: weekly
     cooldown:
