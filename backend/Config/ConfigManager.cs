@@ -796,13 +796,16 @@ public class ConfigManager
 
     /// <summary>
     /// Host-wide cap on decoded article bytes retained in RAM across concurrent WebDAV
-    /// streams. Default 512 MiB; clamped to [64, 8192]. Distinct from
+    /// streams. When unset, derived from the process heap limit (25%, clamped [64, 512]).
+    /// Explicit values keep the existing [64, 8192] clamp. Distinct from
     /// <see cref="GetArticleBufferSize"/>, which bounds per-stream segment count.
     /// </summary>
     public int GetInFlightArticleBudgetMb()
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetInFlightArticleBudgetMb));
-        return int.TryParse(v, out var n) ? Math.Clamp(n, 64, 8192) : 512;
+        return int.TryParse(v, out var n)
+            ? Math.Clamp(n, 64, 8192)
+            : MemoryBudget.DefaultInFlightArticleBudgetMb();
     }
 
     public long GetInFlightArticleBudgetBytes() =>

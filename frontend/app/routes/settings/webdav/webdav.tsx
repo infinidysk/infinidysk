@@ -390,11 +390,12 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                             type="text"
                             id="in-flight-article-budget-input"
                             aria-describedby="in-flight-article-budget-help"
-                            placeholder="512"
-                            value={config["usenet.in-flight-article-budget-mb"] ?? "512"}
+                            placeholder="auto"
+                            value={config["usenet.in-flight-article-budget-mb"] ?? ""}
                             onChange={e => setNewConfig({ ...config, "usenet.in-flight-article-budget-mb": e.target.value })} />
                         <p className="text-[11px] leading-relaxed text-base-content/45" id="in-flight-article-budget-help">
-                            Host-wide cap on decoded article bytes retained in RAM across concurrent WebDAV streams (64–8192, default 512).
+                            Host-wide cap on decoded article bytes retained in RAM across concurrent WebDAV streams (64–8192).
+                            Leave empty for auto: about 25% of the container memory limit, capped at 512 MiB.
                             Prevents unbounded prefetch under heavy Arr/rclone load from OOM-killing the container.
                         </p>
                     </div>

@@ -208,6 +208,8 @@ public partial class Program
                 .AddSingleton(sp =>
                 {
                     var cfg = sp.GetRequiredService<ConfigManager>();
+                    var budgetMb = cfg.GetInFlightArticleBudgetMb();
+                    MemoryBudget.LogInFlightBudget(budgetMb);
                     var budget = new InFlightArticleBudget(cfg.GetInFlightArticleBudgetBytes());
                     InFlightArticleBudget.Current = budget;
                     cfg.OnConfigChanged += (_, args) =>
