@@ -138,6 +138,8 @@ public class WebsocketManager
     private async Task ReceiveSubscriptions(SocketSession session)
     {
         var buffer = new byte[MaxSubscriptionMessageSize];
+        using var messageBuffer = new MemoryStream(MaxSubscriptionMessageSize);
+        var discardCurrentMessage = false;
         try
         {
             while (true)
@@ -152,11 +154,37 @@ public class WebsocketManager
                     return;
                 }
 
-                if (result.MessageType != WebSocketMessageType.Text || !result.EndOfMessage)
-                    continue;
+                if (result.MessageType != WebSocketMessageType.Text)
+                {
+                    discardCurrentMessage = true;
+                }
+                else if (!discardCurrentMessage)
+                {
+                    if (messageBuffer.Length + result.Count > MaxSubscriptionMessageSize)
+                    {
+                        discardCurrentMessage = true;
+                        messageBuffer.SetLength(0);
+                        Log.Debug(
+                            "Ignoring websocket subscription message larger than {MaxBytes} bytes",
+                            MaxSubscriptionMessageSize);
+                    }
+                    else
+                    {
+                        messageBuffer.Write(buffer, 0, result.Count);
+                    }
+                }
 
-                var text = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                ProcessSubscriptionMessage(session, text);
+                if (!result.EndOfMessage) continue;
+
+                if (!discardCurrentMessage)
+                {
+                    var text = Encoding.UTF8.GetString(
+                        messageBuffer.GetBuffer(), 0, checked((int)messageBuffer.Length));
+                    ProcessSubscriptionMessage(session, text);
+                }
+
+                messageBuffer.SetLength(0);
+                discardCurrentMessage = false;
             }
         }
         catch (OperationCanceledException)

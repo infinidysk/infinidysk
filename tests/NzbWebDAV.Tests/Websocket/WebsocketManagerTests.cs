@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Tests.Websocket;
@@ -205,6 +206,31 @@ public class WebsocketManagerTests
             var replay = Parse(socket.Messages.Single());
             Assert.Equal(WebsocketTopic.LiveStats.Name, replay.Topic);
             Assert.Equal("stale-value", replay.Message);
+        }
+        finally
+        {
+            await detach();
+        }
+    }
+
+    [Fact]
+    public async Task StreamTraceStatusTransitionWhileIdle_ReplaysToLateSubscriber()
+    {
+        var manager = new WebsocketManager();
+        var broadcaster = new StreamTraceStatusBroadcaster(manager);
+
+        await broadcaster.BroadcastAsync("""{"enabled":false}""");
+
+        using var socket = new TestWebSocket();
+        var detach = manager.AttachAuthenticatedSocketForTests(socket, replayState: true);
+
+        try
+        {
+            await WaitUntil(() => socket.Messages.Count == 1);
+
+            var replay = Parse(socket.Messages.Single());
+            Assert.Equal(WebsocketTopic.StreamTracing.Name, replay.Topic);
+            Assert.Equal("""{"enabled":false}""", replay.Message);
         }
         finally
         {

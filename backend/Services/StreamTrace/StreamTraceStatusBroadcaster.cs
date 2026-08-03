@@ -30,9 +30,8 @@ public sealed class StreamTraceStatusBroadcaster(WebsocketManager websocketManag
             _lastPayload = payload;
         }
 
-        if (!websocketManager.HasSubscribers(WebsocketTopic.StreamTracing))
-            return;
-
+        // SendMessage records the latest state before applying its subscriber gate,
+        // so a later subscriber receives the transition that happened while idle.
         await websocketManager.SendMessage(WebsocketTopic.StreamTracing, payload).ConfigureAwait(false);
     }
 

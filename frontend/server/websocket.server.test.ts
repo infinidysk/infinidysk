@@ -98,7 +98,7 @@ describe("UpstreamSubscriptionForwarder", () => {
         forwarder.setBackendSocket(socket);
 
         subscriptions.set("ls", new Set([{} as WebSocket]));
-        forwarder.syncAfterBrowserChange([]);
+        forwarder.syncAfterBrowserChange();
 
         expect(sent).toHaveLength(1);
         expect(JSON.parse(sent[0])).toEqual({ sub: ["ls"] });
@@ -114,7 +114,7 @@ describe("UpstreamSubscriptionForwarder", () => {
         sent.length = 0;
 
         subscriptions.get("ls")!.clear();
-        forwarder.syncAfterBrowserChange(["ls"]);
+        forwarder.syncAfterBrowserChange();
 
         expect(sent).toHaveLength(1);
         expect(JSON.parse(sent[0])).toEqual({ unsub: ["ls"] });
@@ -140,7 +140,7 @@ describe("UpstreamSubscriptionForwarder", () => {
         subscriptions.set("ls", new Set([{} as WebSocket]));
         const forwarder = new UpstreamSubscriptionForwarder(subscriptions);
 
-        forwarder.syncAfterBrowserChange([]);
+        forwarder.syncAfterBrowserChange();
         // No error, just no-op
     });
 
@@ -155,7 +155,7 @@ describe("UpstreamSubscriptionForwarder", () => {
 
         // Add a second subscriber to "ls" — topic was already active, no message needed
         subscriptions.get("ls")!.add({} as WebSocket);
-        forwarder.syncAfterBrowserChange([]);
+        forwarder.syncAfterBrowserChange();
 
         expect(sent).toHaveLength(0);
     });

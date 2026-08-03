@@ -123,7 +123,7 @@ function initializeWebsocketServer(wss: WebSocketServer) {
                 }
             }
 
-            upstreamSubscriptions.syncAfterBrowserChange(previous ? Object.keys(previous) : []);
+            upstreamSubscriptions.syncAfterBrowserChange();
         };
 
         ws.onmessage = (event: WebSocket.MessageEvent) => {
@@ -144,7 +144,7 @@ function initializeWebsocketServer(wss: WebSocketServer) {
                     const topicSubscriptions = subscriptions.get(topic);
                     if (topicSubscriptions) topicSubscriptions.delete(ws);
                 }
-                upstreamSubscriptions.syncAfterBrowserChange(Object.keys(topics));
+                upstreamSubscriptions.syncAfterBrowserChange();
             }
             if (authenticated) {
                 logger.info(
@@ -310,7 +310,7 @@ export class UpstreamSubscriptionForwarder {
     }
 
     /** Called after any browser subscribe/unsubscribe to diff and forward changes. */
-    syncAfterBrowserChange(previousTopics: string[]): void {
+    syncAfterBrowserChange(): void {
         if (!this._backendSocket || this._backendSocket.readyState !== WebSocket.OPEN) return;
 
         const currentActive = this._getActiveTopics();
