@@ -1,45 +1,69 @@
-using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.Utils;
 using Serilog;
 
 namespace NzbWebDAV.Queue.PostProcessors;
 
 public class BlocklistedFilePostProcessor(ConfigManager configManager, DavDatabaseClient dbClient)
 {
-    public void RemoveBlocklistedFiles()
+    public void RemoveFilteredFiles()
     {
-        var blocklistPatterns = configManager.GetBlocklistedFiles();
-        var blocklistedFiles = dbClient.Ctx.ChangeTracker.Entries<DavItem>()
+        var addedFiles = dbClient.Ctx.ChangeTracker.Entries<DavItem>()
             .Where(x => x.State == EntityState.Added)
             .Select(x => x.Entity)
             .Where(x => x.Type != DavItem.ItemType.Directory)
-            .Where(x => MatchesAnyPattern(x.Name, blocklistPatterns))
             .ToList();
 
-        foreach (var blocklistedFile in blocklistedFiles)
-            RemoveBlocklistedFile(blocklistedFile);
+        foreach (var (file, reason) in GetFilesToRemove(addedFiles))
+        {
+            Log.Information("Filtering out {FileName} ({Reason}).", file.Name, reason);
+            RemoveFile(file, reason);
+        }
     }
 
+    /// <summary>
+    /// Legacy entry point kept for callers that have not yet migrated.
+    /// </summary>
+    public void RemoveBlocklistedFiles() => RemoveFilteredFiles();
+
+    private IEnumerable<(DavItem File, string Reason)> GetFilesToRemove(IReadOnlyCollection<DavItem> addedFiles)
+    {
+        var blocklistedFilenames = configManager.GetBlocklistedFiles();
+        var sampleFilterEnabled = configManager.IsSampleFilterEnabled();
+
+        // The sample heuristic compares each candidate against the largest video
+        // in the same release, so the largest video can never be a sample itself.
+        var largestVideoFileSize = sampleFilterEnabled
+            ? addedFiles
+                .Where(x => FilenameUtil.IsVideoFile(x.Name))
+                .Select(x => x.FileSize ?? 0)
+                .DefaultIfEmpty(0)
+                .Max()
+            : 0;
+
+        foreach (var file in addedFiles)
+        {
+            if (FileFilterUtil.MatchesAnyGlob(file.Name, blocklistedFilenames))
+                yield return (file, "blacklisted filename");
+
+            else if (sampleFilterEnabled && FileFilterUtil.IsSampleFile(file.Name, file.FileSize, largestVideoFileSize))
+                yield return (file, "sample file");
+        }
+    }
+
+    /// <summary>
+    /// Glob-only match used by health repair (no sibling-size context for samples).
+    /// </summary>
     public static bool MatchesAnyPattern(string fileName, HashSet<string> patterns)
     {
-        var lowerFileName = fileName.ToLower();
-        return patterns.Any(pattern => MatchesPattern(lowerFileName, pattern));
+        return FileFilterUtil.MatchesAnyGlob(fileName, patterns);
     }
 
-    private static bool MatchesPattern(string fileName, string pattern)
-    {
-        // Convert pattern to regex:
-        // 1. Escape all regex special characters (this escapes * to \*)
-        // 2. Replace \* with .* to support greedy wildcard matching
-        var regexPattern = Regex.Escape(pattern).Replace("\\*", ".*");
-        return Regex.IsMatch(fileName, $"^{regexPattern}$");
-    }
-
-    private void RemoveBlocklistedFile(DavItem davItem)
+    private void RemoveFile(DavItem davItem, string reason)
     {
         if (davItem.SubType == DavItem.ItemSubType.NzbFile)
         {
@@ -76,14 +100,14 @@ public class BlocklistedFilePostProcessor(ConfigManager configManager, DavDataba
 
         else
         {
-            Log.Error("Error filtering blocklisted files.");
+            Log.Error("Error filtering {FileName} ({Reason}) from downloading.", davItem.Name, reason);
             return;
         }
 
         DeletionAuditLog.Record(
             "blocklist-filter",
             davItem,
-            "filename matches blocklist pattern during queue post-process");
+            $"{reason} during queue post-process");
         dbClient.Ctx.Items.Remove(davItem);
     }
 }

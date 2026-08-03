@@ -1541,13 +1541,22 @@ public class ConfigManager
 
     public HashSet<string> GetBlocklistedFiles()
     {
-        var defaultValue = "*.nfo, *.par2, *.sfv, *sample.mkv, *unpack.mkv, *.unpack.mp4";
+        // *sample.mkv is intentionally omitted: sample detection is handled by
+        // IsSampleFilterEnabled / FileFilterUtil (name + size ratio).
+        var defaultValue = "*.nfo, *.par2, *.sfv, *unpack.mkv, *.unpack.mp4";
         return (GetConfigValue(ConfigKeys.ApiDownloadFileBlocklist) ?? defaultValue)
             .Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(x => x.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x.ToLower())
             .ToHashSet();
+    }
+
+    public bool IsSampleFilterEnabled()
+    {
+        var defaultValue = true;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiSampleFilterEnabled));
+        return configValue != null ? bool.Parse(configValue) : defaultValue;
     }
 
     public string GetImportStrategy()

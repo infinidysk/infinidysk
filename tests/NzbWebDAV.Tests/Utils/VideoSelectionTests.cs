@@ -72,11 +72,41 @@ public class VideoSelectionTests
         Assert.Same(decoy, best);
     }
 
-    // d. `sample` behavior unchanged.
     [Fact]
     public void SelectBest_SkipsSampleFiles_EpisodeMatch()
     {
         var sample = Video("Show.S01E02.sample.mkv", 50_000_000);
+        var real = Video("Show.S01E02.1080p.mkv", 2_000_000_000);
+        var videos = new List<DavItem> { sample, real };
+
+        var best = VideoSelection.SelectBest(videos, season: 1, episode: 2, primaryTitle: "Show S01E02");
+
+        Assert.Same(real, best);
+    }
+
+    [Fact]
+    public void SelectBest_KeepsLargestVideoEvenWhenNameContainsSample()
+    {
+        var feature = Video("Free.Samples.2012.1080p.mkv", 8_000_000_000);
+        var videos = new List<DavItem> { feature };
+
+        var best = VideoSelection.SelectBest(videos, season: null, episode: null, primaryTitle: "Free Samples 2012");
+
+        Assert.Same(feature, best);
+    }
+
+    [Fact]
+    public void SelectBest_SkipsSampleByNameWhenSizeUnknown()
+    {
+        var sample = new DavItem
+        {
+            Id = Guid.NewGuid(),
+            Name = "Show.S01E02.sample.mkv",
+            FileSize = null,
+            Type = DavItem.ItemType.UsenetFile,
+            SubType = DavItem.ItemSubType.NzbFile,
+            Path = "/Show.S01E02.sample.mkv",
+        };
         var real = Video("Show.S01E02.1080p.mkv", 2_000_000_000);
         var videos = new List<DavItem> { sample, real };
 

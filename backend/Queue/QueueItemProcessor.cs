@@ -427,7 +427,7 @@ public class QueueItemProcessor(
 
             // post-processing
             new RenameDuplicatesPostProcessor(dbClient).RenameDuplicates();
-            new BlocklistedFilePostProcessor(configManager, dbClient).RemoveBlocklistedFiles();
+            new BlocklistedFilePostProcessor(configManager, dbClient).RemoveFilteredFiles();
 
             // validate video files found
             if (configManager.IsEnsureImportableVideoEnabled())

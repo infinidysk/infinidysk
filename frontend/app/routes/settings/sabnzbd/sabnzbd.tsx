@@ -206,13 +206,25 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                     className={'w-full'}
                     id="ignored-files-input"
                     aria-describedby="ignored-files-help"
-                    placeholder="*.nfo, *.par2, *.sfv, *sample.mkv"
+                    placeholder="*.nfo, *.par2, *.sfv, *unpack.mkv"
                     value={config["api.download-file-blocklist"]}
                     onChange={value => setNewConfig({ ...config, "api.download-file-blocklist": value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="ignored-files-help">
-                    Files that match these patterns will be ignored and not mounted onto the webdav when processing an nzb. Wildcards (*) are supported.
+                    Files that match these patterns will be ignored and not mounted onto the webdav when processing an nzb. Wildcards (*) are supported. Sample videos are filtered separately (see below).
                 </p>
             </div>
+            </ManagedSetting>
+            <hr />
+            <ManagedSetting configKey="api.sample-filter-enabled">
+            <Tooltip content="Discard video files whose name contains 'sample' as a whole word and that are under 20% of the largest video in the same NZB. Prevents Sonarr/Radarr from importing samples in STRM mode.">
+                <Toggle
+                    id="sample-filter-enabled-checkbox"
+                    className="cursor-pointer gap-2 p-0"
+                    checked={config["api.sample-filter-enabled"] !== "false"}
+                    onChange={e => setNewConfig({ ...config, "api.sample-filter-enabled": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Filter sample videos from downloads</span>}
+                />
+            </Tooltip>
             </ManagedSetting>
             <hr />
             <ManagedSetting configKey="api.duplicate-nzb-behavior">
@@ -470,6 +482,7 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
         || config["queue.resume-threshold"] !== newConfig["queue.resume-threshold"]
         || config["rclone.mount-dir"] !== newConfig["rclone.mount-dir"]
         || config["api.ensure-importable-video"] !== newConfig["api.ensure-importable-video"]
+        || config["api.sample-filter-enabled"] !== newConfig["api.sample-filter-enabled"]
         || config["api.skip-non-video-on-missing-articles"] !== newConfig["api.skip-non-video-on-missing-articles"]
         || config["api.ensure-article-existence-categories"] !== newConfig["api.ensure-article-existence-categories"]
         || config["api.article-existence-check-mode"] !== newConfig["api.article-existence-check-mode"]

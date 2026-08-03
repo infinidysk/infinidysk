@@ -13,6 +13,7 @@ public static class ConfigKeys
     public const string ApiCategories = "api.categories";
     public const string ApiCompletedDownloadsDir = "api.completed-downloads-dir";
     public const string ApiDownloadFileBlocklist = "api.download-file-blocklist";
+    public const string ApiSampleFilterEnabled = "api.sample-filter-enabled";
     public const string ApiDuplicateNzbBehavior = "api.duplicate-nzb-behavior";
     public const string ApiArticleExistenceCheckMode = "api.article-existence-check-mode";
     public const string ApiEnsureArticleExistenceCategories = "api.ensure-article-existence-categories";
