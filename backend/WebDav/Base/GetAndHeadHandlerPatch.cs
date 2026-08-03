@@ -134,10 +134,13 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         }
 
         var path = request.GetUri().AbsolutePath;
+        // Key the shared-stream audit by the decoded store path (the same form
+        // /view passes), otherwise overlap between the two entry points on the
+        // same file is missed whenever the path needs percent-encoding.
         using var concurrentReadScope = isHeadRequest
             ? null
             : _concurrentReadTracker.BeginRead(
-                path,
+                Uri.UnescapeDataString(path),
                 range?.Start ?? (range is null ? 0 : null),
                 ResolveReadRegion(range));
 

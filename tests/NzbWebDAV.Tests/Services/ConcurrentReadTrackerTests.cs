@@ -45,6 +45,20 @@ public class ConcurrentReadTrackerTests
     }
 
     [Fact]
+    public void ViewAndWebdavEntryPointKeys_OverlapOnTheSameFile()
+    {
+        // /view passes the decoded, prefix-stripped path; the WebDAV GET handler
+        // decodes its raw request path. Both must key the same file.
+        var tracker = new ConcurrentReadTracker();
+        using var viewRead = tracker.BeginRead(
+            "content/My Movie.mkv", 0, ConcurrentReadRegion.Full);
+        using var webdavRead = tracker.BeginRead(
+            Uri.UnescapeDataString("/content/My%20Movie.mkv"), 0, ConcurrentReadRegion.Full);
+
+        Assert.Equal(1, tracker.Snapshot().OverlapEvents);
+    }
+
+    [Fact]
     public void DifferentPaths_DoNotOverlap()
     {
         var tracker = new ConcurrentReadTracker();
