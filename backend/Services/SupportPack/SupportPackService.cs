@@ -256,6 +256,7 @@ public sealed class SupportPackService(
         var uptime = ProcessUptime();
         var streamTracing = streamTraceBuffer.GetStatus();
         var usage = runtimeUsage.Snapshot();
+        var bufferPool = BufferPoolDiagnostics.Shared.Snapshot();
         var cpu = await BuildCpuDiagnosticsAsync(usage, uptime, cancellationToken).ConfigureAwait(false);
 
         return new
@@ -277,6 +278,13 @@ public sealed class SupportPackService(
                 inFlightArticleBytes = inFlightArticleBudget.LeasedBytes,
                 inFlightArticleBudgetBytes = inFlightArticleBudget.CapBytes,
                 inFlightArticleThrottleEvents = inFlightArticleBudget.ThrottleEvents,
+                segmentBufferRents = bufferPool.Rents,
+                segmentBufferReturns = bufferPool.Returns,
+                segmentBufferGrowths = bufferPool.Growths,
+                segmentBufferCheckedOutBytes = bufferPool.CheckedOutBytes,
+                segmentBufferRequestedBytes = bufferPool.RequestedBytes,
+                segmentBufferRentedBytes = bufferPool.RentedBytes,
+                segmentBufferBucketWasteBytes = bufferPool.BucketWasteBytes,
                 timeZone = TimeZoneInfo.Local.Id,
             },
             runtimeSampler = BuildRuntimeSamplerDiagnostics(usage),

@@ -14,58 +14,61 @@ BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
 [MemoryDiagnoser]
 public class SegmentBufferPoolBenchmarks
 {
-    private const int SegmentSize = 768 * 1024;
-    private const int ConcurrentStreams = 8;
     private const int SegmentsPerStream = 20;
     private byte[] _payload = null!;
+    private SegmentBufferPool _segmentPool = null!;
+    private BufferPoolDiagnostics _sharedDiagnostics = null!;
+    private BufferPoolDiagnostics _segmentDiagnostics = null!;
+
+    [Params(700_000, 750_000, 800_000)]
+    public int SegmentSize { get; set; }
+
+    [Params(1, 8)]
+    public int ConcurrentStreams { get; set; }
 
     [GlobalSetup]
     public void Setup()
     {
         _payload = new byte[SegmentSize];
         new Random(42).NextBytes(_payload);
+        _segmentPool = new SegmentBufferPool(128 * 1024 * 1024);
+        _sharedDiagnostics = new BufferPoolDiagnostics();
+        _segmentDiagnostics = new BufferPoolDiagnostics();
     }
 
     [Benchmark(Baseline = true)]
-    public async Task ArrayPoolShared()
-    {
-        PooledBufferStream.Pool = SharedArrayPoolAdapter.Instance;
-        await DrainSegments();
-    }
+    public long ArrayPoolShared() =>
+        DrainSegments(SharedArrayPoolAdapter.Instance, _sharedDiagnostics);
 
     [Benchmark]
-    public async Task SegmentBufferPool_128MB()
-    {
-        PooledBufferStream.Pool = new SegmentBufferPool(128 * 1024 * 1024);
-        await DrainSegments();
-    }
+    public long SegmentBufferPool_128MB() =>
+        DrainSegments(_segmentPool, _segmentDiagnostics);
 
-    [Benchmark]
-    public async Task SegmentBufferPool_64MB()
+    private long DrainSegments(ISegmentBufferPool pool, BufferPoolDiagnostics diagnostics)
     {
-        PooledBufferStream.Pool = new SegmentBufferPool(64 * 1024 * 1024);
-        await DrainSegments();
-    }
-
-    private async Task DrainSegments()
-    {
-        var tasks = Enumerable.Range(0, ConcurrentStreams).Select(async _ =>
+        long bytesRead = 0;
+        for (var segment = 0; segment < SegmentsPerStream; segment++)
         {
-            for (var i = 0; i < SegmentsPerStream; i++)
+            var buffers = Enumerable.Range(0, ConcurrentStreams)
+                .Select(_ => new PooledBufferStream(SegmentSize, pool, diagnostics))
+                .ToArray();
+            try
             {
-                await using var buffer = new PooledBufferStream(SegmentSize);
-                await buffer.WriteAsync(_payload);
-                buffer.Position = 0;
-                await buffer.CopyToAsync(Stream.Null);
+                foreach (var buffer in buffers)
+                {
+                    buffer.Write(_payload);
+                    buffer.Position = 0;
+                    buffer.CopyTo(Stream.Null);
+                    bytesRead += buffer.Length;
+                }
             }
-        });
-        await Task.WhenAll(tasks);
-    }
-
-    [IterationCleanup]
-    public void Cleanup()
-    {
-        PooledBufferStream.Pool = SharedArrayPoolAdapter.Instance;
+            finally
+            {
+                foreach (var buffer in buffers)
+                    buffer.Dispose();
+            }
+        }
+        return bytesRead;
     }
 }
 

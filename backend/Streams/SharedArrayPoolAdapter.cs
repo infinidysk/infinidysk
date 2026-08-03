@@ -12,7 +12,4 @@ public sealed class SharedArrayPoolAdapter : ISegmentBufferPool
 
     public byte[] Rent(int minimumLength) => ArrayPool<byte>.Shared.Rent(minimumLength);
     public void Return(byte[] buffer) => ArrayPool<byte>.Shared.Return(buffer);
-
-    public long IdleBytes => 0;
-    public int ActiveSizeClasses => 0;
 }

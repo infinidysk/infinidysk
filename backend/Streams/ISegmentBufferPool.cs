@@ -12,10 +12,4 @@ public interface ISegmentBufferPool
 
     /// <summary>Return a previously rented buffer.</summary>
     void Return(byte[] buffer);
-
-    /// <summary>Approximate bytes held idle in the pool (not rented out).</summary>
-    long IdleBytes { get; }
-
-    /// <summary>Number of distinct size classes with at least one idle buffer.</summary>
-    int ActiveSizeClasses { get; }
 }

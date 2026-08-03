@@ -1,80 +1,215 @@
-using System.Collections.Concurrent;
-using System.Diagnostics;
-
 namespace NzbWebDAV.Streams;
 
 /// <summary>
-/// Byte-bounded buffer pool with 256 KiB size classes designed for Usenet segment
-/// drains (~750 KiB typical). Reduces bucket waste versus <see cref="System.Buffers.ArrayPool{T}.Shared"/>
-/// power-of-two buckets while bounding total idle retention in bytes.
+/// Evaluation pool for Usenet segment drains. Uses 256 KiB size classes, strictly
+/// bounds idle retention, reclaims across classes, and expires stale buffers.
 /// </summary>
 public sealed class SegmentBufferPool : ISegmentBufferPool
 {
-    private const int SizeClassGranularity = 256 * 1024;
-    private const int MaxBuffersPerClass = 64;
+    internal const int SizeClassGranularity = 256 * 1024;
+    private const int DefaultMaxBuffersPerClass = 64;
+    private static readonly TimeSpan DefaultStaleAfter = TimeSpan.FromMinutes(2);
 
+    private readonly object _gate = new();
     private readonly long _maxIdleBytes;
-    private readonly ConcurrentDictionary<int, ConcurrentBag<byte[]>> _buckets = new();
+    private readonly int _maxBuffersPerClass;
+    private readonly TimeSpan _staleAfter;
+    private readonly TimeProvider _timeProvider;
+    private readonly Dictionary<int, Queue<IdleBuffer>> _buckets = [];
+    private readonly HashSet<byte[]> _checkedOut = new(ReferenceEqualityComparer.Instance);
+
     private long _idleBytes;
-    private long _trimTimestamp;
+    private long _trimmedBytes;
+    private long _rentCount;
+    private long _returnCount;
+    private long _reuseCount;
+    private long _allocationCount;
 
-    /// <param name="maxIdleBytes">
-    /// Maximum bytes to retain idle across all size classes. When exceeded, the oldest
-    /// class with the most waste is trimmed on the next return.
-    /// </param>
-    public SegmentBufferPool(long maxIdleBytes)
+    public SegmentBufferPool(
+        long maxIdleBytes,
+        TimeSpan? staleAfter = null,
+        int maxBuffersPerClass = DefaultMaxBuffersPerClass,
+        TimeProvider? timeProvider = null)
     {
-        _maxIdleBytes = Math.Max(SizeClassGranularity, maxIdleBytes);
-    }
+        ArgumentOutOfRangeException.ThrowIfNegative(maxIdleBytes);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxBuffersPerClass, 1);
 
-    public long IdleBytes => Interlocked.Read(ref _idleBytes);
-    public int ActiveSizeClasses => _buckets.Count(kv => !kv.Value.IsEmpty);
+        _maxIdleBytes = maxIdleBytes;
+        _maxBuffersPerClass = maxBuffersPerClass;
+        _staleAfter = staleAfter ?? DefaultStaleAfter;
+        if (_staleAfter < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(staleAfter));
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
 
     public byte[] Rent(int minimumLength)
     {
-        if (minimumLength <= 0) return [];
+        if (minimumLength < 0)
+            throw new ArgumentOutOfRangeException(nameof(minimumLength));
+        if (minimumLength == 0) return [];
+        if (minimumLength > Array.MaxLength)
+            throw new ArgumentOutOfRangeException(nameof(minimumLength));
 
         var sizeClass = RoundToSizeClass(minimumLength);
-        if (_buckets.TryGetValue(sizeClass, out var bag) && bag.TryTake(out var buffer))
+        var now = _timeProvider.GetUtcNow();
+
+        lock (_gate)
         {
-            Interlocked.Add(ref _idleBytes, -buffer.Length);
-            return buffer;
+            TrimStaleLocked(now);
+            if (_buckets.TryGetValue(sizeClass, out var bucket) && bucket.Count > 0)
+            {
+                var idle = bucket.Dequeue();
+                _idleBytes -= idle.Buffer.Length;
+                if (bucket.Count == 0)
+                    _buckets.Remove(sizeClass);
+                _checkedOut.Add(idle.Buffer);
+                _rentCount++;
+                _reuseCount++;
+                return idle.Buffer;
+            }
         }
 
-        return new byte[sizeClass];
+        var allocated = new byte[sizeClass];
+        lock (_gate)
+        {
+            _checkedOut.Add(allocated);
+            _rentCount++;
+            _allocationCount++;
+        }
+        return allocated;
     }
 
     public void Return(byte[] buffer)
     {
+        ArgumentNullException.ThrowIfNull(buffer);
         if (buffer.Length == 0) return;
 
-        var sizeClass = buffer.Length;
-        var bag = _buckets.GetOrAdd(sizeClass, _ => new ConcurrentBag<byte[]>());
-
-        if (bag.Count >= MaxBuffersPerClass)
-            return;
-
-        bag.Add(buffer);
-        var idle = Interlocked.Add(ref _idleBytes, buffer.Length);
-
-        if (idle > _maxIdleBytes)
-            TrimExcess();
-    }
-
-    private void TrimExcess()
-    {
-        var now = Stopwatch.GetTimestamp();
-        var last = Interlocked.Read(ref _trimTimestamp);
-        if (Stopwatch.GetElapsedTime(last, now) < TimeSpan.FromSeconds(1)) return;
-        if (Interlocked.CompareExchange(ref _trimTimestamp, now, last) != last) return;
-
-        foreach (var (_, bag) in _buckets)
+        var now = _timeProvider.GetUtcNow();
+        lock (_gate)
         {
-            while (Interlocked.Read(ref _idleBytes) > _maxIdleBytes && bag.TryTake(out var evicted))
-                Interlocked.Add(ref _idleBytes, -evicted.Length);
+            if (!_checkedOut.Remove(buffer))
+                throw new InvalidOperationException(
+                    "The segment buffer was not rented from this pool or was already returned.");
+
+            _returnCount++;
+            TrimStaleLocked(now);
+
+            if (buffer.Length > _maxIdleBytes)
+            {
+                _trimmedBytes += buffer.Length;
+                return;
+            }
+
+            if (_buckets.TryGetValue(buffer.Length, out var existingBucket) &&
+                existingBucket.Count >= _maxBuffersPerClass)
+            {
+                _trimmedBytes += buffer.Length;
+                return;
+            }
+
+            ReclaimForLocked(buffer.Length);
+            if (_idleBytes + buffer.Length > _maxIdleBytes)
+            {
+                _trimmedBytes += buffer.Length;
+                return;
+            }
+
+            var bucket = GetOrCreateBucketLocked(buffer.Length);
+            bucket.Enqueue(new IdleBuffer(buffer, now));
+            _idleBytes += buffer.Length;
         }
     }
 
-    internal static int RoundToSizeClass(int size) =>
-        ((size + SizeClassGranularity - 1) / SizeClassGranularity) * SizeClassGranularity;
+    public SegmentBufferPoolSnapshot Snapshot()
+    {
+        lock (_gate)
+        {
+            var classes = _buckets
+                .OrderBy(x => x.Key)
+                .Select(x => new SegmentBufferPoolClassSnapshot(
+                    x.Key, x.Value.Count, (long)x.Key * x.Value.Count))
+                .ToArray();
+            return new SegmentBufferPoolSnapshot(
+                _idleBytes,
+                _trimmedBytes,
+                _checkedOut.Sum(x => (long)x.Length),
+                _rentCount,
+                _returnCount,
+                _reuseCount,
+                _allocationCount,
+                classes);
+        }
+    }
+
+    internal static int RoundToSizeClass(int size)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(size, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(size, Array.MaxLength);
+
+        var rounded = ((long)size + SizeClassGranularity - 1)
+                      / SizeClassGranularity
+                      * SizeClassGranularity;
+        return rounded <= Array.MaxLength ? (int)rounded : size;
+    }
+
+    private Queue<IdleBuffer> GetOrCreateBucketLocked(int sizeClass)
+    {
+        if (_buckets.TryGetValue(sizeClass, out var bucket)) return bucket;
+        bucket = new Queue<IdleBuffer>();
+        _buckets.Add(sizeClass, bucket);
+        return bucket;
+    }
+
+    private void ReclaimForLocked(int incomingBytes)
+    {
+        while (_idleBytes + incomingBytes > _maxIdleBytes)
+        {
+            var oldest = _buckets
+                .Where(x => x.Value.Count > 0)
+                .OrderBy(x => x.Value.Peek().ReturnedAt)
+                .FirstOrDefault();
+            if (oldest.Value is null) return;
+
+            var evicted = oldest.Value.Dequeue();
+            _idleBytes -= evicted.Buffer.Length;
+            _trimmedBytes += evicted.Buffer.Length;
+            if (oldest.Value.Count == 0)
+                _buckets.Remove(oldest.Key);
+        }
+    }
+
+    private void TrimStaleLocked(DateTimeOffset now)
+    {
+        if (_buckets.Count == 0) return;
+        var cutoff = now - _staleAfter;
+        foreach (var (sizeClass, bucket) in _buckets.ToArray())
+        {
+            while (bucket.Count > 0 && bucket.Peek().ReturnedAt <= cutoff)
+            {
+                var evicted = bucket.Dequeue();
+                _idleBytes -= evicted.Buffer.Length;
+                _trimmedBytes += evicted.Buffer.Length;
+            }
+
+            if (bucket.Count == 0)
+                _buckets.Remove(sizeClass);
+        }
+    }
+
+    private sealed record IdleBuffer(byte[] Buffer, DateTimeOffset ReturnedAt);
 }
+
+public readonly record struct SegmentBufferPoolSnapshot(
+    long IdleBytes,
+    long TrimmedBytes,
+    long CheckedOutBytes,
+    long RentCount,
+    long ReturnCount,
+    long ReuseCount,
+    long AllocationCount,
+    IReadOnlyList<SegmentBufferPoolClassSnapshot> SizeClasses);
+
+public readonly record struct SegmentBufferPoolClassSnapshot(
+    int BufferSize,
+    int BufferCount,
+    long IdleBytes);

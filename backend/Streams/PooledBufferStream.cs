@@ -1,5 +1,3 @@
-using System.Buffers;
-
 namespace NzbWebDAV.Streams;
 
 /// <summary>
@@ -9,27 +7,28 @@ namespace NzbWebDAV.Streams;
 /// </summary>
 public sealed class PooledBufferStream : Stream
 {
-    /// <summary>
-    /// Process-wide pool used by all <see cref="PooledBufferStream"/> instances.
-    /// Defaults to <see cref="SharedArrayPoolAdapter"/> (BCL behavior). Replace at
-    /// startup to use <see cref="SegmentBufferPool"/> or a test double.
-    /// </summary>
-    public static ISegmentBufferPool Pool { get; set; } = SharedArrayPoolAdapter.Instance;
-
+    private readonly ISegmentBufferPool _pool;
+    private readonly BufferPoolDiagnostics _diagnostics;
     private byte[]? _buffer;
     private int _length;
     private int _position;
     private bool _disposed;
 
-    public PooledBufferStream(int capacityHint)
+    public PooledBufferStream(
+        int capacityHint,
+        ISegmentBufferPool? pool = null,
+        BufferPoolDiagnostics? diagnostics = null)
     {
         if (capacityHint < 0)
             throw new ArgumentOutOfRangeException(nameof(capacityHint));
 
+        _pool = pool ?? SharedArrayPoolAdapter.Instance;
+        _diagnostics = diagnostics ?? BufferPoolDiagnostics.Shared;
+
         if (capacityHint > 0)
         {
-            _buffer = Pool.Rent(capacityHint);
-            BufferPoolDiagnostics.RecordRent(capacityHint, _buffer.Length);
+            _buffer = RentBuffer(capacityHint);
+            _diagnostics.RecordRent(capacityHint, _buffer.Length);
         }
         else
         {
@@ -196,14 +195,14 @@ public sealed class PooledBufferStream : Stream
         var current = _buffer!;
         if (required <= current.Length) return;
 
-        var next = Pool.Rent(required);
-        BufferPoolDiagnostics.RecordGrowth(current.Length, next.Length);
+        var next = RentBuffer(required);
         if (_length > 0)
             current.AsSpan(0, _length).CopyTo(next);
 
         if (current.Length > 0)
-            Pool.Return(current);
+            _pool.Return(current);
 
+        _diagnostics.RecordGrowth(required, current.Length, next.Length);
         _buffer = next;
     }
 
@@ -212,12 +211,23 @@ public sealed class PooledBufferStream : Stream
         var buffer = Interlocked.Exchange(ref _buffer, null);
         if (buffer is { Length: > 0 })
         {
-            BufferPoolDiagnostics.RecordReturn(buffer.Length);
-            Pool.Return(buffer);
+            _diagnostics.RecordReturn(buffer.Length);
+            _pool.Return(buffer);
         }
 
         _length = 0;
         _position = 0;
+    }
+
+    private byte[] RentBuffer(int minimumLength)
+    {
+        var buffer = _pool.Rent(minimumLength);
+        if (buffer.Length >= minimumLength) return buffer;
+
+        if (buffer.Length > 0)
+            _pool.Return(buffer);
+        throw new InvalidOperationException(
+            $"Segment buffer pool returned {buffer.Length} bytes for a {minimumLength}-byte request.");
     }
 
     private void ThrowIfDisposed()
