@@ -210,7 +210,7 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                     value={config["api.download-file-blocklist"]}
                     onChange={value => setNewConfig({ ...config, "api.download-file-blocklist": value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="ignored-files-help">
-                    Files that match these patterns will be ignored and not mounted onto the webdav when processing an nzb. Wildcards (*) are supported. Sample videos are filtered separately (see below).
+                    Files that match these patterns will be ignored and not mounted onto the webdav when processing an nzb. Wildcards (* and ?) are supported. Sample videos are filtered separately (see below).
                 </p>
             </div>
             </ManagedSetting>

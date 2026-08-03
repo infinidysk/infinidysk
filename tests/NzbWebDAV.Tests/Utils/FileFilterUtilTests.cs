@@ -79,6 +79,7 @@ public class FileFilterUtilTests
 
     [Theory]
     [InlineData("Show.S01E01.trailer.mkv", "*trailer*", true)]
+    [InlineData("proof.jpg", "proof.???", true)]
     [InlineData("Show.S01E01.mkv", "*trailer*", false)]
     [InlineData("PROOF.JPG", "proof.jpg", true)]
     [InlineData("notproof.jpg", "proof.jpg", false)]

@@ -94,6 +94,14 @@ public class BlocklistedFilePostProcessorTests : IDisposable
     }
 
 
+
+    [Fact]
+    public void MatchesAnyPattern_SupportsQuestionMarkWildcard()
+    {
+        Assert.True(BlocklistedFilePostProcessor.MatchesAnyPattern("proof.jpg", ["proof.???"]));
+        Assert.False(BlocklistedFilePostProcessor.MatchesAnyPattern("proof.jpeg", ["proof.???"]));
+    }
+
     private DavItem SeedDirectory(DavItem parent, string name)
     {
         var item = DavItem.New(

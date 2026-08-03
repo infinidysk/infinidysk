@@ -52,7 +52,7 @@ public static partial class FileFilterUtil
     }
 
     /// <summary>
-    /// True when the filename matches any of the given globs (`*`).
+    /// True when the filename matches any of the given globs (`*` and `?`).
     /// Matching is case-insensitive and applied to the filename only.
     /// </summary>
     public static bool MatchesAnyGlob(string filename, IReadOnlyCollection<string> globs)
