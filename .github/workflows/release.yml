@@ -79,10 +79,17 @@ jobs:
         ghcr.io/${{ github.repository }}:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
         ghcr.io/${{ github.repository }}:v${{ needs.release-please.outputs.major }}
         ghcr.io/${{ github.repository }}:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
+        docker.io/infinidysk/infinidysk:latest
+        docker.io/infinidysk/infinidysk:dev
+        docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
+        docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}
+        docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
       nzbdav_version: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
       checkout_ref: ${{ needs.release-please.outputs.sha }}
+      dockerhub_username: infinidysk
     secrets:
       registry_token: ${{ secrets.GITHUB_TOKEN }}
+      dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
 
   deploy-manual:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
@@ -98,10 +105,17 @@ jobs:
         ghcr.io/${{ github.repository }}:${{ needs.resolve-version.outputs.ref }}
         ghcr.io/${{ github.repository }}:v${{ needs.resolve-version.outputs.major }}
         ghcr.io/${{ github.repository }}:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
+        docker.io/infinidysk/infinidysk:latest
+        docker.io/infinidysk/infinidysk:dev
+        docker.io/infinidysk/infinidysk:${{ needs.resolve-version.outputs.ref }}
+        docker.io/infinidysk/infinidysk:v${{ needs.resolve-version.outputs.major }}
+        docker.io/infinidysk/infinidysk:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
       nzbdav_version: ${{ needs.resolve-version.outputs.version }}
       checkout_ref: ${{ needs.resolve-version.outputs.ref }}
+      dockerhub_username: infinidysk
     secrets:
       registry_token: ${{ secrets.GITHUB_TOKEN }}
+      dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
 
   tag-dev:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'

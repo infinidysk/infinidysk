@@ -16,9 +16,16 @@ on:
         required: false
         type: string
         default: ""
+      dockerhub_username:
+        description: Docker Hub username (login skipped when empty)
+        required: false
+        type: string
+        default: ""
     secrets:
       registry_token:
         required: true
+      dockerhub_token:
+        required: false
 
 jobs:
   build-and-push:
@@ -45,6 +52,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.registry_token }}
+
+      - name: Log in to Docker Hub
+        if: inputs.dockerhub_username != ''
+        uses: docker/login-action@v4.5.2
+        with:
+          username: ${{ inputs.dockerhub_username }}
+          password: ${{ secrets.dockerhub_token }}
 
       - name: Build and push Docker image (amd64 + arm64)
         uses: docker/build-push-action@v7
