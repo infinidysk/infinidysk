@@ -902,7 +902,7 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                         {storagePartitions.groups.map(({ name, items }) => (
                             <div
                                 key={name}
-                                className="w-full rounded-lg bg-gradient-to-br from-primary via-secondary to-accent p-px"
+                                className="w-full rounded-lg bg-gradient-to-br from-primary via-info to-success p-px"
                             >
                                 <div className="space-y-2 rounded-[calc(var(--radius-box)-1px)] bg-base-200/90 p-2.5">
                                     <div className="flex items-center gap-2 px-1">

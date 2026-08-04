@@ -4,7 +4,7 @@ Pipelining keeps a Usenet connection busy by asking for the next articles before
 
 ```mermaid
 sequenceDiagram
-  participant NZB as NzbDAV
+  participant NZB as InfiniDysk
   participant Prov as Usenet_provider
   Note over NZB,Prov: Off_one_at_a_time
   NZB->>Prov: ask_article_1

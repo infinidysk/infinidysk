@@ -20,7 +20,7 @@ Background health monitoring and replacement of unhealthy library items.
 | Library Directory | `media.library-dir` | empty | Organized media path in container |
 
 `repair.auto-remove-after-failures` applies only to streaming-triggered failures such as missing
-articles and corrupt archives. With a value greater than `0`, NzbDAV waits for that many
+articles and corrupt archives. With a value greater than `0`, InfiniDysk waits for that many
 consecutive failures before it starts an urgent repair. At the threshold, linked library items are
 removed and their original downloads are marked failed in *Arr when **Auto-remove unlinked files
 only** is enabled. *Arr blocklists those releases and applies its configured failed-download
@@ -28,7 +28,7 @@ redownload policy. Unlinked files are removed. Disable that option to force-dele
 the threshold.
 
 Successful full-file playback and a successful background health check reset the in-memory failure
-count. The count resets when NzbDAV restarts, so it is intentionally not a durable replacement for
+count. The count resets when InfiniDysk restarts, so it is intentionally not a durable replacement for
 health checks.
 
 ## Replacement-loop protection [since 0.9.4](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.4){ .nzbdav-since }

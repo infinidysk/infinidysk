@@ -39,7 +39,7 @@ Advanced reference for **process / container** wiring and **legacy Settings fall
 
 ## `SERVICE_PROVIDER` [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
 
-Hosted NzbDAV services can identify the service provider and mark selected
+Hosted InfiniDysk services can identify the service provider and mark selected
 navigation destinations as unavailable. Disabled destinations remain visible in
 the sidebar; selecting one explains that the feature is disabled by the provider
 and links to the provider's support page (or website). The provider attribution

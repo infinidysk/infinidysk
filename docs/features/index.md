@@ -1,6 +1,6 @@
 # Features
 
-NzbDAV combines a virtual filesystem, Usenet streaming stack, and automation APIs.
+InfiniDysk combines a virtual filesystem, Usenet streaming stack, and automation APIs.
 
 <div class="grid cards" markdown>
 

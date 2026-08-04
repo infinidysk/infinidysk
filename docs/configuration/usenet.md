@@ -56,7 +56,7 @@ See [NNTP pipelining](../features/nntp-pipelining.md) and [Multi-provider](../fe
 ## Article-miss negative cache [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
 
 After a provider (or [storage group](../features/multi-provider.md)) reports a definitive article miss
-(NNTP 430 or provider 451), NzbDAV remembers that miss so later streaming/batch reads skip
+(NNTP 430 or provider 451), InfiniDysk remembers that miss so later streaming/batch reads skip
 re-probing the same provider for the same article until the TTL expires. Transient failures
 (timeouts, network, corrupt articles) are never cached.
 

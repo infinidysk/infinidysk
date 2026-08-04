@@ -57,7 +57,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
     return (
         <SettingsPage>
             <SettingsIntro>
-                Connect NzbDAV to an rclone Remote Control server so mounted directory caches can be
+                Connect InfiniDysk to an rclone Remote Control server so mounted directory caches can be
                 refreshed automatically when files change.
             </SettingsIntro>
 

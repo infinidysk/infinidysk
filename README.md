@@ -5,13 +5,21 @@
 >
 > `ghcr.io/nzbdav/nzbdav:latest`
 
-<h1 align="center">NzbDAV</h1>
-
 <p align="center">
-  <strong>Mount NZBs as a virtual filesystem and stream directly from Usenet — without downloading full media files first.</strong>
+  <img src="docs/assets/logo.png" width="160" alt="InfiniDysk logo" />
 </p>
 
-<img width="1394" height="1078" alt="image" src="https://github.com/user-attachments/assets/37649514-bca5-471f-9556-0d34de2bd8e5" />
+<h1 align="center">InfiniDysk</h1>
+
+<p align="center"><strong>The NzbDAV SuperFork</strong></p>
+<p align="center">
+  Mount NZBs as a virtual filesystem and stream directly from Usenet — without downloading full media files first.
+</p>
+
+> [!NOTE]
+> **NzbDAV is becoming InfiniDysk.** The new identity is here first; the repository and Docker image will move later. No deployment change is needed yet. Read the [rename FAQ](https://nzbdav.com/community/renaming-to-infinidysk/).
+
+<img width="1024" height="601" alt="InfiniDysk overview dashboard" src="docs/assets/overview.png" />
 
 <p align="center">
   <a href="https://github.com/nzbdav/nzbdav/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/nzbdav/nzbdav" /></a>
@@ -22,13 +30,13 @@
 
 ---
 
-NzbDAV is a **WebDAV server** that mounts NZB documents as a browsable virtual filesystem — without downloading full media files first. Content streams on demand, straight from your Usenet provider.
+InfiniDysk is a **WebDAV server** that mounts NZB documents as a browsable virtual filesystem — without downloading full media files first. Content streams on demand, straight from your Usenet provider.
 
 It also exposes a **SABnzbd-compatible API**, so Sonarr, Radarr, and similar tools can use it as a drop-in download client. Combined with Plex, Emby, or Jellyfin, this lets you build an effectively infinite media library without storing the full media library on your server.
 
 Please add feature requests and issues over on our [Issue Tracker](https://github.com/nzbdav/nzbdav/issues) or join our [Discord](https://discord.gg/DAya7W6QMa) to chat with us!
 
-> After joining, use the channel and role selector to enable **NzbDAV - SuperFork** for release notifications and development channels.
+> After joining, use the channel and role selector to enable **InfiniDysk - SuperFork** for release notifications and development channels.
 
 ## Why another fork?
 
@@ -133,7 +141,7 @@ Special thanks to the forks and contributors whose ideas we consolidated:
 
 ## Quick start
 
-NzbDAV ships as a single Docker image. Use the `latest` tag for the newest release, or `lts` for a slower, more conservative release cycle that lags one feature release behind `latest`. To try it out:
+InfiniDysk ships as a single Docker image. Use the `latest` tag for the newest release, or `lts` for a slower, more conservative release cycle that lags one feature release behind `latest`. To try it out:
 
 ```bash
 docker run --rm -it -p 3000:3000 ghcr.io/nzbdav/nzbdav:latest
@@ -162,7 +170,7 @@ services:
 Then open `http://localhost:3000`, create your admin account, and head to the **Settings** page to configure your Usenet provider:
 
 > [!IMPORTANT]
-> Port `3000` serves plain HTTP. If NzbDAV will be reachable outside your trusted network, put it behind an HTTPS reverse proxy and do not expose the container port directly to the internet. WebDAV uses Basic authentication, so TLS is essential for remote access. When the proxy runs on the Docker host, bind the port to localhost with `127.0.0.1:3000:3000`.
+> Port `3000` serves plain HTTP. If InfiniDysk will be reachable outside your trusted network, put it behind an HTTPS reverse proxy and do not expose the container port directly to the internet. WebDAV uses Basic authentication, so TLS is essential for remote access. When the proxy runs on the Docker host, bind the port to localhost with `127.0.0.1:3000:3000`.
 
 You'll also want to set a username and password for the WebDAV server itself.
 
@@ -183,7 +191,7 @@ Start with the [getting started guide](https://nzbdav.com/getting-started/) for 
 * **Search profiles** — token-scoped Newznab, Addon, and JSON adapter setup
 * **Watchtower** — proactive wanted-list resolution in the [Watchtower guide](https://nzbdav.com/features/watchtower/)
 * **Configuration** — [Settings walkthrough](https://nzbdav.com/configuration/) and [environment variables](https://nzbdav.com/configuration/environment-variables/)
-* **Compare** — [NzbDAV vs AltMount vs classic download clients](https://nzbdav.com/guides/compare/)
+* **Compare** — [InfiniDysk vs AltMount vs classic download clients](https://nzbdav.com/guides/compare/)
 
 ## Development
 
@@ -191,7 +199,7 @@ The project consists of a .NET backend (WebDAV, Usenet streaming, SAB API) and a
 
 ## License
 
-NzbDAV is released under the [MIT License](LICENSE).
+InfiniDysk is released under the [MIT License](LICENSE).
 
 > [!NOTE]
-> NzbDAV is intended for use with legally obtained or public domain content only. The project maintainers do not condone piracy and will not provide support for users suspected of engaging in copyright infringement.
+> InfiniDysk is intended for use with legally obtained or public domain content only. The project maintainers do not condone piracy and will not provide support for users suspected of engaging in copyright infringement.

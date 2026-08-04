@@ -9,14 +9,14 @@ Opinionated production path for maximum “always available” library feel with
 3. Pick [import strategy](../guides/import-strategies.md):
    - Plex → symlinks + [rclone mount](../guides/mounting-webdav.md)
    - Emby/Jellyfin → STRM + Base URL
-4. [Connect Radarr/Sonarr](../getting-started/connect-arr.md) as SAB client + register instances in NzbDAV.
+4. [Connect Radarr/Sonarr](../getting-started/connect-arr.md) as SAB client + register instances in InfiniDysk.
 5. Enable [Repairs](../configuration/repairs.md) with **Library Directory**.
 6. Optional: [Watchtower](../features/watchtower.md), indexer [profiles](../configuration/profiles.md), [backups](../guides/backups-upgrades.md).
 
 ```mermaid
 sequenceDiagram
   participant Arr as Sonarr_Radarr
-  participant NZB as NzbDAV
+  participant NZB as InfiniDysk
   participant Mount as WebDAV_rclone
   participant Plex as Media_server
   Arr->>NZB: addfile NZB

@@ -20,7 +20,7 @@ Alternatively, mount WebDAV with rclone and treat the library like Plex if you p
 
 ## Path and permission tips
 
-- Match `PUID`/`PGID` across NzbDAV, rclone (`--uid`/`--gid`), and *Arr.
+- Match `PUID`/`PGID` across InfiniDysk, rclone (`--uid`/`--gid`), and *Arr.
 - Keep TLS in front of any URL Emby/Jellyfin fetches remotely.
 - After strategy changes, use Maintenance tasks to recreate STRM files or convert to symlinks.
 

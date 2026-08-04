@@ -196,7 +196,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
         <SettingsPage>
             <SettingsIntro>
                 Connect Radarr and Sonarr instances for automated replacement searches, then choose how
-                NzbDAV handles downloads stuck in their queues.
+                InfiniDysk handles downloads stuck in their queues.
             </SettingsIntro>
 
             <ManagedSetting configKey="arr.instances">

@@ -342,7 +342,7 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
         <SettingsPage className="mb-6">
             <SettingsIntro>
                 Configure shared search behavior, filter unwanted results, and manage the Newznab-compatible
-                indexers NzbDAV queries.
+                indexers InfiniDysk queries.
             </SettingsIntro>
 
             <SettingsCard

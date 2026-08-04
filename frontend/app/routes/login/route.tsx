@@ -3,6 +3,7 @@ import { isAuthenticated, login } from "~/auth/authentication.server";
 import { Form, redirect, useNavigation } from "react-router";
 import { backendClient } from "~/clients/backend-client.server";
 import { Alert, Button, Icon, Input, Spinner } from "~/components/ui";
+import { RenameAnnouncementBanner } from "~/components/rename-announcement-banner";
 import { isOidcEnabled } from "../../../server/oidc.server";
 
 type LoginPageData = {
@@ -35,7 +36,11 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
     const submitButtonText = isLoading ? "Logging in..." : "Login";
 
     return (
-        <main className="hero min-h-dvh bg-base-300">
+        <main className="flex min-h-dvh flex-col bg-base-300">
+            <div className="w-full px-4 pt-4 md:px-8">
+                <RenameAnnouncementBanner />
+            </div>
+            <div className="hero flex-1">
             <div className="hero-content w-full max-w-sm px-4 py-8">
                 <Form
                     className="card w-full border border-base-content/10 bg-base-100 shadow-xl"
@@ -43,9 +48,18 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                 >
                     <div className="card-body gap-5">
                         <div className="flex flex-col items-center gap-3 text-center">
-                            <img className="h-16 w-16" src="/logo.svg" alt="NzbDAV" />
+                            <img
+                                className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary via-info to-success p-0.5 shadow-lg shadow-primary/20"
+                                src="/logo.png"
+                                alt="InfiniDysk"
+                            />
                             <div>
-                                <h1 className="text-2xl font-bold tracking-tight">NzbDAV</h1>
+                                <h1 className="bg-gradient-to-r from-primary to-success bg-clip-text text-2xl font-bold tracking-tight text-transparent">
+                                    InfiniDysk
+                                </h1>
+                                <p className="mt-1 text-xs font-medium tracking-wide text-base-content/50">
+                                    The NzbDAV SuperFork
+                                </p>
                                 <p className="mt-1 text-sm text-base-content/60">Sign in to manage your server</p>
                             </div>
                         </div>
@@ -103,6 +117,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                         )}
                     </div>
                 </Form>
+            </div>
             </div>
         </main>
     );

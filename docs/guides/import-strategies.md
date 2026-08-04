@@ -17,14 +17,14 @@ Choose how Radarr/Sonarr import completed jobs. Set this under **Settings → SA
     Best when the media server can play `.strm` URLs.
 
     1. Set **Completed Downloads Dir** to a path shared with *Arr (e.g. `/mnt/completed-downloads`).
-    2. Set **Base URL** to an NzbDAV URL the media server can reach (HTTPS recommended).
+    2. Set **Base URL** to an InfiniDysk URL the media server can reach (HTTPS recommended).
     3. Skip the rclone FUSE mount — no `/dev/fuse` required.
 
     STRM files contain authenticated streaming URLs; keep Base URL and WebDAV credentials correct.
 
 ## Path consistency
 
-The completed path NzbDAV reports must appear **at the same absolute path** inside Radarr/Sonarr containers. Map host volumes identically.
+The completed path InfiniDysk reports must appear **at the same absolute path** inside Radarr/Sonarr containers. Map host volumes identically.
 
 ## Switching strategies
 

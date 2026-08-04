@@ -1,6 +1,6 @@
 # SABnzbd API compatibility
 
-NzbDAV implements the SABnzbd-compatible operations used by Sonarr, Radarr, and similar download clients. It is not a complete replacement for SABnzbd's administrative API.
+InfiniDysk implements the SABnzbd-compatible operations used by Sonarr, Radarr, and similar download clients. It is not a complete replacement for SABnzbd's administrative API.
 
 ## Supported operations
 
@@ -24,12 +24,12 @@ Queue and history filters accept both `cat` and `category`. The default category
 - Responses are JSON. The `output=xml` option is not implemented.
 - Queue and history roots contain the fields needed by supported download clients rather than every SABnzbd UI field.
 - History has no separate archive tier. `history&name=delete` permanently removes matching history rows.
-- **Ignore SAB history limit** can ignore a client's `limit`; NzbDAV still enforces a server-side maximum page size.
+- **Ignore SAB history limit** can ignore a client's `limit`; InfiniDysk still enforces a server-side maximum page size.
 - Authentication failures use HTTP error status codes instead of always returning HTTP 200 with an error body.
 
 ## `addurl` and private / LAN hosts [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }
 
-`mode=addurl` fetches the NZB from the URL the download client supplies. Before each hop (including redirects), NzbDAV rejects destinations that resolve to a non-public IP — an SSRF guard that also blocks Docker DNS / RFC1918 indexers unless allowlisted.
+`mode=addurl` fetches the NZB from the URL the download client supplies. Before each hop (including redirects), InfiniDysk rejects destinations that resolve to a non-public IP — an SSRF guard that also blocks Docker DNS / RFC1918 indexers unless allowlisted.
 
 Allow destinations under **Settings → SABnzbd → Trusted local hosts** (`api.addurl-trusted-hosts`):
 
@@ -48,6 +48,6 @@ The same allowlist can be set with `TRUSTED_INTERNAL_HOSTS` when the UI setting 
 
 Queue delete accepts UUID(s), repeated `value` parameters, or `value=all`. SAB `del_files=1` has no extra effect (no incomplete-download directory).
 
-History delete accepts UUIDs, `value=all`, or `value=failed`. The admin UI can delete mounted content for completed jobs with NzbDAV-specific `del_completed_files=1` — download clients should **not** send this after importing a symlink/STRM, or playback sources disappear.
+History delete accepts UUIDs, `value=all`, or `value=failed`. The admin UI can delete mounted content for completed jobs with InfiniDysk-specific `del_completed_files=1` — download clients should **not** send this after importing a symlink/STRM, or playback sources disappear.
 
 [SABnzbd settings](../configuration/sabnzbd.md)

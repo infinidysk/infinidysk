@@ -2,7 +2,7 @@
 
 !!! note "Docs track latest"
 
-    These pages describe the **latest** NzbDAV release. Features and settings marked with a [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } pill (or similar) need at least that version — check your image tag or **Settings → About** before following a new workflow.
+    These pages describe the **latest** InfiniDysk release. Features and settings marked with a [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } pill (or similar) need at least that version — check your image tag or **Settings → About** before following a new workflow.
 
 Choose a path based on where you are:
 
@@ -36,7 +36,7 @@ Choose a path based on where you are:
 
     ---
 
-    Add NzbDAV as a SABnzbd download client in Sonarr and Radarr.
+    Add InfiniDysk as a SABnzbd download client in Sonarr and Radarr.
 
     [:octicons-arrow-right-24: Connect Radarr/Sonarr](connect-arr.md)
 
@@ -61,9 +61,9 @@ Choose a path based on where you are:
 | Option | Who it’s for | Start here |
 |--------|----------------|------------|
 | **Self-hosted Docker** | You run Compose (or Unraid/etc.) and wire *Arr / rclone yourself | [Docker](docker.md) |
-| **[DUMB](https://dumbarr.com/)** (Debrid Unlimited Media Bridge) | You want NzbDAV as a **fully supported core module** with guided onboarding and Arr wiring | [NzbDAV on dumbarr.com](https://dumbarr.com/services/core/nzbdav/) |
+| **[DUMB](https://dumbarr.com/)** (Debrid Unlimited Media Bridge) | You want InfiniDysk as a **fully supported core module** with guided onboarding and Arr wiring | [InfiniDysk on dumbarr.com](https://dumbarr.com/services/core/nzbdav/) |
 
-DUMB treats NzbDAV as a first-class Usenet WebDAV / SABnzbd-compatible workflow service (`core_service: nzbdav`), including automatic Arr download-client and symlink-path integration when you select it during onboarding. Prefer DUMB’s own docs for stack-specific paths and ports; use this site for NzbDAV Settings, features, and troubleshooting.
+DUMB treats InfiniDysk as a first-class Usenet WebDAV / SABnzbd-compatible workflow service (`core_service: nzbdav`), including automatic Arr download-client and symlink-path integration when you select it during onboarding. Prefer DUMB’s own docs for stack-specific paths and ports; use this site for InfiniDysk Settings, features, and troubleshooting.
 
 ## After install
 

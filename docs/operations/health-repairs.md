@@ -13,9 +13,9 @@ Requires:
 Tune concurrency, health-check depth, aging [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }, and streaming-failure thresholds — [Repairs settings](../configuration/repairs.md).
 
 For streaming-triggered failures, **Repair After Streaming Failures** can require consecutive
-failures before NzbDAV starts a repair or asks *Arr to find a replacement. A successful full-file
+failures before InfiniDysk starts a repair or asks *Arr to find a replacement. A successful full-file
 playback or background health check resets that count. The counter is in memory, so it also resets
-when NzbDAV restarts.
+when InfiniDysk restarts.
 
 ## Health-check retention
 

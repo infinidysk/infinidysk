@@ -105,7 +105,7 @@ export function SupportSettings() {
             anchor.click();
             anchor.remove();
             URL.revokeObjectURL(url);
-            setMessage({ text: "Support pack downloaded. Share it only with trusted NzbDAV support.", variant: "success" });
+            setMessage({ text: "Support pack downloaded. Share it only with trusted InfiniDysk support.", variant: "success" });
         } catch (error) {
             setMessage({
                 text: error instanceof Error ? error.message : "Could not generate the support pack.",
@@ -201,7 +201,7 @@ export function SupportSettings() {
     return (
         <SettingsPage>
             <SettingsIntro>
-                Generate a technical support pack to help diagnose an NzbDAV problem.
+                Generate a technical support pack to help diagnose an InfiniDysk problem.
                 It is generated in memory and is not saved on the server.
             </SettingsIntro>
 

@@ -177,7 +177,7 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                         value={config["api.completed-downloads-dir"]}
                         onChange={e => setNewConfig({ ...config, "api.completed-downloads-dir": e.target.value })} />
                     <p className="text-[11px] leading-relaxed text-base-content/45" id="completed-downloads-dir-help">
-                        This is used to tell Radarr / Sonarr where to look for completed "downloads." Make sure this path is also visible to your Radarr / Sonarr containers. The "downloads" placed in this folder will all be *.strm files that point to nzbdav for streaming.
+                        This is used to tell Radarr / Sonarr where to look for completed "downloads." Make sure this path is also visible to your Radarr / Sonarr containers. The "downloads" placed in this folder will all be *.strm files that point to InfiniDysk for streaming.
                     </p>
                 </div>
                 </ManagedSetting>
@@ -193,7 +193,7 @@ export function SabnzbdSettings({ config, setNewConfig, appVersion }: SabnzbdSet
                         value={config["general.base-url"]}
                         onChange={e => setNewConfig({ ...config, "general.base-url": e.target.value })} />
                     <p className="text-[11px] leading-relaxed text-base-content/45" id="base-url-help">
-                        What is the base URL at which you access nzbdav? Make sure that Emby/Jellyfin can access this url. This is the URL they will connect to for streaming. All *.strm files will point to this URL.
+                        What is the base URL at which you access InfiniDysk? Make sure that Emby/Jellyfin can access this URL. This is where they will connect for streaming. All *.strm files will point to this URL.
                     </p>
                 </div>
                 </ManagedSetting>

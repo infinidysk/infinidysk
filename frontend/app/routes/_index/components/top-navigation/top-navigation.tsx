@@ -67,8 +67,19 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
           className="btn btn-ghost gap-3 px-2"
           onClick={() => navigate("/")}
         >
-          <img className="h-8 w-7" src="/logo.svg" alt="" />
-          <span className="text-xl font-bold tracking-tight">NzbDAV</span>
+          <img
+            className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary via-info to-success p-0.5 shadow-md shadow-primary/20"
+            src="/logo.png"
+            alt=""
+          />
+          <span className="flex flex-col items-start leading-none">
+            <span className="bg-gradient-to-r from-primary to-success bg-clip-text text-xl font-bold tracking-tight text-transparent">
+              InfiniDysk
+            </span>
+            <span className="mt-1 text-[10px] font-medium tracking-wide text-base-content/60">
+              The NzbDAV SuperFork
+            </span>
+          </span>
         </button>
       </div>
 
@@ -82,7 +93,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
             className={
               hasUpdate
                 ? "btn btn-primary h-10 min-h-10 shrink-0 list-none gap-2 rounded-box px-4 whitespace-nowrap"
-                : "list-none rounded-box bg-gradient-to-br from-primary via-secondary to-accent p-px"
+                : "list-none rounded-box bg-gradient-to-br from-primary via-info to-success p-px"
             }
             aria-label={hasUpdate ? "Update available" : "App menu"}
           >
@@ -111,7 +122,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
           >
             <li className="menu-title">
               <span className="flex items-center justify-between gap-2">
-                <span>NzbDAV {channelLabel}</span>
+                <span>InfiniDysk {channelLabel}</span>
                 <span className="font-mono font-normal normal-case tracking-normal">
                   {displayVersion}
                 </span>

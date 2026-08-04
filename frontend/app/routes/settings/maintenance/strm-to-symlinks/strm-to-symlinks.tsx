@@ -61,7 +61,7 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
             }
             <div className="space-y-4">
                 <p className="text-sm leading-relaxed text-base-content/70">
-                    Replace NzbDav STRM files in the organized media library with filesystem symlinks to
+                    Replace InfiniDysk STRM files in the organized media library with filesystem symlinks to
                     the corresponding files in the rclone mount.
                 </p>
 
@@ -84,7 +84,7 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
                         </div>
                     </div>
                     <p className="mt-3 border-t border-base-content/10 pt-2.5 text-xs text-base-content/50">
-                        Only STRM files that link to NzbDav media are converted.
+                        Only STRM files that link to InfiniDysk media are converted.
                     </p>
                 </div>
 

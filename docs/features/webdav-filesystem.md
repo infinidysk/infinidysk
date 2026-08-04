@@ -1,6 +1,6 @@
 # WebDAV filesystem
 
-NzbDAV exposes NZB contents as a browsable tree over WebDAV (and the Explore UI).
+InfiniDysk exposes NZB contents as a browsable tree over WebDAV (and the Explore UI).
 
 Typical top-level paths:
 

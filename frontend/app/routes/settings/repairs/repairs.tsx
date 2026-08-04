@@ -65,7 +65,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     onChange={e => setNewConfig({ ...config, "media.library-dir": e.target.value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="library-dir-help">
                     The path to your organized media library that contains all your imported symlinks or *.strm files.
-                    Make sure this path is visible to your NzbDAV container.
+                    Make sure this path is visible to your InfiniDysk container.
                 </p>
             </div>
             </ManagedSetting>

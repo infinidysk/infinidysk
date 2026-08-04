@@ -24,6 +24,7 @@ import { backendClient } from "./clients/backend-client.server";
 import { MigrationBoundary } from "./components/migration-progress";
 import { ServiceProviderGate } from "./components/service-provider-gate";
 import { StreamTracingBanner } from "./components/stream-tracing-banner";
+import { RenameAnnouncementBanner } from "./components/rename-announcement-banner";
 import { isOidcEnabled } from "../server/oidc.server";
 import { getServiceProvider } from "./utils/service-provider.server";
 
@@ -112,7 +113,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" href="/logo.svg" />
+        <title>InfiniDysk</title>
+        <meta
+          name="description"
+          content="The NzbDAV SuperFork — stream media directly from Usenet."
+        />
+        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+        <link rel="icon" href="/favicon.ico" />
+        <link rel="manifest" href="/site.webmanifest" />
         <Meta />
         <Links />
       </head>
@@ -169,6 +179,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
             {showLoading ? <Loading /> : (
               <>
                 <div className="px-4 pt-4 md:px-8">
+                  <RenameAnnouncementBanner />
                   <StreamTracingBanner isReadOnly={role === "readonly"} />
                 </div>
                 {outlet}
@@ -213,7 +224,7 @@ export function ErrorBoundary() {
   if (isBackendUnavailable) {
     title = "Backend temporarily unavailable";
     detail =
-      "The nzbdav backend is still starting up or is busy processing a large queue. Wait a moment and refresh the page.";
+      "The InfiniDysk backend is still starting up or is busy processing a large queue. Wait a moment and refresh the page.";
   } else if (isRouteErrorResponse(error)) {
     title = `${error.status} ${error.statusText}`;
     detail = typeof error.data === "string" ? error.data : "";

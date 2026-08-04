@@ -8,7 +8,7 @@
 
 ## Streaming readiness (`/ready`) [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
 
-The backend readiness endpoint reports whether NzbDAV can make progress on new streams. It returns
+The backend readiness endpoint reports whether InfiniDysk can make progress on new streams. It returns
 `503 Service Unavailable` when Article RAM remains at least 90% leased with no active reads for 30
 seconds. A high Article RAM value while reads are active is normal backpressure and remains ready.
 
@@ -50,7 +50,7 @@ Generate a pack from **Settings → Support** — [Technical support pack](../co
 
 ## *Arr won't import
 
-- Paths must match exactly between NzbDAV completed path and *Arr containers.
+- Paths must match exactly between InfiniDysk completed path and *Arr containers.
 - Symlinks: rclone mount healthy? `ls` shows `completed-symlinks` and `.ids`?
 - STRM: Base URL reachable from Emby/Jellyfin?
 - Check Automatic Queue Management rules — [Arrs](../configuration/arrs.md).
@@ -64,12 +64,12 @@ serve data streamed from Usenet and accept no writes. Refused writes are expecte
 - `405 Method Not Allowed` — `MKCOL` targeted a directory that already exists.
 
 Logs show one aggregated warning per read-only path every 5 minutes (`Refused to create item under
-read-only path …`), with per-attempt detail at `LOG_LEVEL=debug`. NzbDAV cannot stop a client from
+read-only path …`), with per-attempt detail at `LOG_LEVEL=debug`. InfiniDysk cannot stop a client from
 re-attempting, so fix it at the source — the warning and the access-log line both name the client IP
 and User-Agent:
 
 - Media servers (Emby/Jellyfin/Plex/Kodi): turn off saving metadata, artwork or `.nfo`/`.srt`
-  sidecars **into media folders**, or scan your library rather than the NzbDAV mount.
+  sidecars **into media folders**, or scan your library rather than the InfiniDysk mount.
 - *Arr: disable metadata/extra-file writing for the affected root folder.
 - rclone: mount with `--read-only` so it stops probing for writability.
 

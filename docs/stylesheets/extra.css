@@ -1,4 +1,4 @@
-/* NzbDAV brand — teal/cyan on cool slate (not stock indigo) */
+/* InfiniDysk brand — teal/cyan on cool slate (not stock indigo) */
 :root > * {
   --md-primary-fg-color: #0d9488;
   --md-primary-fg-color--light: #5eead4;
@@ -48,6 +48,57 @@
 .md-nav__button.md-logo img {
   height: 1.8rem;
   width: auto;
+}
+
+.md-header__button.md-logo img {
+  box-sizing: border-box;
+  padding: 0.1rem;
+  border-radius: 0.55rem;
+  background: linear-gradient(135deg, #0ea5e9, #22d3ee 52%, #22c55e);
+  background-size: 220% 220%;
+  box-shadow: 0 0.2rem 0.7rem color-mix(in srgb, #22d3ee 24%, transparent);
+  animation: infinidysk-logo-glow 5s ease-in-out infinite;
+}
+
+@keyframes infinidysk-logo-glow {
+  0%,
+  100% {
+    background-position: 0% 50%;
+    box-shadow: 0 0.2rem 0.65rem color-mix(in srgb, #0ea5e9 22%, transparent);
+  }
+
+  50% {
+    background-position: 100% 50%;
+    box-shadow: 0 0.2rem 0.8rem color-mix(in srgb, #22c55e 30%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-header__button.md-logo img {
+    animation: none;
+  }
+}
+
+.md-header__title .md-header__topic:first-child .md-ellipsis {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.05;
+}
+
+.md-header__title .md-header__topic:first-child {
+  height: 100%;
+  align-items: center;
+}
+
+.md-header__title .md-header__topic:first-child .md-ellipsis::after {
+  content: "The NzbDAV SuperFork";
+  margin-top: 0.15rem;
+  color: color-mix(in srgb, currentColor 62%, transparent);
+  font-size: 0.46rem;
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  line-height: 1;
 }
 
 .md-typeset .nzbdav-hero h1 {

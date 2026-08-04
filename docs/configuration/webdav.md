@@ -43,12 +43,12 @@ WebDAV authentication and streaming/connection behavior for playback mounts.
 
 `usenet.article-buffer-size` bounds how many decoded articles a stream may keep ahead of the consumer — and therefore per-stream memory — not how many provider connections playback may use.
 
-When **Pipelined article downloads** is on, WebDAV BODY requests start in batches of up to four articles on one connection. If playback starves waiting for the next segment, NzbDAV automatically narrows that batch width (`4 → 2 → 1`) so more connections can work in parallel at the same buffer depth. When the consumer stays ahead, batch width recovers gradually. Connection and host-wide byte budgets still apply.
+When **Pipelined article downloads** is on, WebDAV BODY requests start in batches of up to four articles on one connection. If playback starves waiting for the next segment, InfiniDysk automatically narrows that batch width (`4 → 2 → 1`) so more connections can work in parallel at the same buffer depth. When the consumer stays ahead, batch width recovers gradually. Connection and host-wide byte budgets still apply.
 
 ## Experimental container-aware gap fill [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
 
 When a confirmed-missing or persistently corrupt article cannot be recovered from any
-provider or fallback Message-ID, NzbDAV normally emits the same number of zero bytes to
+provider or fallback Message-ID, InfiniDysk normally emits the same number of zero bytes to
 keep every later file offset correct. Enable **Container-aware gap fill** to emit
 format-native discard markers instead for supported direct files:
 

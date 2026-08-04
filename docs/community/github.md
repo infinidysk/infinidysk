@@ -8,7 +8,7 @@ Chat with other operators, track development, and contribute.
 
     ---
 
-    Discord community is moving to a new server (transition started **July 21**). Join, then use the channel and role selector to enable **NzbDAV - SuperFork** for release notifications and development channels — plus setup help, streaming tips, and informal discussion.
+    Discord community is moving to a new server (transition started **July 21**). Join, then use the channel and role selector to enable **InfiniDysk - SuperFork** for release notifications and development channels — plus setup help, streaming tips, and informal discussion.
 
     [:octicons-arrow-right-24: discord.gg/DAya7W6QMa](https://discord.gg/DAya7W6QMa)
 
@@ -68,4 +68,4 @@ Prefer **Issues** for bugs and feature requests that need tracking; use **Discor
 
 Want a capability prioritized? Open a **Feature** request on GitHub (Issue Type: Feature), then react with a thumbs-up (👍) on the **issue body** — not on comments.
 
-Thumbs-up counts sync to the [NZBDav Ecosystem](https://github.com/orgs/nzbdav/projects/1) project **Votes** field every few hours and help maintainers prioritize. Feature issues include a short footer that explains how to vote.
+Thumbs-up counts sync to the [InfiniDysk Ecosystem](https://github.com/orgs/nzbdav/projects/1) project **Votes** field every few hours and help maintainers prioritize. Feature issues include a short footer that explains how to vote.

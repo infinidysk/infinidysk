@@ -1,6 +1,6 @@
 # Architecture
 
-NzbDAV sits between download clients / search and Usenet providers, exposing a virtual filesystem and SAB-compatible API.
+InfiniDysk sits between download clients / search and Usenet providers, exposing a virtual filesystem and SAB-compatible API.
 
 ```mermaid
 flowchart TB
@@ -10,7 +10,7 @@ flowchart TB
     Player[Plex_Jellyfin_rclone]
     Stremio[Stremio_AIOStreams]
   end
-  subgraph nzbdav [NzbDAV]
+  subgraph nzbdav [InfiniDysk]
     SAB[SAB_API]
     Queue[Queue_processor]
     WebDAV[WebDAV_store]
@@ -34,17 +34,17 @@ flowchart TB
 
 ### Automation (*Arr + media server)
 
-1. Radarr/Sonarr sends an NZB to NzbDAV as a SABnzbd download client.
-2. NzbDAV mounts the release on WebDAV without downloading the full file.
+1. Radarr/Sonarr sends an NZB to InfiniDysk as a SABnzbd download client.
+2. InfiniDysk mounts the release on WebDAV without downloading the full file.
 3. Import artifact:
    - **Symlinks** — entries under `completed-symlinks`; rclone turns them into filesystem links into `.ids`.
    - **STRM** — small `.strm` files with authenticated streaming URLs.
-4. *Arr imports into the library; the media server reads through the link/URL → NzbDAV → Usenet.
+4. *Arr imports into the library; the media server reads through the link/URL → InfiniDysk → Usenet.
 
 ### On-demand (Stremio)
 
 1. AIOStreams finds a release via Newznab.
-2. NZB is mounted through NzbDAV's API.
+2. NZB is mounted through InfiniDysk's API.
 3. Playback URL (often proxied by AIOStreams) streams from WebDAV.
 
 ## Processes and ports

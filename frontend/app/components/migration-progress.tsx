@@ -162,7 +162,7 @@ export function MigrationBoundary({ fallback }: { fallback: FallbackProps }) {
   if (phase === "checking" || phase === "connecting") {
     return (
       <MigrationShell
-        title={seenMigration.current ? "Finishing up" : "Connecting to NzbDAV"}
+        title={seenMigration.current ? "Finishing up" : "Connecting to InfiniDysk"}
         subtitle={
           seenMigration.current
             ? "Database maintenance finished. Waiting for the server to start..."
@@ -212,10 +212,10 @@ export function MigrationProgressView({ status }: { status: MigrationStatus }) {
 
   let title = "Database maintenance in progress";
   let subtitle =
-    "NzbDAV is upgrading your database. This is a one-time step after an update and can take a while on large libraries. The app will load automatically when it finishes.";
+    "InfiniDysk is upgrading your database. This is a one-time step after an update and can take a while on large libraries. The app will load automatically when it finishes.";
   if (done) {
     title = "Maintenance complete";
-    subtitle = "Starting NzbDAV...";
+    subtitle = "Starting InfiniDysk...";
   } else if (failed) {
     title = "Database maintenance failed";
     subtitle = "The upgrade could not be completed. Check the container logs for details.";
@@ -314,7 +314,11 @@ export function MigrationShell({
         >
           <div className="card-body gap-4">
             <div className="flex items-center gap-3">
-              <img className="h-9 w-9" src="/logo.svg" alt="NzbDAV" />
+              <img
+                className="h-12 w-12 rounded-2xl bg-gradient-to-br from-primary via-info to-success p-0.5 shadow-md shadow-primary/20"
+                src="/logo.png"
+                alt="InfiniDysk"
+              />
               <div className="space-y-1">
                 <h1 className="text-xl font-bold tracking-tight">{title}</h1>
                 {subtitle ? <p className="text-sm leading-relaxed text-base-content/70">{subtitle}</p> : null}

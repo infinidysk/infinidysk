@@ -1,6 +1,6 @@
 # Streaming only
 
-Use NzbDAV without building a traditional *Arr library.
+Use InfiniDysk without building a traditional *Arr library.
 
 ## Patterns
 

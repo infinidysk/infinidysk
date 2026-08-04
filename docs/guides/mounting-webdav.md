@@ -1,6 +1,6 @@
 # Mounting WebDAV
 
-Symlink imports need the NzbDAV WebDAV tree on the host filesystem. Use rclone (sidecar or host mount).
+Symlink imports need the InfiniDysk WebDAV tree on the host filesystem. Use rclone (sidecar or host mount).
 
 ## Prepare the mount point
 

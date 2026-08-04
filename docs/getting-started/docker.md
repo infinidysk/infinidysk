@@ -1,10 +1,10 @@
 # Docker
 
-NzbDAV ships as a single multi-arch image: `ghcr.io/nzbdav/nzbdav`. The container runs the frontend (public port `3000`) and backend (internal `8080`).
+InfiniDysk ships as a single multi-arch image: `ghcr.io/nzbdav/nzbdav`. The container runs the frontend (public port `3000`) and backend (internal `8080`).
 
 !!! tip "Hosted with DUMB"
 
-    Prefer a batteries-included Arr stack? NzbDAV is a **fully supported core module** in [Debrid Unlimited Media Bridge (DUMB)](https://dumbarr.com/) — see the [NzbDAV service guide](https://dumbarr.com/services/core/nzbdav/) and [setup options](index.md#setup-and-hosting-options).
+    Prefer a batteries-included Arr stack? InfiniDysk is a **fully supported core module** in [Debrid Unlimited Media Bridge (DUMB)](https://dumbarr.com/) — see the [InfiniDysk service guide](https://dumbarr.com/services/core/nzbdav/) and [setup options](index.md#setup-and-hosting-options).
 
 !!! tip "IPv6-only hosts"
 
@@ -50,7 +50,7 @@ Set `PUID`/`PGID` from `id` on the host. Map `/mnt` (or your media paths) so com
 
 ## Change the published port
 
-Compose port mappings use `HOST_PORT:CONTAINER_PORT`. To open NzbDAV on port
+Compose port mappings use `HOST_PORT:CONTAINER_PORT`. To open InfiniDysk on port
 `3001` without changing the ports inside the container:
 
 ```yaml
@@ -97,11 +97,11 @@ when generated links should use the new public port.
 
 !!! note "DUMB deployments"
 
-    DUMB builds and launches NzbDAV directly rather than using this image's
+    DUMB builds and launches InfiniDysk directly rather than using this image's
     entrypoint. Change DUMB's `nzbdav.frontend_port` and
     `nzbdav.backend_port` settings instead; DUMB supplies the corresponding
     process environment automatically. See the
-    [DUMB NzbDAV service guide](https://dumbarr.com/services/core/nzbdav/#configuration-in-dumb_configjson).
+    [DUMB InfiniDysk service guide](https://dumbarr.com/services/core/nzbdav/#configuration-in-dumb_configjson).
 
 ## What the image does
 

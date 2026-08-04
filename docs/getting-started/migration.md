@@ -1,6 +1,6 @@
 # Migration paths
 
-NzbDAV is designed as a **drop-in upgrade** from the NZB/WebDAV streaming lineage that started with [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav). Migrations keep your `/config` volume (SQLite settings, queue/history metadata, blobs) and swap the container image.
+InfiniDysk is designed as a **drop-in upgrade** from the NZB/WebDAV streaming lineage that started with [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav). Migrations keep your `/config` volume (SQLite settings, queue/history metadata, blobs) and swap the container image.
 
 !!! warning "Back up first"
 
@@ -8,7 +8,7 @@ NzbDAV is designed as a **drop-in upgrade** from the NZB/WebDAV streaming lineag
 
 ## Official: nzbdav-dev/nzbdav `v0.6.4`
 
-**Supported path.** NzbDAV targets a direct upgrade from [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav) **v0.6.4**.
+**Supported path.** InfiniDysk targets a direct upgrade from [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav) **v0.6.4**.
 
 1. Stop the old container.
 2. Back up `./config` (or whatever you mount at `/config`).
@@ -22,14 +22,14 @@ Older than `0.6.0` installs may hit larger schema migrations — take a full `/c
 
 ## Community-reported: other forks
 
-Operators have also **successfully migrated** to NzbDAV from these forks by the same `/config` volume swap. These are **community-validated**, not a guarantee for every divergent commit on those repos:
+Operators have also **successfully migrated** to InfiniDysk from these forks by the same `/config` volume swap. These are **community-validated**, not a guarantee for every divergent commit on those repos:
 
 | Source | Notes |
 |--------|--------|
 | [Pukabyte/nzbdav](https://github.com/Pukabyte/nzbdav) | Fork of nzbdav-dev; same WebDAV + SAB shape. Back up `/config`, switch image to `ghcr.io/nzbdav/nzbdav`, verify settings after migrate. |
-| [qooode/nzbdavex](https://github.com/qooode/nzbdavex) (NzbDavEx) | Extended fork (Watchdog, multi-provider, indexers, search profiles, etc.). Many features overlap with NzbDAV; after migrate, re-check Settings for providers, indexers, profiles, and Watchdog/Watchtower equivalents rather than assuming every UI field maps 1:1. |
+| [qooode/nzbdavex](https://github.com/qooode/nzbdavex) (NzbDavEx) | Extended fork (Watchdog, multi-provider, indexers, search profiles, etc.). Many features overlap with InfiniDysk; after migrate, re-check Settings for providers, indexers, profiles, and Watchdog/Watchtower equivalents rather than assuming every UI field maps 1:1. |
 
-### Suggested steps (fork → NzbDAV)
+### Suggested steps (fork → InfiniDysk)
 
 1. Export or copy a cold backup of `/config` from the old stack.
 2. Note WebDAV credentials, SAB API key, Base URL, rclone mount paths, and *Arr client settings.
@@ -51,7 +51,7 @@ If something fails, restore the `/config` backup and reopen the previous image �
 - Image tags and healthchecks in Compose
 - Reverse proxy / `TRUST_PROXY` / `SECURE_COOKIES` / Base URL
 - Rclone sidecar URL and WebDAV password
-- New NzbDAV-only features you want (Watchtower, Warden, pipelining) — enable deliberately after a stable migrate
+- New InfiniDysk-only features you want (Watchtower, Warden, pipelining) — enable deliberately after a stable migrate
 
 ## Related
 

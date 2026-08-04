@@ -38,7 +38,7 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 ## Queue admission control [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
 
 Set `queue.max-items` to prevent a large automatic *Arr search from adding an
-unbounded number of NZBs at once. At the limit, NzbDAV returns the standard
+unbounded number of NZBs at once. At the limit, InfiniDysk returns the standard
 SAB-compatible `{"status": false, "error": "..."}` response without storing the
 NZB. Sonarr and Radarr treat this as a temporarily unavailable download client
 and keep automatic-search releases pending for a later retry.

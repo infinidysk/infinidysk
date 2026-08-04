@@ -50,12 +50,12 @@ const STEPS = ["Connect", "Categories", "Scan", "Review", "Run", "Links"] as con
 const LINK_STEP = 5;
 
 const SYMLINK_STATUS_HELP: Record<string, string> = {
-    rewrite: "Points to Altmount and has a verified NzbDAV replacement.",
-    orphan: "Points to Altmount, but no safe NzbDAV match was found.",
+    rewrite: "Points to Altmount and has a verified InfiniDysk replacement.",
+    orphan: "Points to Altmount, but no safe InfiniDysk match was found.",
     unreadable: "Found in the library, but its target could not be read or classified. It remains unchanged and may still point at Altmount.",
-    "already-nzbdav": "Already points to NzbDAV, so no change is needed.",
+    "already-nzbdav": "Already points to InfiniDysk, so no change is needed.",
     "not-altmount": "Does not point to Altmount and will be left unchanged.",
-    applied: "Successfully repointed to NzbDAV.",
+    applied: "Successfully repointed to InfiniDysk.",
     failed: "A rewrite was attempted but could not be completed.",
     removed: "The orphaned Altmount symlink was removed after its original target was backed up.",
 };
@@ -64,7 +64,7 @@ const SYMLINK_STATUS_LABELS: Record<string, string> = {
     rewrite: "Rewrite",
     orphan: "Orphan",
     unreadable: "Unreadable",
-    "already-nzbdav": "NzbDAV",
+    "already-nzbdav": "InfiniDysk",
     "not-altmount": "Other",
     applied: "Applied",
     failed: "Failed",
@@ -90,7 +90,7 @@ const MATCH_METHODS: Record<string, { label: string; help: string }> = {
     },
     "single-leaf-fallback": {
         label: "single file",
-        help: "Matched because the release had only one source file and one NzbDAV file.",
+        help: "Matched because the release had only one source file and one InfiniDysk file.",
     },
 };
 
@@ -136,9 +136,9 @@ export function AltmountMigration() {
     return (
         <div className="flex w-full flex-col gap-6">
             <SettingsIntro>
-                Import an existing Altmount library into NzbDAV by re-submitting each release through NzbDAV's own
+                Import an existing Altmount library into InfiniDysk by re-submitting each release through InfiniDysk's own
                 download pipeline. Connect to the library, map categories, scan and review, then run the migration.
-                Nothing in your current NzbDAV content is modified. This path is experimental — verify a few releases
+                Nothing in your current InfiniDysk content is modified. This path is experimental — verify a few releases
                 play correctly before decommissioning AltMount.
             </SettingsIntro>
 
@@ -332,7 +332,7 @@ function ConnectStep({ m }: { m: Hook }) {
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <NumberField
                                 label="Max Queue Depth"
-                                help="Upper bound on releases queued into NzbDAV at once."
+                                help="Upper bound on releases queued into InfiniDysk at once."
                                 value={form.maxQueueDepth}
                                 min={1}
                                 max={500}
@@ -457,7 +457,7 @@ function CategoriesStep({ m, onDone }: { m: Hook; onDone: () => void }) {
         <Section
             icon="category"
             title="Map categories"
-            subtitle="Choose the NzbDAV target category for each Altmount category, or exclude it."
+            subtitle="Choose the InfiniDysk target category for each Altmount category, or exclude it."
         >
             {draft.length === 0 ? (
                 <EmptyHint icon="category" text="No categories discovered yet. Connect with a config.yaml, or scan to discover them." />
@@ -467,7 +467,7 @@ function CategoriesStep({ m, onDone }: { m: Hook; onDone: () => void }) {
                         <thead>
                             <tr>
                                 <th>Altmount category</th>
-                                <th>Target NzbDAV category</th>
+                                <th>Target InfiniDysk category</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -657,11 +657,11 @@ function ReviewStep({ m, onRun }: { m: Hook; onRun: () => void }) {
                 title={onlyAlreadyMigrated ? "Continue without submitting" : "Start migration"}
                 message={
                     onlyAlreadyMigrated ? <>
-                        All included releases are already present in NzbDAV. Nothing will be submitted; continue to the
+                        All included releases are already present in InfiniDysk. Nothing will be submitted; continue to the
                         optional symlink step using the saved mappings.
                     </> : <>
-                        This queues {summary?.counts.submittable ?? 0} release(s) into NzbDAV's download pipeline. Your
-                        existing NzbDAV content is untouched. You can pause at any time.
+                        This queues {summary?.counts.submittable ?? 0} release(s) into InfiniDysk's download pipeline. Your
+                        existing InfiniDysk content is untouched. You can pause at any time.
                     </>
                 }
                 cancelText="Cancel"
@@ -936,7 +936,7 @@ function RunStep({ m, onLinks }: { m: Hook; onLinks: () => void }) {
                         Rewrite library symlinks
                     </Button>
                     <span className="text-xs text-base-content/50">
-                        Optional — repoint Sonarr/Radarr/Plex symlinks at NzbDAV so nothing needs re-importing.
+                        Optional — repoint Sonarr/Radarr/Plex symlinks at InfiniDysk so nothing needs re-importing.
                     </span>
                 </div>
             )}
@@ -1029,7 +1029,7 @@ function SymlinkStep({ m }: { m: Hook }) {
             <Section
                 icon="link"
                 title="Rewrite library symlinks (optional)"
-                subtitle="Repoint your Sonarr/Radarr/Plex symlinks from Altmount to NzbDAV so the migrated content is used with no re-import."
+                subtitle="Repoint your Sonarr/Radarr/Plex symlinks from Altmount to InfiniDysk so the migrated content is used with no re-import."
             >
                 <Alert className="alert-soft mb-4 text-sm" variant="info">
                     <Icon name="info" className="!text-[18px]" />
@@ -1152,7 +1152,7 @@ function SymlinkResults({ m }: { m: Hook }) {
                 <StatTile label="Rewrite" value={rewrites} tone="success" help={SYMLINK_STATUS_HELP.rewrite} />
                 <StatTile label="Orphan" value={orphans} tone={orphans > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.orphan} />
                 {unreadable > 0 && <StatTile label="Unreadable" value={unreadable} tone="error" help={SYMLINK_STATUS_HELP.unreadable} />}
-                <StatTile label="NzbDAV" value={counts["already-nzbdav"] ?? 0} help={SYMLINK_STATUS_HELP["already-nzbdav"]} />
+                <StatTile label="InfiniDysk" value={counts["already-nzbdav"] ?? 0} help={SYMLINK_STATUS_HELP["already-nzbdav"]} />
                 <StatTile label="Other" value={counts["not-altmount"] ?? 0} help={SYMLINK_STATUS_HELP["not-altmount"]} />
                 <StatTile label="Applied" value={applied} tone={applied > 0 ? "success" : undefined} help={SYMLINK_STATUS_HELP.applied} />
                 <StatTile label="Removed" value={removed} tone={removed > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.removed} />
@@ -1196,7 +1196,7 @@ function SymlinkResults({ m }: { m: Hook }) {
                     <option value="rewrite">Rewrite</option>
                     <option value="orphan">Orphan</option>
                     <option value="unreadable">Unreadable</option>
-                    <option value="already-nzbdav">NzbDAV</option>
+                    <option value="already-nzbdav">InfiniDysk</option>
                     <option value="not-altmount">Other</option>
                     <option value="applied">Applied</option>
                     <option value="failed">Failed</option>
@@ -1269,7 +1269,7 @@ function SymlinkResults({ m }: { m: Hook }) {
                 title="Apply symlink rewrites"
                 message={
                     <>
-                        This repoints {rewrites} symlink(s) from Altmount to NzbDAV. A restore tarball is written first,
+                        This repoints {rewrites} symlink(s) from Altmount to InfiniDysk. A restore tarball is written first,
                         and only symlinks are changed — never the files they point at. Continue?
                     </>
                 }
@@ -1293,7 +1293,7 @@ function SymlinkResults({ m }: { m: Hook }) {
                     <>
                         This deletes {orphans} symlink entry(s) from your media library, so those paths will appear
                         missing to Sonarr, Radarr, Plex, and other applications. It does not delete files stored by
-                        Altmount or NzbDAV, and it does not tell your Arr applications to search or re-grab them.
+                        Altmount or InfiniDysk, and it does not tell your Arr applications to search or re-grab them.
                         A verified restore archive is written first, and only links still pointing to the Altmount
                         target recorded by this plan are removed. Real files, changed links, unreadable links, and
                         target data remain untouched.
@@ -1443,7 +1443,7 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
                     ) : (
                         <>
                             Restore {archive?.entryCount ?? 0} symlink(s) from <span className="font-mono">{archive?.fileName}</span>?
-                            Links still pointing at their recorded NzbDAV targets are restored, and missing links can be recreated.
+                            Links still pointing at their recorded InfiniDysk targets are restored, and missing links can be recreated.
                             Real files, link targets, and links changed after the rewrite are never overwritten.
                         </>
                     )
@@ -1494,7 +1494,7 @@ function HistoryCleanupAction({ m }: { m: Hook }) {
                 title="Clear migration history"
                 message={
                     <>
-                        This removes {pending} completed migration item(s) from SAB history. Migrated NzbDAV files
+                        This removes {pending} completed migration item(s) from SAB history. Migrated InfiniDysk files
                         remain mounted and are never deleted. Continue?
                     </>
                 }
@@ -1601,7 +1601,7 @@ function ResetFooter({ m }: { m: Hook }) {
             <ConfirmModal
                 show={confirmReset}
                 title="Reset migration wizard"
-                message={<>This clears the current scan results, category map, symlink plan, and connection. Completed migration mappings and all NzbDAV content are preserved.</>}
+                message={<>This clears the current scan results, category map, symlink plan, and connection. Completed migration mappings and all InfiniDysk content are preserved.</>}
                 cancelText="Cancel"
                 confirmText="Reset"
                 onCancel={() => setConfirmReset(false)}
@@ -1610,7 +1610,7 @@ function ResetFooter({ m }: { m: Hook }) {
             <ConfirmModal
                 show={confirmForget}
                 title="Forget all migration records?"
-                message={<>This permanently removes the migration run, release, and file mappings used to connect symlinks across runs. Mounted NzbDAV content, SAB history, and symlinks already rewritten will remain safe and unchanged.</>}
+                message={<>This permanently removes the migration run, release, and file mappings used to connect symlinks across runs. Mounted InfiniDysk content, SAB history, and symlinks already rewritten will remain safe and unchanged.</>}
                 errorMessage="Future symlink scans cannot identify files from earlier migrations unless they can be rediscovered from live content."
                 cancelText="Keep records"
                 confirmText="Forget records"

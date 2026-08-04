@@ -19,7 +19,7 @@ const MIGRATION_SOURCES: MigrationSource[] = [
     {
         id: "altmount",
         label: "AltMount",
-        description: "Import an existing AltMount library by rebuilding NZBs and submitting them through NzbDAV's normal queue.",
+        description: "Import an existing AltMount library by rebuilding NZBs and submitting them through InfiniDysk's normal queue.",
         icon: "moving",
         component: AltmountMigration,
     },

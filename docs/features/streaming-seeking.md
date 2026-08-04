@@ -1,6 +1,6 @@
 # Streaming and seeking
 
-Players issue HTTP range requests; NzbDAV fetches the corresponding Usenet articles and serves bytes on demand.
+Players issue HTTP range requests; InfiniDysk fetches the corresponding Usenet articles and serves bytes on demand.
 
 ## Performance levers
 

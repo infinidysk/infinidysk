@@ -1,13 +1,13 @@
 [project]
-site_name = "NzbDAV"
-site_description = "Mount NZBs as a virtual filesystem and stream directly from Usenet"
+site_name = "InfiniDysk"
+site_description = "The NzbDAV SuperFork — stream media directly from Usenet"
 site_url = "https://nzbdav.com/"
 docs_dir = "docs"
 site_dir = "site"
 repo_url = "https://github.com/nzbdav/nzbdav"
 repo_name = "nzbdav/nzbdav"
 edit_uri = "edit/main/docs/"
-copyright = "NzbDAV is released under the MIT License"
+copyright = "InfiniDysk is released under the MIT License"
 extra_css = ["stylesheets/extra.css"]
 
 nav = [
@@ -76,6 +76,7 @@ nav = [
     { "Deletion audit" = "operations/deletion-audit.md" },
   ]},
   { "Community" = [
+    { "Rename FAQ" = "community/renaming-to-infinidysk.md" },
     { "Connect" = "community/github.md" },
     { "Contributing" = "community/contributing.md" },
     { "Changelog" = "community/changelog.md" },
@@ -86,8 +87,8 @@ nav = [
 
 [project.theme]
 custom_dir = "overrides"
-logo = "assets/logo.svg"
-favicon = "assets/favicon.svg"
+logo = "assets/logo.png"
+favicon = "assets/favicon.png"
 features = [
   "announce.dismiss",
   "content.action.edit",

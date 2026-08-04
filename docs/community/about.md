@@ -1,6 +1,6 @@
 # About
 
-NzbDAV is a single product: a WebDAV + SABnzbd-compatible Usenet streaming server.
+InfiniDysk is a single product: a WebDAV + SABnzbd-compatible Usenet streaming server.
 
 ## Ecosystem
 
@@ -16,4 +16,4 @@ Historical stack announcement notes: [0.7.x coordinated release](history/release
 
 [MIT](https://github.com/nzbdav/nzbdav/blob/main/LICENSE).
 
-NzbDAV is intended for legally obtained or public domain content only.
+InfiniDysk is intended for legally obtained or public domain content only.
