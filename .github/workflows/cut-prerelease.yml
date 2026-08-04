@@ -142,3 +142,54 @@ jobs:
     with:
       tag_name: rc
       ref: ${{ needs.resolve.outputs.sha }}
+
+  announce-rc:
+    needs:
+      - resolve
+      - assets
+      - tag-rc
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Post release candidate to Discord
+        env:
+          DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          PREVIOUS_SHA: ${{ needs.tag-rc.outputs.previous_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_DEVELOPMENT_WEBHOOK_URL}" ]; then
+            echo "DISCORD_DEVELOPMENT_WEBHOOK_URL secret is not set" >&2
+            exit 1
+          fi
+
+          BASE_LABEL="Changes since last release candidate"
+          if [ -n "${PREVIOUS_SHA}" ] && [ "${PREVIOUS_SHA}" != "${SHA}" ]; then
+            CHANGELOG=$(gh api "repos/${REPO}/compare/${PREVIOUS_SHA}...${SHA}" \
+              --jq '.commits[] | "- " + (.commit.message | split("\n")[0] | sub(" \\(#[0-9]+\\)$"; ""))')
+          elif [ "${PREVIOUS_SHA}" = "${SHA}" ]; then
+            CHANGELOG="- (no new commits since last release candidate)"
+          else
+            BASE_LABEL="Initial release candidate"
+            CHANGELOG="- No previous release candidate to compare"
+          fi
+          if [ -z "${CHANGELOG}" ]; then
+            CHANGELOG="- (no new commits since last release candidate)"
+          fi
+
+          ANNOUNCEMENT_BODY=$(printf '🧪 **Release Candidate Available** (`%s`)\nRelease and downloads: https://github.com/%s/releases/tag/%s\n\n%s\n%s' \
+            "${RELEASE_TAG}" "${REPO}" "${RELEASE_TAG}" "${BASE_LABEL}" "${CHANGELOG}")
+
+          MAX_LEN=1900
+          if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then
+            ANNOUNCEMENT_BODY="${ANNOUNCEMENT_BODY:0:$((MAX_LEN - 3))}..."
+          fi
+
+          ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
+          curl --fail-with-body -sS -H "Content-Type: application/json" \
+            -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
+            "$DISCORD_DEVELOPMENT_WEBHOOK_URL"
