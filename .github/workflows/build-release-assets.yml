@@ -1,0 +1,148 @@
+name: Build release assets
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version label embedded in the archive
+        required: true
+        type: string
+      checkout_ref:
+        description: Git ref or SHA to build
+        required: true
+        type: string
+      release_tag:
+        description: Existing GitHub release tag to receive the archives
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version label embedded in the archive (for example 0.9.6)
+        required: true
+        type: string
+      checkout_ref:
+        description: Git ref or SHA to build (defaults to the release tag)
+        required: false
+        type: string
+      release_tag:
+        description: Existing GitHub release tag to receive the archives
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || inputs.release_tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build production frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          npm run build:server
+          npm prune --omit=dev
+
+      - name: Stage frontend
+        run: |
+          set -euo pipefail
+          mkdir frontend-package
+          cp frontend/package.json frontend-package/
+          cp -a frontend/build frontend/dist-node frontend/node_modules frontend-package/
+          tar -czf frontend-package.tar.gz -C frontend-package .
+
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-frontend
+          path: frontend-package.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  package:
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-latest
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || inputs.release_tag }}
+          submodules: true
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install native build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
+
+      - name: Build rapidyenc
+        run: scripts/build-rapidyenc.sh "${{ matrix.rid }}"
+
+      - name: Publish backend
+        env:
+          RID: ${{ matrix.rid }}
+        run: |
+          set -euo pipefail
+          dotnet publish backend/NzbWebDAV.csproj \
+            -c Release \
+            -r "$RID" \
+            --self-contained false \
+            -o backend-publish
+          cp "libs/RapidYencSharp/runtimes/$RID/native/librapidyenc.so" backend-publish/
+
+      - name: Download frontend build
+        uses: actions/download-artifact@v7
+        with:
+          name: release-frontend
+          path: release-frontend
+
+      - name: Assemble archive
+        env:
+          RID: ${{ matrix.rid }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          archive_name="nzbdav-v${VERSION}-${RID}"
+          mkdir -p "$archive_name/backend" "$archive_name/frontend"
+          cp -a backend-publish/. "$archive_name/backend/"
+          tar -xzf release-frontend/frontend-package.tar.gz -C "$archive_name/frontend"
+          install -m 0755 scripts/package/run.sh "$archive_name/run.sh"
+          cp scripts/package/README.md "$archive_name/README.md"
+          printf '%s\n' "$VERSION" > "$archive_name/version.txt"
+
+          "./$archive_name/backend/NzbWebDAV" --yenc-self-test
+          tar -czf "${archive_name}.tar.gz" "$archive_name"
+
+      - name: Attach archive to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RID: ${{ matrix.rid }}
+          VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" "nzbdav-v${VERSION}-${RID}.tar.gz" --clobber

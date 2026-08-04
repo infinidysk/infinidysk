@@ -81,6 +81,16 @@ jobs:
             --title "${{ needs.resolve.outputs.tag }}" \
             --prerelease --generate-notes
 
+  assets:
+    needs: [resolve, publish-release]
+    uses: ./.github/workflows/build-release-assets.yml
+    permissions:
+      contents: write
+    with:
+      version: ${{ needs.resolve.outputs.version }}-rc.${{ needs.resolve.outputs.rc }}
+      checkout_ref: ${{ needs.resolve.outputs.sha }}
+      release_tag: ${{ needs.resolve.outputs.tag }}
+
   tag-rc:
     needs: [resolve, build, publish-release]
     uses: ./.github/workflows/move-movable-tag.yml

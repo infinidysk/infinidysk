@@ -91,6 +91,17 @@ jobs:
       registry_token: ${{ secrets.GITHUB_TOKEN }}
       dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
 
+  assets:
+    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
+    needs: release-please
+    uses: ./.github/workflows/build-release-assets.yml
+    permissions:
+      contents: write
+    with:
+      version: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
+      checkout_ref: ${{ needs.release-please.outputs.sha }}
+      release_tag: v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
+
   deploy-manual:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     needs: resolve-version
@@ -116,6 +127,17 @@ jobs:
     secrets:
       registry_token: ${{ secrets.GITHUB_TOKEN }}
       dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  assets-manual:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    needs: resolve-version
+    uses: ./.github/workflows/build-release-assets.yml
+    permissions:
+      contents: write
+    with:
+      version: ${{ needs.resolve-version.outputs.version }}
+      checkout_ref: ${{ needs.resolve-version.outputs.ref }}
+      release_tag: ${{ needs.resolve-version.outputs.ref }}
 
   tag-dev:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'

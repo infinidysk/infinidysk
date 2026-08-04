@@ -74,16 +74,23 @@ build_target() {
       ;;
     linux-arm64)
       lib_names=("librapidyenc.so")
-      if ! command -v aarch64-linux-gnu-g++ >/dev/null 2>&1; then
-        echo "Error: aarch64-linux-gnu-g++ is required to build for linux-arm64." >&2
-        return 1
-      fi
-      cmake_args+=(
-        -DCMAKE_SYSTEM_NAME=Linux
-        -DCMAKE_SYSTEM_PROCESSOR=aarch64
-        -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
-        -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
-      )
+      case "$(uname -m)" in
+        arm64|aarch64)
+          # Build natively on ARM runners and hosts.
+          ;;
+        *)
+          if ! command -v aarch64-linux-gnu-g++ >/dev/null 2>&1; then
+            echo "Error: aarch64-linux-gnu-g++ is required to cross-build for linux-arm64." >&2
+            return 1
+          fi
+          cmake_args+=(
+            -DCMAKE_SYSTEM_NAME=Linux
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+          )
+          ;;
+      esac
       ;;
     linux-musl-x64|linux-musl-arm64)
       lib_names=("librapidyenc.so")
