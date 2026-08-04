@@ -15,6 +15,7 @@ nav = [
   { "Getting started" = [
     { "Overview" = "getting-started/index.md" },
     { "Docker" = "getting-started/docker.md" },
+    { "Prebuilt Linux archives" = "getting-started/prebuilt-archives.md" },
     { "Migration" = "getting-started/migration.md" },
     { "First run" = "getting-started/first-run.md" },
     { "Connect Radarr/Sonarr" = "getting-started/connect-arr.md" },
