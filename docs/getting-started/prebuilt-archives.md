@@ -43,6 +43,20 @@ Other container environment variables are supported, including `PORT`,
 `LOG_LEVEL`, and the
 [headless Settings overlay](../configuration/headless.md).
 
+## Pre-release testing
+
+Each release candidate has a permanent GitHub Pre-release and versioned
+archives such as `nzbdav-v0.10.0-rc.1-linux-x64.tar.gz`.
+
+For automation, the rolling `rc` pre-release always exposes stable asset URLs:
+
+- [linux-x64](https://github.com/nzbdav/nzbdav/releases/download/rc/nzbdav-rc-linux-x64.tar.gz)
+- [linux-arm64](https://github.com/nzbdav/nzbdav/releases/download/rc/nzbdav-rc-linux-arm64.tar.gz)
+
+The archive's `version.txt` identifies the exact release candidate. The rolling
+`rc` release remains on the last candidate after a stable release ships, so
+check its version before assuming it is newer than `latest`.
+
 ## Upgrade
 
 1. Stop the running launcher.
