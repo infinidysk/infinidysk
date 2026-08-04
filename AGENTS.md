@@ -393,12 +393,13 @@ Skip this handoff if there are no local changes and nothing to push or PR. Do no
 | `docs.yml` | PRs and pushes to `main` | Zensical docs build (`zensical build --clean --strict`); deploys to GitHub Pages on `main` |
 | `codeql.yml` | PRs, pushes to `main`, and weekly schedule | CodeQL security analysis for C#, TypeScript, and GitHub Actions |
 | `refresh-dev.yml` | Manual `workflow_dispatch` | Publishes `ghcr.io/.../nzbdav:dev` and moves the git `dev` tag to that commit (unversioned snapshot) |
-| `cut-prerelease.yml` | Manual `workflow_dispatch` | Creates numbered `vX.Y.Z-rc.N` GitHub Pre-releases + permanent tags; pushes `:vX.Y.Z-rc.N` and rolling `:rc` images; moves git `rc` tag |
-| `release.yml` | Push to `main` | release-please versioning; publishes release and `dev` Docker tags when a release is created; moves git `dev` tag |
-| `release.yml` | Manual `workflow_dispatch` | Republishes release and `dev` Docker tags to GHCR for an existing version; moves git `dev` tag |
+| `cut-prerelease.yml` | Manual `workflow_dispatch` | Creates numbered and rolling `rc` GitHub Pre-releases with Linux archives; pushes versioned + rolling `:rc` images; moves git `rc` tag |
+| `release.yml` | Push to `main` | release-please versioning; publishes Linux archives plus release and `dev` Docker tags; moves git `dev` tag |
+| `release.yml` | Manual `workflow_dispatch` | Republishes Linux archives plus release and `dev` Docker tags for an existing version; moves git `dev` tag |
 | `promote-lts.yml` | Manual `workflow_dispatch` | Moves git `lts` and GHCR `:lts` to an existing published version (no rebuild) |
 | `dependency-submission.yml` | GitHub Release `published` (plus manual `workflow_dispatch`) | Dependency graph submission (NuGet + npm) |
 | `docker-build-push.yml` | Reusable (called by refresh-dev/cut-prerelease/release) | Multi-arch Docker build with GHA cache |
+| `build-release-assets.yml` | Reusable/manual (called by cut-prerelease/release) | Builds linux-x64/arm64 archives and attaches them to GitHub Releases |
 | `move-movable-tag.yml` | Reusable (called by refresh-dev/cut-prerelease/release) | Force-moves a movable git tag (`dev`, `rc`, …) to a given commit |
 
 Docker image builds are shared via the reusable workflow. Branch and dependabot image pipelines were removed — PRs are validated by `ci.yml` instead of publishing throwaway images.
@@ -408,10 +409,10 @@ Docker image builds are shared via the reusable workflow. Branch and dependabot 
 - Merging to `main` triggers **release-please** (`.github/workflows/release.yml`) which maintains `CHANGELOG.md` + `version.txt` and creates GitHub releases.
 - Breaking commits (`feat!` / `fix!` / `BREAKING CHANGE` footer) → breaking version bump (and Breaking Changes changelog section). **Database migrations must always use this form.**
 - `feat` → minor bump; `fix` → patch bump (pre-1.0 rules in `.release-please-config.json`). Other conventional types that still appear in notes (`perf`, `refactor`, `ux`, `revert`, `build`, and legacy `docs` / `tests`) do not bump the version by themselves. **`chore` commits are omitted from release notes** — use `chore(<scope>)` for CI, tests, docs, agents/skills, and other non-behavior work (do not use bare `docs` / `ci` / `test` / `tests` types).
-- When release-please creates a release on merge to `main`, the same workflow run builds and pushes Docker images to `ghcr.io` (`latest`, `dev`, exact `vMAJOR.MINOR.PATCH`, and rolling `vMAJOR` / `vMAJOR.MINOR` tags) and moves the git `dev` tag to that release commit.
-- To republish images for an existing release (e.g. after fixing CI), run **Release** workflow manually with the `version` input (e.g. `0.6.5`); this also moves the git `dev` tag to that version.
+- When release-please creates a release on merge to `main`, the same workflow run attaches prebuilt linux-x64/arm64 archives, builds and pushes Docker images to `ghcr.io` (`latest`, `dev`, exact `vMAJOR.MINOR.PATCH`, and rolling `vMAJOR` / `vMAJOR.MINOR` tags), and moves the git `dev` tag to that release commit.
+- To republish images and archives for an existing release (e.g. after fixing CI), run **Release** workflow manually with the `version` input (e.g. `0.6.5`); this also moves the git `dev` tag to that version.
 - Between releases, refresh the unversioned Docker image (`:dev`) and git `dev` tag on demand via **Actions → Refresh :dev → Run workflow**.
-- Cut a versioned release candidate via **Actions → Cut pre-release → Run workflow** with a `version` input (e.g. `0.9.0`, usually the open release-please PR version). This creates a GitHub Release flagged Pre-release at `vX.Y.Z-rc.N` (permanent tag + image), pushes rolling `:rc`, and moves the git `rc` tag. Release notes come from GitHub `--generate-notes` (vs the previous GitHub Release, which may be another rc).
+- Cut a versioned release candidate via **Actions → Cut pre-release → Run workflow**. The stable version defaults to the open release-please PR; pass `version` only to override it. This creates a permanent `vX.Y.Z-rc.N` GitHub Pre-release with versioned images and archives, updates the rolling `rc` Pre-release with stable-named archives, pushes the rolling `:rc` image, and moves the git `rc` tag. Release notes come from GitHub `--generate-notes` (vs the previous GitHub Release, which may be another rc).
 - Promote a curated LTS pointer (`:lts` on GHCR and git tag `lts`) to an existing version via **Actions → Promote LTS → Run workflow** with a `version` input (e.g. `0.6.5`). This retags the existing multi-arch image (no rebuild) and is not updated automatically on release.
 - Dependency graph submission runs when a GitHub Release is published (and can be re-run manually via `workflow_dispatch`). Keep GitHub **Automatic dependency submission** disabled to avoid duplicates.
 
