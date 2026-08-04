@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Database.Models.Metrics;
@@ -33,6 +34,8 @@ public class MultiProviderNntpClient(
     ConcurrentReadTracker? concurrentReadTracker = null
 ) : NntpClient, INntpConnectionStats
 {
+    private static readonly TimeSpan RecoveryProbeTimeout = TimeSpan.FromSeconds(15);
+
     /// <summary>
     /// Max concurrent batch-failover BODY starts. Admission stays strictly ordered;
     /// this only bounds how many fallback walks may be in flight at once so sequential
@@ -78,6 +81,52 @@ public class MultiProviderNntpClient(
                 p.GetConnectionChurn()))
             .ToList();
     }
+
+    public async Task ProbeLatchedProvidersAsync(CancellationToken cancellationToken)
+    {
+        foreach (var provider in providers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (provider.ProviderType == ProviderType.Disabled ||
+                provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.HalfOpen)
+            {
+                continue;
+            }
+
+            Log.Information(
+                "Probing provider {Provider} after circuit-breaker cooldown.",
+                provider.Host);
+
+            using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var timeoutContext = CancellationTokenContext.SetContext(
+                probeCts.Token,
+                new StreamingTimeoutContext
+                {
+                    PerSegmentTimeout = RecoveryProbeTimeout,
+                    MaxRetries = 0,
+                });
+
+            try
+            {
+                await provider.DateAsync(probeCts.Token).ConfigureAwait(false);
+            }
+            catch (NntpClientRetiredException e)
+            {
+                Log.Debug(
+                    e,
+                    "Stopped provider recovery probes because the NNTP client generation was retired.");
+                return;
+            }
+            catch (Exception e) when (!e.IsCancellationException(cancellationToken))
+            {
+                Log.Debug(
+                    e,
+                    "Provider {Provider} recovery probe did not succeed.",
+                    provider.Host);
+            }
+        }
+    }
+
     private readonly ProviderUsageTracker _usageTracker = usageTracker ?? new ProviderUsageTracker();
     private static readonly AsyncLocal<Guid?> ReadSessionScope = new();
     internal static Guid? CurrentReadSessionId => ReadSessionScope.Value;

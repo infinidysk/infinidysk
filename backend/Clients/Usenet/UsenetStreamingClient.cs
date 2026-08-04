@@ -136,6 +136,13 @@ public class UsenetStreamingClient : WrappingNntpClient
             : Array.Empty<ProviderConnectionSnapshot>();
     }
 
+    public Task ProbeLatchedProvidersAsync(CancellationToken cancellationToken)
+    {
+        return WrappingNntpClient.Unwrap(InnerClient) is MultiProviderNntpClient multi
+            ? multi.ProbeLatchedProvidersAsync(cancellationToken)
+            : Task.CompletedTask;
+    }
+
     private static MultiProviderNntpClient CreateMultiProviderClient
     (
         ConfigManager configManager,

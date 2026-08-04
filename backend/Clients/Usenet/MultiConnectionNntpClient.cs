@@ -190,10 +190,25 @@ public class MultiConnectionNntpClient(
         return RunWithConnection(
             "DATE",
             SemaphorePriority.Low,
-            (connection, _, commandCt) => connection.DateAsync(commandCt),
+            RequireSuccessfulDateAsync,
             onConnectionReadyAgain: null,
             ct
         );
+    }
+
+    private static async Task<UsenetDateResponse> RequireSuccessfulDateAsync(
+        INntpClient connection,
+        Action<ArticleBodyResult> _,
+        CancellationToken ct)
+    {
+        var response = await connection.DateAsync(ct).ConfigureAwait(false);
+        if (response.ResponseType != UsenetResponseType.DateAndTime)
+        {
+            throw new RetryableDownloadException(
+                $"Unexpected NNTP response to DATE: {response.ResponseMessage}");
+        }
+
+        return response;
     }
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync

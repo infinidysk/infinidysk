@@ -233,6 +233,7 @@ public partial class Program
                 .AddSingleton<QueueItemSourceTracker>()
                 .AddSingleton<StreamingFailureTracker>()
                 .AddSingleton<UsenetStreamingClient>()
+                .AddHostedService<ProviderRecoveryProbeService>()
                 // LazyRarResolver takes INntpClient (for testability) but must
                 // use the shared streaming client; wire it explicitly instead
                 // of registering a container-wide INntpClient binding.
