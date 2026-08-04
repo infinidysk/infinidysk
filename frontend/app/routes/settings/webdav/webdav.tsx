@@ -1,4 +1,4 @@
-import { ManagedSetting, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
+import { Badge, ManagedSetting, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
 import { Input, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { type Dispatch, type ReactNode, type SetStateAction } from "react";
@@ -432,6 +432,33 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                         />
                     </Tooltip>
                 </ManagedSetting>
+
+                <ManagedSetting configKey="usenet.container-aware-fill">
+                    <div className="space-y-2">
+                        <Tooltip content="Experimental. Applies only after all missing/corrupt article fallbacks are exhausted; transient transport failures still abort so the player can retry the range.">
+                            <Toggle
+                                id="container-aware-fill"
+                                className="cursor-pointer gap-2 p-0"
+                                checked={config["usenet.container-aware-fill"] === "true"}
+                                onChange={e => setNewConfig({
+                                    ...config,
+                                    "usenet.container-aware-fill": e.target.checked ? "true" : "false",
+                                })}
+                                label={
+                                    <span className="inline-flex items-center gap-2 text-sm text-base-content">
+                                        Container-aware gap fill
+                                        <Badge className="badge-warning badge-outline badge-xs">Experimental</Badge>
+                                    </span>
+                                }
+                            />
+                        </Tooltip>
+                        <p className="text-[11px] leading-relaxed text-base-content/45">
+                            For permanently missing data in direct MPEG-TS files, emit packet-aligned null packets
+                            instead of raw zeros so compatible players can resynchronize sooner. Archive-backed files
+                            and unsupported containers keep the existing zero-fill behavior.
+                        </p>
+                    </div>
+                </ManagedSetting>
             </SettingsCard>
         </SettingsPage>
     );
@@ -453,6 +480,7 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.in-flight-article-budget-mb"] !== newConfig["usenet.in-flight-article-budget-mb"]
         || config["usenet.idle-connection-timeout-seconds"] !== newConfig["usenet.idle-connection-timeout-seconds"]
         || config["usenet.pipelined-body-requests"] !== newConfig["usenet.pipelined-body-requests"]
+        || config["usenet.container-aware-fill"] !== newConfig["usenet.container-aware-fill"]
         || config["webdav.show-hidden-files"] !== newConfig["webdav.show-hidden-files"]
         || config["webdav.enforce-readonly"] !== newConfig["webdav.enforce-readonly"]
         || config["webdav.preview-par2-files"] !== newConfig["webdav.preview-par2-files"]

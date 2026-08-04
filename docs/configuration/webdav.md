@@ -29,6 +29,7 @@ WebDAV authentication and streaming/connection behavior for playback mounts.
 | In-flight article budget (MiB) [since 0.8.2](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.2){ .nzbdav-since } | `usenet.in-flight-article-budget-mb` | auto (≈25% of container memory, max 512) | Host-wide cap on decoded article bytes in RAM (64–8192); empty = derived; distinct from per-stream article buffer count |
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | 15–300; pool rebuild/restart |
 | Pipelined article downloads | `usenet.pipelined-body-requests` | on | WebDAV BODY batches |
+| Container-aware gap fill [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | off | Experimental; MPEG-TS null packets instead of zeros for confirmed missing articles |
 | Enforce Read-Only | `webdav.enforce-readonly` | on | `/content` readonly |
 | Show hidden files | `webdav.show-hidden-files` | off | Dot-prefixed names in Explore |
 | Preview par2 files | `webdav.preview-par2-files` | off | Render as text |
@@ -43,6 +44,24 @@ WebDAV authentication and streaming/connection behavior for playback mounts.
 `usenet.article-buffer-size` bounds how many decoded articles a stream may keep ahead of the consumer — and therefore per-stream memory — not how many provider connections playback may use.
 
 When **Pipelined article downloads** is on, WebDAV BODY requests start in batches of up to four articles on one connection. If playback starves waiting for the next segment, NzbDAV automatically narrows that batch width (`4 → 2 → 1`) so more connections can work in parallel at the same buffer depth. When the consumer stays ahead, batch width recovers gradually. Connection and host-wide byte budgets still apply.
+
+## Experimental container-aware gap fill [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+
+When a confirmed-missing or persistently corrupt article cannot be recovered from any
+provider or fallback Message-ID, NzbDAV normally emits the same number of zero bytes to
+keep every later file offset correct. Enable **Container-aware gap fill** to emit
+format-native discard markers instead for supported direct files:
+
+- MPEG-TS (`.ts`, `.m2ts`, `.mts`): packet-aligned null packets when exact segment
+  offsets are available.
+
+This may help compatible players resynchronize sooner, but it cannot restore the missing
+audio or video data. Matroska, MP4/MOV, and archive-backed files retain zero-fill because
+arbitrary article boundaries do not provide safe container-element boundaries.
+
+The setting is experimental and defaults to off. It does not affect transient transport
+failures: after their retries are exhausted, the current HTTP response fails so the player
+can request the range again.
 
 ## Capturing a buffering support pack
 
