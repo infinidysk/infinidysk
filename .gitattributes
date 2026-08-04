@@ -1,5 +1,9 @@
 * text=auto
 * text eol=lf
 
+# Web image assets — preserve their exact binary bytes
+*.png binary
+*.ico binary
+
 # Binary test archives — do not CRLF-convert
 tests/TestArchives/** binary
