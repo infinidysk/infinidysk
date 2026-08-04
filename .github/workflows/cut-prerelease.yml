@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Next intended stable (e.g. 0.9.0; usually the open release-please PR version)
-        required: true
+        description: Next intended stable (defaults to the open release-please PR version)
+        required: false
       ref:
         description: Git ref/SHA to cut from (defaults to the triggering branch tip)
         required: false
@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       version: ${{ steps.vars.outputs.version }}
       rc: ${{ steps.vars.outputs.rc }}
@@ -33,6 +34,26 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${RAW_VERSION#v}"
+          if [[ -z "$VERSION" ]]; then
+            RELEASE_PRS=$(gh pr list \
+              --repo "${{ github.repository }}" \
+              --state open \
+              --head release-please--branches--main \
+              --limit 2 \
+              --json title)
+            RELEASE_PR_COUNT=$(jq length <<< "$RELEASE_PRS")
+            if [[ "$RELEASE_PR_COUNT" -ne 1 ]]; then
+              echo "Expected exactly one open release-please PR, found $RELEASE_PR_COUNT. Pass version explicitly to override." >&2
+              exit 1
+            fi
+            RELEASE_PR_TITLE=$(jq -r '.[0].title' <<< "$RELEASE_PRS")
+            if [[ ! "$RELEASE_PR_TITLE" =~ ^chore\(main\):[[:space:]]release[[:space:]]([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              echo "Could not parse a version from release-please PR title: $RELEASE_PR_TITLE" >&2
+              exit 1
+            fi
+            VERSION="${BASH_REMATCH[1]}"
+            echo "Resolved pending version $VERSION from release-please PR."
+          fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version"; exit 1; }
           if gh api "repos/${{ github.repository }}/git/ref/tags/v${VERSION}" >/dev/null 2>&1; then
             echo "v${VERSION} is already released" >&2; exit 1
@@ -71,18 +92,39 @@ jobs:
     permissions:
       contents: write
     steps:
-      - env:
+      - name: Publish unique and rolling pre-releases
+        env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           set -euo pipefail
-          gh release create "${{ needs.resolve.outputs.tag }}" \
+          gh release create "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
-            --target "${{ needs.resolve.outputs.sha }}" \
-            --title "${{ needs.resolve.outputs.tag }}" \
+            --target "$RELEASE_SHA" \
+            --title "$RELEASE_TAG" \
             --prerelease --generate-notes
 
+          ROLLING_TITLE="Rolling release candidate ($RELEASE_TAG)"
+          ROLLING_NOTES="Currently points to [$RELEASE_TAG](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG). See that release for versioned notes and assets."
+          if gh release view rc --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release edit rc \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$ROLLING_TITLE" \
+              --notes "$ROLLING_NOTES" \
+              --prerelease
+          else
+            gh release create rc \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$ROLLING_TITLE" \
+              --notes "$ROLLING_NOTES" \
+              --prerelease
+          fi
+
   assets:
-    needs: [resolve, publish-release]
+    needs: [resolve, publish-release, tag-rc]
     uses: ./.github/workflows/build-release-assets.yml
     permissions:
       contents: write
@@ -90,6 +132,7 @@ jobs:
       version: ${{ needs.resolve.outputs.version }}-rc.${{ needs.resolve.outputs.rc }}
       checkout_ref: ${{ needs.resolve.outputs.sha }}
       release_tag: ${{ needs.resolve.outputs.tag }}
+      rolling_tag: rc
 
   tag-rc:
     needs: [resolve, build, publish-release]

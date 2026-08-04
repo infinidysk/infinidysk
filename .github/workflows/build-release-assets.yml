@@ -15,6 +15,11 @@ on:
         description: Existing GitHub release tag to receive the archives
         required: true
         type: string
+      rolling_tag:
+        description: Optional rolling GitHub release tag to receive stable-named copies
+        required: false
+        default: ""
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -28,6 +33,11 @@ on:
       release_tag:
         description: Existing GitHub release tag to receive the archives
         required: true
+        type: string
+      rolling_tag:
+        description: Optional rolling GitHub release tag to receive stable-named copies
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -139,10 +149,20 @@ jobs:
           "./$archive_name/backend/NzbWebDAV" --yenc-self-test
           tar -czf "${archive_name}.tar.gz" "$archive_name"
 
-      - name: Attach archive to release
+      - name: Attach archives to releases
         env:
           GH_TOKEN: ${{ github.token }}
           RID: ${{ matrix.rid }}
           VERSION: ${{ inputs.version }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" "nzbdav-v${VERSION}-${RID}.tar.gz" --clobber
+          ROLLING_TAG: ${{ inputs.rolling_tag }}
+        run: |
+          set -euo pipefail
+          archive="nzbdav-v${VERSION}-${RID}.tar.gz"
+          gh release upload "$RELEASE_TAG" "$archive" --clobber
+
+          if [[ -n "$ROLLING_TAG" ]]; then
+            rolling_archive="nzbdav-${ROLLING_TAG}-${RID}.tar.gz"
+            cp "$archive" "$rolling_archive"
+            gh release upload "$ROLLING_TAG" "$rolling_archive" --clobber
+          fi
