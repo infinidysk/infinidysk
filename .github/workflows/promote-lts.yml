@@ -41,14 +41,22 @@ jobs:
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "Resolved ${REF} -> ${SHA}"
 
+      # GITHUB_TOKEN cannot update some movable tags (org/integration 403).
+      # Continue so image retags still run; move refs/tags/lts manually with a PAT if needed.
       - name: Move git lts tag
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ steps.resolve.outputs.sha }}
           REF: ${{ steps.resolve.outputs.ref }}
         run: |
           set -euo pipefail
-          if gh api "repos/${{ github.repository }}/git/ref/tags/lts" >/dev/null 2>&1; then
+          if CURRENT=$(gh api "repos/${{ github.repository }}/git/ref/tags/lts" 2>/dev/null); then
+            CURRENT_SHA=$(printf '%s' "$CURRENT" | jq -r .object.sha)
+            if [[ "$CURRENT_SHA" == "$SHA" ]]; then
+              echo "refs/tags/lts already at $SHA"
+              exit 0
+            fi
             gh api --method PATCH "repos/${{ github.repository }}/git/refs/tags/lts" \
               -f sha="$SHA" \
               -F force=true
