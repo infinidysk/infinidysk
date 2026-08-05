@@ -21,6 +21,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useSearchParams } from "react-router";
+import { isPositiveInteger } from "../validation";
 
 const USAGE_POLL_INTERVAL_MS = 10_000;
 
@@ -2248,11 +2249,6 @@ export function isUsenetSettingsUpdated(config: Record<string, string>, newConfi
         || config["usenet.cascade.retry-primary-on-miss"] !== newConfig["usenet.cascade.retry-primary-on-miss"]
         || config["usenet.article-miss-cache-ttl-seconds"] !== newConfig["usenet.article-miss-cache-ttl-seconds"]
         || config["usenet.article-miss-cache-max-entries"] !== newConfig["usenet.article-miss-cache-max-entries"]
-}
-
-export function isPositiveInteger(value: string) {
-    const num = Number(value);
-    return Number.isInteger(num) && num > 0 && value.trim() === num.toString();
 }
 
 export function isArticleMissCacheTtl(value: string) {

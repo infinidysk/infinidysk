@@ -11,7 +11,7 @@ import {
     Tooltip,
 } from "~/components/ui";
 import { className } from "~/utils/styling";
-import { isPositiveInteger } from "../usenet/usenet";
+import { isPositiveInteger } from "../validation";
 
 type StreamingSettingsProps = {
     config: Record<string, string>

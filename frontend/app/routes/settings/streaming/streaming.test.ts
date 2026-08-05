@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { isStreamingSettingsUpdated, isStreamingSettingsValid } from "./streaming";
+// @vitest-environment jsdom
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { createElement, useState } from "react";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+    isStreamingSettingsUpdated,
+    isStreamingSettingsValid,
+    StreamingSettings,
+} from "./streaming";
 
 const validConfig = {
     "usenet.max-download-connections": "0",
@@ -19,7 +27,95 @@ const validConfig = {
     "usenet.segment-cache.max-gb": "10",
 };
 
+afterEach(cleanup);
+
+function StreamingHarness() {
+    const [config, setConfig] = useState<Record<string, string>>(validConfig);
+    return createElement(StreamingSettings, { config, setNewConfig: setConfig });
+}
+
 describe("Streaming settings", () => {
+    it("updates connection allocation and conditional controls", async () => {
+        const user = userEvent.setup();
+        render(createElement(StreamingHarness));
+
+        await user.click(screen.getByRole("checkbox", {
+            name: /Auto — use all Pool provider connections/,
+        }));
+        const maxConnections = document.getElementById(
+            "max-download-connections-input",
+        ) as HTMLInputElement;
+        expect(maxConnections.value).toBe("15");
+        await user.click(maxConnections);
+        await user.keyboard("{Control>}a{/Control}24");
+        expect(maxConnections.value).toBe("24");
+
+        await user.click(screen.getByRole("checkbox", {
+            name: "Apply limit per stream",
+        }));
+        const performance = screen.getByRole<HTMLSelectElement>("combobox", {
+            name: "Per-stream performance",
+        });
+        await user.selectOptions(performance, "max");
+        expect(performance.value).toBe("max");
+
+        const priority = screen.getByRole<HTMLInputElement>("textbox", {
+            name: "Streaming Priority (vs Queue)",
+        });
+        await user.clear(priority);
+        await user.type(priority, "90");
+        expect(priority.value).toBe("90");
+    });
+
+    it("updates caching, timeout, buffering, and fallback controls", async () => {
+        const user = userEvent.setup();
+        render(createElement(StreamingHarness));
+
+        await user.click(screen.getByRole("checkbox", {
+            name: "Enable Segment Cache",
+        }));
+        const cachePath = screen.getByRole<HTMLInputElement>("textbox", {
+            name: "Cache path",
+        });
+        await user.clear(cachePath);
+        await user.type(cachePath, "/tmp/cache");
+        expect(cachePath.value).toBe("/tmp/cache");
+
+        const cacheSize = screen.getByRole<HTMLInputElement>("textbox", {
+            name: "Maximum size (GB)",
+        });
+        await user.clear(cacheSize);
+        await user.type(cacheSize, "25");
+        expect(cacheSize.value).toBe("25");
+
+        const numericUpdates: Array<[string, string]> = [
+            ["Streaming Segment Timeout", "10"],
+            ["Streaming Read Timeout", "45"],
+            ["Streaming Segment Retries", "4"],
+            ["Article Buffer Size", "60"],
+            ["In-flight article budget (MiB)", "256"],
+            ["Idle connection timeout (seconds)", "90"],
+        ];
+        for (const [name, value] of numericUpdates) {
+            const input = screen.getByRole<HTMLInputElement>("textbox", { name });
+            await user.clear(input);
+            await user.type(input, value);
+            expect(input.value).toBe(value);
+        }
+
+        const pipelining = screen.getByRole<HTMLInputElement>("checkbox", {
+            name: "Pipelined article downloads",
+        });
+        await user.click(pipelining);
+        expect(pipelining.checked).toBe(false);
+
+        const gapFill = screen.getByRole<HTMLInputElement>("checkbox", {
+            name: /Container-aware gap fill/,
+        });
+        await user.click(gapFill);
+        expect(gapFill.checked).toBe(true);
+    });
+
     it("detects changes to every owned setting", () => {
         for (const key of Object.keys(validConfig)) {
             expect(isStreamingSettingsUpdated(validConfig, {

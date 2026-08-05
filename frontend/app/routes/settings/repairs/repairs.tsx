@@ -1,7 +1,7 @@
 import { ManagedSetting, SettingsCard, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
 import { Input, Select, Toggle } from "~/components/ui/form";
 import { type Dispatch, type SetStateAction } from "react";
-import { isPositiveInteger } from "../usenet/usenet";
+import { isPositiveInteger } from "../validation";
 
 type RepairsSettingsProps = {
     config: Record<string, string>

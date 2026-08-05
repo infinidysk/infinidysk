@@ -8,7 +8,7 @@ import {
     SettingsPage,
 } from "~/components/ui";
 import { className } from "~/utils/styling";
-import { isPositiveInteger } from "../usenet/usenet";
+import { isPositiveInteger } from "../validation";
 
 type QueueSettingsProps = {
     config: Record<string, string>
