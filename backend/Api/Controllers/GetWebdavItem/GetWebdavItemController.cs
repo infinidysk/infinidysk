@@ -74,17 +74,17 @@ public class GetWebdavItemController(
         if (idFile?.HistoryItemId is { } hid)
             HttpContext.Items["historyItemId"] = hid;
 
-        // Now that the real filename + size are known, update the active-read
-        // entry so the UI shows the human-readable name instead of the .ids GUID.
+        // .ids items expose the GUID as Name so symlink targets stay stable.
+        // Use the human-readable name for response headers and active reads.
+        var fileName = idFile?.FriendlyName ?? item.Name;
+
         if (HttpContext.Items["readSessionId"] is Guid sid)
-        {
-            var displayName = idFile?.FriendlyName ?? item.Name;
-            activeReadRegistry.UpdateInfo(sid, displayName, fileSize);
-        }
+            activeReadRegistry.UpdateInfo(sid, fileName, fileSize);
 
         // set the content-type and content-disposition headers
-        Response.Headers["Content-Type"] = GetContentType(item.Name);
-        Response.Headers["Content-Disposition"] = GetContentDisposition(item.Name, request.ShouldDownload);
+        Response.Headers["Content-Type"] = ContentHeaderUtil.GetContentType(fileName);
+        Response.Headers["Content-Disposition"] =
+            ContentHeaderUtil.GetContentDisposition(fileName, request.ShouldDownload);
 
         // disable compression to keep Content-Length intact for clients that need seeking
         Response.Headers["Content-Encoding"] = "identity";
@@ -358,36 +358,6 @@ public class GetWebdavItemController(
     /// </summary>
     internal static long ResolveRangeEnd(long? rangeEnd, long fileSize) =>
         Math.Min(rangeEnd ?? (fileSize - 1), fileSize - 1);
-
-    private static string GetContentType(string item)
-    {
-        if (item == "README") return "text/plain";
-        var extension = Path.GetExtension(item).ToLower();
-        // .mkv falls through to ContentTypeUtil → "video/x-matroska". The old
-        // override returned "video/webm", but WebM only permits VP8/VP9 + Vorbis/Opus.
-        // Releases using H.264/H.265 + AC3/DTS made strict players reject the
-        // video stream while still decoding audio.
-        return extension == ".rclonelink" ? "text/plain"
-            : extension == ".nfo" ? "text/plain"
-            : ContentTypeUtil.GetContentType(Path.GetFileName(item));
-    }
-
-    private static string GetContentDisposition(string filename, bool shouldDownload)
-    {
-        // Remove control characters (header safety)
-        filename = new string(filename.Where(c => !char.IsControl(c)).ToArray());
-
-        // ASCII fallback for legacy clients
-        var chars = filename.Select(c => (c >= 32 && c <= 126 && c != '"' && c != '\\' && c != ';') ? c : '_');
-        var ascii = new string(chars.ToArray());
-
-        // RFC 5987 UTF-8 filename
-        var utf8 = Uri.EscapeDataString(filename);
-
-        // return
-        var type = shouldDownload ? "attachment" : "inline";
-        return $"{type}; filename=\"{ascii}\"; filename*=UTF-8''{utf8}";
-    }
 
     private async Task<Stream> GetPar2PreviewStream(IStoreItem item, CancellationToken ct)
     {
