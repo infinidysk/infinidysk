@@ -26,11 +26,14 @@ jobs:
       tags: |
         ghcr.io/${{ github.repository }}:dev
         docker.io/infinidysk/infinidysk:dev
+      legacy_tags: |
+        ghcr.io/nzbdav/nzbdav:dev
       nzbdav_version: dev-${{ needs.resolve.outputs.short_sha }}
       dockerhub_username: infinidysk
     secrets:
       registry_token: ${{ secrets.GITHUB_TOKEN }}
       dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+      old_ghcr_token: ${{ secrets.OLD_GHCR_TOKEN }}
 
   tag-dev:
     needs: build

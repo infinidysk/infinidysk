@@ -86,12 +86,20 @@ jobs:
         docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
         docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}
         docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
+      legacy_tags: |
+        ghcr.io/nzbdav/nzbdav:latest
+        ghcr.io/nzbdav/nzbdav:dev
+        ghcr.io/nzbdav/nzbdav:rc
+        ghcr.io/nzbdav/nzbdav:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
+        ghcr.io/nzbdav/nzbdav:v${{ needs.release-please.outputs.major }}
+        ghcr.io/nzbdav/nzbdav:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
       nzbdav_version: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
       checkout_ref: ${{ needs.release-please.outputs.sha }}
       dockerhub_username: infinidysk
     secrets:
       registry_token: ${{ secrets.GITHUB_TOKEN }}
       dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+      old_ghcr_token: ${{ secrets.OLD_GHCR_TOKEN }}
 
   assets:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
@@ -125,12 +133,20 @@ jobs:
         docker.io/infinidysk/infinidysk:${{ needs.resolve-version.outputs.ref }}
         docker.io/infinidysk/infinidysk:v${{ needs.resolve-version.outputs.major }}
         docker.io/infinidysk/infinidysk:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
+      legacy_tags: |
+        ghcr.io/nzbdav/nzbdav:latest
+        ghcr.io/nzbdav/nzbdav:dev
+        ghcr.io/nzbdav/nzbdav:rc
+        ghcr.io/nzbdav/nzbdav:${{ needs.resolve-version.outputs.ref }}
+        ghcr.io/nzbdav/nzbdav:v${{ needs.resolve-version.outputs.major }}
+        ghcr.io/nzbdav/nzbdav:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
       nzbdav_version: ${{ needs.resolve-version.outputs.version }}
       checkout_ref: ${{ needs.resolve-version.outputs.ref }}
       dockerhub_username: infinidysk
     secrets:
       registry_token: ${{ secrets.GITHUB_TOKEN }}
       dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+      old_ghcr_token: ${{ secrets.OLD_GHCR_TOKEN }}
 
   assets-manual:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'

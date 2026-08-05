@@ -79,12 +79,16 @@ jobs:
         ghcr.io/${{ github.repository }}:rc
         docker.io/infinidysk/infinidysk:${{ needs.resolve.outputs.tag }}
         docker.io/infinidysk/infinidysk:rc
+      legacy_tags: |
+        ghcr.io/nzbdav/nzbdav:${{ needs.resolve.outputs.tag }}
+        ghcr.io/nzbdav/nzbdav:rc
       nzbdav_version: ${{ needs.resolve.outputs.version }}-rc.${{ needs.resolve.outputs.rc }}
       checkout_ref: ${{ needs.resolve.outputs.sha }}
       dockerhub_username: infinidysk
     secrets:
       registry_token: ${{ secrets.GITHUB_TOKEN }}
       dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+      old_ghcr_token: ${{ secrets.OLD_GHCR_TOKEN }}
 
   publish-release:
     needs: [resolve, build]
