@@ -208,4 +208,4 @@ PROFILE_TOKEN=
 - [Environment variables](environment-variables.md) — process + legacy fallbacks
 - [Docker](../getting-started/docker.md) — Compose basics
 - [First run](../getting-started/first-run.md) — admin account (still UI / out of ENV scope)
-- Feature Settings references: [Usenet](usenet.md) · [SABnzbd](sabnzbd.md) · [WebDAV](webdav.md) · [Radarr/Sonarr](arrs.md) · [Indexers](indexers.md) · [Profiles](profiles.md) · [Rclone](rclone.md) · [Repairs](repairs.md) · [Maintenance](maintenance.md) · [Backup](backup.md) · [Preflight](preflight.md) · [Watchdog](watchdog.md) · [Watchtower](watchtower.md) · [Warden](warden.md)
+- Feature Settings references: [Usenet](usenet.md) · [Indexers](indexers.md) · [Profiles](profiles.md) · [Queue](queue.md) · [SABnzbd](sabnzbd.md) · [Streaming](streaming.md) · [WebDAV](webdav.md) · [Preflight](preflight.md) · [Watchdog](watchdog.md) · [Watchtower](watchtower.md) · [Warden](warden.md) · [Arr Apps](arrs.md) · [Rclone](rclone.md) · [Health & repairs](repairs.md) · [Maintenance](maintenance.md) · [Backup](backup.md)

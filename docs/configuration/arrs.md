@@ -1,6 +1,8 @@
-# Radarr / Sonarr
+# Arr Apps
 
-*Arr instance credentials and automatic stuck-queue handling. Config key: `arr.instances`
+Supported Arr app credentials and automatic stuck-queue handling. Radarr and
+Sonarr are supported today; this settings area is intended to accommodate
+additional Arr apps such as Lidarr in the future. Config key: `arr.instances`
 (`NZBDAV_CONFIG__ARR__INSTANCES` — see [headless](headless.md)).
 
 | Control | Effect |

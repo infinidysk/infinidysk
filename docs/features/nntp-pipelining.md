@@ -27,7 +27,7 @@ Responses still arrive in order; depth is the queue of outstanding asks.
 | Setting | Location | Default | Controls |
 |---------|----------|---------|----------|
 | `usenet.pipelining.enabled` | Settings → Usenet | off | Queue first-segment fetch and provider benchmark batches |
-| `usenet.pipelined-body-requests` | Settings → WebDAV | on | WebDAV streaming read-ahead batches |
+| `usenet.pipelined-body-requests` | Settings → Streaming | on | WebDAV streaming read-ahead batches |
 
 ## What queue pipelining speeds up
 
@@ -42,11 +42,11 @@ Health/import existence checks use concurrent `STAT` and are unaffected.
 
 1. Prefer **Auto-tune** on a provider before enabling queue pipelining.
 2. **Settings → Usenet → Enable NNTP pipelining** + pipeline depth (1–64, default 8). Per-provider depth overrides optional.
-3. WebDAV: **Pipelined article downloads** on the WebDAV tab.
+3. Streaming: **Pipelined article downloads** on the Streaming tab.
 
 ## Limitations
 
 - Pipelined batches use the same per-segment failover as `DecodedBodiesAsync`.
 - Per-queue-item article cache can bypass pipelined queue paths when caching is enabled.
 
-[Usenet](../configuration/usenet.md) · [WebDAV](../configuration/webdav.md)
+[Usenet](../configuration/usenet.md) · [Streaming](../configuration/streaming.md)

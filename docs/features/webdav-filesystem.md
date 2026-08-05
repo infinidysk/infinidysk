@@ -14,4 +14,6 @@ Typical top-level paths:
 
 Content streams from Usenet on read — files are not fully downloaded to disk first. Blobs under `{CONFIG_PATH}/blobs/` store NZB metadata needed to remount.
 
-Configure auth and streaming behavior under [WebDAV settings](../configuration/webdav.md). Mount with [rclone](../guides/mounting-webdav.md) for filesystem clients.
+Configure credentials and filesystem behavior under [WebDAV settings](../configuration/webdav.md),
+and playback behavior under [Streaming settings](../configuration/streaming.md).
+Mount with [rclone](../guides/mounting-webdav.md) for filesystem clients.

@@ -35,9 +35,15 @@ Click **Test** / **Auto-tune** when available. See [Usenet settings](../configur
 | WebDAV Password | Required for rclone, AIOStreams, and many players |
 | Enforce Read-Only | Leave on unless you need deletes from clients |
 
-Playback tuning (connections, pipelining, segment cache) lives on the same tab — see [WebDAV settings](../configuration/webdav.md).
+See [WebDAV settings](../configuration/webdav.md).
 
-## 4. Import strategy (`Settings` → `SABnzbd`)
+## 4. Streaming (`Settings` → `Streaming`)
+
+The defaults are a safe starting point. If playback is slow or stalls, tune
+connection allocation, timeouts, buffering, and the segment cache here. See
+[Streaming settings](../configuration/streaming.md).
+
+## 5. Import strategy (`Settings` → `SABnzbd`)
 
 | Strategy | Best for | What to set |
 |----------|----------|-------------|
@@ -46,7 +52,10 @@ Playback tuning (connections, pipelining, segment cache) lives on the same tab �
 
 Copy the **API Key** from this page — *Arr download clients need it.
 
-## 5. Smoke test
+Queue concurrency and admission limits are under
+[Settings → Queue](../configuration/queue.md).
+
+## 6. Smoke test
 
 1. Upload a small `.nzb` on the **Queue** page (or send one from an indexer).
 2. Wait until it reaches history / mounts under Explore → `content`.

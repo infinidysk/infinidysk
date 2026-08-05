@@ -70,10 +70,12 @@ disabled — it is the app's landing page and the fallback destination when
 closing the "feature not available" dialog, so it always stays reachable.
 
 Settings navigation identifiers are `settings.usenet`, `settings.indexers`,
-`settings.profiles`, `settings.watchdog`, `settings.preflight`,
-`settings.watchtower`, `settings.warden`, `settings.sabnzbd`,
-`settings.webdav`, `settings.arrs`, `settings.repairs`, `settings.rclone`,
-`settings.maintenance`, `settings.backup`, and `settings.support`.
+`settings.profiles`, `settings.queue`, `settings.sabnzbd`,
+`settings.streaming`, `settings.webdav`, `settings.watchdog`,
+`settings.preflight`, `settings.watchtower`, `settings.warden`,
+`settings.arrs`, `settings.rclone`, `settings.repairs`,
+`settings.maintenance`, `settings.backup`, `settings.support`, and
+`settings.migration`.
 
 This controls frontend presentation only. Providers must separately configure
 or restrict backend capabilities when enforcement is required.
