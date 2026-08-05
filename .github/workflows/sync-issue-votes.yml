@@ -1,5 +1,5 @@
 # Recounts thumbs-up (👍) reactions on issue bodies linked to the
-# NZBDav Ecosystem project and writes the count to the Votes number field.
+# InfiniDysk Ecosystem project and writes the count to the Votes number field.
 # Also appends an upvote footer to open Feature issues when missing.
 #
 # Requires repo secret PROJECT_VOTES_TOKEN: a fine-grained PAT (or GitHub App
@@ -24,7 +24,7 @@ jobs:
       - name: Sync thumbs-up counts to Votes
         env:
           GH_TOKEN: ${{ secrets.PROJECT_VOTES_TOKEN }}
-          PROJECT_OWNER: nzbdav
+          PROJECT_OWNER: infinidysk
           PROJECT_NUMBER: "1"
           FIELD_NAME: Votes
         run: |

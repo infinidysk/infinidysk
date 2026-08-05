@@ -310,7 +310,7 @@ Use **GitHub Issue Types** for kind — not kind labels:
 - Do **not** use (or recreate) `bug` / `enhancement` labels — they were removed; Issue Type is the source of truth.
 - Do **not** put `[Bug]:` / `[Feature]:` in issue titles; the type field already conveys that.
 
-Triage and release metadata live on the **[NZBDav Ecosystem](https://github.com/orgs/nzbdav/projects/1)** project and on GitHub **milestones**. Prefer those over org Issue Fields, labels, or duplicate project columns.
+Triage and release metadata live on the **[InfiniDysk Ecosystem](https://github.com/orgs/infinidysk/projects/1)** project and on GitHub **milestones**. Prefer those over org Issue Fields, labels, or duplicate project columns.
 
 ### Priority and Effort (project fields)
 
