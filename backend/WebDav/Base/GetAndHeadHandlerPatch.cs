@@ -14,6 +14,7 @@ using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav.Requests;
 
 namespace NzbWebDAV.WebDav.Base;
@@ -170,6 +171,13 @@ public class GetAndHeadHandlerPatch : IRequestHandler
             var contentLanguage = (string?)await propertyManager.GetPropertyAsync(entry, DavGetContentLanguage<IStoreItem>.PropertyName, true, ct).ConfigureAwait(false);
             if (contentLanguage != null)
                 response.Headers.ContentLanguage = contentLanguage;
+        }
+
+        if (entry is DatabaseStoreIdFile friendlyIdFile)
+        {
+            response.ContentType = ContentHeaderUtil.GetContentType(friendlyIdFile.FriendlyName);
+            response.Headers.ContentDisposition =
+                ContentHeaderUtil.GetContentDisposition(friendlyIdFile.FriendlyName, shouldDownload: false);
         }
 
         // Stream the actual entry
