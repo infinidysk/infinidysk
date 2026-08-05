@@ -138,7 +138,7 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          archive_name="nzbdav-v${VERSION}-${RID}"
+          archive_name="infinidysk-v${VERSION}-${RID}"
           mkdir -p "$archive_name/backend" "$archive_name/frontend"
           cp -a backend-publish/. "$archive_name/backend/"
           tar -xzf release-frontend/frontend-package.tar.gz -C "$archive_name/frontend"
@@ -158,11 +158,11 @@ jobs:
           ROLLING_TAG: ${{ inputs.rolling_tag }}
         run: |
           set -euo pipefail
-          archive="nzbdav-v${VERSION}-${RID}.tar.gz"
+          archive="infinidysk-v${VERSION}-${RID}.tar.gz"
           gh release upload "$RELEASE_TAG" "$archive" --clobber
 
           if [[ -n "$ROLLING_TAG" ]]; then
-            rolling_archive="nzbdav-${ROLLING_TAG}-${RID}.tar.gz"
+            rolling_archive="infinidysk-${ROLLING_TAG}-${RID}.tar.gz"
             cp "$archive" "$rolling_archive"
             gh release upload "$ROLLING_TAG" "$rolling_archive" --clobber
           fi

@@ -18,14 +18,14 @@ The .NET SDK, CMake, Ninja, npm install, and Git submodules are not required.
 Download the archive for your system from the
 [latest GitHub release](https://github.com/infinidysk/infinidysk/releases/latest):
 
-- `nzbdav-v<version>-linux-x64.tar.gz`
-- `nzbdav-v<version>-linux-arm64.tar.gz`
+- `infinidysk-v<version>-linux-x64.tar.gz`
+- `infinidysk-v<version>-linux-arm64.tar.gz`
 
 Extract it and start the launcher:
 
 ```bash
-tar -xzf nzbdav-v<version>-linux-<architecture>.tar.gz
-cd nzbdav-v<version>-linux-<architecture>
+tar -xzf infinidysk-v<version>-linux-<architecture>.tar.gz
+cd infinidysk-v<version>-linux-<architecture>
 ./run.sh
 ```
 
@@ -46,12 +46,12 @@ Other container environment variables are supported, including `PORT`,
 ## Pre-release testing
 
 Each release candidate has a permanent GitHub Pre-release and versioned
-archives such as `nzbdav-v0.10.0-rc.1-linux-x64.tar.gz`.
+archives such as `infinidysk-v0.10.0-rc.1-linux-x64.tar.gz`.
 
 For automation, the rolling `rc` pre-release always exposes stable asset URLs:
 
-- [linux-x64](https://github.com/infinidysk/infinidysk/releases/download/rc/nzbdav-rc-linux-x64.tar.gz)
-- [linux-arm64](https://github.com/infinidysk/infinidysk/releases/download/rc/nzbdav-rc-linux-arm64.tar.gz)
+- [linux-x64](https://github.com/infinidysk/infinidysk/releases/download/rc/infinidysk-rc-linux-x64.tar.gz)
+- [linux-arm64](https://github.com/infinidysk/infinidysk/releases/download/rc/infinidysk-rc-linux-arm64.tar.gz)
 
 The archive's `version.txt` identifies the exact release candidate. The rolling
 `rc` release remains on the last candidate after a stable release ships, so
