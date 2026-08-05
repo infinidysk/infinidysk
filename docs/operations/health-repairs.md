@@ -7,7 +7,7 @@
 Requires:
 
 - **Library Directory** visible inside the container
-- At least one configured Radarr/Sonarr instance
+- At least one configured [Radarr/Sonarr instance](../configuration/arrs.md)
 - **Enable Background Repairs**
 
 Tune concurrency, health-check depth, aging [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }, and streaming-failure thresholds — [Repairs settings](../configuration/repairs.md).
