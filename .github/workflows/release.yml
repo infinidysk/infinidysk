@@ -76,11 +76,13 @@ jobs:
       tags: |
         ghcr.io/${{ github.repository }}:latest
         ghcr.io/${{ github.repository }}:dev
+        ghcr.io/${{ github.repository }}:rc
         ghcr.io/${{ github.repository }}:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
         ghcr.io/${{ github.repository }}:v${{ needs.release-please.outputs.major }}
         ghcr.io/${{ github.repository }}:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
         docker.io/infinidysk/infinidysk:latest
         docker.io/infinidysk/infinidysk:dev
+        docker.io/infinidysk/infinidysk:rc
         docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
         docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}
         docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
@@ -113,11 +115,13 @@ jobs:
       tags: |
         ghcr.io/${{ github.repository }}:latest
         ghcr.io/${{ github.repository }}:dev
+        ghcr.io/${{ github.repository }}:rc
         ghcr.io/${{ github.repository }}:${{ needs.resolve-version.outputs.ref }}
         ghcr.io/${{ github.repository }}:v${{ needs.resolve-version.outputs.major }}
         ghcr.io/${{ github.repository }}:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
         docker.io/infinidysk/infinidysk:latest
         docker.io/infinidysk/infinidysk:dev
+        docker.io/infinidysk/infinidysk:rc
         docker.io/infinidysk/infinidysk:${{ needs.resolve-version.outputs.ref }}
         docker.io/infinidysk/infinidysk:v${{ needs.resolve-version.outputs.major }}
         docker.io/infinidysk/infinidysk:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
@@ -151,6 +155,18 @@ jobs:
       tag_name: dev
       ref: ${{ needs.release-please.outputs.sha }}
 
+  tag-rc:
+    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
+    needs:
+      - release-please
+      - deploy
+    uses: ./.github/workflows/move-movable-tag.yml
+    permissions:
+      contents: write
+    with:
+      tag_name: rc
+      ref: ${{ needs.release-please.outputs.sha }}
+
   tag-dev-manual:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     needs:
@@ -163,12 +179,25 @@ jobs:
       tag_name: dev
       ref: ${{ needs.resolve-version.outputs.ref }}
 
+  tag-rc-manual:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    needs:
+      - resolve-version
+      - deploy-manual
+    uses: ./.github/workflows/move-movable-tag.yml
+    permissions:
+      contents: write
+    with:
+      tag_name: rc
+      ref: ${{ needs.resolve-version.outputs.ref }}
+
   announce:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
     needs:
       - release-please
       - deploy
       - tag-dev
+      - tag-rc
     runs-on: ubuntu-latest
     permissions:
       contents: read
