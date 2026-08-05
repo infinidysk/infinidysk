@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.10.0](https://github.com/nzbdav/nzbdav/compare/v0.9.5...v0.10.0) (2026-08-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **migration:** anyone on a pre-release :dev image with an existing /config/usenet-migration.db must delete that disposable file once so the squashed migration history can apply cleanly. Mounted content is unaffected.
+* **auth:** The migration removes duplicate admin rows, retaining the earliest account, before enforcing the single-admin invariant. Back up /config before upgrading.
+
+### Features
+
+* **auth:** sign in with OIDC and mapped access roles ([#749](https://github.com/nzbdav/nzbdav/issues/749)) ([eb72813](https://github.com/nzbdav/nzbdav/commit/eb728135b392c04fc864a6537c4457a62962cfc7))
+* **ci:** download ready-to-run Linux builds from each release ([#814](https://github.com/nzbdav/nzbdav/issues/814)) ([a0a258e](https://github.com/nzbdav/nzbdav/commit/a0a258e49f833fbf485ecae8bee765b3883c95c9))
+* **health:** detect stuck streaming readiness ([#755](https://github.com/nzbdav/nzbdav/issues/755)) ([e58db3b](https://github.com/nzbdav/nzbdav/commit/e58db3b5c1c1749ad550173efbc8bb239534cc69))
+* introduce InfiniDysk pre-move branding ([#810](https://github.com/nzbdav/nzbdav/issues/810)) ([15490a6](https://github.com/nzbdav/nzbdav/commit/15490a656015a24e252445030cee143112aee85c))
+* **migration:** guided Altmount to NzbDAV migration wizard ([#717](https://github.com/nzbdav/nzbdav/issues/717)) ([1bf94bd](https://github.com/nzbdav/nzbdav/commit/1bf94bd3a88f7c7b0de9f3c9265e10fc44c8990f))
+* **queue:** stop sample videos being imported by Sonarr and Radarr ([#801](https://github.com/nzbdav/nzbdav/issues/801)) ([e8764fa](https://github.com/nzbdav/nzbdav/commit/e8764fac9895b2c029dea890f209e01121fa2153))
+* **ui:** add service provider supportUrl and powered-by footer ([#778](https://github.com/nzbdav/nzbdav/issues/778)) ([1b6b4d6](https://github.com/nzbdav/nzbdav/commit/1b6b4d60f1d4de9ee0ffa5834a43f095c9da0b0c))
+* **ui:** compare per-provider download speeds on Overview ([#750](https://github.com/nzbdav/nzbdav/issues/750)) ([b4d5f16](https://github.com/nzbdav/nzbdav/commit/b4d5f16edae3c33a3498a3848beab3969634a1fb))
+* **ui:** let hosting providers disable specific features ([#772](https://github.com/nzbdav/nzbdav/issues/772)) ([a4124ab](https://github.com/nzbdav/nzbdav/commit/a4124ab326f26e5fbd81cbe6a092fb33cfb4aa1b))
+* **ui:** native URL_BASE support for sub-path hosting ([#818](https://github.com/nzbdav/nzbdav/issues/818)) ([caeeb47](https://github.com/nzbdav/nzbdav/commit/caeeb474092fa79ca5199ac745d5b54859027522))
+* **ui:** streamline Usenet provider cards ([#752](https://github.com/nzbdav/nzbdav/issues/752)) ([c977ce1](https://github.com/nzbdav/nzbdav/commit/c977ce185b23cd05b486ddc6878734855185937d))
+* **usenet:** enable container-aware gap fill by default ([#820](https://github.com/nzbdav/nzbdav/issues/820)) ([cf46860](https://github.com/nzbdav/nzbdav/commit/cf468605edd70845e9eaca5481def6e6a9b084b8))
+* **usenet:** prevent playback desync and add experimental container-aware gap fill ([#802](https://github.com/nzbdav/nzbdav/issues/802)) ([9a8152b](https://github.com/nzbdav/nzbdav/commit/9a8152bf0d46aca0d510f3cff1149dd84bd39c3b))
+* **webdav:** downloads and streams from .ids links use the real filename instead of an id ([#816](https://github.com/nzbdav/nzbdav/issues/816)) ([48cdb05](https://github.com/nzbdav/nzbdav/commit/48cdb050ad36a484e79d4dd46e8dfba0bf4f6d23))
+
+
+### Bug Fixes
+
+* **api:** resolve saved keys for indexer connection tests ([#819](https://github.com/nzbdav/nzbdav/issues/819)) ([8bc4d06](https://github.com/nzbdav/nzbdav/commit/8bc4d06998f1e5b7a671650b7421b573c3f58f36))
+* **assets:** preserve InfiniDysk images as binary files ([#812](https://github.com/nzbdav/nzbdav/issues/812)) ([52328f6](https://github.com/nzbdav/nzbdav/commit/52328f65cd4cb1a342d14584ea41244f05219134))
+* **auth:** prevent concurrent onboarding from creating multiple admins ([#740](https://github.com/nzbdav/nzbdav/issues/740)) ([22913ef](https://github.com/nzbdav/nzbdav/commit/22913efdb1a26a2f5306ec2824b41bbfd2a941a0))
+* **build:** declare backend rapidyenc project reference ([#797](https://github.com/nzbdav/nzbdav/issues/797)) ([bb7c1c9](https://github.com/nzbdav/nzbdav/commit/bb7c1c9c04ed09010fd4c66c6f0d3f9d6dc5f2ad))
+* **build:** restore DUMB startup after rapidyenc vendoring ([#796](https://github.com/nzbdav/nzbdav/issues/796)) ([eb54fc3](https://github.com/nzbdav/nzbdav/commit/eb54fc3061ad86f81bd5dcf933bd7e937130e3a6))
+* **deps:** Bump docker/login-action in the github-actions group ([#792](https://github.com/nzbdav/nzbdav/issues/792)) ([8086f3a](https://github.com/nzbdav/nzbdav/commit/8086f3adc2fb8f3d731694dfe7d3f72f9ee33900))
+* **deps:** Bump ip-address from 10.2.0 to 10.4.0 in /frontend ([#804](https://github.com/nzbdav/nzbdav/issues/804)) ([b8c37c9](https://github.com/nzbdav/nzbdav/commit/b8c37c9cabf991147bf05d6da3f39003706f678a))
+* **deps:** Bump jsdom from 29.1.1 to 30.0.0 in /frontend ([#790](https://github.com/nzbdav/nzbdav/issues/790)) ([af8aa7b](https://github.com/nzbdav/nzbdav/commit/af8aa7bb578d6e88a6f9c9eabf021f2226ce6bee))
+* **deps:** Bump the npm-minor-and-patch group ([#789](https://github.com/nzbdav/nzbdav/issues/789)) ([da9dc48](https://github.com/nzbdav/nzbdav/commit/da9dc487f19374bb1da3d55a3eb29900e9b56100))
+* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#791](https://github.com/nzbdav/nzbdav/issues/791)) ([53397e9](https://github.com/nzbdav/nzbdav/commit/53397e95b1424be311c5248573839b61ddc8a1b6))
+* **deps:** npm audit fix ([ddea118](https://github.com/nzbdav/nzbdav/commit/ddea1180430bdf8b88882120956085547947d51c))
+* **nntp:** initialize rapidyenc dispatch before concurrent Usenet work ([#793](https://github.com/nzbdav/nzbdav/issues/793)) ([3e0b2da](https://github.com/nzbdav/nzbdav/commit/3e0b2dac6329e266ea162e8ab69db86208dfbea0))
+* **nntp:** recover circuit-tripped providers automatically ([#811](https://github.com/nzbdav/nzbdav/issues/811)) ([d0887ba](https://github.com/nzbdav/nzbdav/commit/d0887ba9027a03023652c87ab7c5eaafa5f4023f))
+* **nntp:** return the connection when a body is left unread ([#785](https://github.com/nzbdav/nzbdav/issues/785)) ([8140153](https://github.com/nzbdav/nzbdav/commit/81401539bf60001706cb8ec1288e7a5f9fcbbdd5))
+* post-merge follow-ups — stale dashboard stats, faster provider failover, safer feature gating and import seeking ([#779](https://github.com/nzbdav/nzbdav/issues/779)) ([993c49d](https://github.com/nzbdav/nzbdav/commit/993c49de8d9059bb8711ab303f8bc4d7bff26355))
+* **ui:** compare :dev images against the movable dev tag ([#803](https://github.com/nzbdav/nzbdav/issues/803)) ([afd8686](https://github.com/nzbdav/nzbdav/commit/afd8686aaa177a96f81eef1dd759222426c59f17))
+* **ui:** selection ticks, swallowed clicks, and a hidden menu in the file browser ([#775](https://github.com/nzbdav/nzbdav/issues/775)) ([b68ec3d](https://github.com/nzbdav/nzbdav/commit/b68ec3d38eafd53f4740cfe4a4344a3b5906c735))
+* **usenet:** keep provider usage totals across restarts on env-only configs ([#795](https://github.com/nzbdav/nzbdav/issues/795)) ([551d8e5](https://github.com/nzbdav/nzbdav/commit/551d8e5fb6b8266e1656dbd48cb44728fa173414))
+* **usenet:** prevent unreachable providers from stalling concurrent requests ([#771](https://github.com/nzbdav/nzbdav/issues/771)) ([152cf90](https://github.com/nzbdav/nzbdav/commit/152cf9060938f9ca6276828ade11db7983731df2))
+
+
+### Performance Improvements
+
+* background cache load, websocket coalescing, queue admission, sampled existence checks, and stream bridge cleanup ([#780](https://github.com/nzbdav/nzbdav/issues/780)) ([9c8541e](https://github.com/nzbdav/nzbdav/commit/9c8541ee0de33856ec7849667b99c341bf80e94b))
+* **queue:** validate persisted segment offsets for cold-start seeking ([#774](https://github.com/nzbdav/nzbdav/issues/774)) ([37d6146](https://github.com/nzbdav/nzbdav/commit/37d6146355c008094d751df2cfd017dac6e02083))
+* **websocket:** skip live-stat serialization when no browser client is subscribed ([#773](https://github.com/nzbdav/nzbdav/issues/773)) ([29fc6a6](https://github.com/nzbdav/nzbdav/commit/29fc6a6f1b6491d5ef69bb0c000ec234ff953e3b))
+
+
+### Build System
+
+* SharpCompress library now developed in-tree ([#786](https://github.com/nzbdav/nzbdav/issues/786)) ([a5fca67](https://github.com/nzbdav/nzbdav/commit/a5fca672d201e2944158688de428017227e5f25b))
+* **usenet:** vendor UsenetSharp and RapidYencSharp with rapidyenc submodule ([#787](https://github.com/nzbdav/nzbdav/issues/787)) ([ecaca2e](https://github.com/nzbdav/nzbdav/commit/ecaca2e02e56526f74599d865f3d719c16c07bee)), closes [#770](https://github.com/nzbdav/nzbdav/issues/770)
+
 ## [0.9.5](https://github.com/nzbdav/nzbdav/compare/v0.9.4...v0.9.5) (2026-08-02)
 
 
