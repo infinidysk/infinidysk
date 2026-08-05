@@ -4,6 +4,7 @@ import { SettingsCard, SettingsIntro, SettingsPage, ManagedSetting } from "~/com
 import { Input, Select } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
+import { withUrlBase } from "~/utils/url-base";
 
 type ArrsSettingsProps = {
     config: Record<string, string>
@@ -331,7 +332,7 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
             formData.append('host', host);
             formData.append('apiKey', apiKey);
 
-            const response = await fetch('/api/test-arr-connection', {
+            const response = await fetch(withUrlBase('/api/test-arr-connection'), {
                 method: 'POST',
                 body: formData
             });

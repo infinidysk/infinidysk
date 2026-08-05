@@ -4,6 +4,7 @@ import type { RequiredTopNavProps } from "../page-layout/page-layout";
 import { LiveUsenetConnections } from "../live-usenet-connections/live-usenet-connections";
 import { Icon } from "~/components/ui";
 import { isComparableVersion, type UpdateAvailable } from "~/utils/update-check";
+import { withUrlBase } from "~/utils/url-base";
 
 export type TopNavigationProps = RequiredTopNavProps & {
   version?: string,
@@ -69,7 +70,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
         >
           <img
             className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary via-info to-success p-0.5 shadow-md shadow-primary/20"
-            src="/logo.png"
+            src={withUrlBase("/logo.png")}
             alt=""
           />
           <span className="flex flex-col items-start leading-none">

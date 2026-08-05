@@ -1,3 +1,4 @@
+import { withUrlBase } from "~/utils/url-base";
 import type { Route } from "./+types/route";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
@@ -112,7 +113,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         const fetchWindow = async () => {
             if (typeof document !== "undefined" && document.hidden) return;
             try {
-                const res = await fetch(`/api/get-overview-stats?window=${window}&sections=window`);
+                const res = await fetch(withUrlBase(`/api/get-overview-stats?window=${window}&sections=window`));
                 if (!res.ok || cancelled) return;
                 const data: OverviewStatsResponse = await res.json();
                 if (cancelled) return;
@@ -144,7 +145,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         let cancelled = false;
         (async () => {
             try {
-                const res = await fetch(`/api/get-overview-stats?window=${window}&sections=detail`);
+                const res = await fetch(withUrlBase(`/api/get-overview-stats?window=${window}&sections=detail`));
                 if (!res.ok || cancelled) return;
                 const data: OverviewStatsResponse = await res.json();
                 if (cancelled) return;
@@ -160,7 +161,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         let cancelled = false;
         (async () => {
             try {
-                const res = await fetch(`/api/get-overview-stats?window=${window}&sections=static`);
+                const res = await fetch(withUrlBase(`/api/get-overview-stats?window=${window}&sections=static`));
                 if (!res.ok || cancelled) return;
                 const data: OverviewStatsResponse = await res.json();
                 if (cancelled) return;

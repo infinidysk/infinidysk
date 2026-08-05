@@ -1,3 +1,4 @@
+import { withUrlBase } from "~/utils/url-base";
 import { useCallback, useEffect, useState } from "react";
 import {
     Alert,
@@ -56,7 +57,7 @@ export function SupportSettings() {
 
     useEffect(() => {
         let cancelled = false;
-        void fetch("/settings/stream-tracing")
+        void fetch(withUrlBase("/settings/stream-tracing"))
             .then(async (response) => {
                 if (!response.ok) return;
                 const next = await response.json() as Record<string, unknown>;
@@ -90,7 +91,7 @@ export function SupportSettings() {
         setBusy(true);
         setMessage(null);
         try {
-            const response = await fetch("/api/download-support-pack", { cache: "no-store" });
+            const response = await fetch(withUrlBase("/api/download-support-pack"), { cache: "no-store" });
             if (!response.ok) {
                 const body = await response.json().catch(() => null);
                 throw new Error(body?.error || `Support pack failed (${response.status})`);
@@ -125,7 +126,7 @@ export function SupportSettings() {
             form.append("enabled", enabled ? "true" : "false");
             form.append("minutes", String(durationMinutes));
             form.append("capacity", String(capacity));
-            const response = await fetch("/settings/stream-tracing", { method: "POST", body: form });
+            const response = await fetch(withUrlBase("/settings/stream-tracing"), { method: "POST", body: form });
             if (!response.ok) {
                 const body = await response.json().catch(() => null);
                 throw new Error(body?.error || `Could not update stream tracing (${response.status})`);
@@ -159,7 +160,7 @@ export function SupportSettings() {
         try {
             const form = new FormData();
             form.append("intent", "discard");
-            const response = await fetch("/settings/stream-tracing", { method: "POST", body: form });
+            const response = await fetch(withUrlBase("/settings/stream-tracing"), { method: "POST", body: form });
             if (!response.ok) {
                 const body = await response.json().catch(() => null);
                 throw new Error(body?.error || `Could not discard stream traces (${response.status})`);

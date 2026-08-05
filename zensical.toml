@@ -53,6 +53,7 @@ nav = [
     { "SABnzbd" = "configuration/sabnzbd.md" },
     { "Streaming" = "configuration/streaming.md" },
     { "WebDAV" = "configuration/webdav.md" },
+    { "URL base (sub-path hosting)" = "configuration/url-base.md" },
     { "Watchdog" = "configuration/watchdog.md" },
     { "Preflight" = "configuration/preflight.md" },
     { "Watchtower" = "configuration/watchtower.md" },

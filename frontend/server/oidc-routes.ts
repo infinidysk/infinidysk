@@ -15,6 +15,18 @@ import {
   resolveOidcUsername,
 } from "./oidc.server";
 import { logger } from "./logger";
+
+// Mounted under URL_BASE by server.ts, so incoming req.path values are already
+// stripped — but outgoing redirect Locations are browser-absolute and need the
+// prefix restored. Mirror of normalizeUrlBase in app/utils/url-base.ts.
+function normalizeUrlBase(raw: string | undefined): string {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  if (trimmed === "" || trimmed === "/") return "";
+  const withLeading = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return withLeading.replace(/\/+$/, "");
+}
+const URL_BASE = normalizeUrlBase(process.env.URL_BASE);
 import { backendClient } from "~/clients/backend-client.server";
 
 export const oidcRouter = Router();
@@ -24,7 +36,7 @@ oidcRouter.get("/auth/oidc/callback", oidcCallbackHandler);
 
 export async function oidcLoginHandler(req: Request, res: Response): Promise<void> {
   if (!isOidcEnabled()) {
-    res.redirect(302, "/login?error=oidc_not_configured");
+    res.redirect(302, `${URL_BASE}/login?error=oidc_not_configured`);
     return;
   }
 
@@ -55,13 +67,13 @@ export async function oidcLoginHandler(req: Request, res: Response): Promise<voi
     res.redirect(302, authorizationUrl.href);
   } catch (error) {
     logOidcFailure("Could not start OIDC sign-in", error);
-    res.redirect(302, "/login?error=oidc_failed");
+    res.redirect(302, `${URL_BASE}/login?error=oidc_failed`);
   }
 }
 
 export async function oidcCallbackHandler(req: Request, res: Response): Promise<void> {
   if (!isOidcEnabled()) {
-    res.redirect(302, "/login?error=oidc_not_configured");
+    res.redirect(302, `${URL_BASE}/login?error=oidc_not_configured`);
     return;
   }
 
@@ -92,12 +104,12 @@ export async function oidcCallbackHandler(req: Request, res: Response): Promise<
 
     applySetCookie(res, session);
     logger.info(`OIDC sign-in succeeded for ${username} with ${role} role`);
-    res.redirect(302, "/");
+    res.redirect(302, `${URL_BASE}/`);
   } catch (error) {
     logOidcFailure("OIDC sign-in failed", error);
     const session = await clearOidcFlowState(req);
     applySetCookie(res, session);
-    res.redirect(302, "/login?error=oidc_failed");
+    res.redirect(302, `${URL_BASE}/login?error=oidc_failed`);
   }
 }
 
@@ -122,7 +134,7 @@ async function resolveRedirectUri(req: Request): Promise<string> {
 
   const host = req.get("host");
   if (!host) throw new Error("Unable to determine OIDC callback host");
-  return new URL("/auth/oidc/callback", `${req.protocol}://${host}`).href;
+  return new URL(`${URL_BASE}/auth/oidc/callback`, `${req.protocol}://${host}`).href;
 }
 
 function buildCallbackUrl(req: Request, redirectUri: string): URL {

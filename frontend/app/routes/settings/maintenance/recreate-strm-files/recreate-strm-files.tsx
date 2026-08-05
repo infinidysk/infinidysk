@@ -4,6 +4,7 @@ import { Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { useCallback, useState } from "react";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
+import { withUrlBase } from "~/utils/url-base";
 
 type RecreateStrmFilesProps = {
     savedConfig: Record<string, string>
@@ -48,7 +49,7 @@ export function RecreateStrmFiles({ savedConfig }: RecreateStrmFilesProps) {
         setProgress(null);
         try {
             const qs = rewriteAll ? "?rewriteAll=true" : "";
-            const response = await fetch(`/api/recreate-strm-files${qs}`);
+            const response = await fetch(withUrlBase(`/api/recreate-strm-files${qs}`));
             if (response.status === 409) {
                 setError("Another maintenance task is already running.");
                 setRunStarted(false);

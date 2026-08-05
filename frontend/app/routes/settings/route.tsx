@@ -29,6 +29,7 @@ import { parseSettingsTab, getSettingsTabItem, type SettingsTab } from "./settin
 import { Icon } from "~/components/ui";
 import type { AppOutletContext } from "~/auth/authorization";
 import { isSettingsTabDisabled } from "~/utils/service-provider";
+import { withUrlBase } from "~/utils/url-base";
 
 const defaultConfig = {
     "general.base-url": "",
@@ -289,7 +290,7 @@ function Body(props: BodyProps) {
     }, [config]);
 
     const postConfigUpdate = useCallback(async (changedConfig: Record<string, string>) => {
-        const response = await fetch("/settings/update", {
+        const response = await fetch(withUrlBase("/settings/update"), {
             method: "POST",
             body: (() => {
                 const form = new FormData();

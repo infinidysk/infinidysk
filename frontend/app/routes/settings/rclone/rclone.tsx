@@ -4,6 +4,7 @@ import { ManagedSetting, SettingsCard, SettingsIntro, SettingsPage } from "~/com
 import { Input, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
+import { withUrlBase } from "~/utils/url-base";
 
 type RcloneSettingsProps = {
     config: Record<string, string>
@@ -34,7 +35,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
             formData.append('user', config["rclone.user"] ?? '');
             formData.append('pass', config["rclone.pass"] ?? '');
 
-            const response = await fetch('/api/test-rclone-connection', {
+            const response = await fetch(withUrlBase('/api/test-rclone-connection'), {
                 method: 'POST',
                 body: formData
             });

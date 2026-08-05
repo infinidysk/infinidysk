@@ -1,6 +1,7 @@
 import { type ChangeEvent, type DragEvent, type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { Alert, Button, Icon, ManagedSetting, Modal, NativeForm as Form, SettingsIntro, SettingsPage, Spinner, Textarea, Tooltip } from "~/components/ui";
+import { withUrlBase } from "~/utils/url-base";
 
 type WardenSettingsProps = {
     config: Record<string, string>;
@@ -118,14 +119,14 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
 
     const refresh = async () => {
         try {
-            const res = await fetch("/api/warden-sources");
+            const res = await fetch(withUrlBase("/api/warden-sources"));
             if (res.ok) setSnap(await res.json());
         } catch { /* ignore */ }
     };
 
     const loadBackup = async () => {
         try {
-            const res = await fetch("/api/warden-backup");
+            const res = await fetch(withUrlBase("/api/warden-backup"));
             if (res.ok) setBackup(await res.json());
         } catch { }
     };

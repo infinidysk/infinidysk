@@ -3,6 +3,7 @@ import { Alert } from "~/components/ui/feedback";
 import { Icon } from "~/components/ui/icon";
 import { useCallback, useEffect, useState } from "react";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
+import { withUrlBase } from "~/utils/url-base";
 
 type RemoveUnlinkedFilesProps = {
     savedConfig: Record<string, string>
@@ -131,7 +132,7 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
                         >
                             {statusError ?? progress ?? "Ready to scan."}
                             {isDone && <>
-                                {" "}<a className="link link-primary" href="/api/remove-unlinked-files/audit">View audit</a>
+                                {" "}<a className="link link-primary" href={withUrlBase("/api/remove-unlinked-files/audit")}>View audit</a>
                             </>}
                         </div>
                     </div>

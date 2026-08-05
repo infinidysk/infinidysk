@@ -1,3 +1,4 @@
+import { withUrlBase } from "~/utils/url-base";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Icon } from "~/components/ui";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
@@ -46,7 +47,7 @@ export function StreamTracingBanner({ isReadOnly = false }: { isReadOnly?: boole
         try {
             const form = new FormData();
             form.append("enabled", "false");
-            const response = await fetch("/settings/stream-tracing", { method: "POST", body: form });
+            const response = await fetch(withUrlBase("/settings/stream-tracing"), { method: "POST", body: form });
             if (response.ok) {
                 const next = await response.json() as Record<string, unknown>;
                 setStatus(toStreamTracingStatus(next));

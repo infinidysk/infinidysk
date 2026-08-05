@@ -3,6 +3,7 @@ import { Alert } from "~/components/ui/feedback";
 import { Icon } from "~/components/ui/icon";
 import { useCallback, useState } from "react";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
+import { withUrlBase } from "~/utils/url-base";
 
 type ConvertStrmToSymlinksProps = {
     savedConfig: Record<string, string>
@@ -30,7 +31,7 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
     // events
     const onRun = useCallback(async () => {
         setIsFetching(true);
-        await fetch("/api/convert-strm-to-symlinks");
+        await fetch(withUrlBase("/api/convert-strm-to-symlinks"));
         setIsFetching(false);
     }, [setIsFetching]);
 

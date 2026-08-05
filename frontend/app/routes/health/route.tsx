@@ -7,6 +7,7 @@ import { useWebsocketTopics } from "~/utils/shared-websocket";
 import { Alert, Icon } from "~/components/ui";
 import type { HealthCheckQueueResponse } from "~/clients/backend-client.server";
 import { completeHealthCheck, type HealthQueueState } from "./health-queue-state";
+import { withUrlBase } from "~/utils/url-base";
 
 const topicNames = {
     healthItemStatus: 'hs',
@@ -50,7 +51,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     useEffect(() => {
         if (queueItems.length >= 15) return;
         const refetchData = async () => {
-            const response = await fetch('/api/get-health-check-queue?pageSize=30');
+            const response = await fetch(withUrlBase('/api/get-health-check-queue?pageSize=30'));
             if (response.ok) {
                 const healthCheckQueue: HealthCheckQueueResponse = await response.json();
                 setQueueState({

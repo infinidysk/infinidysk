@@ -20,6 +20,7 @@ import {
     useIsAnyManaged,
 } from "~/components/ui";
 import { isMaskedSecret } from "~/utils/config-mask";
+import { withUrlBase } from "~/utils/url-base";
 
 type IndexersSettingsProps = {
     config: Record<string, string>
@@ -288,7 +289,7 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
     const [isSyncing, setIsSyncing] = useState(false);
     const loadSyncStatus = useCallback(async () => {
         try {
-            const res = await fetch("/settings/exclude-sync");
+            const res = await fetch(withUrlBase("/settings/exclude-sync"));
             if (res.ok) setSyncStatus((await res.json()).urls ?? []);
         } catch {
             // status is best-effort; ignore transient failures
@@ -310,7 +311,7 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
         if (excludeSyncManaged) return;
         setIsSyncing(true);
         try {
-            const res = await fetch("/settings/exclude-sync", { method: "POST" });
+            const res = await fetch(withUrlBase("/settings/exclude-sync"), { method: "POST" });
             if (res.ok) setSyncStatus((await res.json()).urls ?? []);
         } catch {
             // ignore; the row shows the backend-reported error on the next status load
@@ -949,7 +950,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
             if (proxyUrl.trim()) fd.append('proxyUrl', proxyUrl);
             if (timeoutSeconds.trim()) fd.append('timeoutSeconds', timeoutSeconds);
             fd.append('skipTlsVerification', skipTlsVerification.toString());
-            const r = await fetch('/api/test-indexer-connection', { method: 'POST', body: fd });
+            const r = await fetch(withUrlBase('/api/test-indexer-connection'), { method: 'POST', body: fd });
             const data = await r.json();
             setTestState(data.status && data.connected ? 'success' : 'error');
         } catch {

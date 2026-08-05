@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Alert } from "~/components/ui/feedback";
 import { Icon } from "~/components/ui/icon";
+import { withUrlBase } from "~/utils/url-base";
 
 export function ResetHealthCheckStats() {
     const [isRunning, setIsRunning] = useState(false);
@@ -19,7 +20,7 @@ export function ResetHealthCheckStats() {
         setMessage(null);
         setError(null);
         try {
-            const response = await fetch("/api/clear-health-check-history", { method: "POST" });
+            const response = await fetch(withUrlBase("/api/clear-health-check-history"), { method: "POST" });
             if (!response.ok) {
                 const body = await response.json().catch(() => ({}));
                 throw new Error(body.error || `Request failed (${response.status})`);

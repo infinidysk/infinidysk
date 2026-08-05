@@ -12,6 +12,7 @@ import { backendClient, type LogEntry, type LogLevel } from "~/clients/backend-c
 import { useLogsWebsocket, type ConnectionStatus } from "./controllers/websocket-controller";
 import { Alert, Badge, Icon } from "~/components/ui";
 import { Input } from "~/components/ui/form";
+import { withUrlBase } from "~/utils/url-base";
 
 const ALL_LEVELS: LogLevel[] = ["Verbose", "Debug", "Information", "Warning", "Error", "Fatal"];
 const DEFAULT_LEVELS: LogLevel[] = ["Information", "Warning", "Error", "Fatal"];
@@ -109,7 +110,7 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
         }
         if (search) params.set("search", search);
         if (source) params.set("source", source);
-        fetch(`/api/get-logs?${params.toString()}`)
+        fetch(withUrlBase(`/api/get-logs?${params.toString()}`))
             .then(async r => {
                 if (!r.ok) throw new Error(`HTTP ${r.status}`);
                 return r.json();

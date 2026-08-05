@@ -7,6 +7,13 @@ FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-build
 
 WORKDIR /frontend
 
+# URL_BASE bakes the reverse-proxy sub-path (e.g. "/nzbdav") into the React
+# Router basename, Vite asset paths, and the client bundle. Leave unset for
+# root hosting (default, identical output to before this arg existed). Must
+# match the URL_BASE env var at container runtime — see docs/configuration/url-base.md.
+ARG URL_BASE=""
+ENV URL_BASE=${URL_BASE}
+
 COPY ./frontend/package.json ./frontend/package-lock.json ./
 RUN npm ci
 COPY ./frontend ./
@@ -86,5 +93,10 @@ ARG NZBDAV_COMMIT_SHA
 ENV NZBDAV_COMMIT_SHA=${NZBDAV_COMMIT_SHA}
 ENV NODE_ENV=production
 ENV LOG_LEVEL=warning
+# Default the runtime half of URL_BASE to the baked build-time value so a
+# `--build-arg URL_BASE=/x` image works without repeating the env var at run
+# time. Can still be overridden (must then match the build value).
+ARG URL_BASE=""
+ENV URL_BASE=${URL_BASE}
 
 CMD ["/entrypoint.sh"]

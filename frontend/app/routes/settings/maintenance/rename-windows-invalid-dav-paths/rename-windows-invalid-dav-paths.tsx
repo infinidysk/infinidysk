@@ -3,6 +3,7 @@ import { Alert } from "~/components/ui/feedback";
 import { Icon } from "~/components/ui/icon";
 import { useCallback, useEffect, useState } from "react";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
+import { withUrlBase } from "~/utils/url-base";
 
 type RenameWindowsInvalidDavPathsProps = {
     savedConfig: Record<string, string>
@@ -127,7 +128,7 @@ export function RenameWindowsInvalidDavPaths({ savedConfig }: RenameWindowsInval
                         >
                             {statusError ?? progress ?? "Ready to scan."}
                             {isDone && <>
-                                {" "}<a className="link link-primary" href="/api/rename-windows-invalid-dav-paths/audit">View report</a>
+                                {" "}<a className="link link-primary" href={withUrlBase("/api/rename-windows-invalid-dav-paths/audit")}>View report</a>
                             </>}
                         </div>
                     </div>

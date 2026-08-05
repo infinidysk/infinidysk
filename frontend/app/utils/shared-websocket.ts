@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { URL_BASE } from "./url-base";
 import { receiveMessage } from "~/utils/websocket-util";
 
 export type TopicKind = "state" | "stream" | "event";
@@ -15,7 +16,7 @@ type Subscriber = {
 const RECONNECT_MS = 1000;
 
 function websocketUrl(): string {
-    return `${globalThis.location.origin.replace(/^http/, "ws")}/ws`;
+    return `${globalThis.location.origin.replace(/^http/, "ws")}${URL_BASE}/ws`;
 }
 
 /**

@@ -5,6 +5,7 @@ import { backendClient, type WatchdogEntry, type WatchdogOutcome } from "~/clien
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { Alert, Badge, Icon } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
+import { withUrlBase } from "~/utils/url-base";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -44,7 +45,7 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
     const refresh = useCallback(async (silent: boolean = false) => {
         if (!silent) setRefreshing(true);
         try {
-            const r = await fetch("/settings/watchdog-attempts?limit=200");
+            const r = await fetch(withUrlBase("/settings/watchdog-attempts?limit=200"));
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const data = await r.json();
             const next: WatchdogEntry[] = data.entries ?? [];
@@ -61,7 +62,7 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
         setShowClearConfirm(false);
         setClearing(true);
         try {
-            const r = await fetch("/settings/watchdog-attempts", { method: "POST" });
+            const r = await fetch(withUrlBase("/settings/watchdog-attempts"), { method: "POST" });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             setAttempts([]);
             setError(null);

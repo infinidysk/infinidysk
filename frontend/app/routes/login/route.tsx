@@ -5,6 +5,7 @@ import { backendClient } from "~/clients/backend-client.server";
 import { Alert, Button, Icon, Input, Spinner } from "~/components/ui";
 import { RenameAnnouncementBanner } from "~/components/rename-announcement-banner";
 import { isOidcEnabled } from "../../../server/oidc.server";
+import { withUrlBase } from "~/utils/url-base";
 
 type LoginPageData = {
     loginError: string | null;
@@ -50,7 +51,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                         <div className="flex flex-col items-center gap-3 text-center">
                             <img
                                 className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary via-info to-success p-0.5 shadow-lg shadow-primary/20"
-                                src="/logo.png"
+                                src={withUrlBase("/logo.png")}
                                 alt="InfiniDysk"
                             />
                             <div>
@@ -108,7 +109,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                                 </div>
                                 <a
                                     className="btn btn-outline w-full gap-2"
-                                    href="/auth/oidc/login"
+                                    href={withUrlBase("/auth/oidc/login")}
                                 >
                                     <Icon name="login" className="!text-[18px]" />
                                     Sign in with SSO

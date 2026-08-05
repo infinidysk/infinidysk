@@ -3,6 +3,7 @@ import { Button } from "~/components/ui/button";
 import { Alert } from "~/components/ui/feedback";
 import { Select } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
+import { withUrlBase } from "~/utils/url-base";
 
 type ProviderOption = { providerId: string; label: string };
 
@@ -15,7 +16,7 @@ export function ResetOverviewStats() {
 
     useEffect(() => {
         let cancelled = false;
-        fetch("/api/get-provider-usage")
+        fetch(withUrlBase("/api/get-provider-usage"))
             .then(r => (r.ok ? r.json() : Promise.reject()))
             .then(data => {
                 if (cancelled) return;

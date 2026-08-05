@@ -5,6 +5,7 @@ import { Form, redirect, useNavigation } from "react-router";
 import { isAuthenticated, setSessionUser } from "~/auth/authentication.server";
 import { Alert, Button, Input, Spinner } from "~/components/ui";
 import { RenameAnnouncementBanner } from "~/components/rename-announcement-banner";
+import { withUrlBase } from "~/utils/url-base";
 
 type OnboardingPageData = {
     error: string
@@ -59,7 +60,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                         <div className="flex flex-col items-center gap-3 text-center">
                             <img
                                 className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary via-info to-success p-0.5 shadow-lg shadow-primary/20"
-                                src="/logo.png"
+                                src={withUrlBase("/logo.png")}
                                 alt="InfiniDysk"
                             />
                             <div>

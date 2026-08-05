@@ -22,6 +22,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useSearchParams } from "react-router";
 import { isPositiveInteger } from "../validation";
+import { withUrlBase } from "~/utils/url-base";
 
 const USAGE_POLL_INTERVAL_MS = 10_000;
 
@@ -582,7 +583,7 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
         let disposed = false;
         async function fetchUsage() {
             try {
-                const response = await fetch('/api/get-provider-usage');
+                const response = await fetch(withUrlBase('/api/get-provider-usage'));
                 if (!response.ok || disposed) return;
                 const data: { providers?: ProviderUsage[] } = await response.json();
                 if (disposed || !data.providers) return;
@@ -1153,7 +1154,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
     useEffect(() => {
         if (!show) {
             benchmarkAbortRef.current?.abort();
-            void fetch('/api/benchmark-usenet-connection', {
+            void fetch(withUrlBase('/api/benchmark-usenet-connection'), {
                 method: 'POST',
                 body: (() => { const f = new FormData(); f.append('cancel', 'true'); return f; })(),
             }).catch(() => { /* best-effort cancel */ });
@@ -1161,7 +1162,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
     }, [show]);
     useEffect(() => () => {
         benchmarkAbortRef.current?.abort();
-        void fetch('/api/benchmark-usenet-connection', {
+        void fetch(withUrlBase('/api/benchmark-usenet-connection'), {
             method: 'POST',
             body: (() => { const f = new FormData(); f.append('cancel', 'true'); return f; })(),
         }).catch(() => { /* best-effort cancel */ });
@@ -1181,7 +1182,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
             formData.append('user', user);
             formData.append('pass', pass);
 
-            const response = await fetch('/api/test-usenet-connection', {
+            const response = await fetch(withUrlBase('/api/test-usenet-connection'), {
                 method: 'POST',
                 body: formData,
             });
@@ -1208,7 +1209,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
     const handleAutoTune = useCallback(async (verifyConnections?: number) => {
         // Abort any previous run still in flight before starting a new one.
         benchmarkAbortRef.current?.abort();
-        await fetch('/api/benchmark-usenet-connection', {
+        await fetch(withUrlBase('/api/benchmark-usenet-connection'), {
             method: 'POST',
             body: (() => { const f = new FormData(); f.append('cancel', 'true'); return f; })(),
         }).catch(() => { /* best-effort */ });
@@ -1274,7 +1275,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
             if (dataBudget) formData.append('data-budget-mb', dataBudget);
             if (verifyConnections) formData.append('verify-connections', String(verifyConnections));
 
-            const response = await fetch('/api/benchmark-usenet-connection', {
+            const response = await fetch(withUrlBase('/api/benchmark-usenet-connection'), {
                 method: 'POST', body: formData, signal: controller.signal,
             });
             const data = await response.json().catch(() => null);
@@ -1321,7 +1322,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
 
     const handleCancelBenchmark = useCallback(() => {
         benchmarkAbortRef.current?.abort();
-        void fetch('/api/benchmark-usenet-connection', {
+        void fetch(withUrlBase('/api/benchmark-usenet-connection'), {
             method: 'POST',
             body: (() => { const f = new FormData(); f.append('cancel', 'true'); return f; })(),
         }).catch(() => { /* best-effort cancel */ });

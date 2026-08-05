@@ -27,6 +27,7 @@ import { StreamTracingBanner } from "./components/stream-tracing-banner";
 import { RenameAnnouncementBanner } from "./components/rename-announcement-banner";
 import { isOidcEnabled } from "../server/oidc.server";
 import { getServiceProvider } from "./utils/service-provider.server";
+import { withUrlBase } from "~/utils/url-base";
 
 export async function loader({ request }: Route.LoaderArgs) {
   // Single-fetch navigation/revalidation uses internal `.data` URLs
@@ -118,11 +119,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
           name="description"
           content="The NzbDAV SuperFork — stream media directly from Usenet."
         />
-        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
-        <link rel="icon" href="/favicon.ico" />
-        <link rel="manifest" href="/site.webmanifest" />
+        <link rel="apple-touch-icon" sizes="180x180" href={withUrlBase("/apple-touch-icon.png")} />
+        <link rel="icon" type="image/png" sizes="32x32" href={withUrlBase("/favicon-32x32.png")} />
+        <link rel="icon" type="image/png" sizes="16x16" href={withUrlBase("/favicon-16x16.png")} />
+        <link rel="icon" href={withUrlBase("/favicon.ico")} />
+        <link rel="manifest" href={withUrlBase("/site.webmanifest")} />
         <Meta />
         <Links />
       </head>

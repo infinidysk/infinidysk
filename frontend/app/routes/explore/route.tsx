@@ -17,6 +17,7 @@ import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { classNames } from "~/utils/styling";
 import { Icon, Checkbox, Button } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
+import { withUrlBase } from "~/utils/url-base";
 
 const ITEM_MENU_CLASS =
     "flex select-none items-center self-stretch rounded-r-lg px-5 py-[15px]";
@@ -173,7 +174,7 @@ function Body(props: ExplorePageData) {
             const fd = new FormData();
             fd.append('path', fullPath);
             try {
-                const resp = await fetch('/api/delete-webdav-item', { method: 'POST', body: fd });
+                const resp = await fetch(withUrlBase('/api/delete-webdav-item'), { method: 'POST', body: fd });
                 if (!resp.ok) {
                     const data = await resp.json().catch(() => ({} as any));
                     failures.push(`${name}: ${data.error || resp.statusText}`);

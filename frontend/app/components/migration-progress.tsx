@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { withUrlBase } from "~/utils/url-base";
 
 export type MigrationStepStatus = "pending" | "running" | "completed" | "failed";
 
@@ -113,7 +114,7 @@ export function MigrationBoundary({ fallback }: { fallback: FallbackProps }) {
 
     const poll = async () => {
       try {
-        const res = await fetch("/api/migration-status", {
+        const res = await fetch(withUrlBase("/api/migration-status"), {
           headers: { accept: "application/json" },
           cache: "no-store",
         });
@@ -316,7 +317,7 @@ export function MigrationShell({
             <div className="flex items-center gap-3">
               <img
                 className="h-12 w-12 rounded-2xl bg-gradient-to-br from-primary via-info to-success p-0.5 shadow-md shadow-primary/20"
-                src="/logo.png"
+                src={withUrlBase("/logo.png")}
                 alt="InfiniDysk"
               />
               <div className="space-y-1">
