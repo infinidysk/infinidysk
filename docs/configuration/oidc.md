@@ -1,4 +1,4 @@
-# OIDC / SSO [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+# OIDC / SSO [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
 InfiniDysk can authenticate browser sessions with any standards-compliant OpenID
 Connect (OIDC) provider, including Authentik, Authelia, and Keycloak. OIDC is

@@ -12,7 +12,7 @@ InfiniDysk is designed as a **drop-in upgrade** from the NZB/WebDAV streaming li
 
 1. Stop the old container.
 2. Back up `./config` (or whatever you mount at `/config`).
-3. Point Compose (or `docker run`) at `ghcr.io/nzbdav/nzbdav:latest` (or a pinned release tag). Keep the same `/config` volume, `PUID`/`PGID`, and media path mounts.
+3. Point Compose (or `docker run`) at `ghcr.io/infinidysk/infinidysk:latest` (or a pinned release tag). Keep the same `/config` volume, `PUID`/`PGID`, and media path mounts.
 4. Start the new container and wait for database maintenance / health to pass.
 5. Confirm **Settings** (Usenet, WebDAV, SABnzbd API key), then spot-check queue/history and a WebDAV playback.
 
@@ -26,19 +26,19 @@ Operators have also **successfully migrated** to InfiniDysk from these forks by 
 
 | Source | Notes |
 |--------|--------|
-| [Pukabyte/nzbdav](https://github.com/Pukabyte/nzbdav) | Fork of nzbdav-dev; same WebDAV + SAB shape. Back up `/config`, switch image to `ghcr.io/nzbdav/nzbdav`, verify settings after migrate. |
+| [Pukabyte/nzbdav](https://github.com/Pukabyte/nzbdav) | Fork of nzbdav-dev; same WebDAV + SAB shape. Back up `/config`, switch image to `ghcr.io/infinidysk/infinidysk`, verify settings after migrate. |
 | [qooode/nzbdavex](https://github.com/qooode/nzbdavex) (NzbDavEx) | Extended fork (Watchdog, multi-provider, indexers, search profiles, etc.). Many features overlap with InfiniDysk; after migrate, re-check Settings for providers, indexers, profiles, and Watchdog/Watchtower equivalents rather than assuming every UI field maps 1:1. |
 
 ### Suggested steps (fork → InfiniDysk)
 
 1. Export or copy a cold backup of `/config` from the old stack.
 2. Note WebDAV credentials, SAB API key, Base URL, rclone mount paths, and *Arr client settings.
-3. Replace the image with `ghcr.io/nzbdav/nzbdav` (same volume mounts).
+3. Replace the image with `ghcr.io/infinidysk/infinidysk` (same volume mounts).
 4. On first boot, watch logs for migration progress; do not interrupt mid-migration.
 5. Walk **Settings** tabs and confirm providers, WebDAV, SABnzbd, *Arr, and import strategy.
 6. Test one known-good release (queue → mount → play) before relying on the library.
 
-If something fails, restore the `/config` backup and reopen the previous image — then [file an issue](https://github.com/nzbdav/nzbdav/issues) with versions and migration log excerpts (redact secrets).
+If something fails, restore the `/config` backup and reopen the previous image — then [file an issue](https://github.com/infinidysk/infinidysk/issues) with versions and migration log excerpts (redact secrets).
 
 ## What usually carries over
 
@@ -55,4 +55,4 @@ If something fails, restore the `/config` backup and reopen the previous image �
 
 ## Related
 
-- [Migrate from Altmount (experimental)](../guides/altmount-migration.md) [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } · [Docker](docker.md) · [First run](first-run.md) · [Compare alternatives](../guides/compare.md) · [About](../community/about.md)
+- [Migrate from Altmount (experimental)](../guides/altmount-migration.md) [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } · [Docker](docker.md) · [First run](first-run.md) · [Compare alternatives](../guides/compare.md) · [About](../community/about.md)

@@ -16,49 +16,47 @@ library with almost none of the media stored locally.
 **InfiniDysk** combines that idea with an intentionally distinctive spelling:
 an infinite virtual disk, streamed on demand.
 
-## What changes now?
+## The move is complete
 
-- The app, documentation, and community branding now use **InfiniDysk**.
-- A new logo and favicon identify the project.
-- Documentation is now published at
-  [www.infinidysk.com](https://www.infinidysk.com/).
-- The current repository and Docker image path remain unchanged during this
-  transition stage.
+The project now lives at its new home:
 
-There is no application configuration or deployment change to make yet.
+- GitHub: [github.com/infinidysk/infinidysk](https://github.com/infinidysk/infinidysk)
+- Container image: `ghcr.io/infinidysk/infinidysk` (canonical)
+- Docker Hub mirror: `docker.io/infinidysk/infinidysk`
+- Documentation: [www.infinidysk.com](https://www.infinidysk.com/)
 
-## What will change later?
+All old GitHub links, git remotes, issues, stars, and releases redirect
+automatically to the new repository.
 
-The project will move to:
+## How do I switch?
 
-- GitHub: `github.com/infinidysk/infinidysk`
-- Container image: `ghcr.io/infinidysk/infinidysk`
+Change the image name — nothing else:
 
-Do not switch the image reference until the new package is published and the
-migration announcement says it is ready.
+```yaml
+# before
+image: ghcr.io/nzbdav/nzbdav:latest
+# after
+image: ghcr.io/infinidysk/infinidysk:latest
+```
 
-When it is available, moving will only require changing the image name. Keep
-the same `/config` volume, ports, environment variables, and media mounts.
-Existing version numbers and release history will continue.
+Keep the same `/config` volume, ports, environment variables, and media
+mounts. Every historical version tag was copied to the new namespace with
+identical digests, so pinned versions swap 1:1. Version numbers and release
+history continue unchanged.
 
 ## Will the old image stop working?
 
-No abrupt cutoff is planned. The old `ghcr.io/nzbdav/nzbdav` path will continue
-receiving releases during a transition period. Images published there after the
-move will show an in-app reminder with the new path and the final support date.
+No abrupt cutoff. The old `ghcr.io/nzbdav/nzbdav` path continues receiving
+releases during a transition period, and old version tags will remain pullable
+indefinitely. Images published to the old path since the move show a persistent
+in-app reminder with the new image name.
 
-Old version tags will remain pullable. The final image published at the old
-path will keep the migration instructions visible for installations that have
-not switched yet.
+When the transition period ends, the old path stops receiving new releases —
+installations that never switched keep working on their last version, with the
+migration instructions still visible in the app.
 
 ## Is this still the same fork?
 
 Yes. InfiniDysk remains the maintained successor and drop-in upgrade from
 `nzbdav-dev/nzbdav v0.6.4`, with the same source history and MIT license. The
 project will keep crediting its upstream and community-fork heritage.
-
-## When is the move?
-
-The new identity is being introduced first so the move is not a surprise. A
-final date will be posted here, in the app, in release notes, and in Discord
-after the new repository and container publishing flow have been verified.

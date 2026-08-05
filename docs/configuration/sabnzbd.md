@@ -18,9 +18,9 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | Completed Downloads Dir | `api.completed-downloads-dir` | backend default under `/data` | When STRM |
 | Base URL | `general.base-url` | `http://localhost:3000` | STRM / adapter absolute URLs |
 | Ignored Files | `api.download-file-blocklist` | `*.nfo, *.par2, …` | Glob blocklist for mounts (`*` and `?`) |
-| Filter sample videos [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } | `api.sample-filter-enabled` | on | Discard videos with whole-word `sample`/`samples` under 20% of the largest video in the NZB |
+| Filter sample videos [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `api.sample-filter-enabled` | on | Discard videos with whole-word `sample`/`samples` under 20% of the largest video in the NZB |
 | Behavior for Duplicate NZBs | `api.duplicate-nzb-behavior` | `increment` | increment / mark-failed |
-| Trusted local hosts [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } | `api.addurl-trusted-hosts` | env `TRUSTED_INTERNAL_HOSTS` | SSRF allowlist for private addurl |
+| Trusted local hosts [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `api.addurl-trusted-hosts` | env `TRUSTED_INTERNAL_HOSTS` | SSRF allowlist for private addurl |
 | Fail downloads without video | `api.ensure-importable-video` | on | Reject non-video NZBs |
 | Fail when non-video missing articles | inverse of `api.skip-non-video-on-missing-articles` | skip non-video by default | |
 | Article health check categories | `api.ensure-article-existence-categories` | empty (off) | Per-category; may be slow |
@@ -34,7 +34,7 @@ Queue capacity and admission limits are configured separately under
 [Queue](queue.md). The default user agent for retrieving NZBs, including
 matched `addurl` requests, is configured under [Indexers](indexers.md).
 
-## Sampled article checks [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+## Sampled article checks [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
 Categories selected under `api.ensure-article-existence-categories` use a full
 article check by default, preserving existing behavior. Set

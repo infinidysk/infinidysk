@@ -2,11 +2,11 @@
 
 Day-to-day settings live in the admin UI (**Settings**) and persist in SQLite under `/config`. Use this section as a walkthrough of every Settings tab.
 
-For **authoritative headless** configuration of those same Settings keys via `NZBDAV_CONFIG__...`, see **[Headless environment configuration](headless.md)** [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }. Process wiring and legacy fallbacks remain on **[Environment variables](environment-variables.md)**.
+For **authoritative headless** configuration of those same Settings keys via `NZBDAV_CONFIG__...`, see **[Headless environment configuration](headless.md)** [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }. Process wiring and legacy fallbacks remain on **[Environment variables](environment-variables.md)**.
 
 !!! note "Docs track latest"
 
-    Settings marked [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } (or another version) were introduced in that release. Older images will not show those controls.
+    Settings marked [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } (or another version) were introduced in that release. Older images will not show those controls.
 
 ## Settings hub
 
@@ -17,7 +17,7 @@ For **authoritative headless** configuration of those same Settings keys via `NZ
 -   **Playback & files** — [Streaming](streaming.md) · [WebDAV](webdav.md)
 -   **Automation** — [Watchdog](watchdog.md) · [Preflight](preflight.md) · [Watchtower](watchtower.md) · [Warden](warden.md)
 -   **Integrations** — [Arr Apps](arrs.md) · [Rclone](rclone.md)
--   **System** — [Health & repairs](repairs.md) · [Maintenance](maintenance.md) · [Backup](backup.md) · [Support](support.md) · [Migration (experimental)](../guides/altmount-migration.md) [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+-   **System** — [Health & repairs](repairs.md) · [Maintenance](maintenance.md) · [Backup](backup.md) · [Support](support.md) · [Migration (experimental)](../guides/altmount-migration.md) [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 -   **Headless / ops** — [OIDC / SSO](oidc.md) · [Headless ENV config](headless.md) · [Environment variables](environment-variables.md)
 
 </div>

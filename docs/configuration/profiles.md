@@ -23,4 +23,4 @@ Treat each generated **token** as a secret. Adapter URLs look like:
 
     Fallback queries spend per-indexer hit/rate limits.
 
-Play link lifetime is under [Watchdog](watchdog.md) (`play.resolution-cache-ttl-hours`) [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }.
+Play link lifetime is under [Watchdog](watchdog.md) (`play.resolution-cache-ttl-hours`) [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }.

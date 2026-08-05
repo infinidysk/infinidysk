@@ -87,14 +87,14 @@ describe("checkForUpdate", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         tag_name: "v0.8.0",
-        html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0",
+        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
       }),
     );
 
     await expect(checkForUpdate("0.7.5")).resolves.toEqual({
       kind: "release",
       latestVersion: "0.8.0",
-      releaseUrl: "https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0",
+      releaseUrl: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
     });
   });
 
@@ -102,7 +102,7 @@ describe("checkForUpdate", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         tag_name: "v0.7.5",
-        html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.7.5",
+        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
       }),
     );
 
@@ -113,7 +113,7 @@ describe("checkForUpdate", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         tag_name: "v0.7.5",
-        html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.7.5",
+        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
       }),
     );
 
@@ -126,7 +126,7 @@ describe("checkForUpdate", () => {
     await expect(checkForUpdate("0.7.5")).resolves.toEqual({
       kind: "release",
       latestVersion: "0.9.0",
-      releaseUrl: "https://github.com/nzbdav/nzbdav/releases",
+      releaseUrl: "https://github.com/infinidysk/infinidysk/releases",
     });
   });
 
@@ -144,7 +144,7 @@ describe("checkForUpdate", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         tag_name: "v0.8.0",
-        html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0",
+        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
       }),
     );
 
@@ -159,13 +159,13 @@ describe("checkForUpdate", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           tag_name: "v0.8.0",
-          html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0",
+          html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           tag_name: "v0.9.0",
-          html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0",
+          html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0",
         }),
       );
 
@@ -190,7 +190,7 @@ describe("checkForUpdate", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         tag_name: "v0.8.0",
-        html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0",
+        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
       }),
     );
 
@@ -212,21 +212,21 @@ describe("checkForUpdate", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           tag_name: "v0.7.5",
-          html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.7.5",
+          html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           status: "ahead",
           ahead_by: 2,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+          html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...main`,
         }),
       );
 
     await expect(checkForUpdate("0.7.5")).resolves.toEqual({
       kind: "dev",
       commitsBehind: 2,
-      compareUrl: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...main`,
+      compareUrl: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...main`,
       trackRef: "main",
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -241,7 +241,7 @@ describe("checkForUpdate", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         tag_name: "v0.7.5",
-        html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.7.5",
+        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
       }),
     );
 
@@ -259,7 +259,7 @@ describe("checkForUpdate", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         tag_name: "v0.7.5",
-        html_url: "https://github.com/nzbdav/nzbdav/releases/tag/v0.7.5",
+        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
       }),
     );
 
@@ -278,14 +278,14 @@ describe("checkForUpdate", () => {
       jsonResponse({
         status: "ahead",
         ahead_by: 2,
-        html_url: "https://github.com/nzbdav/nzbdav/compare/e0eef520...main",
+        html_url: "https://github.com/infinidysk/infinidysk/compare/e0eef520...main",
       }),
     );
 
     await expect(checkForUpdate("main-e0eef520")).resolves.toEqual({
       kind: "dev",
       commitsBehind: 2,
-      compareUrl: "https://github.com/nzbdav/nzbdav/compare/e0eef520...main",
+      compareUrl: "https://github.com/infinidysk/infinidysk/compare/e0eef520...main",
       trackRef: "main",
     });
     expect(getBuildCommitMock).toHaveBeenCalledWith({ version: "main-e0eef520" });
@@ -309,14 +309,14 @@ describe("checkForUpdate (dev builds)", () => {
       jsonResponse({
         status: "ahead",
         ahead_by: 3,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+        html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       }),
     );
 
     await expect(checkForUpdate("dev-e0eef52")).resolves.toEqual({
       kind: "dev",
       commitsBehind: 3,
-      compareUrl: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+      compareUrl: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       trackRef: "dev",
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
@@ -329,7 +329,7 @@ describe("checkForUpdate (dev builds)", () => {
       jsonResponse({
         status: "identical",
         ahead_by: 0,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+        html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       }),
     );
 
@@ -344,7 +344,7 @@ describe("checkForUpdate (dev builds)", () => {
       jsonResponse({
         status: "identical",
         ahead_by: 0,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+        html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       }),
     );
 
@@ -357,7 +357,7 @@ describe("checkForUpdate (dev builds)", () => {
         status: "behind",
         ahead_by: 0,
         behind_by: 2,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+        html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       }),
     );
 
@@ -370,7 +370,7 @@ describe("checkForUpdate (dev builds)", () => {
         status: "diverged",
         ahead_by: 1,
         behind_by: 1,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+        html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       }),
     );
 
@@ -387,7 +387,7 @@ describe("checkForUpdate (dev builds)", () => {
       jsonResponse({
         status: "identical",
         ahead_by: 0,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+        html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       }),
     );
 
@@ -413,7 +413,7 @@ describe("checkForUpdate (dev builds)", () => {
         jsonResponse({
           status: "ahead",
           ahead_by: 2,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+          html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
         }),
       );
 
@@ -433,7 +433,7 @@ describe("checkForUpdate (dev builds)", () => {
         jsonResponse({
           status: "ahead",
           ahead_by: 1,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+          html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
         }),
       );
 
@@ -452,14 +452,14 @@ describe("checkForUpdate (dev builds)", () => {
         jsonResponse({
           status: "identical",
           ahead_by: 0,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+          html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           status: "ahead",
           ahead_by: 4,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+          html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
         }),
       );
 
@@ -485,7 +485,7 @@ describe("checkForUpdate (dev builds)", () => {
     await expect(checkForUpdate("pre-42")).resolves.toEqual({
       kind: "dev",
       commitsBehind: 1,
-      compareUrl: "https://github.com/nzbdav/nzbdav/commits/dev",
+      compareUrl: "https://github.com/infinidysk/infinidysk/commits/dev",
       trackRef: "dev",
     });
   });
@@ -495,7 +495,7 @@ describe("checkForUpdate (dev builds)", () => {
       jsonResponse({
         status: "ahead",
         ahead_by: 2,
-        html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+        html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       }),
     );
 
@@ -511,14 +511,14 @@ describe("checkForUpdate (dev builds)", () => {
         jsonResponse({
           status: "ahead",
           ahead_by: 2,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+          html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           status: "ahead",
           ahead_by: 5,
-          html_url: `https://github.com/nzbdav/nzbdav/compare/${buildSha}...dev`,
+          html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
         }),
       );
 

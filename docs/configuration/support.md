@@ -1,4 +1,4 @@
-# Technical support pack [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+# Technical support pack [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 **Settings → Support** generates a ZIP you can provide to trusted InfiniDysk support
 when troubleshooting an issue. The archive is streamed to your browser and is
@@ -14,7 +14,7 @@ not retained by InfiniDysk.
 Backend logs are memory-only and are cleared when InfiniDysk restarts. Frontend and
 container logs are not included.
 
-## Latency phases [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+## Latency phases [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 `latency24Hours` projects one-minute histograms into five-minute buckets for:
 

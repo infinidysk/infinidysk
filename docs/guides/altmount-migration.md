@@ -1,4 +1,4 @@
-# Migrate from Altmount [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+# Migrate from Altmount [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
 !!! warning "Experimental"
 

@@ -12,9 +12,9 @@ Background health monitoring and replacement of unhealthy library items.
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
 | Enable Background Repairs | `repair.enable` | off | Needs library dir + *Arr |
-| Health Check Concurrency [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since } | `repair.healthcheck-concurrency` | `50` | Worker ceiling for concurrent STAT checks; capped by the provider pool. Actual contention with playback is governed by provider-pool admission and **Streaming Priority** |
+| Health Check Concurrency [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `repair.healthcheck-concurrency` | `50` | Worker ceiling for concurrent STAT checks; capped by the provider pool. Actual contention with playback is governed by provider-pool admission and **Streaming Priority** |
 | Health Check Depth | `repair.healthcheck-depth` | `standard` | standard / enhanced / deep / complete |
-| Check older releases less thoroughly [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } | `repair.healthcheck-aging` | off | Aging taper |
+| Check older releases less thoroughly [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `repair.healthcheck-aging` | off | Aging taper |
 | Repair After Streaming Failures | `repair.auto-remove-after-failures` | `0` | Consecutive streaming failures before urgent repair; `0` = immediate repair |
 | Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items are removed and blocklisted through *Arr instead of force-deleted |
 | Library Directory | `media.library-dir` | empty | Organized media path in container |
@@ -31,7 +31,7 @@ Successful full-file playback and a successful background health check reset the
 count. The count resets when InfiniDysk restarts, so it is intentionally not a durable replacement for
 health checks.
 
-## Replacement-loop protection [since 0.9.4](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.4){ .nzbdav-since }
+## Replacement-loop protection [since 0.9.4](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.4){ .nzbdav-since }
 
 When *Arr imports a download instantly (for example over an rclone mount), a broken release can
 import successfully before any health check runs. Marking an already-imported download failed does

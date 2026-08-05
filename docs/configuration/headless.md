@@ -1,4 +1,4 @@
-# Headless environment configuration [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+# Headless environment configuration [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 Authoritative, opt-in configuration of every user-owned Settings (`ConfigItems`) value via `NZBDAV_CONFIG__...` environment variables. Designed for infrastructure-as-code / Docker Compose deployments where the Settings UI should not own those values.
 
@@ -95,7 +95,7 @@ Copy-ready skeleton. Secrets use `${VAR:?message}` so Compose fails closed if th
 ```yaml
 services:
   nzbdav:
-    image: ghcr.io/nzbdav/nzbdav:latest
+    image: ghcr.io/infinidysk/infinidysk:latest
     container_name: nzbdav
     restart: unless-stopped
     healthcheck:

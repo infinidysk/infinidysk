@@ -1,4 +1,4 @@
-# URL base (sub-path hosting) [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+# URL base (sub-path hosting) [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
 Host the app under a reverse-proxy sub-path — e.g. `https://example.com/nzbdav/` —
 without any `sub_filter` response rewriting in the proxy.

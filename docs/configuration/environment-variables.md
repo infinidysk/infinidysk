@@ -2,7 +2,7 @@
 
 Advanced reference for **process / container** wiring and **legacy Settings fallbacks**. Most day-to-day tunables live in the Settings UI (SQLite).
 
-!!! tip "Authoritative headless Settings [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }"
+!!! tip "Authoritative headless Settings [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }"
 
     To drive every Settings (`ConfigItems`) value from the environment — with read-only UI locks and values kept out of SQLite — use the **`NZBDAV_CONFIG__...`** overlay documented in **[Headless environment configuration](headless.md)**. That page includes a fully hydrated Compose example.
 
@@ -37,7 +37,7 @@ Advanced reference for **process / container** wiring and **legacy Settings fall
 | `NZBDAV_VERSION` / `NZBDAV_COMMIT_SHA` | image build | Version display |
 | `SERVICE_PROVIDER` | unset | Hosted-service branding and UI navigation feature gating |
 
-## `SERVICE_PROVIDER` [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+## `SERVICE_PROVIDER` [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
 Hosted InfiniDysk services can identify the service provider and mark selected
 navigation destinations as unavailable. Disabled destinations remain visible in
@@ -91,7 +91,7 @@ or restrict backend capabilities when enforcement is required.
 | `STREAM_TRACE_EVENTS` | `0` (off) | Opt-in stream trace capacity, always-on with no expiry; the Settings → Support toggle can also set capacity (20k–200k) for timed captures |
 | `TRUSTED_PROXY_CIDRS` | loopback | Comma-separated IPs/CIDRs trusted for forwarded headers |
 | `DISABLE_WEBDAV_AUTH` | unset | Disables WebDAV auth (**dangerous**) |
-| `USENET_DISABLE_CRC_VALIDATION` [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } | unset | `1` skips yEnc CRC checks (emergency) |
+| `USENET_DISABLE_CRC_VALIDATION` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | unset | `1` skips yEnc CRC checks (emergency) |
 | `THREADPOOL_MIN_THREADS` | `max(2×CPU, 50)` | Override min worker/IOCP threads |
 | `THREADPOOL_MAX_THREADS` | `max(50×CPU, 1000)` | Override max threads |
 | `MAX_REQUEST_BODY_SIZE` | 100 MiB | Max request body bytes |
@@ -115,11 +115,11 @@ These apply only when the matching Settings value is empty **and** no
 | `CATEGORIES` | Categories | `audio,software,tv,movies` |
 | `NZB_GRAB_USER_AGENT` | User Agent / retrieve UA | `nzbdav/{version}` |
 | `NZB_SEARCH_USER_AGENT` | Search User-Agent | `nzbdav/{version}` |
-| `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } | Trusted local hosts | none |
+| `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | Trusted local hosts | none |
 | `MOUNT_DIR` | Rclone Mount Directory | `/mnt/nzbdav` |
 | `WEBDAV_USER` | WebDAV User | `admin` |
 | `WEBDAV_PASSWORD` | WebDAV Password | none (hashed when set) |
-| `RESOLUTION_CACHE_TTL_HOURS` [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } | Search link lifetime | `168` |
+| `RESOLUTION_CACHE_TTL_HOURS` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | Search link lifetime | `168` |
 | `DATABASE_HISTORY_RETENTION_DAYS` | History retention | `90` |
 | `DATABASE_HEALTHCHECK_RETENTION_DAYS` | Health-check retention | `30` |
 | `DATABASE_MAINTENANCE_INTERVAL_HOURS` | Retention sweep cadence | `6` |

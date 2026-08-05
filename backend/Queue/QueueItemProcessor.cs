@@ -272,7 +272,7 @@ public class QueueItemProcessor(
             nzb.Metadata.GetValueOrDefault("password");
 
         // step 0 -- perform article existence pre-check against cache
-        // https://github.com/nzbdav/nzbdav/issues/101
+        // https://github.com/infinidysk/infinidysk/issues/101
         var articlesToPrecheck = nzbFiles.SelectMany(x => x.Segments).Select(x => x.MessageId);
         HealthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck);
 

@@ -39,7 +39,7 @@ public class TmdbIdResolver
             var url = $"https://query.wikidata.org/sparql?query={Uri.EscapeDataString(query)}";
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.Accept.ParseAdd("application/sparql-results+json");
-            req.Headers.UserAgent.ParseAdd("NzbDav (https://github.com/nzbdav-dev/nzbdav)");
+            req.Headers.UserAgent.ParseAdd("InfiniDysk (https://github.com/infinidysk/infinidysk)");
             using var resp = await HttpClient.SendAsync(req, ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode) return null;
             await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);

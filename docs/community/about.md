@@ -14,6 +14,6 @@ Historical stack announcement notes: [0.7.x coordinated release](history/release
 
 ## License
 
-[MIT](https://github.com/nzbdav/nzbdav/blob/main/LICENSE).
+[MIT](https://github.com/infinidysk/infinidysk/blob/main/LICENSE).
 
 InfiniDysk is intended for legally obtained or public domain content only.

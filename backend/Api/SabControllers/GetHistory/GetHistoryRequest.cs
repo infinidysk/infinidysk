@@ -32,7 +32,7 @@ public class GetHistoryRequest
         // The official Sabnzbd api uses the `limit` param to specify the number of history items
         // that should be returned in the response. However, radarr/sonarr set this param to 60 items
         // which causes problems:
-        //   * https://github.com/nzbdav/nzbdav/issues/48
+        //   * https://github.com/infinidysk/infinidysk/issues/48
         //   * https://github.com/Sonarr/Sonarr/issues/5452
         //
         // Because of this, NzbDAV added a setting to ignore the `limit` value specified by the Arrs.

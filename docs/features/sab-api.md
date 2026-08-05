@@ -7,16 +7,16 @@ InfiniDysk implements the SABnzbd-compatible operations used by Sonarr, Radarr, 
 - `version`, `status`, `fullstatus`, `get_config`, and `get_cats`
 - `addfile` and `addurl`
 - `queue` listing and `queue&name=delete`
-- `pause` / `resume` (also `queue&name=pause` / `queue&name=resume`) and `speedlimit` [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+- `pause` / `resume` (also `queue&name=pause` / `queue&name=resume`) and `speedlimit` [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 - `history` listing and `history&name=delete`
 
 Queue and history filters accept both `cat` and `category`. The default category sentinel returned by `get_cats` is `*`.
 
-## Pause, resume, and speed limit [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+## Pause, resume, and speed limit [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 `mode=pause` / `mode=resume` stop and restart **new** queue dequeues. Workers already downloading finish naturally. WebDAV mounts keep serving — pause does not interrupt playback. Queue JSON reports `paused` accurately. Items added with SAB priority `-2` (Paused) are skipped until their priority changes; queue slots report `status: Paused` for those jobs.
 
-`mode=speedlimit` is **accepted and stored** and reflected in queue JSON (`speedlimit` / `speedlimit_abs`). Byte-accurate download throttling is **not** enforced yet — that work is tracked in [#375](https://github.com/nzbdav/nzbdav/issues/375).
+`mode=speedlimit` is **accepted and stored** and reflected in queue JSON (`speedlimit` / `speedlimit_abs`). Byte-accurate download throttling is **not** enforced yet — that work is tracked in [#375](https://github.com/infinidysk/infinidysk/issues/375).
 
 ## Intentional differences
 
@@ -27,7 +27,7 @@ Queue and history filters accept both `cat` and `category`. The default category
 - **Ignore SAB history limit** can ignore a client's `limit`; InfiniDysk still enforces a server-side maximum page size.
 - Authentication failures use HTTP error status codes instead of always returning HTTP 200 with an error body.
 
-## `addurl` and private / LAN hosts [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }
+## `addurl` and private / LAN hosts [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }
 
 `mode=addurl` fetches the NZB from the URL the download client supplies. Before each hop (including redirects), InfiniDysk rejects destinations that resolve to a non-public IP — an SSRF guard that also blocks Docker DNS / RFC1918 indexers unless allowlisted.
 

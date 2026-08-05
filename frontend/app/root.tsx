@@ -24,7 +24,7 @@ import { backendClient } from "./clients/backend-client.server";
 import { MigrationBoundary } from "./components/migration-progress";
 import { ServiceProviderGate } from "./components/service-provider-gate";
 import { StreamTracingBanner } from "./components/stream-tracing-banner";
-import { RenameAnnouncementBanner } from "./components/rename-announcement-banner";
+import { LegacyImageBanner } from "./components/legacy-image-banner";
 import { isOidcEnabled } from "../server/oidc.server";
 import { getServiceProvider } from "./utils/service-provider.server";
 import { withUrlBase } from "~/utils/url-base";
@@ -48,6 +48,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   return {
     useLayout: true,
+    // Baked into images published to the deprecated ghcr.io/nzbdav/nzbdav path.
+    isLegacyImage: process.env.NZBDAV_LEGACY_IMAGE === "true",
     version,
     updateAvailable: await checkForUpdate(version),
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
@@ -139,6 +141,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 export default function App({ loaderData }: Route.ComponentProps) {
   const {
     useLayout,
+    isLegacyImage,
     version,
     updateAvailable,
     isFrontendAuthDisabled,
@@ -180,7 +183,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
             {showLoading ? <Loading /> : (
               <>
                 <div className="px-4 pt-4 md:px-8">
-                  <RenameAnnouncementBanner />
+                  <LegacyImageBanner isLegacyImage={isLegacyImage ?? false} />
                   <StreamTracingBanner isReadOnly={role === "readonly"} />
                 </div>
                 {outlet}

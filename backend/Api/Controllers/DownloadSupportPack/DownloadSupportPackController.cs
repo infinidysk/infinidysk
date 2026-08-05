@@ -11,7 +11,7 @@ public sealed class DownloadSupportPackController(SupportPackService supportPack
     {
         var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
         Response.ContentType = "application/zip";
-        Response.Headers.ContentDisposition = $"attachment; filename=\"nzbdav-support-{timestamp}.zip\"";
+        Response.Headers.ContentDisposition = $"attachment; filename=\"infinidysk-support-{timestamp}.zip\"";
         Response.Headers.CacheControl = "no-store";
 
         // ZipArchive performs synchronous finalization writes. BodyWriter's stream

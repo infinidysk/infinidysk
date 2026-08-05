@@ -33,7 +33,7 @@ Persisted as `usenet.providers` JSON.
 
     Disabling SSL stores/sends credentials in cleartext on the wire — only for trusted networks.
 
-## Invalid provider certificates [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+## Invalid provider certificates [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 Leave **Skip TLS certificate verification** disabled unless a trusted provider has
 a certificate it cannot correct. It keeps the NNTP connection encrypted but
@@ -53,7 +53,7 @@ Run Auto-tune before enabling queue pipelining. WebDAV streaming pipelining is a
 
 See [NNTP pipelining](../features/nntp-pipelining.md) and [Multi-provider](../features/multi-provider.md).
 
-## Article-miss negative cache [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+## Article-miss negative cache [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 After a provider (or [storage group](../features/multi-provider.md)) reports a definitive article miss
 (NNTP 430 or provider 451), InfiniDysk remembers that miss so later streaming/batch reads skip

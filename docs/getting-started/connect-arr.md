@@ -14,7 +14,7 @@ In Radarr or Sonarr → **Settings** → **Download Clients** → **Add** → **
 | API Key | InfiniDysk **Settings → SABnzbd → API Key** |
 | Category | Match categories you configured (e.g. `movies`, `tv`) |
 
-Test the connection. Prefer `addfile` when clients can upload NZB bytes; `addurl` to private indexers needs [Trusted local hosts](../configuration/sabnzbd.md) [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }.
+Test the connection. Prefer `addfile` when clients can upload NZB bytes; `addurl` to private indexers needs [Trusted local hosts](../configuration/sabnzbd.md) [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }.
 
 ## Register *Arr in InfiniDysk
 

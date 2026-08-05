@@ -39,7 +39,7 @@ Synced patterns take precedence; last-good cache survives temporary URL failures
 | Ignore category filter | Omit `cat=` |
 | Result filtering | Skip passworded, min grabs, grace period, age/zero-download drops, rank by grabs |
 
-## Invalid indexer certificates [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+## Invalid indexer certificates [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 Leave **Skip TLS certificate verification** disabled unless a trusted HTTPS
 indexer has a certificate it cannot correct. The setting keeps traffic encrypted

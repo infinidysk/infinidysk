@@ -2,7 +2,7 @@
 
 !!! note "Docs track latest"
 
-    These pages describe the **latest** InfiniDysk release. Features and settings marked with a [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } pill (or similar) need at least that version — check your image tag or **Settings → About** before following a new workflow.
+    These pages describe the **latest** InfiniDysk release. Features and settings marked with a [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } pill (or similar) need at least that version — check your image tag or **Settings → About** before following a new workflow.
 
 Choose a path based on where you are:
 

@@ -1,6 +1,6 @@
 # Docker
 
-InfiniDysk ships as a single multi-arch image: `ghcr.io/nzbdav/nzbdav`. The container runs the frontend (public port `3000`) and backend (internal `8080`).
+InfiniDysk ships as a single multi-arch image: `ghcr.io/infinidysk/infinidysk`. The container runs the frontend (public port `3000`) and backend (internal `8080`).
 
 !!! tip "Hosted with DUMB"
 
@@ -15,7 +15,7 @@ InfiniDysk ships as a single multi-arch image: `ghcr.io/nzbdav/nzbdav`. The cont
 ```yaml
 services:
   nzbdav:
-    image: ghcr.io/nzbdav/nzbdav:latest
+    image: ghcr.io/infinidysk/infinidysk:latest
     container_name: nzbdav
     restart: unless-stopped
     healthcheck:
@@ -41,7 +41,7 @@ docker compose up -d
 
 Set `PUID`/`PGID` from `id` on the host. Map `/mnt` (or your media paths) so completed downloads and library folders share paths with *Arr and media servers.
 
-!!! tip "Headless Settings [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }"
+!!! tip "Headless Settings [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }"
 
     Prefer infrastructure-as-code for Usenet, WebDAV, *Arr, and other Settings? Use authoritative
     [`NZBDAV_CONFIG__...`](../configuration/headless.md) variables — see the
@@ -120,7 +120,7 @@ Long one-time maintenance does not mark the Compose healthcheck unhealthy — it
     - Allow HTTP Upgrade on **same-origin** `/ws` (Overview/Queue live updates).
     - Set `SECURE_COOKIES=true` when the UI is HTTPS-only.
     - Set **Base URL** in Settings (or `TRUST_PROXY=1` so forwarded headers rewrite correctly) for STRM/adapter absolute URLs.
-    - For `addurl` to Docker-internal indexers, configure [Trusted local hosts](../configuration/sabnzbd.md) or `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }.
+    - For `addurl` to Docker-internal indexers, configure [Trusted local hosts](../configuration/sabnzbd.md) or `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }.
 
 ## Optional environment
 
@@ -128,7 +128,7 @@ Long one-time maintenance does not mark the Compose healthcheck unhealthy — it
 |----------|---------|
 | `TRUST_PROXY=1` | Honor proxy `X-Forwarded-*` when rewriting scheme/host |
 | `TRUSTED_PROXY_CIDRS` | Widen backend proxy trust (split-container) |
-| `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } | Allowlist for private `addurl` targets |
+| `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | Allowlist for private `addurl` targets |
 | `SESSION_KEY` | Stable session secret (else persisted under `/config`) |
 | `THREADPOOL_MIN_THREADS` / `THREADPOOL_MAX_THREADS` | Memory-constrained hosts |
 

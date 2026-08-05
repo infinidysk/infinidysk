@@ -145,31 +145,31 @@ docker build .
 You can also tag the release, which can be used with `docker compose`:
 
 ```bash
-docker build -t example/nzbdav:test_build .
+docker build -t example/infinidysk:test_build .
 ```
 
 Run the container:
 
 ```bash
 docker run --rm -it \
-  -v /path/to/nzbdav/config:/config \
+  -v /path/to/infinidysk/config:/config \
   -e PUID=1000 \
   -e PGID=1000 \
   -p 3333:3000 \
-  example/nzbdav:test_build
+  example/infinidysk:test_build
 ```
 
 ### Using Docker Compose
 
 ```yaml
 services:
-  nzbdav:
+  infinidysk:
     build: .
     ports:
       - 3333:3000
     volumes:
-      - /path/to/nzbdav/config:/config
-      - /path/to/nzbdav/data:/data
+      - /path/to/infinidysk/config:/config
+      - /path/to/infinidysk/data:/data
     environment:
       - PUID=1000
       - PGID=1000

@@ -6,7 +6,7 @@
 - Ensure `CONFIG_PATH` (`/config`) is writable by `PUID`/`PGID`.
 - Frontend `/healthz` should pass during long migrations; backend `/health` must eventually succeed.
 
-## Streaming readiness (`/ready`) [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+## Streaming readiness (`/ready`) [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
 The backend readiness endpoint reports whether InfiniDysk can make progress on new streams. It returns
 `503 Service Unavailable` when Article RAM remains at least 90% leased with no active reads for 30
@@ -73,7 +73,7 @@ and User-Agent:
 - *Arr: disable metadata/extra-file writing for the affected root folder.
 - rclone: mount with `--read-only` so it stops probing for writability.
 
-## `addurl` SSRF / private indexer [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }
+## `addurl` SSRF / private indexer [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }
 
 Allow Docker DNS or LAN hosts under **Trusted local hosts** — [SABnzbd API](../features/sab-api.md).
 
@@ -90,5 +90,5 @@ See [Deletion audit](../operations/deletion-audit.md) — history retention ≠ 
 ## Still stuck
 
 Generate a [technical support pack](../configuration/support.md) from **Settings → Support**,
-review it for personal paths and names, then [open an issue](https://github.com/nzbdav/nzbdav/issues).
+review it for personal paths and names, then [open an issue](https://github.com/infinidysk/infinidysk/issues).
 For local stream debugging, see [Contributing](../community/contributing.md).

@@ -18,7 +18,7 @@ Chat with other operators, track development, and contribute.
 
     Source, stars, forks, and open pull requests.
 
-    [:octicons-arrow-right-24: github.com/nzbdav/nzbdav](https://github.com/nzbdav/nzbdav)
+    [:octicons-arrow-right-24: github.com/infinidysk/infinidysk](https://github.com/infinidysk/infinidysk)
 
 -   :material-tag:{ .lg .middle } __Releases__
 
@@ -26,7 +26,7 @@ Chat with other operators, track development, and contribute.
 
     Version tags, Docker image notes, upgrade highlights.
 
-    [:octicons-arrow-right-24: Releases](https://github.com/nzbdav/nzbdav/releases)
+    [:octicons-arrow-right-24: Releases](https://github.com/infinidysk/infinidysk/releases)
 
 -   :material-bug:{ .lg .middle } __Issues__
 
@@ -34,15 +34,15 @@ Chat with other operators, track development, and contribute.
 
     Bugs, feature requests, and triage. Prefer GitHub Issue Types over legacy kind labels.
 
-    [:octicons-arrow-right-24: Issues](https://github.com/nzbdav/nzbdav/issues)
+    [:octicons-arrow-right-24: Issues](https://github.com/infinidysk/infinidysk/issues)
 
 -   :material-docker:{ .lg .middle } __Container image__
 
     ---
 
-    `ghcr.io/nzbdav/nzbdav` multi-arch packages.
+    `ghcr.io/infinidysk/infinidysk` multi-arch packages.
 
-    [:octicons-arrow-right-24: GHCR](https://github.com/nzbdav/nzbdav/pkgs/container/nzbdav)
+    [:octicons-arrow-right-24: GHCR](https://github.com/infinidysk/infinidysk/pkgs/container/nzbdav)
 
 -   :material-check-network:{ .lg .middle } __CI__
 
@@ -50,7 +50,7 @@ Chat with other operators, track development, and contribute.
 
     Frontend and backend checks on every PR.
 
-    [:octicons-arrow-right-24: Actions](https://github.com/nzbdav/nzbdav/actions)
+    [:octicons-arrow-right-24: Actions](https://github.com/infinidysk/infinidysk/actions)
 
 -   :material-text-box:{ .lg .middle } __Changelog__
 
@@ -58,13 +58,13 @@ Chat with other operators, track development, and contribute.
 
     Generated release notes from conventional commits.
 
-    [:octicons-arrow-right-24: CHANGELOG](https://github.com/nzbdav/nzbdav/blob/main/CHANGELOG.md)
+    [:octicons-arrow-right-24: CHANGELOG](https://github.com/infinidysk/infinidysk/blob/main/CHANGELOG.md)
 
 </div>
 
 Prefer **Issues** for bugs and feature requests that need tracking; use **Discord** for quicker chat. The site header also shows live GitHub stars / forks / latest release when available.
 
-## Feature request voting [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since }
+## Feature request voting [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 Want a capability prioritized? Open a **Feature** request on GitHub (Issue Type: Feature), then react with a thumbs-up (👍) on the **issue body** — not on comments.
 

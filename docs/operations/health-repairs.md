@@ -10,7 +10,7 @@ Requires:
 - At least one configured Radarr/Sonarr instance
 - **Enable Background Repairs**
 
-Tune concurrency, health-check depth, aging [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }, and streaming-failure thresholds — [Repairs settings](../configuration/repairs.md).
+Tune concurrency, health-check depth, aging [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }, and streaming-failure thresholds — [Repairs settings](../configuration/repairs.md).
 
 For streaming-triggered failures, **Repair After Streaming Failures** can require consecutive
 failures before InfiniDysk starts a repair or asks *Arr to find a replacement. A successful full-file

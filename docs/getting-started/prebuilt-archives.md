@@ -1,4 +1,4 @@
-# Prebuilt Linux archives [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since }
+# Prebuilt Linux archives [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
 Prebuilt release archives run InfiniDysk directly on Linux without Docker or a
 source build. They include the compiled backend, frontend, production Node.js
@@ -16,7 +16,7 @@ The .NET SDK, CMake, Ninja, npm install, and Git submodules are not required.
 ## Install
 
 Download the archive for your system from the
-[latest GitHub release](https://github.com/nzbdav/nzbdav/releases/latest):
+[latest GitHub release](https://github.com/infinidysk/infinidysk/releases/latest):
 
 - `nzbdav-v<version>-linux-x64.tar.gz`
 - `nzbdav-v<version>-linux-arm64.tar.gz`
@@ -50,8 +50,8 @@ archives such as `nzbdav-v0.10.0-rc.1-linux-x64.tar.gz`.
 
 For automation, the rolling `rc` pre-release always exposes stable asset URLs:
 
-- [linux-x64](https://github.com/nzbdav/nzbdav/releases/download/rc/nzbdav-rc-linux-x64.tar.gz)
-- [linux-arm64](https://github.com/nzbdav/nzbdav/releases/download/rc/nzbdav-rc-linux-arm64.tar.gz)
+- [linux-x64](https://github.com/infinidysk/infinidysk/releases/download/rc/nzbdav-rc-linux-x64.tar.gz)
+- [linux-arm64](https://github.com/infinidysk/infinidysk/releases/download/rc/nzbdav-rc-linux-arm64.tar.gz)
 
 The archive's `version.txt` identifies the exact release candidate. The rolling
 `rc` release remains on the last candidate after a stable release ships, so

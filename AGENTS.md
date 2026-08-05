@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Quick-start guide for AI agents working on **NzbDAV**.
+Quick-start guide for AI agents working on **InfiniDysk** (formerly NzbDAV, "The NzbDAV SuperFork").
 
 ## What this project is
 
-NzbDAV is a **WebDAV server** that mounts NZB documents as a virtual filesystem and streams content directly from Usenet providers — without downloading files to disk first. It exposes a **SABnzbd-compatible API** so Sonarr, Radarr, and similar tools can use it as a drop-in download client.
+InfiniDysk is a **WebDAV server** that mounts NZB documents as a virtual filesystem and streams content directly from Usenet providers — without downloading files to disk first. It exposes a **SABnzbd-compatible API** so Sonarr, Radarr, and similar tools can use it as a drop-in download client.
 
 The shipped product is a **single Docker image** that runs two processes:
 
@@ -18,7 +18,7 @@ Persistent state lives under `CONFIG_PATH` (default `/config`): SQLite DB, setti
 ## Repository layout
 
 ```
-nzbdav/
+infinidysk/
 ├── backend/                 # C# ASP.NET Core app (namespace: NzbWebDAV)
 │   ├── Api/
 │   │   ├── Controllers/     # Admin REST API (/api/*)
@@ -118,7 +118,7 @@ Performance benchmarks live in `backend.Benchmarks/` and are run manually with
 
 ## In-tree libraries (UsenetSharp / SharpCompress / RapidYencSharp)
 
-NzbDAV develops these libraries **in this repository** under `libs/` and consumes them via `ProjectReference`. They are not published to NuGet from this repo.
+InfiniDysk develops these libraries **in this repository** under `libs/` and consumes them via `ProjectReference`. They are not published to NuGet from this repo.
 
 | Library | Path | Notes |
 |---------|------|-------|
@@ -364,7 +364,7 @@ When a task that changed the repo is done (unless the user explicitly said not t
 
 ### Never merge pull requests
 
-**Agents must never merge a pull request** — not with `gh pr merge`, the GitHub UI/API, auto-merge, squash/rebase merge, or any equivalent — **in this repository or any sibling NzbDAV ecosystem repo** (including `rapidyenc` and related packages).
+**Agents must never merge a pull request** — not with `gh pr merge`, the GitHub UI/API, auto-merge, squash/rebase merge, or any equivalent — **in this repository or any sibling InfiniDysk ecosystem repo** (including `rapidyenc` and related packages).
 
 - Opening a PR and reporting its URL is the end of the handoff.
 - Do **not** merge even if CI is green, the user seems impatient, a release is blocked on the merge, or merging would unblock downstream work.
@@ -392,7 +392,7 @@ Skip this handoff if there are no local changes and nothing to push or PR. Do no
 | `ci.yml` | PRs and pushes to `main` | Frontend lint/typecheck/build/tests + backend build/tests |
 | `docs.yml` | PRs and pushes to `main` | Zensical docs build (`zensical build --clean --strict`); deploys to GitHub Pages on `main` |
 | `codeql.yml` | PRs, pushes to `main`, and weekly schedule | CodeQL security analysis for C#, TypeScript, and GitHub Actions |
-| `refresh-dev.yml` | Manual `workflow_dispatch` | Publishes `ghcr.io/.../nzbdav:dev` and moves the git `dev` tag to that commit (unversioned snapshot) |
+| `refresh-dev.yml` | Manual `workflow_dispatch` | Publishes `ghcr.io/.../infinidysk:dev` and moves the git `dev` tag to that commit (unversioned snapshot) |
 | `cut-prerelease.yml` | Manual `workflow_dispatch` | Creates numbered and rolling `rc` GitHub Pre-releases with Linux archives; pushes versioned + rolling `:rc` images; moves git `rc` and `dev` tags; announces to development Discord |
 | `release.yml` | Push to `main` | release-please versioning; publishes Linux archives plus release, `dev`, and `rc` Docker tags; moves git `dev` and `rc` tags |
 | `release.yml` | Manual `workflow_dispatch` | Republishes Linux archives plus release, `dev`, and `rc` Docker tags for an existing version; moves git `dev` and `rc` tags |
@@ -471,7 +471,7 @@ else
 When documenting a **new user-visible** feature or setting, mark the introducing release with a `since` pill so readers on older images know the minimum version:
 
 ```markdown
-## Feature heading [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }
+## Feature heading [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }
 ```
 
 Use the first stable release that shipped the capability (not every patch). Style lives in `docs/stylesheets/extra.css` (`.nzbdav-since`). Do not archaeology-tag every historical setting — focus on capabilities readers might try from docs while still on an older tag.

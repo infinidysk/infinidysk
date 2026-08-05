@@ -17,7 +17,7 @@ caching, and retries. WebDAV credentials and filesystem behavior remain under
 | Max Download Connections | `usenet.max-download-connections` | `0` (auto = pool) | Streaming connection budget |
 | Apply limit per stream | `usenet.max-download-connections-per-stream` | off | Give each concurrent stream its own budget |
 | Per-stream performance | `usenet.max-download-connections-per-stream-preset` | `high` | low/medium/high/max = 25/50/75/100% |
-| Streaming Priority (vs Queue) [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since } | `usenet.streaming-priority` | `80` | Favor playback when streaming and queue imports overlap |
+| Streaming Priority (vs Queue) [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `usenet.streaming-priority` | `80` | Favor playback when streaming and queue imports overlap |
 
 Provider limits still cap total connections. Spare capacity is not held idle
 for playback; the priority setting only affects admission when a provider pool
@@ -37,13 +37,13 @@ is saturated.
 | Cache path | `usenet.segment-cache.path` | `/config/segment-cache` | Segment-cache directory |
 | Maximum size (GB) | `usenet.segment-cache.max-gb` | `10` | Segment-cache size limit |
 | Streaming Segment Timeout | `usenet.streaming-segment-timeout-seconds` | `8` | Per-segment deadline, 2–40 seconds |
-| Streaming Read Timeout [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since } | `usenet.streaming-read-timeout-seconds` | `30` | Initial 5–120 second wait to open a GET/range |
+| Streaming Read Timeout [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `usenet.streaming-read-timeout-seconds` | `30` | Initial 5–120 second wait to open a GET/range |
 | Streaming Segment Retries | `usenet.streaming-segment-retries` | `3` | Fresh-connection retries after timeout, 0–5 |
 | Article Buffer Size | `usenet.article-buffer-size` | `40` | Articles buffered ahead per stream |
-| In-flight article budget (MiB) [since 0.8.2](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.2){ .nzbdav-since } | `usenet.in-flight-article-budget-mb` | auto | Host-wide decoded-byte cap, 64–8192 MiB |
+| In-flight article budget (MiB) [since 0.8.2](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.2){ .nzbdav-since } | `usenet.in-flight-article-budget-mb` | auto | Host-wide decoded-byte cap, 64–8192 MiB |
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | Close unused connections after 15–300 seconds |
 | Pipelined article downloads | `usenet.pipelined-body-requests` | on | Fetch WebDAV BODY requests in small batches |
-| Container-aware gap fill [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | on | Experimental MPEG-TS null-packet fill for confirmed gaps |
+| Container-aware gap fill [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | on | Experimental MPEG-TS null-packet fill for confirmed gaps |
 
 ## Article buffer and adaptive prefetch
 

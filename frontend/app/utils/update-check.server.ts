@@ -17,13 +17,13 @@ export {
 };
 
 const GITHUB_LATEST_RELEASE_URL =
-  "https://api.github.com/repos/nzbdav/nzbdav/releases/latest";
+  "https://api.github.com/repos/infinidysk/infinidysk/releases/latest";
 const GITHUB_COMPARE_URL_PREFIX =
-  "https://api.github.com/repos/nzbdav/nzbdav/compare/";
+  "https://api.github.com/repos/infinidysk/infinidysk/compare/";
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const FETCH_TIMEOUT_MS = 5_000;
-const RELEASES_FALLBACK_URL = "https://github.com/nzbdav/nzbdav/releases";
-const COMMITS_URL_PREFIX = "https://github.com/nzbdav/nzbdav/commits/";
+const RELEASES_FALLBACK_URL = "https://github.com/infinidysk/infinidysk/releases";
+const COMMITS_URL_PREFIX = "https://github.com/infinidysk/infinidysk/commits/";
 
 type CachedRelease = {
   latestVersion: string;
@@ -69,7 +69,7 @@ async function fetchLatestRelease(): Promise<CachedRelease | null> {
       signal: controller.signal,
       headers: {
         Accept: "application/vnd.github+json",
-        "User-Agent": "nzbdav",
+        "User-Agent": "infinidysk",
       },
     });
 
@@ -148,7 +148,7 @@ async function fetchCompare(
       signal: controller.signal,
       headers: {
         Accept: "application/vnd.github+json",
-        "User-Agent": "nzbdav",
+        "User-Agent": "infinidysk",
       },
     });
 

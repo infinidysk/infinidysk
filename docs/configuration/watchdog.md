@@ -19,7 +19,7 @@ Playback failover, stall failover, and size-variant retention when a release can
 | Total candidates per request | `play.max-attempts` | `10` | 1–200 |
 | Verify mode | `play.verify-mode` | `none` | `stat` / `body` / `none` |
 | Negative-cache TTL (minutes) | `play.candidate-negative-cache-minutes` | `5` | Skip recently failed |
-| Search link lifetime (hours) [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since } | `play.resolution-cache-ttl-hours` | `168` | Play links in search results (env fallback) |
+| Search link lifetime (hours) [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `play.resolution-cache-ttl-hours` | `168` | Play links in search results (env fallback) |
 | Prefer releases with subtitles | `play.prefer-subtitles` | on | Reorder only |
 
 ## Stall failover

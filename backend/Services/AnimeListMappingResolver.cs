@@ -157,7 +157,7 @@ public class AnimeListMappingResolver
     {
         var handler = new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.All };
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(60) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("NzbDav (https://github.com/nzbdav-dev/nzbdav)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("InfiniDysk (https://github.com/infinidysk/infinidysk)");
         return client;
     }
 

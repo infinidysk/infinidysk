@@ -20,17 +20,17 @@ Mount NZBs as a virtual filesystem and stream directly from Usenet — without d
 <div class="nzbdav-cta" markdown>
 
 [Get started](getting-started/index.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/nzbdav/nzbdav){ .md-button }
-[Docker image](https://github.com/nzbdav/nzbdav/pkgs/container/nzbdav){ .md-button }
+[View on GitHub](https://github.com/infinidysk/infinidysk){ .md-button }
+[Docker image](https://github.com/infinidysk/infinidysk/pkgs/container/nzbdav){ .md-button }
 
 </div>
 
 <div class="nzbdav-badges" markdown>
 
-[![Latest release](https://img.shields.io/github/v/release/nzbdav/nzbdav)](https://github.com/nzbdav/nzbdav/releases)
-[![Docker](https://img.shields.io/badge/ghcr.io-nzbdav%2Fnzbdav-0d9488?logo=docker&logoColor=white)](https://github.com/nzbdav/nzbdav/pkgs/container/nzbdav)
-[![CI](https://img.shields.io/github/actions/workflow/status/nzbdav/nzbdav/ci.yml?branch=main&label=CI)](https://github.com/nzbdav/nzbdav/actions)
-[![License](https://img.shields.io/github/license/nzbdav/nzbdav)](https://github.com/nzbdav/nzbdav/blob/main/LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/nzbdav/nzbdav)](https://github.com/infinidysk/infinidysk/releases)
+[![Docker](https://img.shields.io/badge/ghcr.io-nzbdav%2Fnzbdav-0d9488?logo=docker&logoColor=white)](https://github.com/infinidysk/infinidysk/pkgs/container/nzbdav)
+[![CI](https://img.shields.io/github/actions/workflow/status/nzbdav/nzbdav/ci.yml?branch=main&label=CI)](https://github.com/infinidysk/infinidysk/actions)
+[![License](https://img.shields.io/github/license/nzbdav/nzbdav)](https://github.com/infinidysk/infinidysk/blob/main/LICENSE)
 
 </div>
 
@@ -111,7 +111,7 @@ Choosing between streaming WebDAV tools and classic download clients depends on 
 === "Docker run"
 
     ```bash
-    docker run --rm -it -p 3000:3000 ghcr.io/nzbdav/nzbdav:latest
+    docker run --rm -it -p 3000:3000 ghcr.io/infinidysk/infinidysk:latest
     ```
 
     Ephemeral trial — settings are discarded when the container exits.
@@ -121,7 +121,7 @@ Choosing between streaming WebDAV tools and classic download clients depends on 
     ```yaml
     services:
       nzbdav:
-        image: ghcr.io/nzbdav/nzbdav:latest
+        image: ghcr.io/infinidysk/infinidysk:latest
         container_name: nzbdav
         restart: unless-stopped
         ports:
@@ -196,20 +196,20 @@ Chat on Discord, track releases on GitHub, and file issues when you need a durab
 Discord community transition started **July 21**. After joining, use the channel and role selector to enable **InfiniDysk - SuperFork** for release notifications and development channels.
 
 [Join Discord](https://discord.gg/DAya7W6QMa){ .md-button .md-button--primary }
-[Repository](https://github.com/nzbdav/nzbdav){ .md-button }
-[Releases](https://github.com/nzbdav/nzbdav/releases){ .md-button }
-[Issues](https://github.com/nzbdav/nzbdav/issues){ .md-button }
+[Repository](https://github.com/infinidysk/infinidysk){ .md-button }
+[Releases](https://github.com/infinidysk/infinidysk/releases){ .md-button }
+[Issues](https://github.com/infinidysk/infinidysk/issues){ .md-button }
 [Community hub](community/github.md){ .md-button }
 
 ## Ecosystem
 
-InfiniDysk owns the streaming stack end to end. UsenetSharp, RapidYencSharp, and SharpCompress are developed in-tree under [`libs/`](https://github.com/nzbdav/nzbdav/tree/main/libs); the native **rapidyenc** library remains a [standalone submodule](https://github.com/nzbdav/rapidyenc) so connection, decode, and archive fixes land with the product.
+InfiniDysk owns the streaming stack end to end. UsenetSharp, RapidYencSharp, and SharpCompress are developed in-tree under [`libs/`](https://github.com/infinidysk/infinidysk/tree/main/libs); the native **rapidyenc** library remains a [standalone submodule](https://github.com/nzbdav/rapidyenc) so connection, decode, and archive fixes land with the product.
 
 [About the project](community/about.md){ .md-button }
 
 ## License
 
-InfiniDysk is released under the [MIT License](https://github.com/nzbdav/nzbdav/blob/main/LICENSE).
+InfiniDysk is released under the [MIT License](https://github.com/infinidysk/infinidysk/blob/main/LICENSE).
 
 !!! warning "Disclaimer"
 

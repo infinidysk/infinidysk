@@ -13,7 +13,7 @@ provider connections available to active imports.
 
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
-| Concurrent Queue Downloads [since 0.9.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.9.0){ .nzbdav-since } | `queue.worker-count` | `1` | Process 1–4 NZBs concurrently; the oldest active item is preferred |
+| Concurrent Queue Downloads [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `queue.worker-count` | `1` | Process 1–4 NZBs concurrently; the oldest active item is preferred |
 | Queue Download Connections | `usenet.max-queue-connections` | blank = all | Provider connections shared by queue workers and background health checks |
 
 Adding workers does not add provider capacity. Additional workers use spare
@@ -31,8 +31,8 @@ Playback has a separate connection budget and priority policy under
 
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
-| Maximum queued jobs [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } | `queue.max-items` | `0` (unlimited) | Reject new SAB submissions at this queue depth |
-| Resume threshold [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } | `queue.resume-threshold` | `0` | Resume admission at or below this depth |
+| Maximum queued jobs [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `queue.max-items` | `0` (unlimited) | Reject new SAB submissions at this queue depth |
+| Resume threshold [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `queue.resume-threshold` | `0` | Resume admission at or below this depth |
 
 At the maximum, InfiniDysk returns the standard SAB-compatible
 `{"status": false, "error": "..."}` response without storing the NZB. Sonarr

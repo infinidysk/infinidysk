@@ -12,7 +12,7 @@ Each profile selects indexers and optional adapters:
 | Addon | Manifest at `/adapters/addon/{token}/manifest.json` |
 | JSON | `GET /api/search/{token}/lookup?...` |
 
-Treat profile tokens as secrets. Play links in results have a configurable lifetime (**Watchdog → Search link lifetime**) [since 0.8.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.0){ .nzbdav-since }.
+Treat profile tokens as secrets. Play links in results have a configurable lifetime (**Watchdog → Search link lifetime**) [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }.
 
 ## Filters
 

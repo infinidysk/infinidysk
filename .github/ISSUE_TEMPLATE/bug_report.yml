@@ -24,7 +24,7 @@ body:
     attributes:
       label: NzbDav version
       description: Enter the version shown in the NzbDav UI or the Docker image tag.
-      placeholder: "e.g. 0.6.4 or ghcr.io/nzbdav/nzbdav:0.6.4"
+      placeholder: "e.g. 0.6.4 or ghcr.io/infinidysk/infinidysk:0.6.4"
     validations:
       required: true
 

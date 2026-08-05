@@ -150,7 +150,7 @@ name = "Discord"
 
 [[project.extra.social]]
 icon = "fontawesome/brands/docker"
-link = "https://github.com/nzbdav/nzbdav/pkgs/container/nzbdav"
+link = "https://github.com/infinidysk/infinidysk/pkgs/container/infinidysk"
 name = "GHCR"
 
 [[project.extra.social]]

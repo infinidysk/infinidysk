@@ -3,7 +3,6 @@ import { isAuthenticated, login } from "~/auth/authentication.server";
 import { Form, redirect, useNavigation } from "react-router";
 import { backendClient } from "~/clients/backend-client.server";
 import { Alert, Button, Icon, Input, Spinner } from "~/components/ui";
-import { RenameAnnouncementBanner } from "~/components/rename-announcement-banner";
 import { isOidcEnabled } from "../../../server/oidc.server";
 import { withUrlBase } from "~/utils/url-base";
 
@@ -38,9 +37,6 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
 
     return (
         <main className="flex min-h-dvh flex-col bg-base-300">
-            <div className="w-full px-4 pt-4 md:px-8">
-                <RenameAnnouncementBanner />
-            </div>
             <div className="hero flex-1">
             <div className="hero-content w-full max-w-sm px-4 py-8">
                 <Form

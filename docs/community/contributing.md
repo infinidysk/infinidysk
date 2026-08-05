@@ -39,4 +39,4 @@ cd frontend && npm run lint && npm run typecheck && npm run build && npm test
 dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
 ```
 
-Full details: repository [CONTRIBUTING.md](https://github.com/nzbdav/nzbdav/blob/main/CONTRIBUTING.md) and [AGENTS.md](https://github.com/nzbdav/nzbdav/blob/main/AGENTS.md).
+Full details: repository [CONTRIBUTING.md](https://github.com/infinidysk/infinidysk/blob/main/CONTRIBUTING.md) and [AGENTS.md](https://github.com/infinidysk/infinidysk/blob/main/AGENTS.md).

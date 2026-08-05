@@ -3,7 +3,7 @@
 >
 > Early adopters report **2x network throughput** and **seek times improved by up to 4x** compared with v0.6.4.
 >
-> `ghcr.io/nzbdav/nzbdav:latest`
+> `ghcr.io/infinidysk/infinidysk:latest`
 
 <p align="center">
   <img src="docs/assets/logo.png" width="160" alt="InfiniDysk logo" />
@@ -22,9 +22,9 @@
 <img width="1024" height="601" alt="InfiniDysk overview dashboard" src="docs/assets/overview.png" />
 
 <p align="center">
-  <a href="https://github.com/nzbdav/nzbdav/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/nzbdav/nzbdav" /></a>
-  <a href="https://github.com/nzbdav/nzbdav/pkgs/container/nzbdav"><img alt="Docker image" src="https://img.shields.io/badge/ghcr.io-nzbdav%2Fnzbdav-blue?logo=docker&logoColor=white" /></a>
-  <a href="https://github.com/nzbdav/nzbdav/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/nzbdav/nzbdav/ci.yml?branch=main&label=CI" /></a>
+  <a href="https://github.com/infinidysk/infinidysk/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/nzbdav/nzbdav" /></a>
+  <a href="https://github.com/infinidysk/infinidysk/pkgs/container/nzbdav"><img alt="Docker image" src="https://img.shields.io/badge/ghcr.io-nzbdav%2Fnzbdav-blue?logo=docker&logoColor=white" /></a>
+  <a href="https://github.com/infinidysk/infinidysk/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/nzbdav/nzbdav/ci.yml?branch=main&label=CI" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/nzbdav/nzbdav" /></a>
 </p>
 
@@ -32,7 +32,7 @@
 
 InfiniDysk combines a **WebDAV server** with a **SABnzbd-compatible API**. Sonarr, Radarr, and similar tools can use it as a drop-in download client, while Plex, Emby, Jellyfin, and other WebDAV clients stream content on demand from your Usenet providers.
 
-Please add feature requests and bug reports to the [issue tracker](https://github.com/nzbdav/nzbdav/issues), or join our [Discord](https://discord.gg/DAya7W6QMa) to chat with us.
+Please add feature requests and bug reports to the [issue tracker](https://github.com/infinidysk/infinidysk/issues), or join our [Discord](https://discord.gg/DAya7W6QMa) to chat with us.
 
 > After joining, use the channel and role selector to enable **InfiniDysk - SuperFork** for release notifications and development channels.
 
@@ -76,7 +76,7 @@ InfiniDysk ships as a single multi-architecture Docker image. Use `latest` for t
 To try it without keeping any settings:
 
 ```bash
-docker run --rm -it -p 3000:3000 ghcr.io/nzbdav/nzbdav:latest
+docker run --rm -it -p 3000:3000 ghcr.io/infinidysk/infinidysk:latest
 ```
 
 This trial command is ephemeral: its settings are discarded when the container exits.
@@ -86,7 +86,7 @@ For a persistent setup, save the following as `compose.yml`:
 ```yaml
 services:
   nzbdav:
-    image: ghcr.io/nzbdav/nzbdav:latest
+    image: ghcr.io/infinidysk/infinidysk:latest
     container_name: nzbdav
     restart: unless-stopped
     healthcheck:

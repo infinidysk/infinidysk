@@ -159,7 +159,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
             )}
             <li>
               <a
-                href="https://github.com/nzbdav/nzbdav"
+                href="https://github.com/infinidysk/infinidysk"
                 target="_blank"
                 rel="noreferrer"
               >
@@ -169,7 +169,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
             </li>
             <li>
               <a
-                href="https://github.com/nzbdav/nzbdav/releases"
+                href="https://github.com/infinidysk/infinidysk/releases"
                 target="_blank"
                 rel="noreferrer"
               >
