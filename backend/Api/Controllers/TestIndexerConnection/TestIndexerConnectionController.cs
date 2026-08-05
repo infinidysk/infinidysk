@@ -9,7 +9,7 @@ public class TestIndexerConnectionController(NzbWebDAV.Config.ConfigManager conf
 {
     protected override async Task<IActionResult> HandleRequest()
     {
-        var request = new TestIndexerConnectionRequest(HttpContext);
+        var request = new TestIndexerConnectionRequest(HttpContext, configManager);
         try
         {
             var indexerConfig = configManager.GetIndexerConfig();

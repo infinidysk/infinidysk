@@ -19,7 +19,6 @@ import {
     Tooltip,
     useIsAnyManaged,
 } from "~/components/ui";
-import { isMaskedSecret } from "~/utils/config-mask";
 
 type IndexersSettingsProps = {
     config: Record<string, string>
@@ -894,7 +893,6 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
     }, []);
 
     const [testState, setTestState] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-    const apiKeyIsMasked = isMaskedSecret(apiKey);
 
     useEffect(() => {
         if (show) {
@@ -939,7 +937,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
     useEffect(() => { setTestState('idle'); }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, skipTlsVerification]);
 
     const handleTest = useCallback(async () => {
-        if (!url.trim() || !apiKey.trim() || apiKeyIsMasked) return;
+        if (!url.trim() || !apiKey.trim()) return;
         setTestState('testing');
         try {
             const fd = new FormData();
@@ -955,7 +953,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
         } catch {
             setTestState('error');
         }
-    }, [url, apiKey, apiKeyIsMasked, searchUserAgent, proxyUrl, timeoutSeconds, skipTlsVerification]);
+    }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, skipTlsVerification]);
 
     const handleSave = useCallback(() => {
         const rpm = parseInt(maxRpm || "0", 10);
@@ -1056,8 +1054,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                     <Button
                         variant={testState === 'success' ? 'success' : testState === 'error' ? 'danger' : 'secondary'}
                         onClick={handleTest}
-                        disabled={!isUrlValid || !apiKey.trim() || apiKeyIsMasked || testState === 'testing'}
-                        title={apiKeyIsMasked ? "Enter a new API key to test this connection" : undefined}
+                        disabled={!isUrlValid || !apiKey.trim() || testState === 'testing'}
                     >
                         {testState === 'testing'
                             ? <Spinner size="sm" />
