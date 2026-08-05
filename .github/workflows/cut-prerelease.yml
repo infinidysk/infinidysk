@@ -143,6 +143,15 @@ jobs:
       tag_name: rc
       ref: ${{ needs.resolve.outputs.sha }}
 
+  tag-dev:
+    needs: [resolve, build, publish-release]
+    uses: ./.github/workflows/move-movable-tag.yml
+    permissions:
+      contents: write
+    with:
+      tag_name: dev
+      ref: ${{ needs.resolve.outputs.sha }}
+
   announce-rc:
     needs:
       - resolve
