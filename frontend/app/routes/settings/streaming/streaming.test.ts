@@ -22,7 +22,7 @@ const validConfig = {
     "usenet.in-flight-article-budget-mb": "",
     "usenet.idle-connection-timeout-seconds": "60",
     "usenet.pipelined-body-requests": "true",
-    "usenet.container-aware-fill": "false",
+    "usenet.container-aware-fill": "true",
     "usenet.segment-cache.enabled": "false",
     "usenet.segment-cache.path": "/config/segment-cache",
     "usenet.segment-cache.max-gb": "10",
@@ -114,7 +114,7 @@ describe("Streaming settings", () => {
             name: /Container-aware gap fill/,
         });
         await user.click(gapFill);
-        expect(gapFill.checked).toBe(true);
+        expect(gapFill.checked).toBe(false);
     });
 
     it("detects changes to every owned setting", () => {

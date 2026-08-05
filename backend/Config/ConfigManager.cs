@@ -860,7 +860,7 @@ public class ConfigManager
     {
         var configValue = StringUtil.EmptyToNull(
             GetConfigValue(ConfigKeys.UsenetContainerAwareFill));
-        return configValue != null && bool.Parse(configValue);
+        return configValue == null || bool.Parse(configValue);
     }
 
     public bool IsSegmentCacheEnabled()

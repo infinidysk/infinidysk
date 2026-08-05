@@ -73,7 +73,7 @@ const defaultConfig = {
     "usenet.cascade.retry-primary-on-miss": "true",
     "usenet.article-miss-cache-ttl-seconds": "300",
     "usenet.article-miss-cache-max-entries": "10000",
-    "usenet.container-aware-fill": "false",
+    "usenet.container-aware-fill": "true",
     "webdav.user": "admin",
     "webdav.pass": "",
     "webdav.show-hidden-files": "false",
