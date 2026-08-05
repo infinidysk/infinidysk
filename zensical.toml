@@ -4,8 +4,8 @@ site_description = "The NzbDAV SuperFork — stream media directly from Usenet"
 site_url = "https://www.infinidysk.com/"
 docs_dir = "docs"
 site_dir = "site"
-repo_url = "https://github.com/nzbdav/nzbdav"
-repo_name = "nzbdav/nzbdav"
+repo_url = "https://github.com/infinidysk/infinidysk"
+repo_name = "infinidysk/infinidysk"
 edit_uri = "edit/main/docs/"
 copyright = "InfiniDysk is released under the MIT License"
 extra_css = ["stylesheets/extra.css"]
@@ -140,7 +140,7 @@ generator = false
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"
-link = "https://github.com/nzbdav/nzbdav"
+link = "https://github.com/infinidysk/infinidysk"
 name = "GitHub"
 
 [[project.extra.social]]
@@ -155,12 +155,12 @@ name = "GHCR"
 
 [[project.extra.social]]
 icon = "material/tag"
-link = "https://github.com/nzbdav/nzbdav/releases"
+link = "https://github.com/infinidysk/infinidysk/releases"
 name = "Releases"
 
 [[project.extra.social]]
 icon = "material/bug"
-link = "https://github.com/nzbdav/nzbdav/issues"
+link = "https://github.com/infinidysk/infinidysk/issues"
 name = "Issues"
 
 [project.markdown_extensions.admonition]
