@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["server.ts", "server/logger.ts", "server/proxy-path.ts", "server/compression-filter.ts", "server/request-log-throttle.ts", "server/startup-grace.ts", "server/security-headers.ts", "vite.config.ts", "vitest.config.ts"],
+  "include": ["server.ts", "server/logger.ts", "server/proxy-path.ts", "server/compression-filter.ts", "server/request-log-throttle.ts", "server/startup-grace.ts", "server/security-headers.ts", "app/utils/url-base.ts", "vite.config.ts", "vitest.config.ts"],
   "compilerOptions": {
     "composite": true,
     "strict": true,

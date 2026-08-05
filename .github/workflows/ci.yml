@@ -47,6 +47,24 @@ jobs:
         working-directory: frontend
         run: npm run build && npm run build:server
 
+      # Sub-path build: the only automated coverage NZBDAV_URL_BASE can get.
+      # Asserts the baked bundle carries the prefix in its asset URLs and that
+      # the root build above was produced without one.
+      - name: Build with NZBDAV_URL_BASE
+        working-directory: frontend
+        env:
+          NZBDAV_URL_BASE: /nzbdav
+        run: |
+          mv build build-root
+          npm run build
+          if ! grep -rq '/nzbdav/assets/' build/server; then
+            echo "sub-path build did not bake /nzbdav into the bundle"; exit 1
+          fi
+          if grep -rq '/nzbdav/assets/' build-root/server; then
+            echo "root build unexpectedly contains the /nzbdav prefix"; exit 1
+          fi
+          rm -rf build && mv build-root build
+
       # Node ESM requires explicit .js extensions in emitted dist-node imports.
       # Import every helper under dist-node/server/ (not server.js, which listens).
       - name: Smoke-import dist-node server modules

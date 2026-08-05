@@ -1,6 +1,7 @@
 import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
+import { urlBaseFromEnv } from "./app/utils/url-base";
 
 function resolveAllowedHosts(): string[] {
   const raw = process.env.VITE_ALLOWED_HOSTS?.trim();
@@ -8,23 +9,13 @@ function resolveAllowedHosts(): string[] {
   return raw.split(",").map((host) => host.trim()).filter(Boolean);
 }
 
-// Mirror of normalizeUrlBase in app/utils/url-base.ts (this file runs outside the
-// Vite app graph, so the helper cannot be imported). Produces:
-//   - `viteBase`: Vite's `base` option form, "/" or "/path/" (trailing slash required).
-//   - `token`: value baked into `__URL_BASE__` for browser code, "" or "/path" (no slash).
-function normalizeUrlBase(raw: string | undefined): { viteBase: string; token: string } {
-  if (!raw) return { viteBase: "/", token: "" };
-  const trimmed = raw.trim();
-  if (trimmed === "" || trimmed === "/") return { viteBase: "/", token: "" };
-  const withLeading = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-  const withoutTrailing = withLeading.replace(/\/+$/, "");
-  return { viteBase: `${withoutTrailing}/`, token: withoutTrailing };
-}
-
 export default defineConfig(() => {
-  const { viteBase, token } = normalizeUrlBase(process.env.URL_BASE);
+  // NZBDAV_URL_BASE (or bare URL_BASE), read at build time. `token` is the
+  // "" / "/path" form baked into __URL_BASE__; Vite's `base` needs the
+  // trailing-slash variant.
+  const token = urlBaseFromEnv(process.env);
   return {
-    base: viteBase,
+    base: token === "" ? "/" : `${token}/`,
     server: {
       allowedHosts: resolveAllowedHosts(),
     },

@@ -17,8 +17,14 @@ import { applyCanonicalForwardedHeaders } from "./forwarded-headers";
 import { backendProxyTimeoutOptions } from "./backend-proxy-options";
 import { handleBackendProxyResponse } from "./backend-proxy-response";
 import { oidcRouter } from "./oidc-routes";
+import { URL_BASE } from "~/utils/url-base";
 
 export const app = express();
+
+// The URL base this bundle was compiled with (Vite bakes it via __URL_BASE__).
+// server.ts compares this against the runtime env var and refuses to start on
+// a mismatch — the two halves of the setting cannot work independently.
+export const bakedUrlBase = URL_BASE;
 app.disable("x-powered-by");
 export const initializeWebsocketServer = websocketServer.initialize;
 

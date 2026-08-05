@@ -15,18 +15,11 @@ import {
   resolveOidcUsername,
 } from "./oidc.server";
 import { logger } from "./logger";
-
 // Mounted under URL_BASE by server.ts, so incoming req.path values are already
 // stripped — but outgoing redirect Locations are browser-absolute and need the
-// prefix restored. Mirror of normalizeUrlBase in app/utils/url-base.ts.
-function normalizeUrlBase(raw: string | undefined): string {
-  if (!raw) return "";
-  const trimmed = raw.trim();
-  if (trimmed === "" || trimmed === "/") return "";
-  const withLeading = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-  return withLeading.replace(/\/+$/, "");
-}
-const URL_BASE = normalizeUrlBase(process.env.URL_BASE);
+// prefix restored. Part of the Vite SSR bundle, so the baked constant applies.
+import { URL_BASE } from "~/utils/url-base";
+
 import { backendClient } from "~/clients/backend-client.server";
 
 export const oidcRouter = Router();

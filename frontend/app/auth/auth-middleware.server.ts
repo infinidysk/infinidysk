@@ -1,14 +1,14 @@
 import type express from "express";
 import { isAuthenticated } from "~/auth/authentication.server";
-import { normalizeUrlBase } from "~/utils/url-base";
+import { URL_BASE } from "~/utils/url-base";
 import { safeDecodePath } from "../../server/proxy-path";
 
 // The Express server mounts middleware under URL_BASE, so `req.path` here is
 // already stripped of the prefix and PUBLIC_PATHS work unchanged. But
 // `res.redirect("/login")` emits an absolute path the browser resolves against
 // the origin, not the mount point — outgoing Location values need the prefix
-// put back on. Read at runtime, same as the mount in server.ts.
-const URL_BASE = normalizeUrlBase(process.env.URL_BASE);
+// put back on. This module is part of the Vite SSR bundle, so the baked
+// URL_BASE constant applies (server.ts guarantees it matches the runtime env).
 
 // Paths that do not require authentication. Every other path is protected.
 const PUBLIC_PATHS = [
