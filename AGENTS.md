@@ -481,5 +481,5 @@ Use the first stable release that shipped the capability (not every patch). Styl
 - [README.md](README.md) — product overview
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment setup
 - [docs/](docs/) — Zensical documentation sources (`pip install -r docs-requirements.txt && zensical serve`)
-- [https://nzbdav.com/](https://nzbdav.com/) — published documentation
+- [https://www.infinidysk.com/](https://www.infinidysk.com/) — published documentation
 - [CHANGELOG.md](CHANGELOG.md) — what shipped in each version

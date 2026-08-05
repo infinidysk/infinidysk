@@ -17,7 +17,7 @@ describe("RenameAnnouncementBanner", () => {
 
     expect(await screen.findByText("NzbDAV is becoming InfiniDysk")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Read the rename FAQ" }).getAttribute("href"))
-      .toBe("https://nzbdav.com/community/renaming-to-infinidysk/");
+      .toBe("https://www.infinidysk.com/community/renaming-to-infinidysk/");
 
     await user.click(screen.getByRole("button", { name: "Dismiss rename announcement" }));
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, Icon } from "~/components/ui";
 
 const DISMISSED_KEY = "infinidysk-rename-announcement-v1";
-const RENAME_FAQ_URL = "https://nzbdav.com/community/renaming-to-infinidysk/";
+const RENAME_FAQ_URL = "https://www.infinidysk.com/community/renaming-to-infinidysk/";
 
 export function RenameAnnouncementBanner() {
   const [isVisible, setIsVisible] = useState(false);

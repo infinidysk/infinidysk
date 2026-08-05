@@ -59,7 +59,7 @@ export function PageLayout(props: PageLayoutProps) {
                                         <p>
                                             This installation of{" "}
                                             <a
-                                                href="https://nzbdav.com"
+                                                href="https://www.infinidysk.com"
                                                 target="_blank"
                                                 rel="noreferrer"
                                                 className="link link-hover font-semibold"

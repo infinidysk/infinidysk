@@ -17,7 +17,7 @@
 </p>
 
 > [!NOTE]
-> **NzbDAV is becoming InfiniDysk.** The new identity is here first; the repository and Docker image will move later. No deployment change is needed yet. Read the [rename FAQ](https://nzbdav.com/community/renaming-to-infinidysk/).
+> **NzbDAV is becoming InfiniDysk.** The documentation has moved to the new domain; the repository and Docker image will move later. No deployment change is needed yet. Read the [rename FAQ](https://www.infinidysk.com/community/renaming-to-infinidysk/).
 
 <img width="1024" height="601" alt="InfiniDysk overview dashboard" src="docs/assets/overview.png" />
 
@@ -42,7 +42,7 @@ Please add feature requests and issues over on our [Issue Tracker](https://githu
 
 This project is a maintained fork of [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav). We took ownership of the full Usenet streaming stack — nzbdav, UsenetSharp, RapidYencSharp, rapidyenc, and SharpCompress — so playback, connection, and decoding fixes could land in the right layer instead of waiting on a single upstream dependency chain.
 
-Read the full story in the [about page](https://nzbdav.com/community/about/).
+Read the full story in the [about page](https://www.infinidysk.com/community/about/).
 
 ## Special thanks
 
@@ -176,22 +176,22 @@ You'll also want to set a username and password for the WebDAV server itself.
 
 ## Documentation
 
-Full documentation is published at [nzbdav.com](https://nzbdav.com/).
+Full documentation is published at [www.infinidysk.com](https://www.infinidysk.com/).
 
-The [about page](https://nzbdav.com/community/about/) covers project heritage and the managed library ecosystem (UsenetSharp, RapidYencSharp, rapidyenc, SharpCompress).
+The [about page](https://www.infinidysk.com/community/about/) covers project heritage and the managed library ecosystem (UsenetSharp, RapidYencSharp, rapidyenc, SharpCompress).
 
-Start with the [getting started guide](https://nzbdav.com/getting-started/) for a full production deployment:
+Start with the [getting started guide](https://www.infinidysk.com/getting-started/) for a full production deployment:
 
 * **Docker Compose** — persistent deployment, container health checks, and updates
-* **Migration** — [official path from nzbdav-dev v0.6.4](https://nzbdav.com/getting-started/migration/) and community forks (Pukabyte, NzbDavEx)
+* **Migration** — [official path from nzbdav-dev v0.6.4](https://www.infinidysk.com/getting-started/migration/) and community forks (Pukabyte, NzbDavEx)
 * **Import strategies** — Rclone symlinks for Plex or STRM files for Emby/Jellyfin
 * **Performance tuning** — benchmarking WebDAV connection limits
 * **Integrations** — automating Radarr/Sonarr queue management and repairs
 * **Stremio** — streaming Usenet on demand via AIOStreams
 * **Search profiles** — token-scoped Newznab, Addon, and JSON adapter setup
-* **Watchtower** — proactive wanted-list resolution in the [Watchtower guide](https://nzbdav.com/features/watchtower/)
-* **Configuration** — [Settings walkthrough](https://nzbdav.com/configuration/) and [environment variables](https://nzbdav.com/configuration/environment-variables/)
-* **Compare** — [InfiniDysk vs AltMount vs classic download clients](https://nzbdav.com/guides/compare/)
+* **Watchtower** — proactive wanted-list resolution in the [Watchtower guide](https://www.infinidysk.com/features/watchtower/)
+* **Configuration** — [Settings walkthrough](https://www.infinidysk.com/configuration/) and [environment variables](https://www.infinidysk.com/configuration/environment-variables/)
+* **Compare** — [InfiniDysk vs AltMount vs classic download clients](https://www.infinidysk.com/guides/compare/)
 
 ## Development
 

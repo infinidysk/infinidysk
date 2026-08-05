@@ -20,10 +20,12 @@ an infinite virtual disk, streamed on demand.
 
 - The app, documentation, and community branding now use **InfiniDysk**.
 - A new logo and favicon identify the project.
-- The current repository, documentation domain, and Docker image path remain
-  unchanged during this announcement stage.
+- Documentation is now published at
+  [www.infinidysk.com](https://www.infinidysk.com/).
+- The current repository and Docker image path remain unchanged during this
+  transition stage.
 
-There is no configuration or deployment change to make yet.
+There is no application configuration or deployment change to make yet.
 
 ## What will change later?
 
@@ -31,7 +33,6 @@ The project will move to:
 
 - GitHub: `github.com/infinidysk/infinidysk`
 - Container image: `ghcr.io/infinidysk/infinidysk`
-- Documentation: `infinidysk.com`
 
 Do not switch the image reference until the new package is published and the
 migration announcement says it is ready.

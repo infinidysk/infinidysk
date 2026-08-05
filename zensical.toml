@@ -1,7 +1,7 @@
 [project]
 site_name = "InfiniDysk"
 site_description = "The NzbDAV SuperFork — stream media directly from Usenet"
-site_url = "https://nzbdav.com/"
+site_url = "https://www.infinidysk.com/"
 docs_dir = "docs"
 site_dir = "site"
 repo_url = "https://github.com/nzbdav/nzbdav"
