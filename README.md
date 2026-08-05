@@ -1,10 +1,3 @@
-> [!IMPORTANT]
-> This fork is designed to be a drop in replacement/upgrade from `nzbdav-dev/nzbdav v0.6.4`.
->
-> Early adopters are reporting **2x network throughput** capability and a **400% reduction in seek time**.
->
-> `ghcr.io/nzbdav/nzbdav:latest`
-
 <p align="center">
   <img src="docs/assets/logo.png" width="160" alt="InfiniDysk logo" />
 </p>
@@ -13,7 +6,7 @@
 
 <p align="center"><strong>The NzbDAV SuperFork</strong></p>
 <p align="center">
-  Mount NZBs as a virtual filesystem and stream directly from Usenet — without downloading full media files first.
+  Stream NZBs directly from Usenet through a virtual filesystem — without downloading full media files first.
 </p>
 
 > [!NOTE]
@@ -30,118 +23,53 @@
 
 ---
 
-InfiniDysk is a **WebDAV server** that mounts NZB documents as a browsable virtual filesystem — without downloading full media files first. Content streams on demand, straight from your Usenet provider.
+InfiniDysk combines a **WebDAV server** with a **SABnzbd-compatible API**. Sonarr, Radarr, and similar tools can use it as a drop-in download client, while Plex, Emby, Jellyfin, and other WebDAV clients stream content on demand from your Usenet providers.
 
-It also exposes a **SABnzbd-compatible API**, so Sonarr, Radarr, and similar tools can use it as a drop-in download client. Combined with Plex, Emby, or Jellyfin, this lets you build an effectively infinite media library without storing the full media library on your server.
+> [!IMPORTANT]
+> InfiniDysk is designed as a drop-in replacement and upgrade from `nzbdav-dev/nzbdav v0.6.4`. The current image is `ghcr.io/nzbdav/nzbdav:latest`; follow the [migration guide](https://www.infinidysk.com/getting-started/migration/) before switching an existing installation.
 
-Please add feature requests and issues over on our [Issue Tracker](https://github.com/nzbdav/nzbdav/issues) or join our [Discord](https://discord.gg/DAya7W6QMa) to chat with us!
+Please add feature requests and bug reports to the [issue tracker](https://github.com/nzbdav/nzbdav/issues), or join our [Discord](https://discord.gg/DAya7W6QMa) to chat with us.
 
 > After joining, use the channel and role selector to enable **InfiniDysk - SuperFork** for release notifications and development channels.
 
-## Why another fork?
-
-This project is a maintained fork of [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav). We took ownership of the full Usenet streaming stack — nzbdav, UsenetSharp, RapidYencSharp, rapidyenc, and SharpCompress — so playback, connection, and decoding fixes could land in the right layer instead of waiting on a single upstream dependency chain.
-
-Read the full story in the [about page](https://www.infinidysk.com/community/about/).
-
-## Special thanks
-
-Special thanks to the forks and contributors whose ideas we consolidated:
-
-* [@Nzbdav-dev](https://github.com/Nzbdav-dev)
-* [@Pukabyte](https://github.com/Pukabyte)
-* [@elfhosted](https://github.com/elfhosted)
-* [@kha-kis](https://github.com/kha-kis)
-* [@mrghxst](https://github.com/mrghxst)
-* [@qooode](https://github.com/qooode)
-* [@dgherman](https://github.com/dgherman)
-* [@loambit](http://github.com/loambit)
-
 ## Features
 
-* 📁 **WebDAV server**
-  
-  - _Host your virtual filesystem over HTTP(S)_
+### Streaming and providers
 
-* ☁️ **Mount NZB documents**
-  
-  - _Browse NZB contents instantly, no download needed_
+- **Virtual WebDAV filesystem** — Mount, browse, stream, and seek through NZB content without downloading complete media files first.
+- **Archive streaming** — Read RAR and 7z archives on demand, including password-protected content.
+- **Fast, resilient NNTP** — Pipeline article requests and cascade across multiple providers with automatic failover and circuit breakers.
+- **Provider routing and limits** — Set provider priorities, data caps, usage resets, and connection limits, then benchmark them from the UI.
+- **Container-aware gap handling** — Preserve MPEG-TS timing across missing article ranges to reduce playback desynchronization.
 
-* 📽️ **Full streaming & seeking**
-  
-  - _Jump to any point in your video streams_
+### Search and playback readiness
 
-* 🚀 **NNTP article pipelining**
-  
-  - _Optional pipelined article fetches for higher throughput and faster seeks_
+- **Built-in Newznab search** — Configure indexers, monitor API usage, search manually, and mount results.
+- **Filters and adapters** — Apply regex or remote exclude lists and expose selected indexers through token-scoped Addon, Newznab, and JSON APIs.
+- **Watchdog, Preflight, and Warden** — Verify candidates, warm likely results, retry failed releases, and remember known-dead releases.
+- **Watchtower** — Keep wanted movies and episodes mapped to verified releases before playback begins.
 
-* 🗃️ **Archive streaming**
-  
-  - _View, stream, and seek inside RAR and 7z archives_
+### Automation and library management
 
-* 🔓 **Password-protected archives**
-  
-  - _Stream encrypted content transparently_
+- **SABnzbd-compatible queue** — Use add, queue, history, pause, resume, and speed-limit operations with configurable concurrent workers.
+- **Sonarr and Radarr integration** — Import through Rclone symlinks or lightweight STRM files and optionally repair unhealthy content.
+- **WebDAV management** — Browse, download, and delete eligible virtual filesystem items from the admin UI.
+- **[Experimental AltMount migration](https://www.infinidysk.com/guides/altmount-migration/)** — Rebuild and import an existing AltMount library through a guided wizard that leaves its source metadata untouched.
 
-* 🔀 **Multiple Usenet providers**
-  
-  - _Automatic failover with per-provider circuit breakers_
+### Operations and deployment
 
-* 📊 **Live operations dashboard**
-  
-  - _Throughput, latency, errors, active reads, provider usage, failover saves, and indexer activity_
-
-* 🧭 **Provider routing and limits**
-  
-  - _Cascade priorities, per-provider data caps, usage resets, and connection benchmarking_
-
-* 🔎 **Built-in indexer search**
-  
-  - _Configure Newznab indexers, track API usage, search them manually, and mount results_
-
-* 🚫 **Search exclude filters**
-  
-  - _Manual regex excludes plus auto-synced remote lists (e.g. TRaSH) with refresh status_
-
-* 🎛️ **Search profiles and adapters**
-  
-  - _Expose selected indexers through token-scoped Addon, Newznab, and JSON APIs_
-
-* 🐕 **Watchdog playback failover**
-  
-  - _Verify candidates, retry failed releases, and inspect each playback attempt_
-
-* 🛡️ **Warden dead-release ledger**
-  
-  - _Remember unavailable releases, combine trusted remote ledgers, and import, export, or back up the data_
-
-* 📡 **Watchtower proactive resolution**
-  
-  - _Keep wanted movies and episodes mapped to verified releases before playback_
-
-* 📜 **Live log viewer**
-  
-  - _Filter, follow, and download backend logs from the admin UI_
-
-* 🗂️ **WebDAV management**
-  
-  - _Browse, download, and delete eligible virtual filesystem items from the UI_
-
-* 💙 **Health checks & optional repairs**
-  
-  - _Monitor content health and trigger replacements through Radarr/Sonarr when configured_
-
-* 🧩 **SABnzbd-compatible API**
-  
-  - _Drop-in replacement for SABnzbd_
-
-* 🙌 **Sonarr/Radarr integration**
-  
-  - _Import through Rclone symlinks or lightweight STRM files_
+- **Live operations dashboard** — Track throughput, latency, errors, active reads, provider usage, failover saves, and indexer activity.
+- **[Logs and diagnostics](https://www.infinidysk.com/configuration/support/)** — Filter and download logs, enable stream tracing from the UI, and generate redacted technical support packs.
+- **[Backup and restore](https://www.infinidysk.com/configuration/backup/)** — Schedule database backups and download, upload, or restore them from the Settings UI.
+- **[Headless configuration](https://www.infinidysk.com/configuration/headless/)** — Provision authoritative settings with `NZBDAV_CONFIG__...` environment variables.
+- **[OIDC / SSO](https://www.infinidysk.com/configuration/oidc/)** — Authenticate browser sessions through standards-compliant identity providers such as Authentik, Authelia, and Keycloak.
+- **Flexible hosting** — Run with Docker, prebuilt Linux archives, or DUMB, and build for reverse-proxy sub-path hosting when needed.
 
 ## Quick start
 
-InfiniDysk ships as a single Docker image. Use the `latest` tag for the newest release, or `lts` for a slower, more conservative release cycle that lags one feature release behind `latest`. To try it out:
+InfiniDysk ships as a single multi-architecture Docker image. Use `latest` for the newest stable release. The `lts` tag is a manually curated long-term-support pointer and may lag behind `latest`.
+
+To try it without keeping any settings:
 
 ```bash
 docker run --rm -it -p 3000:3000 ghcr.io/nzbdav/nzbdav:latest
@@ -149,7 +77,7 @@ docker run --rm -it -p 3000:3000 ghcr.io/nzbdav/nzbdav:latest
 
 This trial command is ephemeral: its settings are discarded when the container exits.
 
-For a persistent setup, use Docker Compose:
+For a persistent setup, save the following as `compose.yml`:
 
 ```yaml
 services:
@@ -157,6 +85,14 @@ services:
     image: ghcr.io/nzbdav/nzbdav:latest
     container_name: nzbdav
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsSL http://localhost:3000/healthz > /dev/null || exit 1
+      interval: 30s
+      retries: 3
+      start_period: 60s
+      timeout: 5s
     ports:
       - "3000:3000"
     environment:
@@ -167,35 +103,51 @@ services:
       - ./config:/config
 ```
 
-Then open `http://localhost:3000`, create your admin account, and head to the **Settings** page to configure your Usenet provider:
+Then run `docker compose up -d`, open `http://localhost:3000`, create your admin account, and configure your Usenet provider and WebDAV credentials under **Settings**.
 
 > [!IMPORTANT]
 > Port `3000` serves plain HTTP. If InfiniDysk will be reachable outside your trusted network, put it behind an HTTPS reverse proxy and do not expose the container port directly to the internet. WebDAV uses Basic authentication, so TLS is essential for remote access. When the proxy runs on the Docker host, bind the port to localhost with `127.0.0.1:3000:3000`.
 
-You'll also want to set a username and password for the WebDAV server itself.
+Other supported setup paths:
+
+- **Linux without Docker** — Follow the [prebuilt archive guide](https://www.infinidysk.com/getting-started/prebuilt-archives/) to run the x64 or ARM64 release bundle.
+- **IPv6-only Docker hosts** — Use the Docker Hub mirror, `nzbdav/nzbdav`, because `ghcr.io` is not reachable over IPv6.
+- **Batteries-included Arr stack** — Use InfiniDysk as a supported core module in [DUMB](https://dumbarr.com/services/core/nzbdav/).
+- **Reverse-proxy sub-path** — Follow the [URL base guide](https://www.infinidysk.com/configuration/url-base/) to build an image for paths such as `/nzbdav`.
 
 ## Documentation
 
-Full documentation is published at [www.infinidysk.com](https://www.infinidysk.com/).
+Full documentation is published at [www.infinidysk.com](https://www.infinidysk.com/). Start with the [getting started guide](https://www.infinidysk.com/getting-started/) for a production deployment.
 
-The [about page](https://www.infinidysk.com/community/about/) covers project heritage and the managed library ecosystem (UsenetSharp, RapidYencSharp, rapidyenc, SharpCompress).
+- **Install and migrate** — Docker Compose, prebuilt Linux archives, first-run setup, upgrades from nzbdav-dev and community forks, and the [experimental AltMount migration](https://www.infinidysk.com/guides/altmount-migration/).
+- **Configure** — Settings walkthroughs, [headless environment configuration](https://www.infinidysk.com/configuration/headless/), OIDC, backup and restore, URL base, and provider tuning.
+- **Integrate** — Sonarr/Radarr automation, Rclone symlinks, STRM files, Plex, Emby, Jellyfin, and Stremio through AIOStreams.
+- **Search and prepare** — Indexers, token-scoped search profiles, Watchdog, Preflight, Warden, and [Watchtower](https://www.infinidysk.com/features/watchtower/).
+- **Operate and troubleshoot** — Health checks and repairs, live logs, stream tracing, support packs, and performance tuning.
+- **Compare** — [InfiniDysk, AltMount, and classic download clients](https://www.infinidysk.com/guides/compare/).
 
-Start with the [getting started guide](https://www.infinidysk.com/getting-started/) for a full production deployment:
+## Why another fork?
 
-* **Docker Compose** — persistent deployment, container health checks, and updates
-* **Migration** — [official path from nzbdav-dev v0.6.4](https://www.infinidysk.com/getting-started/migration/) and community forks (Pukabyte, NzbDavEx)
-* **Import strategies** — Rclone symlinks for Plex or STRM files for Emby/Jellyfin
-* **Performance tuning** — benchmarking WebDAV connection limits
-* **Integrations** — automating Radarr/Sonarr queue management and repairs
-* **Stremio** — streaming Usenet on demand via AIOStreams
-* **Search profiles** — token-scoped Newznab, Addon, and JSON adapter setup
-* **Watchtower** — proactive wanted-list resolution in the [Watchtower guide](https://www.infinidysk.com/features/watchtower/)
-* **Configuration** — [Settings walkthrough](https://www.infinidysk.com/configuration/) and [environment variables](https://www.infinidysk.com/configuration/environment-variables/)
-* **Compare** — [InfiniDysk vs AltMount vs classic download clients](https://www.infinidysk.com/guides/compare/)
+This project is a maintained fork of [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav). We took ownership of the full Usenet streaming stack — NzbDAV, UsenetSharp, RapidYencSharp, rapidyenc, and SharpCompress — so playback, connection, archive, and decoding fixes can land in the right layer.
+
+Read the full story on the [about page](https://www.infinidysk.com/community/about/).
+
+### Special thanks
+
+Special thanks to the forks and contributors whose ideas we consolidated:
+
+- [@Nzbdav-dev](https://github.com/Nzbdav-dev)
+- [@Pukabyte](https://github.com/Pukabyte)
+- [@elfhosted](https://github.com/elfhosted)
+- [@kha-kis](https://github.com/kha-kis)
+- [@mrghxst](https://github.com/mrghxst)
+- [@qooode](https://github.com/qooode)
+- [@dgherman](https://github.com/dgherman)
+- [@loambit](https://github.com/loambit)
 
 ## Development
 
-The project consists of a .NET backend (WebDAV, Usenet streaming, SAB API) and a React Router frontend (admin UI). See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup and [CHANGELOG.md](CHANGELOG.md) for release history. Source for the published docs lives in [`docs/`](docs/).
+The project consists of a .NET 10 backend (WebDAV, Usenet streaming, SAB API) and a React Router 7 frontend (admin UI). See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup and [CHANGELOG.md](CHANGELOG.md) for release history. Source for the published documentation lives in [`docs/`](docs/).
 
 ## License
 
