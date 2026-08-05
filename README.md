@@ -1,3 +1,10 @@
+> [!IMPORTANT]
+> InfiniDysk is designed as a drop-in replacement and upgrade from `nzbdav-dev/nzbdav v0.6.4`. Follow the [migration guide](https://www.infinidysk.com/getting-started/migration/) before switching an existing installation.
+>
+> Early adopters report **2x network throughput** and **seek times improved by up to 4x** compared with v0.6.4.
+>
+> `ghcr.io/nzbdav/nzbdav:latest`
+
 <p align="center">
   <img src="docs/assets/logo.png" width="160" alt="InfiniDysk logo" />
 </p>
@@ -24,9 +31,6 @@
 ---
 
 InfiniDysk combines a **WebDAV server** with a **SABnzbd-compatible API**. Sonarr, Radarr, and similar tools can use it as a drop-in download client, while Plex, Emby, Jellyfin, and other WebDAV clients stream content on demand from your Usenet providers.
-
-> [!IMPORTANT]
-> InfiniDysk is designed as a drop-in replacement and upgrade from `nzbdav-dev/nzbdav v0.6.4`. The current image is `ghcr.io/nzbdav/nzbdav:latest`; follow the [migration guide](https://www.infinidysk.com/getting-started/migration/) before switching an existing installation.
 
 Please add feature requests and bug reports to the [issue tracker](https://github.com/nzbdav/nzbdav/issues), or join our [Discord](https://discord.gg/DAya7W6QMa) to chat with us.
 
