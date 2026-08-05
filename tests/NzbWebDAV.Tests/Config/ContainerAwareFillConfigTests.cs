@@ -6,11 +6,11 @@ namespace NzbWebDAV.Tests.Config;
 public sealed class ContainerAwareFillConfigTests
 {
     [Fact]
-    public void UnsetValue_DefaultsToDisabled()
+    public void UnsetValue_DefaultsToEnabled()
     {
         var config = new ConfigManager();
 
-        Assert.False(config.IsContainerAwareFillEnabled());
+        Assert.True(config.IsContainerAwareFillEnabled());
     }
 
     [Theory]

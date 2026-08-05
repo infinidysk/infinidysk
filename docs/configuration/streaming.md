@@ -43,7 +43,7 @@ is saturated.
 | In-flight article budget (MiB) [since 0.8.2](https://github.com/nzbdav/nzbdav/releases/tag/v0.8.2){ .nzbdav-since } | `usenet.in-flight-article-budget-mb` | auto | Host-wide decoded-byte cap, 64–8192 MiB |
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | Close unused connections after 15–300 seconds |
 | Pipelined article downloads | `usenet.pipelined-body-requests` | on | Fetch WebDAV BODY requests in small batches |
-| Container-aware gap fill [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | off | Experimental MPEG-TS null-packet fill for confirmed gaps |
+| Container-aware gap fill [since 0.10.0](https://github.com/nzbdav/nzbdav/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | on | Experimental MPEG-TS null-packet fill for confirmed gaps |
 
 ## Article buffer and adaptive prefetch
 
