@@ -1,7 +1,9 @@
 using System.Net;
 using System.Xml.Linq;
+using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Tests.TestUtils;
+using NzbWebDAV.WebDav;
 
 namespace NzbWebDAV.Tests.WebDav;
 
@@ -86,6 +88,67 @@ public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactor
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.True(response.Content.Headers.ContentLength > 0);
         Assert.Empty(await response.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task HeadViewIdsFile_UsesFriendlyNameForContentHeaders()
+    {
+        var item = await AddIdsFileAsync("My.Movie.2024.mkv");
+        var itemPath = DatabaseStoreSymlinkFile.GetTargetPath(item.Id, '/');
+        var downloadKey = GetWebdavItemRequest.GenerateDownloadKey(
+            NzbDavWebApplicationFactory.ApiKey,
+            itemPath);
+
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Head,
+            $"/view/{itemPath}?downloadKey={downloadKey}");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("video/x-matroska", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains(
+            "My.Movie.2024.mkv",
+            response.Content.Headers.ContentDisposition?.ToString());
+    }
+
+    [Fact]
+    public async Task HeadWebDavIdsFile_UsesFriendlyNameForContentHeaders()
+    {
+        var item = await AddIdsFileAsync("Another.Movie.2025.mkv");
+        var itemPath = DatabaseStoreSymlinkFile.GetTargetPath(item.Id, '/');
+
+        using var client = factory.CreateClient();
+        using var request = factory.CreateWebDavRequest(HttpMethod.Head, $"/{itemPath}");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("video/x-matroska", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains(
+            "Another.Movie.2025.mkv",
+            response.Content.Headers.ContentDisposition?.ToString());
+    }
+
+    private async Task<DavItem> AddIdsFileAsync(string name)
+    {
+        var item = DavItem.New(
+            Guid.NewGuid(),
+            DavItem.ContentFolder,
+            name,
+            1024,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.NzbFile,
+            null,
+            null,
+            null,
+            null);
+        var file = new DavNzbFile
+        {
+            Id = item.Id,
+            SegmentIds = []
+        };
+        await factory.AddDavNzbFileAsync(item, file);
+        return item;
     }
 
     private static async Task<string[]> ReadHrefsAsync(HttpResponseMessage response)

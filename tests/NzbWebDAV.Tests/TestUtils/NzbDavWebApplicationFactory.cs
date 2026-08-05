@@ -62,6 +62,15 @@ public sealed class NzbDavWebApplicationFactory : WebApplicationFactory<Program>
         await context.SaveChangesAsync();
     }
 
+    public async Task AddDavNzbFileAsync(DavItem item, DavNzbFile file)
+    {
+        using var scope = Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
+        context.Items.Add(item);
+        context.NzbFiles.Add(file);
+        await context.SaveChangesAsync();
+    }
+
     protected override void Dispose(bool disposing)
     {
         try
