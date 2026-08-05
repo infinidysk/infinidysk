@@ -12,7 +12,15 @@ function configWith(disabledFeatures: ServiceProviderConfig["disabledFeatures"])
 }
 
 describe("isNavFeatureId", () => {
-  it.each(["overview", "watchtower", "search", "settings.rclone"])(
+  it.each([
+    "overview",
+    "watchtower",
+    "search",
+    "settings.rclone",
+    "settings.queue",
+    "settings.streaming",
+    "settings.migration",
+  ])(
     "accepts known identifier %s",
     (value) => {
       expect(isNavFeatureId(value)).toBe(true);
@@ -57,6 +65,14 @@ describe("isSettingsTabDisabled", () => {
   it("returns false when config is null", () => {
     expect(isSettingsTabDisabled(null, "rclone")).toBe(false);
   });
+
+  it.each(["queue", "streaming", "migration"] as const)(
+    "supports the %s settings feature id",
+    (tab) => {
+      const config = configWith([`settings.${tab}`]);
+      expect(isSettingsTabDisabled(config, tab)).toBe(true);
+    },
+  );
 });
 
 describe("isNavRouteDisabled", () => {

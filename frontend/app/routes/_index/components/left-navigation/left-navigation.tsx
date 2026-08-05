@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigation } from "react-router";
 import type React from "react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Icon } from "~/components/ui";
 import { ServiceProviderNotice } from "~/components/service-provider-notice";
 import {
@@ -27,8 +27,6 @@ type NavItem = {
     label: string;
     featureId: NavFeatureId;
 };
-
-const SETTINGS_ITEMS = SETTINGS_TAB_GROUPS.flatMap((group) => group.items);
 
 export function LeftNavigation({
     isWatchdogEnabled,
@@ -104,18 +102,27 @@ export function LeftNavigation({
                             <span className="flex-1 text-left">Settings</span>
                         </button>
                     </li>
-                    {settingsOpen && SETTINGS_ITEMS.map((item) => (
-                        <SettingsItem
-                            key={item.id}
-                            tab={item.id}
-                            icon={item.icon}
-                            activeTab={activeSettingsTab}
-                            disabled={isSettingsTabDisabled(serviceProvider, item.id)}
-                            providerName={serviceProvider?.name}
-                            onDisabledClick={() => setProviderNoticeOpen(true)}
-                        >
-                            {item.label}
-                        </SettingsItem>
+                    {settingsOpen && SETTINGS_TAB_GROUPS.map((group) => (
+                        <Fragment key={group.title}>
+                            <li className="menu-title ms-3 mt-2 border-s border-base-content/10 ps-3">
+                                <span className="text-[10px] font-semibold uppercase tracking-wider text-base-content/45">
+                                    {group.title}
+                                </span>
+                            </li>
+                            {group.items.map((item) => (
+                                <SettingsItem
+                                    key={item.id}
+                                    tab={item.id}
+                                    icon={item.icon}
+                                    activeTab={activeSettingsTab}
+                                    disabled={isSettingsTabDisabled(serviceProvider, item.id)}
+                                    providerName={serviceProvider?.name}
+                                    onDisabledClick={() => setProviderNoticeOpen(true)}
+                                >
+                                    {item.label}
+                                </SettingsItem>
+                            ))}
+                        </Fragment>
                     ))}
                 </ul>
             </nav>

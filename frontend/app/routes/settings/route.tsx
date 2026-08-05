@@ -6,6 +6,8 @@ import { backendClient } from "~/clients/backend-client.server";
 import { isUsenetSettingsUpdated, UsenetSettings } from "./usenet/usenet";
 import { isSabnzbdSettingsUpdated, isSabnzbdSettingsValid, SabnzbdSettings } from "./sabnzbd/sabnzbd";
 import { isWebdavSettingsUpdated, isWebdavSettingsValid, WebdavSettings } from "./webdav/webdav";
+import { isQueueSettingsUpdated, isQueueSettingsValid, QueueSettings } from "./queue/queue";
+import { isStreamingSettingsUpdated, isStreamingSettingsValid, StreamingSettings } from "./streaming/streaming";
 import { isArrsSettingsUpdated, isArrsSettingsValid, ArrsSettings } from "./arrs/arrs";
 import { isIndexersSettingsUpdated, isIndexersSettingsValid, IndexersSettings } from "./indexers/indexers";
 import { isProfilesSettingsUpdated, isProfilesSettingsValid, ProfilesSettings } from "./profiles/profiles";
@@ -23,7 +25,6 @@ import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } fr
 import { useBlocker, useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { ServiceProviderNotice } from "~/components/service-provider-notice";
-import { getAppVersion } from "~/utils/version.server";
 import { parseSettingsTab, getSettingsTabItem, type SettingsTab } from "./settings-tabs";
 import { Icon } from "~/components/ui";
 import type { AppOutletContext } from "~/auth/authorization";
@@ -178,7 +179,6 @@ export async function loader({ request }: Route.LoaderArgs) {
     return {
         config: config,
         managedEnv,
-        appVersion: (await getAppVersion()) ?? "unknown",
     }
 }
 
@@ -210,7 +210,6 @@ export default function Settings(props: Route.ComponentProps) {
 type BodyProps = {
     config: Record<string, string>,
     managedEnv: ManagedEnvMap,
-    appVersion: string,
     activeTab: SettingsTab,
 };
 
@@ -234,7 +233,9 @@ function Body(props: BodyProps) {
     const managedCount = useMemo(() => Object.keys(managedEnv).length, [managedEnv]);
 
     const iseUsenetUpdated = isUsenetSettingsUpdated(config, newConfig);
+    const isQueueUpdated = isQueueSettingsUpdated(config, newConfig);
     const isSabnzbdUpdated = isSabnzbdSettingsUpdated(config, newConfig);
+    const isStreamingUpdated = isStreamingSettingsUpdated(config, newConfig);
     const isWebdavUpdated = isWebdavSettingsUpdated(config, newConfig);
     const isArrsUpdated = isArrsSettingsUpdated(config, newConfig);
     const isIndexersUpdated = isIndexersSettingsUpdated(config, newConfig);
@@ -247,13 +248,30 @@ function Body(props: BodyProps) {
     const isBackupUpdated = isBackupSettingsUpdated(config, newConfig);
     const isWatchtowerUpdated = isWatchtowerSettingsUpdated(config, newConfig);
     const isWardenUpdated = isWardenSettingsUpdated(config, newConfig);
-    const isUpdated = iseUsenetUpdated || isSabnzbdUpdated || isWebdavUpdated || isArrsUpdated || isIndexersUpdated || isProfilesUpdated || isRepairsUpdated || isWatchdogUpdated || isPreflightUpdated || isRcloneUpdated || isMaintenanceUpdated || isBackupUpdated || isWatchtowerUpdated || isWardenUpdated;
+    const isUpdated = iseUsenetUpdated
+        || isQueueUpdated
+        || isSabnzbdUpdated
+        || isStreamingUpdated
+        || isWebdavUpdated
+        || isArrsUpdated
+        || isIndexersUpdated
+        || isProfilesUpdated
+        || isRepairsUpdated
+        || isWatchdogUpdated
+        || isPreflightUpdated
+        || isRcloneUpdated
+        || isMaintenanceUpdated
+        || isBackupUpdated
+        || isWatchtowerUpdated
+        || isWardenUpdated;
     const navigationBlocker = useNavigationBlocker(isUpdated);
 
     const saveButtonLabel = isSaving ? "Saving..."
         : !isUpdated && isSaved ? "Saved"
         : !isUpdated && !isSaved ? "There are no changes to save"
+        : isQueueUpdated && !isQueueSettingsValid(newConfig) ? "Invalid Queue settings"
         : isSabnzbdUpdated && !isSabnzbdSettingsValid(newConfig) ? "Invalid SABnzbd settings"
+        : isStreamingUpdated && !isStreamingSettingsValid(newConfig) ? "Invalid Streaming settings"
         : isWebdavUpdated && !isWebdavSettingsValid(newConfig) ? "Invalid WebDAV settings"
         : isArrsUpdated && !isArrsSettingsValid(newConfig) ? "Invalid Arrs settings"
         : isIndexersUpdated && !isIndexersSettingsValid(newConfig) ? "Invalid Indexers settings"
@@ -378,12 +396,14 @@ function Body(props: BodyProps) {
                 )}
                 {activeTab === "indexers" && <IndexersSettings config={newConfig} setNewConfig={setNewConfig} savedConfig={config} />}
                 {activeTab === "profiles" && <ProfilesSettings config={newConfig} setNewConfig={setNewConfig} />}
+                {activeTab === "queue" && <QueueSettings config={newConfig} setNewConfig={setNewConfig} />}
+                {activeTab === "sabnzbd" && <SabnzbdSettings config={newConfig} setNewConfig={setNewConfig} />}
+                {activeTab === "streaming" && <StreamingSettings config={newConfig} setNewConfig={setNewConfig} />}
+                {activeTab === "webdav" && <WebdavSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "watchdog" && <WatchdogSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "preflight" && <PreflightSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "watchtower" && <WatchtowerSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "warden" && <WardenSettings config={newConfig} setNewConfig={setNewConfig} />}
-                {activeTab === "sabnzbd" && <SabnzbdSettings config={newConfig} setNewConfig={setNewConfig} appVersion={props.appVersion} />}
-                {activeTab === "webdav" && <WebdavSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "arrs" && <ArrsSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "repairs" && <RepairsSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "rclone" && <RcloneSettings config={newConfig} setNewConfig={setNewConfig} />}

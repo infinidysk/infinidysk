@@ -2,15 +2,17 @@ export type SettingsTab =
     | "usenet"
     | "indexers"
     | "profiles"
+    | "queue"
+    | "sabnzbd"
+    | "streaming"
+    | "webdav"
     | "watchdog"
     | "preflight"
     | "watchtower"
     | "warden"
-    | "sabnzbd"
-    | "webdav"
     | "arrs"
-    | "repairs"
     | "rclone"
+    | "repairs"
     | "maintenance"
     | "backup"
     | "support"
@@ -29,7 +31,7 @@ export type SettingsTabGroup = {
 
 export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
     {
-        title: "Connections",
+        title: "Providers & Search",
         items: [
             { id: "usenet", label: "Usenet", icon: "cloud" },
             { id: "indexers", label: "Indexers", icon: "travel_explore" },
@@ -37,7 +39,21 @@ export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
         ],
     },
     {
-        title: "Playback & Automation",
+        title: "Queue & Import",
+        items: [
+            { id: "queue", label: "Queue", icon: "list_alt" },
+            { id: "sabnzbd", label: "SABnzbd", icon: "download" },
+        ],
+    },
+    {
+        title: "Playback & Files",
+        items: [
+            { id: "streaming", label: "Streaming", icon: "play_circle" },
+            { id: "webdav", label: "WebDAV", icon: "folder_shared" },
+        ],
+    },
+    {
+        title: "Automation",
         items: [
             { id: "watchdog", label: "Watchdog", icon: "monitor_heart" },
             { id: "preflight", label: "Preflight", icon: "fact_check" },
@@ -48,16 +64,14 @@ export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
     {
         title: "Integrations",
         items: [
-            { id: "sabnzbd", label: "SABnzbd", icon: "download" },
-            { id: "webdav", label: "WebDAV", icon: "folder_shared" },
-            { id: "arrs", label: "Radarr/Sonarr", icon: "sync_alt" },
+            { id: "arrs", label: "Arr Apps", icon: "sync_alt" },
             { id: "rclone", label: "Rclone Server", icon: "dns" },
         ],
     },
     {
         title: "System",
         items: [
-            { id: "repairs", label: "Repairs", icon: "build" },
+            { id: "repairs", label: "Health & Repairs", icon: "build" },
             { id: "maintenance", label: "Maintenance", icon: "settings_suggest" },
             { id: "backup", label: "Backup & Restore", icon: "settings_backup_restore" },
             { id: "support", label: "Support", icon: "support_agent" },

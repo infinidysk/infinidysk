@@ -396,7 +396,9 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
                             onChange={e => handleRetrieveUserAgentChange(e.target.value)}
                         />
                         <HelpText>
-                            Sent when retrieving the .nzb file. Leave blank to use the default.
+                            Sent when retrieving .nzb files, including SAB <code>addurl</code> requests
+                            matched to an indexer. Per-indexer overrides take precedence. Leave blank to
+                            use the application default.
                         </HelpText>
                     </div>
                     </ManagedSetting>

@@ -12,18 +12,21 @@ export const NAV_FEATURE_IDS = [
   "settings.usenet",
   "settings.indexers",
   "settings.profiles",
+  "settings.queue",
+  "settings.sabnzbd",
+  "settings.streaming",
+  "settings.webdav",
   "settings.watchdog",
   "settings.preflight",
   "settings.watchtower",
   "settings.warden",
-  "settings.sabnzbd",
-  "settings.webdav",
   "settings.arrs",
   "settings.repairs",
   "settings.rclone",
   "settings.maintenance",
   "settings.backup",
   "settings.support",
+  "settings.migration",
 ] as const;
 
 export type NavFeatureId = (typeof NAV_FEATURE_IDS)[number];

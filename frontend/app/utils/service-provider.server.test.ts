@@ -42,13 +42,26 @@ describe("getServiceProvider", () => {
     process.env.SERVICE_PROVIDER = JSON.stringify({
       name: " ElfHosted ",
       url: "https://elfhosted.com",
-      disabledFeatures: ["search", "settings.rclone", "search"],
+      disabledFeatures: [
+        "search",
+        "settings.rclone",
+        "settings.queue",
+        "settings.streaming",
+        "settings.migration",
+        "search",
+      ],
     });
 
     expect(getServiceProvider()).toEqual({
       name: "ElfHosted",
       url: "https://elfhosted.com/",
-      disabledFeatures: ["search", "settings.rclone"],
+      disabledFeatures: [
+        "search",
+        "settings.rclone",
+        "settings.queue",
+        "settings.streaming",
+        "settings.migration",
+      ],
     });
     expect(warnMock).not.toHaveBeenCalled();
   });

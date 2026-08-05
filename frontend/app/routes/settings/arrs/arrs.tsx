@@ -195,8 +195,9 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
     return (
         <SettingsPage>
             <SettingsIntro>
-                Connect Radarr and Sonarr instances for automated replacement searches, then choose how
-                InfiniDysk handles downloads stuck in their queues.
+                Connect supported Arr apps for automated replacement searches, then choose how InfiniDysk
+                handles downloads stuck in their queues. Radarr and Sonarr are supported today, with room
+                for additional Arr apps in the future.
             </SettingsIntro>
 
             <ManagedSetting configKey="arr.instances">
