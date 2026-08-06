@@ -367,7 +367,7 @@ public class StreamingTimeoutTests
     }
 
     [Fact]
-    public async Task RunWithConnection_StatSuccess_ClosesLatchedBreaker()
+    public async Task RunWithConnection_StatSuccess_ClosesBreakerOnlyAfterCooldown()
     {
         var breaker = new ProviderCircuitBreaker("stat-success-latched");
         using var pool = new ConnectionPool<INntpClient>(
@@ -383,6 +383,12 @@ public class StreamingTimeoutTests
         breaker.RecordFailure();
         Assert.True(breaker.IsLatched);
 
+        await client.StatAsync("seg", CancellationToken.None);
+
+        Assert.True(breaker.IsLatched);
+        Assert.True(breaker.TrippedUntilMs > Environment.TickCount64);
+
+        breaker.ExpireCooldownForTests();
         await client.StatAsync("seg", CancellationToken.None);
 
         Assert.False(breaker.IsLatched);

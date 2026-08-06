@@ -109,6 +109,12 @@ public class ProviderCircuitBreaker
     {
         lock (_lock)
         {
+            // Commands that started before a trip can still complete while the
+            // provider is cooling down. They are not half-open probes and must
+            // not return the provider to normal rotation early.
+            if (_trippedUntilMs > Environment.TickCount64)
+                return;
+
             // Only a circuit that opened can recover. Failures that cleared without tripping
             // are routine, and announcing a recovery for them implies an outage that never
             // happened. Matches the transition notification below.

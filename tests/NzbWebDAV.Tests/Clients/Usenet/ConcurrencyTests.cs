@@ -19,6 +19,7 @@ public class ConcurrencyTests
         breaker.RecordFailure();
         Assert.True(breaker.IsTripped);
 
+        breaker.ExpireCooldownForTests();
         breaker.RecordSuccess();
         Assert.False(breaker.IsTripped);
         Assert.Equal(0, breaker.TrippedUntilMs);
@@ -37,6 +38,7 @@ public class ConcurrencyTests
         breaker.RecordFailure();
         breaker.RecordFailure();
         Assert.Single(transitions);
+        breaker.ExpireCooldownForTests();
         breaker.RecordSuccess();
         breaker.RecordSuccess();
 
@@ -126,6 +128,7 @@ public class ConcurrencyTests
         breaker.RecordFailure();
         Assert.Equal(TimeSpan.FromSeconds(120), breaker.CurrentCooldown);
 
+        breaker.ExpireCooldownForTests();
         breaker.RecordSuccess();
         Assert.Equal(TimeSpan.FromSeconds(60), breaker.CurrentCooldown);
 
@@ -193,6 +196,27 @@ public class ConcurrencyTests
         // Further callers are fully open again (not stuck behind a half-open slot).
         Assert.False(breaker.IsTripped);
         Assert.False(breaker.IsTripped);
+    }
+
+    [Fact]
+    public void ProviderCircuitBreaker_SuccessDuringOpenCooldown_DoesNotCloseOrResetLadder()
+    {
+        var transitions = new List<ProviderCircuitTransition>();
+        var breaker = new ProviderCircuitBreaker("cooldown-success", transitions.Add);
+        breaker.RecordFailure();
+        breaker.RecordFailure();
+        breaker.RecordFailure();
+
+        var trippedUntil = breaker.TrippedUntilMs;
+        var cooldown = breaker.CurrentCooldown;
+
+        breaker.RecordSuccess();
+
+        Assert.Equal(ProviderCircuitState.Open, breaker.GetSnapshot().State);
+        Assert.Equal(trippedUntil, breaker.TrippedUntilMs);
+        Assert.Equal(cooldown, breaker.CurrentCooldown);
+        Assert.DoesNotContain(transitions, transition =>
+            transition.State == ProviderCircuitTransitionState.Closed);
     }
 
     [Fact]
