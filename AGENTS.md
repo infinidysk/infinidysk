@@ -169,7 +169,7 @@ dotnet ef database update   # or: ./publish/NzbWebDAV --db-migration
 
 Migration files go in `backend/Database/Migrations/`. `DavDatabaseContextFactory` exists for design-time tooling.
 
-**Any commit that adds or changes a database migration must be marked as a breaking change** (see [Breaking changes](#breaking-changes) below) so release-please performs a breaking version bump. Migrations auto-apply on startup; a breaking bump signals operators to back up `/config` before upgrading.
+**Only irreversible or destructive migrations are breaking changes.** A migration that rewrites or drops existing data, changes schema in a way that cannot be rolled back, or otherwise makes downgrading unsafe must be marked breaking (see [Breaking changes](#breaking-changes) below) so release-please performs a major version bump. Routine additive migrations (new tables, new nullable columns, new indexes) ship as plain `feat(db)` / `fix(db)` — but the PR description and release announcement must still include a "back up `/config` before upgrading" note, since migrations auto-apply on startup.
 
 ## Commit conventions (required)
 
@@ -188,21 +188,24 @@ All commits **must** follow [Conventional Commits](https://www.conventionalcommi
 This is **required** when the commit:
 
 - Introduces a user-visible breaking change (API, config, behavior, or upgrade path), **or**
-- Adds or modifies an EF Core database migration under `backend/Database/Migrations/`
+- Adds or modifies an EF Core database migration under `backend/Database/Migrations/` that is **irreversible or destructive** (rewrites or drops data, cannot be rolled back, makes downgrading unsafe)
+
+Routine **additive** migrations (new tables, new nullable columns, new indexes) are **not** breaking: commit them as plain `feat(db)` / `fix(db)`, and include a "back up `/config` before upgrading" note in the PR description and release announcement instead.
 
 Examples:
 
 ```
-feat(db)!: add health-check history table migration
 fix(webdav)!: remove deprecated mount path /legacy
 
 feat(db)!: stage guided restore and swap databases during maintenance
 
 BREAKING CHANGE: existing installs must back up /config before upgrading;
 the migration rewrites the queue schema and cannot be rolled back.
+
+feat(db): add health-check history table migration   # additive → not breaking
 ```
 
-Do not land migrations or other breaking work as plain `feat` / `fix` — those only produce minor/patch bumps and will not surface under Breaking Changes in the changelog.
+Do not land irreversible migrations or other breaking work as plain `feat` / `fix` — those only produce minor/patch bumps and will not surface under Breaking Changes in the changelog.
 
 ### Types
 
@@ -210,7 +213,7 @@ Prefer the most specific type so release-please places the entry in the right ch
 
 | Type | Changelog section | When to use |
 |------|-------------------|-------------|
-| `feat!` / `fix!` / `BREAKING CHANGE` footer | Breaking Changes | Breaking changes **and** any commit that includes a database migration |
+| `feat!` / `fix!` / `BREAKING CHANGE` footer | Breaking Changes | Breaking changes, including irreversible/destructive database migrations (routine additive migrations are plain `feat(db)` / `fix(db)`) |
 | `feat` | Features | New user-visible behavior |
 | `fix` | Bug Fixes | Bug fixes, regressions, compatibility fixes |
 | `perf` | Performance Improvements | Performance-only improvements |
@@ -268,7 +271,8 @@ feat(queue): backup incoming nzbs when enabled
 fix(webdav): return 416 for range requests past content boundary
 fix(nntp): skip failing providers with circuit breaker
 feat(ui): add setting to schedule RemoveOrphanedFiles task
-feat(db)!: add orphaned-files index migration
+feat(db): add orphaned-files index migration
+feat(db)!: rewrite queue schema during guided restore
 fix(deps): bump vite in the frontend vite group
 chore(ci): run Refresh :dev image builds on demand
 chore(docs): expand commit type guidance for release-please sections
@@ -407,7 +411,7 @@ Docker image builds are shared via the reusable workflow. Branch and dependabot 
 ## Releases
 
 - Merging to `main` triggers **release-please** (`.github/workflows/release.yml`) which maintains `CHANGELOG.md` + `version.txt` and creates GitHub releases.
-- Breaking commits (`feat!` / `fix!` / `BREAKING CHANGE` footer) → major version bump (and Breaking Changes changelog section). **Database migrations must always use this form.** The next breaking change from `0.x` will release as `1.0.0`.
+- Standard SemVer: breaking commits (`feat!` / `fix!` / `BREAKING CHANGE` footer) → major version bump (and Breaking Changes changelog section). Reserve these for genuine breaks — user-visible breaking changes and irreversible/destructive database migrations — so major versions stay meaningful; routine additive migrations are plain `feat(db)` / `fix(db)`.
 - `feat` → minor bump; `fix` → patch bump (standard SemVer in `.release-please-config.json`). Other conventional types that still appear in notes (`perf`, `refactor`, `ux`, `revert`, `build`, and legacy `docs` / `tests`) do not bump the version by themselves. **`chore` commits are omitted from release notes** — use `chore(<scope>)` for CI, tests, docs, agents/skills, and other non-behavior work (do not use bare `docs` / `ci` / `test` / `tests` types).
 - When release-please creates a release on merge to `main`, the same workflow run attaches prebuilt linux-x64/arm64 archives, builds and pushes Docker images to `ghcr.io` (`latest`, `dev`, `rc`, exact `vMAJOR.MINOR.PATCH`, and rolling `vMAJOR` / `vMAJOR.MINOR` tags), and moves the git `dev` and `rc` tags to that release commit.
 - To republish images and archives for an existing release (e.g. after fixing CI), run **Release** workflow manually with the `version` input (e.g. `0.6.5`); this also moves the git `dev` and `rc` tags to that version.
@@ -461,7 +465,7 @@ else
 - **Proxy paths:** new WebDAV mount points must be added to the proxy allowlists in `frontend/server/app.ts` and compression skip list in `frontend/server.ts`.
 - **Editing CHANGELOG.md:** it is generated — commit messages are the source of truth.
 - **Submodule / natives:** after clone run `git submodule update --init libs/rapidyenc`. Prefer `scripts/run-backend.sh` so the host rapidyenc native is built and `RAPIDYENC_LIBRARY_PATH` is set (required for yEnc on macOS and for local Linux without Docker).
-- **Breaking upgrades:** irreversible schema changes ship as ordinary EF migrations that auto-apply on startup and surface through the migration-progress splash; there is no `UPGRADE` env-var interlock. Advise a `/config` backup before upgrading across such a migration. Commits that add migrations **must** use a breaking conventional-commit marker (`!` or `BREAKING CHANGE`) so release-please bumps as breaking.
+- **Breaking upgrades:** irreversible schema changes ship as ordinary EF migrations that auto-apply on startup and surface through the migration-progress splash; there is no `UPGRADE` env-var interlock. Advise a `/config` backup before upgrading across such a migration. Only **irreversible/destructive** migrations use a breaking conventional-commit marker (`!` or `BREAKING CHANGE`); routine additive migrations ship as plain `feat(db)` / `fix(db)` with a backup note in the PR description and release announcement.
 - **Test fixtures:** prefer deterministic generated data and `FakeNntpClient`; do not require live Usenet providers in the automated suite.
 - **Streaming changes:** run the focused backend tests and retain manual range, rclone scrubbing, and encrypted-archive playback checks for behavior not covered by automation.
 - **Stack dumps for known failures:** do not dismiss an attached exception trace as “expected” without a remediation that catches it and logs a human-friendly event (see [Stack dumps and human-friendly log events](#stack-dumps-and-human-friendly-log-events)).
