@@ -25,6 +25,7 @@ jobs:
       rc: ${{ steps.vars.outputs.rc }}
       tag: ${{ steps.vars.outputs.tag }}
       sha: ${{ steps.vars.outputs.sha }}
+      short_sha: ${{ steps.vars.outputs.short_sha }}
     steps:
       - id: vars
         env:
@@ -66,6 +67,7 @@ jobs:
           echo "rc=${RC}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}-rc.${RC}" >> "$GITHUB_OUTPUT"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHA:0:7}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: resolve
@@ -77,15 +79,32 @@ jobs:
       tags: |
         ghcr.io/${{ github.repository }}:${{ needs.resolve.outputs.tag }}
         ghcr.io/${{ github.repository }}:rc
-        ghcr.io/${{ github.repository }}:dev
         docker.io/infinidysk/infinidysk:${{ needs.resolve.outputs.tag }}
         docker.io/infinidysk/infinidysk:rc
-        docker.io/infinidysk/infinidysk:dev
       legacy_tags: |
         ghcr.io/nzbdav/nzbdav:${{ needs.resolve.outputs.tag }}
         ghcr.io/nzbdav/nzbdav:rc
-        ghcr.io/nzbdav/nzbdav:dev
       nzbdav_version: ${{ needs.resolve.outputs.version }}-rc.${{ needs.resolve.outputs.rc }}
+      checkout_ref: ${{ needs.resolve.outputs.sha }}
+      dockerhub_username: infinidysk
+    secrets:
+      registry_token: ${{ secrets.GITHUB_TOKEN }}
+      dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+      old_ghcr_token: ${{ secrets.OLD_GHCR_TOKEN }}
+
+  build-dev:
+    needs: resolve
+    uses: ./.github/workflows/docker-build-push.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      tags: |
+        ghcr.io/${{ github.repository }}:dev
+        docker.io/infinidysk/infinidysk:dev
+      legacy_tags: |
+        ghcr.io/nzbdav/nzbdav:dev
+      nzbdav_version: dev-${{ needs.resolve.outputs.short_sha }}
       checkout_ref: ${{ needs.resolve.outputs.sha }}
       dockerhub_username: infinidysk
     secrets:
@@ -151,7 +170,7 @@ jobs:
       ref: ${{ needs.resolve.outputs.sha }}
 
   tag-dev:
-    needs: [resolve, build, publish-release]
+    needs: [resolve, build-dev, publish-release]
     uses: ./.github/workflows/move-movable-tag.yml
     permissions:
       contents: write
