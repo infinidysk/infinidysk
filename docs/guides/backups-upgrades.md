@@ -29,7 +29,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Database migrations apply automatically on startup. **Back up `/config` before upgrading across versions that include schema migrations** (breaking releases call this out in the changelog).
+Database migrations apply automatically on startup. **Back up `/config` before upgrading across versions that include schema migrations.** Irreversible migrations appear under Breaking Changes in the changelog; routine additive migrations are noted in the release announcement instead.
 
 Coming from nzbdav-dev `v0.6.4` or a community fork? See [Migration paths](../getting-started/migration.md).
 
