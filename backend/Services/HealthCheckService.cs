@@ -243,8 +243,7 @@ public class HealthCheckService : BackgroundService
                 await ArticleExistenceChecker.CheckAsync(
                     _usenetClient, sampled, concurrency, progress, statCts.Token).ConfigureAwait(false);
             }
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
+            CompleteHealthProgress(davItem.Id);
 
             // update the database.
             // the next check is scheduled so the interval doubles with the item's age since release.
@@ -267,8 +266,7 @@ public class HealthCheckService : BackgroundService
         catch (OperationCanceledException) when (
             !ct.IsCancellationRequested && statCts?.IsCancellationRequested == true)
         {
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
+            CompleteHealthProgress(davItem.Id);
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
@@ -284,8 +282,7 @@ public class HealthCheckService : BackgroundService
         }
         catch (UsenetArticleNotFoundException e)
         {
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
+            CompleteHealthProgress(davItem.Id);
             if (FilenameUtil.IsImportantFileType(davItem.Name))
             {
                 lock (_missingSegmentIds)
@@ -304,8 +301,7 @@ public class HealthCheckService : BackgroundService
         {
             // Connection-level STAT failures (e.g. buffered 400 goodbye) must not trigger
             // repair or leave NextHealthCheck unset — defer and surface ActionNeeded.
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
+            CompleteHealthProgress(davItem.Id);
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
@@ -319,8 +315,7 @@ public class HealthCheckService : BackgroundService
         {
             // STAT/read timeouts and socket/IO failures must not dump stacks or trigger Arr repair —
             // defer and surface ActionNeeded with a single human-readable Warning.
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
-            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
+            CompleteHealthProgress(davItem.Id);
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
@@ -341,6 +336,12 @@ public class HealthCheckService : BackgroundService
         }
     }
 
+    private void CompleteHealthProgress(Guid davItemId)
+    {
+        _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItemId}|100");
+        _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItemId}|done");
+    }
+
     private async Task DeferHealthCheck(
         DavItem davItem,
         DavDatabaseClient dbClient,
@@ -352,8 +353,7 @@ public class HealthCheckService : BackgroundService
         davItem.LastHealthCheck = utcNow;
         davItem.NextHealthCheck = ComputeFailureNextHealthCheck(utcNow, isKnownFailure);
 
-        _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
-        _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
+        CompleteHealthProgress(davItem.Id);
 
         if (isKnownFailure)
         {
