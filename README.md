@@ -17,15 +17,15 @@
 </p>
 
 > [!NOTE]
-> **NzbDAV is becoming InfiniDysk.** The documentation has moved to the new domain; the repository and Docker image will move later. No deployment change is needed yet. Read the [rename FAQ](https://www.infinidysk.com/community/renaming-to-infinidysk/).
+> **NzbDAV is now InfiniDysk.** Docs, GitHub, and the Docker image have moved. If you still pull `ghcr.io/nzbdav/nzbdav`, switch to `ghcr.io/infinidysk/infinidysk` (same `/config` and mounts). Read the [rename FAQ](https://www.infinidysk.com/community/renaming-to-infinidysk/).
 
 <img width="1024" height="601" alt="InfiniDysk overview dashboard" src="docs/assets/overview.png" />
 
 <p align="center">
-  <a href="https://github.com/infinidysk/infinidysk/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/nzbdav/nzbdav" /></a>
-  <a href="https://github.com/infinidysk/infinidysk/pkgs/container/nzbdav"><img alt="Docker image" src="https://img.shields.io/badge/ghcr.io-nzbdav%2Fnzbdav-blue?logo=docker&logoColor=white" /></a>
-  <a href="https://github.com/infinidysk/infinidysk/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/nzbdav/nzbdav/ci.yml?branch=main&label=CI" /></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/nzbdav/nzbdav" /></a>
+  <a href="https://github.com/infinidysk/infinidysk/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/infinidysk/infinidysk" /></a>
+  <a href="https://github.com/infinidysk/infinidysk/pkgs/container/infinidysk"><img alt="Docker image" src="https://img.shields.io/badge/ghcr.io-infinidysk%2Finfinidysk-blue?logo=docker&logoColor=white" /></a>
+  <a href="https://github.com/infinidysk/infinidysk/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/infinidysk/infinidysk/ci.yml?branch=main&label=CI" /></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/infinidysk/infinidysk" /></a>
 </p>
 
 ---
@@ -115,7 +115,7 @@ Then run `docker compose up -d`, open `http://localhost:3000`, create your admin
 Other supported setup paths:
 
 - **Linux without Docker** — Follow the [prebuilt archive guide](https://www.infinidysk.com/getting-started/prebuilt-archives/) to run the x64 or ARM64 release bundle.
-- **IPv6-only Docker hosts** — Use the Docker Hub mirror, `nzbdav/nzbdav`, because `ghcr.io` is not reachable over IPv6.
+- **IPv6-only Docker hosts** — Use the Docker Hub mirror, `infinidysk/infinidysk`, because `ghcr.io` is not reachable over IPv6.
 - **Batteries-included Arr stack** — Use InfiniDysk as a supported core module in [DUMB](https://dumbarr.com/services/core/nzbdav/).
 - **Reverse-proxy sub-path** — Follow the [URL base guide](https://www.infinidysk.com/configuration/url-base/) to build an image for paths such as `/nzbdav`.
 
