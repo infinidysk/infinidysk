@@ -9,6 +9,7 @@ public class ContextualCancellationTokenSource : IDisposable
     private bool _disposed;
 
     public CancellationToken Token => _cts.Token;
+    public bool IsCancellationRequested => _cts.IsCancellationRequested;
 
     private ContextualCancellationTokenSource(CancellationTokenSource cts)
     {

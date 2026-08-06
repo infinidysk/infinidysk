@@ -201,7 +201,7 @@ public class HealthCheckService : BackgroundService
         // Attribution for latency histograms — does not change pool admission priority.
         using var maintenanceScope = ct.SetContext(MaintenanceDownloadContext.Instance);
 
-        CancellationTokenSource? statCts = null;
+        ContextualCancellationTokenSource? statCts = null;
         try
         {
             if (isUrgentRepair)
@@ -235,7 +235,7 @@ public class HealthCheckService : BackgroundService
             // Only cancel a STAT sweep after it has made no progress for a sustained
             // period. A complete/deep scan can otherwise run as long as it continues
             // advancing; cancellation reaches and drains every in-flight STAT request.
-            using (statCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            using (statCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(ct))
             {
                 statCts.CancelAfter(HealthCheckProgressTimeout);
                 var progress = progressHook.ToPercentage(sampled.Count);
