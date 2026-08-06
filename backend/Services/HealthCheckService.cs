@@ -25,6 +25,7 @@ public class HealthCheckService : BackgroundService
 {
     private const int MaximumMissingSegmentIds = 100_000;
     private const int NoMatchConfirmationsRequired = 2;
+    private static readonly TimeSpan HealthCheckProgressTimeout = TimeSpan.FromMinutes(5);
 
     // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
     // a replacement loop (Arr keeps re-grabbing a release repair keeps rejecting, issue #732).
@@ -200,6 +201,7 @@ public class HealthCheckService : BackgroundService
         // Attribution for latency histograms — does not change pool admission priority.
         using var maintenanceScope = ct.SetContext(MaintenanceDownloadContext.Instance);
 
+        CancellationTokenSource? statCts = null;
         try
         {
             if (isUrgentRepair)
@@ -225,14 +227,21 @@ public class HealthCheckService : BackgroundService
             var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
             progressHook.ProgressChanged += (_, progress) =>
             {
+                statCts?.CancelAfter(HealthCheckProgressTimeout);
                 var message = $"{davItem.Id}|{progress}";
                 debounce(() => _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, message));
             };
 
-            // perform health check
-            var progress = progressHook.ToPercentage(sampled.Count);
-            await ArticleExistenceChecker.CheckAsync(_usenetClient, sampled, concurrency, progress, ct)
-                .ConfigureAwait(false);
+            // Only cancel a STAT sweep after it has made no progress for a sustained
+            // period. A complete/deep scan can otherwise run as long as it continues
+            // advancing; cancellation reaches and drains every in-flight STAT request.
+            using (statCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                statCts.CancelAfter(HealthCheckProgressTimeout);
+                var progress = progressHook.ToPercentage(sampled.Count);
+                await ArticleExistenceChecker.CheckAsync(
+                    _usenetClient, sampled, concurrency, progress, statCts.Token).ConfigureAwait(false);
+            }
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
@@ -253,6 +262,24 @@ public class HealthCheckService : BackgroundService
                 HealthCheckResult.HealthResult.Healthy,
                 HealthCheckResult.RepairAction.None,
                 healthyMessage, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            !ct.IsCancellationRequested && statCts?.IsCancellationRequested == true)
+        {
+            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
+            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
+            var utcNow = DateTimeOffset.UtcNow;
+            davItem.LastHealthCheck = utcNow;
+            davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
+            Log.Warning(
+                "Health check for {Path} made no STAT progress for {Timeout}. Deferred next check.",
+                davItem.Path, HealthCheckProgressTimeout);
+            await RecordHealthResult(
+                dbClient, davItem,
+                HealthCheckResult.HealthResult.Unhealthy,
+                HealthCheckResult.RepairAction.ActionNeeded,
+                $"Health check deferred: no STAT progress for {HealthCheckProgressTimeout.TotalMinutes:0} minutes.",
+                ct).ConfigureAwait(false);
         }
         catch (UsenetArticleNotFoundException e)
         {
