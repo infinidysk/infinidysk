@@ -127,7 +127,7 @@ jobs:
           cp "libs/RapidYencSharp/runtimes/$RID/native/librapidyenc.so" backend-publish/
 
       - name: Download frontend build
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-frontend
           path: release-frontend
