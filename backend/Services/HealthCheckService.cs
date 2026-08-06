@@ -227,7 +227,8 @@ public class HealthCheckService : BackgroundService
             var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
             progressHook.ProgressChanged += (_, progress) =>
             {
-                statCts?.CancelAfter(HealthCheckProgressTimeout);
+                try { statCts?.CancelAfter(HealthCheckProgressTimeout); }
+                catch (ObjectDisposedException) { }
                 var message = $"{davItem.Id}|{progress}";
                 debounce(() => _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, message));
             };
