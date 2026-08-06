@@ -11,6 +11,7 @@ vi.mock("./logger", () => ({
 type TransferResult = {
   status: number;
   bytes: number;
+  body: string;
   endedCleanly: boolean;
 };
 
@@ -41,25 +42,46 @@ function close(server: http.Server): Promise<void> {
  * Settles on a clean end, an aborted response, or a request error, so a request
  * that hangs instead fails the test by timing out.
  */
-function fetchThroughProxy(port: number, path: string): Promise<TransferResult> {
+function fetchThroughProxy(
+  port: number,
+  path: string,
+  headers?: http.OutgoingHttpHeaders,
+): Promise<TransferResult> {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: "127.0.0.1", port, path, method: "GET" },
+      { hostname: "127.0.0.1", port, path, method: "GET", headers },
       (res) => {
         let bytes = 0;
+        const chunks: Buffer[] = [];
         const status = res.statusCode ?? 0;
         res.on("data", (chunk: Buffer) => {
           bytes += chunk.length;
+          chunks.push(chunk);
         });
-        res.on("end", () => resolve({ status, bytes, endedCleanly: true }));
-        res.on("aborted", () => resolve({ status, bytes, endedCleanly: false }));
-        res.on("error", () => resolve({ status, bytes, endedCleanly: false }));
+        res.on("end", () => resolve({
+          status,
+          bytes,
+          body: Buffer.concat(chunks).toString("utf8"),
+          endedCleanly: true,
+        }));
+        res.on("aborted", () => resolve({
+          status,
+          bytes,
+          body: Buffer.concat(chunks).toString("utf8"),
+          endedCleanly: false,
+        }));
+        res.on("error", () => resolve({
+          status,
+          bytes,
+          body: Buffer.concat(chunks).toString("utf8"),
+          endedCleanly: false,
+        }));
       },
     );
     req.on("error", (error) => {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ECONNRESET" || error.message === "socket hang up") {
-        resolve({ status: 0, bytes: 0, endedCleanly: false });
+        resolve({ status: 0, bytes: 0, body: "", endedCleanly: false });
         return;
       }
       reject(error);
@@ -98,6 +120,7 @@ describe("handleBackendProxyResponse", () => {
     const proxy = createProxyMiddleware({
       target: `http://127.0.0.1:${backendPort}`,
       changeOrigin: true,
+      selfHandleResponse: true,
       on: { proxyRes: handleBackendProxyResponse },
     });
 
@@ -162,6 +185,41 @@ describe("handleBackendProxyResponse", () => {
 
     expect(result.status).toBe(404);
     expect(result.endedCleanly).toBe(true);
+  });
+
+  it("renders a friendly page for browser requests to unavailable view files", async () => {
+    const frontendPort = await startProxy((_req, res) => {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("The file does not exist.");
+    });
+
+    const result = await fetchThroughProxy(
+      frontendPort,
+      "/view/content/tv/example-show/example.mkv?downloadKey=abc",
+      { Accept: "text/html,application/xhtml+xml" },
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.endedCleanly).toBe(true);
+    expect(result.body).toContain("File unavailable");
+    expect(result.body).toContain('href="/explore/content/tv/example-show"');
+  });
+
+  it("passes unavailable view files through unchanged for non-browser clients", async () => {
+    const frontendPort = await startProxy((_req, res) => {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("The file does not exist.");
+    });
+
+    const result = await fetchThroughProxy(
+      frontendPort,
+      "/view/content/tv/example-show/example.mkv?downloadKey=abc",
+      { Accept: "application/octet-stream" },
+    );
+
+    expect(result.status).toBe(404);
+    expect(result.endedCleanly).toBe(true);
+    expect(result.body).toBe("The file does not exist.");
   });
 
   it("ends a chunked backend response that finishes normally", async () => {

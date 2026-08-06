@@ -109,6 +109,22 @@ function Body(props: ExplorePageData) {
         lastClickedRef.current = null;
     }, [location.pathname]);
 
+    // Keep long-lived directory views in sync with queue and *Arr removals.
+    useEffect(() => {
+        const revalidateWhenVisible = () => {
+            if (document.visibilityState === "visible" && revalidator.state === "idle") {
+                revalidator.revalidate();
+            }
+        };
+
+        const interval = window.setInterval(revalidateWhenVisible, 60_000);
+        document.addEventListener("visibilitychange", revalidateWhenVisible);
+        return () => {
+            window.clearInterval(interval);
+            document.removeEventListener("visibilitychange", revalidateWhenVisible);
+        };
+    }, [revalidator]);
+
     const visibleItems = useMemo(() => {
         const q = query.trim().toLowerCase();
         const filtered = q

@@ -16,6 +16,20 @@ export function handleBackendProxyResponse(
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
+  if (shouldRenderFileUnavailablePage(proxyRes, req)) {
+    proxyRes.resume();
+    const explorePaths = getExplorePaths(req);
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    res.end(renderFileUnavailablePage(explorePaths));
+    return;
+  }
+
+  res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
+  proxyRes.pipe(res);
+
   proxyRes.on("close", () => {
     if (res.writableEnded) return;
 
@@ -33,4 +47,74 @@ export function handleBackendProxyResponse(
     );
     res.destroy();
   });
+}
+
+function shouldRenderFileUnavailablePage(proxyRes: IncomingMessage, req: IncomingMessage): boolean {
+  const statusCode = proxyRes.statusCode;
+  if (statusCode !== 400 && statusCode !== 404) return false;
+
+  const accept = req.headers.accept?.toLowerCase() ?? "";
+  if (!accept.includes("text/html")) return false;
+
+  return getRequestPath(req).pathname.startsWith("/view/");
+}
+
+function getExplorePaths(req: IncomingMessage): { directory: string; root: string } {
+  const { pathname, viewIndex } = getRequestPath(req);
+  const basePath = viewIndex > 0 ? pathname.slice(0, viewIndex) : "";
+  const itemPath = pathname.slice(viewIndex + "/view/".length);
+  const parentPath = itemPath.slice(0, itemPath.lastIndexOf("/"));
+  const root = `${basePath}/explore`;
+  return { directory: `${root}${parentPath ? `/${parentPath}` : ""}`, root };
+}
+
+function getRequestPath(req: IncomingMessage): { pathname: string; viewIndex: number } {
+  const originalUrl = (req as IncomingMessage & { originalUrl?: string }).originalUrl;
+  const pathname = new URL(originalUrl ?? req.url ?? "/", "http://localhost").pathname;
+  return { pathname, viewIndex: pathname.indexOf("/view/") };
+}
+
+function renderFileUnavailablePage(explorePaths: { directory: string; root: string }): string {
+  const escapedDirectoryPath = escapeHtml(explorePaths.directory);
+  const escapedRootPath = escapeHtml(explorePaths.root);
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>File unavailable · InfiniDysk</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { align-items: center; background: #111827; color: #f9fafb; display: flex; font-family: ui-sans-serif, system-ui, sans-serif; justify-content: center; margin: 0; min-height: 100vh; padding: 1.5rem; }
+    main { background: #1f2937; border: 1px solid #374151; border-radius: 1rem; box-shadow: 0 20px 25px rgb(0 0 0 / 0.25); max-width: 34rem; padding: 2rem; text-align: center; }
+    h1 { font-size: 1.5rem; margin: 0 0 0.75rem; }
+    p { color: #d1d5db; line-height: 1.5; margin: 0 0 1.5rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; }
+    a { background: #6366f1; border-radius: 0.5rem; color: white; display: inline-block; font-weight: 600; padding: 0.65rem 1rem; text-decoration: none; }
+    a:hover { background: #4f46e5; }
+    .secondary { background: #374151; }
+    .secondary:hover { background: #4b5563; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>File unavailable</h1>
+    <p>This file may have been removed or is no longer available. Refresh the directory to see its current contents.</p>
+    <div class="actions">
+      <a href="${escapedDirectoryPath}">Back to directory</a>
+      <a class="secondary" href="${escapedRootPath}">Explore root</a>
+    </div>
+  </main>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]!);
 }

@@ -65,6 +65,7 @@ function logProxyFailure(message: string, error: unknown) {
 const forwardToBackend = createProxyMiddleware({
   target: process.env.BACKEND_URL,
   changeOrigin: true,
+  selfHandleResponse: true,
   ...backendProxyTimeoutOptions,
   on: {
     proxyReq: (proxyReq, req) => {
