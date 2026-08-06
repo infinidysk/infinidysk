@@ -236,6 +236,7 @@ public class ProviderCircuitBreakerConnectionFailureTests
         var transitions = new List<ProviderCircuitTransition>();
         var breaker = new ProviderCircuitBreaker("recovered", transitions.Add);
         breaker.RecordConnectionFailure();
+        breaker.ExpireCooldownForTests();
         breaker.RecordSuccess();
 
         breaker.RecordConnectionFailure();

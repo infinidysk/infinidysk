@@ -35,10 +35,26 @@ public class ProviderCircuitBreakerLoggingTests
             breaker.RecordFailure();
             Assert.True(breaker.IsTripped);
 
+            breaker.ExpireCooldownForTests();
             breaker.RecordSuccess();
         });
 
         Assert.Contains(events, RecoveryWasAnnounced);
+    }
+
+    [Fact]
+    public void RecordSuccess_DuringOpenCooldown_DoesNotAnnounceRecovery()
+    {
+        var events = CaptureLogs(breaker =>
+        {
+            breaker.RecordFailure();
+            breaker.RecordFailure();
+            breaker.RecordFailure();
+
+            breaker.RecordSuccess();
+        });
+
+        Assert.DoesNotContain(events, RecoveryWasAnnounced);
     }
 
     private static bool RecoveryWasAnnounced(LogEvent logEvent) =>
