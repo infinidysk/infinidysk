@@ -225,23 +225,52 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
 
             await _streamTasks.Writer.WaitToWriteAsync(cancellationToken);
-            var connection = await _usenetClient.AcquireExclusiveConnectionAsync(
-                segmentIds, cancellationToken);
-            var batch = await _usenetClient.DecodedBodiesAsync(
-                segmentIds, connection, cancellationToken).ConfigureAwait(false);
-            var streamTasks = batch.Responses
-                .Select((response, index) => DownloadBatchSegment(
-                    response,
-                    segmentIds[index],
-                    segmentIndex: batchStart + index,
-                    isFirstSegment: batchStart + index == 0,
-                    cancellationToken))
-                .ToArray();
+            var leases = new ArticleByteLease?[batchCount];
+            Task<SegmentDownloadResult>[]? streamTasks = null;
+            try
+            {
+                // Reserve decoded-memory capacity before the request takes a streaming
+                // permit. A saturated budget must never occupy all download slots with
+                // requests that cannot yet be drained.
+                for (var index = 0; index < leases.Length; index++)
+                {
+                    leases[index] = await LeaseSegmentBytesAsync(
+                        GetPlannedSegmentBytes(batchStart + index), cancellationToken).ConfigureAwait(false);
+                }
+
+                // Use the normal client path so cache hits still bypass admission.
+                var batch = await _usenetClient.DecodedBodiesAsync(
+                    segmentIds, onConnectionReadyAgain: null, cancellationToken).ConfigureAwait(false);
+                if (batch.Responses.Count != batchCount)
+                    throw new InvalidOperationException(
+                        $"Pipelined BODY returned {batch.Responses.Count} responses for {batchCount} requests.");
+
+                streamTasks = batch.Responses
+                    .Select((response, index) =>
+                    {
+                        var lease = leases[index]!;
+                        leases[index] = null;
+                        return DownloadBatchSegment(
+                            response,
+                            segmentIds[index],
+                            segmentIndex: batchStart + index,
+                            isFirstSegment: batchStart + index == 0,
+                            lease,
+                            cancellationToken);
+                    })
+                    .ToArray();
+            }
+            catch
+            {
+                foreach (var lease in leases)
+                    lease?.Dispose();
+                throw;
+            }
 
             var responseIndex = 0;
             try
             {
-                for (; responseIndex < streamTasks.Length; responseIndex++)
+                for (; responseIndex < streamTasks!.Length; responseIndex++)
                 {
                     var planned = GetPlannedSegmentBytes(batchStart + responseIndex);
                     await _streamTasks.Writer.WriteAsync(
@@ -253,7 +282,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch
             {
-                for (; responseIndex < streamTasks.Length; responseIndex++)
+                for (; responseIndex < streamTasks!.Length; responseIndex++)
                 {
                     _ = DisposeStreamAsync(streamTasks[responseIndex]);
                 }
@@ -277,10 +306,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
             var segmentId = _segmentIds.Span[index];
             await _streamTasks.Writer.WaitToWriteAsync(cancellationToken);
-            var connection = await _usenetClient.AcquireExclusiveConnectionAsync(
-                segmentId, cancellationToken);
+            var lease = await LeaseSegmentBytesAsync(
+                GetPlannedSegmentBytes(index), cancellationToken).ConfigureAwait(false);
             var streamTask = DownloadSegment(
-                segmentId, index, connection, isFirstSegment: index == 0, cancellationToken);
+                segmentId, index, lease, isFirstSegment: index == 0, cancellationToken);
             var planned = GetPlannedSegmentBytes(index);
             try
             {
@@ -355,7 +384,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private async Task<SegmentDownloadResult> DownloadSegment(
         string segmentId,
         int segmentIndex,
-        UsenetExclusiveConnection exclusiveConnection,
+        ArticleByteLease initialLease,
         bool isFirstSegment,
         CancellationToken cancellationToken
     )
@@ -363,16 +392,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         var estimate = GetPlannedSegmentBytes(segmentIndex);
         for (var attempt = 0; ; attempt++)
         {
-            var lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
+            var lease = attempt == 0
+                ? initialLease
+                : await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
             try
             {
-                var bodyResponse = attempt == 0
-                    ? await _usenetClient
-                        .DecodedBodyAsync(segmentId, exclusiveConnection, cancellationToken)
-                        .ConfigureAwait(false)
-                    : await _usenetClient
-                        .DecodedBodyAsync(segmentId, cancellationToken)
-                        .ConfigureAwait(false);
+                var bodyResponse = await _usenetClient
+                    .DecodedBodyAsync(segmentId, cancellationToken)
+                    .ConfigureAwait(false);
 
                 await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
                 var stream = await DrainSegmentAsync(
@@ -479,12 +506,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         string segmentId,
         int segmentIndex,
         bool isFirstSegment,
+        ArticleByteLease initialLease,
         CancellationToken cancellationToken)
     {
-        // Lease before awaiting the pipelined response so a burst of batch tasks
-        // cannot materialize beyond the host-wide byte budget.
         var estimate = GetPlannedSegmentBytes(segmentIndex);
-        var lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
+        var lease = initialLease;
         try
         {
             var response = await responseTask.ConfigureAwait(false);
@@ -596,11 +622,22 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken)
                     .ConfigureAwait(false);
-                var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
-                    .ConfigureAwait(false);
-                await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
-                return await DrainSegmentAsync(response.Stream!, segmentIndex, cancellationToken)
-                    .ConfigureAwait(false);
+                ArticleByteLease? lease = await LeaseSegmentBytesAsync(
+                    GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+                        .ConfigureAwait(false);
+                    await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+                    var stream = await DrainSegmentAsync(
+                        response.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
+                    lease = null;
+                    return stream;
+                }
+                finally
+                {
+                    lease?.Dispose();
+                }
             }
             catch (UsenetArticleNotFoundException)
             {
@@ -641,11 +678,22 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
             try
             {
-                var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
-                    .ConfigureAwait(false);
-                await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
-                return await DrainSegmentAsync(response.Stream!, segmentIndex, cancellationToken)
-                    .ConfigureAwait(false);
+                ArticleByteLease? lease = await LeaseSegmentBytesAsync(
+                    GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+                        .ConfigureAwait(false);
+                    await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+                    var stream = await DrainSegmentAsync(
+                        response.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
+                    lease = null;
+                    return stream;
+                }
+                finally
+                {
+                    lease?.Dispose();
+                }
             }
             catch (UsenetCorruptArticleException exception)
             {
@@ -677,15 +725,26 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             try
             {
-                var bodyResponse = await _usenetClient
-                    .DecodedBodyAsync(fallbackId, cancellationToken)
-                    .ConfigureAwait(false);
-                await ThrowOnSegmentIdMismatchAsync(fallbackId, bodyResponse).ConfigureAwait(false);
-                Log.Debug(
-                    "Segment {PrimaryIndex} recovered via fallback MessageId {FallbackId} while reading {FileName}.",
-                    segmentIndex, fallbackId, _fileName);
-                return await DrainSegmentAsync(bodyResponse.Stream!, segmentIndex, cancellationToken)
-                    .ConfigureAwait(false);
+                ArticleByteLease? lease = await LeaseSegmentBytesAsync(
+                    GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    var bodyResponse = await _usenetClient
+                        .DecodedBodyAsync(fallbackId, cancellationToken)
+                        .ConfigureAwait(false);
+                    await ThrowOnSegmentIdMismatchAsync(fallbackId, bodyResponse).ConfigureAwait(false);
+                    Log.Debug(
+                        "Segment {PrimaryIndex} recovered via fallback MessageId {FallbackId} while reading {FileName}.",
+                        segmentIndex, fallbackId, _fileName);
+                    var stream = await DrainSegmentAsync(
+                        bodyResponse.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
+                    lease = null;
+                    return stream;
+                }
+                finally
+                {
+                    lease?.Dispose();
+                }
             }
             catch (UsenetArticleNotFoundException)
             {

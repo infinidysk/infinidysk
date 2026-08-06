@@ -210,7 +210,9 @@ public partial class Program
                     var cfg = sp.GetRequiredService<ConfigManager>();
                     var budgetMb = cfg.GetInFlightArticleBudgetMb();
                     MemoryBudget.LogInFlightBudget(budgetMb);
-                    var budget = new InFlightArticleBudget(cfg.GetInFlightArticleBudgetBytes());
+                    var budget = new InFlightArticleBudget(
+                        cfg.GetInFlightArticleBudgetBytes(),
+                        sp.GetRequiredService<ProviderLatencyTracker>());
                     InFlightArticleBudget.Current = budget;
                     cfg.OnConfigChanged += (_, args) =>
                     {

@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Services.Metrics;
 using Serilog;
 
 namespace NzbWebDAV.Streams;
@@ -13,6 +16,7 @@ public sealed class InFlightArticleBudget
     private long _capBytes;
     private long _throttleEvents;
     private long _lastWarningTicks;
+    private readonly ProviderLatencyTracker? _latencyTracker;
     private readonly object _gate = new();
     private readonly LinkedList<Waiter> _waiters = new();
 
@@ -22,8 +26,11 @@ public sealed class InFlightArticleBudget
     /// </summary>
     public static InFlightArticleBudget? Current { get; set; }
 
-    public InFlightArticleBudget(long capBytes) =>
+    public InFlightArticleBudget(long capBytes, ProviderLatencyTracker? latencyTracker = null)
+    {
         _capBytes = Math.Max(1, capBytes);
+        _latencyTracker = latencyTracker;
+    }
 
     public long LeasedBytes => Interlocked.Read(ref _leased);
     public long CapBytes => Interlocked.Read(ref _capBytes);
@@ -48,6 +55,7 @@ public sealed class InFlightArticleBudget
         if (bytes <= 0) return ArticleByteLease.Empty;
 
         Waiter? waiter = null;
+        Stopwatch? waitTimer = null;
         try
         {
             while (true)
@@ -55,10 +63,22 @@ public sealed class InFlightArticleBudget
                 ct.ThrowIfCancellationRequested();
 
                 if (TryLease(bytes))
+                {
+                    if (waitTimer is not null)
+                    {
+                        _latencyTracker?.Record(
+                            providerKey: null,
+                            LatencyPhase.LocalCapWait,
+                            DownloadWorkloadClassifier.Classify(ct),
+                            NntpOperation.Admission,
+                            waitTimer.Elapsed);
+                    }
                     return new ArticleByteLease(this, bytes);
+                }
 
                 Interlocked.Increment(ref _throttleEvents);
                 MaybeWarn(bytes);
+                waitTimer ??= Stopwatch.StartNew();
 
                 waiter ??= new Waiter(bytes);
                 lock (_gate)

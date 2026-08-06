@@ -180,6 +180,7 @@ internal static class LatencySupportPackProjection
                 response = "Successful NNTP response availability after a provider connection is acquired; excludes body drain.",
                 poolWait = "Wait to acquire a connection from the named provider pool.",
                 permitWait = "Top-level workload connection-budget wait; no provider is selected yet.",
+                localCapWait = "Wait to reserve process-wide decoded Article RAM; no provider or connection permit is held.",
             },
             providerSeries,
             admissionSeries,
