@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/infinidysk/infinidysk/compare/v1.0.0...v1.0.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **ui:** normalize provider usage join keys to MetricsKey form ([#871](https://github.com/infinidysk/infinidysk/issues/871)) ([a45f622](https://github.com/infinidysk/infinidysk/commit/a45f622c3cd6fff0d0e9853af94a305c727cf953))
+
 ## [1.0.0](https://github.com/infinidysk/infinidysk/compare/v0.10.0...v1.0.0) (2026-08-07)
 
 
