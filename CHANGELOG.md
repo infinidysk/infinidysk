@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.0.0](https://github.com/infinidysk/infinidysk/compare/v0.10.0...v1.0.0) (2026-08-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **build:** GitHub release asset filenames and rolling rc download URLs now use the infinidysk- prefix instead of nzbdav-.
+* the canonical container image moved to ghcr.io/infinidysk/infinidysk (mirror: docker.io/infinidysk/infinidysk). The old ghcr.io/nzbdav/nzbdav path keeps receiving releases during a transition period and old tags stay pullable, but operators should switch the image name; /config and all settings carry over unchanged.
+
+### Features
+
+* **docker:** dual-publish images to the legacy ghcr.io/nzbdav/nzbdav namespace ([#826](https://github.com/infinidysk/infinidysk/issues/826)) ([f0f6d75](https://github.com/infinidysk/infinidysk/commit/f0f6d75d55193285483ec5a508e69587e077586b))
+* rename project to InfiniDysk ([#828](https://github.com/infinidysk/infinidysk/issues/828)) ([a932924](https://github.com/infinidysk/infinidysk/commit/a93292470149ec463ba06ed2aea0016c3fde6255))
+
+
+### Bug Fixes
+
+* **build:** keep dev images on the dev update track ([#845](https://github.com/infinidysk/infinidysk/issues/845)) ([5554750](https://github.com/infinidysk/infinidysk/commit/5554750bc868967f2f273a48a5d8ba8514ad4e85))
+* **build:** rename release archives to infinidysk ([#833](https://github.com/infinidysk/infinidysk/issues/833)) ([7025741](https://github.com/infinidysk/infinidysk/commit/7025741b5ba0ba10407516572d7ea3f0d4a86fda))
+* **deps:** Bump the github-actions group with 3 updates ([#838](https://github.com/infinidysk/infinidysk/issues/838)) ([a53e4e6](https://github.com/infinidysk/infinidysk/commit/a53e4e62482a91399b9344096f6c63262eee08df))
+* **deps:** Bump the npm-minor-and-patch group ([#837](https://github.com/infinidysk/infinidysk/issues/837)) ([dc14fc2](https://github.com/infinidysk/infinidysk/commit/dc14fc2e16967314484367fb08cef366c2ef1b94))
+* **deps:** Bump the npm-minor-and-patch group ([#867](https://github.com/infinidysk/infinidysk/issues/867)) ([07a8eac](https://github.com/infinidysk/infinidysk/commit/07a8eacd8feb89ccb2bb9067fcbc5b0e26d26059))
+* **deps:** Bump zensical from 0.0.51 to 0.0.52 in the docs-python group ([#866](https://github.com/infinidysk/infinidysk/issues/866)) ([94eb76d](https://github.com/infinidysk/infinidysk/commit/94eb76d1b8c906bc567dec51a11e316cca2861d0))
+* **docker:** publish dev images with release candidates ([#834](https://github.com/infinidysk/infinidysk/issues/834)) ([26a449e](https://github.com/infinidysk/infinidysk/commit/26a449e1de43b75e92b004bd58cbb1ab276e40cb))
+* **health:** stalled library checks release provider resources ([#844](https://github.com/infinidysk/infinidysk/issues/844)) ([53fe5f6](https://github.com/infinidysk/infinidysk/commit/53fe5f6c48ab82a10d52099cedd962aafe385814))
+* **nntp:** slow providers stay sidelined for their full cooldown ([#842](https://github.com/infinidysk/infinidysk/issues/842)) ([42aefdd](https://github.com/infinidysk/infinidysk/commit/42aefdd4793e152d8f6356ecf5a7e99a8c068674))
+* **sab:** prevent unsafe backup paths and play redirects ([#847](https://github.com/infinidysk/infinidysk/issues/847)) ([731c31e](https://github.com/infinidysk/infinidysk/commit/731c31e9fae478ba7032c8a83f68b2d1d2cee923))
+* **streaming:** reserve article memory before download admission ([#843](https://github.com/infinidysk/infinidysk/issues/843)) ([03d5378](https://github.com/infinidysk/infinidysk/commit/03d5378595c34fad2d4426c9d58bb6e1b88e2ae3))
+* **ui:** explain unavailable stale explore links ([#846](https://github.com/infinidysk/infinidysk/issues/846)) ([5f13efa](https://github.com/infinidysk/infinidysk/commit/5f13efa7ccdaa02671aeb96d2e36b0ae99d91628))
+* **ui:** join provider usage stats by identity during cascade reorder ([#869](https://github.com/infinidysk/infinidysk/issues/869)) ([ed8de9d](https://github.com/infinidysk/infinidysk/commit/ed8de9db4cc33be6b15663bb48c545cf767d95bc))
+
 ## [0.10.0](https://github.com/nzbdav/nzbdav/compare/v0.9.5...v0.10.0) (2026-08-05)
 
 
