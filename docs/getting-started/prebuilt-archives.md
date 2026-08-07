@@ -45,8 +45,9 @@ Other container environment variables are supported, including `PORT`,
 
 ## Pre-release testing
 
-Each release candidate has a permanent GitHub Pre-release and versioned
-archives such as `infinidysk-v0.10.0-rc.1-linux-x64.tar.gz`.
+Each release candidate gets a versioned GitHub Pre-release and archives such as
+`infinidysk-v0.10.0-rc.1-linux-x64.tar.gz`. Those versioned pre-releases and
+their image tags are removed automatically when the next stable release ships.
 
 For automation, the rolling `rc` pre-release always exposes stable asset URLs:
 
@@ -54,8 +55,8 @@ For automation, the rolling `rc` pre-release always exposes stable asset URLs:
 - [linux-arm64](https://github.com/infinidysk/infinidysk/releases/download/rc/infinidysk-rc-linux-arm64.tar.gz)
 
 The archive's `version.txt` identifies the exact release candidate. The rolling
-`rc` release remains on the last candidate after a stable release ships, so
-check its version before assuming it is newer than `latest`.
+`rc` release remains after a stable release ships (it is not deleted), so check
+its version before assuming it is newer than `latest`.
 
 ## Upgrade
 

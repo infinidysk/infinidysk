@@ -183,6 +183,30 @@ jobs:
       tag_name: rc
       ref: ${{ needs.release-please.outputs.sha }}
 
+  cleanup-prereleases:
+    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
+    needs:
+      - release-please
+      - deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+
+      - name: Delete versioned pre-release releases and image tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DOCKERHUB_USERNAME: infinidysk
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          OLD_GHCR_TOKEN: ${{ secrets.OLD_GHCR_TOKEN }}
+        run: bash .github/scripts/cleanup-prerelease-artifacts.sh
+
   tag-dev-manual:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     needs:
@@ -206,6 +230,30 @@ jobs:
     with:
       tag_name: rc
       ref: ${{ needs.resolve-version.outputs.ref }}
+
+  cleanup-prereleases-manual:
+    if: |
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'release' && github.event.release.prerelease == false)
+    needs:
+      - resolve-version
+      - deploy-manual
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Delete versioned pre-release releases and image tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DOCKERHUB_USERNAME: infinidysk
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          OLD_GHCR_TOKEN: ${{ secrets.OLD_GHCR_TOKEN }}
+        run: bash .github/scripts/cleanup-prerelease-artifacts.sh
 
   announce:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
