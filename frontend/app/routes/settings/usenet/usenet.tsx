@@ -70,6 +70,7 @@ type BenchmarkIntensity = "quick" | "thorough";
 
 type UsenetSettingsProps = {
     config: Record<string, string>
+    savedConfig: Record<string, string>
     setNewConfig: Dispatch<SetStateAction<Record<string, string>>>
     persistConfigPatch: (patch: Record<string, string>) => Promise<void>
 };
@@ -238,6 +239,7 @@ type ProviderUsage = {
     index: number;
     host: string;
     nickname?: string | null;
+    providerId?: string | null;
     bytesUsed: number;
     byteLimit: number | null;
     overLimit: boolean;
@@ -375,6 +377,20 @@ function providerKey(p: ConnectionDetails): string {
     return `${p.Host}::${p.Port}::${p.User}`;
 }
 
+function providerIdentity(p: ConnectionDetails): string {
+    return p.ProviderId || providerKey(p);
+}
+
+function usagePollIdentityKey(item: ProviderUsage, providers: ConnectionDetails[]): string {
+    if (item.providerId) return item.providerId;
+    const nickname = item.nickname?.trim() ?? "";
+    const match = providers.find(
+        p => p.Host === item.host && (p.Nickname?.trim() ?? "") === nickname,
+    );
+    if (match) return providerIdentity(match);
+    return `${item.host}::${nickname}`;
+}
+
 // crypto.randomUUID requires a secure context, but self-hosted UIs are often
 // served over plain http on a LAN; fall back to a manual v4 from getRandomValues.
 function generateProviderId(): string {
@@ -409,16 +425,20 @@ function SortableItem({ id, disabled, children }: { id: string; disabled: boolea
     return <>{children({ setNodeRef, setActivatorNodeRef, attributes, listeners, style, isDragging })}</>;
 }
 
-export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: UsenetSettingsProps) {
+export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfigPatch }: UsenetSettingsProps) {
     // state
     const [searchParams] = useSearchParams();
     const isDemoPreview = searchParams.get("demoProviders") === "1";
     const [showModal, setShowModal] = useState(false);
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
-    const [connections, setConnections] = useState<{[index: number]: ConnectionCounts}>({});
-    const [usage, setUsage] = useState<{[index: number]: ProviderUsage}>({});
+    const [connections, setConnections] = useState<Record<string, ConnectionCounts>>({});
+    const [usage, setUsage] = useState<Record<string, ProviderUsage>>({});
     const providersJson = config["usenet.providers"];
     const providerConfig = useMemo(() => parseProviderConfig(providersJson), [providersJson]);
+    const savedProviderConfig = useMemo(
+        () => parseProviderConfig(savedConfig["usenet.providers"]),
+        [savedConfig],
+    );
     const displayedProviderConfig = useMemo(
         () => isDemoPreview ? { Providers: DEMO_PROVIDERS } : providerConfig,
         [isDemoPreview, providerConfig],
@@ -563,13 +583,15 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
         const parts = (message || "0|0|0|0|1|0").split("|");
         const [index, live, idle, _0, _1, _2] = parts.map((x: any) => Number(x));
         if (showModal) return;
-        if (index >= providerConfig.Providers.length) return;
-        setConnections(prev => ({...prev, [index]: {
+        const savedProvider = savedProviderConfig.Providers[index];
+        if (!savedProvider) return;
+        const identity = providerIdentity(savedProvider);
+        setConnections(prev => ({...prev, [identity]: {
             active: live - idle,
             live: live,
-            max: providerConfig.Providers[index]?.MaxConnections || 1
+            max: savedProvider.MaxConnections || 1
         }}));
-    }, [setConnections]);
+    }, [showModal, savedProviderConfig.Providers]);
 
     useWebsocketTopic("cxs", "state", handleConnectionsMessage, {
         onClose: () => setConnections({}),
@@ -587,8 +609,10 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
                 if (!response.ok || disposed) return;
                 const data: { providers?: ProviderUsage[] } = await response.json();
                 if (disposed || !data.providers) return;
-                const next: {[index: number]: ProviderUsage} = {};
-                for (const p of data.providers) next[p.index] = p;
+                const next: Record<string, ProviderUsage> = {};
+                for (const p of data.providers) {
+                    next[usagePollIdentityKey(p, providerConfig.Providers)] = p;
+                }
                 setUsage(next);
             } catch {
                 // network blips are fine — next tick retries.
@@ -598,12 +622,12 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
         if (showModal) return () => { disposed = true; };
         const id = setInterval(fetchUsage, USAGE_POLL_INTERVAL_MS);
         return () => { disposed = true; clearInterval(id); };
-    }, [showModal, providerConfig.Providers.length]);
+    }, [showModal, providerConfig.Providers]);
 
     const renderProviderCard = (provider: ConnectionDetails, index: number) => {
         const isDisabled = provider.Type === ProviderType.Disabled;
         const displayName = provider.Nickname?.trim() || provider.Host;
-        const liveConnections = isDemoPreview ? 0 : connections[index]?.live ?? 0;
+        const liveConnections = isDemoPreview ? 0 : connections[providerIdentity(provider)]?.live ?? 0;
 
         return (
             <SortableItem key={providerKey(provider)} id={providerKey(provider)} disabled={!cascadeEnabled || isDemoPreview}>
@@ -699,7 +723,7 @@ export function UsenetSettings({ config, setNewConfig, persistConfigPatch }: Use
 
                                 <UsageRow
                                     provider={provider}
-                                    usage={isDemoPreview ? undefined : usage[index]}
+                                    usage={isDemoPreview ? undefined : usage[providerIdentity(provider)]}
                                     onReset={() => handleResetUsage(index)}
                                     resetDisabled={isDemoPreview}
                                 />
@@ -1107,8 +1131,8 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
     const passIsMasked = isMaskedSecret(pass);
     // Stable across parent re-parses of the same provider so Apply recommendation
     // (and other dirty-config updates) don't wipe in-progress form state.
-    const providerIdentity = provider
-        ? (provider.ProviderId || providerKey(provider))
+    const providerIdentityKey = provider
+        ? providerIdentity(provider)
         : "new";
 
     // Reset form when modal opens or a different provider is selected
@@ -1147,7 +1171,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
         // Intentionally keyed on providerIdentity, not provider object identity —
         // parent config updates re-parse providers and would otherwise reset the form.
         // eslint-disable-next-line react-hooks/exhaustive-deps -- provider fields read when identity/show change
-    }, [show, providerIdentity]);
+    }, [show, providerIdentityKey]);
 
     // Stop any in-flight speed test when the modal closes or unmounts so it
     // aborts on the backend and frees its connections immediately.

@@ -6,9 +6,8 @@ public class GetProviderUsageResponse : BaseApiResponse
 
     public class ProviderUsageItem
     {
-        // Index into the user's UsenetProviderConfig.Providers list. Stable for
-        // the lifetime of one settings page render — same key the UI uses for
-        // edit/delete actions, so the frontend can join without an extra ID.
+        // Index into the user's UsenetProviderConfig.Providers list at the time
+        // of the request. The settings UI joins live stats by ProviderId instead.
         public int Index { get; set; }
         public string Host { get; set; } = string.Empty;
         public string? Nickname { get; set; }

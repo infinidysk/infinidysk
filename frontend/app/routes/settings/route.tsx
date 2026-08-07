@@ -391,6 +391,7 @@ function Body(props: BodyProps) {
                 {activeTab === "usenet" && (
                     <UsenetSettings
                         config={newConfig}
+                        savedConfig={config}
                         setNewConfig={setNewConfig}
                         persistConfigPatch={persistConfigPatch}
                     />
