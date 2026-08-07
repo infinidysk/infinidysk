@@ -12,8 +12,9 @@ public class GetProviderUsageResponse : BaseApiResponse
         public string Host { get; set; } = string.Empty;
         public string? Nickname { get; set; }
         /// <summary>
-        /// Stable metrics key (<c>ProviderId</c> in "N" format). Null when the
-        /// provider has not yet been assigned an id.
+        /// Stable metrics key (<c>ProviderId</c> in Guid "N" format — no dashes).
+        /// Callers must normalize dashed config UUIDs the same way before joining.
+        /// Null when the provider has not yet been assigned an id.
         /// </summary>
         public string? ProviderId { get; set; }
         public long BytesUsed { get; set; }

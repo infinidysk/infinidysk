@@ -377,12 +377,18 @@ function providerKey(p: ConnectionDetails): string {
     return `${p.Host}::${p.Port}::${p.User}`;
 }
 
+// Match UsenetProviderIdentity.MetricsKey (Guid "N"): strip dashes, lowercase.
+// Demo ids like "demo-primary" are unchanged aside from case.
+function normalizeProviderId(id: string): string {
+    return id.replace(/-/g, "").toLowerCase();
+}
+
 function providerIdentity(p: ConnectionDetails): string {
-    return p.ProviderId || providerKey(p);
+    return p.ProviderId ? normalizeProviderId(p.ProviderId) : providerKey(p);
 }
 
 function usagePollIdentityKey(item: ProviderUsage, providers: ConnectionDetails[]): string {
-    if (item.providerId) return item.providerId;
+    if (item.providerId) return normalizeProviderId(item.providerId);
     const nickname = item.nickname?.trim() ?? "";
     const match = providers.find(
         p => p.Host === item.host && (p.Nickname?.trim() ?? "") === nickname,
