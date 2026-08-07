@@ -317,19 +317,15 @@ public class AddFileController(
             var destDirPrefix = Path.EndsInDirectorySeparator(destDir)
                 ? destDir
                 : destDir + Path.DirectorySeparatorChar;
-            var leafName = Path.GetFileName(fileName);
-            var baseName = Path.GetFileNameWithoutExtension(leafName);
-            if (string.IsNullOrWhiteSpace(baseName)) baseName = id.ToString();
-            var ext = Path.GetExtension(leafName);
-            if (string.IsNullOrEmpty(ext)) ext = ".nzb";
-
-            var destPath = Path.GetFullPath(Path.Combine(destDirPrefix, $"{baseName}{ext}"));
+            var safeFileName = GetSafeBackupFileName(id, fileName);
+            var destPath = Path.GetFullPath(Path.Combine(destDirPrefix, safeFileName));
             if (!destPath.StartsWith(destDirPrefix, StringComparison.Ordinal))
                 throw new ArgumentException("The NZB backup file must stay within its category directory.");
             var counter = 2;
             while (System.IO.File.Exists(destPath))
             {
-                destPath = Path.GetFullPath(Path.Combine(destDirPrefix, $"{baseName} ({counter}){ext}"));
+                var safeBaseName = Path.GetFileNameWithoutExtension(safeFileName);
+                destPath = Path.GetFullPath(Path.Combine(destDirPrefix, $"{safeBaseName} ({counter}).nzb"));
                 if (!destPath.StartsWith(destDirPrefix, StringComparison.Ordinal))
                     throw new ArgumentException("The NZB backup file must stay within its category directory.");
                 counter++;
@@ -342,6 +338,28 @@ public class AddFileController(
         catch (Exception e)
         {
             throw new Exception($"Could not save nzb to `{backupLocation}`", e);
+        }
+    }
+
+    internal static string GetSafeBackupFileName(Guid id, string fileName)
+    {
+        ValidateBackupLeafName(fileName);
+        var leafName = Path.GetFileName(fileName);
+        var baseName = Path.GetFileNameWithoutExtension(leafName);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = id.ToString();
+        return $"{baseName}.nzb";
+    }
+
+    private static void ValidateBackupLeafName(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName) ||
+            Path.IsPathRooted(fileName) ||
+            fileName is "." or ".." ||
+            fileName.Contains('/') ||
+            fileName.Contains('\\') ||
+            fileName.Contains('\0'))
+        {
+            throw new ArgumentException("The NZB backup file name must be a single file name.", nameof(fileName));
         }
     }
 

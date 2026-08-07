@@ -42,4 +42,26 @@ public class AddFileRequestTests
         ex = Assert.Throws<BadHttpRequestException>(() => AddFileRequest.ResolveFileName("  ", ""));
         Assert.Contains("filename", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Theory]
+    [InlineData("release.nzb", "release.nzb")]
+    [InlineData("release", "release.nzb")]
+    public void GetSafeBackupFileName_UsesSingleNzbFileName(string input, string expected)
+    {
+        Assert.Equal(
+            expected,
+            AddFileController.GetSafeBackupFileName(Guid.NewGuid(), input));
+    }
+
+    [Theory]
+    [InlineData("../outside.nzb")]
+    [InlineData("..\\outside.nzb")]
+    [InlineData("/tmp/outside.nzb")]
+    [InlineData("nested/outside.nzb")]
+    [InlineData("nested\\outside.nzb")]
+    public void GetSafeBackupFileName_RejectsPathComponents(string input)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            AddFileController.GetSafeBackupFileName(Guid.NewGuid(), input));
+    }
 }
