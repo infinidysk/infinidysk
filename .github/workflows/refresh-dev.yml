@@ -10,6 +10,7 @@ concurrency:
 jobs:
   resolve:
     runs-on: ubuntu-latest
+    permissions: {}
     outputs:
       short_sha: ${{ steps.sha.outputs.short_sha }}
     steps:
