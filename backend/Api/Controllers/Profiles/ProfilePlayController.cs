@@ -1246,10 +1246,17 @@ public class ProfilePlayController(
 
     private async Task<IActionResult> BuildRedirectAsync(Guid davItemId, string extension, CancellationToken ct)
     {
-        var baseUrl = HttpContext.GetPublicBaseUrl(configManager.GetBaseUrl());
         var path = DatabaseStoreSymlinkFile.GetTargetPath(davItemId, "", '/').TrimStart('/');
         var dlKey = GetWebdavItemRequest.GenerateDownloadKey(configManager.GetStrmKey(), path);
-        return Redirect($"{baseUrl}/view/{path}?downloadKey={dlKey}&extension={extension}");
+        var relativeUrl = $"/view/{path}?downloadKey={dlKey}&extension={extension}";
+        var configuredBaseUrl = configManager.GetBaseUrl().TrimEnd('/');
+        if (!string.IsNullOrWhiteSpace(configuredBaseUrl) &&
+            configuredBaseUrl != "http://localhost:3000")
+        {
+            return Redirect($"{configuredBaseUrl}{relativeUrl}");
+        }
+
+        return LocalRedirect(relativeUrl);
     }
 
     private readonly record struct PreVerifyResult(
