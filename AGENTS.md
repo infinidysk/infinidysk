@@ -353,7 +353,7 @@ Assign closed issues to a version milestone (`0.7`, `0.8`, `0.9`, …) for the r
 
 ### Labels
 
-Do **not** recreate `priority:*` or `effort:*` labels. Meta labels are fine: `performance`, `cataloged`, `more-info-required`, `next-major`, `library`, and source tags (`upstream-audit`, `elfhosted`, etc.).
+Do **not** recreate `priority:*` or `effort:*` labels. Meta labels are fine: `performance`, `playback`, `cataloged`, `more-info-required`, `next-major`, `library`, and source tags (`upstream-audit`, `elfhosted`, etc.).
 
 Bug and feature issue templates set Issue Type only (no kind labels, no title prefix).
 
