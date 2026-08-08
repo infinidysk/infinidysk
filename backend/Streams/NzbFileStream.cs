@@ -88,7 +88,10 @@ public class NzbFileStream(
         {
             _pendingInnerDispose = null;
             try { await pendingDispose.ConfigureAwait(false); }
-            catch { /* teardown-only; producer failures surface on ReadAsync */ }
+            catch (Exception)
+            {
+                // Teardown-only; producer failures surface on ReadAsync.
+            }
         }
         _innerStream ??= await GetFileStream(_position, cancellationToken).ConfigureAwait(false);
         if (_pendingForwardDrain > 0)
@@ -467,7 +470,10 @@ public class NzbFileStream(
         {
             _pendingInnerDispose = null;
             try { await pending.ConfigureAwait(false); }
-            catch { /* teardown-only */ }
+            catch (Exception)
+            {
+                // Teardown-only.
+            }
         }
         if (_innerStream != null) await _innerStream.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);

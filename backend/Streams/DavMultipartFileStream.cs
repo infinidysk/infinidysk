@@ -99,7 +99,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
         {
             _pendingInnerDispose = null;
             try { await pendingDispose.ConfigureAwait(false); }
-            catch { /* teardown-only */ }
+            catch (Exception)
+            {
+                // Teardown-only.
+            }
         }
         _innerStream ??= await GetFileStreamAsync(_position, cancellationToken).ConfigureAwait(false);
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
@@ -347,7 +350,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
         {
             _pendingInnerDispose = null;
             try { await pending.ConfigureAwait(false); }
-            catch { /* teardown-only */ }
+            catch (Exception)
+            {
+                // Teardown-only.
+            }
         }
         if (_innerStream != null) await _innerStream.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);
