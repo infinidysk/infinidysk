@@ -120,11 +120,12 @@ public class GetAndHeadHandlerRangeTests
         using var readCts = new CancellationTokenSource();
         using var dest = new NeverCompletingWriteStream();
 
-        await Assert.ThrowsAsync<TimeoutException>(async () =>
+        var ex = await Assert.ThrowsAsync<NzbWebDAV.Exceptions.StreamingWriteTimeoutException>(async () =>
             await GetAndHeadHandlerPatch.WriteWithProgressTimeoutAsync(
                 dest, new byte[1024], TimeSpan.FromMilliseconds(50), readCts, CancellationToken.None));
 
         Assert.True(readCts.IsCancellationRequested);
+        Assert.IsAssignableFrom<OperationCanceledException>(ex);
     }
 
     [Fact]

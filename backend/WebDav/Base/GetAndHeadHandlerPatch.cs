@@ -306,6 +306,14 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
                         throw;
                     }
+                    catch (StreamingWriteTimeoutException)
+                    {
+                        // Watchdog-fired write timeout: the client stopped reading but kept the
+                        // connection open. Treat as a client abort so the response is a clean
+                        // close, not a 500 with a stack trace.
+                        FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
+                        throw;
+                    }
                     catch (Exception ex)
                     {
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, ex.Message);
@@ -489,10 +497,12 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         catch (TimeoutException)
         {
             // Cancel the linked token so the producer stops prefetching and the stream is
-            // disposed, releasing its in-flight article budget. The OperationCanceledException
-            // surfaces as a client-abort on the next read/write.
+            // disposed, releasing its in-flight article budget. Surface as a
+            // StreamingWriteTimeoutException (an OperationCanceledException) so the request
+            // unwinds through the client-abort path rather than a 500 with a stack trace.
             await readCts.CancelAsync().ConfigureAwait(false);
-            throw;
+            throw new StreamingWriteTimeoutException(
+                "Client stopped reading; streaming write timed out.");
         }
     }
 }

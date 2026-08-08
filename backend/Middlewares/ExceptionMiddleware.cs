@@ -21,6 +21,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentSeekErrors = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentReadErrors = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentStreamingReadTimeouts = new();
+    private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentStreamingWriteTimeouts = new();
     private static readonly ConcurrentDictionary<Guid, DateTime> RecentRepairTriggers = new();
     private static readonly TimeSpan DedupeWindow = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan RepairDedupeWindow = TimeSpan.FromMinutes(5);
@@ -42,6 +43,35 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                 context.Response.StatusCode = 499; // Non-standard status code for client closed request
                 await context.Response.WriteAsync("Client closed request.").ConfigureAwait(false);
             }
+        }
+        catch (StreamingWriteTimeoutException e)
+        {
+            // Watchdog-fired write timeout: the client stopped reading but kept the connection
+            // open. This is an expected operational condition (a stalled/abandoned stream), so
+            // close cleanly and warn — not a 500 with a stack trace. The linked read token was
+            // already cancelled, releasing the stream's in-flight article budget.
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 499; // Client closed request (stalled read)
+            }
+
+            var filePath = GetRequestFilePath(context);
+            LogWithDedup(RecentStreamingWriteTimeouts, filePath, suppressed =>
+            {
+                if (suppressed > 0)
+                    Log.Warning(
+                        "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)",
+                        filePath,
+                        "streaming-write-timeout",
+                        suppressed);
+                else
+                    Log.Warning(
+                        "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason}",
+                        filePath,
+                        "streaming-write-timeout");
+            });
+            Log.Debug(e, "WebDAV streaming-write-timeout stack");
         }
         catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? notFound))
         {
@@ -465,6 +495,11 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         {
             if (kvp.Value.LastLogged < cutoff)
                 RecentStreamingReadTimeouts.TryRemove(kvp.Key, out _);
+        }
+        foreach (var kvp in RecentStreamingWriteTimeouts)
+        {
+            if (kvp.Value.LastLogged < cutoff)
+                RecentStreamingWriteTimeouts.TryRemove(kvp.Key, out _);
         }
         foreach (var kvp in RecentRepairTriggers)
         {
