@@ -430,6 +430,47 @@ public class MultiSegmentStreamPrefetchBudgetTests
         }
     }
 
+    [Fact]
+    public async Task DisposeAsync_JoinsPipelinedBatchOrphanedDisposals()
+    {
+        // Pipelined prefetch takes a lease per batch segment before writing each to the
+        // channel. When the channel writer is completed during teardown, the producer's
+        // WriteAsync throws and it disposes the unwritten segment tasks out-of-band.
+        // DisposeAsync must join those disposals so their leases release before it returns
+        // (the #840 scrub wedge: leases held after NNTP goes idle).
+        const int segmentSize = 20_000;
+        var budget = new InFlightArticleBudget(segmentSize * 16);
+        var segments = Enumerable.Range(0, 20)
+            .ToDictionary(
+                i => $"seg-{i}",
+                _ => Enumerable.Repeat((byte)9, segmentSize).ToArray());
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+
+        using var cts = new CancellationTokenSource();
+        var stream = MultiSegmentStream.Create(
+            segments.Keys.ToArray().AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            cts.Token,
+            fileName: "orphan-pipelined.bin",
+            readBudget: null,
+            inFlightArticleBudget: budget);
+
+        // Start prefetch, then cancel while batches are in flight so the producer hits
+        // the orphan-dispose path for unwritten segment tasks.
+        var buffer = new byte[1024];
+        _ = await stream.ReadAsync(buffer, CancellationToken.None);
+        Assert.True(budget.LeasedBytes > 0);
+
+        cts.Cancel();
+        await stream.DisposeAsync();
+
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
     private sealed class ThrowingCorruptStream(string segmentId) : Stream
     {
         public override bool CanRead => true;

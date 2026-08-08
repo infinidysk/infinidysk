@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using NzbWebDAV.Clients.Usenet;
@@ -46,6 +47,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly Task _downloadTask;
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
+    // Segment tasks whose channel write was cancelled are disposed out-of-band by
+    // the producer; DisposeCoreAsync must join them so DisposeAsync does not return
+    // while their BudgetedStream leases are still held (#840 scrub wedge).
+    private readonly ConcurrentQueue<Task> _orphanedDisposals = new();
 
     /// <summary>
     /// Optional per-instance test hook invoked with the segment-boundary readiness sample,
@@ -284,7 +289,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 for (; responseIndex < streamTasks!.Length; responseIndex++)
                 {
-                    _ = DisposeStreamAsync(streamTasks[responseIndex]);
+                    _orphanedDisposals.Enqueue(DisposeStreamAsync(streamTasks[responseIndex]));
                 }
 
                 throw;
@@ -319,7 +324,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch
             {
-                _ = DisposeStreamAsync(streamTask);
+                _orphanedDisposals.Enqueue(DisposeStreamAsync(streamTask));
                 throw;
             }
         }
@@ -1213,6 +1218,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
         while (_streamTasks.Reader.TryRead(out var streamTask))
             pending.Add(DisposeStreamAsync(streamTask, releaseInFlight: true));
+
+        // Join the producer's out-of-band disposals so leases they hold are released
+        // before DisposeAsync completes. The producer has exited by now (awaited above),
+        // so no new orphans can be enqueued; drain is safe without a lock.
+        while (_orphanedDisposals.TryDequeue(out var orphaned))
+            pending.Add(orphaned);
 
         if (pending.Count > 0)
             await Task.WhenAll(pending).ConfigureAwait(false);

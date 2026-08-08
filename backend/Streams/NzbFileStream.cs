@@ -29,6 +29,11 @@ public class NzbFileStream(
     private long _pendingForwardDrain;
     private bool _disposed;
     private Stream? _innerStream;
+    // Teardown of the inner stream a Seek replaced is started non-blocking (Seek is
+    // synchronous), but the next ReadAsync must await it before opening a new inner
+    // stream — otherwise rapid scrubbing overlaps generations and pins the article
+    // budget (#840 scrub wedge).
+    private Task? _pendingInnerDispose;
     private readonly LongRange[]? _segmentByteRanges =
         AreSegmentByteRangesValid(segmentByteRanges, fileSegmentIds.Length, fileSize)
             ? segmentByteRanges
@@ -77,6 +82,14 @@ public class NzbFileStream(
     {
         if (buffer.IsEmpty) return 0;
         if (_position >= fileSize) return 0;
+        // A prior Seek started the old inner stream's teardown non-blocking; join it
+        // here so its article-budget leases release before a new stream leases again.
+        if (_pendingInnerDispose is { } pendingDispose)
+        {
+            _pendingInnerDispose = null;
+            try { await pendingDispose.ConfigureAwait(false); }
+            catch { /* teardown-only; producer failures surface on ReadAsync */ }
+        }
         _innerStream ??= await GetFileStream(_position, cancellationToken).ConfigureAwait(false);
         if (_pendingForwardDrain > 0)
         {
@@ -136,8 +149,13 @@ public class NzbFileStream(
         }
 
         _position = absoluteOffset;
-        _innerStream?.Dispose();
-        _innerStream = null;
+        if (_innerStream is { } replaced)
+        {
+            // Start the inner stream's async teardown without blocking (Seek is sync),
+            // but retain the task so the next ReadAsync can join it before leasing again.
+            _pendingInnerDispose = replaced.DisposeAsync().AsTask();
+            _innerStream = null;
+        }
         _pendingForwardDrain = 0;
         if (MultiProviderNntpClient.CurrentReadSessionId is { } seekSession)
             StreamTrace.TrySeek(seekSession, _position);
@@ -420,7 +438,21 @@ public class NzbFileStream(
     {
         if (!_disposed)
         {
-            if (disposing) _innerStream?.Dispose();
+            if (disposing)
+            {
+                _innerStream?.Dispose();
+                // The prior Seek's teardown is async and cannot be awaited here; observe
+                // any fault so it is not left unobserved, matching the fire-and-forget
+                // dispose it replaced.
+                var pending = _pendingInnerDispose;
+                if (pending is not null)
+                {
+                    _pendingInnerDispose = null;
+                    pending.ContinueWith(
+                        static t => { _ = t.Exception; },
+                        TaskContinuationOptions.OnlyOnFaulted);
+                }
+            }
             _disposed = true;
         }
 
@@ -430,8 +462,14 @@ public class NzbFileStream(
     public override async ValueTask DisposeAsync()
     {
         if (_disposed) return;
-        if (_innerStream != null) await _innerStream.DisposeAsync().ConfigureAwait(false);
         _disposed = true;
+        if (_pendingInnerDispose is { } pending)
+        {
+            _pendingInnerDispose = null;
+            try { await pending.ConfigureAwait(false); }
+            catch { /* teardown-only */ }
+        }
+        if (_innerStream != null) await _innerStream.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);
     }
 }
