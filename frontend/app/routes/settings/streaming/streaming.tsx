@@ -237,6 +237,36 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                     </div>
                 </ManagedSetting>
 
+                <ManagedSetting configKey="usenet.streaming-write-timeout-seconds">
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-base-content" htmlFor="streaming-write-timeout-input">
+                            Streaming Write Timeout
+                        </label>
+                        <div className="flex w-full">
+                            <Input
+                                className={!isValidStreamingWriteTimeout(config["usenet.streaming-write-timeout-seconds"]) ? "input-error" : undefined}
+                                type="text"
+                                inputMode="numeric"
+                                id="streaming-write-timeout-input"
+                                aria-describedby="streaming-write-timeout-help"
+                                placeholder="60"
+                                value={config["usenet.streaming-write-timeout-seconds"]}
+                                onChange={e => setNewConfig({
+                                    ...config,
+                                    "usenet.streaming-write-timeout-seconds": e.target.value,
+                                })} />
+                            <span className="flex items-center rounded-r border border-l-0 border-base-content/20 bg-base-200 px-2 text-sm text-base-content/80">
+                                sec
+                            </span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="streaming-write-timeout-help">
+                            Per-write deadline for streaming bytes to the client (0–600s, default 60; 0 disables).
+                            Cancels a stream whose client stopped reading but kept the connection open, releasing
+                            its Article RAM instead of wedging until restart.
+                        </p>
+                    </div>
+                </ManagedSetting>
+
                 <ManagedSetting configKey="usenet.streaming-segment-retries">
                     <div className="space-y-2">
                         <label className="block text-sm font-medium text-base-content" htmlFor="streaming-segment-retries-input">
@@ -385,6 +415,7 @@ export function isStreamingSettingsUpdated(
         || config["usenet.streaming-priority"] !== newConfig["usenet.streaming-priority"]
         || config["usenet.streaming-segment-timeout-seconds"] !== newConfig["usenet.streaming-segment-timeout-seconds"]
         || config["usenet.streaming-read-timeout-seconds"] !== newConfig["usenet.streaming-read-timeout-seconds"]
+        || config["usenet.streaming-write-timeout-seconds"] !== newConfig["usenet.streaming-write-timeout-seconds"]
         || config["usenet.streaming-segment-retries"] !== newConfig["usenet.streaming-segment-retries"]
         || config["usenet.article-buffer-size"] !== newConfig["usenet.article-buffer-size"]
         || config["usenet.in-flight-article-budget-mb"] !== newConfig["usenet.in-flight-article-budget-mb"]
@@ -404,6 +435,7 @@ export function isStreamingSettingsValid(config: Record<string, string>): boolea
         && isValidStreamingPriority(config["usenet.streaming-priority"])
         && isValidStreamingSegmentTimeout(config["usenet.streaming-segment-timeout-seconds"])
         && isValidStreamingReadTimeout(config["usenet.streaming-read-timeout-seconds"])
+        && isValidStreamingWriteTimeout(config["usenet.streaming-write-timeout-seconds"])
         && isValidStreamingSegmentRetries(config["usenet.streaming-segment-retries"])
         && isValidArticleBufferSize(config["usenet.article-buffer-size"])
         && isValidInFlightArticleBudget(config["usenet.in-flight-article-budget-mb"])
@@ -435,6 +467,12 @@ function isValidStreamingReadTimeout(value: string): boolean {
     if (value.trim() === "") return false;
     const number = Number(value);
     return Number.isInteger(number) && number >= 5 && number <= 120;
+}
+
+function isValidStreamingWriteTimeout(value: string): boolean {
+    if (value.trim() === "") return false;
+    const number = Number(value);
+    return Number.isInteger(number) && number >= 0 && number <= 600;
 }
 
 function isValidStreamingSegmentRetries(value: string): boolean {

@@ -17,6 +17,7 @@ const validConfig = {
     "usenet.streaming-priority": "80",
     "usenet.streaming-segment-timeout-seconds": "8",
     "usenet.streaming-read-timeout-seconds": "30",
+    "usenet.streaming-write-timeout-seconds": "60",
     "usenet.streaming-segment-retries": "3",
     "usenet.article-buffer-size": "40",
     "usenet.in-flight-article-budget-mb": "",
