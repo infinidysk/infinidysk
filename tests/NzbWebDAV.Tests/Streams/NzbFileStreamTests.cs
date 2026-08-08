@@ -498,6 +498,90 @@ public class NzbFileStreamTests
         }
     }
 
+    [Fact]
+    public async Task RapidScrubbing_ReleasesArticleBudgetAcrossGenerations()
+    {
+        // Models the pringles dump: many overlapping offset reads on one file pin the
+        // global article budget after NNTP goes idle. Each Seek replaces the inner
+        // stream; the next ReadAsync must join the prior teardown before leasing again
+        // so generations do not overlap, and DisposeAsync must drain everything.
+        const int segmentSize = 1000;
+        const int segmentCount = 12;
+        var budget = new InFlightArticleBudget(segmentSize * 40);
+        var segmentIds = Enumerable.Range(0, segmentCount).Select(i => $"seg-{i}").ToArray();
+        var segments = segmentIds.ToDictionary(id => id, _ => Enumerable.Repeat((byte)1, segmentSize).ToArray());
+        var rangesById = segmentIds
+            .Zip(Enumerable.Range(0, segmentCount).Select(i => new LongRange(i * segmentSize, (i + 1) * segmentSize)))
+            .ToDictionary(pair => pair.First, pair => pair.Second);
+        var ranges = Enumerable.Range(0, segmentCount)
+            .Select(i => new LongRange(i * segmentSize, (i + 1) * segmentSize))
+            .ToArray();
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: rangesById);
+
+        await using var stream = new NzbFileStream(
+            segmentIds,
+            fileSize: segmentSize * segmentCount,
+            client,
+            articleBufferSize: 4,
+            segmentByteRanges: ranges,
+            usePipelinedBodyRequests: false,
+            fileName: "scrub.bin",
+            inFlightArticleBudget: budget);
+
+        var buffer = new byte[segmentSize / 4];
+        for (var scrub = 0; scrub < 16; scrub++)
+        {
+            // Jump to a different segment each iteration, simulating scroll back/forward.
+            var pos = ((scrub * 5 + 1) * segmentSize) % (segmentSize * segmentCount);
+            stream.Seek(pos, SeekOrigin.Begin);
+            _ = await stream.ReadAsync(buffer);
+            Assert.True(budget.LeasedBytes <= budget.CapBytes,
+                $"Leased {budget.LeasedBytes} exceeded cap {budget.CapBytes} during scrub {scrub}");
+        }
+
+        await stream.DisposeAsync();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task SeekThenDisposeAsync_AwaitsPriorTeardownBeforeReleasingBudget()
+    {
+        // A Seek with no following Read still starts the old inner stream's teardown;
+        // DisposeAsync must join it so leases are released before it returns.
+        const int segmentSize = 1000;
+        const int segmentCount = 6;
+        var budget = new InFlightArticleBudget(segmentSize * 40);
+        var segmentIds = Enumerable.Range(0, segmentCount).Select(i => $"seg-{i}").ToArray();
+        var segments = segmentIds.ToDictionary(id => id, _ => Enumerable.Repeat((byte)1, segmentSize).ToArray());
+        var rangesById = segmentIds
+            .Zip(Enumerable.Range(0, segmentCount).Select(i => new LongRange(i * segmentSize, (i + 1) * segmentSize)))
+            .ToDictionary(pair => pair.First, pair => pair.Second);
+        var ranges = Enumerable.Range(0, segmentCount)
+            .Select(i => new LongRange(i * segmentSize, (i + 1) * segmentSize))
+            .ToArray();
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: rangesById);
+
+        var stream = new NzbFileStream(
+            segmentIds,
+            fileSize: segmentSize * segmentCount,
+            client,
+            articleBufferSize: 4,
+            segmentByteRanges: ranges,
+            usePipelinedBodyRequests: false,
+            fileName: "seek-dispose.bin",
+            inFlightArticleBudget: budget);
+
+        var buffer = new byte[segmentSize / 2];
+        _ = await stream.ReadAsync(buffer);
+        Assert.True(budget.LeasedBytes > 0);
+
+        // Seek away from the data we just read; this starts the old stream's teardown.
+        stream.Seek(segmentSize * 4, SeekOrigin.Begin);
+
+        await stream.DisposeAsync();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
     private static FakeNntpClient CreateClient()
     {
         return new FakeNntpClient(
