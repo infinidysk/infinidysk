@@ -25,6 +25,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
     private long _position;
     private CombinedStream? _innerStream;
     private bool _disposed;
+    // Teardown of the inner stream a Seek replaced is started non-blocking (Seek is
+    // synchronous); the next ReadAsync joins it before opening a new inner stream so
+    // rapid scrubbing cannot overlap generations and pin the article budget.
+    private Task? _pendingInnerDispose;
 
     public DavMultipartFileStream(
         DavMultipartFile mpf,
@@ -91,6 +95,12 @@ public class DavMultipartFileStream : FastReadOnlyStream
         Memory<byte> buffer,
         CancellationToken cancellationToken = default)
     {
+        if (_pendingInnerDispose is { } pendingDispose)
+        {
+            _pendingInnerDispose = null;
+            try { await pendingDispose.ConfigureAwait(false); }
+            catch { /* teardown-only */ }
+        }
         _innerStream ??= await GetFileStreamAsync(_position, cancellationToken).ConfigureAwait(false);
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         _position += read;
@@ -120,8 +130,11 @@ public class DavMultipartFileStream : FastReadOnlyStream
 
         if (_position == absoluteOffset) return _position;
         _position = absoluteOffset;
-        _innerStream?.Dispose();
-        _innerStream = null;
+        if (_innerStream is { } replaced)
+        {
+            _pendingInnerDispose = replaced.DisposeAsync().AsTask();
+            _innerStream = null;
+        }
         return _position;
     }
 
@@ -311,15 +324,32 @@ public class DavMultipartFileStream : FastReadOnlyStream
     protected override void Dispose(bool disposing)
     {
         if (_disposed) return;
-        _innerStream?.Dispose();
+        if (disposing)
+        {
+            _innerStream?.Dispose();
+            var pending = _pendingInnerDispose;
+            if (pending is not null)
+            {
+                _pendingInnerDispose = null;
+                pending.ContinueWith(
+                    static t => { _ = t.Exception; },
+                    TaskContinuationOptions.OnlyOnFaulted);
+            }
+        }
         _disposed = true;
     }
 
     public override async ValueTask DisposeAsync()
     {
         if (_disposed) return;
-        if (_innerStream != null) await _innerStream.DisposeAsync().ConfigureAwait(false);
         _disposed = true;
+        if (_pendingInnerDispose is { } pending)
+        {
+            _pendingInnerDispose = null;
+            try { await pending.ConfigureAwait(false); }
+            catch { /* teardown-only */ }
+        }
+        if (_innerStream != null) await _innerStream.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);
     }
 }
