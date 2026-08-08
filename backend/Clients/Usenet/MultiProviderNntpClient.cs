@@ -1171,6 +1171,12 @@ public class MultiProviderNntpClient(
     /// </summary>
     internal static SegmentFetch.FetchStatus ClassifyException(Exception ex)
     {
+        // Singular BODY/HEAD and streaming paths surface a definitive 430/451 as a thrown
+        // UsenetArticleNotFoundException; STAT/batch paths return it as a response that is
+        // already recorded Missing. Classify both the same.
+        if (ex.TryGetCausingException<UsenetArticleNotFoundException>(out _))
+            return SegmentFetch.FetchStatus.Missing;
+
         if (ex.TryGetCausingException<TimeoutException>(out _))
             return SegmentFetch.FetchStatus.Timeout;
 

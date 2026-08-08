@@ -1749,6 +1749,25 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public void ClassifyException_ArticleNotFound_ReturnsMissing()
+    {
+        // Singular BODY/HEAD and streaming paths throw on a definitive 430/451 instead of
+        // returning a response; it must classify the same as a response-path miss.
+        var exception = new UsenetArticleNotFoundException("<seg@example>", "430 No Such Article");
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+        Assert.Equal(SegmentFetch.FetchStatus.Missing, status);
+    }
+
+    [Fact]
+    public void ClassifyException_ArticleNotFoundWrapped_StillReturnsMissing()
+    {
+        var inner = new UsenetArticleNotFoundException("<seg@example>", "430 No Such Article");
+        var wrapped = new InvalidOperationException("stream read failed", inner);
+        var status = MultiProviderNntpClient.ClassifyException(wrapped);
+        Assert.Equal(SegmentFetch.FetchStatus.Missing, status);
+    }
+
+    [Fact]
     public void ClassifyException_Timeout_ReturnsTimeout()
     {
         var status = MultiProviderNntpClient.ClassifyException(new TimeoutException());
