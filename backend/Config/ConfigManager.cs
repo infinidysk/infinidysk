@@ -293,6 +293,7 @@ public class ConfigManager
                 case ConfigKeys.UsenetStreamingSegmentTimeoutSeconds:
                 case ConfigKeys.UsenetStreamingSegmentRetries:
                 case ConfigKeys.UsenetStreamingReadTimeoutSeconds:
+                case ConfigKeys.UsenetStreamingWriteTimeoutSeconds:
                 case ConfigKeys.WardenQuorum:
                 case ConfigKeys.WardenMaxSourceEntries:
                 case ConfigKeys.PlayTotalBudgetSeconds:
@@ -923,6 +924,19 @@ public class ConfigManager
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingReadTimeoutSeconds));
         var seconds = int.TryParse(v, out var n) ? Math.Clamp(n, 5, 120) : 30;
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    /// <summary>
+    /// Per-write deadline for streaming response bytes to the client. A write that has not
+    /// completed within this window means the client stopped reading but kept the connection
+    /// open (HTTP/2 flow control, tunnel, or proxy), so the handler is cancelled to release
+    /// its in-flight article budget instead of wedging until restart. 0 disables the watchdog.
+    /// </summary>
+    public TimeSpan GetStreamingWriteTimeout()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingWriteTimeoutSeconds));
+        var seconds = int.TryParse(v, out var n) ? Math.Clamp(n, 0, 600) : 60;
         return TimeSpan.FromSeconds(seconds);
     }
 
