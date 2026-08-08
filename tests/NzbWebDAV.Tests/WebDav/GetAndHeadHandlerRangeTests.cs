@@ -100,4 +100,65 @@ public class GetAndHeadHandlerRangeTests
     {
         return new DavItem { Id = Guid.NewGuid() };
     }
+
+    [Fact]
+    public async Task WriteWithProgressTimeout_CompletesWhenClientReads()
+    {
+        using var readCts = new CancellationTokenSource();
+        using var dest = new MemoryStream();
+
+        await GetAndHeadHandlerPatch.WriteWithProgressTimeoutAsync(
+            dest, new byte[1024], TimeSpan.FromSeconds(5), readCts, CancellationToken.None);
+
+        Assert.Equal(1024, dest.Length);
+        Assert.False(readCts.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task WriteWithProgressTimeout_CancelsReadTokenWhenClientStalls()
+    {
+        using var readCts = new CancellationTokenSource();
+        using var dest = new NeverCompletingWriteStream();
+
+        await Assert.ThrowsAsync<TimeoutException>(async () =>
+            await GetAndHeadHandlerPatch.WriteWithProgressTimeoutAsync(
+                dest, new byte[1024], TimeSpan.FromMilliseconds(50), readCts, CancellationToken.None));
+
+        Assert.True(readCts.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task WriteWithProgressTimeout_ZeroTimeoutDisablesWatchdog()
+    {
+        using var readCts = new CancellationTokenSource();
+        using var dest = new MemoryStream();
+
+        await GetAndHeadHandlerPatch.WriteWithProgressTimeoutAsync(
+            dest, new byte[512], TimeSpan.Zero, readCts, CancellationToken.None);
+
+        Assert.Equal(512, dest.Length);
+        Assert.False(readCts.IsCancellationRequested);
+    }
+
+    private sealed class NeverCompletingWriteStream : Stream
+    {
+        public override bool CanWrite => true;
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override long Length => 0;
+        public override long Position { get => 0; set { } }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => 0;
+        public override long Seek(long offset, SeekOrigin origin) => 0;
+        public override void SetLength(long value) { }
+        public override void Write(byte[] buffer, int offset, int count) { }
+
+        public override async ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            // Never complete: simulates a client that stopped reading but kept the
+            // connection open. Honors cancellation so the test does not hang.
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+        }
+    }
 }
