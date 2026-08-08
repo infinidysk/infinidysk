@@ -9,6 +9,7 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
+using UsenetSharp.Exceptions;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
@@ -1783,6 +1784,24 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public void ClassifyException_InvalidData_ReturnsCorrupt()
+    {
+        // UsenetSharp yEnc header/decode failures escape as InvalidDataException.
+        var status = MultiProviderNntpClient.ClassifyException(new InvalidDataException("CRC mismatch"));
+        Assert.Equal(SegmentFetch.FetchStatus.Corrupt, status);
+    }
+
+    [Fact]
+    public void ClassifyException_InvalidDataWrapped_StillReturnsCorruptNotNetwork()
+    {
+        // InvalidDataException derives from IOException; the Corrupt case must win
+        // over the IOException -> Network case regardless of wrapping.
+        var wrapped = new InvalidOperationException("stream read failed", new InvalidDataException("bad yenc"));
+        var status = MultiProviderNntpClient.ClassifyException(wrapped);
+        Assert.Equal(SegmentFetch.FetchStatus.Corrupt, status);
+    }
+
+    [Fact]
     public void ClassifyException_CouldNotLogin_ReturnsAuth()
     {
         var exception = new CouldNotLoginToUsenetException("bad credentials");
@@ -1821,6 +1840,22 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public void ClassifyException_UsenetNotConnected_ReturnsNetwork()
+    {
+        var exception = new UsenetNotConnectedException("The NNTP connection closed before the article body was read.");
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+        Assert.Equal(SegmentFetch.FetchStatus.Network, status);
+    }
+
+    [Fact]
+    public void ClassifyException_UsenetConnection_ReturnsNetwork()
+    {
+        var exception = new UsenetConnectionException("Server responded: 502") { ResponseCode = 502 };
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+        Assert.Equal(SegmentFetch.FetchStatus.Network, status);
+    }
+
+    [Fact]
     public void ClassifyException_UnknownException_ReturnsOther()
     {
         var status = MultiProviderNntpClient.ClassifyException(new Exception("boom"));
@@ -1841,6 +1876,14 @@ public class MultiProviderNntpClientTests
         var inner = new UsenetUnexpectedResponseException("<seg@example>", "400 idle timeout");
         var wrapped = new InvalidOperationException("stream read failed", inner);
         var status = MultiProviderNntpClient.ClassifyException(wrapped);
+        Assert.Equal(SegmentFetch.FetchStatus.Protocol, status);
+    }
+
+    [Fact]
+    public void ClassifyException_UsenetProtocol_ReturnsProtocol()
+    {
+        var exception = new UsenetProtocolException("Invalid NNTP response: missing article headers.");
+        var status = MultiProviderNntpClient.ClassifyException(exception);
         Assert.Equal(SegmentFetch.FetchStatus.Protocol, status);
     }
 

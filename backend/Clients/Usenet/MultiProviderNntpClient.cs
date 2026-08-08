@@ -15,6 +15,7 @@ using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
 using Serilog;
 using Serilog.Context;
+using UsenetSharp.Exceptions;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
@@ -1063,10 +1064,16 @@ public class MultiProviderNntpClient(
         RecordFetch(metricsKey, status, durationMs, retries, traceRange);
         if (status == SegmentFetch.FetchStatus.Other)
         {
-            Log.Debug(
-                exception,
+            // Keyed by exception type so a storm of the same novel failure logs once per
+            // minute and still names the type in support packs; the stack stays at Debug.
+            ThrottledSegmentWarning.Write(
+                exception.GetType().FullName ?? "unknown",
                 "Unclassified Usenet segment fetch failure. Host={Host} ExceptionType={ExceptionType}",
                 metricsKey, exception.GetType().FullName);
+            Log.Debug(
+                exception,
+                "Unclassified Usenet segment fetch failure stack. Host={Host}",
+                metricsKey);
         }
         return status;
     }
@@ -1180,7 +1187,10 @@ public class MultiProviderNntpClient(
         if (ex.TryGetCausingException<TimeoutException>(out _))
             return SegmentFetch.FetchStatus.Timeout;
 
-        if (ex.TryGetCausingException<UsenetCorruptArticleException>(out _))
+        // yEnc decode failures escape as InvalidDataException, which derives from
+        // IOException — it must be checked before the IOException -> Network case.
+        if (ex.TryGetCausingException<UsenetCorruptArticleException>(out _) ||
+            ex.TryGetCausingException<System.IO.InvalidDataException>(out _))
             return SegmentFetch.FetchStatus.Corrupt;
 
         if (ex.TryGetCausingException<CouldNotLoginToUsenetException>(out _) ||
@@ -1188,11 +1198,14 @@ public class MultiProviderNntpClient(
             return SegmentFetch.FetchStatus.Auth;
 
         if (ex.TryGetCausingException<CouldNotConnectToUsenetException>(out _) ||
+            ex.TryGetCausingException<UsenetNotConnectedException>(out _) ||
+            ex.TryGetCausingException<UsenetException>(out _) ||
             ex.TryGetCausingException<System.Net.Sockets.SocketException>(out _) ||
             ex.TryGetCausingException<System.IO.IOException>(out _))
             return SegmentFetch.FetchStatus.Network;
 
-        if (ex.TryGetCausingException<UsenetUnexpectedResponseException>(out _))
+        if (ex.TryGetCausingException<UsenetUnexpectedResponseException>(out _) ||
+            ex.TryGetCausingException<UsenetProtocolException>(out _))
             return SegmentFetch.FetchStatus.Protocol;
 
         return SegmentFetch.FetchStatus.Other;
