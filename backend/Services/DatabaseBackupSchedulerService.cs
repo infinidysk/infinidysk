@@ -18,6 +18,8 @@ public class DatabaseBackupSchedulerService : BackgroundService
     private readonly WebsocketManager _websocketManager;
     private readonly DatabaseBackupStore _store;
     private CancellationTokenSource _rescheduleCts = new();
+    // NOTE: swapped-out instances are intentionally not disposed (ExecuteAsync may
+    // still read .Token after the swap); the current instance is disposed in Dispose.
 
     private static readonly TimeSpan MaxSleepSlice = TimeSpan.FromMinutes(30);
     private DateTime? _lastLoggedNextRun;
@@ -123,4 +125,14 @@ public class DatabaseBackupSchedulerService : BackgroundService
             }
         }
     }
+
+    public override void Dispose()
+    {
+        // ExecuteAsync has stopped when the host disposes the service, so the
+        // current reschedule source is safe to dispose. Swapped-out instances
+        // are intentionally leaked (see the swap note in ExecuteAsync).
+        _rescheduleCts.Dispose();
+        base.Dispose();
+    }
+
 }

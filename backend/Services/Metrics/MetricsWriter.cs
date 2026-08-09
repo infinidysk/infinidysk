@@ -484,4 +484,11 @@ public class MetricsWriter : BackgroundService
         long LastSuccessfulFlushAtMs,
         string? LastFlushError
     );
+
+    public override void Dispose()
+    {
+        _flushGate.Dispose();
+        base.Dispose();
+    }
+
 }

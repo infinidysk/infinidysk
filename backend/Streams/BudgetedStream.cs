@@ -7,7 +7,9 @@ namespace NzbWebDAV.Streams;
 public sealed class BudgetedStream : Stream
 {
     private readonly Stream _inner;
+#pragma warning disable CA2213 // the lease is disposed race-safely via ReleaseLease()'s Interlocked.Exchange + Dispose; the analyzer cannot follow the exchange-and-dispose-local pattern
     private ArticleByteLease? _lease;
+#pragma warning restore CA2213
 
     public BudgetedStream(Stream inner, ArticleByteLease lease)
     {

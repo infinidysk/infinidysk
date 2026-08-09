@@ -1259,4 +1259,16 @@ lock (_ctsLock) cycleCts.Cancel();
         TimeSpan.FromSeconds(configManager.GetWatchtowerVerifyTimeoutSeconds());
 
     private static long Now() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+    public override void Dispose()
+    {
+        lock (_ctsLock)
+        {
+            _disabledCts?.Dispose();
+            _disabledCts = null;
+        }
+        _indexerGate.Dispose();
+        base.Dispose();
+    }
+
 }

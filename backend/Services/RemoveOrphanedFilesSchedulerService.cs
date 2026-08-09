@@ -122,4 +122,14 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
             }
         }
     }
+
+    public override void Dispose()
+    {
+        // ExecuteAsync has stopped when the host disposes the service, so the
+        // current reschedule source is safe to dispose. Swapped-out instances
+        // are intentionally leaked (see the swap note in ExecuteAsync).
+        _rescheduleCts.Dispose();
+        base.Dispose();
+    }
+
 }

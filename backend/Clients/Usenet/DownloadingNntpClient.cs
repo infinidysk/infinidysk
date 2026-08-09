@@ -316,6 +316,10 @@ public class DownloadingNntpClient : WrappingNntpClient
     public override void Dispose()
     {
         _configManager.OnConfigChanged -= OnConfigChanged;
+        // Owned per generation: retired generations must release their
+        // semaphores once in-flight streams have drained (see Retire()).
+        _streamingSemaphore.Dispose();
+        _queueSemaphore.Dispose();
         base.Dispose();
         GC.SuppressFinalize(this);
     }

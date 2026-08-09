@@ -15,3 +15,38 @@ using System.Diagnostics.CodeAnalysis;
     Scope = "type",
     Target = "~T:NzbWebDAV.Clients.Usenet.NntpClient",
     Justification = "Abstract NNTP client hierarchy manages only managed resources; no finalizers exist. The abstract public Dispose contract is intentional.")]
+
+// These structs are transient data carriers that are never compared for
+// equality, used as collection keys, or stored in hashed containers, so the
+// default ValueType.Equals reflection path is never exercised. (Par2PacketHeader
+// is a P/Invoke-marshaled layout struct where member equality is meaningless.)
+[assembly: SuppressMessage(
+    "Performance",
+    "CA1815:Override equals and operator equals on value types",
+    Scope = "type",
+    Target = "~T:NzbWebDAV.Utils.OrganizedLinksUtil.DavItemLink",
+    Justification = "Transient helper struct; never compared or used as a key.")]
+[assembly: SuppressMessage(
+    "Performance",
+    "CA1815:Override equals and operator equals on value types",
+    Scope = "type",
+    Target = "~T:NzbWebDAV.Utils.SymlinkAndStrmUtil.StrmInfo",
+    Justification = "Transient helper struct; never compared or used as a key.")]
+[assembly: SuppressMessage(
+    "Performance",
+    "CA1815:Override equals and operator equals on value types",
+    Scope = "type",
+    Target = "~T:NzbWebDAV.Utils.SymlinkAndStrmUtil.SymlinkInfo",
+    Justification = "Transient helper struct; never compared or used as a key.")]
+[assembly: SuppressMessage(
+    "Performance",
+    "CA1815:Override equals and operator equals on value types",
+    Scope = "type",
+    Target = "~T:NzbWebDAV.Par2Recovery.Packets.Par2PacketHeader",
+    Justification = "P/Invoke-marshaled layout struct; member equality is meaningless for a packet read view.")]
+[assembly: SuppressMessage(
+    "Performance",
+    "CA1815:Override equals and operator equals on value types",
+    Scope = "type",
+    Target = "~T:NzbWebDAV.Clients.Usenet.Models.UsenetExclusiveConnection",
+    Justification = "Single-field delegate wrapper; never compared or used as a key.")]

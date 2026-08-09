@@ -284,5 +284,11 @@ public partial class WardenBackupService : BackgroundService
         public bool StaleConflict { get; init; }
     }
 
+    public override void Dispose()
+    {
+        _gate.Dispose();
+        base.Dispose();
+    }
+
     private sealed class GithubException(string message) : Exception(message);
 }
