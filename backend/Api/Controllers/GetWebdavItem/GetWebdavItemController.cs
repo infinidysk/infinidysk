@@ -43,9 +43,9 @@ public class GetWebdavItemController(
             PerSegmentTimeout = configManager.GetStreamingSegmentTimeout(),
             MaxRetries = configManager.GetStreamingSegmentRetries(),
         };
-        #pragma warning disable CA2000 // scoped context is disposed via Response.OnCompleted when the response completes
+#pragma warning disable CA2000 // scoped context is disposed via Response.OnCompleted when the response completes
         var scopedStreamingTimeoutContext = ct.SetContext(streamingTimeoutContext);
-        #pragma warning restore CA2000
+#pragma warning restore CA2000
         HttpContext.Response.OnCompleted(() =>
         {
             scopedStreamingTimeoutContext.Dispose();
@@ -129,9 +129,9 @@ public class GetWebdavItemController(
 
             // seek
             stream.Seek(rangeStart.Value, SeekOrigin.Begin);
-            #pragma warning disable CA2000 // the length-limited wrapper is returned as the response stream; the response pipeline disposes it (and the inner stream)
+#pragma warning disable CA2000 // the length-limited wrapper is returned as the response stream; the response pipeline disposes it (and the inner stream)
             if (rangeEnd is not null) stream = stream.LimitLength(chunkSize);
-            #pragma warning restore CA2000
+#pragma warning restore CA2000
 
             // set response headers
             Response.Headers["Content-Range"] = $"bytes {rangeStart}-{end}/{fileSize}";

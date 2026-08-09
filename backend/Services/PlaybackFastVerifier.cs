@@ -73,12 +73,12 @@ public class PlaybackFastVerifier
         // The priority context lives on this candidate's own child token: registering it on
         // the parent token shared by concurrent candidates would let one candidate's disposal
         // strip priority from its siblings.
-        #pragma warning disable CA2000 // disposed by the work.ContinueWith continuation once the probe finishes (see the finally block below)
+#pragma warning disable CA2000 // disposed by the work.ContinueWith continuation once the probe finishes (see the finally block below)
         var timeoutCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(ct);
-        #pragma warning restore CA2000
-        #pragma warning disable CA2000 // disposed by the work.ContinueWith continuation once the probe finishes (see the finally block below)
+#pragma warning restore CA2000
+#pragma warning disable CA2000 // disposed by the work.ContinueWith continuation once the probe finishes (see the finally block below)
         var priorityScope = timeoutCts.Token.SetContext(new DownloadPriorityContext
-        #pragma warning restore CA2000
+#pragma warning restore CA2000
         {
             Priority = priority,
         });
@@ -104,9 +104,9 @@ public class PlaybackFastVerifier
             Log.Debug("Fast-verify timed out after {Timeout:n0}s on {Segment}", timeout.TotalSeconds, messageId);
             return Verdict.Timeout;
         }
-        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
-        #pragma warning restore CA2016
+#pragma warning restore CA2016
         {
             Log.Debug("Fast-verify errored on {Segment}: {Message}", messageId, e.Message);
             return Verdict.Timeout;

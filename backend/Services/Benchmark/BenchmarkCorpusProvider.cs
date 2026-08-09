@@ -127,7 +127,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
     {
         for (var i = list.Count - 1; i > 0; i--)
         {
-            #pragma warning disable CA5394 // benchmark corpus shuffling is not security-sensitive
+#pragma warning disable CA5394 // benchmark corpus shuffling is not security-sensitive
             var j = Random.Shared.Next(i + 1);
 #pragma warning restore CA5394
             (list[i], list[j]) = (list[j], list[i]);

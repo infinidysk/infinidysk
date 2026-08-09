@@ -84,9 +84,9 @@ public abstract class BaseStoreCollection : IStoreCollection
     )
     {
         var existingItem = await GetItemAsync(name, cancellationToken).ConfigureAwait(false);
-        #pragma warning disable CA2000 // wraps the framework-owned request body; on the write path ownership passes to CreateItemRequest
+#pragma warning disable CA2000 // wraps the framework-owned request body; on the write path ownership passes to CreateItemRequest
         var probingStream = new ProbingStream(stream);
-        #pragma warning restore CA2000
+#pragma warning restore CA2000
 
         // if the item doesn't already exist, create it
         //

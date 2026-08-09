@@ -792,9 +792,9 @@ public class ProfilePlayController(
         {
             return new PreVerifyResult(candidate, null, PlaybackFastVerifier.Verdict.Timeout, null, false);
         }
-        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
-        #pragma warning restore CA2016
+#pragma warning restore CA2016
         {
             Log.Debug(e, "Pre-verify failed for {Url}", candidate.NzbUrl);
             return new PreVerifyResult(candidate, null, PlaybackFastVerifier.Verdict.Dead, null, false);
@@ -872,9 +872,9 @@ public class ProfilePlayController(
                 _ = hitTracker.RecordAsync(c.IndexerName, IndexerApiHit.HitType.Download, CancellationToken.None);
                 return bytes;
             }
-            #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
             catch (Exception e) when (!e.IsCancellationException())
-            #pragma warning restore CA2016
+#pragma warning restore CA2016
             {
                 Log.Debug("NZB fetch failed for {Url}: {Message}", c.NzbUrl, e.Message);
                 return null;

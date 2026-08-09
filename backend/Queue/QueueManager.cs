@@ -223,9 +223,9 @@ public sealed class QueueManager : IDisposable
                 await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
                 await item.ProcessingTask.ConfigureAwait(false);
             }
-            #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
             catch (Exception e) when (!e.IsCancellationException())
-            #pragma warning restore CA2016
+#pragma warning restore CA2016
             {
                 Log.Debug(e, "Queue item {QueueItemId} exited with error after cancel", item.QueueItem.Id);
             }
@@ -303,9 +303,9 @@ public sealed class QueueManager : IDisposable
         if (remaining.Length > 0)
         {
             try { await Task.WhenAll(remaining).ConfigureAwait(false); }
-            #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
             catch (Exception e) when (!e.IsCancellationException())
-            #pragma warning restore CA2016
+#pragma warning restore CA2016
             {
                 Log.Debug(e, "Queue workers finished with errors during shutdown");
             }
@@ -405,12 +405,12 @@ public sealed class QueueManager : IDisposable
                     GetFanOutConcurrency = () => ComputeFanOutConcurrency(queueItem.Id),
                 };
 
-                #pragma warning disable CA2000 // worker CTS ownership transfers to InProgressQueueItem and is disposed when the queue item completes; the not-transferred path disposes in finally
+#pragma warning disable CA2000 // worker CTS ownership transfers to InProgressQueueItem and is disposed when the queue item completes; the not-transferred path disposes in finally
                 var workerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                #pragma warning restore CA2000
-                #pragma warning disable CA2000 // registration ownership transfers to InProgressQueueItem (disposed on completion); otherwise disposed in finally
+#pragma warning restore CA2000
+#pragma warning disable CA2000 // registration ownership transfers to InProgressQueueItem (disposed on completion); otherwise disposed in finally
                 queueContextRegistration = workerCts.Token.SetContext(queueDownloadContext);
-                #pragma warning restore CA2000
+#pragma warning restore CA2000
 
                 inProgress = BeginProcessingQueueItem(
                     dbClient!,
@@ -531,9 +531,9 @@ public sealed class QueueManager : IDisposable
             {
                 await item.ProcessingTask.ConfigureAwait(false);
             }
-            #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
             catch (Exception e) when (!e.IsCancellationException())
-            #pragma warning restore CA2016
+#pragma warning restore CA2016
             {
                 Log.Error(e, "Queue worker for {QueueItemId} faulted", item.QueueItem.Id);
             }
@@ -777,9 +777,9 @@ public sealed class QueueManager : IDisposable
             if (untilNextPause <= TimeSpan.Zero) return TimeSpan.FromMilliseconds(250);
             return untilNextPause < IdleDelay ? untilNextPause : IdleDelay;
         }
-        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
-        #pragma warning restore CA2016
+#pragma warning restore CA2016
         {
             Log.Debug(e, "Failed to compute next queue pause; falling back to idle delay");
             return IdleDelay;

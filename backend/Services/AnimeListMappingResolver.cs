@@ -158,9 +158,9 @@ public sealed class AnimeListMappingResolver : IDisposable
 
     private static HttpClient CreateClient()
     {
-        #pragma warning disable CA2000 // handler is owned by the static HttpClient (process lifetime by design)
+#pragma warning disable CA2000 // handler is owned by the static HttpClient (process lifetime by design)
         var handler = new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.All };
-        #pragma warning restore CA2000
+#pragma warning restore CA2000
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(60) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("InfiniDysk (https://github.com/infinidysk/infinidysk)");
         return client;

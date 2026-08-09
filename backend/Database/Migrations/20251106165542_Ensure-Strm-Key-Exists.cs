@@ -14,7 +14,7 @@ namespace NzbWebDAV.Database.Migrations
             migrationBuilder.InsertData(
                 table: "ConfigItems",
                 columns: new[] { "ConfigName", "ConfigValue" },
-                #pragma warning disable CA1814 // EF Core migrationBuilder.InsertData requires the object[,] values shape
+#pragma warning disable CA1814 // EF Core migrationBuilder.InsertData requires the object[,] values shape
                 values: new object[,]
                 #pragma warning restore CA1814
                 {

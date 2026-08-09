@@ -407,9 +407,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     .ConfigureAwait(false);
 
                 await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
-                #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
+#pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                 var stream = await DrainSegmentAsync(
-                #pragma warning restore CA2000
+#pragma warning restore CA2000
                         bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate)
                     .ConfigureAwait(false);
                 lease = null;
@@ -522,9 +522,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             var response = await responseTask.ConfigureAwait(false);
             await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
-            #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
+#pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
             var stream = await DrainSegmentAsync(
-            #pragma warning restore CA2000
+#pragma warning restore CA2000
                     response.Stream!, segmentIndex, cancellationToken, lease, estimate)
                 .ConfigureAwait(false);
             lease = null; // owned by BudgetedStream / buffer
@@ -638,9 +638,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                         .ConfigureAwait(false);
                     await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
-                    #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
+#pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var stream = await DrainSegmentAsync(
-                    #pragma warning restore CA2000
+#pragma warning restore CA2000
                         response.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
                     lease = null;
                     return stream;
@@ -696,9 +696,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                         .ConfigureAwait(false);
                     await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
-                    #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
+#pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var stream = await DrainSegmentAsync(
-                    #pragma warning restore CA2000
+#pragma warning restore CA2000
                         response.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
                     lease = null;
                     return stream;
@@ -749,9 +749,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     Log.Debug(
                         "Segment {PrimaryIndex} recovered via fallback MessageId {FallbackId} while reading {FileName}.",
                         segmentIndex, fallbackId, _fileName);
-                    #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
+#pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var stream = await DrainSegmentAsync(
-                    #pragma warning restore CA2000
+#pragma warning restore CA2000
                         bodyResponse.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
                     lease = null;
                     return stream;
@@ -827,7 +827,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 fill, _fileName, segmentId);
         }
 
-        #pragma warning disable CA2000 // gap-fill stream ownership transfers to the returned SegmentDownloadResult
+#pragma warning disable CA2000 // gap-fill stream ownership transfers to the returned SegmentDownloadResult
         return SegmentDownloadResult.ZeroFill(
             CreateGapFillStream(fill, segmentIndex),
             messageTemplate,
@@ -835,7 +835,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             fill,
             exception,
             GetPlannedSegmentBytes(segmentIndex));
-        #pragma warning restore CA2000
+#pragma warning restore CA2000
     }
 
     private Stream CreateGapFillStream(long fill, int segmentIndex)
@@ -1200,9 +1200,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         try
         {
-            #pragma warning disable CA1849 // synchronous Cancel is required -- teardown callbacks must run before _streamTasks.Writer completes; CancelAsync would race TryComplete
+#pragma warning disable CA1849 // synchronous Cancel is required -- teardown callbacks must run before _streamTasks.Writer completes; CancelAsync would race TryComplete
             _cts.Cancel();
-            #pragma warning restore CA1849
+#pragma warning restore CA1849
         }
         catch (ObjectDisposedException)
         {

@@ -78,9 +78,9 @@ public static class ProxyHttpClientPool
         for (var i = 0; i < addresses.Length; i++)
         {
             var isLast = i == addresses.Length - 1;
-            #pragma warning disable CA2000 // socket is disposed on connect failure; on success the pooled connection stream owns it
+#pragma warning disable CA2000 // socket is disposed on connect failure; on success the pooled connection stream owns it
             var socket = new Socket(addresses[i].AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-            #pragma warning restore CA2000
+#pragma warning restore CA2000
             socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
             TrySetKeepAliveTuning(socket);
             try

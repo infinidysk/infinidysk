@@ -556,9 +556,9 @@ public abstract class NntpClient : INntpClient
                 missing.Add(result.SegmentId);
             }
         }
-        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
-        #pragma warning restore CA2016
+#pragma warning restore CA2016
         {
             // Session/protocol/transport failure during the primary-only sweep (e.g.
             // UsenetUnexpectedResponseException for a buffered 400 goodbye, or

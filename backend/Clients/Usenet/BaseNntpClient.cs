@@ -31,9 +31,9 @@ public class BaseNntpClient : NntpClient
     {
     }
 
-    #pragma warning disable CA2000 // the client is stored in _client and disposed with this instance
+#pragma warning disable CA2000 // the client is stored in _client and disposed with this instance
     public BaseNntpClient(bool skipTlsVerification) : this(new UsenetClient(new UsenetClientOptions
-    #pragma warning restore CA2000
+#pragma warning restore CA2000
     {
         CrcValidation = EnvironmentUtil.GetEnvironmentVariable("USENET_DISABLE_CRC_VALIDATION") == "1"
             ? YencCrcValidationMode.Off
@@ -55,9 +55,9 @@ public class BaseNntpClient : NntpClient
         {
             await _client.ConnectAsync(host, port, useSsl, cancellationToken).ConfigureAwait(false);
         }
-        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
-        #pragma warning restore CA2016
+#pragma warning restore CA2016
         {
             const string message = "Could not connect to usenet host. Check connection settings.";
             throw new CouldNotConnectToUsenetException(message, e);
@@ -82,9 +82,9 @@ public class BaseNntpClient : NntpClient
 
             return response;
         }
-        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
-        #pragma warning restore CA2016
+#pragma warning restore CA2016
         {
             throw new CouldNotLoginToUsenetException("Could not login to usenet host.", e);
         }

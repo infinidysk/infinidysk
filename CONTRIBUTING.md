@@ -181,6 +181,47 @@ Build and run container:
 docker compose up
 ```
 
+## Static analysis policy
+
+All first-party C# projects build with the full .NET analyzer set
+(`AnalysisLevel=latest-All` via the pinned `Microsoft.CodeAnalysis.NetAnalyzers`
+package in the root `Directory.Build.props`). New code must not introduce
+analyzer or compiler warnings.
+
+When a rule fires, resolve it in this order:
+
+1. **Fix it.** Most rules catch real issues (disposal, async, culture) or have
+   a mechanical code fix.
+2. **Per-site suppression** — `#pragma warning disable` (or a targeted
+   `GlobalSuppressions.cs` entry) with a justification comment — when the rule
+   misfires on intent at a specific place. Typical legit cases: ownership
+   transfers the analyzer cannot see (e.g. CA2000/CA2025 around background
+   tasks or response-lifetime disposal via `Response.OnCompleted`),
+   format-mandated weak hashes (CA5351), user-facing opt-outs
+   (CA5359/CA5398), and classification sites that must not bind the ambient
+   cancellation token (CA2016).
+3. **Rule-level policy** in the root `.editorconfig` (`tests/.editorconfig`
+   for test-only noise) with a written justification — only for rules that are
+   structural for this codebase (e.g. CA1515 "make types internal" in an
+   ASP.NET app, xUnit naming conventions in tests).
+
+Rules that must **never** be disabled rule-wide: the security rules (CA53xx) —
+use per-site justification suppressions so each instance stays auditable.
+
+Notes:
+
+- `libs/UsenetSharp` and `libs/RapidYencSharp` have their own `root = true`
+  `.editorconfig` files with a mirrored policy block — keep them in sync with
+  the root policy.
+- `libs/SharpCompress` and `tests/SharpCompress.Tests` are vendored upstream
+  code and exempt via per-project `<NoWarn>` (justification in the csproj).
+  Do not fix analyzer warnings in them; keep ports clean instead.
+- Bulk `dotnet format analyzers` runs: temporarily remove the analyzer package
+  from `Directory.Build.props` first — with the package referenced, the format
+  workspace loads both the SDK and packaged analyzer copies and applies every
+  code fix twice. Restore the package afterwards (builds are unaffected either
+  way; only the format tool is).
+
 ## Contributing
 
 Before creating a PR:

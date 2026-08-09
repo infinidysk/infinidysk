@@ -122,9 +122,9 @@ public static class Examples
     {
         // Simulate larger data
         byte[] largeData = new byte[10_000];
-        #pragma warning disable CA5394 // example/demo data generation; not security-sensitive
+#pragma warning disable CA5394 // example/demo data generation; not security-sensitive
         Random.Shared.NextBytes(largeData);
-        #pragma warning restore CA5394
+#pragma warning restore CA5394
 
         // Calculate the maximum encoded size
         nuint maxEncodedSize = YencEncoder.GetMaxEncodedLength((nuint)largeData.Length);
@@ -201,9 +201,9 @@ public static class Examples
     {
         // Simulate reading data in chunks (e.g., from a network stream)
         byte[] sourceData = new byte[1000];
-        #pragma warning disable CA5394 // example/demo data generation; not security-sensitive
+#pragma warning disable CA5394 // example/demo data generation; not security-sensitive
         Random.Shared.NextBytes(sourceData);
-        #pragma warning restore CA5394
+#pragma warning restore CA5394
 
         // Rent buffers from pool
         byte[] encodeBuffer =

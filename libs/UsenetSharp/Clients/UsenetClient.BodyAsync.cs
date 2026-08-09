@@ -47,9 +47,9 @@ public partial class UsenetClient
             ThrowIfDisposed();
             ThrowIfUnhealthy();
             ThrowIfNotConnected();
-            #pragma warning disable CA2000 // operationCts ownership transfers to the background body-read task (which disposes it on completion) via the `operationCts = null` handoff below; the finally disposes it only on non-transferred paths
+#pragma warning disable CA2000 // operationCts ownership transfers to the background body-read task (which disposes it on completion) via the `operationCts = null` handoff below; the finally disposes it only on non-transferred paths
             operationCts = CreateOperationTokenSource(cancellationToken);
-            #pragma warning restore CA2000
+#pragma warning restore CA2000
             using var ioTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
 
             var (responseCode, response) = await ExchangeSingleLineAsync(
@@ -66,10 +66,10 @@ public partial class UsenetClient
 
                 // Start background task to read the body and write to pipe
                 isReadBodyToPipeAsyncStarted = true;
-                #pragma warning disable CA2025 // the background body-read task owns and disposes the pipe writer and operationCts; the caller awaits/disposes the reader side
+#pragma warning disable CA2025 // the background body-read task owns and disposes the pipe writer and operationCts; the caller awaits/disposes the reader side
                 _ = ReadBodyToPipeAsync(
                                     pipe.Writer, operationCts, onConnectionReadyAgain, cancellationToken);
-                #pragma warning restore CA2025
+#pragma warning restore CA2025
                 operationCts = null;
 
                 // Return immediately with the stream and headers
@@ -138,9 +138,9 @@ public partial class UsenetClient
             ThrowIfDisposed();
             ThrowIfUnhealthy();
             ThrowIfNotConnected();
-            #pragma warning disable CA2000 // operationCts ownership transfers to the background body-read task (which disposes it on completion) via the `operationCts = null` handoff below; the finally disposes it only on non-transferred paths
+#pragma warning disable CA2000 // operationCts ownership transfers to the background body-read task (which disposes it on completion) via the `operationCts = null` handoff below; the finally disposes it only on non-transferred paths
             operationCts = CreateOperationTokenSource(cancellationToken);
-            #pragma warning restore CA2000
+#pragma warning restore CA2000
             using var ioTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
 
             var (responseCode, response) = await ExchangeSingleLineAsync(
@@ -159,7 +159,7 @@ public partial class UsenetClient
                         TaskCreationOptions.RunContinuationsAsynchronously);
 
                 isReadBodyToPipeAsyncStarted = true;
-                #pragma warning disable CA2025 // the background decode task owns and disposes the pipe writer, operationCts and decoded stream; completion is coordinated through headersCompletion and the response callbacks
+#pragma warning disable CA2025 // the background decode task owns and disposes the pipe writer, operationCts and decoded stream; completion is coordinated through headersCompletion and the response callbacks
                 _ = ReadDecodedBodyToPipeAsync(
                                     pipe.Writer,
                     headersCompletion,
@@ -167,7 +167,7 @@ public partial class UsenetClient
                     onConnectionReadyAgain,
                     decodedStream,
                     callerCancellationToken: cancellationToken);
-                #pragma warning restore CA2025
+#pragma warning restore CA2025
                 operationCts = null;
 
                 return new UsenetDecodedBodyResponse
