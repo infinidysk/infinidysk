@@ -97,7 +97,7 @@ function Stat({
     return (
         <div className="stat place-items-center py-4">
             <div className={`stat-figure ${iconClassName}`}>
-                <Icon name={icon} filled={iconFilled} className="!text-[22px]" />
+                <Icon name={icon} {...(iconFilled !== undefined ? { filled: iconFilled } : {})} className="!text-[22px]" />
             </div>
             <div className="stat-title text-xs">{title}</div>
             <div className={`stat-value font-mono text-3xl tabular-nums md:text-4xl ${valueClassName}`}>

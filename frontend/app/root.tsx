@@ -49,7 +49,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     useLayout: true,
     // Baked into images published to the deprecated ghcr.io/nzbdav/nzbdav path.
-    isLegacyImage: process.env.NZBDAV_LEGACY_IMAGE === "true",
+    isLegacyImage: process.env["NZBDAV_LEGACY_IMAGE"] === "true",
     version,
     updateAvailable: await checkForUpdate(version),
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
@@ -171,11 +171,11 @@ export default function App({ loaderData }: Route.ComponentProps) {
         topNavComponent={(navProps) => (
           <TopNavigation
             {...navProps}
-            version={version}
-            updateAvailable={updateAvailable}
-            isFrontendAuthDisabled={isFrontendAuthDisabled}
-            username={username}
-            hasUsenetProviders={hasUsenetProviders}
+            {...(version !== undefined ? { version } : {})}
+            {...(updateAvailable !== undefined ? { updateAvailable } : {})}
+            {...(isFrontendAuthDisabled !== undefined ? { isFrontendAuthDisabled } : {})}
+            {...(username !== undefined ? { username } : {})}
+            {...(hasUsenetProviders !== undefined ? { hasUsenetProviders } : {})}
           />
         )}
         bodyChild={
@@ -193,7 +193,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
         }
         leftNavChild={
           <LeftNavigation
-            isWatchdogEnabled={isWatchdogEnabled}
+            {...(isWatchdogEnabled !== undefined ? { isWatchdogEnabled } : {})}
             serviceProvider={serviceProvider}
           />
         }

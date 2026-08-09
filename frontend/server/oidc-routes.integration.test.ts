@@ -74,12 +74,12 @@ const servers: http.Server[] = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.OIDC_ISSUER = "https://fixture.invalid";
-  process.env.OIDC_CLIENT_ID = CLIENT_ID;
-  process.env.OIDC_CLIENT_SECRET = CLIENT_SECRET;
-  process.env.OIDC_USERNAME_CLAIM = "preferred_username";
-  process.env.OIDC_ADMIN_CLAIM = "groups";
-  process.env.OIDC_ADMIN_CLAIM_VALUE = "nzbdav-admins";
+  process.env["OIDC_ISSUER"] = "https://fixture.invalid";
+  process.env["OIDC_CLIENT_ID"] = CLIENT_ID;
+  process.env["OIDC_CLIENT_SECRET"] = CLIENT_SECRET;
+  process.env["OIDC_USERNAME_CLAIM"] = "preferred_username";
+  process.env["OIDC_ADMIN_CLAIM"] = "groups";
+  process.env["OIDC_ADMIN_CLAIM_VALUE"] = "nzbdav-admins";
   mocks.getOidcFlowState.mockResolvedValue(FLOW);
   mocks.setSessionUser.mockResolvedValue({
     headers: { "Set-Cookie": "__session=user" },

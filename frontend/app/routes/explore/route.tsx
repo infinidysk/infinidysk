@@ -225,8 +225,10 @@ function Body(props: ExplorePageData) {
                     const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
                     const shouldSelect = !prev.has(name);
                     for (let i = lo; i <= hi; i++) {
-                        if (shouldSelect) next.add(selectableNames[i]);
-                        else next.delete(selectableNames[i]);
+                        const n = selectableNames[i];
+                        if (n === undefined) continue;
+                        if (shouldSelect) next.add(n);
+                        else next.delete(n);
                     }
                     lastClickedRef.current = name;
                     return next;
@@ -395,7 +397,7 @@ function Body(props: ExplorePageData) {
                                     openClassName={ITEM_MENU_OPEN_CLASS}
                                     exploreFile={x as ExploreFile}
                                     previewPath={getFilePath(x as ExploreFile)}
-                                    onRemove={canDelete ? () => requestDelete([x.name]) : undefined} />
+                                    {...(canDelete ? { onRemove: () => requestDelete([x.name]) } : {})} />
                             </div>
                         );
                     })}
@@ -409,7 +411,7 @@ function Body(props: ExplorePageData) {
                 message={renderDeleteMessage(pendingDelete)}
                 confirmText={isDeleting ? "Deleting..." : "Delete"}
                 cancelText="Cancel"
-                errorMessage={deleteError ?? undefined}
+                {...(deleteError != null ? { errorMessage: deleteError } : {})}
                 onCancel={cancelDelete}
                 onConfirm={performDelete}
             />

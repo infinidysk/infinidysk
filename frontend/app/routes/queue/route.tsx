@@ -163,7 +163,7 @@ export default function Queue(props: Route.ComponentProps) {
                         onIsRemovingChanged={queueEvents.onRemovingQueueSlots}
                         onRemoved={queueEvents.onRemoveQueueSlots}
                         onMovedToTop={queueEvents.onMoveQueueSlotsToTop}
-                        onUploadClicked={isReadOnly ? undefined : dropzone.open}
+                        {...(!isReadOnly ? { onUploadClicked: dropzone.open } : {})}
                     />
                 </div>
             </div>

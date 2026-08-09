@@ -246,19 +246,26 @@ type SparklineTone = "success" | "error" | "warning";
 function buildEventPath(values: number[], step: number, y: (value: number) => number) {
     const parts: string[] = [];
     for (let index = 0; index < values.length;) {
-        if (values[index] <= 0) {
+        const v = values[index];
+        if (v === undefined || v <= 0) {
             index++;
             continue;
         }
 
         const firstEventIndex = index;
-        while (index + 1 < values.length && values[index + 1] > 0) index++;
+        while (index + 1 < values.length) {
+            const next = values[index + 1];
+            if (next === undefined || next <= 0) break;
+            index++;
+        }
         const lastEventIndex = index;
         const startIndex = Math.max(0, firstEventIndex - 1);
         const endIndex = Math.min(values.length - 1, lastEventIndex + 1);
         for (let pointIndex = startIndex; pointIndex <= endIndex; pointIndex++) {
+            const pv = values[pointIndex];
+            if (pv === undefined) continue;
             parts.push(
-                `${pointIndex === startIndex ? "M" : "L"}${(pointIndex * step).toFixed(1)},${y(values[pointIndex]).toFixed(1)}`,
+                `${pointIndex === startIndex ? "M" : "L"}${(pointIndex * step).toFixed(1)},${y(pv).toFixed(1)}`,
             );
         }
         index = lastEventIndex + 1;

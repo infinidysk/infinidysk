@@ -65,10 +65,10 @@ function form(...entries: [string, string | Blob, string?][]): FormData {
 async function call(path: string, errorPrefix: string, init?: RequestInit): Promise<any> {
     let response: Response;
     try {
-        response = await fetch(process.env.BACKEND_URL + path, {
+        response = await fetch(process.env["BACKEND_URL"] + path, {
             ...init,
             headers: {
-                "x-api-key": process.env.FRONTEND_BACKEND_API_KEY || "",
+                "x-api-key": process.env["FRONTEND_BACKEND_API_KEY"] || "",
                 ...(init?.headers ?? {}),
             },
         });
@@ -377,13 +377,13 @@ export type QueueSlot = {
     status: string,
     mb: string,
     mbleft: string,
-    indexer?: string | null,
-    providers?: ProviderUsage[] | null,
+    indexer?: string | null | undefined,
+    providers?: ProviderUsage[] | null | undefined,
 }
 
 export type ProviderUsage = {
     host: string,
-    nickname?: string | null,
+    nickname?: string | null | undefined,
     segments: number,
 }
 
@@ -404,8 +404,8 @@ export type HistorySlot = {
     completed: number,
     fail_message: string,
     nzb_blob_id?: string,
-    indexer?: string | null,
-    providers?: ProviderUsage[] | null,
+    indexer?: string | null | undefined,
+    providers?: ProviderUsage[] | null | undefined,
 }
 
 export type WatchdogOutcome =
@@ -432,8 +432,8 @@ export type WatchdogEntry = {
     failReason: string | null,
     durationMs: number,
     isWinner: boolean,
-    providerHost?: string | null,
-    providerNickname?: string | null,
+    providerHost?: string | null | undefined,
+    providerNickname?: string | null | undefined,
 }
 
 export type DirectoryItem = {
@@ -447,7 +447,7 @@ export type ConfigItem = {
     configName: string,
     configValue: string,
     /** Present when the setting is owned by an NZBDAV_CONFIG__... environment variable. */
-    environmentVariableName?: string | null,
+    environmentVariableName?: string | null | undefined,
 }
 
 export type ExcludeSyncUrlStatus = {
@@ -483,12 +483,12 @@ export type WatchtowerSource = {
     id: string,
     kind: string,
     name: string,
-    url?: string | null,
+    url?: string | null | undefined,
     enabled: boolean,
     cap: number,
-    seriesScope?: string | null,
-    lastSyncedAtUnix?: number | null,
-    lastSyncError?: string | null,
+    seriesScope?: string | null | undefined,
+    lastSyncedAtUnix?: number | null | undefined,
+    lastSyncError?: string | null | undefined,
 }
 
 export type WatchtowerItem = {
@@ -498,16 +498,16 @@ export type WatchtowerItem = {
     title: string,
     state: string,
     provenanceCount: number,
-    expanderKey?: string | null,
-    childTotal?: number | null,
-    childReady?: number | null,
-    childUnavailable?: number | null,
+    expanderKey?: string | null | undefined,
+    childTotal?: number | null | undefined,
+    childReady?: number | null | undefined,
+    childUnavailable?: number | null | undefined,
     shortlistCount: number,
-    winnerTitle?: string | null,
+    winnerTitle?: string | null | undefined,
     winnerSize: number,
-    lastVerifiedAtUnix?: number | null,
-    nextCheckAtUnix?: number | null,
-    failReason?: string | null,
+    lastVerifiedAtUnix?: number | null | undefined,
+    nextCheckAtUnix?: number | null | undefined,
+    failReason?: string | null | undefined,
 }
 
 export type WatchtowerStats = {
@@ -524,13 +524,13 @@ export type DiscoveredCatalog = {
     id: string,
     name: string,
     url: string,
-    extraRequired?: string | null,
+    extraRequired?: string | null | undefined,
 }
 
 export type DiscoverCatalogsResponse = {
     status: boolean,
     error?: string,
-    addonName?: string | null,
+    addonName?: string | null | undefined,
     catalogs: DiscoveredCatalog[],
 }
 
@@ -706,13 +706,13 @@ export type FailoverBlock = {
 
 export type FailoverProvider = {
     provider: string,
-    nickname?: string | null,
+    nickname?: string | null | undefined,
     saves: number,
 }
 
 export type FailoverFrom = {
     provider: string,
-    nickname?: string | null,
+    nickname?: string | null | undefined,
     misses: number,
 }
 
@@ -739,12 +739,12 @@ export type ProviderCircuitState = "closed" | "open" | "halfOpen";
 
 export type ProviderRow = {
     provider: string,
-    nickname?: string | null,
+    nickname?: string | null | undefined,
     articles: number,
     bytesFetched: number,
     errors: number,
     retries: number,
-    speedMbPerSec?: number | null,
+    speedMbPerSec?: number | null | undefined,
     speedSpark?: number[],
     avgDurationMs: number,
     errorRate: number,
@@ -753,20 +753,20 @@ export type ProviderRow = {
     retrySpark?: number[],
     outageSpark?: number[],
     circuitState?: ProviderCircuitState,
-    cooldownRemainingSeconds?: number | null,
-    lastFailureReason?: string | null,
-    tripCount?: number,
-    failureCount?: number,
-    articleMissCount?: number,
+    cooldownRemainingSeconds?: number | null | undefined,
+    lastFailureReason?: string | null | undefined,
+    tripCount?: number | undefined,
+    failureCount?: number | undefined,
+    articleMissCount?: number | undefined,
 }
 
 export type ProviderCircuitBreakerRow = {
     provider: string,
-    nickname?: string | null,
+    nickname?: string | null | undefined,
     providerType?: string,
     circuitState: ProviderCircuitState,
-    cooldownRemainingSeconds?: number | null,
-    lastFailureReason?: string | null,
+    cooldownRemainingSeconds?: number | null | undefined,
+    lastFailureReason?: string | null | undefined,
     tripCount?: number,
     failureCount?: number,
     articleMissCount?: number,
@@ -822,9 +822,9 @@ export type ActiveRead = {
     bytesRead: number,
     currentOffset: number,
     fileSize: number | null,
-    clientIp?: string | null,
-    clientUserAgent?: string | null,
-    providers: { host: string, nickname?: string | null, segments: number }[],
+    clientIp?: string | null | undefined,
+    clientUserAgent?: string | null | undefined,
+    providers: { host: string, nickname?: string | null | undefined, segments: number }[],
 }
 
 export type LiveStatsMessage = {

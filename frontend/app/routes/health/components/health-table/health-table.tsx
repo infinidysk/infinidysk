@@ -69,7 +69,7 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
                                                                 ? null
                                                                 : formatWhen(item.nextHealthCheck, "ASAP")
                                                         }
-                                                        progress={item.progress > 0 ? item.progress : undefined}
+                                                        {...(item.progress > 0 ? { progress: item.progress } : {})}
                                                     />
                                                 </div>
                                             </div>

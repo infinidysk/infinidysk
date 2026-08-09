@@ -52,15 +52,19 @@ export function getOidcSettings(): OidcSettings {
     throw new Error("OIDC is not configured");
   }
 
+  const redirectUri = readEnv("OIDC_REDIRECT_URI");
+  const adminClaim = readEnv("OIDC_ADMIN_CLAIM");
+  const adminClaimValue = readEnv("OIDC_ADMIN_CLAIM_VALUE");
+
   return {
     issuer: readEnv("OIDC_ISSUER")!,
     clientId: readEnv("OIDC_CLIENT_ID")!,
     clientSecret: readEnv("OIDC_CLIENT_SECRET")!,
-    redirectUri: readEnv("OIDC_REDIRECT_URI"),
+    ...(redirectUri !== undefined ? { redirectUri } : {}),
     scopes: readEnv("OIDC_SCOPES") ?? "openid profile email",
     usernameClaim: readEnv("OIDC_USERNAME_CLAIM") ?? "preferred_username",
-    adminClaim: readEnv("OIDC_ADMIN_CLAIM"),
-    adminClaimValue: readEnv("OIDC_ADMIN_CLAIM_VALUE"),
+    ...(adminClaim !== undefined ? { adminClaim } : {}),
+    ...(adminClaimValue !== undefined ? { adminClaimValue } : {}),
   };
 }
 

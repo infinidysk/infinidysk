@@ -177,7 +177,7 @@ export function subscribeWebsocketTopics(
     return sharedClient.subscribe({
         topics,
         onMessage,
-        onOpen: options.onOpen,
-        onClose: options.onClose,
+        ...(options.onOpen !== undefined ? { onOpen: options.onOpen } : {}),
+        ...(options.onClose !== undefined ? { onClose: options.onClose } : {}),
     });
 }

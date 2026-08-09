@@ -21,14 +21,18 @@ const SCOPE_OPTIONS: { value: string; label: string }[] = [
 
 export async function loader({ request }: Route.LoaderArgs) {
     const sp = new URL(request.url).searchParams;
+    const state = sp.get("state") ?? undefined;
+    const q = sp.get("q")?.trim() || undefined;
+    const sort = sp.get("sort") ?? undefined;
+    const expander = sp.get("expander") ?? undefined;
     return await backendClient.getWatchtower({
-        state: sp.get("state") ?? undefined,
-        q: sp.get("q")?.trim() || undefined,
-        sort: sp.get("sort") ?? undefined,
         offset: Number(sp.get("offset")) || 0,
         limit: Number(sp.get("limit")) || PAGE_SIZE,
-        expander: sp.get("expander") ?? undefined,
         statsOnly: sp.get("statsOnly") === "1",
+        ...(state !== undefined ? { state } : {}),
+        ...(q ? { q } : {}),
+        ...(sort !== undefined ? { sort } : {}),
+        ...(expander !== undefined ? { expander } : {}),
     });
 }
 
@@ -37,13 +41,13 @@ export async function action({ request }: Route.ActionArgs) {
     const fields: Record<string, string> = {};
     for (const [k, v] of form.entries()) fields[k] = String(v);
     try {
-        if (fields.action === "discover-catalogs") {
-            const discovered = await backendClient.discoverStremioCatalogs(fields.url ?? "");
+        if (fields["action"] === "discover-catalogs") {
+            const discovered = await backendClient.discoverStremioCatalogs(fields["url"] ?? "");
             return { ok: true as const, discovered };
         }
-        if (fields.action === "bulk-recheck" || fields.action === "bulk-remove") {
-            const sub = fields.action === "bulk-recheck" ? "recheck-items" : "remove-items";
-            await backendClient.watchtowerMutate({ action: sub, keys: fields.keys ?? "" });
+        if (fields["action"] === "bulk-recheck" || fields["action"] === "bulk-remove") {
+            const sub = fields["action"] === "bulk-recheck" ? "recheck-items" : "remove-items";
+            await backendClient.watchtowerMutate({ action: sub, keys: fields["keys"] ?? "" });
             return { ok: true as const };
         }
         await backendClient.watchtowerMutate(fields);
@@ -197,7 +201,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
     useEffect(() => {
         const el = sentinelRef.current;
         if (!el) return;
-        const io = new IntersectionObserver(es => { if (es[0].isIntersecting) loadMoreRef.current(); }, { rootMargin: "600px" });
+        const io = new IntersectionObserver(es => { if (es[0]?.isIntersecting) loadMoreRef.current(); }, { rootMargin: "600px" });
         io.observe(el);
         return () => io.disconnect();
     }, []);
@@ -307,8 +311,8 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
             );
         } else if (pendingRemove === "filter") {
             const formData: Record<string, string> = { action: "remove-by-filter" };
-            if (stateFilter) formData.state = stateFilter;
-            if (urlQuery) formData.q = urlQuery;
+            if (stateFilter) formData["state"] = stateFilter;
+            if (urlQuery) formData["q"] = urlQuery;
             filterFetcher.submit(formData, { method: "post" });
         }
         setPendingRemove(null);
@@ -927,7 +931,7 @@ function titleCase(value: string): string {
         .replace(/\s+/g, " ")
         .trim()
         .split(" ")
-        .map(w => (w ? w[0].toUpperCase() + w.slice(1) : w))
+        .map(w => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
         .join(" ");
 }
 
@@ -952,11 +956,11 @@ function labelFromUrl(raw: string): string {
     const ci = parts.indexOf("catalog");
     if (ci >= 0 && parts.length > ci + 2) {
         const type = parts[ci + 1];
-        const id = parts[ci + 2].replace(/\.json$/i, "");
+        const id = (parts[ci + 2] ?? "").replace(/\.json$/i, "");
         const pretty = titleCase(id);
         return type ? `${pretty} · ${titleCase(type)}` : pretty;
     }
-    const last = parts.length ? parts[parts.length - 1].replace(/\.json$/i, "") : "";
+    const last = parts.length ? (parts[parts.length - 1] ?? "").replace(/\.json$/i, "") : "";
     return last ? titleCase(last) : hostOf(raw);
 }
 

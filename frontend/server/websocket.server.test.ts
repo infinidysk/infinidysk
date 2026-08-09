@@ -101,7 +101,7 @@ describe("UpstreamSubscriptionForwarder", () => {
         forwarder.syncAfterBrowserChange();
 
         expect(sent).toHaveLength(1);
-        expect(JSON.parse(sent[0])).toEqual({ sub: ["ls"] });
+        expect(JSON.parse(sent[0]!)).toEqual({ sub: ["ls"] });
     });
 
     it("sends unsub when a topic loses its last subscriber", () => {
@@ -117,7 +117,7 @@ describe("UpstreamSubscriptionForwarder", () => {
         forwarder.syncAfterBrowserChange();
 
         expect(sent).toHaveLength(1);
-        expect(JSON.parse(sent[0])).toEqual({ unsub: ["ls"] });
+        expect(JSON.parse(sent[0]!)).toEqual({ unsub: ["ls"] });
     });
 
     it("sends full subscription set on reconnect", () => {
@@ -131,7 +131,7 @@ describe("UpstreamSubscriptionForwarder", () => {
         forwarder.sendFullSubscriptionSet();
 
         expect(sent).toHaveLength(1);
-        const parsed = JSON.parse(sent[0]);
+        const parsed = JSON.parse(sent[0]!);
         expect(parsed.sub.sort()).toEqual(["cxs", "ls"]);
     });
 

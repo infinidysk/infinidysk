@@ -35,7 +35,7 @@ export function WebdavSettings({ config, setNewConfig }: WebdavSettingsProps) {
                                 WebDAV User
                             </label>
                             <Input
-                                {...className(["w-full", !isValidUser(config["webdav.user"]) && "input-error"])}
+                                {...className(["w-full", !isValidUser(config["webdav.user"]!) && "input-error"])}
                                 type="text"
                                 id="webdav-user-input"
                                 aria-describedby="webdav-user-help"
@@ -151,7 +151,7 @@ export function isWebdavSettingsUpdated(
 }
 
 export function isWebdavSettingsValid(config: Record<string, string>): boolean {
-    return isValidUser(config["webdav.user"]);
+    return isValidUser(config["webdav.user"]!);
 }
 
 function isValidUser(user: string): boolean {

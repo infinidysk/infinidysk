@@ -22,15 +22,15 @@ const levelAliases: Record<string, LogLevel> = {
   error: "error",
   fatal: "error",
 };
-const configuredLevel = levelAliases[process.env.LOG_LEVEL?.toLowerCase() ?? ""];
+const configuredLevel = levelAliases[process.env["LOG_LEVEL"]?.toLowerCase() ?? ""];
 const minimumLevel: LogLevel =
   configuredLevel
     ? configuredLevel
-    : process.env.NODE_ENV === "development" ? "debug" : "info";
+    : process.env["NODE_ENV"] === "development" ? "debug" : "info";
 
 const colorEnabled =
-  process.env.NO_COLOR === undefined
-  && (process.env.FORCE_COLOR !== undefined || process.stdout.isTTY);
+  process.env["NO_COLOR"] === undefined
+  && (process.env["FORCE_COLOR"] !== undefined || process.stdout.isTTY);
 const color = createColors(colorEnabled);
 
 const levelLabels: Record<LogLevel, string> = {
@@ -155,7 +155,7 @@ export const requestLogger: RequestHandler = (req, res, next) => {
       } else {
         logger.warn(message);
       }
-    } else if (process.env.NODE_ENV === "development") {
+    } else if (process.env["NODE_ENV"] === "development") {
       logger.debug(message);
     }
   });

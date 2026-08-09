@@ -17,8 +17,8 @@ type BuildCommitOptions = {
 };
 
 export async function getAppVersion(): Promise<string | undefined> {
-  if (process.env.NZBDAV_VERSION) {
-    return process.env.NZBDAV_VERSION;
+  if (process.env["NZBDAV_VERSION"]) {
+    return process.env["NZBDAV_VERSION"];
   }
 
   try {
@@ -47,7 +47,7 @@ export async function getBuildCommit(
 ): Promise<BuildCommit | undefined> {
   const { gitDir = gitDirPath, version } = options;
 
-  const envSha = process.env.NZBDAV_COMMIT_SHA?.trim();
+  const envSha = process.env["NZBDAV_COMMIT_SHA"]?.trim();
   if (envSha && isValidSha(envSha)) {
     return {
       sha: envSha.toLowerCase(),
@@ -67,7 +67,7 @@ export async function getBuildCommit(
  * the movable `dev` tag; everything else compares against `main`.
  */
 export function resolveTrackRef(version?: string | null): string {
-  const label = (version ?? process.env.NZBDAV_VERSION)?.trim() ?? "";
+  const label = (version ?? process.env["NZBDAV_VERSION"])?.trim() ?? "";
   if (/^dev-/i.test(label)) return "dev";
   return "main";
 }
@@ -79,7 +79,9 @@ export function parseBuildCommitFromVersion(
   if (!version) return undefined;
   const match = /^main-([0-9a-f]{7,40})$/i.exec(version.trim());
   if (!match) return undefined;
-  return { sha: match[1].toLowerCase(), branch: "main", source: "version" };
+  const sha = match[1];
+  if (!sha) return undefined;
+  return { sha: sha.toLowerCase(), branch: "main", source: "version" };
 }
 
 async function readLocalMainCommit(gitDir: string): Promise<BuildCommit | undefined> {
@@ -91,8 +93,8 @@ async function readLocalMainCommit(gitDir: string): Promise<BuildCommit | undefi
       return undefined;
     }
 
-    const ref = refMatch[1].trim();
-    if (ref !== "refs/heads/main") {
+    const ref = refMatch[1]?.trim();
+    if (!ref || ref !== "refs/heads/main") {
       return undefined;
     }
 
@@ -119,7 +121,7 @@ async function resolveGitRef(gitDir: string, ref: string): Promise<string | unde
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("^")) continue;
       const [sha, packedRef] = trimmed.split(/\s+/);
-      if (packedRef === ref && isValidSha(sha)) {
+      if (packedRef === ref && sha !== undefined && isValidSha(sha)) {
         return sha.toLowerCase();
       }
     }

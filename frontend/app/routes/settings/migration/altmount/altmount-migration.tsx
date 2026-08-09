@@ -1149,14 +1149,14 @@ function SymlinkResults({ m }: { m: Hook }) {
             )}
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
-                <StatTile label="Rewrite" value={rewrites} tone="success" help={SYMLINK_STATUS_HELP.rewrite} />
-                <StatTile label="Orphan" value={orphans} tone={orphans > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.orphan} />
-                {unreadable > 0 && <StatTile label="Unreadable" value={unreadable} tone="error" help={SYMLINK_STATUS_HELP.unreadable} />}
+                <StatTile label="Rewrite" value={rewrites} tone="success" help={SYMLINK_STATUS_HELP["rewrite"]} />
+                <StatTile label="Orphan" value={orphans} tone={orphans > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP["orphan"]} />
+                {unreadable > 0 && <StatTile label="Unreadable" value={unreadable} tone="error" help={SYMLINK_STATUS_HELP["unreadable"]} />}
                 <StatTile label="InfiniDysk" value={counts["already-nzbdav"] ?? 0} help={SYMLINK_STATUS_HELP["already-nzbdav"]} />
                 <StatTile label="Other" value={counts["not-altmount"] ?? 0} help={SYMLINK_STATUS_HELP["not-altmount"]} />
-                <StatTile label="Applied" value={applied} tone={applied > 0 ? "success" : undefined} help={SYMLINK_STATUS_HELP.applied} />
-                <StatTile label="Removed" value={removed} tone={removed > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.removed} />
-                <StatTile label="Failed" value={failed} tone={failed > 0 ? "error" : undefined} help={SYMLINK_STATUS_HELP.failed} />
+                <StatTile label="Applied" value={applied} tone={applied > 0 ? "success" : undefined} help={SYMLINK_STATUS_HELP["applied"]} />
+                <StatTile label="Removed" value={removed} tone={removed > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP["removed"]} />
+                <StatTile label="Failed" value={failed} tone={failed > 0 ? "error" : undefined} help={SYMLINK_STATUS_HELP["failed"]} />
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1273,13 +1273,13 @@ function SymlinkResults({ m }: { m: Hook }) {
                         and only symlinks are changed — never the files they point at. Continue?
                     </>
                 }
-                checkboxMessage={unreadable > 0
-                    ? `I acknowledge that ${unreadable} unreadable symlink(s) will remain unchanged`
-                    : undefined}
+                {...(unreadable > 0
+                    ? { checkboxMessage: `I acknowledge that ${unreadable} unreadable symlink(s) will remain unchanged` }
+                    : {})}
                 requireCheckbox={unreadable > 0}
-                errorMessage={unreadable > 0
-                    ? `${unreadable} symlink(s) could not be classified and may still point at Altmount.`
-                    : undefined}
+                {...(unreadable > 0
+                    ? { errorMessage: `${unreadable} symlink(s) could not be classified and may still point at Altmount.` }
+                    : {})}
                 cancelText="Cancel"
                 confirmText="Apply"
                 onCancel={() => setConfirmApply(false)}
@@ -1519,7 +1519,7 @@ function SymlinkStatusBadge({ status }: { status: string }) {
     return help ? <Tooltip content={help}>{badge}</Tooltip> : badge;
 }
 
-function MatchMethodLabel({ method }: { method?: string | null }) {
+function MatchMethodLabel({ method }: { method?: string | null | undefined }) {
     if (!method) return <>&mdash;</>;
     const presentation = MATCH_METHODS[method];
     if (!presentation) return <>{method}</>;
@@ -1647,7 +1647,7 @@ function SummaryTiles({ summary }: { summary: SummaryResponse }) {
     );
 }
 
-function StatTile({ label, value, tone, help }: { label: string; value: number | string; tone?: "success" | "warning" | "error"; help?: string }) {
+function StatTile({ label, value, tone, help }: { label: string; value: number | string; tone?: "success" | "warning" | "error" | undefined; help?: string | undefined }) {
     const toneClass = tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : tone === "error" ? "text-error" : "text-base-content";
     const tile = (
         <span className={`block rounded-lg border border-base-content/10 bg-base-100 p-3 ${help ? "cursor-help" : ""}`}>

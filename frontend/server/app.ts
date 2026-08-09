@@ -1,5 +1,6 @@
 import "react-router";
 import { createRequestHandler } from "@react-router/express";
+import type { ServerBuild } from "react-router";
 import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { createProxyMiddleware } from "http-proxy-middleware";
@@ -29,9 +30,9 @@ app.disable("x-powered-by");
 export const initializeWebsocketServer = websocketServer.initialize;
 
 const trustProxy =
-  process.env.TRUST_PROXY === "1"
-  || process.env.TRUST_PROXY?.toLowerCase() === "true"
-  || process.env.TRUST_PROXY?.toLowerCase() === "yes";
+  process.env["TRUST_PROXY"] === "1"
+  || process.env["TRUST_PROXY"]?.toLowerCase() === "true"
+  || process.env["TRUST_PROXY"]?.toLowerCase() === "yes";
 if (trustProxy) {
   // Opt-in: honor X-Forwarded-* from the reverse proxy in front of this container.
   // Required for correct public scheme/host when rewriting headers to the backend.
@@ -63,7 +64,7 @@ function logProxyFailure(message: string, error: unknown) {
 // plus server.requestTimeout/headersTimeout in server.ts — not httpxy's inbound
 // `timeout` option, which leaks socket listeners under keep-alive (#486).
 const forwardToBackend = createProxyMiddleware({
-  target: process.env.BACKEND_URL,
+  target: process.env["BACKEND_URL"]!,
   changeOrigin: true,
   selfHandleResponse: true,
   ...backendProxyTimeoutOptions,
@@ -146,6 +147,6 @@ app.use(authMiddleware);
 // Let frontend handle all other requests
 app.use(
   createRequestHandler({
-    build: () => import("virtual:react-router/server-build"),
+    build: () => import("virtual:react-router/server-build") as unknown as Promise<ServerBuild>,
   }),
 );

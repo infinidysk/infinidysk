@@ -14,8 +14,8 @@ import {
 
 // Short-circuit the type-checking of the built output.
 const BUILD_PATH = "../build/server/index.js";
-const DEVELOPMENT = process.env.NODE_ENV === "development";
-const PORT = Number.parseInt(process.env.PORT || "3000");
+const DEVELOPMENT = process.env["NODE_ENV"] === "development";
+const PORT = Number.parseInt(process.env["PORT"] || "3000");
 
 // NZBDAV_URL_BASE (or bare URL_BASE as a fallback) controls the sub-path the
 // app is mounted under (e.g. "/nzbdav"). Mirror of normalizeUrlBase in
@@ -37,7 +37,7 @@ function normalizeUrlBase(raw: string | undefined): string {
   const withLeading = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
   return withLeading.replace(/\/+$/, "");
 }
-const URL_BASE = normalizeUrlBase(process.env.NZBDAV_URL_BASE ?? process.env.URL_BASE);
+const URL_BASE = normalizeUrlBase(process.env["NZBDAV_URL_BASE"] ?? process.env["URL_BASE"]);
 
 // The server build exports the value baked into the bundle at build time.
 // Mounting under a different prefix than the bundle was built for produces a
@@ -140,9 +140,9 @@ if (DEVELOPMENT) {
   router.use(async (req, res, next) => {
     try {
       const serverModule = await viteDevServer.ssrLoadModule("./server/app.ts");
-      assertUrlBaseMatchesBuild(serverModule.bakedUrlBase);
+      assertUrlBaseMatchesBuild(serverModule["bakedUrlBase"]);
       setServerModule(serverModule);
-      return await serverModule.app(req, res, next);
+      return await serverModule["app"](req, res, next);
     } catch (error) {
       if (typeof error === "object" && error instanceof Error) {
         viteDevServer.ssrFixStacktrace(error);

@@ -65,10 +65,14 @@ export function ThroughputChart({
     const xTicks = useMemo(() => {
         if (points.length === 0) return [];
         const count = Math.min(5, points.length);
-        if (count < 2) return [{ idx: 0, label: formatBucketTime(points[0].bucket, window) }];
+        if (count < 2) {
+            const first = points[0];
+            return first ? [{ idx: 0, label: formatBucketTime(first.bucket, window) }] : [];
+        }
         return Array.from({ length: count }, (_, i) => {
             const idx = Math.round((points.length - 1) * (i / (count - 1)));
-            return { idx, label: formatBucketTime(points[idx].bucket, window) };
+            const point = points[idx];
+            return { idx, label: point ? formatBucketTime(point.bucket, window) : "" };
         });
     }, [points, window]);
 
@@ -242,26 +246,36 @@ function buildArticlesSeriesPath(
     const parts: string[] = [];
     let i = 0;
     while (i < points.length) {
-        if (points[i].articles <= 0) {
+        const current = points[i];
+        if (!current || current.articles <= 0) {
             i++;
             continue;
         }
         const runStart = i;
-        while (i < points.length && points[i].articles > 0) i++;
+        while (i < points.length) {
+            const p = points[i];
+            if (!p || p.articles <= 0) break;
+            i++;
+        }
         const runEnd = i - 1;
         const from = runStart > 0 ? runStart - 1 : runStart;
         const to = runEnd < points.length - 1 ? runEnd + 1 : runEnd;
 
         for (let j = from; j <= to; j++) {
+            const p = points[j];
+            if (!p) continue;
             const x = (j * xStep).toFixed(1);
-            const yy = y(points[j].articles).toFixed(1);
+            const yy = y(p.articles).toFixed(1);
             parts.push(`${j === from ? "M" : "L"}${x},${yy}`);
         }
         // Edge-of-window isolated spike with no adjacent zero needs a tiny stroke.
         if (from === to) {
-            const x2 = (from * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
-            const yy = y(points[from].articles).toFixed(1);
-            parts.push(`L${x2},${yy}`);
+            const p = points[from];
+            if (p) {
+                const x2 = (from * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
+                const yy = y(p.articles).toFixed(1);
+                parts.push(`L${x2},${yy}`);
+            }
         }
     }
     return parts.join(" ");
@@ -277,7 +291,9 @@ function buildSparseSeriesPath(
     const parts: string[] = [];
     let inSegment = false;
     for (let i = 0; i < points.length; i++) {
-        const value = getValue(points[i]);
+        const p = points[i];
+        if (!p) continue;
+        const value = getValue(p);
         const x = (i * xStep).toFixed(1);
         const yy = y(value).toFixed(1);
         if (value > 0) {
@@ -285,7 +301,8 @@ function buildSparseSeriesPath(
                 parts.push(`M${x},${yy}`);
                 inSegment = true;
                 // Isolated spikes need a tiny stroke segment to be visible.
-                const nextZero = i === points.length - 1 || getValue(points[i + 1]) === 0;
+                const next = points[i + 1];
+                const nextZero = i === points.length - 1 || !next || getValue(next) === 0;
                 if (nextZero) {
                     const x2 = (i * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
                     parts.push(`L${x2},${yy}`);
@@ -300,7 +317,7 @@ function buildSparseSeriesPath(
     return parts.join(" ");
 }
 
-function Total({ label, value, accent }: { label: string, value: string, accent?: "danger" }) {
+function Total({ label, value, accent }: { label: string, value: string, accent?: "danger" | undefined }) {
     return (
         <div className="text-right">
             <div className="text-[10px] font-medium tracking-wide text-base-content/50 uppercase">{label}</div>

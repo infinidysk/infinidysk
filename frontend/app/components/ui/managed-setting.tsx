@@ -116,7 +116,10 @@ export function pinManagedConfigKeys(
   if (Object.keys(managed).length === 0) return next;
   const pinned = { ...next };
   for (const key of Object.keys(managed)) {
-    if (key in baseline) pinned[key] = baseline[key];
+    if (key in baseline) {
+      const value = baseline[key];
+      if (value !== undefined) pinned[key] = value;
+    }
   }
   return pinned;
 }

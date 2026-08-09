@@ -229,7 +229,9 @@ async function checkForDevUpdate(
   localGitOnly = false,
   currentVersion?: string | null,
 ): Promise<DevUpdateAvailable | null> {
-  const build = await getBuildCommit({ version: currentVersion });
+  const build = await getBuildCommit(
+    currentVersion !== undefined ? { version: currentVersion } : {},
+  );
   if (!build) return null;
   if (localGitOnly && build.source !== "git") return null;
 

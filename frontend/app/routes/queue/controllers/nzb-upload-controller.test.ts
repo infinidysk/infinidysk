@@ -151,7 +151,8 @@ describe("processUploadQueue", () => {
 
         await processUploadQueue(isUploadingRef, queueRef, state.setUploadingFiles);
 
-        expect(state.files[0].queueSlot).toMatchObject({
+        // the queue run above guarantees the file entry exists
+        expect(state.files[0]!.queueSlot).toMatchObject({
             status: "upload failed",
             error: errorMessage,
         });

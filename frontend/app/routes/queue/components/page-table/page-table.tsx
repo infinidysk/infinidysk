@@ -60,15 +60,15 @@ export type PageRowProps = {
     nameHref?: string | null,
     category: string,
     status: string,
-    percentage?: string,
-    error?: string,
+    percentage?: string | undefined,
+    error?: string | undefined,
     fileSizeBytes: number,
     /** Unix seconds from SAB history `completed` field. */
     completed?: number | null,
     showCompleted?: boolean,
     actions: ReactNode,
-    indexer?: string | null,
-    providers?: ProviderUsage[] | null,
+    indexer?: string | null | undefined,
+    providers?: ProviderUsage[] | null | undefined,
     onRowSelectionChanged: (isSelected: boolean) => void,
     selectable?: boolean,
 }
@@ -219,10 +219,11 @@ function stripHost(host: string): string {
     if (!host) return "—";
     const labels = host.split(".").filter(Boolean);
     if (labels.length === 0) return host;
-    if (labels.length === 1) return labels[0];
-    if (labels.length === 2) return labels[0];
+    const [first = "", second = ""] = labels;
+    if (labels.length === 1) return first;
+    if (labels.length === 2) return first;
     // 3+ labels: skip a generic prefix to get to the brand label
-    if (GENERIC_HOST_PREFIXES.has(labels[0].toLowerCase())) return labels[1];
+    if (GENERIC_HOST_PREFIXES.has(first.toLowerCase())) return second;
     // pick whichever of the first two is longer (heuristic for "more identifying")
-    return labels[0].length >= labels[1].length ? labels[0] : labels[1];
+    return first.length >= second.length ? first : second;
 }

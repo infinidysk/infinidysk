@@ -18,7 +18,9 @@ interface Profile {
     TvFallback?: FallbackMode;
     MovieFallbackMinResults?: number;
     TvFallbackMinResults?: number;
-    QueryFallbackMinResults?: number;
+    // `undefined` is a meaningful explicit value here: writeFallback spreads a
+    // patch with `QueryFallbackMinResults: undefined` to clear any prior value.
+    QueryFallbackMinResults?: number | undefined;
 }
 
 interface ProfileConfig {
@@ -87,8 +89,8 @@ function isAdapterEnabled(profile: Profile, key: AdapterKey): boolean {
 }
 
 export function ProfilesSettings({ config, setNewConfig }: ProfilesSettingsProps) {
-    const profileConfig = useMemo(() => parseProfileConfig(config["profiles.instances"]), [config]);
-    const availableIndexers = useMemo(() => parseIndexerNames(config["indexers.instances"]), [config]);
+    const profileConfig = useMemo(() => parseProfileConfig(config["profiles.instances"]!), [config]);
+    const availableIndexers = useMemo(() => parseIndexerNames(config["indexers.instances"]!), [config]);
 
     const update = useCallback((next: ProfileConfig) => {
         setNewConfig({ ...config, "profiles.instances": JSON.stringify(next) });
@@ -400,7 +402,7 @@ export function isProfilesSettingsUpdated(config: Record<string, string>, newCon
 
 export function isProfilesSettingsValid(newConfig: Record<string, string>) {
     try {
-        const c = parseProfileConfig(newConfig["profiles.instances"]);
+        const c = parseProfileConfig(newConfig["profiles.instances"]!);
         const tokens = new Set<string>();
         for (const p of c.Profiles) {
             if (!p.Token?.trim()) return false;

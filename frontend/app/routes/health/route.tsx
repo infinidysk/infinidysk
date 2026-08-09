@@ -66,7 +66,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     // events
     const onHealthItemStatus = useCallback(async (message: string) => {
         const [davItemId, healthResult, repairAction] = message.split('|');
-        setQueueState(x => completeHealthCheck(x, davItemId));
+        setQueueState(x => completeHealthCheck(x, davItemId!));
         setHistoryStats(x => {
             const healthResultNum = Number(healthResult);
             const repairActionNum = Number(repairAction);

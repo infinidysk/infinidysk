@@ -16,7 +16,7 @@ export function buildHistoryRetryUrl(nzoId: string): string {
 }
 
 export type HistoryRetryResult =
-    | { ok: true; nzoId?: string }
+    | { ok: true; nzoId?: string | undefined }
     | { ok: false; error: string };
 
 export async function retryHistoryItem(

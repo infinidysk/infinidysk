@@ -127,6 +127,7 @@ export async function processUploadQueue(
     try {
         while (uploadQueueRef.current.length > 0) {
             const fileToUpload = uploadQueueRef.current[0];
+            if (!fileToUpload) break;
             setUploadingFiles(files => files.map(f =>
                 f.queueSlot.nzo_id === fileToUpload.queueSlot.nzo_id
                     ? { ...f, queueSlot: { ...f.queueSlot, status: "uploading" } }

@@ -217,7 +217,7 @@ function buildGrid(
                 inRange: dayStart <= lastDay,
             });
         }
-        rows.push({ label: DOW_LABELS[dow], cells: cellsRow });
+        rows.push({ label: DOW_LABELS[dow] ?? "", cells: cellsRow });
     }
     return { rows, cols: weekCount, columnLabels: monthAxisLabels(firstMonday, weekCount) };
 }
@@ -251,7 +251,9 @@ function hourAxisLabels(): { index: number, label: string }[] {
 function rollingHourLabels(cells: GridCell[]): { index: number, label: string }[] {
     const labels: { index: number, label: string }[] = [];
     for (let i = 0; i < cells.length; i++) {
-        const hour = new Date(cells[i].bucket).getHours();
+        const cell = cells[i];
+        if (!cell) continue;
+        const hour = new Date(cell.bucket).getHours();
         if (hour % 6 === 0) labels.push({ index: i, label: String(hour).padStart(2, "0") });
     }
     return labels;
@@ -263,7 +265,7 @@ function monthAxisLabels(firstMonday: number, weekCount: number): { index: numbe
     for (let w = 0; w < weekCount; w++) {
         const m = new Date(addLocalDays(firstMonday, w * 7)).getMonth();
         if (m !== lastMonth) {
-            labels.push({ index: w, label: MONTH_LABELS[m] });
+            labels.push({ index: w, label: MONTH_LABELS[m] ?? "" });
             lastMonth = m;
         }
     }

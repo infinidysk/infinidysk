@@ -25,7 +25,7 @@ export type MigrationStatus = {
 export function isMigrationStatus(value: unknown): value is MigrationStatus {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  return typeof v.state === "string" && Array.isArray(v.steps);
+  return typeof v["state"] === "string" && Array.isArray(v["steps"]);
 }
 
 export type MigrationPollDecision =
@@ -40,11 +40,9 @@ export function decideMigrationStatusPoll(
 ): MigrationPollDecision {
   if (httpStatus >= 200 && httpStatus < 300) {
     if (isMigrationStatus(body)) {
-      return {
-        action: "migrating",
-        status: body,
-        reloadMs: body.state === "completed" ? 1500 : undefined,
-      };
+      return body.state === "completed"
+        ? { action: "migrating", status: body, reloadMs: 1500 }
+        : { action: "migrating", status: body };
     }
     return { action: "fallback", stopPolling: true };
   }

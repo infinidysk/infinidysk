@@ -26,8 +26,9 @@ const MIGRATION_SOURCES: MigrationSource[] = [
 ];
 
 export function Migration() {
-    const [sourceId, setSourceId] = useState<MigrationSourceId>(MIGRATION_SOURCES[0].id);
-    const source = MIGRATION_SOURCES.find((s) => s.id === sourceId) ?? MIGRATION_SOURCES[0];
+    // MIGRATION_SOURCES is a non-empty const literal; [0] is always defined.
+    const [sourceId, setSourceId] = useState<MigrationSourceId>(MIGRATION_SOURCES[0]!.id);
+    const source = MIGRATION_SOURCES.find((s) => s.id === sourceId) ?? MIGRATION_SOURCES[0]!;
     const SourceWizard = source.component;
 
     return (

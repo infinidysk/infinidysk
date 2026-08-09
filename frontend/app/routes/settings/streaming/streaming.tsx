@@ -113,7 +113,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                         </label>
                         <div className="flex w-full">
                             <Input
-                                className={!isValidStreamingPriority(config["usenet.streaming-priority"]) ? "input-error" : undefined}
+                                className={!isValidStreamingPriority(config["usenet.streaming-priority"] ?? "") ? "input-error" : undefined}
                                 type="text"
                                 inputMode="numeric"
                                 id="streaming-priority-input"
@@ -161,7 +161,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                                 <label className="space-y-2 text-sm text-base-content/80">
                                     <span>Cache path</span>
                                     <Input
-                                        className={`w-full ${!isValidSegmentCachePath(config["usenet.segment-cache.path"]) ? "input-error" : ""}`}
+                                        className={`w-full ${!isValidSegmentCachePath(config["usenet.segment-cache.path"] ?? "") ? "input-error" : ""}`}
                                         value={config["usenet.segment-cache.path"]}
                                         placeholder="/config/segment-cache"
                                         onChange={e => setNewConfig({ ...config, "usenet.segment-cache.path": e.target.value })} />
@@ -169,7 +169,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                                 <label className="space-y-2 text-sm text-base-content/80">
                                     <span>Maximum size (GB)</span>
                                     <Input
-                                        className={`w-full ${!isPositiveInteger(config["usenet.segment-cache.max-gb"]) ? "input-error" : ""}`}
+                                        className={`w-full ${!isPositiveInteger(config["usenet.segment-cache.max-gb"] ?? "") ? "input-error" : ""}`}
                                         inputMode="numeric"
                                         value={config["usenet.segment-cache.max-gb"]}
                                         onChange={e => setNewConfig({ ...config, "usenet.segment-cache.max-gb": e.target.value })} />
@@ -186,7 +186,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                         </label>
                         <div className="flex w-full">
                             <Input
-                                className={!isValidStreamingSegmentTimeout(config["usenet.streaming-segment-timeout-seconds"]) ? "input-error" : undefined}
+                                className={!isValidStreamingSegmentTimeout(config["usenet.streaming-segment-timeout-seconds"] ?? "") ? "input-error" : undefined}
                                 type="text"
                                 inputMode="numeric"
                                 id="streaming-segment-timeout-input"
@@ -215,7 +215,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                         </label>
                         <div className="flex w-full">
                             <Input
-                                className={!isValidStreamingReadTimeout(config["usenet.streaming-read-timeout-seconds"]) ? "input-error" : undefined}
+                                className={!isValidStreamingReadTimeout(config["usenet.streaming-read-timeout-seconds"] ?? "") ? "input-error" : undefined}
                                 type="text"
                                 inputMode="numeric"
                                 id="streaming-read-timeout-input"
@@ -244,7 +244,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                         </label>
                         <div className="flex w-full">
                             <Input
-                                className={!isValidStreamingWriteTimeout(config["usenet.streaming-write-timeout-seconds"]) ? "input-error" : undefined}
+                                className={!isValidStreamingWriteTimeout(config["usenet.streaming-write-timeout-seconds"] ?? "") ? "input-error" : undefined}
                                 type="text"
                                 inputMode="numeric"
                                 id="streaming-write-timeout-input"
@@ -273,7 +273,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                             Streaming Segment Retries
                         </label>
                         <Input
-                            className={!isValidStreamingSegmentRetries(config["usenet.streaming-segment-retries"]) ? "input-error" : undefined}
+                            className={!isValidStreamingSegmentRetries(config["usenet.streaming-segment-retries"] ?? "") ? "input-error" : undefined}
                             type="text"
                             inputMode="numeric"
                             id="streaming-segment-retries-input"
@@ -297,7 +297,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                             Article Buffer Size
                         </label>
                         <Input
-                            {...className(["w-full", !isValidArticleBufferSize(config["usenet.article-buffer-size"]) && "input-error"])}
+                            {...className(["w-full", !isValidArticleBufferSize(config["usenet.article-buffer-size"] ?? "") && "input-error"])}
                             type="text"
                             inputMode="numeric"
                             id="article-buffer-size-input"
@@ -429,15 +429,15 @@ export function isStreamingSettingsUpdated(
 
 export function isStreamingSettingsValid(config: Record<string, string>): boolean {
     const segmentCacheValid = config["usenet.segment-cache.enabled"] !== "true"
-        || (isValidSegmentCachePath(config["usenet.segment-cache.path"])
-            && isPositiveInteger(config["usenet.segment-cache.max-gb"]));
+        || (isValidSegmentCachePath(config["usenet.segment-cache.path"] ?? "")
+            && isPositiveInteger(config["usenet.segment-cache.max-gb"] ?? ""));
     return isValidMaxDownloadConnections(config["usenet.max-download-connections"])
-        && isValidStreamingPriority(config["usenet.streaming-priority"])
-        && isValidStreamingSegmentTimeout(config["usenet.streaming-segment-timeout-seconds"])
-        && isValidStreamingReadTimeout(config["usenet.streaming-read-timeout-seconds"])
-        && isValidStreamingWriteTimeout(config["usenet.streaming-write-timeout-seconds"])
-        && isValidStreamingSegmentRetries(config["usenet.streaming-segment-retries"])
-        && isValidArticleBufferSize(config["usenet.article-buffer-size"])
+        && isValidStreamingPriority(config["usenet.streaming-priority"] ?? "")
+        && isValidStreamingSegmentTimeout(config["usenet.streaming-segment-timeout-seconds"] ?? "")
+        && isValidStreamingReadTimeout(config["usenet.streaming-read-timeout-seconds"] ?? "")
+        && isValidStreamingWriteTimeout(config["usenet.streaming-write-timeout-seconds"] ?? "")
+        && isValidStreamingSegmentRetries(config["usenet.streaming-segment-retries"] ?? "")
+        && isValidArticleBufferSize(config["usenet.article-buffer-size"] ?? "")
         && isValidInFlightArticleBudget(config["usenet.in-flight-article-budget-mb"])
         && isValidIdleConnectionTimeout(config["usenet.idle-connection-timeout-seconds"])
         && segmentCacheValid;

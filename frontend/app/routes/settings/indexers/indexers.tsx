@@ -93,7 +93,7 @@ function validateExcludePatterns(raw: string): PatternIssue[] {
     const issues: PatternIssue[] = [];
     const lines = raw.split("\n");
     for (let i = 0; i < lines.length; i++) {
-        const trimmed = lines[i].trim();
+        const trimmed = (lines[i] ?? "").trim();
         if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
         try {
             new RegExp(trimmed, "i");
@@ -118,7 +118,7 @@ function validateSyncUrls(raw: string): SyncUrlIssue[] {
     const issues: SyncUrlIssue[] = [];
     const lines = raw.split("\n");
     for (let i = 0; i < lines.length; i++) {
-        const trimmed = lines[i].trim();
+        const trimmed = (lines[i] ?? "").trim();
         if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
         try {
             const parsed = new URL(trimmed);
@@ -199,7 +199,7 @@ function isProxyUrlValid(raw: string): boolean {
 }
 
 export function IndexersSettings({ config, setNewConfig, savedConfig }: IndexersSettingsProps) {
-    const indexerConfig = useMemo(() => parseConfig(config["indexers.instances"]), [config]);
+    const indexerConfig = useMemo(() => parseConfig(config["indexers.instances"] ?? ""), [config]);
     const [showModal, setShowModal] = useState(false);
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
@@ -255,14 +255,14 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
     const handleTimeoutChange = useCallback((value: string) => {
         const trimmed = value.replace(/[^0-9]/g, "");
         const n = trimmed === "" ? undefined : parseInt(trimmed, 10);
-        const next: IndexerConfig = { ...indexerConfig, TimeoutSeconds: n && n > 0 ? n : undefined };
+        const next: IndexerConfig = { ...indexerConfig, ...(n && n > 0 ? { TimeoutSeconds: n } : {}) };
         setNewConfig({ ...config, "indexers.instances": serializeConfig(next) });
     }, [config, indexerConfig, setNewConfig]);
 
     const handleSearchLimitChange = useCallback((value: string) => {
         const trimmed = value.replace(/[^0-9]/g, "");
         const n = trimmed === "" ? undefined : parseInt(trimmed, 10);
-        const next: IndexerConfig = { ...indexerConfig, SearchResultLimit: n && n > 0 ? n : undefined };
+        const next: IndexerConfig = { ...indexerConfig, ...(n && n > 0 ? { SearchResultLimit: n } : {}) };
         setNewConfig({ ...config, "indexers.instances": serializeConfig(next) });
     }, [config, indexerConfig, setNewConfig]);
 
@@ -574,7 +574,7 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
 
             <IndexerModal
                 show={showModal}
-                indexer={editingIndex !== null ? indexerConfig.Indexers[editingIndex] : null}
+                indexer={editingIndex !== null ? (indexerConfig.Indexers[editingIndex] ?? null) : null}
                 onClose={handleCloseModal}
                 onSave={handleSave}
             />
@@ -976,36 +976,39 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
             const parts = raw.split(",").map(p => p.trim()).filter(p => p.length > 0);
             return parts.length === 0 ? undefined : parts.join(",");
         };
+        const movieCats = normaliseCategoryList(extraMovieCategories);
+        const tvCats = normaliseCategoryList(extraTvCategories);
         onSave({
             Name: name.trim(),
             Url: url.trim(),
             ApiKey: apiKey.trim(),
             Enabled: enabled,
-            UserAgent: undefined,
-            SearchUserAgent: searchUserAgent.trim() || undefined,
-            RetrieveUserAgent: retrieveUserAgent.trim() || undefined,
-            SkipTlsVerification: url.trim().toLowerCase().startsWith("https://") && skipTlsVerification
-                ? true
-                : undefined,
-            ProxyUrl: proxyUrl.trim() || undefined,
-            TimeoutSeconds: Number.isFinite(timeout) && timeout > 0 ? timeout : undefined,
-            SearchResultLimit: Number.isFinite(srl) && srl > 0 ? srl : undefined,
+            ...(searchUserAgent.trim() ? { SearchUserAgent: searchUserAgent.trim() } : {}),
+            ...(retrieveUserAgent.trim() ? { RetrieveUserAgent: retrieveUserAgent.trim() } : {}),
+            ...(url.trim().toLowerCase().startsWith("https://") && skipTlsVerification
+                ? { SkipTlsVerification: true }
+                : {}),
+            ...(proxyUrl.trim() ? { ProxyUrl: proxyUrl.trim() } : {}),
+            ...(Number.isFinite(timeout) && timeout > 0 ? { TimeoutSeconds: timeout } : {}),
+            ...(Number.isFinite(srl) && srl > 0 ? { SearchResultLimit: srl } : {}),
             MaxRequestsPerMinute: Number.isFinite(rpm) && rpm > 0 ? rpm : 0,
-            HitLimit: Number.isFinite(hl) && hl > 0 ? hl : undefined,
-            DownloadLimit: Number.isFinite(dl) && dl > 0 ? dl : undefined,
-            HitLimitResetTime: Number.isFinite(hr) && hr >= 0 && hr <= 23 ? hr : undefined,
+            ...(Number.isFinite(hl) && hl > 0 ? { HitLimit: hl } : {}),
+            ...(Number.isFinite(dl) && dl > 0 ? { DownloadLimit: dl } : {}),
+            ...(Number.isFinite(hr) && hr >= 0 && hr <= 23 ? { HitLimitResetTime: hr } : {}),
             EnableStrictMatching: strict,
-            ExtraMovieCategories: normaliseCategoryList(extraMovieCategories),
-            ExtraTvCategories: normaliseCategoryList(extraTvCategories),
-            IgnoreCategoryFilter: ignoreCategoryFilter || undefined,
-            Filter: filterIsClean ? undefined : {
-                Enabled: filterEnabled,
-                SkipPassworded: filterSkipPassworded,
-                MinGrabs: clampNonNegInt(filterMinGrabs, 0),
-                GrabsGraceHours: clampNonNegInt(filterGrabsGraceHours, 6),
-                MaxAgeDaysWithoutGrabs: clampNonNegInt(filterMaxAgeDaysWithoutGrabs, 0),
-                PreferDownloaded: filterPreferDownloaded,
-            },
+            ...(movieCats ? { ExtraMovieCategories: movieCats } : {}),
+            ...(tvCats ? { ExtraTvCategories: tvCats } : {}),
+            ...(ignoreCategoryFilter ? { IgnoreCategoryFilter: true } : {}),
+            ...(filterIsClean ? {} : {
+                Filter: {
+                    Enabled: filterEnabled,
+                    SkipPassworded: filterSkipPassworded,
+                    MinGrabs: clampNonNegInt(filterMinGrabs, 0),
+                    GrabsGraceHours: clampNonNegInt(filterGrabsGraceHours, 6),
+                    MaxAgeDaysWithoutGrabs: clampNonNegInt(filterMaxAgeDaysWithoutGrabs, 0),
+                    PreferDownloaded: filterPreferDownloaded,
+                },
+            }),
         });
     }, [name, url, apiKey, searchUserAgent, retrieveUserAgent, skipTlsVerification, proxyUrl, timeoutSeconds, searchResultLimit, maxRpm, hitLimit, downloadLimit, hitResetTime, enabled, strict,
         extraMovieCategories, extraTvCategories, ignoreCategoryFilter,
@@ -1466,7 +1469,7 @@ export function isIndexersSettingsUpdated(config: Record<string, string>, newCon
 
 export function isIndexersSettingsValid(newConfig: Record<string, string>) {
     try {
-        const c = parseConfig(newConfig["indexers.instances"]);
+        const c = parseConfig(newConfig["indexers.instances"] ?? "");
         if (!isProxyUrlValid(c.ProxyUrl ?? "")) return false;
         if (c.TimeoutSeconds !== undefined && (!Number.isInteger(c.TimeoutSeconds) || c.TimeoutSeconds <= 0)) return false;
         if (c.SearchResultLimit !== undefined && (!Number.isInteger(c.SearchResultLimit) || c.SearchResultLimit <= 0)) return false;

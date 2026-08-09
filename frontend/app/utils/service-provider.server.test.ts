@@ -15,19 +15,19 @@ import {
   resetServiceProviderCache,
 } from "./service-provider.server";
 
-const originalServiceProvider = process.env.SERVICE_PROVIDER;
+const originalServiceProvider = process.env["SERVICE_PROVIDER"];
 
 beforeEach(() => {
-  delete process.env.SERVICE_PROVIDER;
+  delete process.env["SERVICE_PROVIDER"];
   resetServiceProviderCache();
   warnMock.mockReset();
 });
 
 afterEach(() => {
   if (originalServiceProvider === undefined) {
-    delete process.env.SERVICE_PROVIDER;
+    delete process.env["SERVICE_PROVIDER"];
   } else {
-    process.env.SERVICE_PROVIDER = originalServiceProvider;
+    process.env["SERVICE_PROVIDER"] = originalServiceProvider;
   }
   resetServiceProviderCache();
 });
@@ -39,7 +39,7 @@ describe("getServiceProvider", () => {
   });
 
   it("parses and normalizes a valid configuration", () => {
-    process.env.SERVICE_PROVIDER = JSON.stringify({
+    process.env["SERVICE_PROVIDER"] = JSON.stringify({
       name: " ElfHosted ",
       url: "https://elfhosted.com",
       disabledFeatures: [
@@ -67,7 +67,7 @@ describe("getServiceProvider", () => {
   });
 
   it("parses an optional supportUrl when provided", () => {
-    process.env.SERVICE_PROVIDER = JSON.stringify({
+    process.env["SERVICE_PROVIDER"] = JSON.stringify({
       name: "ElfHosted",
       url: "https://elfhosted.com",
       supportUrl: "https://support.elfhosted.com/help",
@@ -84,7 +84,7 @@ describe("getServiceProvider", () => {
   });
 
   it("omits supportUrl when it is not provided", () => {
-    process.env.SERVICE_PROVIDER = JSON.stringify({
+    process.env["SERVICE_PROVIDER"] = JSON.stringify({
       name: "ElfHosted",
       url: "https://elfhosted.com",
       disabledFeatures: [],
@@ -99,7 +99,7 @@ describe("getServiceProvider", () => {
   });
 
   it("ignores unknown feature identifiers without discarding the provider", () => {
-    process.env.SERVICE_PROVIDER = JSON.stringify({
+    process.env["SERVICE_PROVIDER"] = JSON.stringify({
       name: "Example Hosting",
       url: "https://example.com",
       disabledFeatures: ["search", "future-feature"],
@@ -112,7 +112,7 @@ describe("getServiceProvider", () => {
   });
 
   it("rejects disabling overview so the fallback landing page always stays reachable", () => {
-    process.env.SERVICE_PROVIDER = JSON.stringify({
+    process.env["SERVICE_PROVIDER"] = JSON.stringify({
       name: "Example Hosting",
       url: "https://example.com",
       disabledFeatures: ["overview", "search"],
@@ -129,7 +129,7 @@ describe("getServiceProvider", () => {
     ["non-string supportUrl", 42],
     ["empty supportUrl", "   "],
   ])("drops %s but keeps feature gating active", (_description, supportUrl) => {
-    process.env.SERVICE_PROVIDER = JSON.stringify({
+    process.env["SERVICE_PROVIDER"] = JSON.stringify({
       name: "Example",
       url: "https://example.com",
       supportUrl,
@@ -142,7 +142,7 @@ describe("getServiceProvider", () => {
       disabledFeatures: ["search"],
     });
     expect(warnMock).toHaveBeenCalledOnce();
-    expect(warnMock.mock.calls[0][0]).toContain(
+    expect(warnMock.mock.calls[0]![0]).toContain(
       'SERVICE_PROVIDER "supportUrl" is invalid and will be ignored',
     );
   });
@@ -153,17 +153,17 @@ describe("getServiceProvider", () => {
     ["unsafe URL", JSON.stringify({ name: "Example", url: "javascript:alert(1)", disabledFeatures: [] })],
     ["invalid feature list", JSON.stringify({ name: "Example", url: "https://example.com", disabledFeatures: "search" })],
   ])("ignores %s", (_description, rawValue) => {
-    process.env.SERVICE_PROVIDER = rawValue;
+    process.env["SERVICE_PROVIDER"] = rawValue;
 
     expect(getServiceProvider()).toBeNull();
     expect(warnMock).toHaveBeenCalledOnce();
-    expect(warnMock.mock.calls[0][0]).toContain(
+    expect(warnMock.mock.calls[0]![0]).toContain(
       "SERVICE_PROVIDER is invalid and will be ignored. Reason:",
     );
   });
 
   it("caches parsing and warnings for an unchanged value", () => {
-    process.env.SERVICE_PROVIDER = "{";
+    process.env["SERVICE_PROVIDER"] = "{";
 
     expect(getServiceProvider()).toBeNull();
     expect(getServiceProvider()).toBeNull();

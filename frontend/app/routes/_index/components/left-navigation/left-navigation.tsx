@@ -40,6 +40,7 @@ export function LeftNavigation({
     const activeSettingsTab = isSettingsRoute
         ? parseSettingsTab(new URLSearchParams(search).get("tab"))
         : null;
+    const providerName = serviceProvider?.name;
 
     const [settingsOpen, setSettingsOpen] = useState(isSettingsRoute);
     const [providerNoticeOpen, setProviderNoticeOpen] = useState(false);
@@ -78,7 +79,7 @@ export function LeftNavigation({
                             icon={item.icon}
                             pathname={pathname}
                             disabled={isFeatureDisabled(serviceProvider, item.featureId)}
-                            providerName={serviceProvider?.name}
+                            {...(providerName !== undefined ? { providerName } : {})}
                             onDisabledClick={() => setProviderNoticeOpen(true)}
                         >
                             {item.label}
@@ -116,7 +117,7 @@ export function LeftNavigation({
                                     icon={item.icon}
                                     activeTab={activeSettingsTab}
                                     disabled={isSettingsTabDisabled(serviceProvider, item.id)}
-                                    providerName={serviceProvider?.name}
+                                    {...(providerName !== undefined ? { providerName } : {})}
                                     onDisabledClick={() => setProviderNoticeOpen(true)}
                                 >
                                     {item.label}
