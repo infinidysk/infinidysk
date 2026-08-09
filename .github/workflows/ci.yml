@@ -38,6 +38,10 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      - name: Check formatting
+        working-directory: frontend
+        run: npm run format:check
+
       - name: Typecheck
         working-directory: frontend
         run: npm run typecheck
