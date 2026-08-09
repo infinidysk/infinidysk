@@ -48,3 +48,7 @@ metrics.sqlite-wal
 
 libs/RapidYencSharp/runtimes/
 libs/rapidyenc/build/
+
+# Coverage reports
+frontend/coverage/
+TestResults/

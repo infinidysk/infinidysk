@@ -93,11 +93,12 @@ jobs:
         working-directory: frontend
         run: npm run test:coverage
 
-      - name: Upload frontend coverage
+      - name: Upload frontend coverage artifact
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
-          path: frontend/coverage/
+          path: frontend/coverage/cobertura-coverage.xml
           if-no-files-found: ignore
 
   backend:
@@ -183,11 +184,17 @@ jobs:
           dotnet test tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj -c Release --no-restore
           --filter "TestCategory!=Integration"
 
-      - name: Upload backend coverage
+      - name: Collect backend coverage
+        run: |
+          mkdir -p coverage
+          find TestResults -name coverage.cobertura.xml | head -n 1 | xargs -I{} cp {} coverage/coverage.cobertura.xml || true
+
+      - name: Upload backend coverage artifact
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@v7
         with:
           name: backend-coverage
-          path: TestResults/**/coverage.cobertura.xml
+          path: coverage/coverage.cobertura.xml
           if-no-files-found: ignore
 
   macos-yenc:
@@ -342,3 +349,41 @@ jobs:
       - name: Skip unchanged runtime image
         if: steps.changes.outputs.build != 'true'
         run: echo "No runtime image inputs changed; smoke build skipped."
+
+  upload-coverage-typescript:
+    needs: frontend
+    if: ${{ !cancelled() && needs.frontend.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      code-quality: write
+      pull-requests: read
+    steps:
+      - name: Download frontend coverage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-coverage
+      - uses: actions/upload-code-coverage@v1
+        with:
+          file: cobertura-coverage.xml
+          language: TypeScript
+          label: code-coverage-agent
+
+  upload-coverage-csharp:
+    needs: backend
+    if: ${{ !cancelled() && needs.backend.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      code-quality: write
+      pull-requests: read
+    steps:
+      - name: Download backend coverage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: backend-coverage
+      - uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage.cobertura.xml
+          language: C#
+          label: code-coverage-agent
