@@ -87,7 +87,13 @@ public sealed class SupportPackService(
         return warnings;
     }
 
-    internal async Task WriteAsync(Stream output, CancellationToken cancellationToken)
+    internal async Task WriteAsync(Stream output, CancellationToken cancellationToken) =>
+        await WriteAsync(output, GetPackQualityWarnings(), cancellationToken).ConfigureAwait(false);
+
+    internal async Task WriteAsync(
+        Stream output,
+        IReadOnlyList<string> packQuality,
+        CancellationToken cancellationToken)
     {
         var generatedAt = DateTimeOffset.UtcNow;
         var config = configManager.GetDiagnosticSnapshot();
@@ -195,6 +201,7 @@ public sealed class SupportPackService(
                     sectionStatus,
                     redactor,
                     traceSnapshot,
+                    packQuality,
                     cancellationToken)
                 .ConfigureAwait(false),
             redactor,
@@ -812,6 +819,7 @@ public sealed class SupportPackService(
         IReadOnlyDictionary<string, string> sectionStatus,
         SupportPackRedactor redactor,
         StreamTraceSnapshot traceSnapshot,
+        IReadOnlyList<string> packQuality,
         CancellationToken cancellationToken)
     {
         var (mainMigration, metricsMigration) = await ReadMigrationsAsync(cancellationToken).ConfigureAwait(false);
@@ -845,7 +853,7 @@ public sealed class SupportPackService(
                 retainedSessionCount = traceSnapshot.RetainedSessionCount,
             },
             sections = sectionStatus,
-            packQuality = GetPackQualityWarnings(),
+            packQuality,
             redaction = new { secrets = redactor.SecretsRedacted, ipAddresses = redactor.AddressesPseudonymized },
         };
     }
