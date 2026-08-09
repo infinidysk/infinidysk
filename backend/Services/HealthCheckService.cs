@@ -46,7 +46,11 @@ public class HealthCheckService : BackgroundService
     /// One-time boot delay before the first background sweep. Queue resume, first streams,
     /// and pool warm-up hit cold connection pools simultaneously at startup; giving them a
     /// short grace window keeps health-check STATs out of the connection storm (#881).
-    /// Settable for tests so coverage does not wait on the real delay.
+    /// <para>
+    /// Settable for tests so coverage does not wait on the real delay. Tests that override
+    /// it must restore the original value in a finally block; otherwise later tests in the
+    /// same process silently skip the grace.
+    /// </para>
     /// </summary>
     internal static TimeSpan StartupGracePeriod { get; set; } = TimeSpan.FromSeconds(20);
 
