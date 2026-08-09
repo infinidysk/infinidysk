@@ -23,6 +23,9 @@
   <PropertyGroup>
     <AnalysisLevel>latest-All</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Every warning in first-party code fails the build. Suppression policy:
+         CONTRIBUTING.md "Static analysis policy". -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>

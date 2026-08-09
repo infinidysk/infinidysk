@@ -5,7 +5,8 @@
         <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <WarningsAsErrors>Nullable;NU1903;NU1904</WarningsAsErrors>
+        <!-- Warnings-as-errors (incl. nullable and NU1903/NU1904 audit findings)
+             come from the repo-root Directory.Build.props blanket gate. -->
         <!-- Explicit: net10 defaults to all; keep transitive restore audits gated. -->
         <NuGetAuditMode>all</NuGetAuditMode>
         <ServerGarbageCollection>true</ServerGarbageCollection>
