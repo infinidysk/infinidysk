@@ -36,10 +36,15 @@ public sealed class SupportPackService(
     private const long HourMs = 60 * MinuteMs;
     private const long DayMs = 24 * HourMs;
     private static readonly TimeSpan MinimumMeaningfulUptime = TimeSpan.FromMinutes(2);
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
     private static readonly JsonSerializerOptions CompactJsonOptions = new()
     {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
     /// <summary>
@@ -825,7 +830,7 @@ public sealed class SupportPackService(
         var (mainMigration, metricsMigration) = await ReadMigrationsAsync(cancellationToken).ConfigureAwait(false);
         return new
         {
-            schemaVersion = 3,
+            schemaVersion = 4,
             generatedAtUtc = generatedAt,
             appVersion = ConfigManager.AppVersion,
             commit = Environment.GetEnvironmentVariable("NZBDAV_COMMIT_SHA"),

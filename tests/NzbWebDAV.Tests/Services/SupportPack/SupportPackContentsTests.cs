@@ -2,8 +2,10 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Services;
@@ -278,7 +280,7 @@ public sealed class SupportPackContentsTests : IDisposable
             buffer);
 
         using var enabledManifest = JsonDocument.Parse(enabled["manifest.json"]);
-        Assert.Equal(3, enabledManifest.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(4, enabledManifest.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(
             "included",
             enabledManifest.RootElement.GetProperty("sections").GetProperty("streamTraces").GetString());
@@ -317,7 +319,7 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.Contains("INCOMPLETE", pack["stream-traces/OVERFLOW.txt"]);
 
         using var manifest = JsonDocument.Parse(pack["manifest.json"]);
-        Assert.Equal(3, manifest.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(4, manifest.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(
             "included-truncated",
             manifest.RootElement.GetProperty("sections").GetProperty("streamTraces").GetString());
@@ -448,6 +450,110 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.DoesNotContain(packQuality, w => w!.Contains("No stream traces"));
         Assert.DoesNotContain(packQuality, w => w!.Contains("sampler window"));
     }
+
+    [Fact]
+    public async Task Pack_UsesCamelCaseFieldNamesThroughout()
+    {
+        var buffer = new StreamTraceBuffer(100, enabled: false);
+        buffer.EnableFor(TimeSpan.FromMinutes(15), 100, StreamTraceBuffer.SourceUi);
+        var session = Guid.NewGuid();
+        var range = buffer.RangeOpen(session, "/view/movie.mkv", "GET", 0, 99, 1000, "ua", null);
+        buffer.Segment(session, "provider-a", SegmentFetch.FetchStatus.Ok, 12, 0, "msgid@a");
+        buffer.RangeEnd(session, range, ReadSession.EndReasonCode.Completed, 100);
+
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)),
+            buffer);
+
+        var offenders = new List<string>();
+        foreach (var (name, content) in entries)
+        {
+            if (name.EndsWith(".json", StringComparison.Ordinal))
+            {
+                using var doc = JsonDocument.Parse(content);
+                CollectNonCamelCaseNames(doc.RootElement, name, offenders);
+            }
+            else if (name.EndsWith(".jsonl", StringComparison.Ordinal))
+            {
+                foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    CollectNonCamelCaseNames(doc.RootElement, name, offenders);
+                }
+            }
+        }
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public async Task Pack_RenamesPreviouslyMixedSectionsToCamelCase()
+    {
+        // metricsHealth lives in metrics/recent.json, which is only written once the
+        // metrics database has its tables; migrate so the section is produced here.
+        MetricsDbContext.ResetOptionsForTests();
+        try
+        {
+            await using (var metricsDb = new MetricsDbContext())
+                await metricsDb.Database.MigrateAsync();
+
+            var entries = await ReadPackEntriesAsync(
+                new LogBufferSink(10),
+                new WarningLogBuffer(new LogBufferSink(50)));
+
+            // manifest ring-buffer stats were PascalCase shorthand (OldestSequence/NewestSequence).
+            using var manifest = JsonDocument.Parse(entries["manifest.json"]);
+            var logs = manifest.RootElement.GetProperty("logs");
+            Assert.True(logs.TryGetProperty("oldestSequence", out _));
+            Assert.True(logs.TryGetProperty("newestSequence", out _));
+            Assert.False(logs.TryGetProperty("OldestSequence", out _));
+            var warnings = manifest.RootElement.GetProperty("warnings");
+            Assert.True(warnings.TryGetProperty("oldestSequence", out _));
+            Assert.True(warnings.TryGetProperty("newestSequence", out _));
+
+            // metricsHealth mixed queued/dropped with LastSuccessfulFlushAtMs/LastFlushError.
+            using var metrics = JsonDocument.Parse(entries["metrics/recent.json"]);
+            var metricsHealth = metrics.RootElement.GetProperty("metricsHealth");
+            Assert.True(metricsHealth.TryGetProperty("lastSuccessfulFlushAtMs", out _));
+            Assert.True(metricsHealth.TryGetProperty("lastFlushError", out _));
+            Assert.False(metricsHealth.TryGetProperty("LastSuccessfulFlushAtMs", out _));
+        }
+        finally
+        {
+            MetricsDbContext.ResetOptionsForTests();
+        }
+    }
+
+    private static void CollectNonCamelCaseNames(JsonElement element, string path, List<string> offenders)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    // The environment map is keyed by environment-variable NAMES (LOG_LEVEL,
+                    // TZ, …) — opaque data keys the serializer intentionally leaves as-is
+                    // (no DictionaryKeyPolicy), not field names subject to the casing policy.
+                    var isOpaqueDataKey = path.Equals("environment.json/environment", StringComparison.Ordinal);
+                    if (!isOpaqueDataKey && !IsCamelCase(property.Name))
+                        offenders.Add($"{path}: {property.Name}");
+                    CollectNonCamelCaseNames(property.Value, $"{path}/{property.Name}", offenders);
+                }
+
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                    CollectNonCamelCaseNames(item, path, offenders);
+
+                break;
+        }
+    }
+
+    private static bool IsCamelCase(string name) =>
+        name.Length > 0
+        && char.IsLower(name[0])
+        && name.All(char.IsLetterOrDigit);
 
     private static Task<Dictionary<string, string>> ReadPackEntriesAsync(
         LogBufferSink logBuffer,
