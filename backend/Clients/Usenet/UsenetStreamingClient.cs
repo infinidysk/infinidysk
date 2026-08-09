@@ -5,6 +5,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
@@ -168,6 +169,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         var connectionPoolStats = new ConnectionPoolStats(providerConfig, websocketManager);
         var idleTimeoutSeconds = configManager.GetIdleConnectionTimeoutSeconds();
         var streamingPriority = configManager.GetStreamingPriority();
+        var tripDetector = new CorrelatedTripDetector();
         var providerClients = providerConfig.Providers
             .Select((provider, index) => CreateProviderClient(
                 provider,
@@ -175,7 +177,8 @@ public class UsenetStreamingClient : WrappingNntpClient
                 idleTimeoutSeconds,
                 metricsWriter,
                 streamingPriority,
-                latencyTracker
+                latencyTracker,
+                tripDetector
             ))
             .ToList();
         return new MultiProviderNntpClient(
@@ -196,7 +199,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         int idleTimeoutSeconds,
         MetricsWriter metricsWriter,
         SemaphorePriorityOdds? streamingPriority = null,
-        ProviderLatencyTracker? latencyTracker = null
+        ProviderLatencyTracker? latencyTracker = null,
+        CorrelatedTripDetector? tripDetector = null
     )
     {
         var maxConnections = connectionDetails.MaxConnections;
@@ -242,20 +246,28 @@ public class UsenetStreamingClient : WrappingNntpClient
         if (connectionDetails.ProviderId == Guid.Empty)
             connectionDetails.ProviderId = Guid.NewGuid();
         var metricsKey = UsenetProviderIdentity.MetricsKey(connectionDetails);
+        // Only providers that can carry traffic participate in correlation; a Disabled
+        // provider never trips and would wedge the "all tripped" condition forever.
+        if (connectionDetails.Type != ProviderType.Disabled)
+            tripDetector?.Register(metricsKey, connectionDetails.Host);
         var circuitBreaker = new ProviderCircuitBreaker(
             connectionDetails.Host,
-            transition => metricsWriter.RecordEvent(new MetricEvent
+            transition =>
             {
-                At = transition.AtUnixMilliseconds,
-                Kind = "circuit",
-                Tag1 = metricsKey,
-                Tag2 = transition.State == ProviderCircuitTransitionState.Open
-                    ? "open"
-                    : "closed",
-                Num = transition.Cooldown is { } cooldown
-                    ? (long)cooldown.TotalMilliseconds
-                    : null,
-            }));
+                metricsWriter.RecordEvent(new MetricEvent
+                {
+                    At = transition.AtUnixMilliseconds,
+                    Kind = "circuit",
+                    Tag1 = metricsKey,
+                    Tag2 = transition.State == ProviderCircuitTransitionState.Open
+                        ? "open"
+                        : "closed",
+                    Num = transition.Cooldown is { } cooldown
+                        ? (long)cooldown.TotalMilliseconds
+                        : null,
+                });
+                tripDetector?.OnTransition(metricsKey, transition);
+            });
         return new MultiConnectionNntpClient(
             connectionPool,
             connectionDetails.Type,
