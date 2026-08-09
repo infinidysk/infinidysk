@@ -134,6 +134,13 @@ public partial class UsenetClient : IUsenetClient, IDisposable, IAsyncDisposable
 
     public void Dispose()
     {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!disposing) return;
         if (Interlocked.Exchange(ref _disposeState, 1) != 0)
         {
             return;
@@ -145,7 +152,6 @@ public partial class UsenetClient : IUsenetClient, IDisposable, IAsyncDisposable
         // Dispose the semaphore while still holding it so queued waiters are
         // faulted instead of being granted a lock that is about to be disposed.
         _commandLock.Dispose();
-        GC.SuppressFinalize(this);
     }
 
     public async ValueTask DisposeAsync()

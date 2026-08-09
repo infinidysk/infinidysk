@@ -39,9 +39,10 @@ public partial class UsenetClient
             ThrowIfDisposed();
             ThrowIfUnhealthy();
             ThrowIfNotConnected();
+            #pragma warning disable CA2000 // operationCts ownership transfers to the background body-read task (which disposes it on completion) via the `operationCts = null` handoff below; the finally disposes it only on non-transferred paths
             operationCts = CreateOperationTokenSource(cancellationToken);
-            using var ioTimeout = new CoalescedReadTimeout(
-                operationCts.Token, _options.ReadTimeout, _timeProvider);
+            #pragma warning restore CA2000
+            using var ioTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
 
             var (responseCode, response) = await ExchangeSingleLineAsync(
                 ioTimeout,
@@ -68,8 +69,10 @@ public partial class UsenetClient
 
                 // Start background task to read the body and write to pipe
                 isReadBodyToPipeAsyncStarted = true;
+                #pragma warning disable CA2025 // the background body-read task owns and disposes the pipe writer and operationCts (see the streaming lifecycle invariants); the caller awaits/disposes the reader side
                 _ = ReadBodyToPipeAsync(
-                    pipe.Writer, operationCts, cancellationToken, onConnectionReadyAgain);
+                                    pipe.Writer, operationCts, onConnectionReadyAgain, cancellationToken);
+                #pragma warning restore CA2025
                 operationCts = null;
 
                 // Return immediately with the stream and headers
@@ -207,7 +210,7 @@ public partial class UsenetClient
                 CommitCurrentHeader();
 
                 // Parse new header: "Name: Value"
-                var colonIndex = line.IndexOf(':');
+                var colonIndex = line.IndexOf(':', StringComparison.Ordinal);
                 if (colonIndex > 0)
                 {
                     headerCount++;

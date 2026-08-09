@@ -1,8 +1,11 @@
+using System;
+
 namespace UsenetSharp.Models;
 
-public readonly struct SegmentId(string? value)
+public readonly record struct SegmentId(string? value)
 {
     private readonly string _value = value ?? string.Empty;
+
 
     public ReadOnlySpan<char> Value
     {

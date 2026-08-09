@@ -81,8 +81,7 @@ public partial class UsenetClient
             ThrowIfNotConnected();
 
             using (var operationCts = CreateOperationTokenSource(cancellationToken))
-            using (var writeTimeout = new CoalescedReadTimeout(
-                       operationCts.Token, _options.ReadTimeout, _timeProvider))
+            using (var writeTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token))
             {
                 // Bytes may reach the wire from here on (RFC 3977 §3.5).
                 writeStarted = true;
@@ -103,8 +102,8 @@ public partial class UsenetClient
             var completion = ProcessDecodedBodyBatchAsync(
                 segments,
                 completions,
-                cancellationToken,
-                onConnectionReadyAgain);
+                onConnectionReadyAgain,
+                cancellationToken);
 
             return new UsenetDecodedBodyBatch
             {
@@ -217,11 +216,11 @@ public partial class UsenetClient
     }
 
     private async ValueTask WritePipelinedBodyCommandsAsync(
-        IReadOnlyList<SegmentId> segments,
+        SegmentId[] segments,
         CoalescedReadTimeout ioTimeout)
     {
         var totalLength = 0;
-        for (var index = 0; index < segments.Count; index++)
+        for (var index = 0; index < segments.Length; index++)
         {
             // "BODY <id>\r\n"
             totalLength += 4 + 1 + 1 + segments[index].Value.Length + 1 + 2;
@@ -231,7 +230,7 @@ public partial class UsenetClient
         try
         {
             var written = 0;
-            for (var index = 0; index < segments.Count; index++)
+            for (var index = 0; index < segments.Length; index++)
             {
                 written += FormatBodyCommand(buffer.AsSpan(written), segments[index]);
             }
@@ -256,18 +255,17 @@ public partial class UsenetClient
     }
 
     private async Task ProcessDecodedBodyBatchAsync(
-        IReadOnlyList<SegmentId> segmentIds,
-        IReadOnlyList<TaskCompletionSource<UsenetDecodedBodyResponse>> completions,
-        CancellationToken callerCancellationToken,
-        ArticleBodyCompletionHandler? onConnectionReadyAgain)
+        SegmentId[] segmentIds,
+        TaskCompletionSource<UsenetDecodedBodyResponse>[] completions,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken callerCancellationToken)
     {
         Exception? failure = null;
         var completionResult = ArticleBodyResult.Retrieved;
         string? completionReason = null;
         var nextResponseIndex = 0;
         using var operationCts = CreateOperationTokenSource(callerCancellationToken);
-        using var sharedReadTimeout = new CoalescedReadTimeout(
-            operationCts.Token, _options.ReadTimeout, _timeProvider);
+        using var sharedReadTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
         var sharedEncodedBuffer = new BatchDecodeBuffer
         {
             Buffer = ArrayPool<byte>.Shared.Rent(DecodedBodyChunkSize + 2)
@@ -275,7 +273,7 @@ public partial class UsenetClient
 
         try
         {
-            while (nextResponseIndex < segmentIds.Count)
+            while (nextResponseIndex < segmentIds.Length)
             {
                 var segmentId = segmentIds[nextResponseIndex];
                 var response = await ReadLineAsync(sharedReadTimeout).ConfigureAwait(false);
@@ -324,12 +322,12 @@ public partial class UsenetClient
                         pipe.Writer,
                         headersCompletion,
                         operationCts,
-                        callerCancellationToken,
                         onConnectionReadyAgain: null,
                         decodedStream: decodedStream,
                         releaseCommandLock: false,
                         sharedReadTimeout: sharedReadTimeout,
-                        sharedEncodedBuffer: sharedEncodedBuffer)
+                        sharedEncodedBuffer: sharedEncodedBuffer,
+                        callerCancellationToken: callerCancellationToken)
                     .ConfigureAwait(false);
                 if (bodyReadResult.Failure == null)
                 {
@@ -354,7 +352,7 @@ public partial class UsenetClient
                 }
 
                 var drainFailure = await TryDrainPipelinedBodiesAsync(
-                        segmentIds.Count - nextResponseIndex)
+                        segmentIds.Length - nextResponseIndex)
                     .ConfigureAwait(false);
                 if (drainFailure != null)
                 {
@@ -388,7 +386,7 @@ public partial class UsenetClient
             else
             {
                 var drainFailure = await TryDrainPipelinedBodiesAsync(
-                        segmentIds.Count - nextResponseIndex)
+                        segmentIds.Length - nextResponseIndex)
                     .ConfigureAwait(false);
                 if (drainFailure != null)
                 {
@@ -416,7 +414,7 @@ public partial class UsenetClient
             ArrayPool<byte>.Shared.Return(sharedEncodedBuffer.Buffer);
             if (failure != null)
             {
-                for (var index = nextResponseIndex; index < completions.Count; index++)
+                for (var index = nextResponseIndex; index < completions.Length; index++)
                 {
                     completions[index].TrySetException(failure);
                 }

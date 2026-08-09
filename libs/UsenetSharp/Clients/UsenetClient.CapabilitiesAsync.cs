@@ -27,8 +27,7 @@ public partial class UsenetClient
             ThrowIfUnhealthy();
             ThrowIfNotConnected();
             using var operationCts = CreateOperationTokenSource(cancellationToken);
-            using var ioTimeout = new CoalescedReadTimeout(
-                operationCts.Token, _options.ReadTimeout, _timeProvider);
+            using var ioTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
 
             var (responseCode, response) = await ExchangeSingleLineAsync(
                 ioTimeout,
@@ -94,8 +93,7 @@ public partial class UsenetClient
             ThrowIfUnhealthy();
             ThrowIfNotConnected();
             using var operationCts = CreateOperationTokenSource(cancellationToken);
-            using var ioTimeout = new CoalescedReadTimeout(
-                operationCts.Token, _options.ReadTimeout, _timeProvider);
+            using var ioTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
 
             var (responseCode, response) = await ExchangeSingleLineAsync(
                 ioTimeout,

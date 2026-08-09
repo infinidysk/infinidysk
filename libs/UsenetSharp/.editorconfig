@@ -73,6 +73,10 @@ dotnet_diagnostic.CA1725.severity = none
 # Justification: the public API is the repo-internal contract; hiding it adds
 # nothing.
 dotnet_diagnostic.CA1515.severity = none
+# Justification: C#-only consumers; positional record parameters deliberately
+# pair camelCase ctor parameters with PascalCase properties (SegmentId.value /
+# SegmentId.Value).
+dotnet_diagnostic.CA1708.severity = none
 # Justification: repeated false positives under nullable flow analysis in
 # decoder state machines.
 dotnet_diagnostic.CA1508.severity = none

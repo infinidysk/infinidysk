@@ -46,8 +46,7 @@ public partial class UsenetClient
             ThrowIfNotConnected();
 
             using var operationCts = CreateOperationTokenSource(cancellationToken);
-            using var ioTimeout = new CoalescedReadTimeout(
-                operationCts.Token, _options.ReadTimeout, _timeProvider);
+            using var ioTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
 
             var depth = Math.Min(_options.MaxPipelineDepth, segments.Length);
             var results = new UsenetStatResponse[segments.Length];
@@ -139,7 +138,7 @@ public partial class UsenetClient
     }
 
     private async ValueTask WritePipelinedStatCommandsAsync(
-        IReadOnlyList<SegmentId> segments,
+        SegmentId[] segments,
         int start,
         int count,
         CoalescedReadTimeout ioTimeout)
@@ -181,7 +180,7 @@ public partial class UsenetClient
 
     private static void ThrowIfDesyncedStatEcho(string line, SegmentId expected)
     {
-        var open = line.IndexOf('<');
+        var open = line.IndexOf('<', StringComparison.Ordinal);
         if (open < 0)
         {
             return;

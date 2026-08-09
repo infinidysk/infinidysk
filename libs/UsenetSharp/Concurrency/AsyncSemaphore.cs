@@ -4,12 +4,12 @@ public class AsyncSemaphore : IDisposable
 {
     private readonly LinkedList<TaskCompletionSource<bool>> _waiters = new();
     private int _currentCount;
-    private bool _disposed = false;
+    private bool _disposed;
     private readonly object _lock = new();
 
     public AsyncSemaphore(int initialCount)
     {
-        if (initialCount < 0) throw new ArgumentOutOfRangeException(nameof(initialCount));
+        ArgumentOutOfRangeException.ThrowIfNegative(initialCount);
         _currentCount = initialCount;
     }
 
@@ -33,8 +33,7 @@ public class AsyncSemaphore : IDisposable
     {
         lock (_lock)
         {
-            if (_disposed)
-                throw new ObjectDisposedException(nameof(AsyncSemaphore));
+            ObjectDisposedException.ThrowIf(_disposed, this);
 
             if (_currentCount > 0)
             {
@@ -109,6 +108,13 @@ public class AsyncSemaphore : IDisposable
 
     public void Dispose()
     {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!disposing) return;
         List<TaskCompletionSource<bool>> waitersToCancel;
         lock (_lock)
         {

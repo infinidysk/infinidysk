@@ -47,9 +47,10 @@ public partial class UsenetClient
             ThrowIfDisposed();
             ThrowIfUnhealthy();
             ThrowIfNotConnected();
+            #pragma warning disable CA2000 // operationCts ownership transfers to the background body-read task (which disposes it on completion) via the `operationCts = null` handoff below; the finally disposes it only on non-transferred paths
             operationCts = CreateOperationTokenSource(cancellationToken);
-            using var ioTimeout = new CoalescedReadTimeout(
-                operationCts.Token, _options.ReadTimeout, _timeProvider);
+            #pragma warning restore CA2000
+            using var ioTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
 
             var (responseCode, response) = await ExchangeSingleLineAsync(
                 ioTimeout,
@@ -65,8 +66,10 @@ public partial class UsenetClient
 
                 // Start background task to read the body and write to pipe
                 isReadBodyToPipeAsyncStarted = true;
+                #pragma warning disable CA2025 // the background body-read task owns and disposes the pipe writer and operationCts; the caller awaits/disposes the reader side
                 _ = ReadBodyToPipeAsync(
-                    pipe.Writer, operationCts, cancellationToken, onConnectionReadyAgain);
+                                    pipe.Writer, operationCts, onConnectionReadyAgain, cancellationToken);
+                #pragma warning restore CA2025
                 operationCts = null;
 
                 // Return immediately with the stream and headers
@@ -135,9 +138,10 @@ public partial class UsenetClient
             ThrowIfDisposed();
             ThrowIfUnhealthy();
             ThrowIfNotConnected();
+            #pragma warning disable CA2000 // operationCts ownership transfers to the background body-read task (which disposes it on completion) via the `operationCts = null` handoff below; the finally disposes it only on non-transferred paths
             operationCts = CreateOperationTokenSource(cancellationToken);
-            using var ioTimeout = new CoalescedReadTimeout(
-                operationCts.Token, _options.ReadTimeout, _timeProvider);
+            #pragma warning restore CA2000
+            using var ioTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
 
             var (responseCode, response) = await ExchangeSingleLineAsync(
                 ioTimeout,
@@ -155,13 +159,15 @@ public partial class UsenetClient
                         TaskCreationOptions.RunContinuationsAsynchronously);
 
                 isReadBodyToPipeAsyncStarted = true;
+                #pragma warning disable CA2025 // the background decode task owns and disposes the pipe writer, operationCts and decoded stream; completion is coordinated through headersCompletion and the response callbacks
                 _ = ReadDecodedBodyToPipeAsync(
-                    pipe.Writer,
+                                    pipe.Writer,
                     headersCompletion,
                     operationCts,
-                    cancellationToken,
                     onConnectionReadyAgain,
-                    decodedStream);
+                    decodedStream,
+                    callerCancellationToken: cancellationToken);
+                #pragma warning restore CA2025
                 operationCts = null;
 
                 return new UsenetDecodedBodyResponse
@@ -199,12 +205,12 @@ public partial class UsenetClient
         PipeWriter writer,
         TaskCompletionSource<UsenetYencHeader?> headersCompletion,
         CancellationTokenSource operationCts,
-        CancellationToken callerCancellationToken,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         DecodedBodyReadStream decodedStream,
         bool releaseCommandLock = true,
         CoalescedReadTimeout? sharedReadTimeout = null,
-        BatchDecodeBuffer? sharedEncodedBuffer = null)
+        BatchDecodeBuffer? sharedEncodedBuffer = null,
+        CancellationToken callerCancellationToken = default)
     {
         Exception? failure = null;
         var connectionReusable = true;
@@ -242,8 +248,7 @@ public partial class UsenetClient
             var cancellationToken = operationCts.Token;
             if (sharedReadTimeout == null)
             {
-                ownedReadTimeout = new CoalescedReadTimeout(
-                    cancellationToken, _options.ReadTimeout, _timeProvider);
+                ownedReadTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, cancellationToken);
             }
 
             var readTimeout = sharedReadTimeout ?? ownedReadTimeout!;
@@ -291,8 +296,8 @@ public partial class UsenetClient
                             decoderState,
                             decodedCrc32,
                             _options.CrcValidation != YencCrcValidationMode.Off,
-                            cancellationToken,
-                            decodedStream).ConfigureAwait(false);
+                            decodedStream,
+                            cancellationToken).ConfigureAwait(false);
                         decoderState = flush.DecoderState;
                         decodedCrc32 = flush.Crc32;
                     }
@@ -379,8 +384,8 @@ public partial class UsenetClient
                             decoderState,
                             decodedCrc32,
                             _options.CrcValidation != YencCrcValidationMode.Off,
-                            cancellationToken,
-                            decodedStream).ConfigureAwait(false);
+                            decodedStream,
+                            cancellationToken).ConfigureAwait(false);
                         encodedLength = 0;
                         decoderState = flush.DecoderState;
                         decodedCrc32 = flush.Crc32;
@@ -406,8 +411,8 @@ public partial class UsenetClient
                         decoderState,
                         decodedCrc32,
                         _options.CrcValidation != YencCrcValidationMode.Off,
-                        cancellationToken,
-                        decodedStream).ConfigureAwait(false);
+                        decodedStream,
+                        cancellationToken).ConfigureAwait(false);
                     encodedLength = 0;
                     decoderState = flush.DecoderState;
                     decodedCrc32 = flush.Crc32;
@@ -441,8 +446,8 @@ public partial class UsenetClient
                         decoderState,
                         decodedCrc32,
                         _options.CrcValidation != YencCrcValidationMode.Off,
-                        cancellationToken,
-                        decodedStream).ConfigureAwait(false);
+                        decodedStream,
+                        cancellationToken).ConfigureAwait(false);
                     encodedLength = 0;
                     decoderState = flush.DecoderState;
                     decodedCrc32 = flush.Crc32;
@@ -543,8 +548,8 @@ public partial class UsenetClient
         RapidYencDecoderState? decoderState,
         uint crc32,
         bool computeCrc32,
-        CancellationToken cancellationToken,
-        DecodedBodyReadStream decodedStream)
+        DecodedBodyReadStream decodedStream,
+        CancellationToken cancellationToken)
     {
         var destination = writer.GetSpan(encoded.Length);
         var decodedLength = YencDecoder.DecodeEx(
@@ -664,8 +669,8 @@ public partial class UsenetClient
     private async Task ReadBodyToPipeAsync(
         PipeWriter writer,
         CancellationTokenSource operationCts,
-        CancellationToken callerCancellationToken,
-        ArticleBodyCompletionHandler? onConnectionReadyAgain)
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken callerCancellationToken)
     {
         Exception? failure = null;
         try
@@ -679,8 +684,7 @@ public partial class UsenetClient
             long drainedBytes = 0;
             var unflushed = 0;
             var cancellationToken = operationCts.Token;
-            using var readTimeout = new CoalescedReadTimeout(
-                cancellationToken, _options.ReadTimeout, _timeProvider);
+            using var readTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, cancellationToken);
 
             // Read lines until we encounter the termination sequence (single dot on a line)
             while (true)
@@ -802,8 +806,7 @@ public partial class UsenetClient
         try
         {
             using var drainCts = CreateOperationTokenSource(CancellationToken.None);
-            using var readTimeout = new CoalescedReadTimeout(
-                drainCts.Token, _options.ReadTimeout, _timeProvider);
+            using var readTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, drainCts.Token);
             long drainedBytes = 0;
 
             while (true)

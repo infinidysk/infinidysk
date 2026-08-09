@@ -82,7 +82,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
 
         if (!_headersRead)
         {
-            await ParseHeadersAsync(cancellationToken);
+            await ParseHeadersAsync(cancellationToken).ConfigureAwait(false);
             _headersRead = true;
         }
 
@@ -99,7 +99,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
         // Parse headers on first read
         if (!_headersRead)
         {
-            await ParseHeadersAsync(cancellationToken);
+            await ParseHeadersAsync(cancellationToken).ConfigureAwait(false);
             _headersRead = true;
         }
 
@@ -123,7 +123,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
             else
             {
                 // Need to decode next line
-                var lineMemory = await ReadNextLineAsync(cancellationToken);
+                var lineMemory = await ReadNextLineAsync(cancellationToken).ConfigureAwait(false);
 
                 if (!lineMemory.HasValue)
                 {
@@ -181,7 +181,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
             // Ensure we have data in read buffer
             if (_readBufferPosition >= _readBufferLength)
             {
-                bool hasMoreData = await FillReadBufferAsync(cancellationToken);
+                bool hasMoreData = await FillReadBufferAsync(cancellationToken).ConfigureAwait(false);
                 if (!hasMoreData && _lineAssemblyLength == 0)
                 {
                     return null;
@@ -283,7 +283,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
     private async ValueTask<bool> FillReadBufferAsync(CancellationToken cancellationToken)
     {
         _readBufferPosition = 0;
-        _readBufferLength = await _innerStream.ReadAsync(_readBuffer.AsMemory(0, ReadBufferSize), cancellationToken);
+        _readBufferLength = await _innerStream.ReadAsync(_readBuffer.AsMemory(0, ReadBufferSize), cancellationToken).ConfigureAwait(false);
         return _readBufferLength > 0;
     }
 
@@ -296,7 +296,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
             // Read lines until we find =ybegin (skip empty lines that may appear before it)
             while (true)
             {
-                var lineMemory = await ReadNextLineAsync(cancellationToken);
+                var lineMemory = await ReadNextLineAsync(cancellationToken).ConfigureAwait(false);
 
                 if (!lineMemory.HasValue)
                 {
@@ -319,7 +319,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
             }
 
             // Check if next line is =ypart or encoded data
-            var nextLineMemory = await ReadNextLineAsync(cancellationToken);
+            var nextLineMemory = await ReadNextLineAsync(cancellationToken).ConfigureAwait(false);
             var nextLineSpan = nextLineMemory.HasValue
                 ? nextLineMemory.Value.Span
                 : ReadOnlySpan<byte>.Empty;

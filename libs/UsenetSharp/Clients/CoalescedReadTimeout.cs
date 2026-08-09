@@ -15,9 +15,9 @@ internal sealed class CoalescedReadTimeout : IDisposable
     private bool _disposed;
 
     public CoalescedReadTimeout(
-        CancellationToken operationToken,
         TimeSpan timeout,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        CancellationToken operationToken)
     {
         _operationToken = operationToken;
         _timeout = timeout;

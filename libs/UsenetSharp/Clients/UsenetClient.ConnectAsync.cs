@@ -50,13 +50,14 @@ public partial class UsenetClient
                 await sslStream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
                 {
                     TargetHost = host,
-                    EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12 |
-                                          System.Security.Authentication.SslProtocols.Tls13,
+                    EnabledSslProtocols = System.Security.Authentication.SslProtocols.None, // let the OS choose (TLS 1.2+ on all supported platforms; picks up future versions automatically)
                     CertificateRevocationCheckMode = _options.SkipTlsVerification
                         ? X509RevocationMode.NoCheck
                         : _options.CertificateRevocationCheckMode,
+#pragma warning disable CA5359 // deliberate: behind the explicit SkipTlsVerification option for providers with broken/self-signed certs
                     RemoteCertificateValidationCallback = _options.SkipTlsVerification
                         ? static (_, _, _, _) => true
+#pragma warning restore CA5359
                         : null
                 }, operationCts.Token).ConfigureAwait(false);
                 _stream = sslStream;
@@ -66,8 +67,7 @@ public partial class UsenetClient
             _reader = new NntpLineReader(_stream);
 
             // Read the server response
-            using var greetingTimeout = new CoalescedReadTimeout(
-                operationCts.Token, _options.ReadTimeout, _timeProvider);
+            using var greetingTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
             var response = await ReadLineAsync(greetingTimeout).ConfigureAwait(false);
             var responseCode = ParseResponseCode(response);
 
