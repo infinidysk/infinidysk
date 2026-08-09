@@ -64,6 +64,7 @@ public sealed class BudgetedStream : Stream
         await _inner.DisposeAsync().ConfigureAwait(false);
         ReleaseLease();
         GC.SuppressFinalize(this);
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 
     private void ReleaseLease()

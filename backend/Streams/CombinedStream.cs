@@ -54,11 +54,13 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : FastReadOnlyNon
 
     protected override void Dispose(bool disposing)
     {
-        if (_isDisposed) return;
-        if (!disposing) return;
-        _streams.Dispose();
-        _currentStream?.Dispose();
-        _isDisposed = true;
+        if (!_isDisposed && disposing)
+        {
+            _streams.Dispose();
+            _currentStream?.Dispose();
+            _isDisposed = true;
+        }
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
@@ -68,5 +70,6 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : FastReadOnlyNon
         _streams.Dispose();
         _isDisposed = true;
         GC.SuppressFinalize(this);
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 }

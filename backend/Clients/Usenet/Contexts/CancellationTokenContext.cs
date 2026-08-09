@@ -2,7 +2,7 @@
 
 namespace NzbWebDAV.Clients.Usenet.Contexts;
 
-public class CancellationTokenContext : IDisposable
+public sealed class CancellationTokenContext : IDisposable
 {
     private static readonly ConcurrentDictionary<LookupKey, object?> Context = new();
 

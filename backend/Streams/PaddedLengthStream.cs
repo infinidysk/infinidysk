@@ -122,11 +122,13 @@ public sealed class PaddedLengthStream(
 
     protected override void Dispose(bool disposing)
     {
-        if (_disposed || !disposing)
-            return;
+        if (!_disposed && disposing)
+        {
+            stream.Dispose();
+            _disposed = true;
+        }
 
-        stream.Dispose();
-        _disposed = true;
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
@@ -137,5 +139,6 @@ public sealed class PaddedLengthStream(
         await stream.DisposeAsync().ConfigureAwait(false);
         _disposed = true;
         GC.SuppressFinalize(this);
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 }

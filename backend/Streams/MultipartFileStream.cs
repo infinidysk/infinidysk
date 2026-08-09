@@ -76,10 +76,12 @@ public class MultipartFileStream(MultipartFile multipartFile, INntpClient usenet
 
     protected override void Dispose(bool disposing)
     {
-        if (_isDisposed) return;
-        if (!disposing) return;
-        _currentStream?.Dispose();
-        _isDisposed = true;
+        if (!_isDisposed && disposing)
+        {
+            _currentStream?.Dispose();
+            _isDisposed = true;
+        }
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
@@ -88,5 +90,6 @@ public class MultipartFileStream(MultipartFile multipartFile, INntpClient usenet
         if (_currentStream != null) await _currentStream.DisposeAsync().ConfigureAwait(false);
         _isDisposed = true;
         GC.SuppressFinalize(this);
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 }

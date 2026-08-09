@@ -2,7 +2,7 @@
 
 namespace NzbWebDAV.Clients.Usenet.Contexts;
 
-public class ContextualCancellationTokenSource : IDisposable
+public sealed class ContextualCancellationTokenSource : IDisposable
 {
     private readonly CancellationTokenSource _cts;
     private readonly List<CancellationTokenContext> _contexts;

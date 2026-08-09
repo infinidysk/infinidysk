@@ -13,7 +13,7 @@ using Serilog;
 
 namespace NzbWebDAV.Queue;
 
-public class QueueManager : IDisposable
+public sealed class QueueManager : IDisposable
 {
     private readonly ConcurrentDictionary<Guid, InProgressQueueItem> _inProgress = new();
     private readonly ConcurrentDictionary<Guid, int> _retryAttempts = new();

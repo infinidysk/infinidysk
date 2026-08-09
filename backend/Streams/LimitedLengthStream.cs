@@ -41,6 +41,7 @@ public class LimitedLengthStream(Stream stream, long length) : FastReadOnlyNonSe
         if (_disposed) return;
         stream.Dispose();
         _disposed = true;
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
@@ -49,5 +50,6 @@ public class LimitedLengthStream(Stream stream, long length) : FastReadOnlyNonSe
         await stream.DisposeAsync().ConfigureAwait(false);
         _disposed = true;
         GC.SuppressFinalize(this);
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 }

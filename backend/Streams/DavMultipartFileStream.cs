@@ -340,6 +340,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
             }
         }
         _disposed = true;
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
@@ -357,5 +358,6 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
         if (_innerStream != null) await _innerStream.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 }

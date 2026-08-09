@@ -182,12 +182,12 @@ public sealed class PooledBufferStream : Stream
         base.Dispose(disposing);
     }
 
-    public override ValueTask DisposeAsync()
+    public override async ValueTask DisposeAsync()
     {
         ReturnBuffer();
         _disposed = true;
         GC.SuppressFinalize(this);
-        return ValueTask.CompletedTask;
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 
     private void EnsureCapacity(int required)

@@ -15,7 +15,7 @@ namespace NzbWebDAV.Clients.Usenet.Concurrency;
 /// These configurable odds prevent the high-priority queue from fully starving the
 /// low-priority queue.
 /// </summary>
-public class PrioritizedSemaphore : IDisposable
+public sealed class PrioritizedSemaphore : IDisposable
 {
     private readonly LinkedList<TaskCompletionSource<bool>> _highPriorityWaiters = [];
     private readonly LinkedList<TaskCompletionSource<bool>> _lowPriorityWaiters = [];

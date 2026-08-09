@@ -1176,11 +1176,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         base.Dispose(disposing);
     }
 
+#pragma warning disable CA2215 // base.DisposeAsync() would route through Close()/Dispose(true) back into EnsureDisposeAsync's sync-over-async teardown; the _disposeGate/_disposeTask pair already guarantees exactly-once cleanup (see Dispose(bool) recursion note)
     public override async ValueTask DisposeAsync()
     {
         await EnsureDisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);
     }
+#pragma warning restore CA2215
 
     private Task EnsureDisposeAsync()
     {
