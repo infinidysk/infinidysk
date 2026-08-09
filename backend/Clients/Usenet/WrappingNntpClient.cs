@@ -58,16 +58,16 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
         _usenetClient.DateAsync(cancellationToken);
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken) =>
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken) =>
         _usenetClient.DecodedBodyAsync(segmentId, onConnectionReadyAgain, cancellationToken);
 
     public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
-        IReadOnlyList<SegmentId> segmentIds, Action<ArticleBodyResult>? onConnectionReadyAgain,
+        IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken) =>
         _usenetClient.DecodedBodiesAsync(segmentIds, onConnectionReadyAgain, cancellationToken);
 
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken) =>
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken) =>
         _usenetClient.DecodedArticleAsync(segmentId, onConnectionReadyAgain, cancellationToken);
 
     public override int PipeliningDepth => _usenetClient.PipeliningDepth;

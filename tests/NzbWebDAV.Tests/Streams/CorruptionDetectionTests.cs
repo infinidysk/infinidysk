@@ -85,7 +85,7 @@ public class CorruptionDetectionTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             CreateResponse(segmentId);
 
@@ -140,7 +140,7 @@ public class CorruptionDetectionTests
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -150,7 +150,7 @@ public class CorruptionDetectionTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

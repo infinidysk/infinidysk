@@ -25,17 +25,17 @@ public interface INntpClient : IDisposable
         SegmentId segmentId, CancellationToken cancellationToken);
 
     Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken);
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken);
 
     Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
-        IReadOnlyList<SegmentId> segmentIds, Action<ArticleBodyResult>? onConnectionReadyAgain,
+        IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken);
 
     Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
         SegmentId segmentId, CancellationToken cancellationToken);
 
     Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken);
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken);
 
     Task<UsenetDateResponse> DateAsync(
         CancellationToken cancellationToken);

@@ -615,7 +615,7 @@ public class MultiProviderNntpClientTests
         ]);
 
         var response = await client.DecodedBodyAsync(
-            "segment", callbacks.Add, CancellationToken.None);
+            "segment", (result, _) => callbacks.Add(result), CancellationToken.None);
 
         Assert.Equal(UsenetResponseType.NoArticleWithThatMessageId, response.ResponseType);
         Assert.Equal(1, first.SingularRequests);
@@ -1009,13 +1009,13 @@ public class MultiProviderNntpClientTests
 
         Assert.Equal(
             UsenetResponseType.ArticleRetrievedBodyFollows,
-            (await client.DecodedBodyAsync("segment", _ => { }, CancellationToken.None)).ResponseType);
+            (await client.DecodedBodyAsync("segment", (_, _) => { }, CancellationToken.None)).ResponseType);
         Assert.Equal(1, missing.SingularRequests);
         Assert.Equal(1, backup.SingularRequests);
 
         Assert.Equal(
             UsenetResponseType.ArticleRetrievedBodyFollows,
-            (await client.DecodedBodyAsync("segment", _ => { }, CancellationToken.None)).ResponseType);
+            (await client.DecodedBodyAsync("segment", (_, _) => { }, CancellationToken.None)).ResponseType);
         Assert.Equal(1, missing.SingularRequests);
         Assert.Equal(2, backup.SingularRequests);
     }
@@ -1116,7 +1116,7 @@ public class MultiProviderNntpClientTests
         Assert.Equal(0, backup.SingularRequests);
 
         await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
-            client.DecodedBodyAsync("segment", _ => { }, CancellationToken.None));
+            client.DecodedBodyAsync("segment", (_, _) => { }, CancellationToken.None));
         Assert.Equal(0, primary.SingularRequests);
         Assert.Equal(0, backup.SingularRequests);
 
@@ -1978,11 +1978,11 @@ public class MultiProviderNntpClientTests
         public bool DeferSingularCompletion { get; init; }
         public int BatchRequests { get; private set; }
         public int SingularRequests { get; private set; }
-        private readonly Queue<Action<ArticleBodyResult>> _pendingSingularCallbacks = new();
+        private readonly Queue<ArticleBodyCompletionHandler> _pendingSingularCallbacks = new();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             BatchRequests++;
@@ -2009,7 +2009,7 @@ public class MultiProviderNntpClientTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             SingularRequests++;
@@ -2087,7 +2087,7 @@ public class MultiProviderNntpClientTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

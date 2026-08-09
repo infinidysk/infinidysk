@@ -169,7 +169,7 @@ public class NntpClientPipelinedMappingTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             Assert.Equal(requestedId, segmentId.ToString());
@@ -179,7 +179,7 @@ public class NntpClientPipelinedMappingTests
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             Assert.Single(segmentIds);
@@ -197,7 +197,7 @@ public class NntpClientPipelinedMappingTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

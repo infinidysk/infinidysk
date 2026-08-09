@@ -13,7 +13,7 @@ public class DeferredArticleBodyCallbackTests
 
         callback.Invoke(ArticleBodyResult.Retrieved);
         Assert.Empty(results);
-        callback.Activate(results.Add);
+        callback.Activate((result, _) => results.Add(result));
 
         Assert.Equal([ArticleBodyResult.Retrieved], results);
     }
@@ -23,7 +23,7 @@ public class DeferredArticleBodyCallbackTests
     {
         var callback = new DeferredArticleBodyCallback();
         var results = new List<ArticleBodyResult>();
-        callback.Activate(results.Add);
+        callback.Activate((result, _) => results.Add(result));
 
         callback.Invoke(ArticleBodyResult.NotFound);
 
@@ -35,7 +35,7 @@ public class DeferredArticleBodyCallbackTests
     {
         var callback = new DeferredArticleBodyCallback();
         var results = new List<ArticleBodyResult>();
-        callback.Activate(results.Add);
+        callback.Activate((result, _) => results.Add(result));
 
         callback.Invoke(ArticleBodyResult.Cancelled);
         callback.Invoke(ArticleBodyResult.Retrieved);
@@ -54,7 +54,7 @@ public class DeferredArticleBodyCallbackTests
             callback.Invoke(ArticleBodyResult.NotRetrieved);
 
         callback.Discard();
-        callback.Activate(results.Add);
+        callback.Activate((result, _) => results.Add(result));
         callback.Invoke(ArticleBodyResult.Retrieved);
 
         Assert.Empty(results);
@@ -64,7 +64,7 @@ public class DeferredArticleBodyCallbackTests
     public void ThrowingTarget_IsContained()
     {
         var callback = new DeferredArticleBodyCallback();
-        callback.Activate(_ => throw new InvalidOperationException("callback failure"));
+        callback.Activate((_, _) => throw new InvalidOperationException("callback failure"));
 
         var exception = Record.Exception(() => callback.Invoke(ArticleBodyResult.Retrieved));
 
@@ -87,7 +87,7 @@ public class DeferredArticleBodyCallbackTests
             var activate = Task.Run(async () =>
             {
                 await ready.Task;
-                callback.Activate(_ => Interlocked.Increment(ref delivered));
+                callback.Activate((_, _) => Interlocked.Increment(ref delivered));
             });
 
             ready.SetResult();

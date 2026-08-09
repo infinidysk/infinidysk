@@ -68,7 +68,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     }
 
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken ct)
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken ct)
     {
         if (MultiProviderNntpClient.AttributionContext.Value != null)
             return await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, ct).ConfigureAwait(false);

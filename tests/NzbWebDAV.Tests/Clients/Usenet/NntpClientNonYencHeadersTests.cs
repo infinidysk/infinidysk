@@ -62,7 +62,7 @@ public class NntpClientNonYencHeadersTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             var bytes = Encoding.ASCII.GetBytes("this is not a yEnc article\r\n.\r\n");
@@ -77,7 +77,7 @@ public class NntpClientNonYencHeadersTests
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -87,7 +87,7 @@ public class NntpClientNonYencHeadersTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

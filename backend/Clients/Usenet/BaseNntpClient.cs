@@ -184,7 +184,7 @@ public class BaseNntpClient : NntpClient
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync
     (
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken
     )
     {
@@ -207,7 +207,7 @@ public class BaseNntpClient : NntpClient
     public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync
     (
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken
     )
     {
@@ -227,7 +227,7 @@ public class BaseNntpClient : NntpClient
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync
     (
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken
     )
     {

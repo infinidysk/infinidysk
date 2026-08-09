@@ -23,7 +23,7 @@ public partial class UsenetClient
     public async Task<UsenetBodyResponse> BodyAsync
     (
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken
     )
     {
@@ -111,7 +111,7 @@ public partial class UsenetClient
     public async Task<UsenetDecodedBodyResponse> DecodedBodyAsync
     (
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken
     )
     {
@@ -200,7 +200,7 @@ public partial class UsenetClient
         TaskCompletionSource<UsenetYencHeader?> headersCompletion,
         CancellationTokenSource operationCts,
         CancellationToken callerCancellationToken,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         DecodedBodyReadStream decodedStream,
         bool releaseCommandLock = true,
         CoalescedReadTimeout? sharedReadTimeout = null,
@@ -512,7 +512,9 @@ public partial class UsenetClient
                         ArticleBodyResult.Cancelled,
                     _ => ArticleBodyResult.NotRetrieved
                 };
-                onConnectionReadyAgain?.Invoke(result);
+                onConnectionReadyAgain?.Invoke(
+                    result,
+                    result == ArticleBodyResult.NotRetrieved ? DescribeFailure(failure) : null);
             }
             catch
             {
@@ -663,7 +665,7 @@ public partial class UsenetClient
         PipeWriter writer,
         CancellationTokenSource operationCts,
         CancellationToken callerCancellationToken,
-        Action<ArticleBodyResult>? onConnectionReadyAgain)
+        ArticleBodyCompletionHandler? onConnectionReadyAgain)
     {
         Exception? failure = null;
         try
@@ -785,7 +787,8 @@ public partial class UsenetClient
             try
             {
                 onConnectionReadyAgain?.Invoke(
-                    failure == null ? ArticleBodyResult.Retrieved : ArticleBodyResult.NotRetrieved);
+                    failure == null ? ArticleBodyResult.Retrieved : ArticleBodyResult.NotRetrieved,
+                    failure == null ? null : DescribeFailure(failure));
             }
             catch
             {

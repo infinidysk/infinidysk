@@ -291,7 +291,7 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -322,13 +322,13 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -352,7 +352,7 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -405,13 +405,13 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -431,7 +431,7 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved);
@@ -466,13 +466,13 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -516,7 +516,7 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             ArticleFetches++;
@@ -546,13 +546,13 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -594,7 +594,7 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             ArticleFetches++;
@@ -637,13 +637,13 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -661,7 +661,7 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             var responses = segmentIds.Select(id =>
@@ -689,7 +689,7 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             DecodedArticleAsync(segmentId, cancellationToken);
 
@@ -715,7 +715,7 @@ public class FetchFirstSegmentsStepTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

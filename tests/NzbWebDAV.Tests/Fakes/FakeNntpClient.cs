@@ -55,7 +55,7 @@ internal sealed class FakeNntpClient(
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -77,7 +77,7 @@ internal sealed class FakeNntpClient(
 
     public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         BatchRequestCount++;
@@ -94,7 +94,7 @@ internal sealed class FakeNntpClient(
 
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 

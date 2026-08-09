@@ -276,6 +276,132 @@ public class ProviderCircuitBreakerConnectionFailureTests
         Assert.False(breaker.IsTripped);
     }
 
+    [Fact]
+    public async Task DecodedBodiesAsync_BodyCallbackFailure_TripReasonCarriesTransportDetail()
+    {
+        var breaker = new ProviderCircuitBreaker("reason-batch");
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(new ReasonReportingBodyClient()));
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "reason-batch");
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await client.DecodedBodiesAsync(
+                new List<SegmentId> { "segment" },
+                onConnectionReadyAgain: null,
+                CancellationToken.None);
+        }
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(ProviderCircuitState.Open, snapshot.State);
+        Assert.Contains("NotRetrieved", snapshot.LastFailureReason);
+        Assert.Contains("SocketException", snapshot.LastFailureReason);
+        Assert.Contains("ConnectionReset", snapshot.LastFailureReason);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_BodyCallbackFailure_TripReasonCarriesTransportDetail()
+    {
+        var breaker = new ProviderCircuitBreaker("reason-single");
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(new ReasonReportingBodyClient()));
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "reason-single");
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await client.DecodedBodyAsync(
+                "segment", onConnectionReadyAgain: null, CancellationToken.None);
+        }
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(ProviderCircuitState.Open, snapshot.State);
+        Assert.Contains("NotRetrieved", snapshot.LastFailureReason);
+        Assert.Contains("SocketException", snapshot.LastFailureReason);
+        Assert.Contains("ConnectionReset", snapshot.LastFailureReason);
+    }
+
+    private sealed class ReasonReportingBodyClient : NntpClient
+    {
+        public const string Reason = "IOException (SocketException: ConnectionReset)";
+
+        public override Task ConnectAsync(
+            string host, int port, bool useSsl, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public override Task<UsenetResponse> AuthenticateAsync(
+            string user, string pass, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetStatResponse> StatAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            // A body that dies mid-drain: the response headers succeeded, but the
+            // completion callback reports the transport failure with its reason.
+            onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved, Reason);
+            return Task.FromResult(new UsenetDecodedBodyResponse
+            {
+                SegmentId = segmentId,
+                ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+                ResponseMessage = "222 body follows",
+                Stream = null,
+            });
+        }
+
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            var responses = segmentIds.Select(id =>
+            {
+                var completion = new TaskCompletionSource<UsenetDecodedBodyResponse>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                completion.SetException(new IOException("Connection reset by peer."));
+                return completion.Task;
+            }).ToArray();
+            onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved, Reason);
+            return Task.FromResult(new UsenetDecodedBodyBatch
+            {
+                Responses = responses,
+            });
+        }
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override void Dispose()
+        {
+        }
+    }
+
     private sealed class FailingStatClient : NntpClient
     {
         public override Task ConnectAsync(
@@ -300,13 +426,13 @@ public class ProviderCircuitBreakerConnectionFailureTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -316,7 +442,7 @@ public class ProviderCircuitBreakerConnectionFailureTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -357,13 +483,13 @@ public class ProviderCircuitBreakerConnectionFailureTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -373,7 +499,7 @@ public class ProviderCircuitBreakerConnectionFailureTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

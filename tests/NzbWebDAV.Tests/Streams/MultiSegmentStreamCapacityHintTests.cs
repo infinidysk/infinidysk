@@ -204,7 +204,7 @@ file sealed class HeaderThrowingBodyClient(byte[] payload, Exception headerExcep
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -220,7 +220,7 @@ file sealed class HeaderThrowingBodyClient(byte[] payload, Exception headerExcep
 
     public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
@@ -230,7 +230,7 @@ file sealed class HeaderThrowingBodyClient(byte[] payload, Exception headerExcep
 
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 

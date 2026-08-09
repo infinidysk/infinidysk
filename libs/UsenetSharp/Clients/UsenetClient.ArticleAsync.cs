@@ -15,7 +15,7 @@ public partial class UsenetClient
     public async Task<UsenetArticleResponse> ArticleAsync
     (
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken
     )
     {

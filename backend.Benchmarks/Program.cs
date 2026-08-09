@@ -257,7 +257,7 @@ internal sealed class BenchmarkNntpClient(
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -275,7 +275,7 @@ internal sealed class BenchmarkNntpClient(
 
     public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         var responses = segmentIds
@@ -312,7 +312,7 @@ internal sealed class BenchmarkNntpClient(
 
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 

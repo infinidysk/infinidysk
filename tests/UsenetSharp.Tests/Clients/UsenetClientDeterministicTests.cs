@@ -197,7 +197,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.BodyAsync(
-            "article@example.com", completion.SetResult, CancellationToken.None);
+            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
         using var reader = new StreamReader(response.Stream!, Encoding.Latin1);
         var content = await reader.ReadToEndAsync();
 
@@ -344,7 +344,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.DecodedBodyAsync(
-            "article@example.com", completion.SetResult, CancellationToken.None);
+            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
         var headers = await response.Stream!.GetYencHeadersAsync();
         using var decoded = new MemoryStream();
         await response.Stream.CopyToAsync(decoded);
@@ -432,7 +432,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.DecodedBodyAsync(
-            "article@example.com", completion.SetResult, CancellationToken.None);
+            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
 
         var exception = Assert.ThrowsAsync<InvalidDataException>(async () =>
             await response.Stream!.CopyToAsync(Stream.Null));
@@ -496,7 +496,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.DecodedBodyAsync(
-            "article@example.com", completion.SetResult, CancellationToken.None);
+            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
 
         Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await response.Stream!.CopyToAsync(Stream.Null));
@@ -527,7 +527,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.DecodedBodyAsync(
-            "article@example.com", completion.SetResult, CancellationToken.None);
+            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
         _ = await response.Stream!.GetYencHeadersAsync();
         var copyTask = response.Stream.CopyToAsync(Stream.Null);
         timeProvider.Advance(readTimeout);
@@ -571,7 +571,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.DecodedBodyAsync(
-            "article@example.com", completion.SetResult, cts.Token);
+            "article@example.com", (result, _) => completion.SetResult(result), cts.Token);
         var copyTask = response.Stream!.CopyToAsync(Stream.Null);
         await firstLineSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
         cts.Cancel();
@@ -606,7 +606,7 @@ public class UsenetClientDeterministicTests
         var completion = new TaskCompletionSource<ArticleBodyResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var response = await client.BodyAsync("article@example.com", completion.SetResult, cts.Token);
+        var response = await client.BodyAsync("article@example.com", (result, _) => completion.SetResult(result), cts.Token);
         var copyTask = response.Stream!.CopyToAsync(Stream.Null);
         await firstLineSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
         await Task.Delay(50);
@@ -646,7 +646,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.DecodedBodyAsync(
-            "article@example.com", completion.SetResult, cts.Token);
+            "article@example.com", (result, _) => completion.SetResult(result), cts.Token);
         var copyTask = response.Stream!.CopyToAsync(Stream.Null);
         await firstLineSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var cancelledAt = Environment.TickCount64;
@@ -688,7 +688,7 @@ public class UsenetClientDeterministicTests
 
         var batch = await client.DecodedBodiesAsync(
             new SegmentId[] { "first@example.com", "second@example.com" },
-            result => completion.TrySetResult(result),
+            (result, _) => completion.TrySetResult(result),
             cts.Token);
         var first = await batch.Responses[0];
         var copyTask = first.Stream!.CopyToAsync(Stream.Null);
@@ -743,7 +743,7 @@ public class UsenetClientDeterministicTests
 
         var batch = await client.DecodedBodiesAsync(
             new SegmentId[] { "first@example.com", "second@example.com" },
-            result =>
+            (result, _) =>
             {
                 Interlocked.Increment(ref callbackCount);
                 completion.TrySetResult(result);
@@ -888,7 +888,7 @@ public class UsenetClientDeterministicTests
 
         await foreach (var response in client.EnumerateDecodedBodiesAsync(
                            new SegmentId[] { "first@example.com", "second@example.com" },
-                           completion.SetResult,
+                           (result, _) => completion.SetResult(result),
                            CancellationToken.None))
         {
             using var decoded = new MemoryStream();
@@ -942,7 +942,7 @@ public class UsenetClientDeterministicTests
                                "second@example.com",
                                "third@example.com"
                            },
-                           completion.SetResult,
+                           (result, _) => completion.SetResult(result),
                            CancellationToken.None))
         {
             await response.Stream!.CopyToAsync(Stream.Null);
@@ -985,7 +985,7 @@ public class UsenetClientDeterministicTests
 
         await foreach (var _ in client.EnumerateDecodedBodiesAsync(
                            new SegmentId[] { "first@example.com", "second@example.com" },
-                           completion.SetResult,
+                           (result, _) => completion.SetResult(result),
                            CancellationToken.None))
         {
             await WaitForConditionAsync(
@@ -1024,7 +1024,7 @@ public class UsenetClientDeterministicTests
 
         var batch = await client.DecodedBodiesAsync(
             new SegmentId[] { "missing@example.com", "available@example.com" },
-            completion.SetResult,
+            (result, _) => completion.SetResult(result),
             CancellationToken.None);
         var missing = await batch.Responses[0];
         var available = await batch.Responses[1];
@@ -1064,7 +1064,7 @@ public class UsenetClientDeterministicTests
 
         var batch = await client.DecodedBodiesAsync(
             new SegmentId[] { "truncated@example.com", "pending@example.com" },
-            completion.SetResult,
+            (result, _) => completion.SetResult(result),
             CancellationToken.None);
         var truncated = await batch.Responses[0];
 
@@ -1125,7 +1125,7 @@ public class UsenetClientDeterministicTests
 
         var batch = await client.DecodedBodiesAsync(
             new SegmentId[] { "first@example.com", "second@example.com" },
-            result =>
+            (result, _) =>
             {
                 Interlocked.Increment(ref callbackCount);
                 completion.TrySetResult(result);
@@ -1197,7 +1197,7 @@ public class UsenetClientDeterministicTests
 
         var batch = await client.DecodedBodiesAsync(
             new SegmentId[] { "first@example.com" },
-            completion.SetResult,
+            (result, _) => completion.SetResult(result),
             cts.Token);
         var response = await batch.Responses[0];
         var copyTask = response.Stream!.CopyToAsync(Stream.Null);
@@ -1225,7 +1225,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.BodyAsync(
-            "article@example.com", completion.SetResult, CancellationToken.None);
+            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
 
         Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await response.Stream!.CopyToAsync(Stream.Null));
@@ -1236,6 +1236,50 @@ public class UsenetClientDeterministicTests
             Assert.That(client.IsConnected, Is.True);
             Assert.That(client.IsHealthy, Is.False);
         });
+    }
+
+    [Test]
+    public async Task BodyAsync_TruncatedTransfer_ReportsTheFailureReason()
+    {
+        await using var server = new ScriptedNntpServer(async (_, writer, _) =>
+        {
+            await writer.WriteAsync("222 body follows\r\npartial\r\n");
+            throw new IOException("Close scripted connection.");
+        });
+        await using var client = new UsenetClient();
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        var completion = new TaskCompletionSource<string?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var response = await client.BodyAsync(
+            "article@example.com", (_, reason) => completion.SetResult(reason), CancellationToken.None);
+
+        Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+            await response.Stream!.CopyToAsync(Stream.Null));
+        Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
+            Does.Contain(nameof(UsenetProtocolException)));
+    }
+
+    [Test]
+    public async Task BodyAsync_Success_ReportsNullFailureReason()
+    {
+        await using var server = new ScriptedNntpServer(async (_, writer, _) =>
+        {
+            await writer.WriteAsync("222 body follows\r\nhello\r\n.\r\n");
+        });
+        await using var client = new UsenetClient();
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        var completion = new TaskCompletionSource<(ArticleBodyResult, string?)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var response = await client.BodyAsync(
+            "article@example.com", (result, reason) => completion.SetResult((result, reason)),
+            CancellationToken.None);
+        await response.Stream!.CopyToAsync(Stream.Null);
+
+        var (result, reason) = await completion.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.That(result, Is.EqualTo(ArticleBodyResult.Retrieved));
+        Assert.That(reason, Is.Null);
     }
 
     [Test]
@@ -2142,7 +2186,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.BodyAsync(
-            "article@example.com", completion.SetResult, CancellationToken.None);
+            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
         using var reader = new StreamReader(response.Stream!, Encoding.Latin1);
         Assert.ThrowsAsync<UsenetProtocolException>(async () => await reader.ReadToEndAsync());
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
@@ -2184,7 +2228,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.BodyAsync(
-            "article@example.com", completion.SetResult, CancellationToken.None);
+            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
         var copyTask = response.Stream!.CopyToAsync(Stream.Null);
         timeProvider.Advance(readTimeout);
 
@@ -2403,7 +2447,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.BodyAsync(
-            "article@example.com", completion.SetResult, CancellationToken.None);
+            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
         await response.Stream!.DisposeAsync();
         continueBody.SetResult();
 
@@ -2442,7 +2486,7 @@ public class UsenetClientDeterministicTests
         var completion = new TaskCompletionSource<ArticleBodyResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var response = await client.BodyAsync("article@example.com", completion.SetResult, cts.Token);
+        var response = await client.BodyAsync("article@example.com", (result, _) => completion.SetResult(result), cts.Token);
         var copyTask = response.Stream!.CopyToAsync(Stream.Null);
         await firstLineSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
         await Task.Delay(50);
@@ -2482,7 +2526,7 @@ public class UsenetClientDeterministicTests
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         var response = await client.BodyAsync(
-            "article@example.com", completion.SetResult, callerCts.Token);
+            "article@example.com", (result, _) => completion.SetResult(result), callerCts.Token);
         var buffer = new byte[4096];
         Assert.That(
             await response.Stream!.ReadAsync(buffer.AsMemory()).AsTask().WaitAsync(TimeSpan.FromSeconds(2)),
@@ -2763,9 +2807,9 @@ public class UsenetClientDeterministicTests
 
         // First body holds the command lock; the second command queues behind it.
         _ = await client.BodyAsync(
-            "active@example.com", activeCompletion.SetResult, CancellationToken.None);
+            "active@example.com", (result, _) => activeCompletion.SetResult(result), CancellationToken.None);
         var queuedBody = client.BodyAsync(
-            "queued@example.com", queuedCompletion.SetResult, CancellationToken.None);
+            "queued@example.com", (result, _) => queuedCompletion.SetResult(result), CancellationToken.None);
         await Task.Delay(100);
 
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));

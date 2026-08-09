@@ -2,7 +2,7 @@
 
 namespace NzbWebDAV.Clients.Usenet.Models;
 
-public readonly struct UsenetExclusiveConnection(Action<ArticleBodyResult>? onConnectionReadyAgain)
+public readonly struct UsenetExclusiveConnection(ArticleBodyCompletionHandler? onConnectionReadyAgain)
 {
-    public Action<ArticleBodyResult>? OnConnectionReadyAgain => onConnectionReadyAgain;
+    public ArticleBodyCompletionHandler? OnConnectionReadyAgain => onConnectionReadyAgain;
 }

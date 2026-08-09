@@ -100,49 +100,49 @@ public class DownloadingNntpClient : WrappingNntpClient
     }
 
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken)
+        ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
         var semaphore = await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
         return await base.DecodedBodyAsync(segmentId, OnConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
 
-        void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult)
+        void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult, string? failureReason)
         {
             semaphore.Release();
-            onConnectionReadyAgain?.Invoke(articleBodyResult);
+            onConnectionReadyAgain?.Invoke(articleBodyResult, failureReason);
         }
     }
 
     public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         var semaphore = await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
         return await base.DecodedBodiesAsync(
             segmentIds, OnConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
 
-        void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult)
+        void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult, string? failureReason)
         {
             semaphore.Release();
-            onConnectionReadyAgain?.Invoke(articleBodyResult);
+            onConnectionReadyAgain?.Invoke(articleBodyResult, failureReason);
         }
     }
 
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync(SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken)
+        ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
         var semaphore = await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
         return await base.DecodedArticleAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
             .ConfigureAwait(false);
 
-        void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult)
+        void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult, string? failureReason)
         {
             semaphore.Release();
-            onConnectionReadyAgain?.Invoke(articleBodyResult);
+            onConnectionReadyAgain?.Invoke(articleBodyResult, failureReason);
         }
     }
 
-    private async Task<PrioritizedSemaphore> AcquireExclusiveConnectionAsync(Action<ArticleBodyResult>? onConnectionReadyAgain,
+    private async Task<PrioritizedSemaphore> AcquireExclusiveConnectionAsync(ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         try
@@ -217,7 +217,7 @@ public class DownloadingNntpClient : WrappingNntpClient
     )
     {
         var semaphore = await AcquireExclusiveConnectionAsync(cancellationToken).ConfigureAwait(false);
-        return new UsenetExclusiveConnection(_ => semaphore.Release());
+        return new UsenetExclusiveConnection((_, _) => semaphore.Release());
     }
 
     public override async Task<UsenetExclusiveConnection> AcquireExclusiveConnectionAsync
@@ -233,7 +233,7 @@ public class DownloadingNntpClient : WrappingNntpClient
         }
 
         var semaphore = await AcquireExclusiveConnectionAsync(cancellationToken).ConfigureAwait(false);
-        return new UsenetExclusiveConnection(_ => semaphore.Release());
+        return new UsenetExclusiveConnection((_, _) => semaphore.Release());
     }
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,

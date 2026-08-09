@@ -42,17 +42,17 @@ public abstract class NntpClient : INntpClient
         SegmentId segmentId, CancellationToken cancellationToken);
 
     public abstract Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken);
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken);
 
     public abstract Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
-        IReadOnlyList<SegmentId> segmentIds, Action<ArticleBodyResult>? onConnectionReadyAgain,
+        IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken);
 
     public abstract Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
         SegmentId segmentId, CancellationToken cancellationToken);
 
     public abstract Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken);
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken);
 
     public abstract Task<UsenetDateResponse> DateAsync(
         CancellationToken cancellationToken);

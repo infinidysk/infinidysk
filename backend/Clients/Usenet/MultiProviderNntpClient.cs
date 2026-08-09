@@ -230,7 +230,7 @@ public class MultiProviderNntpClient(
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync
     (
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken
     )
     {
@@ -242,11 +242,11 @@ public class MultiProviderNntpClient(
                     provider.DecodedBodyAsync(segmentId, callback, cancellationToken),
                 UsenetResponseType.ArticleRetrievedBodyFollows,
                 segmentId,
-                result =>
+                (result, failureReason) =>
                 {
                     try
                     {
-                        InvokeCompletionCallback(onConnectionReadyAgain, result);
+                        InvokeCompletionCallback(onConnectionReadyAgain, result, failureReason);
                     }
                     finally
                     {
@@ -265,7 +265,7 @@ public class MultiProviderNntpClient(
     public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync
     (
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken
     )
     {
@@ -273,11 +273,11 @@ public class MultiProviderNntpClient(
             ? []
             : segmentIds.Select(x => concurrentReadTracker.BeginSegmentFetch(x)).ToArray();
 
-        void CompleteBatchFetches(ArticleBodyResult result)
+        void CompleteBatchFetches(ArticleBodyResult result, string? failureReason)
         {
             try
             {
-                InvokeCompletionCallback(onConnectionReadyAgain, result);
+                InvokeCompletionCallback(onConnectionReadyAgain, result, failureReason);
             }
             finally
             {
@@ -538,11 +538,11 @@ public class MultiProviderNntpClient(
                                 traceRange, priorMisses);
                             response = WrapProviderResponse(response, provider.MetricsKey);
                             gateOwnedByTransfer = true;
-                            deferredCallback.Activate(result =>
+                            deferredCallback.Activate((result, failureReason) =>
                             {
                                 try
                                 {
-                                    coordinator.CompleteTransfer(result);
+                                    coordinator.CompleteTransfer(result, failureReason);
                                 }
                                 finally
                                 {
@@ -621,23 +621,25 @@ public class MultiProviderNntpClient(
 
     private sealed class BatchCallbackCoordinator(
         int responseCount,
-        Action<ArticleBodyResult>? callback)
+        ArticleBodyCompletionHandler? callback)
     {
         private int _remaining = responseCount + 1;
         private int _transportFailed;
         private int _resolutionFailed;
         private int _callbackInvoked;
+        private string? _firstFailureReason;
 
         public void AddTransfer()
         {
             Interlocked.Increment(ref _remaining);
         }
 
-        public void CompleteTransfer(ArticleBodyResult result)
+        public void CompleteTransfer(ArticleBodyResult result, string? failureReason = null)
         {
             if (result == ArticleBodyResult.NotRetrieved)
             {
                 Volatile.Write(ref _transportFailed, 1);
+                Interlocked.CompareExchange(ref _firstFailureReason, failureReason, null);
             }
             else if (result == ArticleBodyResult.Cancelled)
             {
@@ -670,19 +672,19 @@ public class MultiProviderNntpClient(
                 return;
             }
 
+            var failed = Volatile.Read(ref _transportFailed) != 0 ||
+                         Volatile.Read(ref _resolutionFailed) != 0;
             InvokeCompletionCallback(
                 callback,
-                Volatile.Read(ref _transportFailed) == 0 &&
-                Volatile.Read(ref _resolutionFailed) == 0
-                    ? ArticleBodyResult.Retrieved
-                    : ArticleBodyResult.NotRetrieved);
+                failed ? ArticleBodyResult.NotRetrieved : ArticleBodyResult.Retrieved,
+                failed ? _firstFailureReason : null);
         }
     }
 
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync
     (
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken
     )
     {
@@ -696,10 +698,10 @@ public class MultiProviderNntpClient(
     }
 
     private async Task<T> RunStreamingFromPoolWithBackup<T>(
-        Func<INntpClient, Action<ArticleBodyResult>, Task<T>> task,
+        Func<INntpClient, ArticleBodyCompletionHandler, Task<T>> task,
         UsenetResponseType successResponseType,
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
         where T : UsenetResponse
     {
@@ -751,7 +753,7 @@ public class MultiProviderNntpClient(
                         provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
                         stopwatch.ElapsedMilliseconds, attemptIndex, traceRange, priorMisses);
                     result = WrapProviderResponse(result, provider.MetricsKey);
-                    deferredCallback.Activate(onConnectionReadyAgain ?? (_ => { }));
+                    deferredCallback.Activate(onConnectionReadyAgain ?? ((_, _) => { }));
                     return result;
                 }
 
@@ -1361,12 +1363,13 @@ public class MultiProviderNntpClient(
     }
 
     private static void InvokeCompletionCallback(
-        Action<ArticleBodyResult>? callback,
-        ArticleBodyResult result)
+        ArticleBodyCompletionHandler? callback,
+        ArticleBodyResult result,
+        string? failureReason = null)
     {
         try
         {
-            callback?.Invoke(result);
+            callback?.Invoke(result, failureReason);
         }
         catch (Exception e)
         {

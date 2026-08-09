@@ -198,7 +198,7 @@ public class MultiConnectionNntpClient(
 
     private static async Task<UsenetDateResponse> RequireSuccessfulDateAsync(
         INntpClient connection,
-        Action<ArticleBodyResult> _,
+        ArticleBodyCompletionHandler _,
         CancellationToken ct)
     {
         var response = await connection.DateAsync(ct).ConfigureAwait(false);
@@ -214,7 +214,7 @@ public class MultiConnectionNntpClient(
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync
     (
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken ct
     )
     {
@@ -230,7 +230,7 @@ public class MultiConnectionNntpClient(
     public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync
     (
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken ct
     )
     {
@@ -273,7 +273,7 @@ public class MultiConnectionNntpClient(
                 deferredCallback.Activate(OnConnectionReadyAgain);
                 return new UsenetDecodedBodyBatch { Responses = wrapped };
 
-                void OnConnectionReadyAgain(ArticleBodyResult result)
+                void OnConnectionReadyAgain(ArticleBodyResult result, string? failureReason)
                 {
                     if (Interlocked.Exchange(ref callbackInvoked, 1) != 0) return;
                     switch (result)
@@ -292,16 +292,20 @@ public class MultiConnectionNntpClient(
                             // client cancellation as provider health failure.
                             LogException(connectionLock.Replace);
                             if (!ct.IsCancellationRequested)
-                                circuitBreaker.RecordFailure($"pipeline-callback-{result}");
+                                circuitBreaker.RecordFailure(failureReason is null
+                                    ? $"pipeline-callback-{result}"
+                                    : $"pipeline-callback-{result} ({failureReason})");
                             break;
                         default:
-                            circuitBreaker.RecordFailure($"pipeline-callback-{result}");
+                            circuitBreaker.RecordFailure(failureReason is null
+                                ? $"pipeline-callback-{result}"
+                                : $"pipeline-callback-{result} ({failureReason})");
                             LogException(connectionLock.Replace);
                             break;
                     }
 
                     LogException(connectionLock.Dispose);
-                    LogException(() => onConnectionReadyAgain?.Invoke(result));
+                    LogException(() => onConnectionReadyAgain?.Invoke(result, failureReason));
                 }
             }
             catch (Exception e) when (
@@ -417,7 +421,7 @@ public class MultiConnectionNntpClient(
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync
     (
         SegmentId segmentId,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken ct
     )
     {
@@ -434,8 +438,8 @@ public class MultiConnectionNntpClient(
     (
         string name,
         SemaphorePriority priority,
-        Func<INntpClient, Action<ArticleBodyResult>, CancellationToken, Task<T>> command,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        Func<INntpClient, ArticleBodyCompletionHandler, CancellationToken, Task<T>> command,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken ct,
         int retryCount = 1
     ) where T : UsenetResponse
@@ -645,7 +649,7 @@ public class MultiConnectionNntpClient(
             else
             {
                 var callbackInvoked = 0;
-                deferredCallback.Activate(articleBodyResult =>
+                deferredCallback.Activate((articleBodyResult, failureReason) =>
                 {
                     if (Interlocked.Exchange(ref callbackInvoked, 1) != 0) return;
 
@@ -654,7 +658,9 @@ public class MultiConnectionNntpClient(
                         LogException(() => connectionLock?.Replace());
                         // Client abort (seek) must not trip the provider circuit breaker.
                         if (!ct.IsCancellationRequested)
-                            circuitBreaker.RecordFailure($"body-callback-{name}-NotRetrieved");
+                            circuitBreaker.RecordFailure(failureReason is null
+                                ? $"body-callback-{name}-NotRetrieved"
+                                : $"body-callback-{name}-NotRetrieved ({failureReason})");
                     }
                     else if (articleBodyResult == ArticleBodyResult.Retrieved)
                     {
@@ -666,7 +672,7 @@ public class MultiConnectionNntpClient(
                     }
 
                     LogException(() => connectionLock?.Dispose());
-                    LogException(() => onConnectionReadyAgain?.Invoke(articleBodyResult));
+                    LogException(() => onConnectionReadyAgain?.Invoke(articleBodyResult, failureReason));
                 });
             }
 

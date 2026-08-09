@@ -153,12 +153,12 @@ public class WrappingNntpClientRetirementTests
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
-            SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain,
+            SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
-            IReadOnlyList<SegmentId> segmentIds, Action<ArticleBodyResult>? onConnectionReadyAgain,
+            IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -167,7 +167,7 @@ public class WrappingNntpClientRetirementTests
             throw new NotSupportedException();
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
-            SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain,
+            SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

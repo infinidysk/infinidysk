@@ -42,7 +42,7 @@ public class StreamingTimeoutTests
         ArticleBodyResult? callbackResult = null;
         var request = client.DecodedBodyAsync(
             "seg",
-            result =>
+            (result, _) =>
             {
                 callbackResult = result;
                 Interlocked.Increment(ref callbacks);
@@ -80,7 +80,7 @@ public class StreamingTimeoutTests
         ArticleBodyResult? callbackResult = null;
         var request = client.DecodedBodiesAsync(
             ["seg-a", "seg-b"],
-            result =>
+            (result, _) =>
             {
                 callbackResult = result;
                 Interlocked.Increment(ref callbacks);
@@ -113,7 +113,7 @@ public class StreamingTimeoutTests
         var exception = await Assert.ThrowsAsync<NntpClientRetiredException>(() =>
             client.DecodedBodyAsync(
                 "seg",
-                result => callbackResult = result,
+                (result, _) => callbackResult = result,
                 CancellationToken.None));
 
         Assert.IsAssignableFrom<ObjectDisposedException>(exception.InnerException);
@@ -157,7 +157,7 @@ public class StreamingTimeoutTests
         await Assert.ThrowsAsync<NntpClientRetiredException>(() =>
             client.DecodedBodyAsync(
                 "seg",
-                result =>
+                (result, _) =>
                 {
                     callbackResult = result;
                     Interlocked.Increment(ref callbacks);
@@ -232,7 +232,7 @@ public class StreamingTimeoutTests
         var sw = Stopwatch.StartNew();
         var response = await client.DecodedBodyAsync(
             "seg",
-            _ => Interlocked.Increment(ref outerCallbacks),
+            (_, _) => Interlocked.Increment(ref outerCallbacks),
             cts.Token);
         sw.Stop();
 
@@ -304,7 +304,7 @@ public class StreamingTimeoutTests
         var outerCallbacks = 0;
         var sw = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAsync<TimeoutException>(() =>
-            client.DecodedBodyAsync("seg", _ => Interlocked.Increment(ref outerCallbacks), cts.Token));
+            client.DecodedBodyAsync("seg", (_, _) => Interlocked.Increment(ref outerCallbacks), cts.Token));
         sw.Stop();
 
         Assert.Contains("2 attempts", ex.Message);
@@ -479,7 +479,7 @@ public class StreamingTimeoutTests
 
         var batch = await client.DecodedBodiesAsync(
             [new SegmentId("one"), new SegmentId("two")],
-            result => callbacks.Add(result),
+            (result, _) => callbacks.Add(result),
             cts.Token);
 
         Assert.Equal(2, batch.Responses.Count);
@@ -515,7 +515,7 @@ public class StreamingTimeoutTests
         var exception = await Assert.ThrowsAsync<TimeoutException>(() =>
             client.DecodedBodiesAsync(
                 [new SegmentId("one"), new SegmentId("two")],
-                result => callbacks.Add(result),
+                (result, _) => callbacks.Add(result),
                 cts.Token));
 
         Assert.Contains("2 attempts", exception.Message, StringComparison.Ordinal);
@@ -551,7 +551,7 @@ public class StreamingTimeoutTests
         var callbacks = new List<ArticleBodyResult>();
         var batchTask = client.DecodedBodiesAsync(
             [new SegmentId("one")],
-            result => callbacks.Add(result),
+            (result, _) => callbacks.Add(result),
             cts.Token);
 
         await hanging.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -803,7 +803,7 @@ public class StreamingTimeoutTests
 
         public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             BodyRequestCount++;
@@ -824,7 +824,7 @@ public class StreamingTimeoutTests
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -850,7 +850,7 @@ public class StreamingTimeoutTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -913,7 +913,7 @@ public class StreamingTimeoutTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -933,7 +933,7 @@ public class StreamingTimeoutTests
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -943,7 +943,7 @@ public class StreamingTimeoutTests
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -1021,7 +1021,7 @@ public class StreamingTimeoutTests
 
         public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             Started.TrySetResult();
@@ -1046,7 +1046,7 @@ public class StreamingTimeoutTests
     {
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
-            Action<ArticleBodyResult>? onConnectionReadyAgain,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();

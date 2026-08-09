@@ -64,7 +64,7 @@ public class ArticleCachingNntpClient(
     }
 
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken)
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
         var semaphore = _pendingRequests.GetOrAdd(segmentId, _ => new SemaphoreSlim(1, 1));
 
@@ -117,7 +117,7 @@ public class ArticleCachingNntpClient(
 
     public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         var partition = PartitionBatch(segmentIds);
@@ -137,7 +137,7 @@ public class ArticleCachingNntpClient(
     }
 
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken)
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
         var semaphore = _pendingRequests.GetOrAdd(segmentId, _ => new SemaphoreSlim(1, 1));
 
@@ -395,12 +395,13 @@ public class ArticleCachingNntpClient(
     }
 
     private static void InvokeCompletionCallback(
-        Action<ArticleBodyResult>? callback,
-        ArticleBodyResult result)
+        ArticleBodyCompletionHandler? callback,
+        ArticleBodyResult result,
+        string? failureReason = null)
     {
         try
         {
-            callback?.Invoke(result);
+            callback?.Invoke(result, failureReason);
         }
         catch
         {

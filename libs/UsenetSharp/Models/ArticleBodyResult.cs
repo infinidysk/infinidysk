@@ -17,3 +17,14 @@ public enum ArticleBodyResult
     /// <summary>The caller cancelled the operation and the connection was successfully drained.</summary>
     Cancelled,
 }
+
+/// <summary>
+/// Completion callback for body operations. <paramref name="failureReason"/> carries a
+/// short classification of the transport failure (exception type, socket error) when
+/// <paramref name="result"/> is <see cref="ArticleBodyResult.NotRetrieved"/>, so callers
+/// recording circuit-breaker or metrics reasons can name the root cause. It is null for
+/// clean outcomes and for cancellations.
+/// </summary>
+public delegate void ArticleBodyCompletionHandler(
+    ArticleBodyResult result,
+    string? failureReason = null);

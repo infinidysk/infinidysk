@@ -37,7 +37,7 @@ public partial class UsenetClient
     /// </remarks>
     public async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
@@ -147,7 +147,7 @@ public partial class UsenetClient
     /// </summary>
     public async IAsyncEnumerable<UsenetDecodedBodyResponse> EnumerateDecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         using var enumerationCts =
@@ -259,10 +259,11 @@ public partial class UsenetClient
         IReadOnlyList<SegmentId> segmentIds,
         IReadOnlyList<TaskCompletionSource<UsenetDecodedBodyResponse>> completions,
         CancellationToken callerCancellationToken,
-        Action<ArticleBodyResult>? onConnectionReadyAgain)
+        ArticleBodyCompletionHandler? onConnectionReadyAgain)
     {
         Exception? failure = null;
         var completionResult = ArticleBodyResult.Retrieved;
+        string? completionReason = null;
         var nextResponseIndex = 0;
         using var operationCts = CreateOperationTokenSource(callerCancellationToken);
         using var sharedReadTimeout = new CoalescedReadTimeout(
@@ -284,11 +285,16 @@ public partial class UsenetClient
                 {
                     await DrainUnexpectedMultiLineAsync(responseCode, operationCts.Token)
                         .ConfigureAwait(false);
-                    completionResult =
-                        responseCode == (int)UsenetResponseType.NoArticleWithThatMessageId &&
-                        completionResult != ArticleBodyResult.NotRetrieved
-                            ? ArticleBodyResult.NotFound
-                            : ArticleBodyResult.NotRetrieved;
+                    if (responseCode == (int)UsenetResponseType.NoArticleWithThatMessageId &&
+                        completionResult != ArticleBodyResult.NotRetrieved)
+                    {
+                        completionResult = ArticleBodyResult.NotFound;
+                    }
+                    else if (responseCode != (int)UsenetResponseType.NoArticleWithThatMessageId)
+                    {
+                        completionResult = ArticleBodyResult.NotRetrieved;
+                        completionReason ??= $"unexpected-response-{responseCode}";
+                    }
                     completions[nextResponseIndex].TrySetResult(new UsenetDecodedBodyResponse
                     {
                         SegmentId = segmentId,
@@ -343,6 +349,7 @@ public partial class UsenetClient
                 {
                     RecordConnectionFailure(bodyReadResult.Failure);
                     completionResult = ArticleBodyResult.NotRetrieved;
+                    completionReason = DescribeFailure(bodyReadResult.Failure);
                     break;
                 }
 
@@ -360,6 +367,12 @@ public partial class UsenetClient
                     drainFailure == null
                         ? ArticleBodyResult.Cancelled
                         : ArticleBodyResult.NotRetrieved;
+                if (completionResult == ArticleBodyResult.NotRetrieved)
+                {
+                    completionReason = drainFailure != null
+                        ? DescribeFailure(drainFailure)
+                        : DescribeFailure(bodyReadResult.Failure);
+                }
                 break;
             }
         }
@@ -370,6 +383,7 @@ public partial class UsenetClient
             {
                 RecordConnectionFailure(exception);
                 completionResult = ArticleBodyResult.NotRetrieved;
+                completionReason = DescribeFailure(exception);
             }
             else
             {
@@ -384,12 +398,17 @@ public partial class UsenetClient
                 completionResult = drainFailure == null
                     ? ArticleBodyResult.Cancelled
                     : ArticleBodyResult.NotRetrieved;
+                if (drainFailure != null)
+                {
+                    completionReason = DescribeFailure(drainFailure);
+                }
             }
         }
         catch (Exception exception)
         {
             failure = exception;
             completionResult = ArticleBodyResult.NotRetrieved;
+            completionReason = DescribeFailure(exception);
             RecordConnectionFailure(exception);
         }
         finally
@@ -406,7 +425,8 @@ public partial class UsenetClient
             _commandLock.Release();
             InvokeBatchCallback(
                 onConnectionReadyAgain,
-                completionResult);
+                completionResult,
+                completionReason);
         }
     }
 
@@ -449,16 +469,37 @@ public partial class UsenetClient
     }
 
     private static void InvokeBatchCallback(
-        Action<ArticleBodyResult>? callback,
-        ArticleBodyResult result)
+        ArticleBodyCompletionHandler? callback,
+        ArticleBodyResult result,
+        string? failureReason = null)
     {
         try
         {
-            callback?.Invoke(result);
+            callback?.Invoke(result, failureReason);
         }
         catch
         {
             // User callbacks must not fault command setup or the background pump.
         }
+    }
+
+    /// <summary>
+    /// Short, log-friendly failure classification: the outermost exception type, plus the
+    /// socket error when one is wrapped — e.g. "IOException (SocketException: ConnectionReset)".
+    /// Lets circuit-breaker and metrics reasons name the root cause instead of "NotRetrieved".
+    /// </summary>
+    internal static string? DescribeFailure(Exception? failure)
+    {
+        if (failure == null) return null;
+        var description = failure.GetType().Name;
+        for (var inner = failure.InnerException; inner != null; inner = inner.InnerException)
+        {
+            if (inner is System.Net.Sockets.SocketException socketException)
+                return $"{description} (SocketException: {socketException.SocketErrorCode})";
+        }
+
+        return failure.InnerException is { } direct
+            ? $"{description} ({direct.GetType().Name})"
+            : description;
     }
 }

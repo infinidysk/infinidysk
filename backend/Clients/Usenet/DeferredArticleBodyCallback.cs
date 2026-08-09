@@ -5,14 +5,14 @@ namespace NzbWebDAV.Clients.Usenet;
 internal sealed class DeferredArticleBodyCallback
 {
     private readonly object _lock = new();
-    private Action<ArticleBodyResult>? _target;
-    private ArticleBodyResult? _deferredResult;
+    private ArticleBodyCompletionHandler? _target;
+    private (ArticleBodyResult Result, string? FailureReason)? _deferred;
     private bool _invoked;
     private bool _discarded;
 
-    public void Invoke(ArticleBodyResult result)
+    public void Invoke(ArticleBodyResult result, string? failureReason = null)
     {
-        Action<ArticleBodyResult>? target;
+        ArticleBodyCompletionHandler? target;
         lock (_lock)
         {
             if (_discarded || _invoked) return;
@@ -20,28 +20,28 @@ internal sealed class DeferredArticleBodyCallback
             target = _target;
             if (target == null)
             {
-                _deferredResult ??= result;
+                _deferred ??= (result, failureReason);
                 return;
             }
         }
 
-        InvokeSafely(target, result);
+        InvokeSafely(target, result, failureReason);
     }
 
-    public void Activate(Action<ArticleBodyResult> target)
+    public void Activate(ArticleBodyCompletionHandler target)
     {
-        ArticleBodyResult? deferredResult;
+        (ArticleBodyResult Result, string? FailureReason)? deferred;
         lock (_lock)
         {
             if (_discarded) return;
             _target = target;
-            deferredResult = _deferredResult;
-            _deferredResult = null;
+            deferred = _deferred;
+            _deferred = null;
         }
 
-        if (deferredResult.HasValue)
+        if (deferred.HasValue)
         {
-            InvokeSafely(target, deferredResult.Value);
+            InvokeSafely(target, deferred.Value.Result, deferred.Value.FailureReason);
         }
     }
 
@@ -51,15 +51,18 @@ internal sealed class DeferredArticleBodyCallback
         {
             _discarded = true;
             _target = null;
-            _deferredResult = null;
+            _deferred = null;
         }
     }
 
-    private static void InvokeSafely(Action<ArticleBodyResult> target, ArticleBodyResult result)
+    private static void InvokeSafely(
+        ArticleBodyCompletionHandler target,
+        ArticleBodyResult result,
+        string? failureReason)
     {
         try
         {
-            target(result);
+            target(result, failureReason);
         }
         catch
         {

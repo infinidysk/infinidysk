@@ -46,13 +46,13 @@ public interface IUsenetClient
         SegmentId segmentId, CancellationToken cancellationToken);
 
     Task<UsenetBodyResponse> BodyAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken);
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken);
 
     Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId, CancellationToken cancellationToken);
 
     Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
-        SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain,
+        SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -80,7 +80,7 @@ public interface IUsenetClient
     /// connection unsafe to reuse.
     /// </remarks>
     Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
-        IReadOnlyList<SegmentId> segmentIds, Action<ArticleBodyResult>? onConnectionReadyAgain,
+        IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         throw new NotSupportedException(
@@ -112,7 +112,7 @@ public interface IUsenetClient
     /// </remarks>
     IAsyncEnumerable<UsenetDecodedBodyResponse> EnumerateDecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
-        Action<ArticleBodyResult>? onConnectionReadyAgain,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         throw new NotSupportedException(
@@ -123,7 +123,7 @@ public interface IUsenetClient
         SegmentId segmentId, CancellationToken cancellationToken);
 
     Task<UsenetArticleResponse> ArticleAsync
-        (SegmentId segmentId, Action<ArticleBodyResult>? onConnectionReadyAgain, CancellationToken cancellationToken);
+        (SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken);
 
     Task<UsenetDateResponse> DateAsync(
         CancellationToken cancellationToken);
