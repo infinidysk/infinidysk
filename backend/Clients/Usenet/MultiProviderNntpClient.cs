@@ -677,7 +677,7 @@ public class MultiProviderNntpClient(
             InvokeCompletionCallback(
                 callback,
                 failed ? ArticleBodyResult.NotRetrieved : ArticleBodyResult.Retrieved,
-                failed ? _firstFailureReason : null);
+                failed ? Volatile.Read(ref _firstFailureReason) : null);
         }
     }
 
