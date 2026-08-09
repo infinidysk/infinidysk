@@ -33,8 +33,8 @@ namespace NzbWebDAV.Streams
         {
             _mStream = input ?? throw new ArgumentNullException(nameof(input));
             _mLimit = aesParams.DecodedSize;
-            _mKey = aesParams.Key ?? throw new ArgumentNullException(nameof(aesParams.Key));
-            _mBaseIv = aesParams.Iv ?? throw new ArgumentNullException(nameof(aesParams.Iv));
+            _mKey = aesParams.Key ?? throw new ArgumentNullException(nameof(aesParams), "Key is required.");
+            _mBaseIv = aesParams.Iv ?? throw new ArgumentNullException(nameof(aesParams), "Iv is required.");
 
             if (((uint)input.Length & (BlockSize - 1)) != 0)
             {
@@ -268,7 +268,7 @@ namespace NzbWebDAV.Streams
                 int read = 0;
                 while (read < BlockSize)
                 {
-                    int r = await _mStream.ReadAsync(iv, read, BlockSize - read, ct).ConfigureAwait(false);
+                    int r = await _mStream.ReadAsync(iv.AsMemory(read, BlockSize - read), ct).ConfigureAwait(false);
                     if (r == 0) throw new EndOfStreamException("Unable to read previous block for IV during seek.");
                     read += r;
                 }
@@ -297,7 +297,7 @@ namespace NzbWebDAV.Streams
                 int read = 0;
                 while (read < BlockSize)
                 {
-                    int r = await _mStream.ReadAsync(block, read, BlockSize - read, ct).ConfigureAwait(false);
+                    int r = await _mStream.ReadAsync(block.AsMemory(read, BlockSize - read), ct).ConfigureAwait(false);
                     if (r == 0) throw new EndOfStreamException("Unable to read target block during seek.");
                     read += r;
                 }

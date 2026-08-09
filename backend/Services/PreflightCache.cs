@@ -72,7 +72,7 @@ public class PreflightCache
                 _currentBytes -= ByteLength(existing.NzbBytes);
 
             while ((_entries.Count >= _maxCacheEntries || _currentBytes + bytes > _maxCacheBytes)
-                   && _entries.Count > 0)
+                   && !_entries.IsEmpty)
             {
                 var oldest = default(KeyValuePair<string, Entry>);
                 var found = false;

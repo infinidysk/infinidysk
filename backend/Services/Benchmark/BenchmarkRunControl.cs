@@ -6,7 +6,7 @@ namespace NzbWebDAV.Services.Benchmark;
 /// still going; we must not treat that disconnect as user cancel. Explicit
 /// cancel (UI Cancel / modal close) calls <see cref="Cancel"/> instead.
 /// </summary>
-public sealed class BenchmarkRunControl
+public sealed class BenchmarkRunControl : IDisposable
 {
     private readonly object _lock = new();
     private CancellationTokenSource? _cts;
@@ -31,4 +31,15 @@ public sealed class BenchmarkRunControl
             _cts?.Cancel();
         }
     }
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            _cts?.Dispose();
+            _cts = null;
+        }
+        GC.SuppressFinalize(this);
+    }
+
 }

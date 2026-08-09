@@ -40,8 +40,7 @@ public sealed class PrioritizedSemaphore : IDisposable
     {
         lock (_lock)
         {
-            if (_disposed)
-                throw new ObjectDisposedException(nameof(AsyncSemaphore));
+            ObjectDisposedException.ThrowIf(_disposed, typeof(AsyncSemaphore));
 
             if (_enteredCount < _maxAllowed)
             {

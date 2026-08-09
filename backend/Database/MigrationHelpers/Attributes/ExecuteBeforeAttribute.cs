@@ -1,6 +1,6 @@
 namespace NzbWebDAV.Database.MigrationHelpers.Attributes;
 
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
-public class ExecuteBeforeAttribute : Attribute
+public sealed class ExecuteBeforeAttribute : Attribute
 {
 }

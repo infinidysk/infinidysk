@@ -57,7 +57,7 @@ public static class IEnumerableTaskExtensions
                 {
                     if (x.Status == TaskStatus.RanToCompletion)
                         x.Result.Dispose();
-                });
+                }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
             }
         }
     }

@@ -60,7 +60,7 @@ public class GetWebdavItemController(
         Response.Headers["Content-Encoding"] = "identity";
 
         // handle par2 preview
-        if (Path.GetExtension(item.Name).ToLowerInvariant() == ".par2" && configManager.IsPreviewPar2FilesEnabled())
+        if (string.Equals(Path.GetExtension(item.Name), ".par2", StringComparison.OrdinalIgnoreCase) && configManager.IsPreviewPar2FilesEnabled())
             return await GetPar2PreviewStream(item, ct).ConfigureAwait(false);
 
         // Provisional budget for fully-specified ranges before stream creation.
@@ -264,7 +264,7 @@ public class GetWebdavItemController(
             int read;
             try
             {
-                read = await src.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false);
+                read = await src.ReadAsync(buffer, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -284,7 +284,7 @@ public class GetWebdavItemController(
             }
             if (read <= 0) break;
             var writeStarted = Stopwatch.GetTimestamp();
-            await dest.WriteAsync(buffer, 0, read, ct).ConfigureAwait(false);
+            await dest.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
             streamTrace.AddStall(
                 traceRange, StreamStallKind.ClientWrite, Stopwatch.GetElapsedTime(writeStarted));
             position += read;
@@ -367,7 +367,7 @@ public class GetWebdavItemController(
     {
         Response.Headers.ContentType = "text/plain";
         await using var stream = await item.GetReadableStreamAsync(ct).ConfigureAwait(false);
-        var fileDescriptors = await Par2.ReadFileDescriptions(stream, ct).GetAllAsync()
+        var fileDescriptors = await Par2.ReadFileDescriptions(stream, ct).GetAllAsync(ct: ct)
             .ConfigureAwait(false);
         return new MemoryStream(Encoding.UTF8.GetBytes(fileDescriptors.ToIndentedJson()));
     }

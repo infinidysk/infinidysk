@@ -71,7 +71,7 @@ public static partial class FileFilterUtil
             if (GlobCache.TryGetValue(glob, out var cached)) return cached;
             var pattern = "^" + Regex.Escape(glob)
                 .Replace("\\*", ".*", StringComparison.Ordinal)
-                .Replace("\\?", ".") + "$";
+                .Replace("\\?", ".", StringComparison.Ordinal) + "$";
             var regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
             GlobCache[glob] = regex;
             return regex;

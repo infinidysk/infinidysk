@@ -28,7 +28,8 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
         if (!HttpContext.Request.HasFormContentType)
             throw new BadHttpRequestException("Expected multipart form body.");
 
-        var file = HttpContext.Request.Form.Files.FirstOrDefault();
+        var formFiles = HttpContext.Request.Form.Files;
+        var file = formFiles.Count > 0 ? formFiles[0] : null;
         if (file is null || file.Length == 0)
             throw new BadHttpRequestException("No backup file was uploaded.");
 

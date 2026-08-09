@@ -218,7 +218,9 @@ public sealed class UsenetMigrationController(
         if (!string.IsNullOrWhiteSpace(q))
         {
             var normalizedSearch = q.Trim().ToLowerInvariant();
+            #pragma warning disable CA1862 // IQueryable: ToLowerInvariant().Contains() is translatable by EF Core; the StringComparison overload is not reliably translated to SQL
             query = query.Where(r => r.SubmitFileName.ToLowerInvariant().Contains(normalizedSearch));
+            #pragma warning restore CA1862
         }
 
         var total = await query.CountAsync(HttpContext.RequestAborted).ConfigureAwait(false);

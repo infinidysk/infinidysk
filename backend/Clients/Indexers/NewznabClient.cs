@@ -145,7 +145,7 @@ public class NewznabClient(
 
         var enclosure = item.Element("enclosure");
         var sizeStr = enclosure?.Attribute("length")?.Value ?? GetAttr(attrs, "size");
-        long.TryParse(sizeStr, out var size);
+        var size = long.TryParse(sizeStr, out var parsedSize) ? parsedSize : 0;
 
         var nzbUrl = enclosure?.Attribute("url")?.Value
                      ?? item.Element("link")?.Value

@@ -336,7 +336,9 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 _pendingInnerDispose = null;
                 pending.ContinueWith(
                     t => { _ = t.Exception; },
-                    TaskContinuationOptions.OnlyOnFaulted);
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
             }
         }
         _disposed = true;

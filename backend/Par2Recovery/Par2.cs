@@ -72,7 +72,7 @@ namespace NzbWebDAV.Par2Recovery
             // Test if the magic constant matches.
             var magic = Encoding.ASCII.GetString(header.Magic);
             if (!Par2PacketHeaderMagic.Equals(magic, StringComparison.Ordinal))
-                throw new ApplicationException("Invalid Magic Constant");
+                throw new InvalidDataException("Invalid Magic Constant");
 
             // Determine which type of packet we have.
             var packetType = Encoding.ASCII.GetString(header.PacketType);
@@ -147,7 +147,7 @@ namespace NzbWebDAV.Par2Recovery
                 var magic = Encoding.ASCII.GetString(header.Magic);
                 return Par2PacketHeaderMagic.Equals(magic, StringComparison.Ordinal);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 return false;
             }

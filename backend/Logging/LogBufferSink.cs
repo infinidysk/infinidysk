@@ -101,9 +101,9 @@ public sealed class LogBufferSink : ILogEventSink
 
     private static bool MatchesSearch(LogEntry entry, string search)
     {
-        if (entry.Message.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        if (entry.Exception is { } ex && ex.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        if (entry.Source is { } src && src.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        if (entry.Message.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
+        if (entry.Exception is { } ex && ex.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
+        if (entry.Source is { } src && src.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 

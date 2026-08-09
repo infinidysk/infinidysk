@@ -1,3 +1,4 @@
+using System.Diagnostics;
 namespace NzbWebDAV.Streams;
 
 /// <summary>
@@ -95,7 +96,7 @@ internal sealed class ContainerAwareFillStream : Stream
                 FillTransportStream(destination, packetSize: 192, transportHeaderOffset: 4);
                 break;
             default:
-                throw new ArgumentOutOfRangeException();
+                throw new UnreachableException($"Unsupported fill format: {_format}");
         }
 
         _position += toRead;

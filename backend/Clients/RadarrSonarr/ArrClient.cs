@@ -81,7 +81,7 @@ public class ArrClient(string host, string apiKey)
         using var response = await SendAsync(request, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false) ?? throw new NullReferenceException();
+        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false) ?? throw new InvalidDataException("The response deserialized to null.");
     }
 
     private async Task<T?> GetRootOrNull<T>(string rootPath, CancellationToken ct) where T : class
@@ -91,7 +91,7 @@ public class ArrClient(string host, string apiKey)
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false) ?? throw new NullReferenceException();
+        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false) ?? throw new InvalidDataException("The response deserialized to null.");
     }
 
     protected async Task<T> Post<T>(string path, object body, CancellationToken ct = default)
@@ -102,7 +102,7 @@ public class ArrClient(string host, string apiKey)
         using var response = await SendAsync(request, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false) ?? throw new NullReferenceException();
+        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false) ?? throw new InvalidDataException("The response deserialized to null.");
     }
 
     protected async Task<HttpStatusCode> Delete(string path, Dictionary<string, string>? queryParams = null, CancellationToken ct = default)

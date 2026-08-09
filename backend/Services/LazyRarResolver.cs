@@ -38,11 +38,13 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         set;
     }
 
+#pragma warning disable CA1001 // Persistor entries live for the process lifetime in _persistors (never evicted); SemaphoreSlim holds no native resources unless WaitHandle is materialized, and only WaitAsync is used
     private sealed class Persistor
     {
         public readonly SemaphoreSlim Sem = new(1, 1);
         public long LatestStamp;
     }
+#pragma warning restore CA1001
 
     // Resolve enough trailing volumes to cover targetByteOffset and return
     // the updated Meta. All needed volumes run in parallel (capped by

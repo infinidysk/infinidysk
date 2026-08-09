@@ -203,7 +203,9 @@ public class QueueItemProcessor(
         }
     }
 
+#pragma warning disable CA1859 // non-generic facade over RunStageAsync<T>; returning Task<object?> would leak the wrapper's shape for no benefit
     private Task RunStageAsync(string stage, Func<Task> action)
+#pragma warning restore CA1859
     {
         return RunStageAsync<object?>(stage, async () =>
         {

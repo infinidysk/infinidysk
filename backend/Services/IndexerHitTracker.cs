@@ -122,7 +122,9 @@ public class IndexerHitTracker
             });
             await ctx.SaveChangesAsync(ct).ConfigureAwait(false);
 
+            #pragma warning disable CA5394 // probabilistic metric pruning is not security-sensitive
             if (Rng.NextDouble() < PruneProbability)
+#pragma warning restore CA5394
                 _ = Task.Run(() => PruneAsync(CancellationToken.None), CancellationToken.None);
         }
         catch (Exception e)

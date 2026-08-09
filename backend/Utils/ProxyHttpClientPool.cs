@@ -50,7 +50,9 @@ public static class ProxyHttpClientPool
             {
                 handler.SslOptions = new SslClientAuthenticationOptions
                 {
+#pragma warning disable CA5359 // behind the explicit per-provider SkipTlsVerification setting for providers with broken/self-signed certs
                     RemoteCertificateValidationCallback = static (_, _, _, _) => true,
+#pragma warning restore CA5359
                 };
             }
 

@@ -17,7 +17,9 @@ public static class GetFileInfosStep
         List<FileDesc> par2FileDescriptors
     )
     {
+#pragma warning disable CA5351 // MD5 here is content hashing for the NZB/PAR2 ecosystem (dedup/integrity per format conventions), not security
         using var md5 = MD5.Create();
+#pragma warning restore CA5351
         var hashToFileDescMap = GetHashToFileDescMap(par2FileDescriptors);
         var picks = files.Select(x =>
         {

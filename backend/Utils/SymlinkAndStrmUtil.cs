@@ -289,7 +289,7 @@ public static class SymlinkAndStrmUtil
     }
 
     private static bool IsStrm(FileInfo x) =>
-        x.Extension.Equals(".strm", StringComparison.CurrentCultureIgnoreCase);
+        x.Extension.Equals(".strm", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSymLink(FileInfo x) =>
         x.Attributes.HasFlag(FileAttributes.ReparsePoint) && x.LinkTarget is not null;

@@ -139,6 +139,12 @@ public class WardenSourcesImportController(WardenStore warden, WardenRemoteSourc
 [Route("api/warden-sources-export")]
 public class WardenSourcesExportController(WardenStore warden) : BaseApiController
 {
+    private static readonly JsonSerializerOptions BundleJsonOptions = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
     protected override Task<IActionResult> HandleRequest()
     {
         var items = warden.GetSources()
@@ -153,11 +159,7 @@ public class WardenSourcesExportController(WardenStore warden) : BaseApiControll
             .ToList();
 
         var bundle = new Bundle { Version = 1, Items = items };
-        var json = JsonSerializer.Serialize(bundle, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        });
+        var json = JsonSerializer.Serialize(bundle, BundleJsonOptions);
 
         return Task.FromResult<IActionResult>(File(Encoding.UTF8.GetBytes(json), "application/json", "bundle.json"));
     }

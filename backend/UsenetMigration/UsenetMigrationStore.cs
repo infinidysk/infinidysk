@@ -30,7 +30,7 @@ internal sealed record MigrationCategoryMappingChange(
 /// than resolving a scoped context, because the migration DB is separate from the
 /// request-scoped <see cref="DavDatabaseContext"/>.
 /// </summary>
-public sealed class UsenetMigrationStore
+public sealed class UsenetMigrationStore : IDisposable
 {
     /// <summary>The pinned singleton session id enforced by CK_SessionState_Singleton.</summary>
     public const int SessionId = 1;
@@ -895,4 +895,11 @@ public sealed class UsenetMigrationStore
 
     internal static int ClampSubmitWorkers(int value, int maxQueueDepth) =>
         Math.Clamp(value, 1, Math.Min(16, Math.Max(1, maxQueueDepth)));
+
+    public void Dispose()
+    {
+        _databaseInitialization.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
 }

@@ -221,7 +221,9 @@ public class AddUrlRequest() : AddFileRequest
         {
             handler.SslOptions = new System.Net.Security.SslClientAuthenticationOptions
             {
+#pragma warning disable CA5359 // behind the explicit per-request/per-provider skip-TLS-verification setting for hosts with broken/self-signed certs
                 RemoteCertificateValidationCallback = static (_, _, _, _) => true,
+#pragma warning restore CA5359
             };
         }
         return new HttpClient(handler);

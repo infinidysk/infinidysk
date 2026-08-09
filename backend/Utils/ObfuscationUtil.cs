@@ -34,7 +34,7 @@ public static class ObfuscationUtil
 
         // "[BlaBla] something [More] something 5937bc5e32146e.bef89a622e4a23f07b0d3757ad5e8a.a02b264e [Brrr]"
         // So: square brackets plus 30+ hex digit
-        if (Regex.IsMatch(fileBaseName, @"[a-f0-9]{30}") && Regex.Matches(fileBaseName, @"\[\w+\]").Count >= 2)
+        if (Regex.IsMatch(fileBaseName, @"[a-f0-9]{30}") && Regex.Count(fileBaseName, @"\[\w+\]") >= 2)
         {
             return true;
         }

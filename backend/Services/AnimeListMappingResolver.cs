@@ -10,7 +10,7 @@ namespace NzbWebDAV.Services;
 /// Fribb/anime-lists dataset, which frequently carries the id Kitsu's API omits.
 /// The dataset is a single large json file; we download, index, and cache it in memory.
 /// </summary>
-public class AnimeListMappingResolver
+public sealed class AnimeListMappingResolver : IDisposable
 {
     private const string DatasetUrl =
         "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json";
@@ -195,6 +195,13 @@ public class AnimeListMappingResolver
             return dict is not null && dict.TryGetValue(id, out var m) ? m : null;
         }
     }
+
+    public void Dispose()
+    {
+        _loadGate.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
 }
 
 public sealed record AnimeMapping(int? TvdbId, string? ImdbId, bool IsMovie, int? TvdbSeason);

@@ -88,10 +88,7 @@ public class CancellableStream(Stream innerStream, CancellationToken token) : Fa
 
     private void CheckDisposed()
     {
-        if (_disposed)
-        {
-            throw new ObjectDisposedException(nameof(CancellableStream));
-        }
+        ObjectDisposedException.ThrowIf(_disposed, typeof(CancellableStream));
     }
 
     protected override void Dispose(bool disposing)

@@ -4,21 +4,22 @@ namespace NzbWebDAV.Utils;
 
 public static class ContentTypeUtil
 {
-    private static readonly FileExtensionContentTypeProvider ContentTypeProvider;
+    private static readonly FileExtensionContentTypeProvider ContentTypeProvider = CreateContentTypeProvider();
 
-    static ContentTypeUtil()
+    private static FileExtensionContentTypeProvider CreateContentTypeProvider()
     {
         // ReSharper disable once UseObjectOrCollectionInitializer
-        ContentTypeProvider = new FileExtensionContentTypeProvider();
-        ContentTypeProvider.Mappings[".flac"] = "audio/flac";
-        ContentTypeProvider.Mappings[".mkv"] = "video/x-matroska";
-        ContentTypeProvider.Mappings[".mk3d"] = "video/x-matroska";
-        ContentTypeProvider.Mappings[".m4v"] = "video/x-m4v";
-        ContentTypeProvider.Mappings[".ts"] = "video/mp2t";
-        ContentTypeProvider.Mappings[".m2ts"] = "video/mp2t";
-        ContentTypeProvider.Mappings[".mts"] = "video/mp2t";
-        ContentTypeProvider.Mappings[".divx"] = "video/divx";
-        ContentTypeProvider.Mappings[".rmvb"] = "application/vnd.rn-realmedia-vbr";
+        var provider = new FileExtensionContentTypeProvider();
+        provider.Mappings[".flac"] = "audio/flac";
+        provider.Mappings[".mkv"] = "video/x-matroska";
+        provider.Mappings[".mk3d"] = "video/x-matroska";
+        provider.Mappings[".m4v"] = "video/x-m4v";
+        provider.Mappings[".ts"] = "video/mp2t";
+        provider.Mappings[".m2ts"] = "video/mp2t";
+        provider.Mappings[".mts"] = "video/mp2t";
+        provider.Mappings[".divx"] = "video/divx";
+        provider.Mappings[".rmvb"] = "application/vnd.rn-realmedia-vbr";
+        return provider;
     }
 
     public static string GetContentType(string fileName)

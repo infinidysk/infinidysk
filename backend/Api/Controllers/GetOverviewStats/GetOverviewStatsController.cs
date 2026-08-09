@@ -211,10 +211,14 @@ public class GetOverviewStatsController(
             .Select(x => new { x.StartedAt, x.EndedAt, x.DurationMs, x.BytesServed, x.FailoverSaves })
             .ToListAsync();
         #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
+        #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
         var heatmapTask = BuildHeatmapAsync(metricsHeatmap, window, nowMs);
         #pragma warning restore CA2025
+        #pragma warning restore CA2025
+        #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
         #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
         var previousSavesTask = LoadPreviousFailoverSavesAsync(metricsPrev, window, windowStart, windowMs);
+        #pragma warning restore CA2025
         #pragma warning restore CA2025
         var sinceMinute = nowMs - OneMinute;
         var liveCountsTask = metricsLive.SegmentFetches
@@ -478,15 +482,23 @@ public class GetOverviewStatsController(
         await using var davIndexers = new DavDatabaseContext();
 
         #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
+        #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
         var catalogueTask = BuildCatalogueAsync(davDb.Ctx);
         #pragma warning restore CA2025
+        #pragma warning restore CA2025
+        #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
         var indexersTask = BuildIndexersAsync(davIndexers);
+        #pragma warning restore CA2025
         var apiUsageTask = BuildIndexerApiUsageAsync();
+        #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
         #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
         var lifetimeTask = BuildLifetimeAsync(metricsLifetime);
         #pragma warning restore CA2025
+        #pragma warning restore CA2025
+        #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
         #pragma warning disable CA2025 // all parallel query tasks are awaited via Task.WhenAll before the await using contexts dispose at method end
         var recordsTask = BuildRecordsAsync(metricsRecords);
+        #pragma warning restore CA2025
         #pragma warning restore CA2025
 
         await Task.WhenAll(catalogueTask, indexersTask, apiUsageTask, lifetimeTask, recordsTask)

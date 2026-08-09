@@ -83,7 +83,7 @@ public class ProbingStream(Stream stream) : Stream
             return 1 + read;
         }
 
-        return await stream.ReadAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
+        return await stream.ReadAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)

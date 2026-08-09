@@ -6,8 +6,7 @@ public static class IEnumerableExtensions
 {
     public static IEnumerable<List<T>> ToBatches<T>(this IEnumerable<T> items, int batchSize)
     {
-        if (items == null)
-            throw new ArgumentNullException(nameof(items));
+        ArgumentNullException.ThrowIfNull(items);
         if (batchSize <= 0)
             throw new ArgumentOutOfRangeException(
                 nameof(batchSize),

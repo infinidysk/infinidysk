@@ -91,7 +91,7 @@ public class NzbFetchCoalescer
                 _currentBytes -= existing.Bytes.LongLength;
 
             while ((_cache.Count >= _maxCacheEntries || _currentBytes + bytes.LongLength > _maxCacheBytes)
-                   && _cache.Count > 0)
+                   && !_cache.IsEmpty)
             {
                 var oldest = default(KeyValuePair<FetchKey, Entry>);
                 var found = false;

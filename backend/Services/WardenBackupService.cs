@@ -18,7 +18,7 @@ public partial class WardenBackupService : BackgroundService
     private const long MaxRestoreBytes = 256L * 1024 * 1024;
     private const long MaxPushBytes = 95L * 1024 * 1024;
 
-    private static readonly HttpClient Http = new(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.None })
+    private static readonly HttpClient Http = new(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.None, CheckCertificateRevocationList = true })
     {
         Timeout = TimeSpan.FromSeconds(100),
     };
