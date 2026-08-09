@@ -49,7 +49,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     useLayout: true,
     // Baked into images published to the deprecated ghcr.io/nzbdav/nzbdav path.
-    isLegacyImage: process.env.NZBDAV_LEGACY_IMAGE === "true",
+    isLegacyImage: process.env["NZBDAV_LEGACY_IMAGE"] === "true",
     version,
     updateAvailable: await checkForUpdate(version),
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,

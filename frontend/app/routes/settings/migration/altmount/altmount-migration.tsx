@@ -1149,14 +1149,14 @@ function SymlinkResults({ m }: { m: Hook }) {
             )}
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
-                <StatTile label="Rewrite" value={rewrites} tone="success" help={SYMLINK_STATUS_HELP.rewrite} />
-                <StatTile label="Orphan" value={orphans} tone={orphans > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.orphan} />
-                {unreadable > 0 && <StatTile label="Unreadable" value={unreadable} tone="error" help={SYMLINK_STATUS_HELP.unreadable} />}
+                <StatTile label="Rewrite" value={rewrites} tone="success" help={SYMLINK_STATUS_HELP["rewrite"]} />
+                <StatTile label="Orphan" value={orphans} tone={orphans > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP["orphan"]} />
+                {unreadable > 0 && <StatTile label="Unreadable" value={unreadable} tone="error" help={SYMLINK_STATUS_HELP["unreadable"]} />}
                 <StatTile label="InfiniDysk" value={counts["already-nzbdav"] ?? 0} help={SYMLINK_STATUS_HELP["already-nzbdav"]} />
                 <StatTile label="Other" value={counts["not-altmount"] ?? 0} help={SYMLINK_STATUS_HELP["not-altmount"]} />
-                <StatTile label="Applied" value={applied} tone={applied > 0 ? "success" : undefined} help={SYMLINK_STATUS_HELP.applied} />
-                <StatTile label="Removed" value={removed} tone={removed > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP.removed} />
-                <StatTile label="Failed" value={failed} tone={failed > 0 ? "error" : undefined} help={SYMLINK_STATUS_HELP.failed} />
+                <StatTile label="Applied" value={applied} tone={applied > 0 ? "success" : undefined} help={SYMLINK_STATUS_HELP["applied"]} />
+                <StatTile label="Removed" value={removed} tone={removed > 0 ? "warning" : undefined} help={SYMLINK_STATUS_HELP["removed"]} />
+                <StatTile label="Failed" value={failed} tone={failed > 0 ? "error" : undefined} help={SYMLINK_STATUS_HELP["failed"]} />
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">

@@ -17,8 +17,8 @@ type BuildCommitOptions = {
 };
 
 export async function getAppVersion(): Promise<string | undefined> {
-  if (process.env.NZBDAV_VERSION) {
-    return process.env.NZBDAV_VERSION;
+  if (process.env["NZBDAV_VERSION"]) {
+    return process.env["NZBDAV_VERSION"];
   }
 
   try {
@@ -47,7 +47,7 @@ export async function getBuildCommit(
 ): Promise<BuildCommit | undefined> {
   const { gitDir = gitDirPath, version } = options;
 
-  const envSha = process.env.NZBDAV_COMMIT_SHA?.trim();
+  const envSha = process.env["NZBDAV_COMMIT_SHA"]?.trim();
   if (envSha && isValidSha(envSha)) {
     return {
       sha: envSha.toLowerCase(),
@@ -67,7 +67,7 @@ export async function getBuildCommit(
  * the movable `dev` tag; everything else compares against `main`.
  */
 export function resolveTrackRef(version?: string | null): string {
-  const label = (version ?? process.env.NZBDAV_VERSION)?.trim() ?? "";
+  const label = (version ?? process.env["NZBDAV_VERSION"])?.trim() ?? "";
   if (/^dev-/i.test(label)) return "dev";
   return "main";
 }

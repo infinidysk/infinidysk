@@ -5,7 +5,7 @@ import path from "path";
 import { backendClient } from "~/clients/backend-client.server";
 import type { IncomingMessage } from "http";
 
-export const IS_FRONTEND_AUTH_DISABLED = process.env.DISABLE_FRONTEND_AUTH === 'true';
+export const IS_FRONTEND_AUTH_DISABLED = process.env["DISABLE_FRONTEND_AUTH"] === 'true';
 
 export type UserRole = "admin" | "readonly";
 
@@ -30,7 +30,7 @@ export type SessionResponseInit = {
 const oneYear = 60 * 60 * 24 * 365; // seconds
 
 function resolveSessionMaxAgeSeconds(): number {
-  const raw = process.env.SESSION_MAX_AGE?.trim();
+  const raw = process.env["SESSION_MAX_AGE"]?.trim();
   if (!raw) return oneYear;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return oneYear;
@@ -38,23 +38,23 @@ function resolveSessionMaxAgeSeconds(): number {
 }
 
 function resolveSessionKey(): string {
-  if (process.env.SESSION_KEY) return process.env.SESSION_KEY;
+  if (process.env["SESSION_KEY"]) return process.env["SESSION_KEY"];
 
-  const configPath = process.env.CONFIG_PATH;
+  const configPath = process.env["CONFIG_PATH"];
   if (configPath) {
     const keyPath = path.join(configPath, "session.key");
     try {
       if (fs.existsSync(keyPath)) {
         const existing = fs.readFileSync(keyPath, "utf8").trim();
         if (existing.length > 0) {
-          process.env.SESSION_KEY = existing;
+          process.env["SESSION_KEY"] = existing;
           return existing;
         }
       }
       const generated = crypto.randomBytes(64).toString("hex");
       fs.mkdirSync(configPath, { recursive: true });
       fs.writeFileSync(keyPath, generated, { encoding: "utf8", mode: 0o600 });
-      process.env.SESSION_KEY = generated;
+      process.env["SESSION_KEY"] = generated;
       return generated;
     } catch {
       // Fall through to ephemeral key if CONFIG_PATH is unwritable.
@@ -62,7 +62,7 @@ function resolveSessionKey(): string {
   }
 
   const ephemeral = crypto.randomBytes(64).toString("hex");
-  process.env.SESSION_KEY = ephemeral;
+  process.env["SESSION_KEY"] = ephemeral;
   return ephemeral;
 }
 
@@ -70,7 +70,7 @@ const sessionKey = resolveSessionKey();
 const sessionMaxAge = resolveSessionMaxAgeSeconds();
 const oidcConfigured = ["OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"]
   .every((name) => Boolean(process.env[name]?.trim()));
-const secureCookiesExplicit = process.env.SECURE_COOKIES !== undefined && process.env.SECURE_COOKIES !== "";
+const secureCookiesExplicit = process.env["SECURE_COOKIES"] !== undefined && process.env["SECURE_COOKIES"] !== "";
 if (!secureCookiesExplicit && !IS_FRONTEND_AUTH_DISABLED) {
   console.warn(
     "SECURE_COOKIES is unset; session cookies will be sent over HTTP. Set SECURE_COOKIES=true behind HTTPS.",
@@ -85,7 +85,7 @@ const sessionStorage = createCookieSessionStorage({
     // OIDC callbacks are top-level cross-site navigations, which require Lax.
     sameSite: oidcConfigured ? "lax" : "strict",
     secrets: [sessionKey],
-    secure: ["true", "yes"].includes(process?.env?.SECURE_COOKIES || ""),
+    secure: ["true", "yes"].includes(process?.env?.["SECURE_COOKIES"] || ""),
     maxAge: sessionMaxAge,
   },
 });

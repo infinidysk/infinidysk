@@ -41,7 +41,7 @@ export function normalizeUrlBase(raw: string | undefined): string {
 
 /** Read the URL base from the environment: NZBDAV_URL_BASE, then bare URL_BASE. */
 export function urlBaseFromEnv(env: Record<string, string | undefined>): string {
-  return normalizeUrlBase(env.NZBDAV_URL_BASE ?? env.URL_BASE);
+  return normalizeUrlBase(env["NZBDAV_URL_BASE"] ?? env["URL_BASE"]);
 }
 
 export const URL_BASE: string =
