@@ -1042,7 +1042,7 @@ public sealed class UsenetMigrationController(
     /// <summary>Wrap in single quotes, escaping embedded quotes as <c>'\''</c>.</summary>
     internal static string ShQuote(string value)
     {
-        return "'" + value.Replace("'", "'\\''") + "'";
+        return "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
     }
 
     /// <summary>
@@ -1055,7 +1055,7 @@ public sealed class UsenetMigrationController(
         var safe = value[0] is '=' or '+' or '-' or '@' ? "'" + value : value;
         // Quote when the field contains a delimiter, quote, or newline; double interior quotes.
         if (safe.IndexOfAny([',', '"', '\n', '\r']) < 0) return safe;
-        return "\"" + safe.Replace("\"", "\"\"") + "\"";
+        return "\"" + safe.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
     }
 
     private static string[] Reasons(string json)

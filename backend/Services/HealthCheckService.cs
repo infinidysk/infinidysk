@@ -742,7 +742,7 @@ public class HealthCheckService : BackgroundService
             // A null/empty path is a malformed response we can't rule this instance in or out
             // with, so if nothing else matches, treat it like an unreachable instance rather
             // than falling through to a delete this instance may not have sanctioned.
-            if (!rootFolders.Any(x => !string.IsNullOrEmpty(x.Path) && symlinkOrStrmPath.StartsWith(x.Path)))
+            if (!rootFolders.Any(x => !string.IsNullOrEmpty(x.Path) && symlinkOrStrmPath.StartsWith(x.Path, StringComparison.Ordinal)))
             {
                 if (rootFolders.Any(x => string.IsNullOrEmpty(x.Path))) anInstanceFailed = true;
                 continue;
@@ -900,7 +900,7 @@ public class HealthCheckService : BackgroundService
                 string deleteMessage;
                 if (symlinkOrStrmPath != null)
                 {
-                    var forceDeleteLinkType = symlinkOrStrmPath.ToLowerInvariant().EndsWith("strm") ? "strm-file" : "symlink";
+                    var forceDeleteLinkType = symlinkOrStrmPath.ToLowerInvariant().EndsWith("strm", StringComparison.Ordinal) ? "strm-file" : "symlink";
                     deleteMessage = string.Join(" ", [
                         "File failed during streaming.",
                         $"Auto-removed after repeated streaming failures.{failureNote}",
@@ -943,7 +943,7 @@ public class HealthCheckService : BackgroundService
             }
 
             var linkedPath = symlinkOrStrmPath!;
-            var linkType = linkedPath.ToLowerInvariant().EndsWith("strm") ? "strm-file" : "symlink";
+            var linkType = linkedPath.ToLowerInvariant().EndsWith("strm", StringComparison.Ordinal) ? "strm-file" : "symlink";
 
             // Rate-limit repairs per library file: when Arr keeps re-importing broken
             // replacements to the same location, deleting again only fuels the loop.

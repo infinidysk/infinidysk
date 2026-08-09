@@ -38,7 +38,7 @@ internal static class LatencySupportPackProjection
             return false;
         if (refId is null)
             return false;
-        var slash = refId.IndexOf('/');
+        var slash = refId.IndexOf('/', StringComparison.Ordinal);
         if (slash <= 0 || slash >= refId.Length - 1)
             return false;
         if (!LatencyNames.TryParseWorkload(refId[..slash], out var workload))

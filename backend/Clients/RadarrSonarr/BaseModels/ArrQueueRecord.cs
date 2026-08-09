@@ -35,6 +35,6 @@ public class ArrQueueRecord
     {
         return StatusMessages
             .SelectMany(x => x.Messages)
-            .Any(x => x.Contains(message));
+            .Any(x => x.Contains(message, StringComparison.Ordinal));
     }
 }

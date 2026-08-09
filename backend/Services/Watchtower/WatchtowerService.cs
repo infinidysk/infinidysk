@@ -703,7 +703,7 @@ public class WatchtowerService(
     private static bool IsImdbId(string contentId)
     {
         var s = contentId;
-        var colon = s.IndexOf(':');
+        var colon = s.IndexOf(':', StringComparison.Ordinal);
         if (colon > 0) s = s[..colon];
         if (s.StartsWith("tt", StringComparison.OrdinalIgnoreCase)) s = s[2..];
         return s.Length > 0 && s.All(char.IsDigit);
@@ -712,7 +712,7 @@ public class WatchtowerService(
     private static string CanonicalImdb(string contentId)
     {
         var s = contentId;
-        var colon = s.IndexOf(':');
+        var colon = s.IndexOf(':', StringComparison.Ordinal);
         if (colon > 0) s = s[..colon];
         return s.StartsWith("tt", StringComparison.OrdinalIgnoreCase) ? s : "tt" + s;
     }

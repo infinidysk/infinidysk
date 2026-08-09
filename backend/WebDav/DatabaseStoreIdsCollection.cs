@@ -43,7 +43,7 @@ public class DatabaseStoreIdsCollection(
         if (_currentPathParts.Length < DavItem.IdPrefixLength)
         {
             if (request.Name.Length != 1) return null;
-            if (!Alphabet.Contains(request.Name[0])) return null;
+            if (!Alphabet.Contains(request.Name[0], StringComparison.Ordinal)) return null;
             return new DatabaseStoreIdsCollection(
                 dir, Path.Join(currentPath, dir), ctx, db, usenet, config, lazy, budget);
         }

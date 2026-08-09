@@ -355,9 +355,9 @@ public class AddFileController(
         if (string.IsNullOrWhiteSpace(fileName) ||
             Path.IsPathRooted(fileName) ||
             fileName is "." or ".." ||
-            fileName.Contains('/') ||
-            fileName.Contains('\\') ||
-            fileName.Contains('\0'))
+            fileName.Contains('/', StringComparison.Ordinal) ||
+            fileName.Contains('\\', StringComparison.Ordinal) ||
+            fileName.Contains('\0', StringComparison.Ordinal))
         {
             throw new ArgumentException("The NZB backup file name must be a single file name.", nameof(fileName));
         }
@@ -368,9 +368,9 @@ public class AddFileController(
         if (string.IsNullOrWhiteSpace(category) ||
             Path.IsPathRooted(category) ||
             category is "." or ".." ||
-            category.Contains('/') ||
-            category.Contains('\\') ||
-            category.Contains('\0'))
+            category.Contains('/', StringComparison.Ordinal) ||
+            category.Contains('\\', StringComparison.Ordinal) ||
+            category.Contains('\0', StringComparison.Ordinal))
         {
             throw new ArgumentException("The NZB backup category must be a single directory name.", nameof(category));
         }

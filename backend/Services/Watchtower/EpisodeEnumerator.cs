@@ -159,7 +159,7 @@ public class EpisodeEnumerator
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         var s = raw.Trim();
-        var colon = s.IndexOf(':');
+        var colon = s.IndexOf(':', StringComparison.Ordinal);
         if (colon > 0) s = s[..colon];
         if (s.StartsWith("tt", StringComparison.OrdinalIgnoreCase)) s = s[2..];
         return s.Length > 0 && s.All(char.IsDigit) ? "tt" + s : null;

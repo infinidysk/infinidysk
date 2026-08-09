@@ -52,7 +52,7 @@ public sealed class TrustedHostsMatcher
                 continue;
             }
 
-            if (part.Contains('/') && IPNetwork.TryParse(part, out var network))
+            if (part.Contains('/', StringComparison.Ordinal) && IPNetwork.TryParse(part, out var network))
             {
                 networks.Add(network);
                 continue;
@@ -65,7 +65,7 @@ public sealed class TrustedHostsMatcher
             }
 
             // Reject entries that look like broken CIDR/IP before treating as hostname.
-            if (part.Contains('/') || part.Any(char.IsWhiteSpace))
+            if (part.Contains('/', StringComparison.Ordinal) || part.Any(char.IsWhiteSpace))
             {
                 Log.Warning("Ignoring invalid trusted-hosts entry: {Entry}", part);
                 continue;

@@ -503,7 +503,7 @@ public class ConfigManager
                 var label = string.IsNullOrWhiteSpace(p.Nickname) ? p.Host : p.Nickname;
                 if (string.IsNullOrWhiteSpace(p.Host))
                     throw new ArgumentException($"Provider #{i + 1}: host must not be empty.");
-                if (ContainsControlChars(p.Host) || p.Host.Contains(' '))
+                if (ContainsControlChars(p.Host) || p.Host.Contains(' ', StringComparison.Ordinal))
                     throw new ArgumentException($"Provider '{label}': host contains whitespace or control characters.");
                 if (ContainsControlChars(p.User))
                     throw new ArgumentException($"Provider '{label}': username contains control characters.");

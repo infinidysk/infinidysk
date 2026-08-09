@@ -107,7 +107,7 @@ public static class StorePathParser
     /// </summary>
     private static (long? queueId, string nzbBasename) SplitQueueId(string storeBasename)
     {
-        var dash = storeBasename.IndexOf('-');
+        var dash = storeBasename.IndexOf('-', StringComparison.Ordinal);
         if (dash <= 0) return (null, storeBasename);
 
         var left = storeBasename[..dash];

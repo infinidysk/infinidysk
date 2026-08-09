@@ -141,7 +141,7 @@ public static class AltmountConfigReader
         ref string? name, ref string? dir, ref string? type,
         ref int? order, ref int? priority)
     {
-        var colon = keyValue.IndexOf(':');
+        var colon = keyValue.IndexOf(':', StringComparison.Ordinal);
         if (colon < 0) return;
         var key = keyValue[..colon].Trim();
         var value = ScalarValue(keyValue[(colon + 1)..]);

@@ -25,7 +25,7 @@ public static class WardenFingerprint
     {
         if (string.IsNullOrWhiteSpace(host)) return "unknown";
         var h = host.Trim().ToLowerInvariant();
-        var colon = h.IndexOf(':');
+        var colon = h.IndexOf(':', StringComparison.Ordinal);
         if (colon > 0) h = h[..colon];
         return string.IsNullOrEmpty(h) ? "unknown" : h;
     }
@@ -34,7 +34,7 @@ public static class WardenFingerprint
     {
         if (string.IsNullOrWhiteSpace(host)) return "unknown";
         var h = host.Trim().ToLowerInvariant();
-        var colon = h.IndexOf(':');
+        var colon = h.IndexOf(':', StringComparison.Ordinal);
         if (colon > 0) h = h[..colon];
         h = h.Trim('.');
         if (h.Length == 0) return "unknown";

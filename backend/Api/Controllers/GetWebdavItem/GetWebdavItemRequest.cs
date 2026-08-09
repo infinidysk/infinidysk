@@ -21,9 +21,9 @@ public class GetWebdavItemRequest
     {
         // normalize path
         var path = context.Request.Path.Value ?? "";
-        if (path.StartsWith("/")) path = path[1..];
-        if (path.StartsWith("view")) path = path[4..];
-        if (path.StartsWith("/")) path = path[1..];
+        if (path.StartsWith("/", StringComparison.Ordinal)) path = path[1..];
+        if (path.StartsWith("view", StringComparison.Ordinal)) path = path[4..];
+        if (path.StartsWith("/", StringComparison.Ordinal)) path = path[1..];
         Item = path;
 
         // determine whether to download
@@ -65,7 +65,7 @@ public class GetWebdavItemRequest
 
         var spec = rangeHeader["bytes=".Length..];
         // Multi-range or garbage with commas is unparseable for our single-range path.
-        if (spec.Contains(','))
+        if (spec.Contains(',', StringComparison.Ordinal))
             return false;
 
         if (spec.StartsWith('-'))
@@ -76,7 +76,7 @@ public class GetWebdavItemRequest
             return true;
         }
 
-        var dash = spec.IndexOf('-');
+        var dash = spec.IndexOf('-', StringComparison.Ordinal);
         if (dash < 0)
             return false;
 
@@ -101,7 +101,7 @@ public class GetWebdavItemRequest
 
     private static bool VerifyDownloadKey(string? downloadKey, string path, ConfigManager configManager)
     {
-        if (path.StartsWith(".ids"))
+        if (path.StartsWith(".ids", StringComparison.Ordinal))
         {
             // strm streams link items by id and use a different download key
             var strmKey = configManager.GetStrmKey();

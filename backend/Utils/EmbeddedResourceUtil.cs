@@ -41,8 +41,8 @@ public static class EmbeddedResourceUtil
             .GetFrames()
             .Select(x => x.GetMethod()!)
             .Select(x => x.ReflectedType!)
-            .Where(x => !x.FullName!.StartsWith("NzbWebDAV.Utils.EmbeddedResourceUtil"))
-            .First(x => !x.FullName!.StartsWith("System"))
+            .Where(x => !x.FullName!.StartsWith("NzbWebDAV.Utils.EmbeddedResourceUtil", StringComparison.Ordinal))
+            .First(x => !x.FullName!.StartsWith("System", StringComparison.Ordinal))
             .Namespace + "." + resourcePath;
     }
 

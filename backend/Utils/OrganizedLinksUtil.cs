@@ -104,10 +104,10 @@ public static class OrganizedLinksUtil
     internal static DavItemLink? GetDavItemLink(SymlinkAndStrmUtil.SymlinkInfo symlinkInfo, string mountDir)
     {
         var targetPath = symlinkInfo.TargetPath;
-        if (!targetPath.StartsWith(mountDir)) return null;
+        if (!targetPath.StartsWith(mountDir, StringComparison.Ordinal)) return null;
         targetPath = targetPath.RemovePrefix(mountDir);
         targetPath = targetPath.StartsWith('/') ? targetPath : $"/{targetPath}";
-        if (!targetPath.StartsWith("/.ids")) return null;
+        if (!targetPath.StartsWith("/.ids", StringComparison.Ordinal)) return null;
         var guid = Path.GetFileNameWithoutExtension(targetPath);
         // a foreign/hand-made symlink under the mount dir must not abort the library walk
         if (!Guid.TryParse(guid, out var davItemId)) return null;
@@ -125,7 +125,7 @@ public static class OrganizedLinksUtil
         // a malformed strm file must not abort the library walk
         if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)) return null;
         var absolutePath = uri.AbsolutePath;
-        if (!absolutePath.StartsWith("/view/.ids")) return null;
+        if (!absolutePath.StartsWith("/view/.ids", StringComparison.Ordinal)) return null;
         var guid = Path.GetFileNameWithoutExtension(absolutePath);
         if (!Guid.TryParse(guid, out var davItemId)) return null;
         return new DavItemLink()

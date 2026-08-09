@@ -36,7 +36,7 @@ public class WardenImportController(WardenStore warden) : BaseApiController
         {
             var name = form["name"].ToString();
             if (string.IsNullOrWhiteSpace(name))
-                name = Path.GetFileNameWithoutExtension(file.FileName).Replace(".ndjson", "");
+                name = Path.GetFileNameWithoutExtension(file.FileName).Replace(".ndjson", "", StringComparison.Ordinal);
             if (string.IsNullOrWhiteSpace(name)) name = "Imported list";
             var trust = form["trust"].ToString();
             var (sourceId, count) = await warden.ImportAsNewSourceAsync(buffered, name, trust, ct).ConfigureAwait(false);

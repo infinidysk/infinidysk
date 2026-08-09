@@ -45,7 +45,7 @@ public class JsonSearchController(
 
         if (type.Equals("series", StringComparison.OrdinalIgnoreCase)
             && season.HasValue && episode.HasValue
-            && !id.Contains(':'))
+            && !id.Contains(':', StringComparison.Ordinal))
         {
             id = $"{id}:{season.Value}:{episode.Value}";
         }

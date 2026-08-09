@@ -300,7 +300,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
     private static string DeriveTopLevelCategory(string virtualPath)
     {
         var normalised = virtualPath.Replace('\\', '/').Trim('/');
-        var slash = normalised.IndexOf('/');
+        var slash = normalised.IndexOf('/', StringComparison.Ordinal);
         return slash < 0 ? "" : normalised[..slash];
     }
 

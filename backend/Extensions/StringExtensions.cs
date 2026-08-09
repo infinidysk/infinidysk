@@ -21,6 +21,6 @@ public static class StringExtensions
 
     public static string RemovePrefix(this string value, string prefix)
     {
-        return value.StartsWith(prefix) ? value[prefix.Length..] : value;
+        return value.StartsWith(prefix, StringComparison.Ordinal) ? value[prefix.Length..] : value;
     }
 }

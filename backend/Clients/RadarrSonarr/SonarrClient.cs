@@ -107,7 +107,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         if (cachedSeriesPath != null)
         {
             var series = await GetSeriesOrNull(cachedSeriesId, ct).ConfigureAwait(false);
-            if (series?.Path != null && symlinkOrStrmPath.StartsWith(series.Path))
+            if (series?.Path != null && symlinkOrStrmPath.StartsWith(series.Path, StringComparison.Ordinal))
                 return cachedSeriesId;
             SeriesPathToSeriesIdCache.TryRemove((Host, cachedSeriesPath), out _);
         }
@@ -117,7 +117,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         foreach (var series in await GetAllSeries(ct).ConfigureAwait(false))
         {
             SeriesPathToSeriesIdCache[(Host, series.Path!)] = series.Id;
-            if (symlinkOrStrmPath.StartsWith(series.Path!))
+            if (symlinkOrStrmPath.StartsWith(series.Path!, StringComparison.Ordinal))
                 result = series.Id;
         }
 

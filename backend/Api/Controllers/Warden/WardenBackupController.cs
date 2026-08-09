@@ -70,7 +70,7 @@ public class WardenBackupNowController(WardenBackupService backup) : BaseApiCont
     protected override async Task<IActionResult> HandleRequest()
     {
         var msg = await backup.PushAsync(HttpContext.RequestAborted).ConfigureAwait(false);
-        return Ok(new WardenBackupMutateResponse { Status = !msg.StartsWith("error"), Message = msg });
+        return Ok(new WardenBackupMutateResponse { Status = !msg.StartsWith("error", StringComparison.Ordinal), Message = msg });
     }
 }
 

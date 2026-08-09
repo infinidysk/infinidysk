@@ -50,8 +50,8 @@ public static class ExcludePatternParser
             body = wrapper.Groups[1].Value;
             var flags = wrapper.Groups[2].Value;
             // Built in a fixed order so "/x/ms" and "/x/sm" yield the same dedup key.
-            if (flags.Contains('m')) { options |= RegexOptions.Multiline; extraFlags += "m"; }
-            if (flags.Contains('s')) { options |= RegexOptions.Singleline; extraFlags += "s"; }
+            if (flags.Contains('m', StringComparison.Ordinal)) { options |= RegexOptions.Multiline; extraFlags += "m"; }
+            if (flags.Contains('s', StringComparison.Ordinal)) { options |= RegexOptions.Singleline; extraFlags += "s"; }
         }
 
         if (body.Length == 0) return null;

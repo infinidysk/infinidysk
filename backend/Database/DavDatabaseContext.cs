@@ -792,7 +792,7 @@ public sealed class DavDatabaseContext : DbContext
             .ToList();
 
         var completedSymlinkDirs = contentDirs
-            .Where(x => x.StartsWith("/content"))
+            .Where(x => x.StartsWith("/content", StringComparison.Ordinal))
             .Select(x => $"/completed-symlinks{x["/content".Length..]}")
             .ToList();
 

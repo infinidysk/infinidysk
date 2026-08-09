@@ -128,7 +128,7 @@ public class ExternalIdResolver(AnimeListMappingResolver animeList)
                 else if (site.Equals("thetvdb", StringComparison.OrdinalIgnoreCase))
                 {
                     // ext is "<seriesId>" or "<seriesId>/<season>" — canonical season source
-                    var slashIdx = ext.IndexOf('/');
+                    var slashIdx = ext.IndexOf('/', StringComparison.Ordinal);
                     if (slashIdx > 0)
                     {
                         if (int.TryParse(ext[..slashIdx], out var id)) tvdbId ??= id;

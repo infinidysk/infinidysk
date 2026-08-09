@@ -160,7 +160,7 @@ public class ListSourceEnumerator
 
         const string ext = ".json";
         if (!url.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
-            return url.Contains('?') ? $"{url}&skip={skip}" : $"{url}?skip={skip}";
+            return url.Contains('?', StringComparison.Ordinal) ? $"{url}&skip={skip}" : $"{url}?skip={skip}";
 
         var stem = url[..^ext.Length];
         const string marker = "/catalog/";
@@ -170,7 +170,7 @@ public class ListSourceEnumerator
         var head = stem[..(markerIdx + marker.Length)];
         var segments = stem[(markerIdx + marker.Length)..].Split('/');
 
-        if (segments.Length >= 3 && segments[^1].Contains('='))
+        if (segments.Length >= 3 && segments[^1].Contains('=', StringComparison.Ordinal))
         {
             var merged = segments[^1].Split('&')
                 .Where(p => !p.StartsWith("skip=", StringComparison.OrdinalIgnoreCase))
@@ -238,7 +238,7 @@ public class ListSourceEnumerator
             throw new InvalidOperationException("List request failed or returned an empty response.");
 
         var trimmed = body.TrimStart();
-        if (trimmed.StartsWith("[") || trimmed.StartsWith("{"))
+        if (trimmed.StartsWith("[", StringComparison.Ordinal) || trimmed.StartsWith("{", StringComparison.Ordinal))
         {
             var fromJson = TryParseJsonList(trimmed);
             if (fromJson.Count > 0) return fromJson;
@@ -247,7 +247,7 @@ public class ListSourceEnumerator
         var refs = new List<WtContentRef>();
         foreach (var line in body.Split('\n')
                      .Select(raw => raw.Trim())
-                     .Where(line => line.Length > 0 && !line.StartsWith("#")))
+                     .Where(line => line.Length > 0 && !line.StartsWith("#", StringComparison.Ordinal)))
         {
             var (type, id) = SplitTypeId(line);
             if (id.Length == 0) continue;
@@ -295,10 +295,10 @@ public class ListSourceEnumerator
 
     private static (string Type, string Id) SplitTypeId(string line)
     {
-        if (line.StartsWith("tt", StringComparison.OrdinalIgnoreCase) && !line.Contains(':'))
+        if (line.StartsWith("tt", StringComparison.OrdinalIgnoreCase) && !line.Contains(':', StringComparison.Ordinal))
             return ("movie", line);
 
-        var firstColon = line.IndexOf(':');
+        var firstColon = line.IndexOf(':', StringComparison.Ordinal);
         if (firstColon > 0)
         {
             var maybeType = line[..firstColon].ToLowerInvariant();
