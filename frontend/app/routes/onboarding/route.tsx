@@ -6,10 +6,6 @@ import { isAuthenticated, setSessionUser } from "~/auth/authentication.server";
 import { Alert, Button, Input, Spinner } from "~/components/ui";
 import { withUrlBase } from "~/utils/url-base";
 
-type OnboardingPageData = {
-    error: string
-}
-
 export async function loader({ request }: Route.LoaderArgs) {
     if (await isAuthenticated(request)) return redirect("/")
 
@@ -149,9 +145,9 @@ export async function action({ request }: Route.ActionArgs) {
         if (!isOnboarding) return redirect("/login");
 
         const formData = await request.formData();
-        const username = formData.get("username")?.toString();
-        const password = formData.get("password")?.toString();
-        if (!username || !password) throw new Error("username and password required");
+        const username = formData.get("username");
+        const password = formData.get("password");
+        if (typeof username !== "string" || typeof password !== "string" || !username || !password) throw new Error("username and password required");
         const isSuccess = await backendClient.createAccount(username, password);
         if (!isSuccess) throw new Error("Unknown error creating account");
         const responseInit = await setSessionUser(request, username);

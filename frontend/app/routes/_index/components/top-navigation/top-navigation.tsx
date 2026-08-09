@@ -66,7 +66,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
         <button
           type="button"
           className="btn btn-ghost gap-3 px-2"
-          onClick={() => navigate("/")}
+          onClick={() => { void navigate("/"); }}
         >
           <img
             className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary via-info to-success p-0.5 shadow-md shadow-primary/20"

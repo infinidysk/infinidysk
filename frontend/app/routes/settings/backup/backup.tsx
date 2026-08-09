@@ -48,6 +48,9 @@ type BackupListResponse = {
     error?: string;
 };
 
+// Error body shared by the /api/db-backup-* and /api/db-restore endpoints (BaseApiResponse).
+type BackupErrorResponse = { error?: string };
+
 export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
     const [backups, setBackups] = useState<BackupManifest[]>([]);
     const [taskRunning, setTaskRunning] = useState(false);
@@ -124,7 +127,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                     cache: "no-store",
                 });
                 if (cancelled) return;
-                const body = res.ok ? await res.json().catch(() => null) : null;
+                const body: unknown = res.ok ? await res.json().catch(() => null) : null;
                 const decision = decideMigrationStatusPoll(res.status, body);
                 if (decision.action === "migrating") {
                     setMigrationStatus(decision.status);
@@ -144,7 +147,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
         };
 
         void poll();
-        const interval = window.setInterval(poll, 2000);
+        const interval = window.setInterval(() => void poll(), 2000);
         return () => {
             cancelled = true;
             window.clearInterval(interval);
@@ -164,7 +167,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                 return;
             }
             if (!res.ok) {
-                const data = await res.json().catch(() => null);
+                const data = (await res.json().catch(() => null)) as BackupErrorResponse | null;
                 setMessage({ text: data?.error || `Backup failed (${res.status})`, variant: "danger" });
                 return;
             }
@@ -185,7 +188,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
         if (patch.notes !== undefined) form.append("notes", patch.notes);
         const res = await fetch(withUrlBase("/api/db-backup-update"), { method: "POST", body: form });
         if (!res.ok) {
-            const data = await res.json().catch(() => null);
+            const data = (await res.json().catch(() => null)) as BackupErrorResponse | null;
             setMessage({ text: data?.error || `Update failed (${res.status})`, variant: "danger" });
             return;
         }
@@ -200,7 +203,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
             form.append("id", id);
             const res = await fetch(withUrlBase("/api/db-backup-delete"), { method: "POST", body: form });
             if (!res.ok) {
-                const data = await res.json().catch(() => null);
+                const data = (await res.json().catch(() => null)) as BackupErrorResponse | null;
                 setMessage({ text: data?.error || `Delete failed (${res.status})`, variant: "danger" });
                 return;
             }
@@ -219,7 +222,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
         try {
             const res = await fetch(withUrlBase(`/api/db-backup-download?id=${encodeURIComponent(id)}`));
             if (!res.ok) {
-                const data = await res.json().catch(() => null);
+                const data = (await res.json().catch(() => null)) as BackupErrorResponse | null;
                 setMessage({ text: data?.error || `Download failed (${res.status})`, variant: "danger" });
                 return;
             }
@@ -246,7 +249,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
             const form = new FormData();
             form.append("file", file);
             const res = await fetch(withUrlBase("/api/db-backup-upload"), { method: "POST", body: form });
-            const data = await res.json().catch(() => null);
+            const data = (await res.json().catch(() => null)) as BackupErrorResponse | null;
             if (!res.ok) {
                 setMessage({ text: data?.error || `Upload failed (${res.status})`, variant: "danger" });
                 return;
@@ -276,7 +279,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
             const form = new FormData();
             form.append("id", id);
             const res = await fetch(withUrlBase("/api/db-restore"), { method: "POST", body: form });
-            const data = await res.json().catch(() => null);
+            const data = (await res.json().catch(() => null)) as BackupErrorResponse | null;
             if (res.status === 409) {
                 setMessage({ text: "A backup or restore task is already running.", variant: "warning" });
                 setRestoring(false);

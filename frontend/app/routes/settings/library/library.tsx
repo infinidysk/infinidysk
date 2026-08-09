@@ -7,7 +7,7 @@ type LibrarySettingsProps = {
     setNewConfig: Dispatch<SetStateAction<Record<string, string>>>
 };
 
-export function LibrarySettings({ savedConfig, config, setNewConfig }: LibrarySettingsProps) {
+export function LibrarySettings({ config, setNewConfig }: LibrarySettingsProps) {
     return (
         <div className={'space-y-6'}>
             <div className="space-y-2">

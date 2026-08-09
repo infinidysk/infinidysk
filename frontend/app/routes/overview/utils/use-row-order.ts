@@ -9,7 +9,7 @@ export function useRowOrder(defaultOrder: readonly string[]) {
         try {
             const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
             if (!raw) return;
-            const saved = JSON.parse(raw);
+            const saved: unknown = JSON.parse(raw);
             if (!Array.isArray(saved)) return;
             const known = new Set(defaultOrder);
             const kept = saved.filter((id: unknown): id is string => typeof id === "string" && known.has(id));

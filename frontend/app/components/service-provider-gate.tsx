@@ -40,7 +40,7 @@ export function ServiceProviderGate({
     <ServiceProviderNotice
       open
       serviceProvider={serviceProvider}
-      onClose={() => navigate("/overview", { replace: true })}
+      onClose={() => { void navigate("/overview", { replace: true }); }}
     />
   );
 }

@@ -47,12 +47,13 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
         try {
             const r = await fetch(withUrlBase("/settings/watchdog-attempts?limit=200"));
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            const data = await r.json();
+            // /settings/watchdog-attempts resource route returns { entries: WatchdogEntry[] }
+            const data = await r.json() as { entries?: WatchdogEntry[] };
             const next: WatchdogEntry[] = data.entries ?? [];
             setAttempts(prev => attemptsEqual(prev, next) ? prev : next);
             setError(null);
-        } catch (e: any) {
-            setError(e?.message ?? String(e));
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : String(e));
         } finally {
             if (!silent) setRefreshing(false);
         }
@@ -66,8 +67,8 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             setAttempts([]);
             setError(null);
-        } catch (e: any) {
-            setError(e?.message ?? String(e));
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : String(e));
         } finally {
             setClearing(false);
         }
@@ -81,9 +82,9 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
             if (cancelled) return;
             await refresh(true);
             if (cancelled) return;
-            timer = setTimeout(loop, POLL_INTERVAL_MS);
+            timer = setTimeout(() => { void loop(); }, POLL_INTERVAL_MS);
         };
-        timer = setTimeout(loop, POLL_INTERVAL_MS);
+        timer = setTimeout(() => { void loop(); }, POLL_INTERVAL_MS);
         return () => {
             cancelled = true;
             if (timer) clearTimeout(timer);
@@ -125,7 +126,7 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
                             <button
                                 type="button"
                                 className="btn btn-sm btn-primary join-item gap-2"
-                                onClick={() => refresh()}
+                                onClick={() => void refresh()}
                                 disabled={refreshing || clearing}
                                 title="Refresh now.">
                                 <Icon
@@ -194,7 +195,7 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
                 confirmText="Clear log"
                 cancelText="Cancel"
                 onCancel={() => setShowClearConfirm(false)}
-                onConfirm={performClear}
+                onConfirm={() => void performClear()}
             />
         </div>
     );

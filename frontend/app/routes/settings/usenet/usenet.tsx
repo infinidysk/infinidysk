@@ -6,6 +6,8 @@ import { shouldWarnCleartextCredentials } from "./cleartext-credentials";
 import {
     DndContext,
     type DragEndEvent,
+    type DraggableAttributes,
+    type DraggableSyntheticListeners,
     closestCenter,
     KeyboardSensor,
     PointerSensor,
@@ -67,6 +69,20 @@ type BenchmarkProgress = {
     error?: string | null;
 };
 type BenchmarkIntensity = "quick" | "thorough";
+
+// Mirrors backend TestUsenetConnectionResponse (BaseApiResponse + Connected), camelCase JSON.
+type TestConnectionResult = {
+    status?: boolean;
+    connected?: boolean;
+    error?: string | null;
+};
+
+// Mirrors backend BenchmarkUsenetConnectionResponse (BaseApiResponse + Result), camelCase JSON.
+type BenchmarkPostResult = {
+    status?: boolean;
+    result?: BenchmarkResult | null;
+    error?: string | null;
+};
 
 type UsenetSettingsProps = {
     config: Record<string, string>
@@ -360,7 +376,8 @@ function parseProviderConfig(jsonString: string): UsenetProviderConfig {
         if (!jsonString || jsonString.trim() === "") {
             return { Providers: [] };
         }
-        const parsed = JSON.parse(jsonString);
+        // Config key "usenet.providers" holds the backend UsenetProviderConfig JSON.
+        const parsed = JSON.parse(jsonString) as UsenetProviderConfig | null;
         return parsed && Array.isArray(parsed.Providers)
             ? parsed
             : { Providers: [] };
@@ -414,8 +431,8 @@ function generateProviderId(): string {
 type DragBits = {
     setNodeRef: (node: HTMLElement | null) => void;
     setActivatorNodeRef: (node: HTMLElement | null) => void;
-    attributes: any;
-    listeners: any;
+    attributes: DraggableAttributes;
+    listeners: DraggableSyntheticListeners;
     style: CSSProperties;
     isDragging: boolean;
 };
@@ -587,7 +604,7 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
 
     const handleConnectionsMessage = useCallback((message: string) => {
         const parts = (message || "0|0|0|0|1|0").split("|");
-        const [index, live, idle, _0, _1, _2] = parts.map((x: any) => Number(x));
+        const [index, live, idle, _0, _1, _2] = parts.map((x) => Number(x));
         if (showModal) return;
         const savedProvider = savedProviderConfig.Providers[index];
         if (!savedProvider) return;
@@ -613,7 +630,8 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
             try {
                 const response = await fetch(withUrlBase('/api/get-provider-usage'));
                 if (!response.ok || disposed) return;
-                const data: { providers?: ProviderUsage[] } = await response.json();
+                // Response of GET /api/get-provider-usage (backend GetProviderUsageResponse).
+                const data = await response.json() as { providers?: ProviderUsage[] };
                 if (disposed || !data.providers) return;
                 const next: Record<string, ProviderUsage> = {};
                 for (const p of data.providers) {
@@ -624,9 +642,9 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
                 // network blips are fine — next tick retries.
             }
         }
-        fetchUsage();
+        void fetchUsage(); // fire-and-forget: fetchUsage swallows its own errors
         if (showModal) return () => { disposed = true; };
-        const id = setInterval(fetchUsage, USAGE_POLL_INTERVAL_MS);
+        const id = setInterval(() => void fetchUsage(), USAGE_POLL_INTERVAL_MS);
         return () => { disposed = true; clearInterval(id); };
     }, [showModal, providerConfig.Providers]);
 
@@ -1024,7 +1042,7 @@ function UsageRow({ provider, usage, onReset, resetDisabled = false }: UsageRowP
     const limit = provider.ByteLimit ?? null;
     const used = usage?.bytesUsed ?? 0;
     const hasLimit = limit !== null && limit > 0;
-    const pct = hasLimit ? Math.min(100, (used / (limit as number)) * 100) : 0;
+    const pct = hasLimit ? Math.min(100, (used / limit) * 100) : 0;
     // Thresholds match the soft-warning levels the backend would alert on if
     // we wired notifications. Keeping the same numbers here means the colors
     // tell the same story as any future alert email or webhook.
@@ -1049,7 +1067,7 @@ function UsageRow({ provider, usage, onReset, resetDisabled = false }: UsageRowP
                 </span>
                 <span className={`min-w-0 flex-1 text-xs font-semibold tabular-nums ${valueToneClass}`}>
                     {hasLimit
-                        ? `${formatBytes(used)} / ${formatBytes(limit as number)} · ${pct.toFixed(1)}%`
+                        ? `${formatBytes(used)} / ${formatBytes(limit)} · ${pct.toFixed(1)}%`
                         : formatBytes(used)}
                 </span>
                 {hasLimit && usage && usage.daysRemaining !== null && usage.daysRemaining !== undefined && !usage.overLimit && (
@@ -1218,7 +1236,8 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
             });
 
             if (response.ok) {
-                const data = await response.json();
+                // Response of POST /api/test-usenet-connection (backend TestUsenetConnectionResponse).
+                const data = await response.json() as TestConnectionResult;
                 if (data.connected) {
                     setConnectionTested(true);
                     setTestError(null);
@@ -1226,7 +1245,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
                     setTestError("Connection test failed");
                 }
             } else {
-                const data = await response.json().catch(() => null);
+                const data = await response.json().catch(() => null) as TestConnectionResult | null;
                 setTestError(data?.error || "Failed to test connection");
             }
         } catch (error) {
@@ -1308,11 +1327,12 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
             const response = await fetch(withUrlBase('/api/benchmark-usenet-connection'), {
                 method: 'POST', body: formData, signal: controller.signal,
             });
-            const data = await response.json().catch(() => null);
+            // Response of POST /api/benchmark-usenet-connection (backend BenchmarkUsenetConnectionResponse).
+            const data = await response.json().catch(() => null) as BenchmarkPostResult | null;
             if (finished) return;
 
             if (response.ok && data?.status && data.result) {
-                finish(data.result as BenchmarkResult, null);
+                finish(data.result, null);
                 return;
             }
             if (data?.error) {
@@ -1445,7 +1465,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
                     {canSave && type !== ProviderType.Disabled && (
                         <Button
                             variant="outline"
-                            onClick={handleTestConnection}
+                            onClick={() => void handleTestConnection()}
                             disabled={!isFormValid || isTestingConnection || isSaving}
                         >
                             {isTestingConnection ? "Testing..." : "Test Connection"}
@@ -1454,13 +1474,13 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
                     {!canSave ? (
                         <Button
                             variant="primary"
-                            onClick={handleTestConnection}
+                            onClick={() => void handleTestConnection()}
                             disabled={!isFormValid || isTestingConnection || isSaving}
                         >
                             {isTestingConnection ? "Testing..." : "Test Connection"}
                         </Button>
                     ) : (
-                        <Button variant="primary" onClick={handleSave} disabled={!canSave || isSaving}>
+                        <Button variant="primary" onClick={() => void handleSave()} disabled={!canSave || isSaving}>
                             {isSaving ? "Saving..." : "Save Provider"}
                         </Button>
                     )}
@@ -1658,7 +1678,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
                                 id="provider-type"
                                 className="w-full"
                                 value={type}
-                                onChange={(e) => setType(parseInt(e.target.value, 10) as ProviderType)}
+                                onChange={(e) => setType(parseInt(e.target.value, 10))}
                             >
                                 <option value={ProviderType.Disabled}>Disabled</option>
                                 <option value={ProviderType.Pooled}>Pool Connections</option>
@@ -1714,8 +1734,8 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
                         progress={benchmarkProgress}
                         result={benchmarkResult}
                         error={benchmarkError}
-                        onRun={() => handleAutoTune()}
-                        onVerify={(connections) => handleAutoTune(connections)}
+                        onRun={() => void handleAutoTune()}
+                        onVerify={(connections) => void handleAutoTune(connections)}
                         onCancel={handleCancelBenchmark}
                         onApply={handleApplyRecommendation}
                     />

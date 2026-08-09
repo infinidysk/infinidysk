@@ -120,7 +120,7 @@ describe("backend proxy keep-alive timeout listeners", () => {
 
     // Same TCP connection reused for every request.
     expect(inboundSocket).toBeDefined();
-    const first = listenerCounts[0]!;
+    const first = listenerCounts[0];
     for (const count of listenerCounts) {
       expect(count).toBe(first);
     }

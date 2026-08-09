@@ -47,6 +47,30 @@ type BackupStatus = {
     rawUrl?: string | null;
 };
 
+// Backend response contracts, mirroring backend/Api/Controllers/Warden/*.cs
+type WardenImportResponse = {
+    added: number;
+    total: number;
+    cleared: number;
+    sourceId?: string | null;
+};
+
+type WardenSourceMutateResponse = {
+    sourceId?: string | null;
+    message?: string | null;
+    removed: number;
+};
+
+type WardenSourcesImportResponse = {
+    added: number;
+    skipped: number;
+    invalid: number;
+};
+
+type WardenBackupMutateResponse = {
+    message: string;
+};
+
 const TRUST_HELP: Record<Trust, string> = {
     full: "Filters on its own",
     corroborate: "Filters only when enough sources agree",
@@ -66,6 +90,16 @@ function kindMeta(kind: Source["kind"]) {
     if (kind === "local") return { label: "Local", cls: "text-success border-success/30 bg-success/10" };
     if (kind === "remote") return { label: "Remote", cls: "text-info border-info/30 bg-info/10" };
     return { label: "Imported", cls: "" };
+}
+
+function apiError(data: unknown) {
+    return typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
+        ? data.error
+        : null;
+}
+
+function errorText(err: unknown, fallback: string) {
+    return err instanceof Error && err.message ? err.message : fallback;
 }
 
 export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
@@ -120,18 +154,21 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
     const refresh = async () => {
         try {
             const res = await fetch(withUrlBase("/api/warden-sources"));
-            if (res.ok) setSnap(await res.json());
+            // GET /api/warden-sources → WardenSourcesResponse
+            if (res.ok) setSnap((await res.json()) as Snapshot);
         } catch { /* ignore */ }
     };
 
     const loadBackup = async () => {
         try {
             const res = await fetch(withUrlBase("/api/warden-backup"));
-            if (res.ok) setBackup(await res.json());
+            // GET /api/warden-backup → WardenBackupStatusResponse
+            if (res.ok) setBackup((await res.json()) as BackupStatus);
         } catch { }
     };
 
-    useEffect(() => { refresh(); loadBackup(); }, []);
+    // Initial load; both fetches catch internally and report via state.
+    useEffect(() => { void refresh(); void loadBackup(); }, []);
 
     useEffect(() => {
         if (message?.variant !== "success") return;
@@ -139,11 +176,12 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
         return () => clearTimeout(t);
     }, [message]);
 
-    const post = async (url: string, form: FormData): Promise<any> => {
+    const post = async <T = unknown>(url: string, form: FormData): Promise<T> => {
         const res = await fetch(url, { method: "POST", body: form });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Request failed.");
-        return data;
+        const data: unknown = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(apiError(data) || "Request failed.");
+        // The caller names the endpoint's response contract (see the Warden controllers).
+        return data as T;
     };
 
     const submitImport = async () => {
@@ -158,14 +196,14 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                 form.append("name", importName);
                 form.append("trust", importTrust);
             }
-            const data = await post("/api/warden-import", form);
+            const data = await post<WardenImportResponse>("/api/warden-import", form);
             setMessage({ text: `Imported ${(data.added ?? 0).toLocaleString()} fingerprint${data.added === 1 ? "" : "s"}.`, variant: "success" });
             setShowImport(false);
             setPendingFile(null);
             setImportName("");
             await refresh();
-        } catch (err: any) {
-            setMessage({ text: err?.message || "Import failed.", variant: "danger" });
+        } catch (err: unknown) {
+            setMessage({ text: errorText(err, "Import failed."), variant: "danger" });
         } finally {
             setBusy(null);
             if (fileRef.current) fileRef.current.value = "";
@@ -215,7 +253,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             form.append("name", remoteName.trim());
             form.append("trust", remoteTrust);
             form.append("refreshHours", remoteInterval);
-            const data = await post("/api/warden-source-add", form);
+            const data = await post<WardenSourceMutateResponse>("/api/warden-source-add", form);
             const failed = (data.message ?? "").startsWith("error");
             setMessage(failed
                 ? { text: `Added, but the first fetch failed: ${data.message}`, variant: "danger" }
@@ -224,8 +262,8 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             setRemoteUrl("");
             setRemoteName("");
             await refresh();
-        } catch (err: any) {
-            setMessage({ text: err?.message || "Could not add the remote list.", variant: "danger" });
+        } catch (err: unknown) {
+            setMessage({ text: errorText(err, "Could not add the remote list."), variant: "danger" });
         } finally {
             setBusy(null);
         }
@@ -240,7 +278,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             if (bulkText.trim()) form.append("text", bulkText);
             form.append("trust", bulkTrust);
             form.append("refreshHours", bulkInterval);
-            const data = await post("/api/warden-sources-import", form);
+            const data = await post<WardenSourcesImportResponse>("/api/warden-sources-import", form);
             const parts = [`Added ${(data.added ?? 0).toLocaleString()}`];
             if (data.skipped) parts.push(`${data.skipped.toLocaleString()} already present`);
             if (data.invalid) parts.push(`${data.invalid.toLocaleString()} invalid`);
@@ -250,8 +288,8 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             setBulkFile(null);
             if (bulkFileRef.current) bulkFileRef.current.value = "";
             await refresh();
-        } catch (err: any) {
-            setMessage({ text: err?.message || "Import failed.", variant: "danger" });
+        } catch (err: unknown) {
+            setMessage({ text: errorText(err, "Import failed."), variant: "danger" });
         } finally {
             setBusy(null);
         }
@@ -274,8 +312,8 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             for (const [k, v] of Object.entries(fields)) form.append(k, v);
             await post("/api/warden-source-update", form);
             await refresh();
-        } catch (err: any) {
-            setMessage({ text: err?.message || "Update failed.", variant: "danger" });
+        } catch (err: unknown) {
+            setMessage({ text: errorText(err, "Update failed."), variant: "danger" });
         } finally {
             setBusy(null);
         }
@@ -287,12 +325,12 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
         try {
             const form = new FormData();
             form.append("id", id);
-            const data = await post("/api/warden-source-refresh", form);
+            const data = await post<WardenSourceMutateResponse>("/api/warden-source-refresh", form);
             const failed = (data.message ?? "").startsWith("error");
             setMessage({ text: `Refresh: ${data.message}`, variant: failed ? "danger" : "success" });
             await refresh();
-        } catch (err: any) {
-            setMessage({ text: err?.message || "Refresh failed.", variant: "danger" });
+        } catch (err: unknown) {
+            setMessage({ text: errorText(err, "Refresh failed."), variant: "danger" });
         } finally {
             setBusy(null);
         }
@@ -308,7 +346,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             const form = new FormData();
             form.append("id", source.id);
             if (kind === "clear") form.append("action", "clear");
-            const data = await post("/api/warden-source-remove", form);
+            const data = await post<WardenSourceMutateResponse>("/api/warden-source-remove", form);
             setMessage({
                 text: kind === "clear"
                     ? `Cleared ${(data.removed ?? 0).toLocaleString()} fingerprint${data.removed === 1 ? "" : "s"}.`
@@ -316,8 +354,8 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                 variant: "success",
             });
             await refresh();
-        } catch (err: any) {
-            setMessage({ text: err?.message || "Action failed.", variant: "danger" });
+        } catch (err: unknown) {
+            setMessage({ text: errorText(err, "Action failed."), variant: "danger" });
         } finally {
             setBusy(null);
         }
@@ -346,13 +384,13 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             form.append("scope", bScope);
             form.append("intervalHours", bInterval);
             if (bToken) form.append("token", bToken);
-            const data = await post("/api/warden-backup", form);
+            const data = await post<BackupStatus>("/api/warden-backup", form);
             setBackup(data);
             setMessage({ text: "Backup settings saved.", variant: "success" });
             setShowBackup(false);
             setBToken("");
-        } catch (err: any) {
-            setMessage({ text: err?.message || "Could not save backup settings.", variant: "danger" });
+        } catch (err: unknown) {
+            setMessage({ text: errorText(err, "Could not save backup settings."), variant: "danger" });
         } finally {
             setBusy(null);
         }
@@ -362,12 +400,12 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
         setBusy("backup-now");
         setMessage(null);
         try {
-            const data = await post("/api/warden-backup-now", new FormData());
+            const data = await post<WardenBackupMutateResponse>("/api/warden-backup-now", new FormData());
             const failed = (data.message ?? "").startsWith("error");
             setMessage({ text: `Backup: ${data.message}`, variant: failed ? "danger" : "success" });
             await loadBackup();
-        } catch (err: any) {
-            setMessage({ text: err?.message || "Backup failed.", variant: "danger" });
+        } catch (err: unknown) {
+            setMessage({ text: errorText(err, "Backup failed."), variant: "danger" });
         } finally {
             setBusy(null);
         }
@@ -378,12 +416,12 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
         setBusy("backup-restore");
         setMessage(null);
         try {
-            const data = await post("/api/warden-backup-restore", new FormData());
+            const data = await post<WardenBackupMutateResponse>("/api/warden-backup-restore", new FormData());
             setMessage({ text: data.message || "Restored.", variant: "success" });
             await refresh();
             await loadBackup();
-        } catch (err: any) {
-            setMessage({ text: err?.message || "Restore failed.", variant: "danger" });
+        } catch (err: unknown) {
+            setMessage({ text: errorText(err, "Restore failed."), variant: "danger" });
         } finally {
             setBusy(null);
         }
@@ -504,14 +542,14 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                                             ? <span className={"truncate text-sm font-semibold text-base-content"}>{s.name}</span>
                                             : <input className={"min-w-0 max-w-[240px] rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-sm font-semibold text-base-content hover:border-base-content/10 focus:border-base-content/10 focus:bg-base-200 focus:outline-none"} defaultValue={s.name} disabled={rowBusy}
                                                 key={`nm-${s.id}-${s.name}`}
-                                                onBlur={e => { const v = e.target.value.trim(); if (v && v !== s.name) updateSource(s.id, { name: v }); }}
+                                                onBlur={e => { const v = e.target.value.trim(); if (v && v !== s.name) void updateSource(s.id, { name: v }); /* failures surface via setMessage */ }}
                                                 onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} />}
                                         <span className={`${"shrink-0 rounded-md border border-base-content/10 bg-base-200 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-base-content/80"} ${km.cls}`}>{km.label}</span>
                                         {rowBusy && <Spinner size="sm" />}
                                     </div>
                                     <div className={"ml-auto flex shrink-0 items-center gap-1.5"}>
                                         {s.kind === "remote" &&
-                                            <Button variant="primary" size="xsmall" disabled={rowBusy} onClick={() => refreshSource(s.id)}>
+                                            <Button variant="primary" size="xsmall" disabled={rowBusy} onClick={() => void refreshSource(s.id)}>
                                                 <Icon name="refresh" className="!text-[16px]" />
                                                 Refresh
                                             </Button>}
@@ -538,7 +576,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                                         : <div className={"flex items-center gap-1.5"}>
                                             <span className={"text-xs text-base-content/80"}>Trust</span>
                                             <Form.Select className={"w-[123px] shrink-0 text-xs"} value={s.trust} disabled={rowBusy}
-                                                onChange={e => updateSource(s.id, { trust: e.target.value })}>
+                                                onChange={e => void updateSource(s.id, { trust: e.target.value })}>
                                                 <option value="full">full</option>
                                                 <option value="corroborate">corroborate</option>
                                                 <option value="observe">observe</option>
@@ -551,7 +589,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                                             <Form.Check type="switch" id={`enabled-${s.id}`} label="Enabled"
                                                 className="cursor-pointer gap-2 p-0"
                                                 checked={s.enabled} disabled={rowBusy}
-                                                onChange={e => updateSource(s.id, { enabled: String(e.target.checked) })} />
+                                                onChange={e => void updateSource(s.id, { enabled: String(e.target.checked) })} />
                                         </Tooltip>}
 
                                     {s.kind === "remote" &&
@@ -559,7 +597,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                                             <span className={"text-xs text-base-content/80"}>Refresh (h)</span>
                                             <Form.Control type="number" min={1} max={720} className={"w-[72px] shrink-0 text-xs"}
                                                 key={`rh-${s.id}-${s.refreshHours}`} defaultValue={s.refreshHours} disabled={rowBusy}
-                                                onBlur={e => { const v = parseInt(e.target.value, 10); if (v && v !== s.refreshHours) updateSource(s.id, { refreshHours: String(v) }); }}
+                                                onBlur={e => { const v = parseInt(e.target.value, 10); if (v && v !== s.refreshHours) void updateSource(s.id, { refreshHours: String(v) }); /* failures surface via setMessage */ }}
                                                 onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} />
                                         </div>}
 
@@ -596,7 +634,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                             Settings
                         </Button>
                         <Button variant="primary" size="xsmall" disabled={!backup?.hasToken || busy !== null}
-                            onClick={backupNow}>
+                            onClick={() => void backupNow()}>
                             {busy === "backup-now"
                                 ? <><Spinner size="sm" /> Backing up…</>
                                 : <><Icon name="cloud_upload" className="!text-[16px]" /> Back up now</>}
@@ -636,7 +674,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                 onClose={() => setShowAddRemote(false)}
                 footer={<>
                     <Button variant="outline" onClick={() => setShowAddRemote(false)}>Cancel</Button>
-                    <Button disabled={busy === "add-remote" || !remoteUrl.trim()} onClick={addRemoteSource}>
+                    <Button disabled={busy === "add-remote" || !remoteUrl.trim()} onClick={() => void addRemoteSource()}>
                         {busy === "add-remote" ? <><Spinner size="sm" /> Adding…</> : "Add & fetch"}
                     </Button>
                 </>}
@@ -675,7 +713,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                 onClose={() => setShowBulk(false)}
                 footer={<>
                     <Button variant="outline" onClick={() => setShowBulk(false)}>Cancel</Button>
-                    <Button disabled={busy === "bulk" || (!bulkText.trim() && !bulkFile)} onClick={submitBulk}>
+                    <Button disabled={busy === "bulk" || (!bulkText.trim() && !bulkFile)} onClick={() => void submitBulk()}>
                         {busy === "bulk" ? <><Spinner size="sm" /> Importing…</> : "Import"}
                     </Button>
                 </>}
@@ -730,7 +768,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                 onClose={() => setShowImport(false)}
                 footer={<>
                     <Button variant="outline" onClick={() => setShowImport(false)}>Cancel</Button>
-                    <Button disabled={busy === "import" || !pendingFile} onClick={submitImport}>
+                    <Button disabled={busy === "import" || !pendingFile} onClick={() => void submitImport()}>
                         {busy === "import" ? <><Spinner size="sm" /> Importing…</> : "Import"}
                     </Button>
                 </>}
@@ -814,7 +852,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                 onClose={() => setShowBackup(false)}
                 footer={<>
                     <Button variant="outline" onClick={() => setShowBackup(false)}>Cancel</Button>
-                    <Button disabled={busy === "backup-save" || !bRepo.trim()} onClick={saveBackup}>
+                    <Button disabled={busy === "backup-save" || !bRepo.trim()} onClick={() => void saveBackup()}>
                         {busy === "backup-save" ? <><Spinner size="sm" /> Saving…</> : "Save"}
                     </Button>
                 </>}
@@ -872,7 +910,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                 cancelText="Cancel"
                 confirmText="Restore"
                 onCancel={() => setConfirmRestore(false)}
-                onConfirm={doRestore} />
+                onConfirm={() => void doRestore()} />
 
             <ConfirmModal
                 show={confirm !== null}
@@ -883,7 +921,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                 cancelText="Cancel"
                 confirmText={confirm?.kind === "remove" ? "Remove" : "Clear"}
                 onCancel={() => setConfirm(null)}
-                onConfirm={runConfirm} />
+                onConfirm={() => void runConfirm()} />
         </SettingsPage>
     );
 }

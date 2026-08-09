@@ -1,33 +1,27 @@
-import type { HealthCheckStats } from "~/clients/backend-client.server";
+import type { HealthCheckStats, HealthResult, RepairAction } from "~/clients/backend-client.server";
 import { Badge, Icon } from "~/components/ui";
 
 export type HealthStatsProps = {
     stats: HealthCheckStats[];
 }
 
-enum HealthResult {
-    Healthy = 0,
-    Unhealthy = 1,
-}
-
-enum RepairAction {
-    None = 0,
-    Repaired = 1,
-    Deleted = 2,
-    ActionNeeded = 3,
-}
+// Numeric values mirror the backend HealthResult / RepairAction enums declared in
+// ~/clients/backend-client.server (a .server module, so its enums cannot be value-imported here).
+const HealthResultHealthy: HealthResult = 0;
+const RepairActionRepaired: RepairAction = 1;
+const RepairActionDeleted: RepairAction = 2;
 
 export function HealthStats({ stats }: HealthStatsProps) {
     const totalChecked = stats
         .reduce((sum, stat) => sum + stat.count, 0);
     const healthy = stats
-        .filter(stat => stat.result === HealthResult.Healthy)
+        .filter(stat => stat.result === HealthResultHealthy)
         .reduce((sum, stat) => sum + stat.count, 0);
     const repaired = stats
-        .filter(stat => stat.repairStatus === RepairAction.Repaired)
+        .filter(stat => stat.repairStatus === RepairActionRepaired)
         .reduce((sum, stat) => sum + stat.count, 0);
     const deleted = stats
-        .filter(stat => stat.repairStatus === RepairAction.Deleted)
+        .filter(stat => stat.repairStatus === RepairActionDeleted)
         .reduce((sum, stat) => sum + stat.count, 0);
 
     const getPercentage = (count: number) => {
