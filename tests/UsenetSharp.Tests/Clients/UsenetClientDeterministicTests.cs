@@ -1289,7 +1289,7 @@ public class UsenetClientDeterministicTests
         var reason = UsenetClient.DescribeFailure(
             new SocketException((int)SocketError.ConnectionReset));
 
-        Assert.That(reason, Does.Contain(nameof(SocketError.ConnectionReset)));
+        Assert.That(reason, Is.EqualTo("SocketException: ConnectionReset"));
     }
 
     [Test]
