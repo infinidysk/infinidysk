@@ -68,7 +68,7 @@ public static class SymlinkMatcher
         Func<DavDatabaseContext>? davContextFactory = null,
         CancellationToken ct = default)
     {
-        await using var ctx = (davContextFactory?.Invoke() ?? new DavDatabaseContext());
+        await using var ctx = DavDatabaseContexts.Create(davContextFactory);
         return await ctx.Items.AsNoTracking()
             .Where(i => (i.NzbBlobId == nzoId || i.HistoryItemId == nzoId)
                         && i.Type == DavItem.ItemType.UsenetFile)

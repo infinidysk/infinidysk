@@ -31,7 +31,7 @@ public static class LiveCollisions
     public static (HashSet<string> queueKeys, HashSet<string> contentPaths) LoadSets(
         Func<DavDatabaseContext>? davContextFactory = null)
     {
-        using var ctx = davContextFactory?.Invoke() ?? new DavDatabaseContext();
+        using var ctx = DavDatabaseContexts.Create(davContextFactory);
         var queueKeys = ctx.QueueItems.AsNoTracking()
             .Select(q => new { q.Category, q.FileName })
             .AsEnumerable()

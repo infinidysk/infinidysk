@@ -33,7 +33,7 @@ internal static class SubmissionClaimRecovery
         if (claims.Count == 0)
             return new SubmissionRecoverySummary();
 
-        await using var davContext = (davContextFactory?.Invoke() ?? new DavDatabaseContext());
+        await using var davContext = DavDatabaseContexts.Create(davContextFactory);
         var adopted = 0;
         var retried = 0;
         var ambiguous = 0;

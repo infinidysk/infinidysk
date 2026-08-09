@@ -73,8 +73,12 @@ public class PlaybackFastVerifier
         // The priority context lives on this candidate's own child token: registering it on
         // the parent token shared by concurrent candidates would let one candidate's disposal
         // strip priority from its siblings.
+        #pragma warning disable CA2000 // disposed by the work.ContinueWith continuation once the probe finishes (see the finally block below)
         var timeoutCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(ct);
+        #pragma warning restore CA2000
+        #pragma warning disable CA2000 // disposed by the work.ContinueWith continuation once the probe finishes (see the finally block below)
         var priorityScope = timeoutCts.Token.SetContext(new DownloadPriorityContext
+        #pragma warning restore CA2000
         {
             Priority = priority,
         });

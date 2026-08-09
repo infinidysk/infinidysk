@@ -361,6 +361,5 @@ public sealed class SubmissionWorkerPool(
         return await davCtx.QueueItems.AsNoTracking().CountAsync(ct).ConfigureAwait(false);
     }
 
-    private DavDatabaseContext NewDavContext() =>
-        DavContextFactory?.Invoke() ?? new DavDatabaseContext();
+    private DavDatabaseContext NewDavContext() => DavDatabaseContexts.Create(DavContextFactory);
 }

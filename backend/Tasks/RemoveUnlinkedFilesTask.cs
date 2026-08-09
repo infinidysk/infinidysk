@@ -50,7 +50,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         _progressObserver = progressObserver;
     }
 
-    private DavDatabaseContext CreateContext() => _createContext?.Invoke() ?? new DavDatabaseContext();
+    private DavDatabaseContext CreateContext() => DavDatabaseContexts.Create(_createContext);
 
     protected override async Task ExecuteInternal()
     {

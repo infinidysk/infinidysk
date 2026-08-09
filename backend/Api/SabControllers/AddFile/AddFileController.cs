@@ -65,8 +65,10 @@ public class AddFileController(
                     .CountAsync(request.CancellationToken)
                     .ConfigureAwait(false);
                 var resumeThreshold = Config.GetQueueResumeThreshold();
+#pragma warning disable CA2000 // reservation is assigned to the method-scoped using below; the only statements between creation and the using are a null check and logging
                 admissionReservation = queueManager.TryReserveQueueSlot(
                     currentCount, maxItems, resumeThreshold);
+#pragma warning restore CA2000
                 if (admissionReservation is null)
                 {
                     Log.Warning(

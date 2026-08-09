@@ -339,7 +339,9 @@ public class NzbFileStream(
                     await body.DiscardExactBytesAsync(rangeStart - start, ct).ConfigureAwait(false);
                     var tail = end - rangeStart;
                     var capacity = tail is > 0 and <= int.MaxValue ? (int)tail : 0;
+                    #pragma warning disable CA2000 // head is disposed in the outer finally on all non-transferred paths; on success ownership moves to the returned CombinedStream
                     head = new PooledBufferStream(capacity);
+                    #pragma warning restore CA2000
                     await body.CopyToAsync(head, ct).ConfigureAwait(false);
                     head.Position = 0;
                     // Do not relinquish the pooled head until body disposal succeeds.

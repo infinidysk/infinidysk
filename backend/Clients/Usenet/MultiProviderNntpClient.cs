@@ -234,7 +234,9 @@ public class MultiProviderNntpClient(
         CancellationToken cancellationToken
     )
     {
+        #pragma warning disable CA2000 // fetch scope is disposed on both the success and failure paths below
         var fetchScope = concurrentReadTracker?.BeginSegmentFetch(segmentId);
+        #pragma warning restore CA2000
         try
         {
             return await RunStreamingFromPoolWithBackup(

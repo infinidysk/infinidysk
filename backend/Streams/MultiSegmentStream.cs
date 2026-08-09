@@ -407,7 +407,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     .ConfigureAwait(false);
 
                 await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
+                #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                 var stream = await DrainSegmentAsync(
+                #pragma warning restore CA2000
                         bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate)
                     .ConfigureAwait(false);
                 lease = null;
@@ -520,7 +522,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             var response = await responseTask.ConfigureAwait(false);
             await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+            #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
             var stream = await DrainSegmentAsync(
+            #pragma warning restore CA2000
                     response.Stream!, segmentIndex, cancellationToken, lease, estimate)
                 .ConfigureAwait(false);
             lease = null; // owned by BudgetedStream / buffer
@@ -634,7 +638,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                         .ConfigureAwait(false);
                     await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+                    #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var stream = await DrainSegmentAsync(
+                    #pragma warning restore CA2000
                         response.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
                     lease = null;
                     return stream;
@@ -690,7 +696,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                         .ConfigureAwait(false);
                     await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+                    #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var stream = await DrainSegmentAsync(
+                    #pragma warning restore CA2000
                         response.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
                     lease = null;
                     return stream;
@@ -741,7 +749,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     Log.Debug(
                         "Segment {PrimaryIndex} recovered via fallback MessageId {FallbackId} while reading {FileName}.",
                         segmentIndex, fallbackId, _fileName);
+                    #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var stream = await DrainSegmentAsync(
+                    #pragma warning restore CA2000
                         bodyResponse.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
                     lease = null;
                     return stream;
@@ -817,7 +827,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 fill, _fileName, segmentId);
         }
 
+        #pragma warning disable CA2000 // gap-fill stream ownership transfers to the returned SegmentDownloadResult
         return SegmentDownloadResult.ZeroFill(
+        #pragma warning restore CA2000
             CreateGapFillStream(fill, segmentIndex),
             messageTemplate,
             segmentId,

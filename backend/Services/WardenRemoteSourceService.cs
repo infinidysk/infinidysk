@@ -76,8 +76,7 @@ public class WardenRemoteSourceService : BackgroundService
             await using var raw = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             using var buffer = await BufferAsync(raw, ct).ConfigureAwait(false);
 
-            Stream body = buffer;
-            if (LooksGzip(buffer)) body = new GZipStream(buffer, CompressionMode.Decompress);
+            using Stream body = LooksGzip(buffer) ? new GZipStream(buffer, CompressionMode.Decompress) : buffer;
 
             using var limitedBody = new LimitedReadStream(body, WardenInputLimits.MaxDecompressedBytes);
             var count = await _store.ReplaceSourceAsync(source.Id, limitedBody, ct).ConfigureAwait(false);

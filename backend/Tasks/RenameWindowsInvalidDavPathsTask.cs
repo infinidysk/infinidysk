@@ -22,7 +22,7 @@ public class RenameWindowsInvalidDavPathsTask(
 {
     private static List<string> _auditLines = [];
 
-    private DavDatabaseContext CreateContext() => createContext?.Invoke() ?? new DavDatabaseContext();
+    private DavDatabaseContext CreateContext() => DavDatabaseContexts.Create(createContext);
 
     protected override async Task ExecuteInternal()
     {

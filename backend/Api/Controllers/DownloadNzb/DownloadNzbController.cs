@@ -24,7 +24,9 @@ public class DownloadNzbController(DavDatabaseContext dbContext) : BaseApiContro
             throw new BadHttpRequestException("NZB not found.");
 
         // Open the NZB blob from the blob store
+        #pragma warning disable CA2000 // the MVC File() result disposes the stream after the response is sent
         var stream = BlobStore.ReadBlob(nzbBlobId);
+        #pragma warning restore CA2000
         if (stream == null)
             throw new BadHttpRequestException("NZB file is no longer available.");
 

@@ -23,14 +23,18 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             Priority = SemaphorePriority.High,
             StreamSemaphore = streamSemaphore,
         };
+        #pragma warning disable CA2000 // scoped context is disposed via Response.OnCompleted when the response completes
         var scopedDownloadPriorityContext = cancellationToken.SetContext(downloadPriorityContext);
+        #pragma warning restore CA2000
 
         var streamingTimeoutContext = new StreamingTimeoutContext
         {
             PerSegmentTimeout = configManager.GetStreamingSegmentTimeout(),
             MaxRetries = configManager.GetStreamingSegmentRetries(),
         };
+        #pragma warning disable CA2000 // scoped context is disposed via Response.OnCompleted when the response completes
         var scopedStreamingTimeoutContext = cancellationToken.SetContext(streamingTimeoutContext);
+        #pragma warning restore CA2000
 
         // Keep this stream's per-stream budget in sync with live config changes,
         // mirroring how DownloadingNntpClient resizes the shared streaming semaphore.

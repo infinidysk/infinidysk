@@ -29,7 +29,9 @@ public class UsenetStreamingClient : WrappingNntpClient
         ArticleMissNegativeCache? articleMissCache = null,
         ProviderLatencyTracker? latencyTracker = null,
         ConcurrentReadTracker? concurrentReadTracker = null)
+        #pragma warning disable CA2000 // the client chain transfers to the base class and is disposed with this instance
         : base(CreateDownloadingNntpClient(
+        #pragma warning restore CA2000
             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
             streamTrace, activeReadRegistry, articleMissCache, latencyTracker, concurrentReadTracker))
     {
@@ -88,16 +90,22 @@ public class UsenetStreamingClient : WrappingNntpClient
         ConcurrentReadTracker? concurrentReadTracker
     )
     {
+        #pragma warning disable CA2000 // wrapped by DownloadingNntpClient below; the returned client chain is disposed with this instance
         var multiProviderClient = CreateMultiProviderClient(
+        #pragma warning restore CA2000
             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
             streamTrace, activeReadRegistry, articleMissCache, latencyTracker, concurrentReadTracker);
+        #pragma warning disable CA2000 // ownership transfers to the wrapping/returned client chain, disposed with this instance
         var downloadingClient = new DownloadingNntpClient(multiProviderClient, configManager, latencyTracker);
+        #pragma warning restore CA2000
         INntpClient inner = downloadingClient;
         if (configManager.IsSegmentCacheEnabled())
         {
             try
             {
+                #pragma warning disable CA2000 // on construction failure the inner chain is returned unwrapped; the returned chain is disposed with this instance
                 inner = new SegmentCacheNntpClient(
+                #pragma warning restore CA2000
                     downloadingClient,
                     configManager.GetSegmentCachePath(),
                     configManager.GetSegmentCacheMaxBytes(),
@@ -235,7 +243,9 @@ public class UsenetStreamingClient : WrappingNntpClient
                 label);
         }
 
+        #pragma warning disable CA2000 // the pool is owned by the provider's MultiConnectionNntpClient and disposed on provider config change
         var connectionPool = CreateNewConnectionPool(
+        #pragma warning restore CA2000
             maxConnections: maxConnections,
             connectionFactory: ct => CreateNewConnection(connectionDetails, ct),
             onConnectionPoolChanged,

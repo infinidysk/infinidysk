@@ -33,7 +33,9 @@ public class PreflightOrchestrator(
         var mode = configManager.GetPreflightMode();
         if (mode == "off" || candidates.Count == 0) return;
 
+        #pragma warning disable CA2000 // session ownership transfers to the background task, which disposes it on completion
         var session = sessionRegistry.BeginSession(profileToken, type, id);
+        #pragma warning restore CA2000
 
         _ = Task.Run(async () =>
         {

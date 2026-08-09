@@ -209,7 +209,9 @@ public class AddUrlRequest() : AddFileRequest
 
     private static HttpClient InitializeHttpClient(bool skipTlsVerification)
     {
+        #pragma warning disable CA2000 // handler is owned by the static HttpClient (process lifetime by design)
         var handler = new SocketsHttpHandler
+        #pragma warning restore CA2000
         {
             AllowAutoRedirect = false,
             UseProxy = false,
@@ -300,7 +302,9 @@ public class AddUrlRequest() : AddFileRequest
         Exception? lastException = null;
         foreach (var address in addresses.Distinct())
         {
+            #pragma warning disable CA2000 // socket is disposed on connect failure; on success the returned NetworkStream owns it (ownsSocket: true)
             var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+            #pragma warning restore CA2000
             {
                 NoDelay = true
             };

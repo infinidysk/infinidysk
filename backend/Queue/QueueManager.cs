@@ -48,8 +48,7 @@ public class QueueManager : IDisposable
     internal Func<CancellationToken, Task<DateTime?>>? GetNextPauseUntilOverride { get; set; }
     internal Func<DavDatabaseContext>? CreateDbContextOverride { get; set; }
 
-    private DavDatabaseContext CreateDbContext() =>
-        CreateDbContextOverride?.Invoke() ?? new DavDatabaseContext();
+    private DavDatabaseContext CreateDbContext() => DavDatabaseContexts.Create(CreateDbContextOverride);
 
     public QueueManager(
         UsenetStreamingClient usenetClient,
@@ -406,8 +405,12 @@ public class QueueManager : IDisposable
                     GetFanOutConcurrency = () => ComputeFanOutConcurrency(queueItem.Id),
                 };
 
+                #pragma warning disable CA2000 // worker CTS ownership transfers to InProgressQueueItem and is disposed when the queue item completes; the not-transferred path disposes in finally
                 var workerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                #pragma warning restore CA2000
+                #pragma warning disable CA2000 // registration ownership transfers to InProgressQueueItem (disposed on completion); otherwise disposed in finally
                 queueContextRegistration = workerCts.Token.SetContext(queueDownloadContext);
+                #pragma warning restore CA2000
 
                 inProgress = BeginProcessingQueueItem(
                     dbClient!,
