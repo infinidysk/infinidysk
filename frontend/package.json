@@ -11,7 +11,7 @@
     "predev": "bash ../scripts/sync-dev-env.sh",
     "dev": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx server.ts",
     "start": "node dist-node/server.js",
-    "lint": "react-router typegen && eslint . --max-warnings 27",
+    "lint": "react-router typegen && eslint . --max-warnings 0",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "typecheck": "react-router typegen && tsc -b"

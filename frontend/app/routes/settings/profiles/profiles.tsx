@@ -360,7 +360,9 @@ function AdapterRow({ token, origin, adapter, enabled, onToggle }: AdapterRowPro
             await navigator.clipboard.writeText(url);
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
-        } catch {}
+        } catch {
+            // clipboard write can fail without focus/permission; nothing to report
+        }
     }, [url]);
 
     return (

@@ -462,8 +462,8 @@ function getChangedConfig(
     config: Record<string, string>,
     newConfig: Record<string, string>
 ): Record<string, string> {
-    let changedConfig: Record<string, string> = {};
-    let configKeys = Object.keys(defaultConfig);
+    const changedConfig: Record<string, string> = {};
+    const configKeys = Object.keys(defaultConfig);
     for (const configKey of configKeys) {
         const newValue = newConfig[configKey];
         if (newValue !== undefined && config[configKey] !== newValue) {

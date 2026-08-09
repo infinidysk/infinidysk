@@ -45,6 +45,7 @@ function parseArrConfig(value: string): ArrConfig {
             return parsed;
         }
     } catch {
+        // invalid stored JSON: fall through to the default config below
     }
 
     return {
