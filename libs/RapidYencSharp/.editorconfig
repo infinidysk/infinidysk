@@ -24,3 +24,46 @@ indent_size = 2
 
 [*.md]
 trim_trailing_whitespace = false
+
+# ==========================================================================
+# Analyzer policy — mirrors the repository root .editorconfig (this file has
+# root = true, so the root policy does not flow in). Keep in sync with the
+# root "Analyzer policy" section. See CONTRIBUTING.md "Static analysis
+# policy".
+# ==========================================================================
+[*.cs]
+
+# Justification: P/Invoke declarations follow native symbol names and expose
+# interop structs directly by design; consumed only by this repo.
+dotnet_diagnostic.CA1002.severity = none
+dotnet_diagnostic.CA1819.severity = none
+dotnet_diagnostic.CA2227.severity = none
+dotnet_diagnostic.CA1051.severity = none
+dotnet_diagnostic.CA1034.severity = none
+dotnet_diagnostic.CA1062.severity = none
+dotnet_diagnostic.CA1008.severity = none
+dotnet_diagnostic.CA1024.severity = none
+dotnet_diagnostic.CA1040.severity = none
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1055.severity = none
+dotnet_diagnostic.CA1056.severity = none
+dotnet_diagnostic.CA2234.severity = none
+dotnet_diagnostic.CA2225.severity = none
+dotnet_diagnostic.CA1031.severity = none
+dotnet_diagnostic.CA1032.severity = none
+dotnet_diagnostic.CA1303.severity = none
+dotnet_diagnostic.CA1304.severity = none
+dotnet_diagnostic.CA1305.severity = none
+# Justification: P/Invoke method names intentionally mirror the native C
+# symbols (snake_case) they bind to.
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1711.severity = none
+dotnet_diagnostic.CA1716.severity = none
+dotnet_diagnostic.CA1720.severity = none
+dotnet_diagnostic.CA1724.severity = none
+dotnet_diagnostic.CA1725.severity = none
+dotnet_diagnostic.CA1515.severity = none
+dotnet_diagnostic.CA1508.severity = none
+dotnet_diagnostic.CA1852.severity = none
+dotnet_diagnostic.CA2100.severity = none
+dotnet_diagnostic.CA3003.severity = none

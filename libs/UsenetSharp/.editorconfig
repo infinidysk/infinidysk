@@ -24,3 +24,58 @@ indent_size = 2
 
 [*.md]
 trim_trailing_whitespace = false
+
+# ==========================================================================
+# Analyzer policy — mirrors the repository root .editorconfig (this file has
+# root = true, so the root policy does not flow in). Keep in sync with the
+# root "Analyzer policy" section. See CONTRIBUTING.md "Static analysis
+# policy".
+# ==========================================================================
+[*.cs]
+
+# Justification: protocol DTOs expose collections/arrays/fields directly by
+# design; this library's public surface is consumed only by this repo.
+dotnet_diagnostic.CA1002.severity = none
+dotnet_diagnostic.CA1819.severity = none
+dotnet_diagnostic.CA2227.severity = none
+dotnet_diagnostic.CA1051.severity = none
+dotnet_diagnostic.CA1034.severity = none
+# Justification: nullable reference types guard call sites; per-parameter
+# null re-validation duplicates that.
+dotnet_diagnostic.CA1062.severity = none
+dotnet_diagnostic.CA1008.severity = none
+dotnet_diagnostic.CA1024.severity = none
+dotnet_diagnostic.CA1040.severity = none
+# Justification: NNTP endpoints are configured as strings by design.
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1055.severity = none
+dotnet_diagnostic.CA1056.severity = none
+dotnet_diagnostic.CA2234.severity = none
+# Justification: operator-overload alternate-method naming does not apply to
+# protocol value types.
+dotnet_diagnostic.CA2225.severity = none
+# Justification: connection/streaming code intentionally catches broadly at
+# layer boundaries; the AGENTS.md exception-logging policy governs.
+dotnet_diagnostic.CA1031.severity = none
+# Justification: exceptions define only the constructors they use (YAGNI).
+dotnet_diagnostic.CA1032.severity = none
+# Justification: no localization; NNTP/yEnc data is invariant ASCII.
+dotnet_diagnostic.CA1303.severity = none
+dotnet_diagnostic.CA1304.severity = none
+dotnet_diagnostic.CA1305.severity = none
+# Justification: identifiers follow protocol/field names (NNTP, yEnc).
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1711.severity = none
+dotnet_diagnostic.CA1716.severity = none
+dotnet_diagnostic.CA1720.severity = none
+dotnet_diagnostic.CA1724.severity = none
+dotnet_diagnostic.CA1725.severity = none
+# Justification: the public API is the repo-internal contract; hiding it adds
+# nothing.
+dotnet_diagnostic.CA1515.severity = none
+# Justification: repeated false positives under nullable flow analysis in
+# decoder state machines.
+dotnet_diagnostic.CA1508.severity = none
+dotnet_diagnostic.CA1852.severity = none
+dotnet_diagnostic.CA2100.severity = none
+dotnet_diagnostic.CA3003.severity = none

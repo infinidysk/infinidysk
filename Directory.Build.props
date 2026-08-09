@@ -1,0 +1,26 @@
+<Project>
+
+  <!--
+    Shared static-analysis configuration for all first-party projects
+    (backend, tests, libs/UsenetSharp, libs/RapidYencSharp, backend.Benchmarks).
+
+    Vendored upstream code (libs/SharpCompress and its ported test suite
+    tests/SharpCompress.Tests) opts out per project via <NoWarn>; see the
+    respective csproj files and CONTRIBUTING.md for the suppression policy.
+
+    The NetAnalyzers package is pinned (instead of relying on the SDK-bundled
+    analyzers) so the rule set only changes on a deliberate dependency bump.
+  -->
+  <PropertyGroup>
+    <AnalysisLevel>latest-All</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="10.0.302">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

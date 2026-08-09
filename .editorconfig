@@ -15,3 +15,104 @@ indent_size = 2
 
 [*.md]
 trim_trailing_whitespace = false
+
+# ==========================================================================
+# Analyzer policy (see CONTRIBUTING.md "Static analysis policy")
+#
+# latest-All enables every CA rule as a warning. Rules listed here as `none`
+# are disabled project-wide with a recorded justification; everything else
+# stays enabled and must be fixed, not suppressed. Security rules (CA53xx)
+# are never disabled here — rare intentional violations get a targeted
+# GlobalSuppressions.cs entry with justification.
+#
+# NOTE: libs/* and the rapidyenc submodule ship their own root .editorconfig
+# files (root = true) and do not inherit this section. Keep the mirrored
+# policy blocks in libs/UsenetSharp/.editorconfig and
+# libs/RapidYencSharp/.editorconfig in sync with this list.
+# ==========================================================================
+[*.cs]
+
+# --- Application-design rules: target reusable libraries, not an app -------
+
+# Justification: app-internal DTOs/services are not a public library surface;
+# List<T>/array/writable-collection members are fine on internal models.
+dotnet_diagnostic.CA1002.severity = none
+dotnet_diagnostic.CA1819.severity = none
+dotnet_diagnostic.CA2227.severity = none
+# Justification: public fields are deliberate on plain data structs/DTOs.
+dotnet_diagnostic.CA1051.severity = none
+# Justification: nested types are used intentionally for scoping helpers.
+dotnet_diagnostic.CA1034.severity = none
+# Justification: nullable reference types already guard the app boundary;
+# per-parameter null re-validation of every visible method is library noise.
+dotnet_diagnostic.CA1062.severity = none
+# Justification: enum values are defined by wire/storage formats (e.g.
+# AccountType); a mandatory zero/'None' member does not fit every enum.
+dotnet_diagnostic.CA1008.severity = none
+# Justification: Get*/method-vs-property naming is chosen for clarity, not
+# by mechanical rule.
+dotnet_diagnostic.CA1024.severity = none
+# Justification: empty marker interfaces are used deliberately.
+dotnet_diagnostic.CA1040.severity = none
+# Justification: internal URI/config values are stored and passed as strings
+# by design (settings persistence, NNTP/HTTP endpoint configuration).
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1055.severity = none
+dotnet_diagnostic.CA1056.severity = none
+dotnet_diagnostic.CA2234.severity = none
+# Justification: operator-overload alternate-method naming does not apply to
+# the few protocol value types that define operators.
+dotnet_diagnostic.CA2225.severity = none
+
+# --- Error handling ---------------------------------------------------------
+
+# Justification: background hosted services intentionally catch broadly to
+# stay alive; the AGENTS.md exception-logging policy (known failure -> warning,
+# unexpected -> error + stack) governs this, not per-site analyzer noise.
+dotnet_diagnostic.CA1031.severity = none
+# Justification: domain exceptions define the constructors they actually use;
+# the full standard-exception constructor set is library boilerplate (YAGNI).
+dotnet_diagnostic.CA1032.severity = none
+# Justification: reserved exception types are fixed (CA2201 stays on);
+# CA2208's param-name plumbing is covered by throw helpers and tests.
+# (CA2208 itself stays enabled; nothing to disable here.)
+
+# --- Globalization ----------------------------------------------------------
+
+# Justification: the server is not localized; protocol parsing targets
+# invariant/ASCII Usenet data. StringComparison rules that affect semantics
+# (CA1307-CA1311) stay enabled and are fixed; culture-provision rules do not
+# apply to an English-only admin UI + protocol daemon.
+dotnet_diagnostic.CA1303.severity = none
+dotnet_diagnostic.CA1304.severity = none
+dotnet_diagnostic.CA1305.severity = none
+
+# --- Naming -----------------------------------------------------------------
+
+# Justification: identifiers follow protocol/field names (NNTP, yEnc, RAR)
+# and test conventions; mechanical naming rules are not enforced.
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1711.severity = none
+dotnet_diagnostic.CA1716.severity = none
+dotnet_diagnostic.CA1720.severity = none
+dotnet_diagnostic.CA1724.severity = none
+dotnet_diagnostic.CA1725.severity = none
+
+# --- Misc noise -------------------------------------------------------------
+
+# Justification: ASP.NET Core apps gain nothing from making every public type
+# internal (controllers, DI registrations, EF models are public by convention).
+dotnet_diagnostic.CA1515.severity = none
+# Justification: repeated false positives under nullable flow analysis in
+# streaming/decoder state machines.
+dotnet_diagnostic.CA1508.severity = none
+# Justification: sealing every internal class churns the codebase and breaks
+# test doubles for a micro-optimization the hot paths already get via CA1859.
+dotnet_diagnostic.CA1852.severity = none
+# Justification: data access is EF Core parameterized queries; the few raw
+# SQL statements are fixed literal strings in maintenance/migration helpers.
+dotnet_diagnostic.CA2100.severity = none
+# Justification: WebDAV "paths" are virtual store keys sanitized by the
+# DatabaseStore layer, not raw filesystem paths; per-site taint review of a
+# path-centric server is not actionable.
+dotnet_diagnostic.CA3003.severity = none

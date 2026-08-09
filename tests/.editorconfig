@@ -1,0 +1,59 @@
+# Test-project analyzer policy — extends the repository root .editorconfig
+# (no `root = true` here on purpose). See CONTRIBUTING.md "Static analysis
+# policy". Compiler (CS) warnings are NOT relaxed: nullable and other compiler
+# warnings in tests must be fixed like anywhere else.
+
+[*.cs]
+
+# Justification: xUnit test methods use descriptive Snake_Case names.
+dotnet_diagnostic.CA1707.severity = none
+# Justification: ConfigureAwait adds no value inside test bodies; xUnit
+# controls the synchronization context.
+dotnet_diagnostic.CA2007.severity = none
+# Justification: test-scoped disposables are torn down by the test runner /
+# collection fixtures; per-local dispose tracking is noise.
+dotnet_diagnostic.CA2000.severity = none
+dotnet_diagnostic.CA2213.severity = none
+dotnet_diagnostic.CA1001.severity = none
+dotnet_diagnostic.CA1063.severity = none
+dotnet_diagnostic.CA1816.severity = none
+dotnet_diagnostic.CA2215.severity = none
+# Justification: culture/StringComparison correctness is a product-code
+# concern; tests assert on fixed English fixtures.
+dotnet_diagnostic.CA1307.severity = none
+dotnet_diagnostic.CA1308.severity = none
+dotnet_diagnostic.CA1309.severity = none
+dotnet_diagnostic.CA1310.severity = none
+dotnet_diagnostic.CA1311.severity = none
+# Justification: tests freely throw Exception/aggregate failures; reserved-type
+# and CancellationToken-plumbing rules target product code.
+dotnet_diagnostic.CA2201.severity = none
+dotnet_diagnostic.CA2016.severity = none
+dotnet_diagnostic.CA1849.severity = none
+dotnet_diagnostic.CA2025.severity = none
+# Justification: micro-performance rules (static members, concrete types,
+# cached arrays) are irrelevant in test code.
+dotnet_diagnostic.CA1822.severity = none
+dotnet_diagnostic.CA1859.severity = none
+dotnet_diagnostic.CA1861.severity = none
+dotnet_diagnostic.CA1826.severity = none
+dotnet_diagnostic.CA1828.severity = none
+dotnet_diagnostic.CA1835.severity = none
+dotnet_diagnostic.CA1844.severity = none
+dotnet_diagnostic.CA1869.severity = none
+dotnet_diagnostic.CA1806.severity = none
+dotnet_diagnostic.CA1052.severity = none
+dotnet_diagnostic.CA1512.severity = none
+dotnet_diagnostic.CA1513.severity = none
+dotnet_diagnostic.CA1812.severity = none
+# Justification: test fixtures generate non-security random data, pin TLS
+# versions for compatibility matrix coverage, exercise P/Invoke marshaling,
+# and decrypt spec-mandated archive IVs on purpose.
+dotnet_diagnostic.CA5394.severity = none
+dotnet_diagnostic.CA5398.severity = none
+dotnet_diagnostic.CA5392.severity = none
+dotnet_diagnostic.CA5401.severity = none
+dotnet_diagnostic.CA2101.severity = none
+# Justification: Stream.Read exact-length checks are product-code concerns;
+# tests read in-memory buffers where short reads do not occur.
+dotnet_diagnostic.CA2022.severity = none
