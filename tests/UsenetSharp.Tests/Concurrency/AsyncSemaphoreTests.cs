@@ -247,7 +247,7 @@ public class AsyncSemaphoreTests
 
         // Assert
         var ex = Assert.ThrowsAsync<ObjectDisposedException>(async () => await waitTask);
-        Assert.That(ex!.ObjectName, Is.EqualTo("AsyncSemaphore"));
+        Assert.That(ex!.ObjectName, Is.EqualTo(typeof(UsenetSharp.Concurrency.AsyncSemaphore).FullName));
     }
 
     [Test]
@@ -259,7 +259,7 @@ public class AsyncSemaphoreTests
 
         // Act & Assert
         var ex = Assert.Throws<ObjectDisposedException>(() => semaphore.WaitAsync());
-        Assert.That(ex!.ObjectName, Is.EqualTo("AsyncSemaphore"));
+        Assert.That(ex!.ObjectName, Is.EqualTo(typeof(UsenetSharp.Concurrency.AsyncSemaphore).FullName));
     }
 
     [Test]

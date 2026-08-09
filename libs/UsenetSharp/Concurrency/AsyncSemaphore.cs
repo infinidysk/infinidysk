@@ -125,6 +125,6 @@ public class AsyncSemaphore : IDisposable
         }
 
         foreach (var tcs in waitersToCancel)
-            tcs.TrySetException(new ObjectDisposedException(nameof(AsyncSemaphore)));
+            tcs.TrySetException(new ObjectDisposedException(typeof(AsyncSemaphore).FullName));
     }
 }

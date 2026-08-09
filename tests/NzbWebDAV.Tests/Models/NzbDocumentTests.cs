@@ -87,7 +87,7 @@ public class NzbDocumentTests
     {
         await using var stream = new MemoryStream(Encoding.UTF8.GetBytes("<nzb><file>"));
 
-        var exception = await Assert.ThrowsAsync<Exception>(
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
             () => NzbDocument.LoadAsync(stream));
 
         Assert.Equal("Could not parse the nzb document (malformed nzb)", exception.Message);

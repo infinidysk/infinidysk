@@ -234,7 +234,7 @@ public class ArrLinkedRepairDecisionTests
         Func<Task<List<ArrRootFolder>>> rootFolders,
         Func<string, Guid, Task<ArrRepairOutcome>> removeAndBlocklist) : ArrClient(host, "test-key")
     {
-        public override Task<List<ArrRootFolder>> GetRootFolders() => rootFolders();
+        public override Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct) => rootFolders();
 
         public override Task<ArrRepairOutcome> RemoveAndBlocklist(
             string symlinkOrStrmPath,
