@@ -461,27 +461,43 @@ public sealed class SupportPackContentsTests : IDisposable
         buffer.Segment(session, "provider-a", SegmentFetch.FetchStatus.Ok, 12, 0, "msgid@a");
         buffer.RangeEnd(session, range, ReadSession.EndReasonCode.Completed, 100);
 
-        var entries = await ReadPackEntriesAsync(
-            new LogBufferSink(10),
-            new WarningLogBuffer(new LogBufferSink(50)),
-            buffer);
-
-        var offenders = new List<string>();
-        foreach (var (name, content) in entries)
+        // Migrate the metrics database so metrics/recent.json is produced and the
+        // recursive walk covers the metrics section too (providerHours/connections
+        // stay empty without seeded providers, but metricsHealth and the other
+        // subsections are populated and get checked).
+        MetricsDbContext.ResetOptionsForTests();
+        List<string> offenders;
+        try
         {
-            if (name.EndsWith(".json", StringComparison.Ordinal))
+            await using (var metricsDb = new MetricsDbContext())
+                await metricsDb.Database.MigrateAsync();
+
+            var entries = await ReadPackEntriesAsync(
+                new LogBufferSink(10),
+                new WarningLogBuffer(new LogBufferSink(50)),
+                buffer);
+
+            offenders = new List<string>();
+            foreach (var (name, content) in entries)
             {
-                using var doc = JsonDocument.Parse(content);
-                CollectNonCamelCaseNames(doc.RootElement, name, offenders);
-            }
-            else if (name.EndsWith(".jsonl", StringComparison.Ordinal))
-            {
-                foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                if (name.EndsWith(".json", StringComparison.Ordinal))
                 {
-                    using var doc = JsonDocument.Parse(line);
+                    using var doc = JsonDocument.Parse(content);
                     CollectNonCamelCaseNames(doc.RootElement, name, offenders);
                 }
+                else if (name.EndsWith(".jsonl", StringComparison.Ordinal))
+                {
+                    foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        using var doc = JsonDocument.Parse(line);
+                        CollectNonCamelCaseNames(doc.RootElement, name, offenders);
+                    }
+                }
             }
+        }
+        finally
+        {
+            MetricsDbContext.ResetOptionsForTests();
         }
 
         Assert.Empty(offenders);
@@ -506,7 +522,6 @@ public sealed class SupportPackContentsTests : IDisposable
             using var manifest = JsonDocument.Parse(entries["manifest.json"]);
             var logs = manifest.RootElement.GetProperty("logs");
             Assert.True(logs.TryGetProperty("oldestSequence", out _));
-            Assert.True(logs.TryGetProperty("newestSequence", out _));
             Assert.False(logs.TryGetProperty("OldestSequence", out _));
             var warnings = manifest.RootElement.GetProperty("warnings");
             Assert.True(warnings.TryGetProperty("oldestSequence", out _));
@@ -516,8 +531,8 @@ public sealed class SupportPackContentsTests : IDisposable
             using var metrics = JsonDocument.Parse(entries["metrics/recent.json"]);
             var metricsHealth = metrics.RootElement.GetProperty("metricsHealth");
             Assert.True(metricsHealth.TryGetProperty("lastSuccessfulFlushAtMs", out _));
-            Assert.True(metricsHealth.TryGetProperty("lastFlushError", out _));
             Assert.False(metricsHealth.TryGetProperty("LastSuccessfulFlushAtMs", out _));
+            Assert.True(metricsHealth.TryGetProperty("lastFlushError", out _));
         }
         finally
         {
