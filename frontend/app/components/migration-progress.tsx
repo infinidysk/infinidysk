@@ -25,7 +25,7 @@ export type MigrationStatus = {
 export function isMigrationStatus(value: unknown): value is MigrationStatus {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  return typeof v.state === "string" && Array.isArray(v.steps);
+  return typeof v["state"] === "string" && Array.isArray(v["steps"]);
 }
 
 export type MigrationPollDecision =

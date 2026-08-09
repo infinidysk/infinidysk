@@ -12,7 +12,7 @@ export async function setApiKeyForAuthenticatedRequests(
   // if the path is not /api (decoded, segment-bounded), do nothing
   if (!isBackendApiPath(req.path)) return;
 
-  const apikey = req.query.apikey || req.query.apiKey || req.headers["x-api-key"];
+  const apikey = req.query["apikey"] || req.query["apiKey"] || req.headers["x-api-key"];
   const hasApiKey = apikey && typeof apikey === "string";
 
   // if the request already has an apikey, do nothing
@@ -23,5 +23,5 @@ export async function setApiKeyForAuthenticatedRequests(
   if (!authenticated) return;
 
   // otherwise, set the api key header
-  req.headers["x-api-key"] = process.env.FRONTEND_BACKEND_API_KEY || "";
+  req.headers["x-api-key"] = process.env["FRONTEND_BACKEND_API_KEY"] || "";
 }

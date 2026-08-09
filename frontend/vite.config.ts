@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 import { urlBaseFromEnv } from "./app/utils/url-base";
 
 function resolveAllowedHosts(): string[] {
-  const raw = process.env.VITE_ALLOWED_HOSTS?.trim();
+  const raw = process.env["VITE_ALLOWED_HOSTS"]?.trim();
   if (!raw) return [".net"];
   return raw.split(",").map((host) => host.trim()).filter(Boolean);
 }

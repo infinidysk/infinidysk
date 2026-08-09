@@ -36,12 +36,12 @@ function parseConfig(rawValue: string): ParsedServiceProvider {
   }
 
   const candidate = value as Record<string, unknown>;
-  if (typeof candidate.name !== "string" || !candidate.name.trim()) {
+  if (typeof candidate["name"] !== "string" || !candidate["name"].trim()) {
     throw new Error('"name" must be a non-empty string');
   }
   if (
-    !Array.isArray(candidate.disabledFeatures)
-    || !candidate.disabledFeatures.every((feature) => typeof feature === "string")
+    !Array.isArray(candidate["disabledFeatures"])
+    || !candidate["disabledFeatures"].every((feature) => typeof feature === "string")
   ) {
     throw new Error('"disabledFeatures" must be an array of strings');
   }
@@ -49,7 +49,7 @@ function parseConfig(rawValue: string): ParsedServiceProvider {
   const disabledFeatures: NavFeatureId[] = [];
   const ignoredFeatures: string[] = [];
   const rejectedFeatures: string[] = [];
-  for (const feature of new Set(candidate.disabledFeatures)) {
+  for (const feature of new Set(candidate["disabledFeatures"])) {
     if (feature === NON_DISABLEABLE_FEATURE_ID) {
       rejectedFeatures.push(feature);
     } else if (isNavFeatureId(feature)) {
@@ -63,9 +63,9 @@ function parseConfig(rawValue: string): ParsedServiceProvider {
   // otherwise a typo would silently turn off all feature gating.
   let supportUrl: string | undefined;
   let supportUrlError: string | undefined;
-  if (candidate.supportUrl !== undefined) {
+  if (candidate["supportUrl"] !== undefined) {
     try {
-      supportUrl = parseUrl(candidate.supportUrl, "supportUrl");
+      supportUrl = parseUrl(candidate["supportUrl"], "supportUrl");
     } catch (error) {
       supportUrlError = error instanceof Error ? error.message : String(error);
     }
@@ -73,8 +73,8 @@ function parseConfig(rawValue: string): ParsedServiceProvider {
 
   return {
     config: {
-      name: candidate.name.trim(),
-      url: parseUrl(candidate.url),
+      name: candidate["name"].trim(),
+      url: parseUrl(candidate["url"]),
       ...(supportUrl !== undefined ? { supportUrl } : {}),
       disabledFeatures,
     },
@@ -85,7 +85,7 @@ function parseConfig(rawValue: string): ParsedServiceProvider {
 }
 
 export function getServiceProvider(): ServiceProviderConfig | null {
-  const rawValue = process.env.SERVICE_PROVIDER?.trim();
+  const rawValue = process.env["SERVICE_PROVIDER"]?.trim();
   if (rawValue === cachedRawValue) {
     return cachedConfig;
   }

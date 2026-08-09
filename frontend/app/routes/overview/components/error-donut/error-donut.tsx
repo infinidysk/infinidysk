@@ -136,7 +136,7 @@ export function ErrorBreakdown({ errors }: ErrorDonutProps) {
 
                     {missTotal > 0 && (
                         <div className="mt-3.5 flex items-start gap-2.5 border-t border-base-content/10 pt-3 text-[11px] leading-snug text-base-content/50">
-                            <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: COLORS.Missing }} />
+                            <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: COLORS["Missing"] }} />
                             <span>
                                 Provider misses are articles not found on the first provider tried;
                                 failover usually recovers them.

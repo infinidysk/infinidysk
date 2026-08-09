@@ -241,7 +241,7 @@ export function initializeWebsocketClient(
                 reconnectTimeout = null;
             }
 
-            socket.send(Buffer.from(process.env.FRONTEND_BACKEND_API_KEY!, "utf-8"), { binary: false });
+            socket.send(Buffer.from(process.env["FRONTEND_BACKEND_API_KEY"]!, "utf-8"), { binary: false });
 
             if (upstreamForwarder) {
                 upstreamForwarder.setBackendSocket(socket);
@@ -365,7 +365,7 @@ export class UpstreamSubscriptionForwarder {
 }
 
 function getBackendWebsocketUrl() {
-    const host = process.env.BACKEND_URL!;
+    const host = process.env["BACKEND_URL"]!;
     return `${host.replace(/\/$/, '')}/ws`.replace(/^http/, 'ws');
 }
 

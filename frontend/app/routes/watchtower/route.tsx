@@ -37,13 +37,13 @@ export async function action({ request }: Route.ActionArgs) {
     const fields: Record<string, string> = {};
     for (const [k, v] of form.entries()) fields[k] = typeof v === "string" ? v : v.name;
     try {
-        if (fields.action === "discover-catalogs") {
-            const discovered = await backendClient.discoverStremioCatalogs(fields.url ?? "");
+        if (fields["action"] === "discover-catalogs") {
+            const discovered = await backendClient.discoverStremioCatalogs(fields["url"] ?? "");
             return { ok: true as const, discovered };
         }
-        if (fields.action === "bulk-recheck" || fields.action === "bulk-remove") {
-            const sub = fields.action === "bulk-recheck" ? "recheck-items" : "remove-items";
-            await backendClient.watchtowerMutate({ action: sub, keys: fields.keys ?? "" });
+        if (fields["action"] === "bulk-recheck" || fields["action"] === "bulk-remove") {
+            const sub = fields["action"] === "bulk-recheck" ? "recheck-items" : "remove-items";
+            await backendClient.watchtowerMutate({ action: sub, keys: fields["keys"] ?? "" });
             return { ok: true as const };
         }
         await backendClient.watchtowerMutate(fields);
@@ -308,8 +308,8 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
             );
         } else if (pendingRemove === "filter") {
             const formData: Record<string, string> = { action: "remove-by-filter" };
-            if (stateFilter) formData.state = stateFilter;
-            if (urlQuery) formData.q = urlQuery;
+            if (stateFilter) formData["state"] = stateFilter;
+            if (urlQuery) formData["q"] = urlQuery;
             void filterFetcher.submit(formData, { method: "post" }); // fire-and-forget: result handled via fetcher state
         }
         setPendingRemove(null);

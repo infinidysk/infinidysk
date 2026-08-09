@@ -65,10 +65,10 @@ function form(...entries: [string, string | Blob, string?][]): FormData {
 async function call<T = unknown>(path: string, errorPrefix: string, init?: RequestInit): Promise<T> {
     let response: Response;
     try {
-        response = await fetch(process.env.BACKEND_URL + path, {
+        response = await fetch(process.env["BACKEND_URL"] + path, {
             ...init,
             headers: {
-                "x-api-key": process.env.FRONTEND_BACKEND_API_KEY || "",
+                "x-api-key": process.env["FRONTEND_BACKEND_API_KEY"] || "",
                 ...(init?.headers ?? {}),
             },
         });
