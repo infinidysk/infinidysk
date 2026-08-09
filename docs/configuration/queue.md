@@ -13,7 +13,7 @@ provider connections available to active imports.
 
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
-| Concurrent Queue Downloads [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `queue.worker-count` | `1` | Process 1–4 NZBs concurrently; the oldest active item is preferred |
+| Concurrent Queue Downloads [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `queue.worker-count` | `1` | Process 1–10 NZBs concurrently; the oldest active item is preferred |
 | Queue Download Connections | `usenet.max-queue-connections` | blank = all | Provider connections shared by queue workers and background health checks |
 
 Adding workers does not add provider capacity. Additional workers use spare

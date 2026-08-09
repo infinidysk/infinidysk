@@ -149,11 +149,12 @@ public class QueueWorkerCountConfigTests
     [InlineData("", 1)]
     [InlineData("1", 1)]
     [InlineData("4", 4)]
-    [InlineData("8", 4)]
+    [InlineData("8", 8)]
+    [InlineData("10", 10)]
     [InlineData("0", 1)]
-    [InlineData("99", 4)]
+    [InlineData("99", 10)]
     [InlineData("abc", 1)]
-    public void GetQueueWorkerCount_ClampsToOneThroughFour(string? configured, int expected)
+    public void GetQueueWorkerCount_ClampsToOneThroughTen(string? configured, int expected)
     {
         var config = new ConfigManager();
         if (configured is not null)

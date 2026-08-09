@@ -67,7 +67,7 @@ describe("Queue settings", () => {
         expect(isQueueSettingsValid(validConfig)).toBe(true);
         expect(isQueueSettingsValid({
             ...validConfig,
-            "queue.worker-count": "4",
+            "queue.worker-count": "10",
             "usenet.max-queue-connections": "20",
             "queue.max-items": "50",
             "queue.resume-threshold": "25",
@@ -77,7 +77,7 @@ describe("Queue settings", () => {
     it("rejects out-of-range workers and invalid admission thresholds", () => {
         expect(isQueueSettingsValid({
             ...validConfig,
-            "queue.worker-count": "5",
+            "queue.worker-count": "11",
         })).toBe(false);
         expect(isQueueSettingsValid({
             ...validConfig,
