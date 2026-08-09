@@ -42,6 +42,14 @@ public class HealthCheckService : BackgroundService
     // Files at or below this many segments are checked in full, before any aging taper.
     public const int SampleFloor = 8000;
 
+    /// <summary>
+    /// One-time boot delay before the first background sweep. Queue resume, first streams,
+    /// and pool warm-up hit cold connection pools simultaneously at startup; giving them a
+    /// short grace window keeps health-check STATs out of the connection storm (#881).
+    /// Settable for tests so coverage does not wait on the real delay.
+    /// </summary>
+    internal static TimeSpan StartupGracePeriod { get; set; } = TimeSpan.FromSeconds(20);
+
     // A release keeps full depth for its first year, then tapers until it stops aging at ten.
     private const double FullDepthDays = 365;
     private const double MinDepthDays = 3650;
@@ -89,6 +97,15 @@ public class HealthCheckService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        try
+        {
+            await Task.Delay(StartupGracePeriod, stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
