@@ -11,7 +11,7 @@ public class CreateAccountRequest
 
     public CreateAccountRequest(HttpContext context)
     {
-        Username = context.Request.Form["username"].FirstOrDefault()?.ToLower() ??
+        Username = context.Request.Form["username"].FirstOrDefault()?.ToLowerInvariant() ??
             throw new BadHttpRequestException("Username is required");
 
         Password = context.Request.Form["password"].FirstOrDefault() ??

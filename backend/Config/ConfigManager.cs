@@ -413,33 +413,33 @@ public class ConfigManager
 
         return;
 
-        static void RequireLong(string key, string value)
+        void RequireLong(string key, string value)
         {
             if (!long.TryParse(value, out _))
                 throw new ArgumentException($"Config value for '{key}' must be a whole number, but was '{value}'.");
         }
 
-        static void RequireNonNegativeInt(string key, string value)
+        void RequireNonNegativeInt(string key, string value)
         {
             if (!int.TryParse(value, out var parsed) || parsed < 0)
                 throw new ArgumentException(
                     $"Config value for '{key}' must be a non-negative whole number, but was '{value}'.");
         }
 
-        static void RequireBool(string key, string value)
+        void RequireBool(string key, string value)
         {
             if (!bool.TryParse(value, out _))
                 throw new ArgumentException($"Config value for '{key}' must be 'true' or 'false', but was '{value}'.");
         }
 
-        static void RequireOneOf(string key, string value, params string[] allowed)
+        void RequireOneOf(string key, string value, params string[] allowed)
         {
             if (!allowed.Contains(value, StringComparer.OrdinalIgnoreCase))
                 throw new ArgumentException(
                     $"Config value for '{key}' must be one of '{string.Join("', '", allowed)}', but was '{value}'.");
         }
 
-        static void RequireJson<T>(string key, string value, JsonSerializerOptions? options)
+        void RequireJson<T>(string key, string value, JsonSerializerOptions? options)
         {
             try
             {
@@ -455,7 +455,7 @@ public class ConfigManager
         // the type, so a strict failure can only be property naming and the path is
         // safe to surface. One that fails both is malformed, and that message can
         // quote part of the value.
-        static ArgumentException DescribeJsonFailure<T>(
+        ArgumentException DescribeJsonFailure<T>(
             string key, string value, JsonSerializerOptions? options, JsonException e)
         {
             if (options is null || !ParsesIgnoringCase<T>(value))
@@ -464,7 +464,7 @@ public class ConfigManager
             return new ConfigUnmappedPropertyException(key, TruncatePath(e.Path));
         }
 
-        static bool ParsesIgnoringCase<T>(string value)
+        bool ParsesIgnoringCase<T>(string value)
         {
             try
             {
@@ -478,13 +478,13 @@ public class ConfigManager
         }
 
         // A property name is operator-supplied text, so bound what reaches the log.
-        static string TruncatePath(string? path)
+        string TruncatePath(string? path)
         {
             if (string.IsNullOrEmpty(path)) return "$";
             return path.Length <= 120 ? path : path[..120] + "...";
         }
 
-        static void RequireValidUsenetProviders(string key, string value, JsonSerializerOptions? options)
+        void RequireValidUsenetProviders(string key, string value, JsonSerializerOptions? options)
         {
             UsenetProviderConfig? config;
             try
@@ -519,7 +519,7 @@ public class ConfigManager
                     throw new ArgumentException($"Provider '{label}': byte limit must not be negative.");
             }
 
-            static bool ContainsControlChars(string? s) =>
+            bool ContainsControlChars(string? s) =>
                 !string.IsNullOrEmpty(s) && s.Any(c => c < 0x20 || c == 0x7F);
         }
     }
@@ -959,7 +959,7 @@ public class ConfigManager
         var configValue = GetConfigValue(ConfigKeys.ApiEnsureArticleExistenceCategories);
         return (configValue ?? "").Split(',')
             .Select(x => x.Trim())
-            .Select(x => x.ToLower())
+            .Select(x => x.ToLowerInvariant())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .ToHashSet();
     }
@@ -1574,7 +1574,7 @@ public class ConfigManager
             .Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(x => x.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.ToLower())
+            .Select(x => x.ToLowerInvariant())
             .ToHashSet();
     }
 

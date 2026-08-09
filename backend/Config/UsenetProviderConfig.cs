@@ -24,7 +24,7 @@ public class UsenetProviderConfig
         public required string Host { get; set; }
         public required int Port { get; set; }
         public required bool UseSsl { get; set; }
-        public bool SkipTlsVerification { get; set; } = false;
+        public bool SkipTlsVerification { get; set; }
         public required string User { get; set; }
         public required string Pass { get; set; }
         public required int MaxConnections { get; set; }

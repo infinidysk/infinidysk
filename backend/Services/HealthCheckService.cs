@@ -900,7 +900,7 @@ public class HealthCheckService : BackgroundService
                 string deleteMessage;
                 if (symlinkOrStrmPath != null)
                 {
-                    var forceDeleteLinkType = symlinkOrStrmPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
+                    var forceDeleteLinkType = symlinkOrStrmPath.ToLowerInvariant().EndsWith("strm") ? "strm-file" : "symlink";
                     deleteMessage = string.Join(" ", [
                         "File failed during streaming.",
                         $"Auto-removed after repeated streaming failures.{failureNote}",
@@ -943,7 +943,7 @@ public class HealthCheckService : BackgroundService
             }
 
             var linkedPath = symlinkOrStrmPath!;
-            var linkType = linkedPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
+            var linkType = linkedPath.ToLowerInvariant().EndsWith("strm") ? "strm-file" : "symlink";
 
             // Rate-limit repairs per library file: when Arr keeps re-importing broken
             // replacements to the same location, deleting again only fuels the loop.
@@ -1054,7 +1054,7 @@ public class HealthCheckService : BackgroundService
             var noMatchConfirmations = _arrNoMatchConfirmations.AddOrUpdate(
                 davItem.Id,
                 1,
-                static (_, previous) => previous + 1);
+                (_, previous) => previous + 1);
             if (!ShouldDeleteAfterArrNoMatch(noMatchConfirmations))
             {
                 var noMatchUtcNow = DateTimeOffset.UtcNow;

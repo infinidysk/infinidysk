@@ -62,9 +62,9 @@ public class IndexerConfig
         public string? UserAgent { get; set; }
         public string? SearchUserAgent { get; set; }
         public string? RetrieveUserAgent { get; set; }
-        public bool SkipTlsVerification { get; set; } = false;
-        public int MaxRequestsPerMinute { get; set; } = 0;
-        public bool EnableStrictMatching { get; set; } = false;
+        public bool SkipTlsVerification { get; set; }
+        public int MaxRequestsPerMinute { get; set; }
+        public bool EnableStrictMatching { get; set; }
         // Per-indexer HTTP(S) proxy URL. Overrides the global ProxyUrl. Empty/null = inherit global.
         public string? ProxyUrl { get; set; }
         // Per-indexer HTTP timeout (seconds). Overrides the global TimeoutSeconds.
@@ -82,21 +82,21 @@ public class IndexerConfig
         public int? HitLimitResetTime { get; set; }
         public string? ExtraMovieCategories { get; set; }
         public string? ExtraTvCategories { get; set; }
-        public bool IgnoreCategoryFilter { get; set; } = false;
+        public bool IgnoreCategoryFilter { get; set; }
         public ResultFilter? Filter { get; set; }
     }
 
     public class ResultFilter
     {
         // Master toggle. When false, all rules below are ignored regardless of value.
-        public bool Enabled { get; set; } = false;
+        public bool Enabled { get; set; }
 
         // Drop rules. Each defaults to "no effect".
         // Skip releases where password != 0 (RAR-passworded or contains inner archive).
-        public bool SkipPassworded { get; set; } = false;
+        public bool SkipPassworded { get; set; }
 
         // Minimum download count to keep a release. 0 = disabled (any count is fine).
-        public int MinGrabs { get; set; } = 0;
+        public int MinGrabs { get; set; }
 
         // Grace window for the MinGrabs rule. Releases newer than this many hours bypass
         // the MinGrabs check (so a fresh post isn't punished for having no grabs yet).
@@ -105,11 +105,11 @@ public class IndexerConfig
 
         // Drop releases older than N days that still have zero recorded grabs.
         // 0 = disabled.
-        public int MaxAgeDaysWithoutGrabs { get; set; } = 0;
+        public int MaxAgeDaysWithoutGrabs { get; set; }
 
         // Ranking. When true, this indexer's items will be sorted by grabs descending
         // before merging with other indexers' results. Items missing the grabs attribute
         // sort to the bottom of this indexer's slice (treated as unknown).
-        public bool PreferDownloaded { get; set; } = false;
+        public bool PreferDownloaded { get; set; }
     }
 }

@@ -300,29 +300,11 @@ public static class SymlinkAndStrmUtil
     {
         public required string SymlinkPath;
         public required string TargetPath;
-        public static bool operator ==(SymlinkInfo left, SymlinkInfo right)
-        {
-            return left.Equals(right);
-        }
-
-        public static bool operator !=(SymlinkInfo left, SymlinkInfo right)
-        {
-            return !(left == right);
-        }
     }
 
     public struct StrmInfo : ISymlinkOrStrmInfo
     {
         public required string StrmPath;
         public required string TargetUrl;
-        public static bool operator ==(StrmInfo left, StrmInfo right)
-        {
-            return left.Equals(right);
-        }
-
-        public static bool operator !=(StrmInfo left, StrmInfo right)
-        {
-            return !(left == right);
-        }
     }
 }

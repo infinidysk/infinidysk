@@ -29,7 +29,7 @@ public static partial class FilenameUtil
 
     public static bool IsVideoFile(string filename)
     {
-        return VideoExtensions.Contains(Path.GetExtension(filename).ToLower());
+        return VideoExtensions.Contains(Path.GetExtension(filename).ToLowerInvariant());
     }
 
     public static bool IsRarFile(string? filename)

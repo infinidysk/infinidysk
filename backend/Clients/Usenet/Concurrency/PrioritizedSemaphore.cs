@@ -22,7 +22,7 @@ public class PrioritizedSemaphore : IDisposable
     private SemaphorePriorityOdds _priorityOdds;
     private int _maxAllowed;
     private int _enteredCount;
-    private bool _disposed = false;
+    private bool _disposed;
     private readonly Lock _lock = new();
     private int _accumulatedOdds;
 

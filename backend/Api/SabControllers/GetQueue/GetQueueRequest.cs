@@ -6,7 +6,7 @@ namespace NzbWebDAV.Api.SabControllers.GetQueue;
 
 public class GetQueueRequest
 {
-    public int Start { get; init; } = 0;
+    public int Start { get; init; }
     public int Limit { get; init; } = int.MaxValue;
     public string? Category { get; init; }
     public CancellationToken CancellationToken { get; init; }

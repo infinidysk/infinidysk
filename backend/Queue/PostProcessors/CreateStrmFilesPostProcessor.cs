@@ -110,7 +110,7 @@ public class CreateStrmFilesPostProcessor(
         if (pathUrl.StartsWith('/')) pathUrl = pathUrl.TrimStart('/');
         var strmKey = configManager.GetStrmKey();
         var downloadKey = GetWebdavItemRequest.GenerateDownloadKey(strmKey, pathUrl);
-        var extension = Path.GetExtension(davItem.Name).ToLower().TrimStart('.');
+        var extension = Path.GetExtension(davItem.Name).ToLowerInvariant().TrimStart('.');
         return $"{baseUrl}/view/{pathUrl}?downloadKey={downloadKey}&extension={extension}";
     }
 

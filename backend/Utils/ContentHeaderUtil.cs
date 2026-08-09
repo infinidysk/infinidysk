@@ -5,7 +5,7 @@ public static class ContentHeaderUtil
     public static string GetContentType(string fileName)
     {
         if (fileName == "README") return "text/plain";
-        var extension = Path.GetExtension(fileName).ToLower();
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
         // .mkv falls through to ContentTypeUtil → "video/x-matroska". WebM only
         // permits VP8/VP9 + Vorbis/Opus, while MKV releases commonly use other codecs.
         return extension == ".rclonelink" ? "text/plain"

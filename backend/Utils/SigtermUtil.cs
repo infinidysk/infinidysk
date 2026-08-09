@@ -5,7 +5,7 @@ namespace NzbWebDAV.Utils;
 public static class SigtermUtil
 {
     private static readonly CancellationTokenSource CancellationTokenSource = new();
-    private static bool _isInitialized = false;
+    private static bool _isInitialized;
 
     /// <summary>
     /// Gets a CancellationToken that will be cancelled when the application

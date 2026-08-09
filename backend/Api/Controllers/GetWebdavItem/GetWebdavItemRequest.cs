@@ -27,7 +27,7 @@ public class GetWebdavItemRequest
         Item = path;
 
         // determine whether to download
-        ShouldDownload = context.GetQueryParam("download")?.ToLower() == "true";
+        ShouldDownload = context.GetQueryParam("download")?.ToLowerInvariant() == "true";
 
         // authenticate the downloadKey
         var downloadKey = context.Request.Query["downloadKey"];

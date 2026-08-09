@@ -27,7 +27,7 @@ public static class RcloneClient
     public static string? Host { get; private set; }
     private static string? User { get; set; }
     private static string? Pass { get; set; }
-    public static bool IsRemoteControlEnabled { get; private set; } = false;
+    public static bool IsRemoteControlEnabled { get; private set; }
 
     public static void Initialize(ConfigManager configManager)
     {

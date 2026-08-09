@@ -58,7 +58,7 @@ public class GetWebdavItemController(
         Response.Headers["Content-Encoding"] = "identity";
 
         // handle par2 preview
-        if (Path.GetExtension(item.Name).ToLower() == ".par2" && configManager.IsPreviewPar2FilesEnabled())
+        if (Path.GetExtension(item.Name).ToLowerInvariant() == ".par2" && configManager.IsPreviewPar2FilesEnabled())
             return await GetPar2PreviewStream(item, ct).ConfigureAwait(false);
 
         // Provisional budget for fully-specified ranges before stream creation.

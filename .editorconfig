@@ -118,6 +118,14 @@ dotnet_diagnostic.CA1515.severity = none
 # Justification: repeated false positives under nullable flow analysis in
 # streaming/decoder state machines.
 dotnet_diagnostic.CA1508.severity = none
+# Justification: DI-injected services deliberately expose instance methods for
+# substitutability (fakes/mocks in tests) even when they touch no instance
+# state today; forcing them static is a design constraint for micro-perf.
+dotnet_diagnostic.CA1822.severity = none
+# Justification: existing case-normalization sites pair ToUpperInvariant with
+# upper-case protocol constants consistently; mass-converting to
+# ToLowerInvariant risks breaking those pairings for no runtime benefit.
+dotnet_diagnostic.CA1308.severity = none
 # Justification: sealing every internal class churns the codebase and breaks
 # test doubles for a micro-optimization the hot paths already get via CA1859.
 dotnet_diagnostic.CA1852.severity = none

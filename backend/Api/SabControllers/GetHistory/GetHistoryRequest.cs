@@ -6,7 +6,7 @@ namespace NzbWebDAV.Api.SabControllers.GetHistory;
 
 public class GetHistoryRequest
 {
-    public int Start { get; init; } = 0;
+    public int Start { get; init; }
     public int Limit { get; init; } = int.MaxValue;
     public string? Category { get; init; }
     public List<Guid> NzoIds { get; init; } = [];

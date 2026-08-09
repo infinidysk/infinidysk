@@ -218,7 +218,7 @@ public sealed class UsenetMigrationController(
         if (!string.IsNullOrWhiteSpace(q))
         {
             var normalizedSearch = q.Trim().ToLowerInvariant();
-            query = query.Where(r => r.SubmitFileName.ToLower().Contains(normalizedSearch));
+            query = query.Where(r => r.SubmitFileName.ToLowerInvariant().Contains(normalizedSearch));
         }
 
         var total = await query.CountAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -944,7 +944,7 @@ public sealed class UsenetMigrationController(
         var relativeBa = Path.GetRelativePath(b, a);
         return IsWithinOrEqual(relativeAb) || IsWithinOrEqual(relativeBa);
 
-        static bool IsWithinOrEqual(string relative) =>
+        bool IsWithinOrEqual(string relative) =>
             relative == "."
             || (!Path.IsPathRooted(relative)
                 && relative != ".."

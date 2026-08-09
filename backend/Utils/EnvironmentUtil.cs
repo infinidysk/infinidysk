@@ -20,7 +20,7 @@ public static class EnvironmentUtil
 
     public static bool IsVariableTrue(string envVariable)
     {
-        var value = Environment.GetEnvironmentVariable(envVariable)?.ToLower();
+        var value = Environment.GetEnvironmentVariable(envVariable)?.ToLowerInvariant();
         return value is "y" or "yes" or "true";
     }
 }

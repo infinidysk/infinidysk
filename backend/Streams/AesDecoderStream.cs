@@ -18,7 +18,7 @@ namespace NzbWebDAV.Streams
         private long _mWritten; // number of decoded bytes returned already
         private readonly long _mLimit;
         private bool _isDisposed;
-        private long? _pendingSeekPosition = null;
+        private long? _pendingSeekPosition;
 
         // store for reinitializing on Seek
         private readonly byte[] _mKey;

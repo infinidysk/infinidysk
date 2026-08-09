@@ -21,9 +21,9 @@ public class DeleteQueueRecordRequest
     {
         return new Dictionary<string, string>()
         {
-            { "removeFromClient", RemoveFromClient.ToString().ToLower() },
-            { "blocklist", Blocklist.ToString().ToLower() },
-            { "skipRedownload", SkipRedownload.ToString().ToLower() },
+            { "removeFromClient", RemoveFromClient.ToString().ToLowerInvariant() },
+            { "blocklist", Blocklist.ToString().ToLowerInvariant() },
+            { "skipRedownload", SkipRedownload.ToString().ToLowerInvariant() },
         };
     }
 }

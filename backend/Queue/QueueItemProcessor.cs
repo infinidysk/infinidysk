@@ -375,7 +375,7 @@ public class QueueItemProcessor(
         // step 3 -- Optionally check full article existence
         var checkedFullHealth = false;
         var healthCheckCategories = configManager.GetEnsureArticleExistenceCategories();
-        if (healthCheckCategories.Contains(queueItem.Category.ToLower()))
+        if (healthCheckCategories.Contains(queueItem.Category.ToLowerInvariant()))
         {
             var segmentsByFile = fileInfos
                 .Where(x => x.IsRar || FilenameUtil.IsImportantFileType(x.FileName))
