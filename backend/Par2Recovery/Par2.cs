@@ -8,7 +8,7 @@ using Serilog;
 
 namespace NzbWebDAV.Par2Recovery
 {
-    public class Par2
+    public static class Par2
     {
         internal static readonly Regex ParVolume = new(
             @"(.+)\.vol[0-9]{1,10}\+[0-9]{1,10}\.par2$",

@@ -1,6 +1,6 @@
 namespace NzbWebDAV.Utils;
 
-public class PathUtil
+public static class PathUtil
 {
     public static IEnumerable<string> GetAllParentDirectories(string path)
     {

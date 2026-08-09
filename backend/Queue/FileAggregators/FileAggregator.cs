@@ -15,7 +15,7 @@ public class FileAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, 
         foreach (var processorResult in processorResults)
         {
             if (processorResult is not FileProcessor.Result result) continue;
-            if (result.FileName == "") continue; // skip files whose name we can't determine
+            if (string.IsNullOrEmpty(result.FileName)) continue; // skip files whose name we can't determine
             var parentDirectory = EnsureParentDirectory(result.FileName);
             var name = SanitizeDavName(Path.GetFileName(result.FileName));
 

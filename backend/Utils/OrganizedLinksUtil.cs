@@ -141,5 +141,14 @@ public static class OrganizedLinksUtil
         public string LinkPath; // Path to either a symlink or strm file.
         public Guid DavItemId;
         public SymlinkAndStrmUtil.ISymlinkOrStrmInfo SymlinkOrStrmInfo;
+        public static bool operator ==(DavItemLink left, DavItemLink right)
+        {
+            return left.Equals(right);
+        }
+
+        public static bool operator !=(DavItemLink left, DavItemLink right)
+        {
+            return !(left == right);
+        }
     }
 }

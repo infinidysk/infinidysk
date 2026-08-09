@@ -2,7 +2,7 @@
 
 namespace NzbWebDAV.Utils;
 
-public partial class FilenameUtil
+public static partial class FilenameUtil
 {
     // Group `pw` contains the password,
     // Group `rm` contains the part of the filename that should be removed to create a clean job name

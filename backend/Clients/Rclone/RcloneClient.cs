@@ -14,7 +14,7 @@ namespace NzbWebDAV.Clients.Rclone;
 /// Client for interacting with rclone's remote control (RC) API.
 /// See https://rclone.org/rc/ for API documentation.
 /// </summary>
-public class RcloneClient
+public static class RcloneClient
 {
     private static readonly HttpClient HttpClient = new();
 

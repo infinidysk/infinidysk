@@ -14,8 +14,6 @@ namespace NzbWebDAV.Services;
 /// </summary>
 public class HealthCheckRetentionService(ConfigManager configManager) : BackgroundService
 {
-    private static readonly TimeSpan DefaultInterval = TimeSpan.FromHours(6);
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await SafeSweepAsync(stoppingToken).ConfigureAwait(false);

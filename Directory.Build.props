@@ -10,17 +10,20 @@
 
     The NetAnalyzers package is pinned (instead of relying on the SDK-bundled
     analyzers) so the rule set only changes on a deliberate dependency bump.
+
+    NOTE: while the package is referenced, `dotnet format analyzers` applies
+    every code fix twice (its workspace loads both the SDK-bundled and the
+    packaged analyzer copies), producing broken output such as
+    `.ConfigureAwait(false).ConfigureAwait(false)` and
+    `expr.ConfigureAwait(false)` on `await using` declarations. Run bulk
+    `dotnet format analyzers` fixes with the package temporarily removed from
+    this file (SDK-bundled analyzers apply the same fixes correctly), then
+    restore it. Builds and CI are unaffected — only the format tool.
   -->
   <PropertyGroup>
     <AnalysisLevel>latest-All</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="10.0.302">
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
-  </ItemGroup>
 
 </Project>

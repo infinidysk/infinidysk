@@ -6,9 +6,9 @@ using ZstdSharp;
 
 namespace NzbWebDAV.Database;
 
-public class BlobStore
+public static class BlobStore
 {
-    private static readonly int CompressionLevel = 1;
+    private const int CompressionLevel = 1;
     private static string ConfigPath => DavDatabaseContext.ConfigPath;
     private static readonly Lock LockObj = new();
     private static readonly MemoryCache MetadataCache = new(new MemoryCacheOptions

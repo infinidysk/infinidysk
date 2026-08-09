@@ -37,7 +37,7 @@ public class DatabaseStore(
     public async Task<IStoreItem?> GetItemAsync(string path, CancellationToken cancellationToken)
     {
         path = path.Trim('/');
-        if (path == "") return _root;
+        if (string.IsNullOrEmpty(path)) return _root;
 
         // Fast path: a single indexed lookup by absolute path. This handles the overwhelmingly
         // common case (streaming/serving a real, persisted file or directory) in one query

@@ -267,6 +267,6 @@ public class NzbFile
         return funcs
             .Select(x => x.Invoke())
             .Where(x => x == Path.GetFileName(x))
-            .FirstOrDefault(x => x != "") ?? "";
+            .FirstOrDefault(x => !string.IsNullOrEmpty(x)) ?? "";
     }
 }
