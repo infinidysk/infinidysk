@@ -80,7 +80,9 @@ export function HistoryTable({
                     return;
                 }
             }
-        } catch { }
+        } catch {
+            // network/API failure: history unchanged; removing state resets below
+        }
         onIsRemovingChanged(nzo_ids, false);
     }, [historySlots, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
 
@@ -182,7 +184,9 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
                     return;
                 }
             }
-        } catch { }
+        } catch {
+            // network/API failure: history unchanged; removing state resets below
+        }
         onIsRemovingChanged(slot.nzo_id, false);
     }, [slot.nzo_id, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
 
@@ -319,7 +323,7 @@ export function Actions({
                     isOpen={isMenuOpen}
                     onClose={() => setIsMenuOpen(false)}
                     options={[
-                        !!nzbDownloadUrl ? { option: <ExportNzb />, linkTo: nzbDownloadUrl } : undefined,
+                        nzbDownloadUrl ? { option: <ExportNzb />, linkTo: nzbDownloadUrl } : undefined,
                         !isReadOnly
                             ? { option: <Remove />, onSelect: onRemoveSelected, variant: "danger" }
                             : undefined,

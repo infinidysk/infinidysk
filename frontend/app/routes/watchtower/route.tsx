@@ -158,6 +158,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
         }
     }, [childFetcher.state, childFetcher.data]);
 
+    const childLoad = childFetcher.load;
     useEffect(() => {
         if (childFetcher.state !== "idle" || pendingChildRef.current) return;
         const keys = new Set(shows.map(s => s.key));
@@ -169,8 +170,8 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
         if (stateFilter) sp.set("state", stateFilter);
         if (urlQuery) sp.set("q", urlQuery);
         sp.set("expander", next);
-        void childFetcher.load(`${location.pathname}?${sp.toString()}`); // fire-and-forget: result handled via fetcher state
-    }, [shows, expandedShows, childLoaded, childFetcher.state, stateFilter, urlQuery, location.pathname]);
+        void childLoad(`${location.pathname}?${sp.toString()}`); // fire-and-forget: result handled via fetcher state
+    }, [shows, expandedShows, childLoaded, childLoad, childFetcher.state, stateFilter, urlQuery, location.pathname]);
 
     useEffect(() => {
         if (statsFetcher.state === "idle" && statsFetcher.data) {

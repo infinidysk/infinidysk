@@ -32,7 +32,7 @@ import { withUrlBase } from "~/utils/url-base";
 export async function loader({ request }: Route.LoaderArgs) {
   // Single-fetch navigation/revalidation uses internal `.data` URLs
   // (e.g. /login.data), so strip that suffix before the layout check.
-  let path = new URL(request.url).pathname.replace(/\.data$/, "");
+  const path = new URL(request.url).pathname.replace(/\.data$/, "");
   if (path === "/login" || path === "/onboarding") {
     return { useLayout: false, serviceProvider: null };
   }

@@ -42,7 +42,7 @@ export function TagInput({
 
     const updateTags = useCallback((newTags: string[]) => {
         onChange(newTags.join(`${delimiter} `));
-    }, [onChange, delimiter]);
+    }, [onChange]);
 
     const addTag = useCallback((tag: string) => {
         const trimmed = tag.trim();

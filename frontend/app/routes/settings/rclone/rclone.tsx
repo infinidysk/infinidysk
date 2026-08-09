@@ -15,10 +15,13 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
     const [connectionState, setConnectionState] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
     const [testError, setTestError] = useState<string | null>(null);
 
+    const rcloneHost = config["rclone.host"];
+    const rcloneUser = config["rclone.user"];
+    const rclonePass = config["rclone.pass"];
     useEffect(() => {
         setConnectionState('idle');
         setTestError(null);
-    }, [config["rclone.host"], config["rclone.user"], config["rclone.pass"]]);
+    }, [rcloneHost, rcloneUser, rclonePass]);
 
     const testConnection = useCallback(async () => {
         const host = config["rclone.host"];

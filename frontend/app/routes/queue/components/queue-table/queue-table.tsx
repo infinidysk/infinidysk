@@ -84,7 +84,7 @@ export function QueueTable({
 
     const onRowIsRemovingChanged = useCallback((id: string, isRemoving: boolean) => {
         onIsRemovingChanged(new Set<string>([id]), isRemoving);
-    }, [onIsSelectedChanged]);
+    }, [onIsRemovingChanged]);
 
     const onRowRemoved = useCallback((id: string) => {
         onRemoved(new Set([id]));
@@ -134,7 +134,9 @@ export function QueueTable({
                     return;
                 }
             }
-        } catch { }
+        } catch {
+            // network/API failure: queue unchanged; removing state resets below
+        }
         onIsRemovingChanged(queued_nzo_ids, false);
     }, [queueSlots, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
 
@@ -261,7 +263,7 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
         }
 
         setIsConfirmingRemoval(true);
-    }, [setIsConfirmingRemoval]);
+    }, [slot.isUploading, slot.nzo_id, onRemoved, setIsConfirmingRemoval]);
 
     const onCancelRemoval = useCallback(() => {
         setIsConfirmingRemoval(false);
@@ -283,9 +285,11 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
                     return;
                 }
             }
-        } catch { }
+        } catch {
+            // network/API failure: queue unchanged; removing state resets below
+        }
         onIsRemovingChanged(slot.nzo_id, false);
-    }, [slot.nzo_id, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
+    }, [slot.nzo_id, slot.isUploading, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
 
     const onMoveToTop = useCallback(async () => {
         if (slot.isUploading || isMoving) return;

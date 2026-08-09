@@ -710,6 +710,7 @@ function CollisionPanel({ groups }: { groups: CollisionGroup[] }) {
 }
 
 function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
+    const { loadReleases } = m;
     const [filters, setFilters] = useState<ReleaseFilters>({
         page: 1, pageSize: 50, verdict: "", included: "", q: "", sort: "",
     });
@@ -731,7 +732,7 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
         try {
             await loadTableLatest(
                 loadGeneration,
-                () => m.loadReleases(f),
+                () => loadReleases(f),
                 (data) => {
                     setRows(data.releases);
                     setTotal(data.total);
@@ -742,7 +743,7 @@ function ReleaseGrid({ m, onChanged }: { m: Hook; onChanged: () => void }) {
         } finally {
             setLoading(false);
         }
-    }, [m.loadReleases]);
+    }, [loadReleases]);
 
     useEffect(() => { void load(filters); }, [load, filters]);
 
@@ -1084,6 +1085,7 @@ function SymlinkStep({ m }: { m: Hook }) {
 }
 
 function SymlinkResults({ m }: { m: Hook }) {
+    const { loadSymlinks } = m;
     const [filters, setFilters] = useState<SymlinkFilters>({ page: 1, pageSize: 100, status: "rewrite", q: "", sort: "" });
     const [searchDraft, setSearchDraft] = useState("");
     const debouncedSearch = useDebouncedValue(searchDraft, 300);
@@ -1103,7 +1105,7 @@ function SymlinkResults({ m }: { m: Hook }) {
         try {
             await loadTableLatest(
                 loadGeneration,
-                () => m.loadSymlinks(f),
+                () => loadSymlinks(f),
                 (res) => {
                     setData({ total: res.total, counts: res.counts, rows: res.rows });
                     setLoadError(null);
@@ -1113,7 +1115,7 @@ function SymlinkResults({ m }: { m: Hook }) {
         } finally {
             setLoading(false);
         }
-    }, [m.loadSymlinks]);
+    }, [loadSymlinks]);
 
     useEffect(() => { void load(filters); }, [load, filters]);
 
@@ -1314,6 +1316,7 @@ function SymlinkResults({ m }: { m: Hook }) {
 }
 
 function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => void }) {
+    const { loadSymlinkBackups, setError } = m;
     const [backups, setBackups] = useState<SymlinkBackupInfo[]>([]);
     const [loading, setLoading] = useState(true);
     const [selected, setSelected] = useState("");
@@ -1329,19 +1332,19 @@ function SymlinkRestoreAction({ m, onRestored }: { m: Hook; onRestored: () => vo
         try {
             await loadTableLatest(
                 loadGeneration,
-                m.loadSymlinkBackups,
+                loadSymlinkBackups,
                 (items) => {
                     setBackups(items);
                     setSelected((current) => items.some((item) => item.fileName === current)
                         ? current
                         : items.find((item) => item.isValid)?.fileName ?? items[0]?.fileName ?? "");
                 },
-                (message) => m.setError(message),
+                (message) => setError(message),
             );
         } finally {
             setLoading(false);
         }
-    }, [m.loadSymlinkBackups, m.setError]);
+    }, [loadSymlinkBackups, setError]);
 
     useEffect(() => { void load(); }, [load]);
 
