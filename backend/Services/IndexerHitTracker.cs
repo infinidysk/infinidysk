@@ -92,7 +92,7 @@ public class IndexerHitTracker
         foreach (var i in indexers)
         {
             var (windowStart, nextResetAt) = ComputeWindow(now, i.ResetHourUtc);
-            var indexerHits = hits.Where(h => h.IndexerName == i.Name && h.AccessedAt >= windowStart);
+            var indexerHits = hits.Where(h => h.IndexerName == i.Name && h.AccessedAt >= windowStart).ToList();
             var apiCount = indexerHits.Count(h => h.Type == IndexerApiHit.HitType.Search);
             var downloadCount = indexerHits.Count(h => h.Type == IndexerApiHit.HitType.Download);
             result.Add(new UsageSnapshot(

@@ -130,8 +130,8 @@ public class SevenZipProcessor : BaseProcessor
         var progressPercentage = progress.ToPercentage(missingFileSizes.Count);
         var populatedFileSizes = await missingFileSizes
             .Select(PopulateMissingFileSize)
-            .WithConcurrencyAsync(NzbWebDAV.Queue.QueueFanOut.GetExactQueueConcurrency(_ct, _configManager))
-            .GetAllAsync(_ct, progressPercentage)
+            .WithConcurrencyAsync(NzbWebDAV.Queue.QueueFanOut.GetExactQueueConcurrency(_configManager, _ct))
+            .GetAllAsync(progressPercentage, _ct)
             .ConfigureAwait(false);
         progress.Report(100);
         return withFileSizes.Concat(populatedFileSizes).ToList();

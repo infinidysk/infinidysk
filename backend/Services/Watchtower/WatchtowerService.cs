@@ -1268,6 +1268,7 @@ lock (_ctsLock) cycleCts.Cancel();
             _disabledCts = null;
         }
         _indexerGate.Dispose();
+        GC.SuppressFinalize(this);
         base.Dispose();
     }
 

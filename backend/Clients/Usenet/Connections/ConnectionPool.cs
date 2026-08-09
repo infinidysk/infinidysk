@@ -98,8 +98,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         TimeSpan? idleTimeout = null,
         SemaphorePriorityOdds? priorityOdds = null)
     {
-        if (maxConnections <= 0)
-            throw new ArgumentOutOfRangeException(nameof(maxConnections));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
 
         _factory = connectionFactory
                    ?? throw new ArgumentNullException(nameof(connectionFactory));

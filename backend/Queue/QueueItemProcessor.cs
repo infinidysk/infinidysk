@@ -359,8 +359,8 @@ public class QueueItemProcessor(
         {
             var fileProcessingResultsAll = await fileProcessors
                 .Select(x => x!.ProcessAsync(part2Progress.SubProgress))
-                .WithConcurrencyAsync(QueueFanOut.GetConcurrency(ct, configManager))
-                .GetAllAsync(ct).ConfigureAwait(false);
+                .WithConcurrencyAsync(QueueFanOut.GetConcurrency(configManager, ct))
+                .GetAllAsync(ct: ct).ConfigureAwait(false);
             var results = fileProcessingResultsAll
                 .Where(x => x is not null)
                 .Select(x => x!)
@@ -397,7 +397,7 @@ public class QueueItemProcessor(
                 .ToPercentage(articlesToCheck.Count);
             var healthCheckConcurrency = Math.Min(
                 configManager.GetHealthCheckConcurrency(),
-                QueueFanOut.GetConcurrency(ct, configManager));
+                QueueFanOut.GetConcurrency(configManager, ct));
             await RunStageAsync(
                     "health",
                     () => ArticleExistenceChecker

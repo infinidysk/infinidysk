@@ -287,6 +287,7 @@ public partial class WardenBackupService : BackgroundService
     public override void Dispose()
     {
         _gate.Dispose();
+        GC.SuppressFinalize(this);
         base.Dispose();
     }
 

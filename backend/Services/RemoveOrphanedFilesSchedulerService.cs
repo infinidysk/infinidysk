@@ -129,6 +129,7 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
         // current reschedule source is safe to dispose. Swapped-out instances
         // are intentionally leaked (see the swap note in ExecuteAsync).
         _rescheduleCts.Dispose();
+        GC.SuppressFinalize(this);
         base.Dispose();
     }
 

@@ -47,6 +47,7 @@ public class DisposableCallbackStream : Stream
             _onDispose?.Invoke();
 
         _disposed = true;
+        GC.SuppressFinalize(this);
         await base.DisposeAsync().ConfigureAwait(false);
     }
 

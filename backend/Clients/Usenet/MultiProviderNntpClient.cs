@@ -330,6 +330,7 @@ public class MultiProviderNntpClient(
                     {
                         var fallbackAdmission = new TaskCompletionSource(
                             TaskCreationOptions.RunContinuationsAsynchronously);
+#pragma warning disable CA2025 // batch response tasks intentionally outlive this scope: releasePending only returns the pending-admission reservation, while in-flight transfers hold (and release via completion callbacks) their own per-provider connection locks
                         responses[index] = ResolveBatchResponseAsync(
                             primaryBatch.Responses[index],
                             segmentIds[index],
@@ -339,6 +340,7 @@ public class MultiProviderNntpClient(
                             fallbackAdmission,
                             coordinator,
                             cancellationToken);
+#pragma warning restore CA2025
                         previousFallbackAdmission = fallbackAdmission.Task;
                     }
                     return new UsenetDecodedBodyBatch { Responses = responses };

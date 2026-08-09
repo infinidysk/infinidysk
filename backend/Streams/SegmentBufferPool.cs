@@ -53,11 +53,9 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
 
     public byte[] Rent(int minimumLength)
     {
-        if (minimumLength < 0)
-            throw new ArgumentOutOfRangeException(nameof(minimumLength));
+        ArgumentOutOfRangeException.ThrowIfNegative(minimumLength);
         if (minimumLength == 0) return [];
-        if (minimumLength > Array.MaxLength)
-            throw new ArgumentOutOfRangeException(nameof(minimumLength));
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(minimumLength, Array.MaxLength);
 
         var sizeClass = RoundToSizeClass(minimumLength);
         var now = _timeProvider.GetUtcNow();

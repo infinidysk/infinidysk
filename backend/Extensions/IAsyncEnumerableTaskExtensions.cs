@@ -7,8 +7,8 @@ public static class IAsyncEnumerableTaskExtensions
     public static async Task<List<T>> GetAllAsync<T>
     (
         this IAsyncEnumerable<T> asyncEnumerable,
-        CancellationToken ct = default,
-        IProgress<int>? progress = null
+        IProgress<int>? progress = null,
+        CancellationToken ct = default
     )
     {
         var done = 0;

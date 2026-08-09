@@ -16,15 +16,14 @@ public static class CircuitOutageSparkBuilder
         int bucketCount,
         long nowMs)
     {
-        var result = providerKeys
-            .Distinct(StringComparer.Ordinal)
+        var distinctProviderKeys = providerKeys.Distinct(StringComparer.Ordinal).ToArray();
+        var result = distinctProviderKeys
             .ToDictionary(
                 key => key,
                 _ => new long[bucketCount],
                 StringComparer.Ordinal);
 
-        var tripBuckets = providerKeys
-            .Distinct(StringComparer.Ordinal)
+        var tripBuckets = distinctProviderKeys
             .ToDictionary(
                 key => key,
                 _ => new bool[bucketCount],

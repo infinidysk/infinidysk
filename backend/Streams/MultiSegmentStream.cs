@@ -130,14 +130,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 estimatedSegmentSize,
                 failFastOnFirstSegment,
                 usePipelinedBodyRequests,
-                cancellationToken,
                 fileName,
                 readBudget,
                 segmentFallbacks,
                 exactSegmentSizes,
                 inFlightArticleBudget,
                 useContainerAwareFill,
-                firstSegmentFileOffset);
+                firstSegmentFileOffset,
+                cancellationToken);
     }
 
     private MultiSegmentStream
@@ -148,14 +148,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         long estimatedSegmentSize,
         bool failFastOnFirstSegment,
         bool usePipelinedBodyRequests,
-        CancellationToken cancellationToken,
         string? fileName,
         long? readBudget,
         string[][]? segmentFallbacks,
         ReadOnlyMemory<long> exactSegmentSizes,
         InFlightArticleBudget? inFlightArticleBudget,
         bool useContainerAwareFill,
-        long? firstSegmentFileOffset
+        long? firstSegmentFileOffset,
+        CancellationToken cancellationToken
     )
     {
         _segmentIds = segmentIds;

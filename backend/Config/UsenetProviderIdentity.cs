@@ -280,7 +280,7 @@ public static class UsenetProviderIdentity
     /// double-count rows when the remap is retried on the next startup.
     /// </summary>
     private static async Task ExecuteAtomicallyAsync(
-        MetricsDbContext db, CancellationToken ct, Func<Task> work)
+        MetricsDbContext db, Func<Task> work, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
         await work().ConfigureAwait(false);
@@ -290,7 +290,7 @@ public static class UsenetProviderIdentity
     private static Task MergeProviderMinutesAsync(
         MetricsDbContext db, string host, string metricsKey, CancellationToken ct)
     {
-        return ExecuteAtomicallyAsync(db, ct, async () =>
+        return ExecuteAtomicallyAsync(db, async () =>
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
@@ -310,13 +310,13 @@ public static class UsenetProviderIdentity
             await db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM ProviderMinutes WHERE Provider = {0}",
                 new object[] { host }, ct).ConfigureAwait(false);
-        });
+        }, ct);
     }
 
     private static Task MergeProviderHourlyAsync(
         MetricsDbContext db, string host, string metricsKey, CancellationToken ct)
     {
-        return ExecuteAtomicallyAsync(db, ct, async () =>
+        return ExecuteAtomicallyAsync(db, async () =>
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
@@ -336,7 +336,7 @@ public static class UsenetProviderIdentity
             await db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM ProviderHourly WHERE Provider = {0}",
                 new object[] { host }, ct).ConfigureAwait(false);
-        });
+        }, ct);
     }
 
     private static async Task RemapFailoverMissesAsync(
@@ -356,7 +356,7 @@ public static class UsenetProviderIdentity
         MetricsDbContext db, string host, string metricsKey, CancellationToken ct)
     {
         // Remap FromProvider first, then ToProvider, merging on conflict.
-        await ExecuteAtomicallyAsync(db, ct, async () =>
+        await ExecuteAtomicallyAsync(db, async () =>
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
@@ -370,9 +370,9 @@ public static class UsenetProviderIdentity
             await db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM FailoverHourly WHERE FromProvider = {0}",
                 new object[] { host }, ct).ConfigureAwait(false);
-        }).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
 
-        await ExecuteAtomicallyAsync(db, ct, async () =>
+        await ExecuteAtomicallyAsync(db, async () =>
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
@@ -386,6 +386,6 @@ public static class UsenetProviderIdentity
             await db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM FailoverHourly WHERE ToProvider = {0}",
                 new object[] { host }, ct).ConfigureAwait(false);
-        }).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
     }
 }

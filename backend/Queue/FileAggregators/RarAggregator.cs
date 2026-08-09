@@ -333,13 +333,14 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
         return (decoded, aesParams);
     }
 
-    [SuppressMessage("ReSharper", "PossibleMultipleEnumeration")]
     private static void ValidatePartNumbers(IEnumerable<int> partNumbers)
     {
-        var count = partNumbers.Count();
-        var uniqueCount = partNumbers.Distinct().Count();
-        if (count != uniqueCount)
-            throw new InvalidDataException("Rar archive has duplicate volume numbers.");
+        var seen = new HashSet<int>();
+        foreach (var partNumber in partNumbers)
+        {
+            if (!seen.Add(partNumber))
+                throw new InvalidDataException("Rar archive has duplicate volume numbers.");
+        }
     }
 
     private static int GetNormalizedPartNumber(

@@ -488,6 +488,7 @@ public class MetricsWriter : BackgroundService
     public override void Dispose()
     {
         _flushGate.Dispose();
+        GC.SuppressFinalize(this);
         base.Dispose();
     }
 

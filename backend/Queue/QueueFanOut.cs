@@ -40,7 +40,7 @@ public static class QueueFanOut
     /// Reads <see cref="QueueDownloadContext"/> from <paramref name="ct"/> when present;
     /// otherwise falls back to primary fan-out (single-item / test paths).
     /// </summary>
-    public static int GetConcurrency(CancellationToken ct, ConfigManager configManager)
+    public static int GetConcurrency(ConfigManager configManager, CancellationToken ct)
     {
         var ctx = ct.GetContext<QueueDownloadContext>();
         if (ctx is not null)
@@ -51,7 +51,7 @@ public static class QueueFanOut
     /// <summary>
     /// Fan-out for SevenZip size population — never applies the primary +5 overshoot.
     /// </summary>
-    public static int GetExactQueueConcurrency(CancellationToken ct, ConfigManager configManager)
+    public static int GetExactQueueConcurrency(ConfigManager configManager, CancellationToken ct)
     {
         var maxQueue = Math.Max(1, configManager.GetMaxQueueConnections());
         var ctx = ct.GetContext<QueueDownloadContext>();

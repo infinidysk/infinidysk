@@ -53,7 +53,7 @@ public static class FetchFirstSegmentsStep
         await foreach (var result in files
                            .Select(x => FetchFirstSegment(x, usenetClient, abortCts.Token))
                            .WithConcurrencyAsync(
-                               QueueFanOut.GetConcurrency(abortCts.Token, configManager),
+                               QueueFanOut.GetConcurrency(configManager, abortCts.Token),
                                abortCts.Token)
                            .WithCancellation(abortCts.Token)
                            .ConfigureAwait(false))
@@ -166,7 +166,7 @@ public static class FetchFirstSegmentsStep
             await foreach (var (i, result) in pending
                                .Select(i => RescueFirstSegment(i, files[i], usenetClient, rescueAbortCts.Token))
                                .WithConcurrencyAsync(
-                                   QueueFanOut.GetConcurrency(rescueAbortCts.Token, configManager),
+                                   QueueFanOut.GetConcurrency(configManager, rescueAbortCts.Token),
                                    rescueAbortCts.Token)
                                .WithCancellation(rescueAbortCts.Token)
                                .ConfigureAwait(false))

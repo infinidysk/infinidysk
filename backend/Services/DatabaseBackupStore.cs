@@ -187,8 +187,7 @@ public sealed class DatabaseBackupStore
 
     public int Prune(int retentionCount)
     {
-        if (retentionCount < 0)
-            throw new ArgumentOutOfRangeException(nameof(retentionCount));
+        ArgumentOutOfRangeException.ThrowIfNegative(retentionCount);
         if (retentionCount == 0)
             return 0;
 
