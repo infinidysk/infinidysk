@@ -9,6 +9,13 @@ namespace NzbWebDAV.Clients.Usenet.Connections;
 /// (network, DNS, TLS interception, ISP routing) rather than simultaneous independent
 /// provider outages — a shape per-provider breakers cannot see. Emits one throttled
 /// warning so operators get a single actionable event instead of N isolated trips.
+/// <para>
+/// Lifetime: one instance per <c>MultiProviderNntpClient</c> generation. A config-change
+/// rebuild creates a new detector for the new provider set; any in-flight trip state from
+/// the old generation is intentionally lost. This means a trip on provider A under the old
+/// client followed by a trip on provider B under the new client will not correlate — an
+/// acceptable gap since config changes are rare and the correlation window is short (10s).
+/// </para>
 /// </summary>
 public sealed class CorrelatedTripDetector
 {
