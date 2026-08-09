@@ -105,7 +105,18 @@ public class ProviderCircuitBreaker
         }
     }
 
-    public void RecordSuccess()
+    /// <summary>
+    /// Records a successful command.
+    /// </summary>
+    /// <param name="resetsCooldownLadder">
+    /// True when the success proves the download path works (a BODY/ARTICLE fetch),
+    /// fully resetting the escalation ladder. False for reachability-only successes
+    /// (STAT/HEAD/DATE): the trip is cleared so the provider rejoins rotation, but the
+    /// current cooldown is preserved for the next trip. Health-check STAT traffic would
+    /// otherwise close every latched breaker seconds after cooldown expiry and pin a
+    /// provider with a persistently broken BODY path at the minimum cooldown forever.
+    /// </param>
+    public void RecordSuccess(bool resetsCooldownLadder = true)
     {
         lock (_lock)
         {
@@ -124,7 +135,8 @@ public class ProviderCircuitBreaker
 
             _window.Clear();
             _trippedUntilMs = 0;
-            _currentCooldown = InitialCooldown;
+            if (resetsCooldownLadder)
+                _currentCooldown = InitialCooldown;
             _lastFailureReason = null;
             Volatile.Write(ref _halfOpenProbeInFlight, 0);
             Volatile.Write(ref _probeStartedMs, 0);

@@ -625,8 +625,11 @@ public class MultiConnectionNntpClient(
                 // Once latched the breaker is no longer tracking a streak, it is waiting
                 // for proof the provider answers at all. A provider that sees little body
                 // traffic would otherwise stay latched with nothing able to close it.
+                // Reachability is not proof the download path works, so the cooldown
+                // ladder survives the close; only a BODY success resets it. Constant
+                // health-check STATs must not pin a BODY-broken provider at 60s forever.
                 if (circuitBreaker.IsLatched)
-                    circuitBreaker.RecordSuccess();
+                    circuitBreaker.RecordSuccess(resetsCooldownLadder: false);
                 deferredCallback.Discard();
                 LogException(() => connectionLock?.Dispose());
             }
