@@ -35,11 +35,57 @@ public sealed class SupportPackService(
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
     private const long DayMs = 24 * HourMs;
+    private static readonly TimeSpan MinimumMeaningfulUptime = TimeSpan.FromMinutes(2);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static readonly JsonSerializerOptions CompactJsonOptions = new()
     {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
+
+    /// <summary>
+    /// Cheap up-front quality flags for the pack that is about to be generated. Surfaced
+    /// in manifest.json and as a response header so the Support UI can tell the operator
+    /// when a capture cannot answer playback questions and should be re-collected.
+    /// </summary>
+    public IReadOnlyList<string> GetPackQualityWarnings()
+    {
+        var warnings = new List<string>();
+
+        var uptime = ProcessUptime();
+        if (uptime < MinimumMeaningfulUptime)
+        {
+            warnings.Add(
+                $"Captured {(int)uptime.TotalSeconds}s after process start — CPU, GC, and " +
+                "connection-pool gauges reflect startup, not sustained load.");
+        }
+
+        var tracing = streamTraceBuffer.GetStatus();
+        if (tracing.EventCount == 0)
+        {
+            warnings.Add(
+                "No stream traces were captured — stall attribution for playback problems is " +
+                "impossible. Enable stream tracing, reproduce the issue, then re-collect.");
+        }
+
+        var sampler = runtimeUsage.Snapshot();
+        if (sampler.WindowSpanMs < MinuteMs)
+        {
+            warnings.Add(
+                "The runtime sampler window is under a minute — rolling CPU/GC averages " +
+                "cover a partial window.");
+        }
+
+        var logs = logBuffer.Snapshot(1, null, null, null, null);
+        if (logs.OldestSequence > 1)
+        {
+            warnings.Add(
+                "The log ring buffer has wrapped since startup — earlier context was evicted. " +
+                "If the symptom began before the oldest retained entry, re-collect with a " +
+                "larger LOG_BUFFER_SIZE.");
+        }
+
+        return warnings;
+    }
 
     internal async Task WriteAsync(Stream output, CancellationToken cancellationToken)
     {
@@ -799,6 +845,7 @@ public sealed class SupportPackService(
                 retainedSessionCount = traceSnapshot.RetainedSessionCount,
             },
             sections = sectionStatus,
+            packQuality = GetPackQualityWarnings(),
             redaction = new { secrets = redactor.SecretsRedacted, ipAddresses = redactor.AddressesPseudonymized },
         };
     }

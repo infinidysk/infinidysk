@@ -380,6 +380,75 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.False(discarded.ContainsKey("stream-traces/events.jsonl"));
     }
 
+    [Fact]
+    public async Task Pack_FlagsAnUntracedFreshCaptureAsLowQuality()
+    {
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)));
+
+        using var manifest = JsonDocument.Parse(entries["manifest.json"]);
+        var packQuality = manifest.RootElement.GetProperty("packQuality")
+            .EnumerateArray().Select(x => x.GetString()).ToList();
+
+        Assert.Contains(packQuality, w => w!.Contains("No stream traces"));
+        Assert.Contains(packQuality, w => w!.Contains("sampler window"));
+    }
+
+    [Fact]
+    public async Task Pack_FlagsAWrappedLogBuffer()
+    {
+        var logBuffer = new LogBufferSink(2);
+        var logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(logBuffer)
+            .CreateLogger();
+        for (var i = 0; i < 5; i++) logger.Information("entry {Index}", i);
+
+        var entries = await ReadPackEntriesAsync(
+            logBuffer,
+            new WarningLogBuffer(new LogBufferSink(50)));
+
+        using var manifest = JsonDocument.Parse(entries["manifest.json"]);
+        var packQuality = manifest.RootElement.GetProperty("packQuality")
+            .EnumerateArray().Select(x => x.GetString()).ToList();
+
+        Assert.Contains(packQuality, w => w!.Contains("ring buffer has wrapped"));
+    }
+
+    [Fact]
+    public async Task Pack_OmitsTracingAndSamplerWarningsForAHealthyCapture()
+    {
+        var buffer = new StreamTraceBuffer(100, enabled: false);
+        buffer.EnableFor(TimeSpan.FromMinutes(15), 100, StreamTraceBuffer.SourceUi);
+        buffer.RangeOpen(Guid.NewGuid(), "/view/movie.mkv", "GET", 0, 99, 1000, "ua", null);
+
+        var runtimeUsage = new RuntimeUsageTracker(processorCount: 4);
+        var at = new DateTimeOffset(2026, 8, 9, 12, 0, 0, TimeSpan.Zero);
+        for (var i = 0; i < 13; i++)
+        {
+            runtimeUsage.Record(
+                TimeSpan.FromMilliseconds(1000),
+                TimeSpan.FromMilliseconds(10),
+                TimeSpan.FromSeconds(5),
+                activeReads: 1,
+                at.AddSeconds(5 * i));
+        }
+
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)),
+            buffer,
+            runtimeUsage);
+
+        using var manifest = JsonDocument.Parse(entries["manifest.json"]);
+        var packQuality = manifest.RootElement.GetProperty("packQuality")
+            .EnumerateArray().Select(x => x.GetString()).ToList();
+
+        Assert.DoesNotContain(packQuality, w => w!.Contains("No stream traces"));
+        Assert.DoesNotContain(packQuality, w => w!.Contains("sampler window"));
+    }
+
     private static Task<Dictionary<string, string>> ReadPackEntriesAsync(
         LogBufferSink logBuffer,
         WarningLogBuffer warningBuffer,
