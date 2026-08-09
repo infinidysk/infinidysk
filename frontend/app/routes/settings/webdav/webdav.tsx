@@ -154,6 +154,6 @@ export function isWebdavSettingsValid(config: Record<string, string>): boolean {
     return isValidUser(config["webdav.user"]);
 }
 
-function isValidUser(user: string): boolean {
-    return /^[A-Za-z0-9_-]+$/.test(user);
+function isValidUser(user: string | undefined): boolean {
+    return user !== undefined && /^[A-Za-z0-9_-]+$/.test(user);
 }

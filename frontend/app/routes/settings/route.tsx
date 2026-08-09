@@ -340,8 +340,9 @@ function Body(props: BodyProps) {
 
         const changedFromPatch: Record<string, string> = {};
         for (const key of Object.keys(patch)) {
-            if (config[key] !== nextNew[key]) {
-                changedFromPatch[key] = nextNew[key];
+            const nextValue = nextNew[key];
+            if (nextValue !== undefined && config[key] !== nextValue) {
+                changedFromPatch[key] = nextValue;
             }
         }
         const changedConfig = omitManagedConfigKeys(changedFromPatch, managedEnv);
@@ -352,7 +353,10 @@ function Body(props: BodyProps) {
 
         const nextSaved = { ...config };
         for (const key of Object.keys(patch)) {
-            nextSaved[key] = nextNew[key];
+            const nextValue = nextNew[key];
+            if (nextValue !== undefined) {
+                nextSaved[key] = nextValue;
+            }
         }
         setConfig(nextSaved);
 
@@ -461,8 +465,9 @@ function getChangedConfig(
     let changedConfig: Record<string, string> = {};
     let configKeys = Object.keys(defaultConfig);
     for (const configKey of configKeys) {
-        if (config[configKey] !== newConfig[configKey]) {
-            changedConfig[configKey] = newConfig[configKey];
+        const newValue = newConfig[configKey];
+        if (newValue !== undefined && config[configKey] !== newValue) {
+            changedConfig[configKey] = newValue;
         }
     }
     return changedConfig;

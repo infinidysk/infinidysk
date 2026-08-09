@@ -117,7 +117,7 @@ function MetaChip({
 }: {
     label: string;
     value: string | null;
-    progress?: number;
+    progress?: number | undefined;
 }) {
     return (
         <span className="inline-flex items-center gap-1.5 text-[11px] text-base-content/55">

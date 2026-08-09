@@ -67,7 +67,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     // events
     const onHealthItemStatus = useCallback((message: string) => {
         const [davItemId, healthResult, repairAction] = message.split('|');
-        setQueueState(x => completeHealthCheck(x, davItemId));
+        setQueueState(x => davItemId === undefined ? x : completeHealthCheck(x, davItemId));
         setHistoryStats(x => {
             // 'hs' websocket payload carries numeric HealthResult / RepairAction enum values
             const healthResultNum: HealthResult = Number(healthResult);

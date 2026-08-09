@@ -4,8 +4,8 @@ import { Badge, Icon, Tooltip } from "~/components/ui";
 export type StatusBadgeProps = {
     className?: string,
     status: string,
-    percentage?: string,
-    error?: string,
+    percentage?: string | undefined,
+    error?: string | undefined,
 }
 
 
@@ -108,7 +108,7 @@ function StatusShell({ className = "", children }: { className?: string, childre
     );
 }
 
-function ProgressStatus({ className = "", children }: { className?: string, children: ReactNode }) {
+function ProgressStatus({ className = "", children }: { className?: string | undefined, children: ReactNode }) {
     return (
         <div className={`inline-flex w-[85px] flex-col gap-0.5 ${className}`}>
             {children}

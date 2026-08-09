@@ -371,7 +371,7 @@ function partitionByStorageGroup(items: DisplayedProvider[]): StorageGroupPartit
     };
 }
 
-function parseProviderConfig(jsonString: string): UsenetProviderConfig {
+function parseProviderConfig(jsonString: string | undefined): UsenetProviderConfig {
     try {
         if (!jsonString || jsonString.trim() === "") {
             return { Providers: [] };
@@ -422,8 +422,9 @@ function generateProviderId(): string {
     }
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    // Indices 6 and 8 are provably in bounds for the 16-byte v4 UUID buffer.
+    bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80;
     const hex = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
@@ -526,9 +527,14 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
         const current = providerConfig.Providers[index];
         if (!current) return;
         const isDisabled = current.Type === ProviderType.Disabled;
-        const updated: ConnectionDetails = isDisabled
-            ? { ...current, Type: current.PreviousType ?? ProviderType.Pooled, PreviousType: undefined }
-            : { ...current, Type: ProviderType.Disabled, PreviousType: current.Type };
+        let updated: ConnectionDetails;
+        if (isDisabled) {
+            // Drop PreviousType (rather than setting undefined) so the key is gone after serialization.
+            const { PreviousType: previousType, ...rest } = current;
+            updated = { ...rest, Type: previousType ?? ProviderType.Pooled };
+        } else {
+            updated = { ...current, Type: ProviderType.Disabled, PreviousType: current.Type };
+        }
         const newProviderConfig = { ...providerConfig };
         newProviderConfig.Providers = providerConfig.Providers.map((p, i) => i === index ? updated : p);
         setNewConfig({ ...config, "usenet.providers": serializeProviderConfig(newProviderConfig) });
@@ -606,6 +612,7 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
         const parts = (message || "0|0|0|0|1|0").split("|");
         const [index, live, idle, _0, _1, _2] = parts.map((x) => Number(x));
         if (showModal) return;
+        if (index === undefined || live === undefined || idle === undefined) return;
         const savedProvider = savedProviderConfig.Providers[index];
         if (!savedProvider) return;
         const identity = providerIdentity(savedProvider);
@@ -982,7 +989,7 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
 
             <ProviderModal
                 show={showModal}
-                provider={editingIndex !== null ? providerConfig.Providers[editingIndex] : null}
+                provider={editingIndex !== null ? providerConfig.Providers[editingIndex] ?? null : null}
                 existingStorageGroups={existingStorageGroups}
                 onClose={handleCloseModal}
                 onSave={handleSaveProvider}
@@ -1400,7 +1407,7 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
         setSaveError(null);
         try {
             await onSave({
-                ProviderId: provider?.ProviderId,
+                ...(provider?.ProviderId !== undefined ? { ProviderId: provider.ProviderId } : {}),
                 Type: type,
                 Host: host,
                 Port: parseInt(port, 10),
@@ -1411,9 +1418,11 @@ function ProviderModal({ show, provider, existingStorageGroups, onClose, onSave,
                 MaxConnections: parseInt(maxConnections, 10),
                 PipeliningDepth: pipeliningDepth.trim() === "" ? null : parseInt(pipeliningDepth, 10),
                 Priority: provider?.Priority ?? 0,
-                Nickname: trimmedNickname === "" ? undefined : trimmedNickname,
+                ...(trimmedNickname !== "" ? { Nickname: trimmedNickname } : {}),
                 StorageGroup: trimmedStorageGroup,
-                PreviousType: type === ProviderType.Disabled ? provider?.PreviousType : undefined,
+                ...(type === ProviderType.Disabled && provider?.PreviousType !== undefined
+                    ? { PreviousType: provider.PreviousType }
+                    : {}),
                 ByteLimit: byteLimit,
                 BytesUsedOffset: offsetToPersist,
                 BytesUsedResetAt: resetAtToPersist,

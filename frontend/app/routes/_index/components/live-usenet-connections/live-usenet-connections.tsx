@@ -13,7 +13,8 @@ export function LiveUsenetConnections({ hasUsenetProviders }: LiveUsenetConnecti
     const [transportDown, setTransportDown] = useState(false);
     const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const parts = (connections || "0|0|0|0|1|0").split("|");
-    const [_0, _1, _2, live, max, idle] = parts.map(x => Number(x));
+    // Defaults only apply if the backend ever sends a short frame.
+    const [_0, _1, _2, live = 0, max = 0, idle = 0] = parts.map(x => Number(x));
     const active = live - idle;
 
     useWebsocketTopic(

@@ -169,7 +169,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                                 <label className="space-y-2 text-sm text-base-content/80">
                                     <span>Maximum size (GB)</span>
                                     <Input
-                                        className={`w-full ${!isPositiveInteger(config["usenet.segment-cache.max-gb"]) ? "input-error" : ""}`}
+                                        className={`w-full ${!isPositiveInteger(config["usenet.segment-cache.max-gb"] ?? "") ? "input-error" : ""}`}
                                         inputMode="numeric"
                                         value={config["usenet.segment-cache.max-gb"]}
                                         onChange={e => setNewConfig({ ...config, "usenet.segment-cache.max-gb": e.target.value })} />
@@ -430,7 +430,7 @@ export function isStreamingSettingsUpdated(
 export function isStreamingSettingsValid(config: Record<string, string>): boolean {
     const segmentCacheValid = config["usenet.segment-cache.enabled"] !== "true"
         || (isValidSegmentCachePath(config["usenet.segment-cache.path"])
-            && isPositiveInteger(config["usenet.segment-cache.max-gb"]));
+            && isPositiveInteger(config["usenet.segment-cache.max-gb"] ?? ""));
     return isValidMaxDownloadConnections(config["usenet.max-download-connections"])
         && isValidStreamingPriority(config["usenet.streaming-priority"])
         && isValidStreamingSegmentTimeout(config["usenet.streaming-segment-timeout-seconds"])
@@ -451,38 +451,38 @@ function isValidMaxDownloadConnections(value: string | undefined): boolean {
     return isAutoMaxDownloadConnections(value) || isPositiveInteger(value ?? "");
 }
 
-function isValidStreamingPriority(value: string): boolean {
-    if (value.trim() === "") return false;
+function isValidStreamingPriority(value: string | undefined): boolean {
+    if (value == null || value.trim() === "") return false;
     const number = Number(value);
     return Number.isInteger(number) && number >= 0 && number <= 100;
 }
 
-function isValidStreamingSegmentTimeout(value: string): boolean {
-    if (value.trim() === "") return false;
+function isValidStreamingSegmentTimeout(value: string | undefined): boolean {
+    if (value == null || value.trim() === "") return false;
     const number = Number(value);
     return Number.isInteger(number) && number >= 2 && number <= 40;
 }
 
-function isValidStreamingReadTimeout(value: string): boolean {
-    if (value.trim() === "") return false;
+function isValidStreamingReadTimeout(value: string | undefined): boolean {
+    if (value == null || value.trim() === "") return false;
     const number = Number(value);
     return Number.isInteger(number) && number >= 5 && number <= 120;
 }
 
-function isValidStreamingWriteTimeout(value: string): boolean {
-    if (value.trim() === "") return false;
+function isValidStreamingWriteTimeout(value: string | undefined): boolean {
+    if (value == null || value.trim() === "") return false;
     const number = Number(value);
     return Number.isInteger(number) && number >= 0 && number <= 600;
 }
 
-function isValidStreamingSegmentRetries(value: string): boolean {
-    if (value.trim() === "") return false;
+function isValidStreamingSegmentRetries(value: string | undefined): boolean {
+    if (value == null || value.trim() === "") return false;
     const number = Number(value);
     return Number.isInteger(number) && number >= 0 && number <= 5;
 }
 
-function isValidArticleBufferSize(value: string): boolean {
-    return isPositiveInteger(value);
+function isValidArticleBufferSize(value: string | undefined): boolean {
+    return value != null && isPositiveInteger(value);
 }
 
 function isValidInFlightArticleBudget(value: string | undefined): boolean {
@@ -497,6 +497,6 @@ function isValidIdleConnectionTimeout(value: string | undefined): boolean {
     return Number.isInteger(number) && number >= 15 && number <= 300;
 }
 
-function isValidSegmentCachePath(value: string): boolean {
-    return value.trim().length > 0;
+function isValidSegmentCachePath(value: string | undefined): boolean {
+    return value != null && value.trim().length > 0;
 }

@@ -156,7 +156,8 @@ class BackendClient {
         if (!data.nzo_ids || data.nzo_ids.length != 1) {
             throw new Error(`Failed to add nzb file: unexpected response format`);
         }
-        return data.nzo_ids[0];
+        // The length check above guarantees element 0 exists.
+        return data.nzo_ids[0]!;
     }
 
     public async searchIndexers(q: string, limit: number = 100): Promise<SearchIndexersResponse> {
@@ -183,7 +184,8 @@ class BackendClient {
         if (!data.nzo_ids || data.nzo_ids.length !== 1) {
             throw new Error("Failed to add nzb url: unexpected response format");
         }
-        return data.nzo_ids[0];
+        // The length check above guarantees element 0 exists.
+        return data.nzo_ids[0]!;
     }
 
     public async listWebdavDirectory(directory: string): Promise<DirectoryItem[]> {
@@ -741,7 +743,7 @@ export type ProviderCircuitState = "closed" | "open" | "halfOpen";
 
 export type ProviderRow = {
     provider: string,
-    nickname?: string | null,
+    nickname?: string | null | undefined,
     articles: number,
     bytesFetched: number,
     errors: number,
@@ -754,12 +756,12 @@ export type ProviderRow = {
     errorSpark?: number[],
     retrySpark?: number[],
     outageSpark?: number[],
-    circuitState?: ProviderCircuitState,
-    cooldownRemainingSeconds?: number | null,
-    lastFailureReason?: string | null,
-    tripCount?: number,
-    failureCount?: number,
-    articleMissCount?: number,
+    circuitState?: ProviderCircuitState | undefined,
+    cooldownRemainingSeconds?: number | null | undefined,
+    lastFailureReason?: string | null | undefined,
+    tripCount?: number | undefined,
+    failureCount?: number | undefined,
+    articleMissCount?: number | undefined,
 }
 
 export type ProviderCircuitBreakerRow = {

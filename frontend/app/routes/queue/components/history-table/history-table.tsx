@@ -111,7 +111,7 @@ export function HistoryTable({
     return (
         <PageSection
             title={sectionTitle}
-            badgeText={totalHistoryCount > 0 ? String(totalHistoryCount) : undefined}
+            {...(totalHistoryCount > 0 ? { badgeText: String(totalHistoryCount) } : {})}
         >
             <PageTable
                 headerCheckboxState={headerCheckboxState}
@@ -243,7 +243,7 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
                 show={isConfirmingRemoval}
                 title="Remove From History?"
                 message={slot.nzb_name}
-                checkboxMessage={!slot.fail_message ? "Delete mounted files" : undefined}
+                {...(!slot.fail_message ? { checkboxMessage: "Delete mounted files" } : {})}
                 errorMessage={slot.fail_message}
                 onConfirm={(isChecked) => void onConfirmRemoval(isChecked)}
                 onCancel={onCancelRemoval} />

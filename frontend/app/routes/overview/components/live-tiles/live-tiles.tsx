@@ -57,8 +57,8 @@ export function LiveTiles({ tiles }: LiveTilesProps) {
 function Tile({ label, value, sub, accent }: {
     label: string,
     value: string,
-    sub?: string,
-    accent?: "live" | "danger"
+    sub?: string | undefined,
+    accent?: "live" | "danger" | undefined
 }) {
     const valueClass = accent === "live"
         ? "text-success"

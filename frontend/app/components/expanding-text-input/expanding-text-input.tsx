@@ -39,7 +39,7 @@ export function ExpandingTextInput({
         adjustHeight();
 
         const intersectionObserver = new IntersectionObserver((entries) => {
-            if (entries[0].isIntersecting) {
+            if (entries[0]?.isIntersecting) {
                 adjustHeight();
             }
         });

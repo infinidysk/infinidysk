@@ -21,13 +21,17 @@ const SCOPE_OPTIONS: { value: string; label: string }[] = [
 
 export async function loader({ request }: Route.LoaderArgs) {
     const sp = new URL(request.url).searchParams;
+    const state = sp.get("state");
+    const q = sp.get("q")?.trim();
+    const sort = sp.get("sort");
+    const expander = sp.get("expander");
     return await backendClient.getWatchtower({
-        state: sp.get("state") ?? undefined,
-        q: sp.get("q")?.trim() || undefined,
-        sort: sp.get("sort") ?? undefined,
+        ...(state ? { state } : {}),
+        ...(q ? { q } : {}),
+        ...(sort ? { sort } : {}),
         offset: Number(sp.get("offset")) || 0,
         limit: Number(sp.get("limit")) || PAGE_SIZE,
-        expander: sp.get("expander") ?? undefined,
+        ...(expander ? { expander } : {}),
         statsOnly: sp.get("statsOnly") === "1",
     });
 }
@@ -197,7 +201,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
     useEffect(() => {
         const el = sentinelRef.current;
         if (!el) return;
-        const io = new IntersectionObserver(es => { if (es[0].isIntersecting) loadMoreRef.current(); }, { rootMargin: "600px" });
+        const io = new IntersectionObserver(es => { if (es[0]?.isIntersecting) loadMoreRef.current(); }, { rootMargin: "600px" });
         io.observe(el);
         return () => io.disconnect();
     }, []);
@@ -928,7 +932,7 @@ function titleCase(value: string): string {
         .replace(/\s+/g, " ")
         .trim()
         .split(" ")
-        .map(w => (w ? w[0].toUpperCase() + w.slice(1) : w))
+        .map(w => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
         .join(" ");
 }
 
@@ -953,11 +957,11 @@ function labelFromUrl(raw: string): string {
     const ci = parts.indexOf("catalog");
     if (ci >= 0 && parts.length > ci + 2) {
         const type = parts[ci + 1];
-        const id = parts[ci + 2].replace(/\.json$/i, "");
+        const id = (parts[ci + 2] ?? "").replace(/\.json$/i, "");
         const pretty = titleCase(id);
         return type ? `${pretty} · ${titleCase(type)}` : pretty;
     }
-    const last = parts.length ? parts[parts.length - 1].replace(/\.json$/i, "") : "";
+    const last = parts.at(-1)?.replace(/\.json$/i, "") ?? "";
     return last ? titleCase(last) : hostOf(raw);
 }
 

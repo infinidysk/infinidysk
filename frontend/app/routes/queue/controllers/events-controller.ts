@@ -83,12 +83,18 @@ export function useQueueEvents(
     }, [setQueueSlots, isQueueLive, pageSize]);
 
     const onChangeQueueSlotStatus = useCallback((message: string) => {
-        const [nzo_id, status] = message.split('|');
+        const sep = message.indexOf('|');
+        if (sep < 0) return;
+        const nzo_id = message.slice(0, sep);
+        const status = message.slice(sep + 1);
         setQueueSlots(slots => slots.map(x => x.nzo_id === nzo_id ? { ...x, status } : x));
     }, [setQueueSlots]);
 
     const onChangeQueueSlotPercentage = useCallback((message: string) => {
-        const [nzo_id, true_percentage] = message.split('|');
+        const sep = message.indexOf('|');
+        if (sep < 0) return;
+        const nzo_id = message.slice(0, sep);
+        const true_percentage = message.slice(sep + 1);
         setQueueSlots(slots => slots.map(x => x.nzo_id === nzo_id ? { ...x, true_percentage } : x));
     }, [setQueueSlots]);
 

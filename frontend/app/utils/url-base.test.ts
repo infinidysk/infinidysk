@@ -81,6 +81,6 @@ describe("server.ts mirror parity", () => {
   });
 
   it("server.ts reads NZBDAV_URL_BASE with URL_BASE fallback", () => {
-    expect(server).toContain("process.env.NZBDAV_URL_BASE ?? process.env.URL_BASE");
+    expect(server).toContain('process.env["NZBDAV_URL_BASE"] ?? process.env["URL_BASE"]');
   });
 });

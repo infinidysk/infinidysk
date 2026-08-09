@@ -557,7 +557,7 @@ function sameLevels(set: Set<LogLevel>, list: LogLevel[]): boolean {
 function mergeAndCap(prev: LogEntry[], incoming: LogEntry[]): LogEntry[] {
     if (incoming.length === 0) return prev;
     // Newest live entries always have higher sequence numbers, so append + dedupe.
-    const lastSeq = prev.length > 0 ? prev[prev.length - 1].seq : 0;
+    const lastSeq = prev.at(-1)?.seq ?? 0;
     const fresh = incoming.filter(e => e.seq > lastSeq);
     if (fresh.length === 0) return prev;
     const next = prev.concat(fresh);

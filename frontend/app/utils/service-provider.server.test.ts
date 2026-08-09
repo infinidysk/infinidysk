@@ -142,7 +142,7 @@ describe("getServiceProvider", () => {
       disabledFeatures: ["search"],
     });
     expect(warnMock).toHaveBeenCalledOnce();
-    expect(warnMock.mock.calls[0][0]).toContain(
+    expect(warnMock.mock.calls[0]?.[0]).toContain(
       'SERVICE_PROVIDER "supportUrl" is invalid and will be ignored',
     );
   });
@@ -157,7 +157,7 @@ describe("getServiceProvider", () => {
 
     expect(getServiceProvider()).toBeNull();
     expect(warnMock).toHaveBeenCalledOnce();
-    expect(warnMock.mock.calls[0][0]).toContain(
+    expect(warnMock.mock.calls[0]?.[0]).toContain(
       "SERVICE_PROVIDER is invalid and will be ignored. Reason:",
     );
   });

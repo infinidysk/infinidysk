@@ -50,33 +50,35 @@ const OPTIMISED_DEFAULTS: ResultFilter = {
     PreferDownloaded: true,
 };
 
+// Optional keys may be present with an undefined value in objects built from the
+// edit-modal form state; JSON.stringify drops them when the config is persisted.
 interface ConnectionDetails {
     Name: string;
     Url: string;
     ApiKey: string;
     Enabled: boolean;
-    UserAgent?: string;
-    SearchUserAgent?: string;
-    RetrieveUserAgent?: string;
-    SkipTlsVerification?: boolean;
+    UserAgent?: string | undefined;
+    SearchUserAgent?: string | undefined;
+    RetrieveUserAgent?: string | undefined;
+    SkipTlsVerification?: boolean | undefined;
     MaxRequestsPerMinute?: number;
     EnableStrictMatching?: boolean;
-    ProxyUrl?: string;
-    TimeoutSeconds?: number;
-    SearchResultLimit?: number;
-    HitLimit?: number;
-    DownloadLimit?: number;
-    HitLimitResetTime?: number;
-    ExtraMovieCategories?: string;
-    ExtraTvCategories?: string;
-    IgnoreCategoryFilter?: boolean;
-    Filter?: ResultFilter;
+    ProxyUrl?: string | undefined;
+    TimeoutSeconds?: number | undefined;
+    SearchResultLimit?: number | undefined;
+    HitLimit?: number | undefined;
+    DownloadLimit?: number | undefined;
+    HitLimitResetTime?: number | undefined;
+    ExtraMovieCategories?: string | undefined;
+    ExtraTvCategories?: string | undefined;
+    IgnoreCategoryFilter?: boolean | undefined;
+    Filter?: ResultFilter | undefined;
 }
 
 interface IndexerConfig {
     ProxyUrl?: string;
-    TimeoutSeconds?: number;
-    SearchResultLimit?: number;
+    TimeoutSeconds?: number | undefined;
+    SearchResultLimit?: number | undefined;
     Indexers: ConnectionDetails[];
 }
 
@@ -99,8 +101,8 @@ type PatternIssue = { line: number, pattern: string, error: string };
 function validateExcludePatterns(raw: string): PatternIssue[] {
     const issues: PatternIssue[] = [];
     const lines = raw.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-        const trimmed = lines[i].trim();
+    for (const [i, line] of lines.entries()) {
+        const trimmed = line.trim();
         if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
         try {
             new RegExp(trimmed, "i");
@@ -121,8 +123,8 @@ type SyncUrlIssue = { line: number, value: string, error: string };
 function validateSyncUrls(raw: string): SyncUrlIssue[] {
     const issues: SyncUrlIssue[] = [];
     const lines = raw.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-        const trimmed = lines[i].trim();
+    for (const [i, line] of lines.entries()) {
+        const trimmed = line.trim();
         if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
         try {
             const parsed = new URL(trimmed);
@@ -155,7 +157,7 @@ function syncRelativeTime(unixSeconds: number): string {
     return `${Math.floor(diff / 86400)}d ago`;
 }
 
-function parseConfig(raw: string): IndexerConfig {
+function parseConfig(raw: string | undefined): IndexerConfig {
     try {
         // Config key "indexers.instances" holds the backend IndexerConfig JSON.
         const parsed = JSON.parse(raw || "{}") as Partial<IndexerConfig>;
@@ -579,7 +581,7 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
 
             <IndexerModal
                 show={showModal}
-                indexer={editingIndex !== null ? indexerConfig.Indexers[editingIndex] : null}
+                indexer={editingIndex !== null ? (indexerConfig.Indexers[editingIndex] ?? null) : null}
                 onClose={handleCloseModal}
                 onSave={handleSave}
             />
