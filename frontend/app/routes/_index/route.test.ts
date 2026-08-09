@@ -3,7 +3,7 @@ import { action } from "./route";
 
 describe("_index route action", () => {
   it("returns 405 for POST requests", async () => {
-    const response = await action();
+    const response = action();
 
     expect(response).toBeInstanceOf(Response);
     expect(response.status).toBe(405);

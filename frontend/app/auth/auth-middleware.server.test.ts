@@ -17,7 +17,7 @@ function mockReq(path: string): express.Request {
 function mockRes() {
   return {
     redirect: vi.fn(),
-  } as unknown as express.Response & { redirect: ReturnType<typeof vi.fn> };
+  } as unknown as Omit<express.Response, "redirect"> & { redirect: ReturnType<typeof vi.fn> };
 }
 
 beforeEach(() => {
@@ -37,7 +37,7 @@ describe("authMiddleware", () => {
     const next = vi.fn();
     const res = mockRes();
 
-    await authMiddleware(mockReq(path), res, next);
+    await authMiddleware(mockReq(path), res as unknown as express.Response, next);
 
     expect(next).toHaveBeenCalledOnce();
     expect(res.redirect).not.toHaveBeenCalled();
@@ -49,7 +49,7 @@ describe("authMiddleware", () => {
     const next = vi.fn();
     const res = mockRes();
 
-    await authMiddleware(mockReq("/settings"), res, next);
+    await authMiddleware(mockReq("/settings"), res as unknown as express.Response, next);
 
     expect(isAuthenticatedMock).toHaveBeenCalledOnce();
     expect(next).toHaveBeenCalledOnce();
@@ -61,7 +61,7 @@ describe("authMiddleware", () => {
     const next = vi.fn();
     const res = mockRes();
 
-    await authMiddleware(mockReq("/queue"), res, next);
+    await authMiddleware(mockReq("/queue"), res as unknown as express.Response, next);
 
     expect(res.redirect).toHaveBeenCalledWith(302, "/login");
     expect(next).not.toHaveBeenCalled();
@@ -71,7 +71,7 @@ describe("authMiddleware", () => {
     const next = vi.fn();
     const res = mockRes();
 
-    await authMiddleware(mockReq("/%6Fnboarding"), res, next);
+    await authMiddleware(mockReq("/%6Fnboarding"), res as unknown as express.Response, next);
 
     expect(next).toHaveBeenCalledOnce();
     expect(isAuthenticatedMock).not.toHaveBeenCalled();
@@ -82,7 +82,7 @@ describe("authMiddleware", () => {
     const next = vi.fn();
     const res = mockRes();
 
-    await authMiddleware(mockReq("/%E0%A4%A"), res, next);
+    await authMiddleware(mockReq("/%E0%A4%A"), res as unknown as express.Response, next);
 
     expect(res.redirect).toHaveBeenCalledWith(302, "/login");
     expect(next).not.toHaveBeenCalled();

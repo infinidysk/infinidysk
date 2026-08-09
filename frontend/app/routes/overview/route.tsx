@@ -115,14 +115,15 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             try {
                 const res = await fetch(withUrlBase(`/api/get-overview-stats?window=${window}&sections=window`));
                 if (!res.ok || cancelled) return;
-                const data: OverviewStatsResponse = await res.json();
+                // /api/get-overview-stats returns OverviewStatsResponse
+                const data = await res.json() as OverviewStatsResponse;
                 if (cancelled) return;
                 setStats(s => mergeOverviewStats(s, data));
                 setWindowLoaded(true);
             } catch { /* network blip, retry next tick */ }
         };
 
-        fetchWindow();
+        void fetchWindow(); // fire-and-forget: polled on interval below
         const interval = setInterval(() => {
             if (editModeRef.current) return;
             void fetchWindow();
@@ -143,11 +144,12 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     useEffect(() => {
         if (isLongWindow) return;
         let cancelled = false;
-        (async () => {
+        void (async () => {
             try {
                 const res = await fetch(withUrlBase(`/api/get-overview-stats?window=${window}&sections=detail`));
                 if (!res.ok || cancelled) return;
-                const data: OverviewStatsResponse = await res.json();
+                // /api/get-overview-stats returns OverviewStatsResponse
+                const data = await res.json() as OverviewStatsResponse;
                 if (cancelled) return;
                 setStats(s => mergeOverviewStats(s, data));
                 setDetailLoaded(true);
@@ -159,11 +161,12 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     // Static blocks: once per page visit.
     useEffect(() => {
         let cancelled = false;
-        (async () => {
+        void (async () => {
             try {
                 const res = await fetch(withUrlBase(`/api/get-overview-stats?window=${window}&sections=static`));
                 if (!res.ok || cancelled) return;
-                const data: OverviewStatsResponse = await res.json();
+                // /api/get-overview-stats returns OverviewStatsResponse
+                const data = await res.json() as OverviewStatsResponse;
                 if (cancelled) return;
                 setStats(s => mergeOverviewStats(s, data));
                 setStaticLoaded(true);
@@ -175,7 +178,8 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     const onWsMessage = useCallback((topic: string, message: string) => {
         if (topic !== topicNames.liveStats) return;
         try {
-            const live: LiveStatsMessage = JSON.parse(message);
+            // live-stats websocket message ('ls' topic) carries LiveStatsMessage
+            const live = JSON.parse(message) as LiveStatsMessage;
             setStats(s => ({
                 ...s,
                 tiles: {

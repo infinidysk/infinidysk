@@ -1,7 +1,17 @@
 import WebSocket, { WebSocketServer } from 'ws';
+import { Buffer } from "node:buffer";
 import { isAuthenticated } from "../app/auth/authentication.server";
 import type { IncomingMessage } from 'http';
 import { logger } from "./logger";
+
+// ws types MessageEvent.data as any; decode explicitly.
+function messageEventDataToString(data: unknown): string {
+    if (typeof data === "string") return data;
+    if (data instanceof Buffer) return data.toString("utf8");
+    if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+    if (Array.isArray(data)) return Buffer.concat(data as Buffer[]).toString("utf8");
+    return String(data);
+}
 
 export const MAX_WEBSOCKET_PAYLOAD_BYTES = 64 * 1024;
 export const MAX_TOPICS_PER_SOCKET = 100;
@@ -99,7 +109,7 @@ function initializeWebsocketServer(wss: WebSocketServer) {
         });
 
         const applySubscription = (event: WebSocket.MessageEvent) => {
-            const topics = parseSubscriptionTopics(event.data.toString());
+            const topics = parseSubscriptionTopics(messageEventDataToString(event.data));
             if (!topics) {
                 ws.close(1003, "Could not process topic subscription. If recently updated, try refreshing the page.");
                 return;
@@ -241,7 +251,7 @@ export function initializeWebsocketClient(
 
         socket.onmessage = (event: WebSocket.MessageEvent) => {
             try {
-                const rawMessage = event.data.toString();
+                const rawMessage = messageEventDataToString(event.data);
                 const topicMessage: unknown = JSON.parse(rawMessage);
                 if (!topicMessage || typeof topicMessage !== "object") return;
 

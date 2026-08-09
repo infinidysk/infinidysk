@@ -22,10 +22,12 @@ export function ResetHealthCheckStats() {
         try {
             const response = await fetch(withUrlBase("/api/clear-health-check-history"), { method: "POST" });
             if (!response.ok) {
-                const body = await response.json().catch(() => ({}));
+                // Error body from POST /api/clear-health-check-history (BaseApiResponse).
+                const body = await response.json().catch(() => ({})) as { error?: string };
                 throw new Error(body.error || `Request failed (${response.status})`);
             }
-            const data = await response.json();
+            // Success body from POST /api/clear-health-check-history (ClearHealthCheckHistoryResponse).
+            const data = await response.json() as { deletedResults?: number; deletedStats?: number };
             setMessage(
                 `Reset complete. Removed ${data.deletedResults ?? 0} result row(s) and ${data.deletedStats ?? 0} stat row(s).`
             );
@@ -59,7 +61,7 @@ export function ResetHealthCheckStats() {
                         variant={isRunning ? "secondary" : "danger"}
                         disabled={isRunning}
                         className="shrink-0"
-                        onClick={onReset}
+                        onClick={() => void onReset()}
                     >
                         <Icon
                             name={isRunning ? "progress_activity" : "delete_sweep"}

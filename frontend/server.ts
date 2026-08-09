@@ -113,14 +113,20 @@ const router = express.Router();
 router.use(securityHeadersMiddleware);
 
 // Initialize the websocket server as soon as both it and the server-module are ready
-let _serverModule: any = null;
+interface ServerBuildModule {
+    app: express.Express;
+    bakedUrlBase?: string;
+    initializeWebsocketServer(websocketServer: WebSocketServer): void;
+}
+
+let _serverModule: ServerBuildModule | null = null;
 let _websocketServer: WebSocketServer | null = null;
 const setWebsocketServer = (websocketServer: WebSocketServer) => {
   if (_websocketServer != null) return;
   if (_serverModule != null) _serverModule.initializeWebsocketServer(websocketServer);
   _websocketServer = websocketServer;
 };
-const setServerModule = (serverModule: any) => {
+const setServerModule = (serverModule: ServerBuildModule) => {
   if (_serverModule != null) return;
   if (_websocketServer != null) serverModule.initializeWebsocketServer(_websocketServer);
   _serverModule = serverModule;
@@ -139,7 +145,8 @@ if (DEVELOPMENT) {
   app.use(viteDevServer.middlewares);
   router.use(async (req, res, next) => {
     try {
-      const serverModule = await viteDevServer.ssrLoadModule("./server/app.ts");
+      // The dev SSR module fulfills the same contract as the production build.
+      const serverModule = (await viteDevServer.ssrLoadModule("./server/app.ts")) as ServerBuildModule;
       assertUrlBaseMatchesBuild(serverModule.bakedUrlBase);
       setServerModule(serverModule);
       return await serverModule.app(req, res, next);

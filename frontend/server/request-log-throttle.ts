@@ -17,7 +17,11 @@ const throttleState = process as typeof process & {
 };
 
 function getState(): Map<string, ThrottleEntry> {
-  return throttleState.__nzbdavClientErrorLogState ??= new Map();
+  const existing = throttleState.__nzbdavClientErrorLogState;
+  if (existing) return existing;
+  const created = new Map<string, ThrottleEntry>();
+  throttleState.__nzbdavClientErrorLogState = created;
+  return created;
 }
 
 /**

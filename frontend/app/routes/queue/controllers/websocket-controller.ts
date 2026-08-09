@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { HistoryEvents, QueueEvents } from "./events-controller";
 import { adjustTotalCount } from "./events-controller";
+import type { HistorySlot, QueueSlot } from "~/clients/backend-client.server";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
 
 const topicNames = {
@@ -39,7 +40,8 @@ export function useQueueHistoryWebsocket(
             // Count updates live here (not in UI handlers) so optimistic UI remove + qr
             // do not double-decrement.
             setTotalQueueCount(count => adjustTotalCount(count, 1));
-            if (isQueueLive) queueEvents.onAddQueueSlot(JSON.parse(message));
+            // 'qa' websocket payload carries a JSON-serialized QueueSlot (backend contract)
+            if (isQueueLive) queueEvents.onAddQueueSlot(JSON.parse(message) as QueueSlot);
         }
         else if (topic == topicNames.queueItemRemoved) {
             const ids = message.split(',').filter(Boolean);
@@ -57,7 +59,8 @@ export function useQueueHistoryWebsocket(
             queueEvents.onChangeQueueSlotProviders(message);
         else if (topic == topicNames.historyItemAdded) {
             setTotalHistoryCount(count => adjustTotalCount(count, 1));
-            if (isHistoryLive) historyEvents.onAddHistorySlot(JSON.parse(message));
+            // 'ha' websocket payload carries a JSON-serialized HistorySlot (backend contract)
+            if (isHistoryLive) historyEvents.onAddHistorySlot(JSON.parse(message) as HistorySlot);
         }
         else if (topic == topicNames.historyItemRemoved) {
             const ids = message.split(',').filter(Boolean);

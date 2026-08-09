@@ -113,7 +113,7 @@ function Body(props: ExplorePageData) {
     useEffect(() => {
         const revalidateWhenVisible = () => {
             if (document.visibilityState === "visible" && revalidator.state === "idle") {
-                revalidator.revalidate();
+                void revalidator.revalidate(); // fire-and-forget refresh
             }
         };
 
@@ -136,7 +136,7 @@ function Body(props: ExplorePageData) {
 
     const visibleNames = useMemo(() => visibleItems.map(i => i.name), [visibleItems]);
     const selectableNames = useMemo(
-        () => visibleNames.filter(n => canDelete),
+        () => visibleNames.filter(() => canDelete),
         [visibleNames, canDelete]
     );
     const selectedVisibleCount = useMemo(
@@ -192,11 +192,12 @@ function Body(props: ExplorePageData) {
             try {
                 const resp = await fetch(withUrlBase('/api/delete-webdav-item'), { method: 'POST', body: fd });
                 if (!resp.ok) {
-                    const data = await resp.json().catch(() => ({} as any));
+                    // /api/delete-webdav-item returns BaseApiResponse { status, error? }
+                    const data = await resp.json().catch(() => ({})) as { error?: string };
                     failures.push(`${name}: ${data.error || resp.statusText}`);
                 }
-            } catch (err: any) {
-                failures.push(`${name}: ${err?.message || 'network error'}`);
+            } catch (err: unknown) {
+                failures.push(`${name}: ${err instanceof Error && err.message ? err.message : 'network error'}`);
             }
         }
         setIsDeleting(false);
@@ -210,7 +211,7 @@ function Body(props: ExplorePageData) {
             return next;
         });
         setPendingDelete(null);
-        revalidator.revalidate();
+        void revalidator.revalidate(); // fire-and-forget refresh after delete
     }, [pendingDelete, location.pathname, revalidator]);
 
     const toggleSelect = useCallback((name: string, shiftKey: boolean) => {
@@ -315,7 +316,7 @@ function Body(props: ExplorePageData) {
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSortChange={(k, d) => { setSortKey(k); setSortDir(d); }}
-                onRefresh={() => revalidator.revalidate()}
+                onRefresh={() => void revalidator.revalidate()}
                 isRefreshing={isRefreshing}
                 stats={stats}
                 totalCount={items.length}
@@ -411,7 +412,7 @@ function Body(props: ExplorePageData) {
                 cancelText="Cancel"
                 errorMessage={deleteError ?? undefined}
                 onCancel={cancelDelete}
-                onConfirm={performDelete}
+                onConfirm={() => void performDelete()}
             />
         </div>
     );

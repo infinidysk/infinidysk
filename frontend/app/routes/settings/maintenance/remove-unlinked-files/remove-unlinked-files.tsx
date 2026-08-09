@@ -109,7 +109,7 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
                             <Button
                                 className={'shrink-0'}
                                 variant={runButtonVariant}
-                                onClick={onRun}
+                                onClick={() => void onRun()}
                                 disabled={!isRunButtonEnabled}
                             >
                                 <Icon name={isRunning ? "progress_activity" : "play_arrow"} className={`!text-[18px] ${isRunning ? "animate-spin" : ""}`} />
@@ -118,7 +118,7 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
                             <Button
                                 className="shrink-0"
                                 disabled={!isRunButtonEnabled}
-                                onClick={onDryRun}
+                                onClick={() => void onDryRun()}
                                 variant="outline"
                                 size="small"
                             >

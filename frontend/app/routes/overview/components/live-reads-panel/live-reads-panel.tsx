@@ -19,7 +19,8 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
 
     useWebsocketTopic(TOPIC_ACTIVE_READS, "state", (message) => {
         try {
-            const payload: ActiveReadsMessage = JSON.parse(message);
+            // ActiveReads websocket topic payload shape (backend contract)
+            const payload = JSON.parse(message) as ActiveReadsMessage;
             const now = Date.now();
             const prev = prevRef.current;
             const next = new Map<string, { bytes: number, at: number, rate: number }>();

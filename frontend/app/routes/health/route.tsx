@@ -5,7 +5,7 @@ import { HealthStats } from "./components/health-stats/health-stats";
 import { useCallback, useEffect, useState } from "react";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
 import { Alert, Icon } from "~/components/ui";
-import type { HealthCheckQueueResponse } from "~/clients/backend-client.server";
+import type { HealthCheckQueueResponse, HealthResult, RepairAction } from "~/clients/backend-client.server";
 import { completeHealthCheck, type HealthQueueState } from "./health-queue-state";
 import { withUrlBase } from "~/utils/url-base";
 
@@ -53,23 +53,25 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         const refetchData = async () => {
             const response = await fetch(withUrlBase('/api/get-health-check-queue?pageSize=30'));
             if (response.ok) {
-                const healthCheckQueue: HealthCheckQueueResponse = await response.json();
+                // /api/get-health-check-queue returns HealthCheckQueueResponse
+                const healthCheckQueue = await response.json() as HealthCheckQueueResponse;
                 setQueueState({
                     items: healthCheckQueue.items,
                     uncheckedCount: healthCheckQueue.uncheckedCount,
                 });
             }
         };
-        refetchData();
+        void refetchData(); // fire-and-forget queue refill
     }, [queueItems, setQueueState]);
 
     // events
-    const onHealthItemStatus = useCallback(async (message: string) => {
+    const onHealthItemStatus = useCallback((message: string) => {
         const [davItemId, healthResult, repairAction] = message.split('|');
         setQueueState(x => completeHealthCheck(x, davItemId));
         setHistoryStats(x => {
-            const healthResultNum = Number(healthResult);
-            const repairActionNum = Number(repairAction);
+            // 'hs' websocket payload carries numeric HealthResult / RepairAction enum values
+            const healthResultNum: HealthResult = Number(healthResult);
+            const repairActionNum: RepairAction = Number(repairAction);
 
             // attempt to find and update a matching statistic
             let updated = false;

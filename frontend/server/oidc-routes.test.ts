@@ -3,7 +3,7 @@ import type { Request, Response } from "express";
 
 const mocks = vi.hoisted(() => ({
   randomPKCECodeVerifier: vi.fn(() => "verifier"),
-  calculatePKCECodeChallenge: vi.fn(async () => "challenge"),
+  calculatePKCECodeChallenge: vi.fn(() => Promise.resolve("challenge")),
   randomNonce: vi.fn(() => "nonce"),
   randomState: vi.fn(() => "state"),
   buildAuthorizationUrl: vi.fn(() => new URL("https://identity.example.com/authorize")),
@@ -68,17 +68,19 @@ function mockRequest(originalUrl: string): Request {
   } as unknown as Request;
 }
 
-function mockResponse(): Response & {
+// Omit<> keeps the mock members lint-clean (pure vi.fn, no `this`); callers cast
+// back to express.Response at the handler boundary (the mock only implements the
+// surface the handlers exercise).
+type MockResponse = Omit<Response, "redirect" | "setHeader"> & {
   redirect: ReturnType<typeof vi.fn>;
   setHeader: ReturnType<typeof vi.fn>;
-} {
+};
+
+function mockResponse(): MockResponse {
   return {
     redirect: vi.fn(),
     setHeader: vi.fn(),
-  } as unknown as Response & {
-    redirect: ReturnType<typeof vi.fn>;
-    setHeader: ReturnType<typeof vi.fn>;
-  };
+  } as unknown as MockResponse;
 }
 
 beforeEach(() => {
@@ -106,7 +108,7 @@ describe("OIDC Express routes", () => {
     const req = mockRequest("/auth/oidc/login");
     const res = mockResponse();
 
-    await oidcLoginHandler(req, res);
+    await oidcLoginHandler(req, res as unknown as Response);
 
     expect(mocks.setOidcFlowState).toHaveBeenCalledWith(req, {
       codeVerifier: "verifier",
@@ -149,7 +151,7 @@ describe("OIDC Express routes", () => {
       headers: { "Set-Cookie": "__session=user" },
     });
 
-    await oidcCallbackHandler(req, res);
+    await oidcCallbackHandler(req, res as unknown as Response);
 
     expect(mocks.authorizationCodeGrant).toHaveBeenCalledWith(
       {},
@@ -170,7 +172,7 @@ describe("OIDC Express routes", () => {
     const res = mockResponse();
     mocks.getOidcFlowState.mockResolvedValue(null);
 
-    await oidcCallbackHandler(req, res);
+    await oidcCallbackHandler(req, res as unknown as Response);
 
     expect(mocks.clearOidcFlowState).toHaveBeenCalledWith(req);
     expect(res.setHeader).toHaveBeenCalledWith("Set-Cookie", "__session=cleared");

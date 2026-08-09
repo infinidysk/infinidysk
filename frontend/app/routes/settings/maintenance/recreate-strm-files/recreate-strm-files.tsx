@@ -117,7 +117,7 @@ export function RecreateStrmFiles({ savedConfig }: RecreateStrmFilesProps) {
                         <Button
                             className="shrink-0"
                             variant={runButtonVariant}
-                            onClick={onRun}
+                            onClick={() => void onRun()}
                             disabled={!isRunButtonEnabled}
                         >
                             <Icon

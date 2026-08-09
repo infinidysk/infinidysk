@@ -95,7 +95,8 @@ export function SupportSettings() {
         try {
             const response = await fetch(withUrlBase("/api/download-support-pack"), { cache: "no-store" });
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
+                // Error body from /api/download-support-pack (BaseApiResponse).
+                const body = await response.json().catch(() => null) as { error?: string } | null;
                 throw new Error(body?.error || `Support pack failed (${response.status})`);
             }
 
@@ -142,7 +143,8 @@ export function SupportSettings() {
             form.append("capacity", String(capacity));
             const response = await fetch(withUrlBase("/settings/stream-tracing"), { method: "POST", body: form });
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
+                // Error body from POST /settings/stream-tracing (BaseApiResponse).
+                const body = await response.json().catch(() => null) as { error?: string } | null;
                 throw new Error(body?.error || `Could not update stream tracing (${response.status})`);
             }
             const next = toStreamTracingStatus(await response.json() as Record<string, unknown>);
@@ -176,7 +178,8 @@ export function SupportSettings() {
             form.append("intent", "discard");
             const response = await fetch(withUrlBase("/settings/stream-tracing"), { method: "POST", body: form });
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
+                // Error body from POST /settings/stream-tracing (BaseApiResponse).
+                const body = await response.json().catch(() => null) as { error?: string } | null;
                 throw new Error(body?.error || `Could not discard stream traces (${response.status})`);
             }
             const next = toStreamTracingStatus(await response.json() as Record<string, unknown>);

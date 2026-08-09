@@ -7,7 +7,9 @@ type ProfileOption = { token: string; name: string };
 
 function parseProfiles(raw?: string): ProfileOption[] {
     try {
-        const list = (JSON.parse(raw || "{}").Profiles ?? []) as Array<{ Token?: string; Name?: string }>;
+        // `profiles.instances` config value shape (backend contract)
+        const parsed = JSON.parse(raw || "{}") as { Profiles?: Array<{ Token?: string; Name?: string }> };
+        const list = parsed.Profiles ?? [];
         return list
             .filter(p => p?.Token)
             .map(p => ({ token: String(p.Token), name: String(p.Name ?? "").trim() }));

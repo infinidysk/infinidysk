@@ -13,16 +13,22 @@ export async function loader({ request }: Route.LoaderArgs) {
     return { q, data };
 }
 
-export async function action({ request }: Route.ActionArgs) {
+type SearchActionResult =
+    | { ok: true; nzoId: string }
+    | { ok: false; error: string };
+
+export async function action({ request }: Route.ActionArgs): Promise<SearchActionResult> {
     const formData = await request.formData();
-    const nzbUrl = formData.get("nzbUrl")?.toString() ?? "";
-    const nzbName = formData.get("nzbName")?.toString() ?? "";
+    const nzbUrlEntry = formData.get("nzbUrl");
+    const nzbNameEntry = formData.get("nzbName");
+    const nzbUrl = typeof nzbUrlEntry === "string" ? nzbUrlEntry : "";
+    const nzbName = typeof nzbNameEntry === "string" ? nzbNameEntry : "";
     if (!nzbUrl || !nzbName) return { ok: false, error: "Missing nzbUrl or nzbName" };
     try {
         const nzoId = await backendClient.addNzbFromUrl(nzbUrl, nzbName);
         return { ok: true, nzoId };
-    } catch (e: any) {
-        return { ok: false, error: e?.message ?? "Failed to add" };
+    } catch (e: unknown) {
+        return { ok: false, error: e instanceof Error ? e.message : "Failed to add" };
     }
 }
 
@@ -117,7 +123,7 @@ function ResultRow({ result }: { result: { indexer: string; title: string; nzbUr
                     variant={done ? "success" : failed ? "danger" : "primary"}
                     disabled={submitting || done}
                     className="whitespace-nowrap"
-                    title={failed ? fetcher.data?.error : undefined}
+                    title={fetcher.data && !fetcher.data.ok ? fetcher.data.error : undefined}
                 >
                     {submitting ? <Spinner size="sm" />
                         : done ? "Mounted"

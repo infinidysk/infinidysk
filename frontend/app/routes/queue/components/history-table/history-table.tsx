@@ -73,7 +73,8 @@ export function HistoryTable({
                 body: JSON.stringify({ nzo_ids: Array.from(nzo_ids) }),
             });
             if (response.ok) {
-                const data = await response.json();
+                // SABnzbd API (`/api?mode=history&name=delete`) response shape
+                const data = await response.json() as { status?: boolean };
                 if (data.status === true) {
                     onRemoved(nzo_ids);
                     return;
@@ -135,7 +136,7 @@ export function HistoryTable({
                 title="Remove From History?"
                 message={`${selectedCount} item(s) will be removed`}
                 checkboxMessage="Delete mounted files"
-                onConfirm={onConfirmRemoval}
+                onConfirm={(isChecked) => void onConfirmRemoval(isChecked)}
                 onCancel={onCancelRemoval} />
         </PageSection>
     );
@@ -174,7 +175,8 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
                 + `&del_completed_files=${deleteCompletedFiles ? 1 : 0}`;
             const response = await fetch(url);
             if (response.ok) {
-                const data = await response.json();
+                // SABnzbd API (`/api?mode=history&name=delete`) response shape
+                const data = await response.json() as { status?: boolean };
                 if (data.status === true) {
                     onRemoved(slot.nzo_id);
                     return;
@@ -222,7 +224,7 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
                                 slot={slot}
                                 isRetrying={isRetrying}
                                 onRemove={onRemove}
-                                onRetry={onRetry}
+                                onRetry={() => void onRetry()}
                             />
                         </div>
                         {retryError &&
@@ -243,7 +245,7 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
                 message={slot.nzb_name}
                 checkboxMessage={!slot.fail_message ? "Delete mounted files" : undefined}
                 errorMessage={slot.fail_message}
-                onConfirm={onConfirmRemoval}
+                onConfirm={(isChecked) => void onConfirmRemoval(isChecked)}
                 onCancel={onCancelRemoval} />
         </>
     );
