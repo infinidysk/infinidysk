@@ -112,7 +112,7 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
                 throw PayloadTooLarge("Zip entry compression ratio exceeds the restore safety limit.");
 
             var dest = Path.Join(stagingPath, fileName);
-            await using var entryStream = entry.Open();
+            await using var entryStream = await entry.OpenAsync(ct).ConfigureAwait(false);
             await using var output = System.IO.File.Create(dest);
             extractedBytes += await CopyWithLimitAsync(
                 entryStream,

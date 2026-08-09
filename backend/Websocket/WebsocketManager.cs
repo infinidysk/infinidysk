@@ -171,7 +171,7 @@ public class WebsocketManager
                     }
                     else
                     {
-                        messageBuffer.Write(buffer, 0, result.Count);
+                        await messageBuffer.WriteAsync(buffer.AsMemory(0, result.Count), SigtermUtil.GetCancellationToken()).ConfigureAwait(false);
                     }
                 }
 

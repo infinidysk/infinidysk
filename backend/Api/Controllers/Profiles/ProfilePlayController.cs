@@ -404,7 +404,7 @@ public class ProfilePlayController(
             var settled = await Task.WhenAny(preVerifies[0], hedgeTask).ConfigureAwait(false);
             var primaryReady = settled == preVerifies[0]
                                && preVerifies[0].IsCompletedSuccessfully
-                               && preVerifies[0].Result.Verdict == PlaybackFastVerifier.Verdict.Available;
+                               && (await preVerifies[0].ConfigureAwait(false)).Verdict == PlaybackFastVerifier.Verdict.Available;
 
             if (!primaryReady)
             {

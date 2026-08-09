@@ -102,7 +102,7 @@ public class WardenRemoteSourceService : BackgroundService
         {
             if (ms.Length + read > MaxDownloadBytes)
                 throw new InvalidOperationException("Download exceeds the size limit.");
-            ms.Write(buf, 0, read);
+            await ms.WriteAsync(buf.AsMemory(0, read), ct).ConfigureAwait(false);
         }
         ms.Position = 0;
         return ms;

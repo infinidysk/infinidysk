@@ -899,7 +899,7 @@ public sealed class SupportPackService(
         CancellationToken cancellationToken)
     {
         var entry = archive.CreateEntry(name, CompressionLevel.Fastest);
-        await using var stream = entry.Open();
+        await using var stream = await entry.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var writer = new StreamWriter(stream, Encoding.UTF8);
         foreach (var evt in events)
         {
@@ -1013,7 +1013,7 @@ public sealed class SupportPackService(
         CancellationToken cancellationToken)
     {
         var entry = archive.CreateEntry(name, CompressionLevel.Fastest);
-        await using var stream = entry.Open();
+        await using var stream = await entry.OpenAsync(cancellationToken).ConfigureAwait(false);
         var bytes = Encoding.UTF8.GetBytes(content);
         await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
     }

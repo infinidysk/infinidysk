@@ -95,7 +95,9 @@ public class WatchtowerService(
                         {
                             Log.Warning("Watchtower: cycle exceeded {Budget:n0}s watchdog; abandoning and restarting",
                                 CycleWatchdog.TotalSeconds);
-                            lock (_ctsLock) cycleCts.Cancel();
+                            #pragma warning disable CA1849 // synchronous Cancel is required here -- CancelAsync cannot be awaited while holding _ctsLock, and the cancel must be ordered before the abandoned-cycle continuation
+lock (_ctsLock) cycleCts.Cancel();
+#pragma warning restore CA1849
                             _ = cycle.ContinueWith(static t => _ = t.Exception, CancellationToken.None,
                                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                                 TaskScheduler.Default);

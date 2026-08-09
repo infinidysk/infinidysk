@@ -28,7 +28,7 @@ public static class HttpContentReadUtil
         {
             if (ms.Length + read > maxBytes)
                 throw new NzbResponseTooLargeException(maxBytes);
-            ms.Write(buf, 0, read);
+            await ms.WriteAsync(buf.AsMemory(0, read), ct).ConfigureAwait(false);
         }
 
         return ms.ToArray();

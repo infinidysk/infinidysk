@@ -135,7 +135,7 @@ public static class FetchFirstSegmentsStep
                     if (DeadNzbFailFast.IsImportantNzbFile(files[i]))
                     {
                         abortFile = files[i];
-                        abortCts.Cancel();
+                        await abortCts.CancelAsync().ConfigureAwait(false);
                         break;
                     }
                 }

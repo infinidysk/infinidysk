@@ -52,7 +52,9 @@ public static class SymlinkBackup
             }
 
             await fs.FlushAsync(ct).ConfigureAwait(false);
+            #pragma warning disable CA1849 // FlushAsync does not flush to disk; backup durability requires the synchronous Flush(flushToDisk: true)
             fs.Flush(flushToDisk: true);
+            #pragma warning restore CA1849
         }
     }
 

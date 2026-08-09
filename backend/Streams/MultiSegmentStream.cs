@@ -829,13 +829,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
         #pragma warning disable CA2000 // gap-fill stream ownership transfers to the returned SegmentDownloadResult
         return SegmentDownloadResult.ZeroFill(
-        #pragma warning restore CA2000
             CreateGapFillStream(fill, segmentIndex),
             messageTemplate,
             segmentId,
             fill,
             exception,
             GetPlannedSegmentBytes(segmentIndex));
+        #pragma warning restore CA2000
     }
 
     private Stream CreateGapFillStream(long fill, int segmentIndex)
@@ -1198,7 +1198,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         try
         {
+            #pragma warning disable CA1849 // synchronous Cancel is required -- teardown callbacks must run before _streamTasks.Writer completes; CancelAsync would race TryComplete
             _cts.Cancel();
+            #pragma warning restore CA1849
         }
         catch (ObjectDisposedException)
         {

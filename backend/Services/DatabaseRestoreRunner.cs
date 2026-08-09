@@ -286,7 +286,7 @@ public static class DatabaseRestoreRunner
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                if (!reader.IsDBNull(0))
+                if (!await reader.IsDBNullAsync(0, cancellationToken).ConfigureAwait(false))
                     ids.Add(reader.GetString(0));
             }
         }

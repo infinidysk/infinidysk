@@ -252,7 +252,7 @@ public sealed class SearchExcludeSyncService : BackgroundService
         {
             if (ms.Length + read > MaxDownloadBytes)
                 throw new InvalidOperationException("Synced list exceeds the size limit.");
-            ms.Write(buffer, 0, read);
+            await ms.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
         }
         return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
     }

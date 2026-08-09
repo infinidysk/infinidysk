@@ -351,7 +351,7 @@ public partial class WardenStore
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         using var reader = new StreamReader(input);
         using var conn = Open();
-        var tx = conn.BeginTransaction();
+        var tx = (SqliteTransaction)await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
 
         if (replace)
         {
@@ -359,7 +359,7 @@ public partial class WardenStore
             del.Transaction = tx;
             del.CommandText = "DELETE FROM warden_entries WHERE source_id = $sid";
             del.Parameters.AddWithValue("$sid", sourceId);
-            del.ExecuteNonQuery();
+            await del.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
 
         using var sel = conn.CreateCommand();
@@ -413,13 +413,13 @@ public partial class WardenStore
             }
 
             pSfp.Value = rec.Fp;
-            var existing = sel.ExecuteScalar() is string s ? s : "";
+            var existing = await sel.ExecuteScalarAsync(ct).ConfigureAwait(false) is string s ? s : "";
 
             pFp.Value = rec.Fp;
             pT.Value = Math.Clamp(rec.DeadAt, 0, now + 86400);
             pN.Value = rec.Count <= 0 ? 1 : Math.Min(rec.Count, 1000000000);
             pBk.Value = MergeBackbones(existing, rec.Backbones ?? Array.Empty<string>());
-            cmd.ExecuteNonQuery();
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             processed++;
 
             // Replacements must remain invisible until the complete source has
@@ -428,7 +428,7 @@ public partial class WardenStore
             {
                 await tx.CommitAsync(ct).ConfigureAwait(false);
                 await tx.DisposeAsync().ConfigureAwait(false);
-                tx = conn.BeginTransaction();
+                tx = (SqliteTransaction)await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
                 sel.Transaction = tx;
                 cmd.Transaction = tx;
                 inBatch = 0;
@@ -464,8 +464,8 @@ public partial class WardenStore
             : $"SELECT fp, dead_at, n, backbones FROM warden_entries WHERE source_id IN ({placeholders})";
         for (var i = 0; i < ids.Length; i++) cmd.Parameters.AddWithValue("$s" + i, ids[i]);
 
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             ct.ThrowIfCancellationRequested();
             var rec = new WardenRecord

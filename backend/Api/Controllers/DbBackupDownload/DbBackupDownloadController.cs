@@ -46,7 +46,7 @@ public class DbBackupDownloadController(DatabaseBackupStore store) : BaseApiCont
                 continue;
 
             var entry = archive.CreateEntry(relative, CompressionLevel.Fastest);
-            await using var entryStream = entry.Open();
+            await using var entryStream = await entry.OpenAsync(cancellationToken).ConfigureAwait(false);
             await using var fileStream = System.IO.File.OpenRead(file);
             await fileStream.CopyToAsync(entryStream, cancellationToken).ConfigureAwait(false);
         }
