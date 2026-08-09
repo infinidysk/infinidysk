@@ -18,12 +18,19 @@ export default tseslint.config(
     ],
   },
   eslint.configs.recommended,
-  ...tseslint.configs.recommended,
+  // Type-aware rules: catch floating/misused promises and unsafe `any` flows.
+  // Requires generated route types (`react-router typegen`) — the lint script
+  // runs typegen first.
+  ...tseslint.configs.recommendedTypeChecked,
   {
     plugins: {
       "react-hooks": reactHooks,
     },
     languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
       globals: {
         console: "readonly",
         process: "readonly",
@@ -65,16 +72,28 @@ export default tseslint.config(
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
 
-      // Existing backlog — the npm lint script locks its 163-warning baseline;
-      // follow-ups must reduce it before the budget can be lowered.
-      "@typescript-eslint/no-explicit-any": "warn",
+      // Type-aware strictness (#853 phase 1). The four promise rules per the
+      // issue; no-unsafe-* come from recommendedTypeChecked.
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": "error",
+      "@typescript-eslint/await-thenable": "error",
+      "@typescript-eslint/require-await": "error",
+      "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-unused-vars": [
-        "warn",
+        "error",
         {
           argsIgnorePattern: "^_",
           varsIgnorePattern: "^_",
         },
       ],
+
+      // no-undef is meaningless for TypeScript (the compiler owns undefined-name
+      // detection) and misfires on type-only imports; typescript-eslint FAQ
+      // recommends turning it off for TS files.
+      "no-undef": "off",
+
+      // Remaining warning budget — driven to zero in phase 3 (kept as warn so
+      // the type-aware rollout stays reviewable; the lint script caps the count).
       "@typescript-eslint/no-empty-object-type": "warn",
       "@typescript-eslint/no-unused-expressions": "warn",
       "no-unused-expressions": "off",
@@ -82,7 +101,12 @@ export default tseslint.config(
       "no-extra-boolean-cast": "warn",
       "no-useless-assignment": "warn",
       "prefer-const": "warn",
-      "no-undef": "warn",
     },
+  },
+  {
+    // Root config files are not part of any tsconfig project; lint them
+    // without type information.
+    files: ["*.js", "*.ts", "*.mjs"],
+    ...tseslint.configs.disableTypeChecked,
   },
 );
