@@ -341,6 +341,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         if (ContainsControlChars(connectionDetails.Host) ||
             ContainsControlChars(connectionDetails.User) ||
             ContainsControlChars(connectionDetails.Pass) ||
+            // codeql[cs/user-controlled-bypass] — false positive: the operator configures their own NNTP provider host; connecting to a user-specified host is the core feature of a Usenet streaming server (not a multi-tenant app). This ContainsControlChars check is a format guard (no control chars / whitespace in hostnames), not an authorization boundary.
             connectionDetails.Host.Contains(' ', StringComparison.Ordinal))
         {
             throw new ArgumentException(
