@@ -47,6 +47,7 @@ function formatUtcWindow(unixMs: number): string | null {
 export function SupportSettings() {
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState<Message>(null);
+    const [packQuality, setPackQuality] = useState<string[]>([]);
     const [tracingBusy, setTracingBusy] = useState(false);
     const [tracingMessage, setTracingMessage] = useState<Message>(null);
     const [minutes, setMinutes] = useState<number>(30);
@@ -90,11 +91,24 @@ export function SupportSettings() {
     const download = useCallback(async () => {
         setBusy(true);
         setMessage(null);
+        setPackQuality([]);
         try {
             const response = await fetch(withUrlBase("/api/download-support-pack"), { cache: "no-store" });
             if (!response.ok) {
                 const body = await response.json().catch(() => null);
                 throw new Error(body?.error || `Support pack failed (${response.status})`);
+            }
+
+            const qualityHeader = response.headers.get("x-support-pack-quality");
+            if (qualityHeader) {
+                try {
+                    const parsed = JSON.parse(qualityHeader) as unknown;
+                    if (Array.isArray(parsed)) {
+                        setPackQuality(parsed.filter((item): item is string => typeof item === "string"));
+                    }
+                } catch {
+                    // a malformed quality header must not break a successful download
+                }
             }
 
             const blob = await response.blob();
@@ -239,6 +253,21 @@ export function SupportSettings() {
                     </span>
                 </div>
                 {message && <Alert variant={message.variant}>{message.text}</Alert>}
+                {packQuality.length > 0 && (
+                    <Alert variant="warning" className="items-start text-sm">
+                        <Icon name="warning" className="mt-0.5 !text-[20px]" />
+                        <span>
+                            <span className="mb-1 block font-semibold">
+                                This pack may not answer playback questions — consider re-collecting:
+                            </span>
+                            <ul className="list-inside list-disc space-y-1">
+                                {packQuality.map((warning) => (
+                                    <li key={warning}>{warning}</li>
+                                ))}
+                            </ul>
+                        </span>
+                    </Alert>
+                )}
             </SettingsCard>
 
             <SettingsCard
