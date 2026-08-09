@@ -2,6 +2,11 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+// The native library always ships next to the managed assembly or is loaded
+// through the DllImportResolver below (RAPIDYENC_LIBRARY_PATH); never search
+// the application base directory / CWD for rapidyenc.dll-style lookups.
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.UseDllDirectoryForDependencies)]
+
 namespace RapidYencSharp;
 
 public enum RapidYencDecoderState

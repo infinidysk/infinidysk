@@ -11,7 +11,7 @@ public class DeserializeOrFallbackTests
     public void DeserializeOrFallback_ReadsJsonArray()
     {
         var result = DavDatabaseContext.DeserializeOrFallback<string[]>("[\"a\",\"b\"]");
-        Assert.Equal(["a", "b"], result);
+        Assert.Equal(["a", "b"], result!);
     }
 
     [Fact]
@@ -28,7 +28,7 @@ public class DeserializeOrFallbackTests
         var encoded = EncodeBase64Brotli(json);
 
         var result = DavDatabaseContext.DeserializeOrFallback<string[]>(encoded);
-        Assert.Equal(["seg1", "seg2"], result);
+        Assert.Equal(["seg1", "seg2"], result!);
     }
 
     [Fact]

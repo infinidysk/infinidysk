@@ -67,3 +67,9 @@ dotnet_diagnostic.CA1508.severity = none
 dotnet_diagnostic.CA1852.severity = none
 dotnet_diagnostic.CA2100.severity = none
 dotnet_diagnostic.CA3003.severity = none
+# Justification: NativeMethods registers a DllImportResolver that controls the
+# real load path (RAPIDYENC_LIBRARY_PATH, else runtimes/<rid>/native next to
+# the assembly); CA5393's "AssemblyDirectory is unsafe" classification targets
+# default-search-order loading, which the resolver preempts. The assembly-level
+# DefaultDllImportSearchPaths attribute stays as defense-in-depth.
+dotnet_diagnostic.CA5393.severity = none

@@ -45,14 +45,14 @@ public class QueueFanOutTests
     public void GetConcurrency_WithoutContext_UsesPrimaryFanOut()
     {
         var config = CreateConfig(maxQueueConnections: 8);
-        Assert.Equal(13, QueueFanOut.GetConcurrency(CancellationToken.None, config));
+        Assert.Equal(13, QueueFanOut.GetConcurrency(config, CancellationToken.None));
     }
 
     [Fact]
     public void GetExactQueueConcurrency_WithoutContext_UsesMaxQueue()
     {
         var config = CreateConfig(maxQueueConnections: 8);
-        Assert.Equal(8, QueueFanOut.GetExactQueueConcurrency(CancellationToken.None, config));
+        Assert.Equal(8, QueueFanOut.GetExactQueueConcurrency(config, CancellationToken.None));
     }
 
     [Fact]
@@ -66,8 +66,8 @@ public class QueueFanOutTests
             GetFanOutConcurrency = () => QueueFanOut.PrimaryFanOut(10),
         });
 
-        Assert.Equal(15, QueueFanOut.GetConcurrency(cts.Token, config));
-        Assert.Equal(10, QueueFanOut.GetExactQueueConcurrency(cts.Token, config));
+        Assert.Equal(15, QueueFanOut.GetConcurrency(config, cts.Token));
+        Assert.Equal(10, QueueFanOut.GetExactQueueConcurrency(config, cts.Token));
     }
 
     [Fact]
@@ -83,8 +83,8 @@ public class QueueFanOutTests
 
         using var linked = ContextualCancellationTokenSource.CreateLinkedTokenSource(parentCts.Token);
 
-        Assert.Equal(7, QueueFanOut.GetConcurrency(linked.Token, config));
-        Assert.Equal(7, QueueFanOut.GetExactQueueConcurrency(linked.Token, config));
+        Assert.Equal(7, QueueFanOut.GetConcurrency(config, linked.Token));
+        Assert.Equal(7, QueueFanOut.GetExactQueueConcurrency(config, linked.Token));
         Assert.Same(
             parentCts.Token.GetContext<QueueDownloadContext>(),
             linked.Token.GetContext<QueueDownloadContext>());

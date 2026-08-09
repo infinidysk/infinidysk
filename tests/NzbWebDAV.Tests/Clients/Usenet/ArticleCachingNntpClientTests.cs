@@ -18,9 +18,9 @@ public class ArticleCachingNntpClientTests
         using var client = new ArticleCachingNntpClient(inner);
 
         var first = await client.DecodedBodyAsync("segment", CancellationToken.None);
-        var firstBytes = await ReadAllAsync(first.Stream);
+        var firstBytes = await ReadAllAsync(first.Stream!);
         var second = await client.DecodedBodyAsync("segment", CancellationToken.None);
-        var secondBytes = await ReadAllAsync(second.Stream);
+        var secondBytes = await ReadAllAsync(second.Stream!);
 
         Assert.Equal("cached payload", Encoding.ASCII.GetString(firstBytes));
         Assert.Equal(firstBytes, secondBytes);
@@ -38,14 +38,14 @@ public class ArticleCachingNntpClientTests
         });
         using var client = new ArticleCachingNntpClient(inner);
         var cached = await client.DecodedBodyAsync("one", CancellationToken.None);
-        await ReadAllAsync(cached.Stream);
+        await ReadAllAsync(cached.Stream!);
 
         var batch = await client.DecodedBodiesAsync(
             ["one", "two"], onConnectionReadyAgain: null, CancellationToken.None);
         var responses = await Task.WhenAll(batch.Responses);
         var bodies = new List<string>();
         foreach (var response in responses)
-            bodies.Add(Encoding.ASCII.GetString(await ReadAllAsync(response.Stream)));
+            bodies.Add(Encoding.ASCII.GetString(await ReadAllAsync(response.Stream!)));
 
         Assert.Equal(new[] { "one", "two" }, bodies);
         Assert.Equal(1, inner.BatchRequestCount);

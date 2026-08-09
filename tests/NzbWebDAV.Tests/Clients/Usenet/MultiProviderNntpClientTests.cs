@@ -299,8 +299,9 @@ public class MultiProviderNntpClientTests
         var results = await CollectPipelinedAsync(client, ["segment"], 1);
         Assert.Single(results);
         Assert.True(results[0].Found);
-        if (results[0].Stream != null)
-            await results[0].Stream.DisposeAsync();
+        var firstStream = results[0].Stream;
+        if (firstStream != null)
+            await firstStream.DisposeAsync();
 
         // Exactly one fetch — must not double-count override metrics + DecodedBodiesAsync.
         Assert.Equal(1, writer.Stats.QueuedFetches);
