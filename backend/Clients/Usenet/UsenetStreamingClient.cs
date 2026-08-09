@@ -348,7 +348,9 @@ public class UsenetStreamingClient : WrappingNntpClient
                     connectionDetails.Host, connectionDetails.Port, connectionDetails.UseSsl,
                     timeoutCts.Token).ConfigureAwait(false);
             }
+            #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
             catch (Exception e) when (e.IsCancellationException() &&
+            #pragma warning restore CA2016
                                       timeoutCts.IsCancellationRequested &&
                                       !ct.IsCancellationRequested)
             {
@@ -370,7 +372,9 @@ public class UsenetStreamingClient : WrappingNntpClient
                         connectionDetails.User, connectionDetails.Pass,
                         timeoutCts.Token).ConfigureAwait(false);
                 }
+                #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
                 catch (Exception e) when (e.IsCancellationException() &&
+                #pragma warning restore CA2016
                                           timeoutCts.IsCancellationRequested &&
                                           !ct.IsCancellationRequested)
                 {

@@ -545,7 +545,9 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         {
             return false;
         }
+        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
+        #pragma warning restore CA2016
         {
             Log.Debug(e, "Benchmark download worker stopped early.");
             return false;

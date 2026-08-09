@@ -100,7 +100,9 @@ public class PlaybackFastVerifier
             Log.Debug("Fast-verify timed out after {Timeout:n0}s on {Segment}", timeout.TotalSeconds, messageId);
             return Verdict.Timeout;
         }
+        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
+        #pragma warning restore CA2016
         {
             Log.Debug("Fast-verify errored on {Segment}: {Message}", messageId, e.Message);
             return Verdict.Timeout;

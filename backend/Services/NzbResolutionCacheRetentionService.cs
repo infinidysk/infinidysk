@@ -46,7 +46,9 @@ public class NzbResolutionCacheRetentionService(
                 await cache.PurgeExpiredAsync(configManager.GetPlayResolutionCacheTtl(), stoppingToken)
                     .ConfigureAwait(false);
             }
+            #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
             catch (Exception ex) when (ex.IsCancellationException() &&
+            #pragma warning restore CA2016
                                       (stoppingToken.IsCancellationRequested ||
                                        SigtermUtil.IsSigtermTriggered()))
             {

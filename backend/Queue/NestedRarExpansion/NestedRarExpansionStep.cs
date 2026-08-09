@@ -238,7 +238,9 @@ public static class NestedRarExpansionStep
                 path, expanded.Count);
             return expanded;
         }
+        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
+        #pragma warning restore CA2016
         {
             Log.Information(e,
                 "NestedRarExpansion: failed to expand {Path}; keeping opaque",

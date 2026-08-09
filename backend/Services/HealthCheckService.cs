@@ -726,7 +726,7 @@ public class HealthCheckService : BackgroundService
             List<ArrRootFolder> rootFolders;
             try
             {
-                rootFolders = await arrClient.GetRootFolders().ConfigureAwait(false);
+                rootFolders = await arrClient.GetRootFolders(ct).ConfigureAwait(false);
             }
             catch (Exception e)
             {

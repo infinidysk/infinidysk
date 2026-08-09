@@ -310,7 +310,9 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e) when (
                 streamingTimeout != null
+                #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
                 && e.IsCancellationException()
+                #pragma warning restore CA2016
                 && !ct.IsCancellationRequested)
             {
                 // Per-segment deadline fired while the caller is still reading. The
@@ -750,7 +752,9 @@ public class MultiConnectionNntpClient(
                         operation,
                         Stopwatch.GetElapsedTime(moveStarted));
                 }
+                #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
                 catch (Exception e) when (!e.IsCancellationException())
+                #pragma warning restore CA2016
                 {
                     // Do not RecordFailure — STAT must not feed the breaker — but the
                     // connection is poisoned and must not return to the pool.
@@ -803,7 +807,9 @@ public class MultiConnectionNntpClient(
                         operation,
                         Stopwatch.GetElapsedTime(moveStarted));
                 }
+                #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
                 catch (Exception e) when (!e.IsCancellationException())
+                #pragma warning restore CA2016
                 {
                     circuitBreaker.RecordFailure($"pipelined-enum-{e.GetType().Name}");
                     connectionLock.Replace();
@@ -877,7 +883,9 @@ public class MultiConnectionNntpClient(
         {
             throw;
         }
+        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
+        #pragma warning restore CA2016
         {
             // A client abort mid-connect can surface as an IOException rather than
             // a cancellation exception; it must not trip a healthy provider.

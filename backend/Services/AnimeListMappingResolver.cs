@@ -32,7 +32,7 @@ public class AnimeListMappingResolver
             if (index.HasData)
             {
                 // serve the (stale) data we already have and refresh in the background
-                _ = Task.Run(() => LoadIfDueAsync(CancellationToken.None));
+                _ = Task.Run(() => LoadIfDueAsync(CancellationToken.None), CancellationToken.None);
             }
             else
             {

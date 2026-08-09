@@ -85,7 +85,7 @@ public class StrmToSymlinksTask(
             {
                 File.CreateSymbolicLink(symlinkPath, symlinkTarget);
                 File.Delete(item.Link.LinkPath);
-            }).ConfigureAwait(false);
+            }, token).ConfigureAwait(false);
             onItemCompleted?.Invoke();
         }
     }

@@ -53,7 +53,9 @@ public class BaseNntpClient : NntpClient
         {
             await _client.ConnectAsync(host, port, useSsl, cancellationToken).ConfigureAwait(false);
         }
+        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
+        #pragma warning restore CA2016
         {
             const string message = "Could not connect to usenet host. Check connection settings.";
             throw new CouldNotConnectToUsenetException(message, e);
@@ -78,7 +80,9 @@ public class BaseNntpClient : NntpClient
 
             return response;
         }
+        #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException())
+        #pragma warning restore CA2016
         {
             throw new CouldNotLoginToUsenetException("Could not login to usenet host.", e);
         }

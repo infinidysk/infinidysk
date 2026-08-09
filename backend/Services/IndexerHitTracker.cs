@@ -123,7 +123,7 @@ public class IndexerHitTracker
             await ctx.SaveChangesAsync(ct).ConfigureAwait(false);
 
             if (Rng.NextDouble() < PruneProbability)
-                _ = Task.Run(() => PruneAsync(CancellationToken.None));
+                _ = Task.Run(() => PruneAsync(CancellationToken.None), CancellationToken.None);
         }
         catch (Exception e)
         {
