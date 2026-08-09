@@ -2,7 +2,7 @@ import type { HTMLAttributes } from "react";
 
 type IconProps = HTMLAttributes<HTMLSpanElement> & {
   name: string;
-  filled?: boolean;
+  filled?: boolean | undefined;
 };
 
 export function Icon({ name, filled = false, className = "", style, ...props }: IconProps) {

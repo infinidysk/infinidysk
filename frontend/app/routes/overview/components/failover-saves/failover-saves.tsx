@@ -247,7 +247,7 @@ function SavesTrend({ bucketTotals, bucketSizeMs }: { bucketTotals: { bucket: nu
         });
     }, [bucketTotals]);
 
-    const total = series.length ? series[series.length - 1].cum : 0;
+    const total = series.at(-1)?.cum ?? 0;
 
     const { linePath, areaPath, xPercent, yPercent } = useMemo(() => {
         const n = series.length;
@@ -272,10 +272,13 @@ function SavesTrend({ bucketTotals, bucketSizeMs }: { bucketTotals: { bucket: nu
         const n = series.length;
         if (n === 0) return [];
         const count = Math.min(4, n);
-        return Array.from({ length: count }, (_, i) => {
+        const ticks: { idx: number, label: string }[] = [];
+        for (let i = 0; i < count; i++) {
             const idx = count < 2 ? 0 : Math.round((n - 1) * (i / (count - 1)));
-            return { idx, label: formatBucket(series[idx].bucket, bucketSizeMs) };
-        });
+            const point = series[idx];
+            if (point) ticks.push({ idx, label: formatBucket(point.bucket, bucketSizeMs) });
+        }
+        return ticks;
     }, [series, bucketSizeMs]);
 
     const onMove = (clientX: number, target: HTMLElement) => {

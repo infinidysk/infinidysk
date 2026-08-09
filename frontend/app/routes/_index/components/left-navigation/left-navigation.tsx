@@ -17,8 +17,8 @@ import {
 } from "~/utils/service-provider";
 
 export type LeftNavigationProps = {
-    isWatchdogEnabled?: boolean,
-    serviceProvider?: ServiceProviderConfig | null,
+    isWatchdogEnabled?: boolean | undefined,
+    serviceProvider?: ServiceProviderConfig | null | undefined,
 }
 
 type NavItem = {
@@ -151,7 +151,7 @@ function Item({
     children: React.ReactNode;
     pathname: string;
     disabled: boolean;
-    providerName?: string;
+    providerName?: string | undefined;
     onDisabledClick: () => void;
 }) {
     const isSelected = pathname.startsWith(target);
@@ -204,7 +204,7 @@ function SettingsItem({
     activeTab: SettingsTab | null;
     children: React.ReactNode;
     disabled: boolean;
-    providerName?: string;
+    providerName?: string | undefined;
     onDisabledClick: () => void;
 }) {
     const isSelected = activeTab === tab;

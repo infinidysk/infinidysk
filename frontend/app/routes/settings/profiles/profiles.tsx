@@ -18,7 +18,8 @@ interface Profile {
     TvFallback?: FallbackMode;
     MovieFallbackMinResults?: number;
     TvFallbackMinResults?: number;
-    QueryFallbackMinResults?: number;
+    // Legacy shared threshold; writeFallback clears it by assigning undefined.
+    QueryFallbackMinResults?: number | undefined;
 }
 
 interface ProfileConfig {
@@ -55,7 +56,7 @@ const ADAPTERS: { key: AdapterKey; name: string; description: string; buildUrl: 
 
 const ALL_ADAPTER_KEYS: AdapterKey[] = ADAPTERS.map(a => a.key);
 
-function parseProfileConfig(raw: string): ProfileConfig {
+function parseProfileConfig(raw: string | undefined): ProfileConfig {
     try {
         // The profiles.instances config value stores a serialized ProfileConfig.
         const parsed = JSON.parse(raw || "{}") as Partial<ProfileConfig>;
@@ -65,7 +66,7 @@ function parseProfileConfig(raw: string): ProfileConfig {
     }
 }
 
-function parseIndexerNames(raw: string): string[] {
+function parseIndexerNames(raw: string | undefined): string[] {
     try {
         // The indexers.instances config value stores a serialized { Indexers: IndexerSummary[] }.
         const parsed = JSON.parse(raw || "{}") as { Indexers?: IndexerSummary[] };

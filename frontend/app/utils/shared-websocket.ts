@@ -9,8 +9,8 @@ type MessageListener = (topic: string, message: string) => void;
 type Subscriber = {
     topics: Record<string, TopicKind>;
     onMessage: MessageListener;
-    onOpen?: () => void;
-    onClose?: (event: CloseEvent) => void;
+    onOpen?: (() => void) | undefined;
+    onClose?: ((event: CloseEvent) => void) | undefined;
 };
 
 const RECONNECT_MS = 1000;

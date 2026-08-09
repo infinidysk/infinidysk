@@ -1,4 +1,5 @@
 import "react-router";
+import type { ServerBuild } from "react-router";
 import { createRequestHandler } from "@react-router/express";
 import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
@@ -63,7 +64,11 @@ function logProxyFailure(message: string, error: unknown) {
 // plus server.requestTimeout/headersTimeout in server.ts — not httpxy's inbound
 // `timeout` option, which leaks socket listeners under keep-alive (#486).
 const forwardToBackend = createProxyMiddleware({
-  target: process.env["BACKEND_URL"],
+  // BACKEND_URL may be unset; omit `target` rather than passing undefined
+  // (exactOptionalPropertyTypes forbids `target: undefined`).
+  ...(process.env["BACKEND_URL"] !== undefined
+    ? { target: process.env["BACKEND_URL"] }
+    : {}),
   changeOrigin: true,
   selfHandleResponse: true,
   ...backendProxyTimeoutOptions,
@@ -146,6 +151,9 @@ app.use(authMiddleware);
 // Let frontend handle all other requests
 app.use(
   createRequestHandler({
-    build: () => import("virtual:react-router/server-build"),
+    // React Router's generated type for the virtual module widens optional
+    // ServerBuild props to `| undefined`, which exactOptionalPropertyTypes
+    // rejects; the runtime object is always a full ServerBuild.
+    build: () => import("virtual:react-router/server-build") as Promise<ServerBuild>,
   }),
 );

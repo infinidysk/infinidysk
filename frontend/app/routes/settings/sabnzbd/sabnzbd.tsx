@@ -72,7 +72,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                             className={!isValidCategories(config["api.categories"]) ? "input-error w-full" : "w-full"}
                             id="categories-input"
                             aria-describedby="categories-help"
-                            value={config["api.categories"]}
+                            value={config["api.categories"] ?? ""}
                             placeholder="tv, movies, audio, software"
                             onChange={value => setNewConfig({ ...config, "api.categories": value })} />
                         <p className="text-[11px] leading-relaxed text-base-content/45" id="categories-help">
@@ -110,7 +110,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                             className="w-full"
                             id="addurl-trusted-hosts-input"
                             aria-describedby="addurl-trusted-hosts-help"
-                            value={config["api.addurl-trusted-hosts"]}
+                            value={config["api.addurl-trusted-hosts"] ?? ""}
                             placeholder="prowlarr, hydra.lan, 192.168.1.0/24"
                             onChange={value => setNewConfig({ ...config, "api.addurl-trusted-hosts": value })} />
                         <p className="text-[11px] leading-relaxed text-base-content/45" id="addurl-trusted-hosts-help">
@@ -224,7 +224,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                             id="ignored-files-input"
                             aria-describedby="ignored-files-help"
                             placeholder="*.nfo, *.par2, *.sfv, *unpack.mkv"
-                            value={config["api.download-file-blocklist"]}
+                            value={config["api.download-file-blocklist"] ?? ""}
                             onChange={value => setNewConfig({ ...config, "api.download-file-blocklist": value })} />
                         <p className="text-[11px] leading-relaxed text-base-content/45" id="ignored-files-help">
                             Files matching these wildcard patterns are not mounted when an NZB is processed.
@@ -527,8 +527,8 @@ export function generateNewApiKey(): string {
     return crypto.randomUUID().replaceAll("-", "");
 }
 
-function isValidCategories(categories: string): boolean {
-    if (categories === "") return true;
+function isValidCategories(categories: string | undefined): boolean {
+    if (!categories) return true;
     return categories
         .split(",")
         .map(category => category.trim())

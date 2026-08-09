@@ -33,7 +33,7 @@ export function CatalogueBlock({ catalogue }: CatalogueBlockProps) {
     );
 }
 
-function Stat({ label, value, accent }: { label: string, value: string, accent?: "good" }) {
+function Stat({ label, value, accent }: { label: string, value: string, accent?: "good" | undefined }) {
     return (
         <div className="stat py-3">
             <div className="stat-title text-xs">{label}</div>

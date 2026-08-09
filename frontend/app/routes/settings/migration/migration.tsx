@@ -15,7 +15,7 @@ type MigrationSource = {
     component: ComponentType;
 };
 
-const MIGRATION_SOURCES: MigrationSource[] = [
+const MIGRATION_SOURCES: [MigrationSource, ...MigrationSource[]] = [
     {
         id: "altmount",
         label: "AltMount",

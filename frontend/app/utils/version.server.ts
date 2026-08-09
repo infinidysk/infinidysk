@@ -13,7 +13,7 @@ export type BuildCommit = {
 type BuildCommitOptions = {
   gitDir?: string;
   /** Version label that may embed a commit SHA (e.g. `main-e0eef520`). */
-  version?: string | null;
+  version?: string | null | undefined;
 };
 
 export async function getAppVersion(): Promise<string | undefined> {
@@ -79,7 +79,8 @@ export function parseBuildCommitFromVersion(
   if (!version) return undefined;
   const match = /^main-([0-9a-f]{7,40})$/i.exec(version.trim());
   if (!match) return undefined;
-  return { sha: match[1].toLowerCase(), branch: "main", source: "version" };
+  // Group 1 is a required part of the pattern, so it participates in every match.
+  return { sha: match[1]!.toLowerCase(), branch: "main", source: "version" };
 }
 
 async function readLocalMainCommit(gitDir: string): Promise<BuildCommit | undefined> {
@@ -91,7 +92,8 @@ async function readLocalMainCommit(gitDir: string): Promise<BuildCommit | undefi
       return undefined;
     }
 
-    const ref = refMatch[1].trim();
+    // Group 1 is a required part of the pattern, so it participates in every match.
+    const ref = refMatch[1]!.trim();
     if (ref !== "refs/heads/main") {
       return undefined;
     }
@@ -119,7 +121,7 @@ async function resolveGitRef(gitDir: string, ref: string): Promise<string | unde
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("^")) continue;
       const [sha, packedRef] = trimmed.split(/\s+/);
-      if (packedRef === ref && isValidSha(sha)) {
+      if (sha !== undefined && packedRef === ref && isValidSha(sha)) {
         return sha.toLowerCase();
       }
     }

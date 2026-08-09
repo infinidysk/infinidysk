@@ -8,11 +8,11 @@ export type OidcSettings = {
   issuer: string;
   clientId: string;
   clientSecret: string;
-  redirectUri?: string;
+  redirectUri?: string | undefined;
   scopes: string;
   usernameClaim: string;
-  adminClaim?: string;
-  adminClaimValue?: string;
+  adminClaim?: string | undefined;
+  adminClaimValue?: string | undefined;
 };
 
 const REQUIRED_ENV_VARS = [

@@ -41,7 +41,7 @@ export function RecordsBlock({ records }: RecordsBlockProps) {
     );
 }
 
-function Stat({ label, value, desc }: { label: string, value: string, desc?: string }) {
+function Stat({ label, value, desc }: { label: string, value: string, desc?: string | undefined }) {
     return (
         <div className="stat py-3">
             <div className="stat-title text-xs">{label}</div>

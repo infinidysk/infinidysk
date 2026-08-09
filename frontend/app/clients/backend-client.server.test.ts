@@ -45,7 +45,7 @@ describe("BackendClient", () => {
       fetchMock.mockResolvedValueOnce(jsonResponse({ [resultKey]: result }));
 
       await expect(backendClient[method]("alice", "secret")).resolves.toBe(result);
-      const [url, init] = fetchMock.mock.calls[0];
+      const [url, init] = fetchMock.mock.calls[0] ?? [];
       const form = init?.body as FormData;
 
       expect(url).toBe(`http://backend/api/${endpoint}`);
@@ -88,13 +88,13 @@ describe("BackendClient", () => {
       .mockResolvedValueOnce(jsonResponse({ status: true }));
 
     await expect(backendClient.getConfig(["one"])).resolves.toEqual(configItems);
-    const getForm = fetchMock.mock.calls[0][1]?.body as FormData;
+    const getForm = fetchMock.mock.calls[0]?.[1]?.body as FormData;
     expect(getForm.getAll("config-keys")).toEqual(["one"]);
 
     await expect(backendClient.getConfig(["missing"])).resolves.toEqual([]);
 
     await expect(backendClient.updateConfig(configItems)).resolves.toBe(true);
-    const updateForm = fetchMock.mock.calls[2][1]?.body as FormData;
+    const updateForm = fetchMock.mock.calls[2]?.[1]?.body as FormData;
     expect(updateForm.get("one")).toBe("value");
   });
 
@@ -103,7 +103,7 @@ describe("BackendClient", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ items }));
 
     await expect(backendClient.listWebdavDirectory("/view")).resolves.toEqual(items);
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
     expect(url).toBe("http://backend/api/list-webdav-directory");
     expect((init?.body as FormData).get("directory")).toBe("/view");
   });
@@ -117,7 +117,7 @@ describe("BackendClient", () => {
     const file = new File(["nzb"], "movie.nzb");
 
     await expect(backendClient.addNzb(file)).resolves.toBe("nzo-1");
-    const [url, init] = fetchMock.mock.calls[1];
+    const [url, init] = fetchMock.mock.calls[1] ?? [];
     expect(url).toBe(
       "http://backend/api?mode=addfile&cat=movies+%26+shows&priority=0&pp=0",
     );
@@ -166,7 +166,7 @@ describe("BackendClient", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(results));
 
     await expect(backendClient.searchIndexers("Example Movie", 25)).resolves.toEqual(results);
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
     const form = init?.body as FormData;
 
     expect(url).toBe("http://backend/api/search-indexers");
@@ -195,10 +195,10 @@ describe("BackendClient", () => {
       id: "wanted-1",
     })).resolves.toBe(true);
 
-    expect(fetchMock.mock.calls[0][0]).toBe(
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "http://backend/api/get-watchtower?state=ready&q=Example&sort=updated&offset=20&limit=10&expander=episodes&statsOnly=1",
     );
-    const mutation = fetchMock.mock.calls[1][1];
+    const mutation = fetchMock.mock.calls[1]?.[1];
     expect(Object.fromEntries((mutation?.body as FormData).entries())).toEqual({
       action: "park",
       id: "wanted-1",

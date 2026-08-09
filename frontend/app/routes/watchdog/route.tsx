@@ -390,6 +390,7 @@ function attemptsEqual(a: WatchdogEntry[], b: WatchdogEntry[]): boolean {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) {
         const x = a[i], y = b[i];
+        if (x === undefined || y === undefined) return false;
         if (x.clickId !== y.clickId) return false;
         if (x.rankIndex !== y.rankIndex) return false;
         if (x.outcome !== y.outcome) return false;
@@ -484,11 +485,12 @@ const GENERIC_HOST_PREFIXES = new Set(["news", "reader", "premium", "secure", "s
 function stripHost(host: string): string {
     if (!host) return "";
     const labels = host.split(".").filter(Boolean);
-    if (labels.length === 0) return host;
-    if (labels.length === 1) return labels[0];
-    if (labels.length === 2) return labels[0];
-    if (GENERIC_HOST_PREFIXES.has(labels[0].toLowerCase())) return labels[1];
-    return labels[0].length >= labels[1].length ? labels[0] : labels[1];
+    const first = labels[0];
+    const second = labels[1];
+    if (first === undefined) return host;
+    if (second === undefined || labels.length === 2) return first;
+    if (GENERIC_HOST_PREFIXES.has(first.toLowerCase())) return second;
+    return first.length >= second.length ? first : second;
 }
 
 function formatBytes(bytes: number): string {

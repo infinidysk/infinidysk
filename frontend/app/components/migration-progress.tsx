@@ -29,7 +29,7 @@ export function isMigrationStatus(value: unknown): value is MigrationStatus {
 }
 
 export type MigrationPollDecision =
-  | { action: "migrating"; status: MigrationStatus; reloadMs?: number }
+  | { action: "migrating"; status: MigrationStatus; reloadMs?: number | undefined }
   | { action: "connecting"; reloadMs: number }
   | { action: "fallback"; stopPolling: true };
 

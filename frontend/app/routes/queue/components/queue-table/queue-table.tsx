@@ -27,7 +27,7 @@ export type QueueTableProps = {
     onIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void,
     onRemoved: (nzo_ids: Set<string>) => void,
     onMovedToTop: (nzo_ids: Set<string>) => void,
-    onUploadClicked?: () => void;
+    onUploadClicked?: (() => void) | undefined;
 }
 
 async function moveQueueItemsToTop(nzoIds: string[]): Promise<boolean> {
@@ -203,10 +203,10 @@ export function QueueTable({
         <PageSection
             title={sectionTitle}
             subTitle={sectionSubTitle}
-            badgeText={totalQueueCount > 0 ? String(totalQueueCount) : undefined}
+            {...(totalQueueCount > 0 ? { badgeText: String(totalQueueCount) } : {})}
         >
             {queueSlots?.length == 0 ? (
-                <EmptyQueue onUploadClicked={isReadOnly ? undefined : onUploadClicked} />
+                <EmptyQueue {...(!isReadOnly && onUploadClicked ? { onUploadClicked } : {})} />
             ) : (
                 <PageTable
                     headerCheckboxState={headerCheckboxState}
@@ -250,7 +250,7 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
     const [isMoving, setIsMoving] = useState(false);
-    const isActivelyUploading = slot.isUploading && slot.status == "uploading";
+    const isActivelyUploading = !!slot.isUploading && slot.status == "uploading";
 
     // events
     const onRemove = useCallback(() => {

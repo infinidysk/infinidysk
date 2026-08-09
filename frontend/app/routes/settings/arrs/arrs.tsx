@@ -118,7 +118,7 @@ const queueStatusMessages = [
 ];
 
 export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
-    const arrConfig = parseArrConfig(config["arr.instances"]);
+    const arrConfig = parseArrConfig(config["arr.instances"] ?? "");
 
     const updateConfig = useCallback((newArrConfig: ArrConfig) => {
         setNewConfig({ ...config, "arr.instances": JSON.stringify(newArrConfig) });

@@ -7,11 +7,11 @@ import { isComparableVersion, type UpdateAvailable } from "~/utils/update-check"
 import { withUrlBase } from "~/utils/url-base";
 
 export type TopNavigationProps = RequiredTopNavProps & {
-  version?: string,
-  updateAvailable?: UpdateAvailable | null,
-  isFrontendAuthDisabled?: boolean,
-  username?: string | null,
-  hasUsenetProviders?: boolean,
+  version?: string | undefined,
+  updateAvailable?: UpdateAvailable | null | undefined,
+  isFrontendAuthDisabled?: boolean | undefined,
+  username?: string | null | undefined,
+  hasUsenetProviders?: boolean | undefined,
 };
 
 export const TopNavigation = memo(function TopNavigation(props: TopNavigationProps) {

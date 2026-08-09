@@ -16,10 +16,10 @@ function isNonNegativeInteger(value: string) {
 export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) {
     const libraryDirConfig = config["media.library-dir"];
     // `arr.instances` config value shape (backend contract)
-    const arrConfig = JSON.parse(config["arr.instances"]) as { RadarrInstances: unknown[]; SonarrInstances: unknown[] };
+    const arrConfig = JSON.parse(config["arr.instances"] ?? "{}") as { RadarrInstances?: unknown[]; SonarrInstances?: unknown[] };
     const areArrInstancesConfigured =
-        arrConfig.RadarrInstances.length > 0 ||
-        arrConfig.SonarrInstances.length > 0;
+        (arrConfig.RadarrInstances?.length ?? 0) > 0 ||
+        (arrConfig.SonarrInstances?.length ?? 0) > 0;
     const canEnableRepairs = !!libraryDirConfig && areArrInstancesConfigured;
     const helpText = canEnableRepairs
         ? "When enabled, usenet items will be continuously monitored for health. Unhealthy items will be removed. If an unhealthy item is part of your Radarr/Sonarr library, a new search will be triggered to find a replacement."

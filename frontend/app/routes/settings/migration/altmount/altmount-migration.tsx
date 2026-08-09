@@ -1273,13 +1273,11 @@ function SymlinkResults({ m }: { m: Hook }) {
                         and only symlinks are changed — never the files they point at. Continue?
                     </>
                 }
-                checkboxMessage={unreadable > 0
-                    ? `I acknowledge that ${unreadable} unreadable symlink(s) will remain unchanged`
-                    : undefined}
+                {...(unreadable > 0 ? {
+                    checkboxMessage: `I acknowledge that ${unreadable} unreadable symlink(s) will remain unchanged`,
+                    errorMessage: `${unreadable} symlink(s) could not be classified and may still point at Altmount.`,
+                } : {})}
                 requireCheckbox={unreadable > 0}
-                errorMessage={unreadable > 0
-                    ? `${unreadable} symlink(s) could not be classified and may still point at Altmount.`
-                    : undefined}
                 cancelText="Cancel"
                 confirmText="Apply"
                 onCancel={() => setConfirmApply(false)}
@@ -1519,7 +1517,7 @@ function SymlinkStatusBadge({ status }: { status: string }) {
     return help ? <Tooltip content={help}>{badge}</Tooltip> : badge;
 }
 
-function MatchMethodLabel({ method }: { method?: string | null }) {
+function MatchMethodLabel({ method }: { method?: string | null | undefined }) {
     if (!method) return <>&mdash;</>;
     const presentation = MATCH_METHODS[method];
     if (!presentation) return <>{method}</>;
@@ -1647,7 +1645,7 @@ function SummaryTiles({ summary }: { summary: SummaryResponse }) {
     );
 }
 
-function StatTile({ label, value, tone, help }: { label: string; value: number | string; tone?: "success" | "warning" | "error"; help?: string }) {
+function StatTile({ label, value, tone, help }: { label: string; value: number | string; tone?: "success" | "warning" | "error" | undefined; help?: string | undefined }) {
     const toneClass = tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : tone === "error" ? "text-error" : "text-base-content";
     const tile = (
         <span className={`block rounded-lg border border-base-content/10 bg-base-100 p-3 ${help ? "cursor-help" : ""}`}>
