@@ -148,7 +148,7 @@ public static class RarUtil
 
                 // TODO: support solid archives
                 if (fh.IsEncrypted && fh.IsSolid)
-                    throw new Exception("Password-protected rar archives cannot be solid.");
+                    throw new InvalidOperationException("Password-protected rar archives cannot be solid.");
 
                 // add the headers
                 headers.Add(header);

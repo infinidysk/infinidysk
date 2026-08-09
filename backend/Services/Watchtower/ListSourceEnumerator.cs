@@ -238,7 +238,7 @@ public class ListSourceEnumerator
             throw new InvalidOperationException("List request failed or returned an empty response.");
 
         var trimmed = body.TrimStart();
-        if (trimmed.StartsWith("[", StringComparison.Ordinal) || trimmed.StartsWith("{", StringComparison.Ordinal))
+        if (trimmed.StartsWith('[') || trimmed.StartsWith('{'))
         {
             var fromJson = TryParseJsonList(trimmed);
             if (fromJson.Count > 0) return fromJson;
@@ -247,7 +247,7 @@ public class ListSourceEnumerator
         var refs = new List<WtContentRef>();
         foreach (var line in body.Split('\n')
                      .Select(raw => raw.Trim())
-                     .Where(line => line.Length > 0 && !line.StartsWith("#", StringComparison.Ordinal)))
+                     .Where(line => line.Length > 0 && !line.StartsWith('#')))
         {
             var (type, id) = SplitTypeId(line);
             if (id.Length == 0) continue;

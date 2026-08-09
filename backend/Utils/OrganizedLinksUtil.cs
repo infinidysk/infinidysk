@@ -97,7 +97,7 @@ public static class OrganizedLinksUtil
         {
             SymlinkAndStrmUtil.SymlinkInfo symlinkInfo => GetDavItemLink(symlinkInfo, mountDir),
             SymlinkAndStrmUtil.StrmInfo strmInfo => GetDavItemLink(strmInfo),
-            _ => throw new Exception("Unknown link type")
+            _ => throw new InvalidOperationException("Unknown link type")
         };
     }
 

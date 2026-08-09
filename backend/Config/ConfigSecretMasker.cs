@@ -225,7 +225,7 @@ public sealed class ConfigSecretMasker(string signingKey)
         }
     }
 
-    private static IReadOnlyCollection<string> GetExistingJsonSecrets(string? existingValue, string propertyName)
+    private static List<string> GetExistingJsonSecrets(string? existingValue, string propertyName)
     {
         if (existingValue == null)
             return [];

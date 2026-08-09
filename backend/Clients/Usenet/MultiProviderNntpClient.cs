@@ -374,7 +374,7 @@ public class MultiProviderNntpClient(
 
             InvokeCompletionCallback(CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
             lastException?.Throw();
-            throw new Exception("There are no usenet providers configured.");
+            throw new InvalidOperationException("There are no usenet providers configured.");
         }
     }
 
@@ -382,7 +382,7 @@ public class MultiProviderNntpClient(
         Task<UsenetDecodedBodyResponse> primaryResponse,
         SegmentId segmentId,
         MultiConnectionNntpClient primaryProvider,
-        IReadOnlyList<MultiConnectionNntpClient> fallbackProviders,
+        MultiConnectionNntpClient[] fallbackProviders,
         Task previousFallbackAdmission,
         TaskCompletionSource fallbackAdmission,
         BatchCallbackCoordinator coordinator,
@@ -467,7 +467,7 @@ public class MultiProviderNntpClient(
                 && lastException.SourceException.TryGetCausingException<TimeoutException>(out _);
             var reprobePrimary = !definitiveMiss
                 || (retryPrimaryOnMiss?.Invoke() != false && !primaryCachedMiss);
-            if ((exhaustedTimeout && fallbackProviders.Count > 0)
+            if ((exhaustedTimeout && fallbackProviders.Length > 0)
                 || (definitiveMiss && !reprobePrimary))
             {
                 var primaryGroup = NormalizeStorageGroup(primaryProvider.StorageGroup);
@@ -807,7 +807,7 @@ public class MultiProviderNntpClient(
         if (lastOutcomeWasException) lastException!.Throw();
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         if (orderedProviders.Count == 0)
-            throw new Exception("There are no usenet providers configured.");
+            throw new InvalidOperationException("There are no usenet providers configured.");
         // All providers were skipped (negative cache / storage-group) without a probe.
         throw new UsenetArticleNotFoundException(segmentId.ToString()!);
     }
@@ -940,11 +940,11 @@ public class MultiProviderNntpClient(
         }
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         if (orderedProviders.Count == 0)
-            throw new Exception("There are no usenet providers configured.");
+            throw new InvalidOperationException("There are no usenet providers configured.");
         // All providers were skipped (negative cache / storage-group) without a probe.
         if (articleId is { } exhaustedId)
             throw new UsenetArticleNotFoundException(exhaustedId.ToString()!);
-        throw new Exception("There are no usenet providers configured.");
+        throw new InvalidOperationException("There are no usenet providers configured.");
     }
 
     private bool IsCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider)

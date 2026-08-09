@@ -63,7 +63,7 @@ public static class ConfigEnvMapping
         return EnvPrefix + body;
     }
 
-    private static IReadOnlyDictionary<string, string> BuildConfigKeyToEnvVarMap()
+    private static Dictionary<string, string> BuildConfigKeyToEnvVarMap()
     {
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var field in typeof(ConfigKeys).GetFields(BindingFlags.Public | BindingFlags.Static))
@@ -77,7 +77,7 @@ public static class ConfigEnvMapping
         return map;
     }
 
-    private static IReadOnlyDictionary<string, string> BuildEnvVarToConfigKeyMap()
+    private static Dictionary<string, string> BuildEnvVarToConfigKeyMap()
     {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (configKey, envVar) in ConfigKeyToEnvVar.Value)

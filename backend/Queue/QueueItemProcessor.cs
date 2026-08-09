@@ -243,7 +243,7 @@ public class QueueItemProcessor(
         // if the `/blobs` folder is tampered with outside the nzbdav process,
         // then it is possible that the nzb file goes missing.
         if (queueNzbStream is null)
-            throw new Exception($"The NZB file could not be found.");
+            throw new InvalidOperationException($"The NZB file could not be found.");
 
         // load config for handling duplicate nzbs
         var existingMountFolder = await GetMountFolder().ConfigureAwait(false);
@@ -569,7 +569,7 @@ public class QueueItemProcessor(
             return mountFolder;
         }
 
-        throw new Exception("Duplicate nzb with more than 100 existing copies.");
+        throw new InvalidOperationException("Duplicate nzb with more than 100 existing copies.");
     }
 
     private HistoryItem CreateHistoryItem(DavItem? mountFolder, DateTime jobStartTime, string? errorMessage = null)

@@ -14,16 +14,16 @@ public class WardenBackupController(WardenStore warden) : BaseApiController
 
     protected override Task<IActionResult> HandleRequest()
     {
-        return Task.FromResult(HttpContext.Request.Method == HttpMethods.Post ? Save() : Status());
+        return Task.FromResult<IActionResult>(HttpContext.Request.Method == HttpMethods.Post ? Save() : Status());
     }
 
-    private IActionResult Status()
+    private OkObjectResult Status()
     {
         var s = warden.GetBackupSettings();
         return Ok(ToResponse(s));
     }
 
-    private IActionResult Save()
+    private OkObjectResult Save()
     {
         var form = HttpContext.Request.Form;
         var repo = form["repo"].ToString().Trim();

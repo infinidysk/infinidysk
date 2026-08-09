@@ -59,7 +59,7 @@ public partial class GetWatchdogEntriesController(
     // nickname (or kept as-is when no nickname is configured). Returns null
     // when no part has a nickname, so the frontend can fall back to its own
     // formatProviderShort for the host string.
-    private static string? ResolveNickname(string? providerHost, IReadOnlyDictionary<string, string?> nicknamesByHost)
+    private static string? ResolveNickname(string? providerHost, Dictionary<string, string?> nicknamesByHost)
     {
         if (string.IsNullOrWhiteSpace(providerHost) || nicknamesByHost.Count == 0) return null;
         var parts = providerHost.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

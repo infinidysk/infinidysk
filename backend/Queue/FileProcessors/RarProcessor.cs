@@ -75,7 +75,7 @@ public class RarProcessor(
         };
 
         if (partNumber.PartNumberFromHeader == null && partNumber.PartNumberFromFilename == null)
-            throw new Exception("Could not determine part number for RAR file.");
+            throw new InvalidOperationException("Could not determine part number for RAR file.");
 
         return partNumber;
     }

@@ -247,7 +247,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
     /// </summary>
     private static async Task<int> DeleteItemsByIdTextAsync(
         DavDatabaseContext dbContext,
-        IReadOnlyList<UnlinkedItemInfo> items,
+        List<UnlinkedItemInfo> items,
         CancellationToken cancellationToken = default)
     {
         var parameters = new SqliteParameter[items.Count];

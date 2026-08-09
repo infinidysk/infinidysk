@@ -10,7 +10,7 @@ public static class EnvironmentUtil
     public static string GetRequiredVariable(string envVariable)
     {
         return Environment.GetEnvironmentVariable(envVariable) ??
-               throw new Exception($"The environment variable `{envVariable}` must be set.");
+               throw new InvalidOperationException($"The environment variable `{envVariable}` must be set.");
     }
 
     public static long? GetLongVariable(string envVariable)

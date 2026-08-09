@@ -892,7 +892,7 @@ public class GetOverviewStatsController(
 
     private static List<double> BuildSpeedSpark(
         IReadOnlyList<long> bytes,
-        IReadOnlyList<long> durations) =>
+        long[] durations) =>
         bytes.Select((value, index) =>
                 CalculateSpeedMbPerSec(value, durations[index]) ?? 0)
             .ToList();

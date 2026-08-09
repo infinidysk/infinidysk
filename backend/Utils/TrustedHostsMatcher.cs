@@ -116,7 +116,7 @@ public sealed class TrustedHostsMatcher
         return false;
     }
 
-    private static IEnumerable<string> SplitEntries(string rawEntries)
+    private static string[] SplitEntries(string rawEntries)
     {
         return rawEntries
             .Split([',', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

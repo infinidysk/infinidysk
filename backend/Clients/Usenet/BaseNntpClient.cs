@@ -279,7 +279,7 @@ public class BaseNntpClient : NntpClient
             : CreateConnectionLevelException(segmentId, response);
     }
 
-    private static Exception CreateConnectionLevelException(SegmentId segmentId, UsenetResponse response)
+    private static UsenetUnexpectedResponseException CreateConnectionLevelException(SegmentId segmentId, UsenetResponse response)
     {
         if (response.ResponseCode == 480)
         {

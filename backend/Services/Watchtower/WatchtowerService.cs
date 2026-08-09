@@ -420,7 +420,7 @@ public class WatchtowerService(
     }
 
     private static List<string> EffectiveScopes(
-        WantedItem expander, IReadOnlyDictionary<string, string> scopeBySource, string globalScope)
+        WantedItem expander, Dictionary<string, string> scopeBySource, string globalScope)
     {
         var scopes = new List<string>();
         foreach (var srcId in WtJson.ReadStrings(expander.Provenance))
@@ -590,7 +590,7 @@ public class WatchtowerService(
 
     private Dictionary<string, DesiredRow> BuildDesiredRows(
         IReadOnlyList<EpisodeEnumerator.Episode> episodes, string? seriesTitle, string imdb, string scope, long now,
-        IReadOnlySet<int> parkedFallbackSeasons)
+        HashSet<int> parkedFallbackSeasons)
     {
         var desired = new Dictionary<string, DesiredRow>();
         var aired = episodes.Where(e => e.AirDateUnix is null || e.AirDateUnix <= now).ToList();

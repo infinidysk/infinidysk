@@ -96,14 +96,14 @@ public class AddUrlRequest() : AddFileRequest
         try
         {
             if (string.IsNullOrWhiteSpace(url))
-                throw new Exception($"The url is invalid.");
+                throw new InvalidOperationException($"The url is invalid.");
 
             var response = await GetAsync(
                 url, userAgent, proxyUrl, skipTlsVerification, trustedHosts, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 response.Dispose();
-                throw new Exception($"Received status code {response.StatusCode}.");
+                throw new InvalidOperationException($"Received status code {response.StatusCode}.");
             }
 
             var contentType = response.Content.Headers.ContentType?.MediaType;
@@ -111,7 +111,7 @@ public class AddUrlRequest() : AddFileRequest
             var resolvedFileName = nzbName
                                    ?? GetFilenameFromResponseHeader(response)
                                    ?? GetFilenameFromUrl(url)
-                                   ?? throw new Exception("Nzb filename could not be determined.");
+                                   ?? throw new InvalidOperationException("Nzb filename could not be determined.");
             var fileName = NzbStreamUtil.NormalizeFileName(resolvedFileName);
 
             var fileStream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);

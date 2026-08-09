@@ -252,7 +252,7 @@ public class SearchProfileService(
         id.StartsWith("tmdb:", StringComparison.OrdinalIgnoreCase)
         || id.StartsWith("tmdb-", StringComparison.OrdinalIgnoreCase);
 
-    private static IReadOnlyDictionary<string, string>? BuildTvdbQuery(string type, string id)
+    private static Dictionary<string, string>? BuildTvdbQuery(string type, string id)
     {
         if (type != "series") return null;
 

@@ -1081,7 +1081,7 @@ public class ConfigManager
     // Synced patterns (last-good cache, in configured-URL order) take precedence and are
     // emitted first; the manual textarea is appended after, with exact duplicates dropped
     // so a pattern present in both sources is compiled and evaluated only once.
-    private IReadOnlyList<Regex> BuildExcludePatterns()
+    private List<Regex> BuildExcludePatterns()
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var compiled = new List<Regex>();

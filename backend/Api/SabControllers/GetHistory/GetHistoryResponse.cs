@@ -149,7 +149,7 @@ public class GetHistoryResponse : SabBaseResponse
                 });
             }
 
-            throw new Exception("Unknown import strategy");
+            throw new InvalidOperationException("Unknown import strategy");
         }
     }
 }

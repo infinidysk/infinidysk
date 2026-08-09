@@ -74,7 +74,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         };
     }
 
-    private static INntpClient CreateDownloadingNntpClient
+    private static HeaderCachingNntpClient CreateDownloadingNntpClient
     (
         ConfigManager configManager,
         WebsocketManager websocketManager,

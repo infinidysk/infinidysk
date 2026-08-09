@@ -238,7 +238,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
             {
                 var part = fileParts[i];
                 var extraOffset = (i == firstFilePartIndex) ? firstOffset : 0;
-                yield return Task.FromResult(OpenPart(part, extraOffset, i));
+                yield return Task.FromResult<System.IO.Stream>(OpenPart(part, extraOffset, i));
                 i++;
                 continue;
             }
@@ -254,7 +254,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
     }
 
-    private Stream OpenPart(DavMultipartFile.FilePart part, long extraOffset, int partIndex)
+    private PaddedLengthStream OpenPart(DavMultipartFile.FilePart part, long extraOffset, int partIndex)
     {
         if (part.SegmentIdByteRange.StartInclusive != 0 ||
             part.SegmentIdByteRange.Count < 0 ||

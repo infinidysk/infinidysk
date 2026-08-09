@@ -129,8 +129,8 @@ public sealed class AlreadyMigratedDetector
     /// </summary>
     private static List<DetectedFile>? MatchSidecar(
         AlreadyMigratedCandidate candidate,
-        IReadOnlyDictionary<Guid, ReleaseLeaf> liveById,
-        IReadOnlyDictionary<Guid, List<ReleaseLeaf>> liveByBlobId)
+        Dictionary<Guid, ReleaseLeaf> liveById,
+        Dictionary<Guid, List<ReleaseLeaf>> liveByBlobId)
     {
         if (candidate.Files.Count == 0)
             return null;
@@ -174,8 +174,8 @@ public sealed class AlreadyMigratedDetector
 
     private static List<DetectedFile>? MatchHistorical(
         AlreadyMigratedCandidate candidate,
-        IReadOnlyDictionary<string, MigratedFile> historicalFiles,
-        IReadOnlyDictionary<Guid, ReleaseLeaf> liveById)
+        Dictionary<string, MigratedFile> historicalFiles,
+        Dictionary<Guid, ReleaseLeaf> liveById)
     {
         if (candidate.Files.Count == 0 || historicalFiles.Count != candidate.Files.Count)
             return null;
@@ -195,7 +195,7 @@ public sealed class AlreadyMigratedDetector
 
     private static List<DetectedFile>? MatchLiveMount(
         AlreadyMigratedCandidate candidate,
-        IReadOnlyDictionary<string, List<ReleaseLeaf>> liveByMountPrefix)
+        Dictionary<string, List<ReleaseLeaf>> liveByMountPrefix)
     {
         if (candidate.Files.Count == 0)
             return null;

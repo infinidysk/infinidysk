@@ -125,7 +125,7 @@ public class UsenetFileToBlobstoreMigrationService(WebsocketManager websocketMan
     private static async Task<DavItem> GetDavItem(Guid id, DavDatabaseContext dbContext, CancellationToken ct)
     {
         return (await dbContext.Items.Where(x => x.Id == id).FirstOrDefaultAsync(ct).ConfigureAwait(false))
-               ?? throw new Exception($"DavItem with id `{id}` not found");
+               ?? throw new InvalidOperationException($"DavItem with id `{id}` not found");
     }
 
     private void Report(string message)

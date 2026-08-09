@@ -21,9 +21,9 @@ public class GetWebdavItemRequest
     {
         // normalize path
         var path = context.Request.Path.Value ?? "";
-        if (path.StartsWith("/", StringComparison.Ordinal)) path = path[1..];
+        if (path.StartsWith('/')) path = path[1..];
         if (path.StartsWith("view", StringComparison.Ordinal)) path = path[4..];
-        if (path.StartsWith("/", StringComparison.Ordinal)) path = path[1..];
+        if (path.StartsWith('/')) path = path[1..];
         Item = path;
 
         // determine whether to download

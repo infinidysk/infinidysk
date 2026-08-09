@@ -37,7 +37,7 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         if (historyId == null) return ArrRepairOutcome.DownloadHistoryNotFound;
 
         if (await DeleteMovieFile(movieFileId.Value, ct).ConfigureAwait(false) != HttpStatusCode.OK)
-            throw new Exception($"Failed to delete movie file `{symlinkOrStrmPath}` from radarr instance `{Host}`.");
+            throw new InvalidOperationException($"Failed to delete movie file `{symlinkOrStrmPath}` from radarr instance `{Host}`.");
 
         await MarkHistoryFailed(historyId.Value, ct).ConfigureAwait(false);
         return ArrRepairOutcome.RemoveAndBlocklistSucceeded;

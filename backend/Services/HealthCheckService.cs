@@ -59,7 +59,7 @@ public class HealthCheckService : BackgroundService
     private const double MinDepthDays = 3650;
 
     private readonly ConfigManager _configManager;
-    private readonly INntpClient _usenetClient;
+    private readonly UsenetStreamingClient _usenetClient;
     private readonly WebsocketManager _websocketManager;
     private readonly BenchmarkGate _benchmarkGate;
     private readonly StreamingFailureTracker _failureTracker;

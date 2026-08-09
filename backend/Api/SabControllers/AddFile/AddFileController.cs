@@ -337,7 +337,7 @@ public class AddFileController(
         }
         catch (Exception e) when (!e.IsCancellationException())
         {
-            throw new Exception($"Could not save nzb to `{backupLocation}`", e);
+            throw new InvalidOperationException($"Could not save nzb to `{backupLocation}`", e);
         }
     }
 

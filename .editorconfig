@@ -126,6 +126,10 @@ dotnet_diagnostic.CA1822.severity = none
 # upper-case protocol constants consistently; mass-converting to
 # ToLowerInvariant risks breaking those pairings for no runtime benefit.
 dotnet_diagnostic.CA1308.severity = none
+# Justification: fires overwhelmingly on cold paths (startup EF migrations,
+# config maps) where one constant-array allocation is immaterial; streaming
+# hot paths already use pooled buffers.
+dotnet_diagnostic.CA1861.severity = none
 # Justification: sealing every internal class churns the codebase and breaks
 # test doubles for a micro-optimization the hot paths already get via CA1859.
 dotnet_diagnostic.CA1852.severity = none

@@ -40,7 +40,7 @@ public class NzbDocument
         }
         catch (XmlException e)
         {
-            throw new Exception("Could not parse the nzb document (malformed nzb)", e);
+            throw new InvalidOperationException("Could not parse the nzb document (malformed nzb)", e);
         }
     }
 

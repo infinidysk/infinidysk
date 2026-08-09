@@ -99,7 +99,7 @@ public static class VerdictReason
     /// <summary><c>{nzbBasename}</c> matches <c>PasswordRegex</c> — two password channels with unknown precedence.</summary>
     public const string FilenamePasswordMarker = "filename_password_marker";
 
-    private static readonly IReadOnlyDictionary<string, Verdict> Severity = new Dictionary<string, Verdict>
+    private static readonly Dictionary<string, Verdict> Severity = new Dictionary<string, Verdict>
     {
         [NoStoreRef] = Verdict.Red,
         [StoreMissing] = Verdict.Red,

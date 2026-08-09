@@ -83,7 +83,7 @@ public class PreflightOrchestrator(
     private async Task<bool> PreflightCandidateAsync(
         string mode,
         NzbResolutionCache.Candidate candidate,
-        IReadOnlyDictionary<string, IndexerConfig.ConnectionDetails> indexers,
+        Dictionary<string, IndexerConfig.ConnectionDetails> indexers,
         TimeSpan maxWait,
         CancellationToken ct)
     {
