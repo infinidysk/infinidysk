@@ -50,7 +50,7 @@ public class GetQueueController(
 
         // Metrics keys of every configured Usenet provider — used to show idle providers
         // alongside active ones for in-progress downloads.
-        var configuredProviders = configManager.GetUsenetProviderConfig().Providers;
+        var configuredProviders = Config.GetUsenetProviderConfig().Providers;
         var configuredKeys = configuredProviders
             .Where(p => p.ProviderId != Guid.Empty)
             .Select(UsenetProviderIdentity.MetricsKey)
@@ -86,12 +86,12 @@ public class GetQueueController(
             .ToList();
 
         // return response
-        var speedLimitKbps = configManager.GetSabSpeedLimitKbps();
+        var speedLimitKbps = Config.GetSabSpeedLimitKbps();
         return new GetQueueResponse()
         {
             Queue = new GetQueueResponse.QueueObject()
             {
-                Paused = configManager.IsSabQueuePaused(),
+                Paused = Config.IsSabQueuePaused(),
                 Slots = slots,
                 TotalCount = totalCount,
                 SpeedLimit = speedLimitKbps.ToString(),
@@ -116,7 +116,7 @@ public class GetQueueController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = new GetQueueRequest(httpContext, configManager);
+        var request = new GetQueueRequest(Context, Config);
         return Ok(await GetQueueAsync(request).ConfigureAwait(false));
     }
 }

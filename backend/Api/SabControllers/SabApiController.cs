@@ -138,6 +138,11 @@ public class SabApiController(
 
     public abstract class BaseController(HttpContext httpContext, ConfigManager configManager) : ControllerBase
     {
+        // Derived controllers must use these properties instead of capturing
+        // the primary-constructor parameters (CS9107 double-capture).
+        protected HttpContext Context => httpContext;
+        protected ConfigManager Config => configManager;
+
         public Task<IActionResult> HandleRequest()
         {
             if (RequiresAuthentication)

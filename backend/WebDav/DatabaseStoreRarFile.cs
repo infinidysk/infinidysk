@@ -28,7 +28,7 @@ public class DatabaseStoreRarFile(
     protected override async Task<Stream> GetStreamAsync(CancellationToken ct)
     {
         // store the DavItem being accessed in the http context
-        httpContext.Items["DavItem"] = davRarFile;
+        Context.Items["DavItem"] = davRarFile;
 
         var id = davRarFile.Id;
         var rarFile = await dbClient.GetDavRarFileAsync(davRarFile, ct).ConfigureAwait(false);
@@ -50,9 +50,9 @@ public class DatabaseStoreRarFile(
         (
             transient,
             usenetClient,
-            configManager.GetArticleBufferSize(),
+            Config.GetArticleBufferSize(),
             resolver: null,
-            usePipelinedBodyRequests: configManager.IsPipelinedBodyRequestsEnabled(),
+            usePipelinedBodyRequests: Config.IsPipelinedBodyRequestsEnabled(),
             fileName: davRarFile.Path,
             inFlightArticleBudget: inFlightArticleBudget
         );

@@ -51,7 +51,7 @@ public class RetryHistoryController(
         };
 
         var addFileController = new AddFileController(
-            httpContext, dbClient, queueManager, configManager, websocketManager);
+            Context, dbClient, queueManager, Config, websocketManager);
         var addResponse = await addFileController.AddFileAsync(addFileRequest).ConfigureAwait(false);
         if (addResponse.NzoIds.Count == 0)
             throw new BadHttpRequestException("Failed to re-queue NZB.");
@@ -65,7 +65,7 @@ public class RetryHistoryController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = RetryHistoryRequest.New(httpContext);
+        var request = RetryHistoryRequest.New(Context);
         return Ok(await RetryHistoryAsync(request).ConfigureAwait(false));
     }
 }

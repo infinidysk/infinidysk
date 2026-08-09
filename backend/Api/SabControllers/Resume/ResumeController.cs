@@ -21,13 +21,13 @@ public class ResumeController(
     public async Task<ResumeResponse> Resume(CancellationToken ct)
     {
         await ConfigPersistenceUtil.SetValueAsync(
-            dbClient, configManager, ConfigKeys.QueuePaused, "false", ct).ConfigureAwait(false);
+            dbClient, Config, ConfigKeys.QueuePaused, "false", ct).ConfigureAwait(false);
         queueManager.AwakenQueue();
         return new ResumeResponse { Status = true };
     }
 
     protected override async Task<IActionResult> Handle()
     {
-        return Ok(await Resume(httpContext.RequestAborted).ConfigureAwait(false));
+        return Ok(await Resume(Context.RequestAborted).ConfigureAwait(false));
     }
 }

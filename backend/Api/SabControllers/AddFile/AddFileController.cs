@@ -47,7 +47,7 @@ public class AddFileController(
         await using var sourceStream = request.NzbFileStream;
         var id = request.NzoId ?? Guid.NewGuid();
         var category = StringUtil.EmptyToNull(request.Category)
-                       ?? configManager.GetManualUploadCategory();
+                       ?? Config.GetManualUploadCategory();
 
         var replacesExisting = await dbClient.Ctx.QueueItems
             .AnyAsync(
@@ -58,13 +58,13 @@ public class AddFileController(
         IDisposable? admissionReservation = null;
         if (!replacesExisting)
         {
-            var maxItems = configManager.GetQueueMaxItems();
+            var maxItems = Config.GetQueueMaxItems();
             if (maxItems > 0)
             {
                 var currentCount = await dbClient.Ctx.QueueItems
                     .CountAsync(request.CancellationToken)
                     .ConfigureAwait(false);
-                var resumeThreshold = configManager.GetQueueResumeThreshold();
+                var resumeThreshold = Config.GetQueueResumeThreshold();
                 admissionReservation = queueManager.TryReserveQueueSlot(
                     currentCount, maxItems, resumeThreshold);
                 if (admissionReservation is null)
@@ -113,9 +113,9 @@ public class AddFileController(
             }
 
             // backup the nzb file if enabled
-            if (configManager.IsNzbBackupEnabled())
+            if (Config.IsNzbBackupEnabled())
             {
-                var backupLocation = configManager.GetNzbBackupLocation();
+                var backupLocation = Config.GetNzbBackupLocation();
                 if (backupLocation != null)
                 {
                     await BackupNzbAsync(id, request.FileName, category, backupLocation).ConfigureAwait(false);
@@ -291,7 +291,7 @@ public class AddFileController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = await AddFileRequest.New(httpContext, configManager).ConfigureAwait(false);
+        var request = await AddFileRequest.New(Context, Config).ConfigureAwait(false);
         return Ok(await AddFileAsync(request).ConfigureAwait(false));
     }
 

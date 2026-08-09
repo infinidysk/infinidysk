@@ -23,11 +23,11 @@ public class GetConfigController(
         var root = JsonNode.Parse(config)!;
 
         // update the complete_dir
-        root["config"]!["misc"]!["complete_dir"] = SabPathResolver.GetCompletedDir(configManager);
+        root["config"]!["misc"]!["complete_dir"] = SabPathResolver.GetCompletedDir(Config);
 
         // update the categories
         var categoriesRoot = root["config"]?["categories"]?.AsArray()!;
-        var categories = configManager.GetApiCategories();
+        var categories = Config.GetApiCategories();
         foreach (var category in categories)
         {
             categoriesRoot.Add(new JsonObject

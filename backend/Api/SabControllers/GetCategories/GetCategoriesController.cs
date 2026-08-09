@@ -11,14 +11,14 @@ public class GetCategoriesController(
 {
     protected override Task<IActionResult> Handle()
     {
-        var categories = BuildCategories(configManager);
+        var categories = BuildCategories(Config);
         var response = new { categories };
         return Task.FromResult<IActionResult>(Ok(response));
     }
 
-    internal static List<string> BuildCategories(ConfigManager configManager)
+    internal static List<string> BuildCategories(ConfigManager Config)
     {
-        return configManager.GetApiCategories()
+        return Config.GetApiCategories()
             .Where(category => category != "*")
             .Prepend("*")
             .ToList();

@@ -15,7 +15,7 @@ public class GetStatusController(
         {
             Status = new SabStatusObject
             {
-                CompleteDir = SabPathResolver.GetCompletedDir(configManager),
+                CompleteDir = SabPathResolver.GetCompletedDir(Config),
             },
         };
         return Task.FromResult<IActionResult>(Ok(response));

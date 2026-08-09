@@ -8,6 +8,11 @@ namespace NzbWebDAV.WebDav.Base;
 
 public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager configManager) : BaseStoreReadonlyItem
 {
+    // Derived stream files must use these properties instead of capturing
+    // the primary-constructor parameters (CS9107 double-capture).
+    protected HttpContext Context => context;
+    protected ConfigManager Config => configManager;
+
     protected abstract Task<Stream> GetStreamAsync(CancellationToken cancellationToken);
 
     public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)

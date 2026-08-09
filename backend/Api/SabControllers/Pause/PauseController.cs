@@ -19,12 +19,12 @@ public class PauseController(
     public async Task<PauseResponse> Pause(CancellationToken ct)
     {
         await ConfigPersistenceUtil.SetValueAsync(
-            dbClient, configManager, ConfigKeys.QueuePaused, "true", ct).ConfigureAwait(false);
+            dbClient, Config, ConfigKeys.QueuePaused, "true", ct).ConfigureAwait(false);
         return new PauseResponse { Status = true };
     }
 
     protected override async Task<IActionResult> Handle()
     {
-        return Ok(await Pause(httpContext.RequestAborted).ConfigureAwait(false));
+        return Ok(await Pause(Context.RequestAborted).ConfigureAwait(false));
     }
 }

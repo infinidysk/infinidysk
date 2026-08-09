@@ -30,7 +30,7 @@ public class DatabaseStoreMultipartFile(
     protected override async Task<Stream> GetStreamAsync(CancellationToken ct)
     {
         // store the DavItem being accessed in the http context
-        httpContext.Items["DavItem"] = davMultipartFile;
+        Context.Items["DavItem"] = davMultipartFile;
 
         var id = davMultipartFile.Id;
         var multipartFile = await dbClient.GetDavMultipartFileAsync(davMultipartFile, ct).ConfigureAwait(false);
@@ -51,9 +51,9 @@ public class DatabaseStoreMultipartFile(
         var packedStream = new DavMultipartFileStream(
             multipartFile,
             usenetClient,
-            configManager.GetArticleBufferSize(),
+            Config.GetArticleBufferSize(),
             lazyRarResolver,
-            configManager.IsPipelinedBodyRequestsEnabled(),
+            Config.IsPipelinedBodyRequestsEnabled(),
             davMultipartFile.Path,
             inFlightArticleBudget
         );

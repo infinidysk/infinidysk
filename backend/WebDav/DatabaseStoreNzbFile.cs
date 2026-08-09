@@ -27,7 +27,7 @@ public class DatabaseStoreNzbFile(
     protected override async Task<Stream> GetStreamAsync(CancellationToken cancellationToken)
     {
         // store the DavItem being accessed in the http context
-        httpContext.Items["DavItem"] = davNzbFile;
+        Context.Items["DavItem"] = davNzbFile;
 
         var id = davNzbFile.Id;
         var file = await dbClient.GetDavNzbFileAsync(davNzbFile, cancellationToken).ConfigureAwait(false);
@@ -40,13 +40,13 @@ public class DatabaseStoreNzbFile(
         return usenetClient.GetFileStream(
             nzbFile.SegmentIds,
             FileSize,
-            configManager.GetArticleBufferSize(),
+            Config.GetArticleBufferSize(),
             nzbFile.SegmentByteRanges,
-            configManager.IsPipelinedBodyRequestsEnabled(),
+            Config.IsPipelinedBodyRequestsEnabled(),
             davNzbFile.Path,
             nzbFile.SegmentFallbackIds,
             inFlightArticleBudget,
-            useContainerAwareFill: configManager.IsContainerAwareFillEnabled()
+            useContainerAwareFill: Config.IsContainerAwareFillEnabled()
         );
     }
 }

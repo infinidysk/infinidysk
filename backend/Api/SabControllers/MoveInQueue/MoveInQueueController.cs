@@ -33,7 +33,7 @@ public class MoveInQueueController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = await MoveInQueueRequest.New(httpContext).ConfigureAwait(false);
+        var request = await MoveInQueueRequest.New(Context).ConfigureAwait(false);
         return Ok(await MoveInQueue(request).ConfigureAwait(false));
     }
 }

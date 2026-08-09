@@ -19,14 +19,14 @@ public class SpeedLimitController(
     public async Task<SpeedLimitResponse> SetSpeedLimit(SpeedLimitRequest request, CancellationToken ct)
     {
         await ConfigPersistenceUtil.SetValueAsync(
-            dbClient, configManager, ConfigKeys.QueueSpeedLimitKbps,
+            dbClient, Config, ConfigKeys.QueueSpeedLimitKbps,
             request.LimitKbps.ToString(), ct).ConfigureAwait(false);
         return new SpeedLimitResponse { Status = true };
     }
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = SpeedLimitRequest.New(httpContext);
-        return Ok(await SetSpeedLimit(request, httpContext.RequestAborted).ConfigureAwait(false));
+        var request = SpeedLimitRequest.New(Context);
+        return Ok(await SetSpeedLimit(request, Context.RequestAborted).ConfigureAwait(false));
     }
 }

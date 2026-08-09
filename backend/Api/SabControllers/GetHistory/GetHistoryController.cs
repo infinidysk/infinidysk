@@ -51,13 +51,13 @@ public class GetHistoryController(
         // get slots (in-memory provider counts only survive until app restart)
         var providerUsages = providerUsageTracker.SnapshotMany(historyItems.Select(x => x.Id));
         var displayByMetricsKey = ProviderUsageHelper
-            .BuildDisplayByMetricsKey(configManager.GetUsenetProviderConfig().Providers);
+            .BuildDisplayByMetricsKey(Config.GetUsenetProviderConfig().Providers);
         var slots = historyItems
             .Select(x =>
                 GetHistoryResponse.HistorySlot.FromHistoryItem(
                     x,
                     x.DownloadDirId != null ? davItemsDict.GetValueOrDefault(x.DownloadDirId.Value) : null,
-                    configManager,
+                    Config,
                     providerUsages.GetValueOrDefault(x.Id),
                     displayByMetricsKey
                 )
@@ -77,7 +77,7 @@ public class GetHistoryController(
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = new GetHistoryRequest(httpContext, configManager);
+        var request = new GetHistoryRequest(Context, Config);
         return Ok(await GetHistoryAsync(request).ConfigureAwait(false));
     }
 }
