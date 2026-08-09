@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using System.Reflection;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
@@ -1280,6 +1281,24 @@ public class UsenetClientDeterministicTests
         var (result, reason) = await completion.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.That(result, Is.EqualTo(ArticleBodyResult.Retrieved));
         Assert.That(reason, Is.Null);
+    }
+
+    [Test]
+    public void DescribeFailure_DirectSocketException_ReportsTheSocketErrorCode()
+    {
+        var reason = UsenetClient.DescribeFailure(
+            new SocketException((int)SocketError.ConnectionReset));
+
+        Assert.That(reason, Does.Contain(nameof(SocketError.ConnectionReset)));
+    }
+
+    [Test]
+    public void DescribeFailure_WrappedSocketException_ReportsTheSocketErrorCode()
+    {
+        var reason = UsenetClient.DescribeFailure(
+            new IOException("transport failure", new SocketException((int)SocketError.ConnectionReset)));
+
+        Assert.That(reason, Does.Contain(nameof(SocketError.ConnectionReset)));
     }
 
     [Test]

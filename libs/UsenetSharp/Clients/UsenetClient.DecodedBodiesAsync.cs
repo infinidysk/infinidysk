@@ -492,6 +492,12 @@ public partial class UsenetClient
     {
         if (failure == null) return null;
         var description = failure.GetType().Name;
+
+        // A direct SocketException (no wrapper) carries the socket error code on itself.
+        if (failure is System.Net.Sockets.SocketException directSocket)
+            return $"{description} ({directSocket.SocketErrorCode})";
+
+        // Otherwise look for a SocketException wrapped by an outer transport exception.
         for (var inner = failure.InnerException; inner != null; inner = inner.InnerException)
         {
             if (inner is System.Net.Sockets.SocketException socketException)
