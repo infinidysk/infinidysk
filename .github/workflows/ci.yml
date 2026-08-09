@@ -144,6 +144,12 @@ jobs:
           dotnet restore tests/SharpCompress.Tests/SharpCompress.Tests.csproj
           dotnet restore tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj
           dotnet restore tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj
+          dotnet restore backend.Benchmarks/NzbWebDAV.Benchmarks.csproj
+
+      # Benchmarks are first-party code under the warnings-as-errors gate but
+      # are not exercised by any test project; build them explicitly.
+      - name: Build benchmarks (warning gate)
+        run: dotnet build backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-restore
 
       - name: Verify NuGet vulnerability gate fixtures
         run: bash scripts/test-nuget-vulnerability-gate.sh
