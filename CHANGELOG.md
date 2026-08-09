@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.0.1](https://github.com/infinidysk/infinidysk/compare/v1.0.0...v1.0.1) (2026-08-09)
+
+
+### Features
+
+* **queue:** allow up to 10 concurrent queue downloads ([#879](https://github.com/infinidysk/infinidysk/issues/879)) ([46cf29d](https://github.com/infinidysk/infinidysk/commit/46cf29d9c6eb96a52bccf7074f5c341ec577dc83))
+
+
+### Bug Fixes
+
+* **build:** attach legacy nzbdav-named release archives for DUMB compat ([#877](https://github.com/infinidysk/infinidysk/issues/877)) ([b8c3ba0](https://github.com/infinidysk/infinidysk/commit/b8c3ba0ae31a8bfe5eec6fbeeba3e4dd2a9fc125))
+* **deps:** Bump the npm-minor-and-patch group ([#875](https://github.com/infinidysk/infinidysk/issues/875)) ([2e1ea34](https://github.com/infinidysk/infinidysk/commit/2e1ea34006a8b257950fcd6f5d0307402c5e41d1))
+* **streaming:** Article RAM no longer stays pinned at the cap after scrubbing ([#876](https://github.com/infinidysk/infinidysk/issues/876)) ([b2617d2](https://github.com/infinidysk/infinidysk/commit/b2617d2e26338cf9768adadc6663cddce7b707f3))
+* **ui:** normalize provider usage join keys to MetricsKey form ([#871](https://github.com/infinidysk/infinidysk/issues/871)) ([a45f622](https://github.com/infinidysk/infinidysk/commit/a45f622c3cd6fff0d0e9853af94a305c727cf953))
+* **usenet:** fetch errors now show their real cause instead of "Other (unclassified)" ([#878](https://github.com/infinidysk/infinidysk/issues/878)) ([45d27cf](https://github.com/infinidysk/infinidysk/commit/45d27cfda76728d445365bf160ed11f6b2dc1d98))
+
+
+### Chores
+
+* force patch release 1.0.1 ([#880](https://github.com/infinidysk/infinidysk/issues/880)) ([2b3b466](https://github.com/infinidysk/infinidysk/commit/2b3b466e3f7eadc83621a82bb1c3560f724483d1))
+
 ## [1.0.0](https://github.com/infinidysk/infinidysk/compare/v0.10.0...v1.0.0) (2026-08-07)
 
 
