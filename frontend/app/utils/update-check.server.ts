@@ -18,8 +18,7 @@ export {
 
 const GITHUB_LATEST_RELEASE_URL =
   "https://api.github.com/repos/infinidysk/infinidysk/releases/latest";
-const GITHUB_COMPARE_URL_PREFIX =
-  "https://api.github.com/repos/infinidysk/infinidysk/compare/";
+const GITHUB_COMPARE_URL_PREFIX = "https://api.github.com/repos/infinidysk/infinidysk/compare/";
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const FETCH_TIMEOUT_MS = 5_000;
 const RELEASES_FALLBACK_URL = "https://github.com/infinidysk/infinidysk/releases";
@@ -127,10 +126,7 @@ async function getCachedLatestRelease(): Promise<CachedRelease | null> {
  * up-to-date builds don't re-query on every page load. Returns null only for
  * transient failures (network errors, rate limiting, 5xx), which stay uncached.
  */
-async function fetchCompare(
-  sha: string,
-  trackRef: string,
-): Promise<CachedCompare | null> {
+async function fetchCompare(sha: string, trackRef: string): Promise<CachedCompare | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   const fallbackUrl = compareFallbackUrl(trackRef);

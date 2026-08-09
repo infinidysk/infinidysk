@@ -42,5 +42,8 @@ export function parseVersionParts(version: string): number[] | null {
   const normalized = version.trim().replace(/^v/i, "");
   const match = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:\.(\d+))?$/.exec(normalized);
   if (!match) return null;
-  return match.slice(1).filter((p) => p !== undefined).map((p) => Number(p));
+  return match
+    .slice(1)
+    .filter((p) => p !== undefined)
+    .map((p) => Number(p));
 }

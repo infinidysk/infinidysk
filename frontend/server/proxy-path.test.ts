@@ -12,12 +12,9 @@ describe("safeDecodePath", () => {
     expect(safeDecodePath("/%61pi/get-config")).toBe("/api/get-config");
   });
 
-  it.each(["/%zz", "/view%", "/%E0%A4%A"])(
-    "returns null for malformed path %s",
-    (path) => {
-      expect(safeDecodePath(path)).toBeNull();
-    },
-  );
+  it.each(["/%zz", "/view%", "/%E0%A4%A"])("returns null for malformed path %s", (path) => {
+    expect(safeDecodePath(path)).toBeNull();
+  });
 });
 
 describe("matchesBackendPathPrefix", () => {
@@ -81,12 +78,9 @@ describe("shouldProxyToBackend", () => {
     expect(shouldProxyToBackend("GET", "/%61pi/get-config")).toBe(true);
   });
 
-  it.each(["/%zz", "/view%"])(
-    "does not proxy malformed path %s",
-    (path) => {
-      expect(shouldProxyToBackend("GET", path)).toBe(false);
-    },
-  );
+  it.each(["/%zz", "/view%"])("does not proxy malformed path %s", (path) => {
+    expect(shouldProxyToBackend("GET", path)).toBe(false);
+  });
 
   it.each(["/apifoo", "/viewport.css", "/contents-page"])(
     "does not proxy bare-prefix false positive %s",

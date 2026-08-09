@@ -37,10 +37,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     return { useLayout: false, serviceProvider: null };
   }
 
-  const config = await backendClient.getConfig([
-    "usenet.providers",
-    "play.watchdog-enabled",
-  ]);
+  const config = await backendClient.getConfig(["usenet.providers", "play.watchdog-enabled"]);
 
   const version = await getAppVersion();
   const sessionUser = await getSessionUser(request);
@@ -57,10 +54,12 @@ export async function loader({ request }: Route.LoaderArgs) {
     role: sessionUser?.role ?? null,
     isOidcEnabled: isOidcEnabled(),
     hasUsenetProviders: hasConfiguredUsenetProviders(
-      config.find(item => item.configName === "usenet.providers")?.configValue
+      config.find((item) => item.configName === "usenet.providers")?.configValue,
     ),
     isWatchdogEnabled:
-      config.find(item => item.configName === "play.watchdog-enabled")?.configValue?.toLowerCase() !== "false",
+      config
+        .find((item) => item.configName === "play.watchdog-enabled")
+        ?.configValue?.toLowerCase() !== "false",
     serviceProvider,
   };
 }
@@ -88,11 +87,9 @@ export function shouldRevalidate({
   }
   if (formMethod && formMethod !== "GET") {
     const fromSettingsOrOnboarding =
-      currentUrl.pathname.startsWith("/settings")
-      || currentUrl.pathname.startsWith("/onboarding");
+      currentUrl.pathname.startsWith("/settings") || currentUrl.pathname.startsWith("/onboarding");
     const toSettingsOrOnboarding =
-      nextUrl.pathname.startsWith("/settings")
-      || nextUrl.pathname.startsWith("/onboarding");
+      nextUrl.pathname.startsWith("/settings") || nextUrl.pathname.startsWith("/onboarding");
     return fromSettingsOrOnboarding || toSettingsOrOnboarding;
   }
   return defaultShouldRevalidate;
@@ -103,16 +100,17 @@ function hasConfiguredUsenetProviders(configValue?: string): boolean {
 
   try {
     const config: unknown = JSON.parse(configValue);
-    return typeof config === "object"
-      && config !== null
-      && "Providers" in config
-      && Array.isArray(config.Providers)
-      && config.Providers.length > 0;
+    return (
+      typeof config === "object" &&
+      config !== null &&
+      "Providers" in config &&
+      Array.isArray(config.Providers) &&
+      config.Providers.length > 0
+    );
   } catch {
     return false;
   }
 }
-
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
@@ -165,8 +163,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
   const isCurrentExplorePage = location.pathname.startsWith("/explore");
   const isNextExplorePage = navigation.location?.pathname?.startsWith("/explore");
   const showLoading = isNavigating && !(isCurrentExplorePage && isNextExplorePage);
-  const hideShell =
-    location.pathname === "/login" || location.pathname === "/onboarding";
+  const hideShell = location.pathname === "/login" || location.pathname === "/onboarding";
   const outlet = <Outlet context={{ role, isOidcEnabled, serviceProvider }} />;
 
   if (useLayout && !hideShell) {
@@ -184,7 +181,9 @@ export default function App({ loaderData }: Route.ComponentProps) {
         )}
         bodyChild={
           <ServiceProviderGate serviceProvider={serviceProvider}>
-            {showLoading ? <Loading /> : (
+            {showLoading ? (
+              <Loading />
+            ) : (
               <>
                 <div className="px-4 pt-4 md:px-8">
                   <LegacyImageBanner isLegacyImage={isLegacyImage ?? false} />
@@ -196,10 +195,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
           </ServiceProviderGate>
         }
         leftNavChild={
-          <LeftNavigation
-            isWatchdogEnabled={isWatchdogEnabled}
-            serviceProvider={serviceProvider}
-          />
+          <LeftNavigation isWatchdogEnabled={isWatchdogEnabled} serviceProvider={serviceProvider} />
         }
         serviceProvider={serviceProvider}
       />
@@ -219,13 +215,11 @@ export function ErrorBoundary() {
   // Match by name — do not import BackendUnavailableError here; ErrorBoundary is a
   // client export and .server modules must only be referenced from loader/action.
   const isBackendUnavailable =
-    (error instanceof Error && error.name === "BackendUnavailableError")
-    || (
-      error instanceof Error
-      && /fetch failed|ConnectTimeoutError|HeadersTimeoutError|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT/i.test(
+    (error instanceof Error && error.name === "BackendUnavailableError") ||
+    (error instanceof Error &&
+      /fetch failed|ConnectTimeoutError|HeadersTimeoutError|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT/i.test(
         `${error.message} ${(error.cause as Error)?.message ?? ""}`,
-      )
-    );
+      ));
 
   let title = "Something went wrong";
   let detail: string;

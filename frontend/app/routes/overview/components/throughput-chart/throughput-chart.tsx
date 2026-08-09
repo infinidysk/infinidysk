@@ -4,14 +4,14 @@ import type { OverviewWindow, ThroughputPoint } from "~/clients/backend-client.s
 import { formatBytes, formatNumber } from "../../utils/format";
 
 export type ThroughputChartProps = {
-    points: ThroughputPoint[],
-    totalArticles: number,
-    totalMisses: number,
-    totalErrors: number,
-    totalBytesServed: number,
-    bucketSizeMs: number,
-    window: OverviewWindow,
-}
+  points: ThroughputPoint[];
+  totalArticles: number;
+  totalMisses: number;
+  totalErrors: number;
+  totalBytesServed: number;
+  bucketSizeMs: number;
+  window: OverviewWindow;
+};
 
 const VB_W = 800;
 const VB_H = 160;
@@ -19,218 +19,262 @@ const TOP_PAD = 6;
 const BOT_PAD = 4;
 
 export function ThroughputChart({
-    points,
-    totalArticles,
-    totalMisses,
-    totalErrors,
-    totalBytesServed,
-    bucketSizeMs,
-    window,
+  points,
+  totalArticles,
+  totalMisses,
+  totalErrors,
+  totalBytesServed,
+  bucketSizeMs,
+  window,
 }: ThroughputChartProps) {
-    const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-    const bucketSeconds = Math.max(1, (bucketSizeMs || 60_000) / 1000);
+  const bucketSeconds = Math.max(1, (bucketSizeMs || 60_000) / 1000);
 
-    const { articlesPath, errorsPath, maxArticles, maxNetworkRate, xPercent, yPercent } = useMemo(() => {
-        if (points.length === 0) {
-            return {
-                articlesPath: "",
-                errorsPath: "",
-                maxArticles: 0,
-                maxNetworkRate: 0,
-                xPercent: (_: number) => 0,
-                yPercent: (_: number) => 0,
-            };
-        }
-        const peakArticles = Math.max(0, ...points.map(p => p.articles));
-        const scaleMax = Math.max(1, peakArticles);
-        const maxRate = Math.max(0, ...points.map(p => (p.bytesFetched ?? 0) / bucketSeconds));
-        const xStep = points.length > 1 ? VB_W / (points.length - 1) : 0;
-        const innerH = VB_H - TOP_PAD - BOT_PAD;
-        const y = (v: number) => VB_H - BOT_PAD - (v / scaleMax) * innerH;
-
-        const xPct = (i: number) => points.length > 1 ? (i / (points.length - 1)) * 100 : 50;
-        const yPct = (v: number) => 100 - ((v / scaleMax) * (1 - (TOP_PAD + BOT_PAD) / VB_H) * 100 + (BOT_PAD / VB_H) * 100);
-
+  const { articlesPath, errorsPath, maxArticles, maxNetworkRate, xPercent, yPercent } =
+    useMemo(() => {
+      if (points.length === 0) {
         return {
-            articlesPath: buildArticlesSeriesPath(points, xStep, y),
-            errorsPath: buildSparseSeriesPath(points, p => p.errors, xStep, y),
-            maxArticles: peakArticles,
-            maxNetworkRate: maxRate,
-            xPercent: xPct,
-            yPercent: yPct,
+          articlesPath: "",
+          errorsPath: "",
+          maxArticles: 0,
+          maxNetworkRate: 0,
+          xPercent: (_: number) => 0,
+          yPercent: (_: number) => 0,
         };
+      }
+      const peakArticles = Math.max(0, ...points.map((p) => p.articles));
+      const scaleMax = Math.max(1, peakArticles);
+      const maxRate = Math.max(0, ...points.map((p) => (p.bytesFetched ?? 0) / bucketSeconds));
+      const xStep = points.length > 1 ? VB_W / (points.length - 1) : 0;
+      const innerH = VB_H - TOP_PAD - BOT_PAD;
+      const y = (v: number) => VB_H - BOT_PAD - (v / scaleMax) * innerH;
+
+      const xPct = (i: number) => (points.length > 1 ? (i / (points.length - 1)) * 100 : 50);
+      const yPct = (v: number) =>
+        100 - ((v / scaleMax) * (1 - (TOP_PAD + BOT_PAD) / VB_H) * 100 + (BOT_PAD / VB_H) * 100);
+
+      return {
+        articlesPath: buildArticlesSeriesPath(points, xStep, y),
+        errorsPath: buildSparseSeriesPath(points, (p) => p.errors, xStep, y),
+        maxArticles: peakArticles,
+        maxNetworkRate: maxRate,
+        xPercent: xPct,
+        yPercent: yPct,
+      };
     }, [points, bucketSeconds]);
 
-    const xTicks = useMemo(() => {
-        const first = points[0];
-        if (!first) return [];
-        const count = Math.min(5, points.length);
-        if (count < 2) return [{ idx: 0, label: formatBucketTime(first.bucket, window) }];
-        const ticks: { idx: number, label: string }[] = [];
-        for (let i = 0; i < count; i++) {
-            const idx = Math.round((points.length - 1) * (i / (count - 1)));
-            const point = points[idx];
-            if (point) ticks.push({ idx, label: formatBucketTime(point.bucket, window) });
-        }
-        return ticks;
-    }, [points, window]);
+  const xTicks = useMemo(() => {
+    const first = points[0];
+    if (!first) return [];
+    const count = Math.min(5, points.length);
+    if (count < 2) return [{ idx: 0, label: formatBucketTime(first.bucket, window) }];
+    const ticks: { idx: number; label: string }[] = [];
+    for (let i = 0; i < count; i++) {
+      const idx = Math.round((points.length - 1) * (i / (count - 1)));
+      const point = points[idx];
+      if (point) ticks.push({ idx, label: formatBucketTime(point.bucket, window) });
+    }
+    return ticks;
+  }, [points, window]);
 
-    const onMove = useCallback((clientX: number, target: HTMLElement) => {
-        if (points.length === 0) return;
-        const rect = target.getBoundingClientRect();
-        const rel = (clientX - rect.left) / rect.width;
-        const idx = Math.round(rel * (points.length - 1));
-        setHoverIdx(Math.max(0, Math.min(points.length - 1, idx)));
-    }, [points.length]);
+  const onMove = useCallback(
+    (clientX: number, target: HTMLElement) => {
+      if (points.length === 0) return;
+      const rect = target.getBoundingClientRect();
+      const rel = (clientX - rect.left) / rect.width;
+      const idx = Math.round(rel * (points.length - 1));
+      setHoverIdx(Math.max(0, Math.min(points.length - 1, idx)));
+    },
+    [points.length],
+  );
 
-    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => onMove(e.clientX, e.currentTarget);
-    const handleMouseLeave = () => setHoverIdx(null);
-    const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-        const t = e.touches[0];
-        if (t) onMove(t.clientX, e.currentTarget);
-    };
-    const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-        const t = e.touches[0];
-        if (t) onMove(t.clientX, e.currentTarget);
-    };
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) =>
+    onMove(e.clientX, e.currentTarget);
+  const handleMouseLeave = () => setHoverIdx(null);
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    const t = e.touches[0];
+    if (t) onMove(t.clientX, e.currentTarget);
+  };
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const t = e.touches[0];
+    if (t) onMove(t.clientX, e.currentTarget);
+  };
 
-    const hasData = points.length > 0;
-    const hasArticleActivity = maxArticles > 0;
-    const bucketLabel = window === "1h" || window === "24h" ? "min" : (window === "all" ? "day" : "hour");
-    const hover = hoverIdx !== null ? points[hoverIdx] : null;
-    const hoverNetworkRate = hover ? (hover.bytesFetched ?? 0) / bucketSeconds : 0;
-    const tooltipPlacement = hoverIdx === null || points.length < 2
-        ? "tooltip-top"
-        : (() => {
-            const rel = hoverIdx / (points.length - 1);
-            if (rel < 0.2) return "tooltip-right";
-            if (rel > 0.8) return "tooltip-left";
-            return "tooltip-top";
+  const hasData = points.length > 0;
+  const hasArticleActivity = maxArticles > 0;
+  const bucketLabel =
+    window === "1h" || window === "24h" ? "min" : window === "all" ? "day" : "hour";
+  const hover = hoverIdx !== null ? points[hoverIdx] : null;
+  const hoverNetworkRate = hover ? (hover.bytesFetched ?? 0) / bucketSeconds : 0;
+  const tooltipPlacement =
+    hoverIdx === null || points.length < 2
+      ? "tooltip-top"
+      : (() => {
+          const rel = hoverIdx / (points.length - 1);
+          if (rel < 0.2) return "tooltip-right";
+          if (rel > 0.8) return "tooltip-left";
+          return "tooltip-top";
         })();
 
-    return (
-        <section className="card w-full min-w-0 overflow-visible border border-base-content/10 bg-base-100 shadow-sm">
-            <div className="card-body gap-3 overflow-visible p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                    <h3 className="card-title text-base">Activity</h3>
-                    <p className="text-xs text-base-content/50">Articles fetched per {bucketLabel}, last {window}</p>
-                </div>
-                <div className="flex gap-[18px]">
-                    <Total label="Articles" value={formatNumber(totalArticles)} />
-                    <Total label="Misses" value={formatNumber(totalMisses)} />
-                    <Total label="Errors" value={formatNumber(totalErrors)} accent={totalErrors > 0 ? "danger" : undefined} />
-                    <Total label="Served" value={formatBytes(totalBytesServed)} />
-                </div>
+  return (
+    <section className="card w-full min-w-0 overflow-visible border border-base-content/10 bg-base-100 shadow-sm">
+      <div className="card-body gap-3 overflow-visible p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="card-title text-base">Activity</h3>
+            <p className="text-xs text-base-content/50">
+              Articles fetched per {bucketLabel}, last {window}
+            </p>
+          </div>
+          <div className="flex gap-[18px]">
+            <Total label="Articles" value={formatNumber(totalArticles)} />
+            <Total label="Misses" value={formatNumber(totalMisses)} />
+            <Total
+              label="Errors"
+              value={formatNumber(totalErrors)}
+              accent={totalErrors > 0 ? "danger" : undefined}
+            />
+            <Total label="Served" value={formatBytes(totalBytesServed)} />
+          </div>
+        </div>
+
+        {hasData ? (
+          <>
+            <div className={styles.plot}>
+              <div className="flex h-40 w-9 shrink-0 flex-col items-end justify-between text-[10px] text-base-content/50 tabular-nums select-none">
+                <span>{formatNumber(maxArticles)}</span>
+                <span>{formatNumber(Math.round(maxArticles / 2))}</span>
+                <span>0</span>
+              </div>
+              <div
+                className={styles.chartArea}
+                onMouseMove={handleMouseMove}
+                onMouseLeave={handleMouseLeave}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+              >
+                <svg
+                  viewBox={`0 0 ${VB_W} ${VB_H}`}
+                  preserveAspectRatio="none"
+                  className={styles.svg}
+                >
+                  {/* faint gridlines */}
+                  <line
+                    x1="0"
+                    y1={(VB_H - BOT_PAD).toFixed(1)}
+                    x2={VB_W}
+                    y2={(VB_H - BOT_PAD).toFixed(1)}
+                    className={styles.gridline}
+                  />
+                  <line
+                    x1="0"
+                    y1={(VB_H / 2).toFixed(1)}
+                    x2={VB_W}
+                    y2={(VB_H / 2).toFixed(1)}
+                    className={styles.gridline}
+                  />
+                  <line
+                    x1="0"
+                    y1={TOP_PAD.toFixed(1)}
+                    x2={VB_W}
+                    y2={TOP_PAD.toFixed(1)}
+                    className={styles.gridline}
+                  />
+                  {hasArticleActivity && (
+                    <path d={articlesPath} className={styles.lineArticles} data-series="articles" />
+                  )}
+                  {totalErrors > 0 && errorsPath && (
+                    <path d={errorsPath} className={styles.lineErrors} data-series="errors" />
+                  )}
+                </svg>
+
+                {hover && hoverIdx !== null && (
+                  <>
+                    <div className={styles.crosshair} style={{ left: `${xPercent(hoverIdx)}%` }} />
+                    <div
+                      className={`tooltip tooltip-open ${tooltipPlacement} ${styles.hoverTooltip}`}
+                      style={{
+                        left: `${xPercent(hoverIdx)}%`,
+                        top: `${yPercent(hover.articles)}%`,
+                      }}
+                    >
+                      <div className="tooltip-content">
+                        <div className="space-y-0.5 text-left font-mono text-xs">
+                          <div className="font-semibold">
+                            {formatBucketTime(hover.bucket, window)}
+                          </div>
+                          <div>{formatNumber(hover.articles)} articles</div>
+                          {hoverNetworkRate > 0 && (
+                            <div>{formatBytes(hoverNetworkRate)}/s downloaded</div>
+                          )}
+                          {(hover.misses ?? 0) > 0 && (
+                            <div>{formatNumber(hover.misses)} misses</div>
+                          )}
+                          {hover.errors > 0 && (
+                            <div className="text-error">{formatNumber(hover.errors)} errors</div>
+                          )}
+                          {hover.bytesServed > 0 && (
+                            <div>{formatBytes(hover.bytesServed)} served</div>
+                          )}
+                        </div>
+                      </div>
+                      <span className={styles.hoverDotAnchor} />
+                    </div>
+                    {totalErrors > 0 && hover.errors > 0 && (
+                      <div
+                        className={`${styles.hoverDot} ${styles.hoverDotErr}`}
+                        style={{
+                          left: `${xPercent(hoverIdx)}%`,
+                          top: `${yPercent(hover.errors)}%`,
+                        }}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
             </div>
 
-            {hasData ? (
-                <>
-                    <div className={styles.plot}>
-                        <div className="flex h-40 w-9 shrink-0 flex-col items-end justify-between text-[10px] text-base-content/50 tabular-nums select-none">
-                            <span>{formatNumber(maxArticles)}</span>
-                            <span>{formatNumber(Math.round(maxArticles / 2))}</span>
-                            <span>0</span>
-                        </div>
-                        <div
-                            className={styles.chartArea}
-                            onMouseMove={handleMouseMove}
-                            onMouseLeave={handleMouseLeave}
-                            onTouchStart={handleTouchStart}
-                            onTouchMove={handleTouchMove}
-                        >
-                            <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="none" className={styles.svg}>
-                                {/* faint gridlines */}
-                                <line x1="0" y1={(VB_H - BOT_PAD).toFixed(1)} x2={VB_W} y2={(VB_H - BOT_PAD).toFixed(1)} className={styles.gridline} />
-                                <line x1="0" y1={(VB_H / 2).toFixed(1)} x2={VB_W} y2={(VB_H / 2).toFixed(1)} className={styles.gridline} />
-                                <line x1="0" y1={TOP_PAD.toFixed(1)} x2={VB_W} y2={TOP_PAD.toFixed(1)} className={styles.gridline} />
-                                {hasArticleActivity && <path d={articlesPath} className={styles.lineArticles} data-series="articles" />}
-                                {totalErrors > 0 && errorsPath && <path d={errorsPath} className={styles.lineErrors} data-series="errors" />}
-                            </svg>
-
-                            {hover && hoverIdx !== null && (
-                                <>
-                                    <div className={styles.crosshair} style={{ left: `${xPercent(hoverIdx)}%` }} />
-                                    <div
-                                        className={`tooltip tooltip-open ${tooltipPlacement} ${styles.hoverTooltip}`}
-                                        style={{
-                                            left: `${xPercent(hoverIdx)}%`,
-                                            top: `${yPercent(hover.articles)}%`,
-                                        }}
-                                    >
-                                        <div className="tooltip-content">
-                                            <div className="space-y-0.5 text-left font-mono text-xs">
-                                                <div className="font-semibold">{formatBucketTime(hover.bucket, window)}</div>
-                                                <div>{formatNumber(hover.articles)} articles</div>
-                                                {hoverNetworkRate > 0 && (
-                                                    <div>{formatBytes(hoverNetworkRate)}/s downloaded</div>
-                                                )}
-                                                {(hover.misses ?? 0) > 0 && <div>{formatNumber(hover.misses)} misses</div>}
-                                                {hover.errors > 0 && (
-                                                    <div className="text-error">{formatNumber(hover.errors)} errors</div>
-                                                )}
-                                                {hover.bytesServed > 0 && (
-                                                    <div>{formatBytes(hover.bytesServed)} served</div>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <span className={styles.hoverDotAnchor} />
-                                    </div>
-                                    {totalErrors > 0 && hover.errors > 0 && (
-                                        <div
-                                            className={`${styles.hoverDot} ${styles.hoverDotErr}`}
-                                            style={{
-                                                left: `${xPercent(hoverIdx)}%`,
-                                                top: `${yPercent(hover.errors)}%`,
-                                            }}
-                                        />
-                                    )}
-                                </>
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="relative mt-1.5 ml-[46px] h-4 text-[10px] text-base-content/50 tabular-nums select-none">
-                        {xTicks.map(t => (
-                            <span
-                                key={t.idx}
-                                className="absolute top-0 -translate-x-1/2 whitespace-nowrap"
-                                style={{ left: `${xPercent(t.idx)}%` }}
-                            >
-                                {t.label}
-                            </span>
-                        ))}
-                    </div>
-
-                    <div className="mt-2 flex flex-wrap items-center gap-3.5 text-[11px] text-base-content/50">
-                        <span className="inline-flex items-center gap-1.5">
-                            <span className="inline-block h-0.5 w-2.5 bg-success" />
-                            Articles
-                            {maxNetworkRate > 0 && (
-                                <> · peak {formatBytes(maxNetworkRate)}/s</>
-                            )}
-                        </span>
-                        {totalErrors > 0 && (
-                            <span className="inline-flex items-center gap-1.5">
-                                <span className="inline-block h-0.5 w-2.5 bg-error" />
-                                Errors
-                            </span>
-                        )}
-                        <span className="ml-auto tabular-nums">
-                            Peak {formatNumber(maxArticles)} / {bucketLabel} · hover for details
-                        </span>
-                    </div>
-                </>
-            ) : (
-                <div className="py-12 text-center text-[13px] text-base-content/50">
-                    No activity in this window yet.
-                    <div className="mt-1.5 text-[11px] text-base-content/40">Articles you fetch will appear here.</div>
-                </div>
-            )}
+            <div className="relative mt-1.5 ml-[46px] h-4 text-[10px] text-base-content/50 tabular-nums select-none">
+              {xTicks.map((t) => (
+                <span
+                  key={t.idx}
+                  className="absolute top-0 -translate-x-1/2 whitespace-nowrap"
+                  style={{ left: `${xPercent(t.idx)}%` }}
+                >
+                  {t.label}
+                </span>
+              ))}
             </div>
-        </section>
-    );
+
+            <div className="mt-2 flex flex-wrap items-center gap-3.5 text-[11px] text-base-content/50">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-0.5 w-2.5 bg-success" />
+                Articles
+                {maxNetworkRate > 0 && <> · peak {formatBytes(maxNetworkRate)}/s</>}
+              </span>
+              {totalErrors > 0 && (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-0.5 w-2.5 bg-error" />
+                  Errors
+                </span>
+              )}
+              <span className="ml-auto tabular-nums">
+                Peak {formatNumber(maxArticles)} / {bucketLabel} · hover for details
+              </span>
+            </div>
+          </>
+        ) : (
+          <div className="py-12 text-center text-[13px] text-base-content/50">
+            No activity in this window yet.
+            <div className="mt-1.5 text-[11px] text-base-content/40">
+              Articles you fetch will appear here.
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 /**
@@ -239,98 +283,114 @@ export function ThroughputChart({
  * between runs stay undrawn (no continuous zero baseline).
  */
 function buildArticlesSeriesPath(
-    points: ThroughputPoint[],
-    xStep: number,
-    y: (v: number) => number,
+  points: ThroughputPoint[],
+  xStep: number,
+  y: (v: number) => number,
 ): string {
-    const parts: string[] = [];
-    const articlesAt = (idx: number) => points[idx]?.articles ?? 0;
-    let i = 0;
-    while (i < points.length) {
-        if (articlesAt(i) <= 0) {
-            i++;
-            continue;
-        }
-        const runStart = i;
-        while (i < points.length && articlesAt(i) > 0) i++;
-        const runEnd = i - 1;
-        const from = runStart > 0 ? runStart - 1 : runStart;
-        const to = runEnd < points.length - 1 ? runEnd + 1 : runEnd;
-
-        for (let j = from; j <= to; j++) {
-            const x = (j * xStep).toFixed(1);
-            const yy = y(articlesAt(j)).toFixed(1);
-            parts.push(`${j === from ? "M" : "L"}${x},${yy}`);
-        }
-        // Edge-of-window isolated spike with no adjacent zero needs a tiny stroke.
-        if (from === to) {
-            const x2 = (from * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
-            const yy = y(articlesAt(from)).toFixed(1);
-            parts.push(`L${x2},${yy}`);
-        }
+  const parts: string[] = [];
+  const articlesAt = (idx: number) => points[idx]?.articles ?? 0;
+  let i = 0;
+  while (i < points.length) {
+    if (articlesAt(i) <= 0) {
+      i++;
+      continue;
     }
-    return parts.join(" ");
+    const runStart = i;
+    while (i < points.length && articlesAt(i) > 0) i++;
+    const runEnd = i - 1;
+    const from = runStart > 0 ? runStart - 1 : runStart;
+    const to = runEnd < points.length - 1 ? runEnd + 1 : runEnd;
+
+    for (let j = from; j <= to; j++) {
+      const x = (j * xStep).toFixed(1);
+      const yy = y(articlesAt(j)).toFixed(1);
+      parts.push(`${j === from ? "M" : "L"}${x},${yy}`);
+    }
+    // Edge-of-window isolated spike with no adjacent zero needs a tiny stroke.
+    if (from === to) {
+      const x2 = (from * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
+      const yy = y(articlesAt(from)).toFixed(1);
+      parts.push(`L${x2},${yy}`);
+    }
+  }
+  return parts.join(" ");
 }
 
 /** Sparse errors path: skip y=0 so red does not cover the green baseline. */
 function buildSparseSeriesPath(
-    points: ThroughputPoint[],
-    getValue: (p: ThroughputPoint) => number,
-    xStep: number,
-    y: (v: number) => number,
+  points: ThroughputPoint[],
+  getValue: (p: ThroughputPoint) => number,
+  xStep: number,
+  y: (v: number) => number,
 ): string {
-    const parts: string[] = [];
-    let inSegment = false;
-    for (let i = 0; i < points.length; i++) {
-        const point = points[i];
-        if (!point) continue;
-        const value = getValue(point);
-        const x = (i * xStep).toFixed(1);
-        const yy = y(value).toFixed(1);
-        if (value > 0) {
-            if (!inSegment) {
-                parts.push(`M${x},${yy}`);
-                inSegment = true;
-                // Isolated spikes need a tiny stroke segment to be visible.
-                const next = points[i + 1];
-                const nextZero = !next || getValue(next) === 0;
-                if (nextZero) {
-                    const x2 = (i * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
-                    parts.push(`L${x2},${yy}`);
-                }
-            } else {
-                parts.push(`L${x},${yy}`);
-            }
-        } else {
-            inSegment = false;
+  const parts: string[] = [];
+  let inSegment = false;
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i];
+    if (!point) continue;
+    const value = getValue(point);
+    const x = (i * xStep).toFixed(1);
+    const yy = y(value).toFixed(1);
+    if (value > 0) {
+      if (!inSegment) {
+        parts.push(`M${x},${yy}`);
+        inSegment = true;
+        // Isolated spikes need a tiny stroke segment to be visible.
+        const next = points[i + 1];
+        const nextZero = !next || getValue(next) === 0;
+        if (nextZero) {
+          const x2 = (i * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
+          parts.push(`L${x2},${yy}`);
         }
+      } else {
+        parts.push(`L${x},${yy}`);
+      }
+    } else {
+      inSegment = false;
     }
-    return parts.join(" ");
+  }
+  return parts.join(" ");
 }
 
-function Total({ label, value, accent }: { label: string, value: string, accent?: "danger" | undefined }) {
-    return (
-        <div className="text-right">
-            <div className="text-[10px] font-medium tracking-wide text-base-content/50 uppercase">{label}</div>
-            <div className={`text-lg font-semibold tracking-tight tabular-nums ${accent === "danger" ? "text-error" : "text-base-content"}`}>{value}</div>
-        </div>
-    );
+function Total({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: "danger" | undefined;
+}) {
+  return (
+    <div className="text-right">
+      <div className="text-[10px] font-medium tracking-wide text-base-content/50 uppercase">
+        {label}
+      </div>
+      <div
+        className={`text-lg font-semibold tracking-tight tabular-nums ${accent === "danger" ? "text-error" : "text-base-content"}`}
+      >
+        {value}
+      </div>
+    </div>
+  );
 }
 
 function formatBucketTime(ms: number, window: OverviewWindow): string {
-    const d = new Date(ms);
-    if (window === "1h" || window === "24h") {
-        const hh = String(d.getHours()).padStart(2, "0");
-        const mm = String(d.getMinutes()).padStart(2, "0");
-        return `${hh}:${mm}`;
-    }
-    if (window === "7d") {
-        const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()];
-        const hh = String(d.getHours()).padStart(2, "0");
-        return `${day} ${hh}:00`;
-    }
-    // 30d and all-time: show day-month so the x-axis spans many days clearly.
-    const day = String(d.getDate()).padStart(2, "0");
-    const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()];
-    return `${day} ${mon}`;
+  const d = new Date(ms);
+  if (window === "1h" || window === "24h") {
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+  if (window === "7d") {
+    const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()];
+    const hh = String(d.getHours()).padStart(2, "0");
+    return `${day} ${hh}:00`;
+  }
+  // 30d and all-time: show day-month so the x-axis spans many days clearly.
+  const day = String(d.getDate()).padStart(2, "0");
+  const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
+    d.getMonth()
+  ];
+  return `${day} ${mon}`;
 }

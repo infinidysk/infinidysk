@@ -2,10 +2,7 @@ import http from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createProxyMiddleware } from "http-proxy-middleware";
-import {
-  backendProxyTimeoutOptions,
-  LONG_RUNNING_PROXY_TIMEOUT_MS,
-} from "./backend-proxy-options";
+import { backendProxyTimeoutOptions, LONG_RUNNING_PROXY_TIMEOUT_MS } from "./backend-proxy-options";
 
 function listen(server: http.Server): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -30,11 +27,7 @@ function close(server: http.Server): Promise<void> {
   });
 }
 
-function requestOnce(
-  port: number,
-  agent: http.Agent,
-  path: string,
-): Promise<number> {
+function requestOnce(port: number, agent: http.Agent, path: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -58,9 +51,7 @@ function requestOnce(
 describe("backendProxyTimeoutOptions", () => {
   it("omits httpxy inbound timeout to avoid keep-alive listener leaks", () => {
     expect("timeout" in backendProxyTimeoutOptions).toBe(false);
-    expect(backendProxyTimeoutOptions.proxyTimeout).toBe(
-      LONG_RUNNING_PROXY_TIMEOUT_MS,
-    );
+    expect(backendProxyTimeoutOptions.proxyTimeout).toBe(LONG_RUNNING_PROXY_TIMEOUT_MS);
   });
 });
 

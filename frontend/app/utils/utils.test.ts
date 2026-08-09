@@ -73,13 +73,15 @@ describe("getLeafDirectoryName", () => {
 
 describe("getExploreContentLink", () => {
   it("builds an explore content URL", () => {
-    expect(getExploreContentLink("/completed/movies/Alien", "movies"))
-      .toBe("/explore/content/movies/Alien");
+    expect(getExploreContentLink("/completed/movies/Alien", "movies")).toBe(
+      "/explore/content/movies/Alien",
+    );
   });
 
   it("encodes category and folder segments", () => {
-    expect(getExploreContentLink("/completed/tv shows/Show Name", "tv shows"))
-      .toBe("/explore/content/tv%20shows/Show%20Name");
+    expect(getExploreContentLink("/completed/tv shows/Show Name", "tv shows")).toBe(
+      "/explore/content/tv%20shows/Show%20Name",
+    );
   });
 
   it("returns null when storage or category is missing", () => {
@@ -104,7 +106,9 @@ describe("getExploreBreadcrumbHref", () => {
     const directories = ["content", "My#1 Hits", "100%", "A?B", "tv shows", "日本語"];
     const href = getExploreBreadcrumbHref(directories, directories.length - 1);
 
-    expect(href).toBe("/explore/content/My%231%20Hits/100%25/A%3FB/tv%20shows/%E6%97%A5%E6%9C%AC%E8%AA%9E");
+    expect(href).toBe(
+      "/explore/content/My%231%20Hits/100%25/A%3FB/tv%20shows/%E6%97%A5%E6%9C%AC%E8%AA%9E",
+    );
     expect(parseExploreWebdavPath(href.slice("/explore/".length))).toEqual({
       ok: true,
       path: directories.join("/"),
@@ -144,13 +148,7 @@ describe("secret masking", () => {
 });
 
 describe("class name helpers", () => {
-  const values: (string | false | null | undefined)[] = [
-    "card",
-    false,
-    null,
-    undefined,
-    "active",
-  ];
+  const values: (string | false | null | undefined)[] = ["card", false, null, undefined, "active"];
 
   it("joins truthy class names", () => {
     expect(classNames(values)).toBe("card active");

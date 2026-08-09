@@ -1,40 +1,49 @@
 .livePulse {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--color-success);
-    animation: livePulse 1.6s ease-in-out infinite;
-    flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-success);
+  animation: livePulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
 }
 
 @keyframes livePulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 .progressIndeterminateWrap {
-    position: relative;
-    height: 4px;
-    background: color-mix(in srgb, var(--color-base-content) 8%, transparent);
-    border-radius: 4px;
-    overflow: hidden;
+  position: relative;
+  height: 4px;
+  background: color-mix(in srgb, var(--color-base-content) 8%, transparent);
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .progressIndeterminate {
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(
-        90deg,
-        transparent,
-        color-mix(in srgb, var(--color-success) 70%, transparent),
-        transparent
-    );
-    background-size: 50% 100%;
-    background-repeat: no-repeat;
-    animation: liveIndet 1.6s linear infinite;
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-success) 70%, transparent),
+    transparent
+  );
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: liveIndet 1.6s linear infinite;
 }
 
 @keyframes liveIndet {
-    0% { background-position: -50% 0; }
-    100% { background-position: 150% 0; }
+  0% {
+    background-position: -50% 0;
+  }
+  100% {
+    background-position: 150% 0;
+  }
 }

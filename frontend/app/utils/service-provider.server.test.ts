@@ -10,10 +10,7 @@ vi.mock("../../server/logger", () => ({
   },
 }));
 
-import {
-  getServiceProvider,
-  resetServiceProviderCache,
-} from "./service-provider.server";
+import { getServiceProvider, resetServiceProviderCache } from "./service-provider.server";
 
 const originalServiceProvider = process.env["SERVICE_PROVIDER"];
 
@@ -150,8 +147,14 @@ describe("getServiceProvider", () => {
   it.each([
     ["malformed JSON", "{"],
     ["missing name", JSON.stringify({ url: "https://example.com", disabledFeatures: [] })],
-    ["unsafe URL", JSON.stringify({ name: "Example", url: "javascript:alert(1)", disabledFeatures: [] })],
-    ["invalid feature list", JSON.stringify({ name: "Example", url: "https://example.com", disabledFeatures: "search" })],
+    [
+      "unsafe URL",
+      JSON.stringify({ name: "Example", url: "javascript:alert(1)", disabledFeatures: [] }),
+    ],
+    [
+      "invalid feature list",
+      JSON.stringify({ name: "Example", url: "https://example.com", disabledFeatures: "search" }),
+    ],
   ])("ignores %s", (_description, rawValue) => {
     process.env["SERVICE_PROVIDER"] = rawValue;
 

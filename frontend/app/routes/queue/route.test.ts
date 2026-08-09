@@ -75,10 +75,7 @@ describe("queue route loader", () => {
 
     expect(getQueueMock).toHaveBeenCalledWith(25, 25);
     expect(getHistoryMock).toHaveBeenCalledWith(250, 500);
-    expect(getConfigMock).toHaveBeenCalledWith([
-      "api.categories",
-      "api.manual-category",
-    ]);
+    expect(getConfigMock).toHaveBeenCalledWith(["api.categories", "api.manual-category"]);
     expect(result).toEqual({
       queueSlots,
       historySlots,

@@ -5,7 +5,10 @@ import type express from "express";
  * Prevents spoofed X-Forwarded-* from being laundered through the loopback backend.
  */
 export function applyCanonicalForwardedHeaders(
-  proxyReq: { removeHeader: (name: string) => void; setHeader: (name: string, value: string) => void },
+  proxyReq: {
+    removeHeader: (name: string) => void;
+    setHeader: (name: string, value: string) => void;
+  },
   req: express.Request,
   options?: { trustProxy?: boolean },
 ): void {

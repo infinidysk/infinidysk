@@ -112,14 +112,11 @@ async function resolveRedirectUri(req: Request): Promise<string> {
 
   try {
     const config = await backendClient.getConfig(["general.base-url"]);
-    const baseUrl = config.find((item) => item.configName === "general.base-url")
-      ?.configValue
-      ?.trim();
+    const baseUrl = config
+      .find((item) => item.configName === "general.base-url")
+      ?.configValue?.trim();
     if (baseUrl) {
-      return new URL(
-        "auth/oidc/callback",
-        baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`,
-      ).href;
+      return new URL("auth/oidc/callback", baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).href;
     }
   } catch (error) {
     logger.debug("Could not read general.base-url for OIDC callback", error);

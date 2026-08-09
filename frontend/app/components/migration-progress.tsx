@@ -207,7 +207,9 @@ export function MigrationProgressView({ status }: { status: MigrationStatus }) {
   const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
   const overallElapsed = formatDuration(now - status.startedAt);
   const runningStep = status.steps.find((s) => s.status === "running") ?? null;
-  const currentElapsed = runningStep?.startedAt ? formatDuration(now - runningStep.startedAt) : null;
+  const currentElapsed = runningStep?.startedAt
+    ? formatDuration(now - runningStep.startedAt)
+    : null;
 
   const failed = status.state === "failed";
   const done = status.state === "completed";
@@ -248,13 +250,16 @@ export function MigrationProgressView({ status }: { status: MigrationStatus }) {
             <span className="loading loading-spinner loading-sm text-primary" />
             <span>
               {runningStep.name}
-              {currentElapsed ? <span className="ml-1 font-mono text-base-content/60">({currentElapsed})</span> : null}
+              {currentElapsed ? (
+                <span className="ml-1 font-mono text-base-content/60">({currentElapsed})</span>
+              ) : null}
             </span>
           </div>
         ) : null}
         {runningStep?.slow && !done && !failed ? (
           <div role="alert" className="alert alert-warning text-xs">
-            This step rewrites large tables and may take a long time on big databases. This is expected.
+            This step rewrites large tables and may take a long time on big databases. This is
+            expected.
           </div>
         ) : null}
       </div>
@@ -323,7 +328,9 @@ export function MigrationShell({
               />
               <div className="space-y-1">
                 <h1 className="text-xl font-bold tracking-tight">{title}</h1>
-                {subtitle ? <p className="text-sm leading-relaxed text-base-content/70">{subtitle}</p> : null}
+                {subtitle ? (
+                  <p className="text-sm leading-relaxed text-base-content/70">{subtitle}</p>
+                ) : null}
               </div>
             </div>
             {children}

@@ -39,25 +39,22 @@ describe("BackendClient", () => {
   it.each([
     ["createAccount", "create-account", "status", true],
     ["authenticate", "authenticate", "authenticated", true],
-  ] as const)(
-    "%s posts credentials as form data",
-    async (method, endpoint, resultKey, result) => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ [resultKey]: result }));
+  ] as const)("%s posts credentials as form data", async (method, endpoint, resultKey, result) => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ [resultKey]: result }));
 
-      await expect(backendClient[method]("alice", "secret")).resolves.toBe(result);
-      const [url, init] = fetchMock.mock.calls[0] ?? [];
-      const form = init?.body as FormData;
+    await expect(backendClient[method]("alice", "secret")).resolves.toBe(result);
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    const form = init?.body as FormData;
 
-      expect(url).toBe(`http://backend/api/${endpoint}`);
-      expect(init?.method).toBe("POST");
-      expect(init?.headers).toEqual({ "x-api-key": "test-api-key" });
-      expect(Object.fromEntries(form.entries())).toEqual({
-        username: "alice",
-        password: "secret",
-        type: "admin",
-      });
-    },
-  );
+    expect(url).toBe(`http://backend/api/${endpoint}`);
+    expect(init?.method).toBe("POST");
+    expect(init?.headers).toEqual({ "x-api-key": "test-api-key" });
+    expect(Object.fromEntries(form.entries())).toEqual({
+      username: "alice",
+      password: "secret",
+      type: "admin",
+    });
+  });
 
   it("gets queue and history payloads", async () => {
     const queue = { slots: [], noofslots: 0 };
@@ -110,17 +107,17 @@ describe("BackendClient", () => {
 
   it("adds an NZB using the configured manual category", async () => {
     fetchMock
-      .mockResolvedValueOnce(jsonResponse({
-        configItems: [{ configName: "api.manual-category", configValue: "movies & shows" }],
-      }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          configItems: [{ configName: "api.manual-category", configValue: "movies & shows" }],
+        }),
+      )
       .mockResolvedValueOnce(jsonResponse({ nzo_ids: ["nzo-1"] }));
     const file = new File(["nzb"], "movie.nzb");
 
     await expect(backendClient.addNzb(file)).resolves.toBe("nzo-1");
     const [url, init] = fetchMock.mock.calls[1] ?? [];
-    expect(url).toBe(
-      "http://backend/api?mode=addfile&cat=movies+%26+shows&priority=0&pp=0",
-    );
+    expect(url).toBe("http://backend/api?mode=addfile&cat=movies+%26+shows&priority=0&pp=0");
     expect((init?.body as FormData).get("nzbFile")).toBeInstanceOf(File);
   });
 
@@ -147,13 +144,15 @@ describe("BackendClient", () => {
       .mockResolvedValueOnce(jsonResponse(logs));
 
     await expect(backendClient.getOverviewStats("7d")).resolves.toEqual(overview);
-    await expect(backendClient.getLogs({
-      limit: 50,
-      levels: ["Warning", "Error"],
-      source: "Queue",
-      search: "failed request",
-      beforeSequence: 42,
-    })).resolves.toEqual(logs);
+    await expect(
+      backendClient.getLogs({
+        limit: 50,
+        levels: ["Warning", "Error"],
+        source: "Queue",
+        search: "failed request",
+        beforeSequence: 42,
+      }),
+    ).resolves.toEqual(logs);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "http://backend/api/get-overview-stats?window=7d&sections=all",
@@ -181,19 +180,23 @@ describe("BackendClient", () => {
       .mockResolvedValueOnce(jsonResponse(data))
       .mockResolvedValueOnce(jsonResponse({ status: true }));
 
-    await expect(backendClient.getWatchtower({
-      state: "ready",
-      q: "Example",
-      sort: "updated",
-      offset: 20,
-      limit: 10,
-      expander: "episodes",
-      statsOnly: true,
-    })).resolves.toEqual(data);
-    await expect(backendClient.watchtowerMutate({
-      action: "park",
-      id: "wanted-1",
-    })).resolves.toBe(true);
+    await expect(
+      backendClient.getWatchtower({
+        state: "ready",
+        q: "Example",
+        sort: "updated",
+        offset: 20,
+        limit: 10,
+        expander: "episodes",
+        statsOnly: true,
+      }),
+    ).resolves.toEqual(data);
+    await expect(
+      backendClient.watchtowerMutate({
+        action: "park",
+        id: "wanted-1",
+      }),
+    ).resolves.toBe(true);
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "http://backend/api/get-watchtower?state=ready&q=Example&sort=updated&offset=20&limit=10&expander=episodes&statsOnly=1",
@@ -208,9 +211,7 @@ describe("BackendClient", () => {
   it("includes the backend error when a non-503 request fails", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "bad request" }, 400));
 
-    await expect(backendClient.getQueue(1)).rejects.toThrow(
-      "Failed to get queue: bad request",
-    );
+    await expect(backendClient.getQueue(1)).rejects.toThrow("Failed to get queue: bad request");
   });
 
   it("throws BackendUnavailableError when fetch fails", async () => {
@@ -255,21 +256,23 @@ describe("BackendClient", () => {
   });
 
   it("maps stream tracing status fields and defaults retained values", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      enabled: true,
-      source: "ui",
-      expiresAtUnixMs: 123,
-      capacity: 100000,
-      eventCount: 4,
-      sessionCount: 1,
-      retainedEventCount: 4,
-      overwrittenEventCount: 0,
-      oldestRetainedSequence: 1,
-      newestRetainedSequence: 4,
-      oldestRetainedAtUnixMs: 100,
-      newestRetainedAtUnixMs: 120,
-      overflowed: false,
-    }));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        enabled: true,
+        source: "ui",
+        expiresAtUnixMs: 123,
+        capacity: 100000,
+        eventCount: 4,
+        sessionCount: 1,
+        retainedEventCount: 4,
+        overwrittenEventCount: 0,
+        oldestRetainedSequence: 1,
+        newestRetainedSequence: 4,
+        oldestRetainedAtUnixMs: 100,
+        newestRetainedAtUnixMs: 120,
+        overflowed: false,
+      }),
+    );
 
     await expect(backendClient.getStreamTracingStatus()).resolves.toEqual({
       enabled: true,
@@ -291,19 +294,21 @@ describe("BackendClient", () => {
   });
 
   it("posts discard-stream-traces and maps the clean status", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      enabled: false,
-      source: "ui",
-      expiresAtUnixMs: 0,
-      capacity: 100000,
-      eventCount: 0,
-      sessionCount: 0,
-      retained: false,
-      retainedUntilUnixMs: 0,
-      retainedEventCount: 0,
-      overwrittenEventCount: 0,
-      overflowed: false,
-    }));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        enabled: false,
+        source: "ui",
+        expiresAtUnixMs: 0,
+        capacity: 100000,
+        eventCount: 0,
+        sessionCount: 0,
+        retained: false,
+        retainedUntilUnixMs: 0,
+        retainedEventCount: 0,
+        overwrittenEventCount: 0,
+        overflowed: false,
+      }),
+    );
 
     await expect(backendClient.discardStreamTraces()).resolves.toMatchObject({
       retained: false,
@@ -316,19 +321,21 @@ describe("BackendClient", () => {
   });
 
   it("maps a retained response after disabling stream tracing", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      enabled: false,
-      source: "ui",
-      expiresAtUnixMs: 0,
-      capacity: 100000,
-      eventCount: 12,
-      sessionCount: 2,
-      retained: true,
-      retainedUntilUnixMs: 999,
-      retainedEventCount: 12,
-      overwrittenEventCount: 0,
-      overflowed: false,
-    }));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        enabled: false,
+        source: "ui",
+        expiresAtUnixMs: 0,
+        capacity: 100000,
+        eventCount: 12,
+        sessionCount: 2,
+        retained: true,
+        retainedUntilUnixMs: 999,
+        retainedEventCount: 12,
+        overwrittenEventCount: 0,
+        overflowed: false,
+      }),
+    );
 
     await expect(backendClient.setStreamTracing(false)).resolves.toMatchObject({
       enabled: false,
@@ -339,19 +346,21 @@ describe("BackendClient", () => {
   });
 
   it("posts capacity when enabling stream tracing", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      enabled: true,
-      source: "ui",
-      expiresAtUnixMs: 123,
-      capacity: 200000,
-      eventCount: 0,
-      sessionCount: 0,
-      retained: false,
-      retainedUntilUnixMs: 0,
-      retainedEventCount: 0,
-      overwrittenEventCount: 0,
-      overflowed: false,
-    }));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        enabled: true,
+        source: "ui",
+        expiresAtUnixMs: 123,
+        capacity: 200000,
+        eventCount: 0,
+        sessionCount: 0,
+        retained: false,
+        retainedUntilUnixMs: 0,
+        retainedEventCount: 0,
+        overwrittenEventCount: 0,
+        overflowed: false,
+      }),
+    );
 
     await expect(backendClient.setStreamTracing(true, 30, 200_000)).resolves.toMatchObject({
       enabled: true,

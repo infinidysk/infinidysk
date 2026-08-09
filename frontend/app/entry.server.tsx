@@ -25,9 +25,7 @@ export const handleError: HandleErrorFunction = (error, { request }) => {
   if (request.signal.aborted) return;
   // Unwrap route error responses the same way React Router's default handler does.
   // The wrapped error is internal to ErrorResponseImpl, hence the cast.
-  const routeError = isRouteErrorResponse(error)
-    ? (error as { error?: unknown }).error
-    : undefined;
+  const routeError = isRouteErrorResponse(error) ? (error as { error?: unknown }).error : undefined;
   const unwrapped = routeError ?? error;
   if (isExpectedBackendUnavailableError(unwrapped)) {
     if (isWithinBackendStartupGrace()) return;
@@ -63,9 +61,7 @@ export default function handleRequest(
     // Ensure requests from bots and SPA Mode renders wait for all content to load before responding
     // https://react.dev/reference/react-dom/server/renderToPipeableStream#waiting-for-all-content-to-load-for-crawlers-and-static-generation
     const readyOption: keyof RenderToPipeableStreamOptions =
-      (userAgent && isbot(userAgent)) || routerContext.isSpaMode
-        ? "onAllReady"
-        : "onShellReady";
+      (userAgent && isbot(userAgent)) || routerContext.isSpaMode ? "onAllReady" : "onShellReady";
 
     // Abort the rendering stream after the `streamTimeout` so it has time to
     // flush down the rejected boundaries

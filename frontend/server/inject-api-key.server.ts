@@ -6,9 +6,7 @@ import { isBackendApiPath } from "./proxy-path";
  * Inject the frontend→backend API key for authenticated UI sessions that proxy
  * `/api` without supplying their own key.
  */
-export async function setApiKeyForAuthenticatedRequests(
-  req: express.Request,
-): Promise<void> {
+export async function setApiKeyForAuthenticatedRequests(req: express.Request): Promise<void> {
   // if the path is not /api (decoded, segment-bounded), do nothing
   if (!isBackendApiPath(req.path)) return;
 

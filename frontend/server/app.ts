@@ -30,9 +30,9 @@ app.disable("x-powered-by");
 export const initializeWebsocketServer = websocketServer.initialize;
 
 const trustProxy =
-  process.env["TRUST_PROXY"] === "1"
-  || process.env["TRUST_PROXY"]?.toLowerCase() === "true"
-  || process.env["TRUST_PROXY"]?.toLowerCase() === "yes";
+  process.env["TRUST_PROXY"] === "1" ||
+  process.env["TRUST_PROXY"]?.toLowerCase() === "true" ||
+  process.env["TRUST_PROXY"]?.toLowerCase() === "yes";
 if (trustProxy) {
   // Opt-in: honor X-Forwarded-* from the reverse proxy in front of this container.
   // Required for correct public scheme/host when rewriting headers to the backend.
@@ -66,9 +66,7 @@ function logProxyFailure(message: string, error: unknown) {
 const forwardToBackend = createProxyMiddleware({
   // BACKEND_URL may be unset; omit `target` rather than passing undefined
   // (exactOptionalPropertyTypes forbids `target: undefined`).
-  ...(process.env["BACKEND_URL"] !== undefined
-    ? { target: process.env["BACKEND_URL"] }
-    : {}),
+  ...(process.env["BACKEND_URL"] !== undefined ? { target: process.env["BACKEND_URL"] } : {}),
   changeOrigin: true,
   selfHandleResponse: true,
   ...backendProxyTimeoutOptions,
@@ -90,16 +88,8 @@ const forwardToBackend = createProxyMiddleware({
   },
 });
 
-const credentialPostPaths = new Set([
-  "/login",
-  "/login.data",
-  "/onboarding",
-  "/onboarding.data",
-]);
-const oidcGetPaths = new Set([
-  "/auth/oidc/login",
-  "/auth/oidc/callback",
-]);
+const credentialPostPaths = new Set(["/login", "/login.data", "/onboarding", "/onboarding.data"]);
+const oidcGetPaths = new Set(["/auth/oidc/login", "/auth/oidc/callback"]);
 const credentialRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 20,
@@ -119,14 +109,12 @@ const credentialRateLimiter = rateLimit({
 
     const method = req.method.toUpperCase();
     return !(
-      (method === "POST" && credentialPostPaths.has(decodedPath))
-      || (method === "GET" && oidcGetPaths.has(decodedPath))
+      (method === "POST" && credentialPostPaths.has(decodedPath)) ||
+      (method === "GET" && oidcGetPaths.has(decodedPath))
     );
   },
   handler: (req, res, _next, options) => {
-    logger.warn(
-      `Credential rate limit exceeded for ${req.ip ?? "unknown IP"} on ${req.path}`,
-    );
+    logger.warn(`Credential rate limit exceeded for ${req.ip ?? "unknown IP"} on ${req.path}`);
     res.status(options.statusCode).send(options.message);
   },
 });

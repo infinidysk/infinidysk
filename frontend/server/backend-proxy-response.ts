@@ -42,8 +42,8 @@ export function handleBackendProxyResponse(
     }
 
     logger.warn(
-      `Backend response for ${req.method ?? "?"} ${req.url ?? "?"} ended before its body was `
-      + "complete; aborting the client transfer instead of ending it successfully.",
+      `Backend response for ${req.method ?? "?"} ${req.url ?? "?"} ended before its body was ` +
+        "complete; aborting the client transfer instead of ending it successfully.",
     );
     res.destroy();
   });
@@ -110,11 +110,15 @@ function renderFileUnavailablePage(explorePaths: { directory: string; root: stri
 }
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[character]!);
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[character]!,
+  );
 }

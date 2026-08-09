@@ -58,24 +58,30 @@ function fetchThroughProxy(
           bytes += chunk.length;
           chunks.push(chunk);
         });
-        res.on("end", () => resolve({
-          status,
-          bytes,
-          body: Buffer.concat(chunks).toString("utf8"),
-          endedCleanly: true,
-        }));
-        res.on("aborted", () => resolve({
-          status,
-          bytes,
-          body: Buffer.concat(chunks).toString("utf8"),
-          endedCleanly: false,
-        }));
-        res.on("error", () => resolve({
-          status,
-          bytes,
-          body: Buffer.concat(chunks).toString("utf8"),
-          endedCleanly: false,
-        }));
+        res.on("end", () =>
+          resolve({
+            status,
+            bytes,
+            body: Buffer.concat(chunks).toString("utf8"),
+            endedCleanly: true,
+          }),
+        );
+        res.on("aborted", () =>
+          resolve({
+            status,
+            bytes,
+            body: Buffer.concat(chunks).toString("utf8"),
+            endedCleanly: false,
+          }),
+        );
+        res.on("error", () =>
+          resolve({
+            status,
+            bytes,
+            body: Buffer.concat(chunks).toString("utf8"),
+            endedCleanly: false,
+          }),
+        );
       },
     );
     req.on("error", (error) => {
@@ -137,10 +143,12 @@ describe("handleBackendProxyResponse", () => {
   }
 
   it("does not pass off a truncated backend response as a finished transfer", async () => {
-    const frontendPort = await startProxy(abortAfterPrefix({
-      "Content-Type": "video/x-matroska",
-      "Content-Length": "1000",
-    }));
+    const frontendPort = await startProxy(
+      abortAfterPrefix({
+        "Content-Type": "video/x-matroska",
+        "Content-Length": "1000",
+      }),
+    );
 
     const result = await fetchThroughProxy(frontendPort, "/content/movie.mkv");
 
@@ -149,9 +157,11 @@ describe("handleBackendProxyResponse", () => {
   });
 
   it("does not pass off a truncated chunked backend response as finished", async () => {
-    const frontendPort = await startProxy(abortAfterPrefix({
-      "Content-Type": "video/x-matroska",
-    }));
+    const frontendPort = await startProxy(
+      abortAfterPrefix({
+        "Content-Type": "video/x-matroska",
+      }),
+    );
 
     const result = await fetchThroughProxy(frontendPort, "/content/movie.mkv");
 

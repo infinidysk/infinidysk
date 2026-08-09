@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./route";
 
-const {
-  getConfigMock,
-  getHealthCheckHistoryMock,
-  getHealthCheckQueueMock,
-} = vi.hoisted(() => ({
+const { getConfigMock, getHealthCheckHistoryMock, getHealthCheckQueueMock } = vi.hoisted(() => ({
   getConfigMock: vi.fn(),
   getHealthCheckHistoryMock: vi.fn(),
   getHealthCheckQueueMock: vi.fn(),
@@ -59,9 +55,7 @@ describe("health route loader", () => {
       stats: historyStats,
       items: historyItems,
     });
-    getConfigMock.mockResolvedValueOnce([
-      { configName: "repair.enable", configValue: "TRUE" },
-    ]);
+    getConfigMock.mockResolvedValueOnce([{ configName: "repair.enable", configValue: "TRUE" }]);
 
     await expect(loader()).resolves.toEqual({
       uncheckedCount: 12,
@@ -86,9 +80,7 @@ describe("health route loader", () => {
     });
     getConfigMock
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { configName: "repair.enable", configValue: "false" },
-      ]);
+      .mockResolvedValueOnce([{ configName: "repair.enable", configValue: "false" }]);
 
     await expect(loader()).resolves.toMatchObject({ isEnabled: false });
     await expect(loader()).resolves.toMatchObject({ isEnabled: false });
