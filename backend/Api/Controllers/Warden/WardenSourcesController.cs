@@ -47,7 +47,7 @@ public class WardenSourceAddController(WardenStore warden, WardenRemoteSourceSer
 
         var id = warden.AddSource("remote", name, url, trust, refreshHours);
         var source = warden.GetSources().FirstOrDefault(s => s.Id == id);
-        var status = source is null ? "error" : await remote.RefreshAsync(source, HttpContext.RequestAborted);
+        var status = source is null ? "error" : await remote.RefreshAsync(source, HttpContext.RequestAborted).ConfigureAwait(false);
 
         return Ok(new WardenSourceMutateResponse { Status = true, SourceId = id, Message = status });
     }
@@ -107,7 +107,7 @@ public class WardenSourceRefreshController(WardenStore warden, WardenRemoteSourc
         var source = warden.GetSources().FirstOrDefault(s => s.Id == id);
         if (source is null) throw new BadHttpRequestException("Unknown source.");
 
-        var status = await remote.RefreshAsync(source, HttpContext.RequestAborted);
+        var status = await remote.RefreshAsync(source, HttpContext.RequestAborted).ConfigureAwait(false);
         return Ok(new WardenSourceMutateResponse { Status = true, SourceId = id, Message = status });
     }
 }

@@ -30,7 +30,7 @@ public class WardenExportController(WardenStore warden) : BaseApiController
         Response.ContentType = "application/gzip";
         Response.Headers["Content-Disposition"] = "attachment; filename=\"warden.ndjson.gz\"";
         await using var gz = new GZipStream(Response.Body, CompressionLevel.Optimal, leaveOpen: true);
-        await warden.ExportToAsync(gz, sourceIds, dedup, ct);
+        await warden.ExportToAsync(gz, sourceIds, dedup, ct).ConfigureAwait(false);
         return new EmptyResult();
     }
 }

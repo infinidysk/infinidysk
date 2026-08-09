@@ -42,7 +42,7 @@ public sealed class SubmissionReconciler(UsenetMigrationStore store)
         if (active.Count == 0)
             return new ReconcileSummary();
 
-        await using var davCtx = DavContextFactory?.Invoke() ?? new DavDatabaseContext();
+        await using var davCtx = (DavContextFactory?.Invoke() ?? new DavDatabaseContext());
         int completed = 0, failed = 0, processing = 0, evicted = 0;
         foreach (var sub in active)
         {

@@ -17,7 +17,7 @@ public abstract class BaseProcessor
     {
         try
         {
-            return await ProcessAsync();
+            return await ProcessAsync().ConfigureAwait(false);
         }
         finally
         {

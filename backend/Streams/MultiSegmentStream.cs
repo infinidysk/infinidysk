@@ -229,7 +229,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 segmentIds[index] = _segmentIds.Span[batchStart + index];
             }
 
-            await _streamTasks.Writer.WaitToWriteAsync(cancellationToken);
+            await _streamTasks.Writer.WaitToWriteAsync(cancellationToken).ConfigureAwait(false);
             var leases = new ArticleByteLease?[batchCount];
             Task<SegmentDownloadResult>[]? streamTasks = null;
             try
@@ -279,7 +279,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 {
                     var planned = GetPlannedSegmentBytes(batchStart + responseIndex);
                     await _streamTasks.Writer.WriteAsync(
-                        streamTasks[responseIndex], cancellationToken);
+                        streamTasks[responseIndex], cancellationToken).ConfigureAwait(false);
                     segmentsEnqueued++;
                     enqueuedBytes += planned;
                     Interlocked.Add(ref _inFlightPrefetchBytes, planned);
@@ -310,7 +310,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             await WaitForPrefetchCeilingAsync(cancellationToken).ConfigureAwait(false);
 
             var segmentId = _segmentIds.Span[index];
-            await _streamTasks.Writer.WaitToWriteAsync(cancellationToken);
+            await _streamTasks.Writer.WaitToWriteAsync(cancellationToken).ConfigureAwait(false);
             var lease = await LeaseSegmentBytesAsync(
                 GetPlannedSegmentBytes(index), cancellationToken).ConfigureAwait(false);
             var streamTask = DownloadSegment(
@@ -318,7 +318,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             var planned = GetPlannedSegmentBytes(index);
             try
             {
-                await _streamTasks.Writer.WriteAsync(streamTask, cancellationToken);
+                await _streamTasks.Writer.WriteAsync(streamTask, cancellationToken).ConfigureAwait(false);
                 enqueuedBytes += planned;
                 Interlocked.Add(ref _inFlightPrefetchBytes, planned);
             }
@@ -1072,7 +1072,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 var wasQueued = _streamTasks.Reader.TryRead(out var streamTask);
                 if (!wasQueued)
                 {
-                    if (!await _streamTasks.Reader.WaitToReadAsync(cancellationToken)) return 0;
+                    if (!await _streamTasks.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false)) return 0;
                     if (!_streamTasks.Reader.TryRead(out streamTask)) return 0;
                 }
 
@@ -1097,11 +1097,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
 
             // read from the stream
-            var read = await _stream.ReadAsync(buffer, cancellationToken);
+            var read = await _stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
             if (read > 0) return read;
 
             // if the stream ended, continue to the next stream.
-            await _stream.DisposeAsync();
+            await _stream.DisposeAsync().ConfigureAwait(false);
             _stream = null;
         }
     }

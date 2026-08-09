@@ -33,7 +33,7 @@ public class WardenSourcesImportController(WardenStore warden, WardenRemoteSourc
             if (file.Length > MaxUploadBytes)
                 throw new BadHttpRequestException("File is too large.");
             using var reader = new StreamReader(file.OpenReadStream());
-            content = await reader.ReadToEndAsync(ct);
+            content = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
         }
         else
         {
@@ -54,7 +54,7 @@ public class WardenSourcesImportController(WardenStore warden, WardenRemoteSourc
         if (added > 0)
             _ = Task.Run(async () =>
             {
-                try { await remote.RefreshDueAsync(CancellationToken.None); }
+                try { await remote.RefreshDueAsync(CancellationToken.None).ConfigureAwait(false); }
                 catch (Exception e) { Log.Debug(e, "Warden: post-import refresh failed"); }
             });
 

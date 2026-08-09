@@ -75,7 +75,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 _openSegmentBytes = 0;
                 try
                 {
-                    var body = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken);
+                    var body = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
                     await SegmentResponseValidator
                         .ThrowOnSegmentIdMismatchAsync(segmentId, body)
                         .ConfigureAwait(false);
@@ -128,7 +128,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             var destination = remainingExact > 0 && remainingExact < buffer.Length
                 ? buffer[..(int)remainingExact]
                 : buffer;
-            var read = await _stream.ReadAsync(destination, cancellationToken);
+            var read = await _stream.ReadAsync(destination, cancellationToken).ConfigureAwait(false);
             if (read > 0)
             {
                 _openSegmentBytes += read;

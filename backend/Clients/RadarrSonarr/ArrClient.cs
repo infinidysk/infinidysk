@@ -43,7 +43,7 @@ public class ArrClient(string host, string apiKey)
         Get<ArrQueue<ArrQueueRecord>>($"/queue?protocol=usenet&pageSize=5000", ct);
 
     public async Task<int> GetQueueCountAsync() =>
-        (await Get<ArrQueue<ArrQueueRecord>>($"/queue?pageSize=1")).TotalRecords;
+        (await Get<ArrQueue<ArrQueueRecord>>($"/queue?pageSize=1").ConfigureAwait(false)).TotalRecords;
 
     public Task<HttpStatusCode> DeleteQueueRecord(int id, DeleteQueueRecordRequest request) =>
         Delete($"/queue/{id}", request.GetQueryParams());
@@ -78,20 +78,20 @@ public class ArrClient(string host, string apiKey)
     protected async Task<T> GetRoot<T>(string rootPath, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{Host}{rootPath}");
-        using var response = await SendAsync(request, ct);
+        using var response = await SendAsync(request, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct) ?? throw new NullReferenceException();
+        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false) ?? throw new NullReferenceException();
     }
 
     private async Task<T?> GetRootOrNull<T>(string rootPath, CancellationToken ct) where T : class
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{Host}{rootPath}");
-        using var response = await SendAsync(request, ct);
+        using var response = await SendAsync(request, ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct) ?? throw new NullReferenceException();
+        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false) ?? throw new NullReferenceException();
     }
 
     protected async Task<T> Post<T>(string path, object body, CancellationToken ct = default)
@@ -99,16 +99,16 @@ public class ArrClient(string host, string apiKey)
         using var request = new HttpRequestMessage(HttpMethod.Post, GetRequestUri(path));
         var jsonBody = JsonSerializer.Serialize(body);
         request.Content = new StringContent(jsonBody, new MediaTypeHeaderValue("application/json"));
-        using var response = await SendAsync(request, ct);
+        using var response = await SendAsync(request, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct) ?? throw new NullReferenceException();
+        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false) ?? throw new NullReferenceException();
     }
 
     protected async Task<HttpStatusCode> Delete(string path, Dictionary<string, string>? queryParams = null, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Delete, GetRequestUri(path, queryParams));
-        using var response = await SendAsync(request, ct);
+        using var response = await SendAsync(request, ct).ConfigureAwait(false);
         return response.StatusCode;
     }
 

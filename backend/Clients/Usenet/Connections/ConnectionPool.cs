@@ -410,7 +410,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             OnConnectionPoolChanged = null;
         }
 
-        await _sweepCts.CancelAsync();
+        await _sweepCts.CancelAsync().ConfigureAwait(false);
 
         try
         {

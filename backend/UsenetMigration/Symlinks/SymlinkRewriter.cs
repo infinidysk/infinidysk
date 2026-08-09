@@ -171,7 +171,7 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store, ConfigManager co
             .ToList();
 
         HashSet<Guid> existing;
-        await using (var dav = DavContextFactory?.Invoke() ?? new DavDatabaseContext())
+        await using (var dav = (DavContextFactory?.Invoke() ?? new DavDatabaseContext()))
         {
             // Chunked IN queries keep SQLite parameter limits safe for large plans.
             existing = new HashSet<Guid>();

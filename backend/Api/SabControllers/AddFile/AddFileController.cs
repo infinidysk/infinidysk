@@ -118,7 +118,7 @@ public class AddFileController(
                 var backupLocation = configManager.GetNzbBackupLocation();
                 if (backupLocation != null)
                 {
-                    await BackupNzbAsync(id, request.FileName, category, backupLocation);
+                    await BackupNzbAsync(id, request.FileName, category, backupLocation).ConfigureAwait(false);
                 }
             }
 
@@ -333,7 +333,7 @@ public class AddFileController(
 
             await using var src = BlobStore.ReadBlob(id);
             await using var dst = System.IO.File.Create(destPath);
-            await src!.CopyToAsync(dst);
+            await src!.CopyToAsync(dst).ConfigureAwait(false);
         }
         catch (Exception e) when (!e.IsCancellationException())
         {

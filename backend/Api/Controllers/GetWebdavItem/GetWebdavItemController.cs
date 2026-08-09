@@ -171,7 +171,7 @@ public class GetWebdavItemController(
             StreamTraceRangeContext? traceRange = null;
             try
             {
-                await using var response = await GetWebdavItem(request, ct);
+                await using var response = await GetWebdavItem(request, ct).ConfigureAwait(false);
                 if (response == Stream.Null)
                     return;
                 var effectiveStart = (long)(HttpContext.Items["effectiveRangeStart"] ?? 0L);
@@ -192,7 +192,7 @@ public class GetWebdavItemController(
                     // Body transfer can run for minutes; drop the admission/open
                     // deadline and rely on per-segment mid-stream timeouts.
                     readCts.CancelAfter(Timeout.InfiniteTimeSpan);
-                    await CopyAndReportAsync(response, Response.Body, sessionId, effectiveStart, traceRange, ct);
+                    await CopyAndReportAsync(response, Response.Body, sessionId, effectiveStart, traceRange, ct).ConfigureAwait(false);
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed);
                 }
                 catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)

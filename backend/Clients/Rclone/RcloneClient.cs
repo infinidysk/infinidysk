@@ -72,7 +72,7 @@ public class RcloneClient
             request["recursive"] = true;
 
         Log.Debug("Rclone vfs/refresh: {0}", paths.ToIndentedJson());
-        return await Post<RcloneResponse>("vfs/refresh", request);
+        return await Post<RcloneResponse>("vfs/refresh", request).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -96,7 +96,7 @@ public class RcloneClient
         }
 
         Log.Debug("Rclone vfs/forget: {0}", paths.ToIndentedJson());
-        return await Post<VfsForgetResponse>("vfs/forget", request);
+        return await Post<VfsForgetResponse>("vfs/forget", request).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -106,7 +106,7 @@ public class RcloneClient
     public static async Task<VfsStatsResponse> GetVfsStats(string? fs = null)
     {
         var request = fs != null ? new { fs } : null;
-        return await Post<VfsStatsResponse>("vfs/stats", request);
+        return await Post<VfsStatsResponse>("vfs/stats", request).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -114,7 +114,7 @@ public class RcloneClient
     /// </summary>
     public static async Task<CoreVersionResponse> GetVersion()
     {
-        return await Post<CoreVersionResponse>("core/version", null);
+        return await Post<CoreVersionResponse>("core/version", null).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -122,7 +122,7 @@ public class RcloneClient
     /// </summary>
     public static async Task<RcloneResponse> NoOp()
     {
-        return await Post<RcloneResponse>("rc/noop", null);
+        return await Post<RcloneResponse>("rc/noop", null).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -132,7 +132,7 @@ public class RcloneClient
     {
         try
         {
-            await NoOp();
+            await NoOp().ConfigureAwait(false);
             return true;
         }
         catch
@@ -146,7 +146,7 @@ public class RcloneClient
     /// </summary>
     public static async Task<RcloneResponse> TestConnection(string host, string? user, string? pass)
     {
-        var result = await Post<CoreVersionResponse>(host, user, pass, "core/version", null);
+        var result = await Post<CoreVersionResponse>(host, user, pass, "core/version", null).ConfigureAwait(false);
         if (result.Success && string.IsNullOrEmpty(result.Version))
             return new RcloneResponse { Success = false, Error = "Connected but received empty version" };
         return result;
@@ -178,8 +178,8 @@ public class RcloneClient
 
         try
         {
-            using var response = await HttpClient.SendAsync(request);
-            var content = await response.Content.ReadAsStringAsync();
+            using var response = await HttpClient.SendAsync(request).ConfigureAwait(false);
+            var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {

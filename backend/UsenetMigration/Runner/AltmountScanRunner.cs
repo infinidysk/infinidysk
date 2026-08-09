@@ -381,7 +381,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             return;
 
         await using var migrationContext = store.NewContext();
-        await using var davContext = DavContextFactory?.Invoke() ?? new DavDatabaseContext();
+        await using var davContext = (DavContextFactory?.Invoke() ?? new DavDatabaseContext());
         var detected = await new AlreadyMigratedDetector()
             .DetectAndRecordAsync(candidates, migrationContext, davContext, ct)
             .ConfigureAwait(false);

@@ -98,6 +98,18 @@ dotnet_diagnostic.CA1720.severity = none
 dotnet_diagnostic.CA1724.severity = none
 dotnet_diagnostic.CA1725.severity = none
 
+# --- Async ------------------------------------------------------------------
+
+# Justification: ASP.NET Core has no SynchronizationContext, so plain awaits
+# do not capture anything worth configuring; the AGENTS.md ConfigureAwait
+# guidance is scoped to library-style code (libs/ keep CA2007 enabled). The
+# rule's code fix also cannot correctly handle `await using` locals — it
+# retypes the variable to ConfiguredAsyncDisposable (roslyn-analyzers #7087),
+# which breaks member access, so the remaining ~540 await-using sites cannot
+# be mechanically fixed. Plain awaits that were configured before this policy
+# was introduced keep their ConfigureAwait(false) for consistency.
+dotnet_diagnostic.CA2007.severity = none
+
 # --- Misc noise -------------------------------------------------------------
 
 # Justification: ASP.NET Core apps gain nothing from making every public type

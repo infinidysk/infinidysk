@@ -35,7 +35,7 @@ public class HistoryCleanupService : BackgroundService
                     var deletedItems = await dbContext.Items
                         .Where(x => x.HistoryItemId == cleanupItem.Id)
                         .Select(x => new DavItem { Id = x.Id, Type = x.Type, Path = x.Path })
-                        .ToListAsync(stoppingToken);
+                        .ToListAsync(stoppingToken).ConfigureAwait(false);
 
                     // Loud warning for large deletes; does not block (SAB semantics unchanged).
                     DeletionAuditLog.WarnBulkDelete(
@@ -54,7 +54,7 @@ public class HistoryCleanupService : BackgroundService
                     // Delete the corresponding dav-items
                     await dbContext.Items
                         .Where(x => x.HistoryItemId == cleanupItem.Id)
-                        .ExecuteDeleteAsync(stoppingToken);
+                        .ExecuteDeleteAsync(stoppingToken).ConfigureAwait(false);
 
                     // Trigger rclone vfs/forget for deleted items
                     _ = DavDatabaseContext.RcloneVfsForget(deletedItems);
@@ -67,7 +67,7 @@ public class HistoryCleanupService : BackgroundService
                         .ExecuteUpdateAsync(
                             x => x.SetProperty(p => p.HistoryItemId, (Guid?)null),
                             stoppingToken
-                        );
+                        ).ConfigureAwait(false);
                 }
 
                 // Remove the cleanup item from the database

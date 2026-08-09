@@ -17,12 +17,12 @@ public class UsenetFileToBlobstoreMigrationService(WebsocketManager websocketMan
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         Report("Determining number of files to migrate...");
-        var initialRemaining = await GetTotalCountLeft(stoppingToken);
+        var initialRemaining = await GetTotalCountLeft(stoppingToken).ConfigureAwait(false);
         var totalRemaining = initialRemaining;
         ReportProgress(totalRemaining, initialRemaining);
-        totalRemaining = await MigrateNzbFiles(totalRemaining, initialRemaining, stoppingToken);
-        totalRemaining = await MigrateRarFiles(totalRemaining, initialRemaining, stoppingToken);
-        totalRemaining = await MigrateMultipartFiles(totalRemaining, initialRemaining, stoppingToken);
+        totalRemaining = await MigrateNzbFiles(totalRemaining, initialRemaining, stoppingToken).ConfigureAwait(false);
+        totalRemaining = await MigrateRarFiles(totalRemaining, initialRemaining, stoppingToken).ConfigureAwait(false);
+        totalRemaining = await MigrateMultipartFiles(totalRemaining, initialRemaining, stoppingToken).ConfigureAwait(false);
         var complete = initialRemaining - totalRemaining;
         Report(complete == 0
             ? $"Done! Nothing to migrate."
@@ -32,9 +32,9 @@ public class UsenetFileToBlobstoreMigrationService(WebsocketManager websocketMan
     private async Task<int> GetTotalCountLeft(CancellationToken ct)
     {
         await using var dbContext = new DavDatabaseContext();
-        return await dbContext.NzbFiles.CountAsync(ct) +
-               await dbContext.RarFiles.CountAsync(ct) +
-               await dbContext.MultipartFiles.CountAsync(ct);
+        return await dbContext.NzbFiles.CountAsync(ct).ConfigureAwait(false) +
+               await dbContext.RarFiles.CountAsync(ct).ConfigureAwait(false) +
+               await dbContext.MultipartFiles.CountAsync(ct).ConfigureAwait(false);
     }
 
     private Task<int> MigrateNzbFiles(int totalRemaining, int initialRemaining, CancellationToken ct)
@@ -91,18 +91,18 @@ public class UsenetFileToBlobstoreMigrationService(WebsocketManager websocketMan
             try
             {
                 await using var dbContext = new DavDatabaseContext();
-                var fileToMigrate = await getFileToMigrate(dbContext);
+                var fileToMigrate = await getFileToMigrate(dbContext).ConfigureAwait(false);
                 if (fileToMigrate == null) return totalRemaining;
-                var davItem = await GetDavItem(getFileToMigrateId(fileToMigrate), dbContext, ct);
+                var davItem = await GetDavItem(getFileToMigrateId(fileToMigrate), dbContext, ct).ConfigureAwait(false);
                 dbContext.Entry(fileToMigrate).State = EntityState.Detached;
                 setFileToMigrateNewId(fileToMigrate);
-                await BlobStore.WriteBlob(getFileToMigrateId(fileToMigrate), fileToMigrate);
+                await BlobStore.WriteBlob(getFileToMigrateId(fileToMigrate), fileToMigrate).ConfigureAwait(false);
                 try
                 {
                     // database changes
                     davItem.FileBlobId = getFileToMigrateId(fileToMigrate);
                     removeFileToMigrateFromDb(dbContext, davItem.Id);
-                    await dbContext.SaveChangesAsync(ct);
+                    await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
                     totalRemaining--;
                     ReportProgress(totalRemaining, initialRemaining);
                 }
@@ -124,7 +124,7 @@ public class UsenetFileToBlobstoreMigrationService(WebsocketManager websocketMan
 
     private static async Task<DavItem> GetDavItem(Guid id, DavDatabaseContext dbContext, CancellationToken ct)
     {
-        return (await dbContext.Items.Where(x => x.Id == id).FirstOrDefaultAsync(ct))
+        return (await dbContext.Items.Where(x => x.Id == id).FirstOrDefaultAsync(ct).ConfigureAwait(false))
                ?? throw new Exception($"DavItem with id `{id}` not found");
     }
 

@@ -738,15 +738,15 @@ public sealed class DavDatabaseContext : DbContext
         {
             // save blobs to blob-store
             foreach (var blobNzbFile in BlobNzbFiles)
-                await BlobStore.WriteBlob(blobNzbFile.Id, blobNzbFile);
+                await BlobStore.WriteBlob(blobNzbFile.Id, blobNzbFile).ConfigureAwait(false);
             foreach (var blobRarFile in BlobRarFiles)
-                await BlobStore.WriteBlob(blobRarFile.Id, blobRarFile);
+                await BlobStore.WriteBlob(blobRarFile.Id, blobRarFile).ConfigureAwait(false);
             foreach (var blobMultipartFile in BlobMultipartFiles)
-                await BlobStore.WriteBlob(blobMultipartFile.Id, blobMultipartFile);
+                await BlobStore.WriteBlob(blobMultipartFile.Id, blobMultipartFile).ConfigureAwait(false);
 
             // save db changes
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
-            var result = await base.SaveChangesAsync(cancellationToken);
+            var result = await base.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             _ = RcloneVfsForget(addedOrRemovedDavItems);
 
             // clear pending blob writes

@@ -48,7 +48,7 @@ public sealed class MigrationHistoryCleaner(UsenetMigrationStore store)
             };
         }
 
-        await using var davContext = DavContextFactory?.Invoke() ?? new DavDatabaseContext();
+        await using var davContext = (DavContextFactory?.Invoke() ?? new DavDatabaseContext());
         var davClient = new DavDatabaseClient(davContext);
         var removed = 0;
 

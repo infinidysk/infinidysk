@@ -230,7 +230,7 @@ public class ArticleCachingNntpClient(
         {
             return _cachedSegments.ContainsKey(segmentId)
                 ? new UsenetExclusiveConnection(onConnectionReadyAgain: null)
-                : await base.AcquireExclusiveConnectionAsync(segmentId, cancellationToken);
+                : await base.AcquireExclusiveConnectionAsync(segmentId, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -521,7 +521,7 @@ public class ArticleCachingNntpClient(
         _cachedSegments.Clear();
         _trackedSegments.Clear();
 
-        Task.Run(async () => await DeleteCacheDir(_cacheDir));
+        Task.Run(async () => await DeleteCacheDir(_cacheDir).ConfigureAwait(false));
         GC.SuppressFinalize(this);
     }
 

@@ -662,7 +662,7 @@ public partial class Program
         {
             Log.Information("Performing database vacuum");
             await using var databaseContext = new DavDatabaseContext();
-            await databaseContext.Database.ExecuteSqlRawAsync("VACUUM;");
+            await databaseContext.Database.ExecuteSqlRawAsync("VACUUM;").ConfigureAwait(false);
             Log.Information("Database vacuum completed");
         }
     }

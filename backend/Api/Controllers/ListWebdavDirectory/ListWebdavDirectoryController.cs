@@ -18,7 +18,7 @@ public class ListWebdavDirectoryController(DatabaseStore store, ConfigManager co
         if (item is not IStoreCollection dir) throw new BadHttpRequestException("The directory does not exist.");
         var children = new List<ListWebdavDirectoryResponse.DirectoryItem>();
         var showHiddenWebdavFiles = configManager.ShowHiddenWebdavFiles();
-        await foreach (var child in dir.GetItemsAsync(HttpContext.RequestAborted))
+        await foreach (var child in dir.GetItemsAsync(HttpContext.RequestAborted).ConfigureAwait(false))
         {
             if (!showHiddenWebdavFiles && child.Name.StartsWith('.'))
                 continue;

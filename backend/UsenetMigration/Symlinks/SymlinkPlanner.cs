@@ -416,7 +416,7 @@ public sealed class SymlinkPlanner(UsenetMigrationStore store, ConfigManager con
             return new List<CorrelatedFile>();
 
         var validIds = new HashSet<Guid>();
-        await using var davContext = DavContextFactory?.Invoke() ?? new DavDatabaseContext();
+        await using var davContext = (DavContextFactory?.Invoke() ?? new DavDatabaseContext());
         foreach (var batch in files.Select(f => f.DavItemId).Distinct().Chunk(500))
         {
             var found = await davContext.Items.AsNoTracking()

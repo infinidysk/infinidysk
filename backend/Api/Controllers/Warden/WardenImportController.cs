@@ -30,7 +30,7 @@ public class WardenImportController(WardenStore warden) : BaseApiController
         if (file.Length > 256L * 1024 * 1024)
             throw new BadHttpRequestException("Warden upload exceeds the 256 MiB size limit.", StatusCodes.Status413PayloadTooLarge);
 
-        await using var buffered = await BufferAndDecompressAsync(file, ct);
+        await using var buffered = await BufferAndDecompressAsync(file, ct).ConfigureAwait(false);
 
         if (target == "separate")
         {
@@ -39,12 +39,12 @@ public class WardenImportController(WardenStore warden) : BaseApiController
                 name = Path.GetFileNameWithoutExtension(file.FileName).Replace(".ndjson", "");
             if (string.IsNullOrWhiteSpace(name)) name = "Imported list";
             var trust = form["trust"].ToString();
-            var (sourceId, count) = await warden.ImportAsNewSourceAsync(buffered, name, trust, ct);
+            var (sourceId, count) = await warden.ImportAsNewSourceAsync(buffered, name, trust, ct).ConfigureAwait(false);
             return Ok(new WardenImportResponse { Status = true, Added = count, Total = warden.Count, Cleared = 0, SourceId = sourceId });
         }
 
         var before = warden.LocalCount;
-        await warden.MergeIntoLocalAsync(buffered, ct);
+        await warden.MergeIntoLocalAsync(buffered, ct).ConfigureAwait(false);
         var after = warden.LocalCount;
         return Ok(new WardenImportResponse { Status = true, Added = Math.Max(0, after - before), Total = warden.Count, Cleared = 0 });
     }
@@ -53,7 +53,7 @@ public class WardenImportController(WardenStore warden) : BaseApiController
     {
         var ms = new MemoryStream();
         await using (var raw = file.OpenReadStream())
-            await raw.CopyToAsync(ms, ct);
+            await raw.CopyToAsync(ms, ct).ConfigureAwait(false);
         ms.Position = 0;
         if (ms.Length >= 2)
         {
@@ -62,7 +62,7 @@ public class WardenImportController(WardenStore warden) : BaseApiController
             {
                 var decompressed = new MemoryStream();
                 await using (var gz = new GZipStream(ms, CompressionMode.Decompress, leaveOpen: true))
-                    await CopyWithLimitAsync(gz, decompressed, WardenInputLimits.MaxDecompressedBytes, ct);
+                    await CopyWithLimitAsync(gz, decompressed, WardenInputLimits.MaxDecompressedBytes, ct).ConfigureAwait(false);
                 decompressed.Position = 0;
                 return decompressed;
             }

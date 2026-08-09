@@ -51,7 +51,7 @@ public class BaseNntpClient : NntpClient
     {
         try
         {
-            await _client.ConnectAsync(host, port, useSsl, cancellationToken);
+            await _client.ConnectAsync(host, port, useSsl, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception e) when (!e.IsCancellationException())
         {
@@ -69,7 +69,7 @@ public class BaseNntpClient : NntpClient
     {
         try
         {
-            var response = await _client.AuthenticateAsync(user, pass, cancellationToken);
+            var response = await _client.AuthenticateAsync(user, pass, cancellationToken).ConfigureAwait(false);
             if (!response.Success)
             {
                 var message = $"Could not login to usenet host: {response.ResponseMessage}";
@@ -158,7 +158,7 @@ public class BaseNntpClient : NntpClient
     public override async Task<UsenetHeadResponse> HeadAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
         segmentId = PrepareSegmentId(segmentId);
-        var headResponse = await _client.HeadAsync(segmentId, cancellationToken);
+        var headResponse = await _client.HeadAsync(segmentId, cancellationToken).ConfigureAwait(false);
 
         if (headResponse.ResponseType != UsenetResponseType.ArticleRetrievedHeadFollows)
             throw CreateArticleFetchException(segmentId, headResponse);
@@ -190,7 +190,7 @@ public class BaseNntpClient : NntpClient
     {
         segmentId = PrepareSegmentId(segmentId);
         var bodyResponse = await _client.DecodedBodyAsync(
-            segmentId, onConnectionReadyAgain, cancellationToken);
+            segmentId, onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
 
         if (bodyResponse.ResponseType != UsenetResponseType.ArticleRetrievedBodyFollows)
             throw CreateArticleFetchException(segmentId, bodyResponse);

@@ -110,7 +110,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            var blob = await BlobStore.ReadBlob<DavNzbFile>(blobId.Value);
+            var blob = await BlobStore.ReadBlob<DavNzbFile>(blobId.Value).ConfigureAwait(false);
             if (blob is not null) return blob;
         }
 
@@ -127,7 +127,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            var blob = await BlobStore.ReadBlob<DavRarFile>(blobId.Value);
+            var blob = await BlobStore.ReadBlob<DavRarFile>(blobId.Value).ConfigureAwait(false);
             if (blob is not null) return blob;
         }
 
@@ -144,7 +144,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            var blob = await BlobStore.ReadBlob<DavMultipartFile>(blobId.Value);
+            var blob = await BlobStore.ReadBlob<DavMultipartFile>(blobId.Value).ConfigureAwait(false);
             if (blob is not null) return blob;
         }
 
