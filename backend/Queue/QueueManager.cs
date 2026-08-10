@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Config;
@@ -38,10 +39,18 @@ public sealed class QueueManager : IDisposable
     private int _pendingAdmissions;
     private bool _admissionPaused;
 
+    private static readonly TimeSpan DefaultStuckItemThreshold =
+        EnvironmentUtil.GetLongVariable("QUEUE_ITEM_STUCK_MINUTES") is long minutes and > 0
+            ? TimeSpan.FromMinutes(minutes)
+            : TimeSpan.FromMinutes(5);
+
     // Overridable in tests so persistent-failure / idle-sleep behaviour can be
     // exercised without a real database.
     internal TimeSpan ErrorBackoffDelay { get; set; } = TimeSpan.FromSeconds(5);
     internal TimeSpan IdleDelay { get; set; } = TimeSpan.FromMinutes(1);
+    internal TimeSpan StuckItemThreshold { get; set; } = DefaultStuckItemThreshold;
+    internal TimeSpan StuckItemCheckInterval { get; set; } = TimeSpan.FromSeconds(30);
+    internal TimeSpan StuckItemPauseWriteTimeout { get; set; } = TimeSpan.FromSeconds(10);
     internal Func<IReadOnlyCollection<Guid>, CancellationToken, Task<(QueueItem? queueItem, Stream? queueNzbStream)>>?
         GetTopQueueItemOverride
     { get; set; }
@@ -635,9 +644,14 @@ public sealed class QueueManager : IDisposable
             _finalizeLock, cts.Token
         ).ProcessAsync();
 
+        var watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+
         _ = task.ContinueWith(
             t =>
             {
+                try { watchdogCts.Cancel(); }
+                catch (ObjectDisposedException) { /* already disposed */ }
+
                 if (t.IsFaulted)
                     Log.Error(t.Exception!.GetBaseException(),
                         "Unhandled queue processor fault for {QueueItemId}", queueItem.Id);
@@ -660,7 +674,10 @@ public sealed class QueueManager : IDisposable
             QueueNzbStream = queueNzbStream,
             CachingUsenetClient = cachingUsenetClient,
             StartedAt = DateTime.UtcNow,
+            WatchdogCts = watchdogCts,
         };
+        inProgressQueueItem.WatchdogTask =
+            WatchForStuckProgressAsync(inProgressQueueItem, watchdogCts.Token);
 
         var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
         var providersDebounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(500));
@@ -703,6 +720,95 @@ public sealed class QueueManager : IDisposable
         };
         return inProgressQueueItem;
     }
+
+    private async Task WatchForStuckProgressAsync(InProgressQueueItem item, CancellationToken ct)
+    {
+        var lastProgress = item.ProgressPercentage;
+        var lastChangeTick = Environment.TickCount64;
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(StuckItemCheckInterval, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return;
+            }
+
+            var currentProgress = item.ProgressPercentage;
+            if (currentProgress != lastProgress)
+            {
+                lastProgress = currentProgress;
+                lastChangeTick = Environment.TickCount64;
+                continue;
+            }
+
+            var idleMs = Environment.TickCount64 - lastChangeTick;
+            if (idleMs < StuckItemThreshold.TotalMilliseconds)
+                continue;
+
+            await HandleStuckItemAsync(item, idleMs).ConfigureAwait(false);
+            return;
+        }
+    }
+
+    private async Task HandleStuckItemAsync(InProgressQueueItem item, long idleMs)
+    {
+        var queueItem = item.QueueItem;
+        var progress = item.ProgressPercentage;
+        var idleMinutes = idleMs / 60000d;
+        var phase = DescribeProgressPhase(progress);
+#pragma warning disable CA5394 // pause jitter is not security-sensitive
+        var jitterSeconds = Random.Shared.Next(0, 301);
+#pragma warning restore CA5394
+        var pauseUntil = DateTime.Now + TimeSpan.FromMinutes(15) + TimeSpan.FromSeconds(jitterSeconds);
+
+        try
+        {
+            await using var ctx = CreateDbContext();
+            using var writeCts = new CancellationTokenSource(StuckItemPauseWriteTimeout);
+            await ctx.QueueItems
+                .Where(q => q.Id == queueItem.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(q => q.PauseUntil, pauseUntil), writeCts.Token)
+                .ConfigureAwait(false);
+        }
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+#pragma warning restore CA2016
+        {
+            Log.Warning(e,
+                "Failed to persist PauseUntil for stuck queue item {QueueItemId} ({JobName})",
+                queueItem.Id,
+                queueItem.JobName);
+        }
+
+        Log.Warning(
+            "Queue item stuck with no progress; pausing and cancelling. JobName={JobName} QueueItemId={QueueItemId} " +
+            "IdleMinutes={IdleMinutes:F1} ProgressPhase={ProgressPhase} ProgressPercentage={ProgressPercentage} " +
+            "PauseUntil={PauseUntil}",
+            queueItem.JobName,
+            queueItem.Id,
+            idleMinutes,
+            phase,
+            progress,
+            pauseUntil);
+
+        try
+        {
+            await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Worker may have finished and disposed the CTS concurrently.
+        }
+    }
+
+    private static string DescribeProgressPhase(int progress) =>
+        progress < 50 ? "fetch first segments"
+        : progress < 100 ? "file processing"
+        : "full health check";
 
     private string BuildProvidersMessage(Guid queueItemId)
     {
@@ -822,10 +928,23 @@ public sealed class QueueManager : IDisposable
         public Stream? QueueNzbStream { get; init; }
         public ArticleCachingNntpClient CachingUsenetClient { get; init; } = null!;
         public DateTime StartedAt { get; init; }
+        public CancellationTokenSource WatchdogCts { get; init; } = null!;
+        public Task WatchdogTask { get; set; } = Task.CompletedTask;
         public bool IsPrimary => QueueDownloadContext.IsPrimary;
 
         public async ValueTask DisposeAsync()
         {
+            try { await WatchdogCts.CancelAsync().ConfigureAwait(false); }
+            catch (ObjectDisposedException) { /* already disposed */ }
+
+            try { await WatchdogTask.ConfigureAwait(false); }
+#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
+            catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+#pragma warning restore CA2016
+            {
+                // Watchdog may fault after the worker is torn down; ignore during cleanup.
+            }
+
             QueueContextRegistration.Dispose();
             CancellationTokenSource.Dispose();
             CachingUsenetClient.Dispose();
