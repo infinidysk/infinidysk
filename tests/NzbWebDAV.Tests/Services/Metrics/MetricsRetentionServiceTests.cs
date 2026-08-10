@@ -109,7 +109,7 @@ public sealed class MetricsRetentionServiceTests
             {
                 Directory.Delete(_dir, recursive: true);
             }
-            catch
+            catch (IOException)
             {
                 // best effort
             }

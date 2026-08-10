@@ -308,11 +308,6 @@ public class GetOverviewStatsController(
             rescues = hours.Where(h => h.FailoverSaves > 0)
                 .Select(h => (h.Hour, h.Provider, h.FailoverSaves))
                 .ToList();
-            if (window == GetOverviewStatsRequest.OverviewWindow.AllTime)
-            {
-                foreach (var lifetime in lifetimeTotals.Where(x => x.FailoverSaves > 0))
-                    rescues.Add((0, lifetime.Provider, lifetime.FailoverSaves));
-            }
             misses = failoverEdges.Select(e => (e.FromProvider, e.Reason, e.Count)).ToList();
         }
         else
@@ -382,7 +377,11 @@ public class GetOverviewStatsController(
             readsSaved,
             previousSaves,
             ResolveFailoverBucket(window),
-            labelsByMetricsKey);
+            labelsByMetricsKey,
+            window == GetOverviewStatsRequest.OverviewWindow.AllTime
+                ? lifetimeTotals.Where(x => x.FailoverSaves > 0)
+                    .Select(x => (x.Provider, x.FailoverSaves))
+                : null);
 
         var tiles = BuildLiveTiles(liveCounts?.Articles ?? 0, liveCounts?.Errors ?? 0);
         var sessionsBlock = BuildSessionsBlock(sessionsRows.Select(s => (s.DurationMs, s.BytesServed)));
@@ -606,7 +605,8 @@ public class GetOverviewStatsController(
         long readsSaved,
         long? previousSaves,
         long chartBucketSize,
-        IReadOnlyDictionary<string, string?> labelsByMetricsKey)
+        IReadOnlyDictionary<string, string?> labelsByMetricsKey,
+        IEnumerable<(string Provider, long Saves)>? lifetimeFailoverSaves = null)
     {
         var totalsByProvider = new Dictionary<string, long>();
         var byBucket = new SortedDictionary<long, Dictionary<string, long>>();
@@ -621,6 +621,15 @@ public class GetOverviewStatsController(
                 byBucket[bucket] = perProvider = new Dictionary<string, long>();
             perProvider.TryGetValue(provider, out var c);
             perProvider[provider] = c + saves;
+        }
+
+        if (lifetimeFailoverSaves is not null)
+        {
+            foreach (var (provider, saves) in lifetimeFailoverSaves)
+            {
+                totalsByProvider.TryGetValue(provider, out var t);
+                totalsByProvider[provider] = t + saves;
+            }
         }
 
         // Chart/list series only include currently configured providers; aggregate
@@ -898,10 +907,9 @@ public class GetOverviewStatsController(
 
         if (foldedLifetimeTotals is not null)
         {
-            foreach (var lifetime in foldedLifetimeTotals)
+            foreach (var lifetime in foldedLifetimeTotals
+                         .Where(lt => IsConfiguredMetricsKey(lt.Provider, labelsByMetricsKey)))
             {
-                if (!IsConfiguredMetricsKey(lifetime.Provider, labelsByMetricsKey))
-                    continue;
                 if (!byProvider.TryGetValue(lifetime.Provider, out var acc))
                     acc = new ProviderAccumulator(sparkBuckets);
                 acc.Articles += lifetime.Articles;
