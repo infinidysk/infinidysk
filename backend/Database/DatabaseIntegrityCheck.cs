@@ -61,7 +61,7 @@ internal static class DatabaseIntegrityCheck
 
     private static void LogCorruption(List<string> findings)
     {
-        Log.Error("{Reason}", ExceptionExtensions.DatabaseCorruptionReason);
+        Log.Error("Database integrity check failed. {Reason}", ExceptionExtensions.DatabaseCorruptionReason);
         foreach (var finding in findings.Take(MaxLoggedFindings))
             Log.Error("Database integrity check finding: {Finding}", finding);
         if (findings.Count > MaxLoggedFindings)

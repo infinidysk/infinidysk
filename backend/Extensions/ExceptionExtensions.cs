@@ -31,7 +31,12 @@ public static class ExceptionExtensions
     {
         for (var current = exception; current != null; current = current.InnerException)
         {
-            if (current is SqliteException { SqliteErrorCode: 11 }) // SQLITE_CORRUPT
+            // SqliteErrorCode is the primary result code today (extended result codes
+            // are never enabled in this stack). The mask keeps the check correct if
+            // extended codes are ever turned on: SQLITE_CORRUPT_VTAB (267) and
+            // SQLITE_CORRUPT_SEQUENCE (523) share primary code 11 in their low byte.
+            if (current is SqliteException sqlite
+                && (sqlite.SqliteErrorCode == 11 || (sqlite.SqliteExtendedErrorCode & 0xFF) == 11))
                 return true;
         }
 
