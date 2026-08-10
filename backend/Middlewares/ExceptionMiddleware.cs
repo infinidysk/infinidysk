@@ -54,7 +54,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             if (!context.Response.HasStarted)
             {
                 context.Response.Clear();
-                context.Response.StatusCode = 499; // Client closed request (stalled read)
+                context.Response.StatusCode = 499; // Client stopped reading (write-stall watchdog)
             }
             else
             {

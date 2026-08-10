@@ -278,8 +278,8 @@ public class ExceptionMiddlewareTests
                  && e.Exception is null);
         Assert.Contains("write stalled", logged.RenderMessage(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(
-            logged.RenderMessage(),
             "streaming-read-timeout",
+            logged.RenderMessage(),
             StringComparison.OrdinalIgnoreCase);
     }
 
