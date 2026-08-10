@@ -1,6 +1,8 @@
+using System.Security.Cryptography;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
+using NzbWebDAV.Tests.Par2Recovery;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Queue;
@@ -8,6 +10,54 @@ namespace NzbWebDAV.Tests.Queue;
 public class GetFileInfosStepTests
 {
     private static readonly byte[] Rar4Magic = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00];
+
+    [Fact]
+    public async Task GetFileInfos_AssignsPar2NamesFromMultiplePar2Sets()
+    {
+        // Season packs with one par2 set per episode yield one descriptor per
+        // set; every file whose 16k hash matches must get its own par2 name.
+        var first16kA = Enumerable.Range(0, 64).Select(i => (byte)i).ToArray();
+        var first16kB = Enumerable.Range(100, 64).Select(i => (byte)i).ToArray();
+#pragma warning disable CA5351 // MD5 here is content hashing for the NZB/PAR2 ecosystem, not security
+        var descriptors = await Par2TestPackets.ReadFileDescsAsync(Par2TestPackets.BuildPar2Bytes(
+            Par2TestPackets.BuildFileDescBody(
+                FileId(0x0A), "Show.S01E01.mkv", MD5.HashData(first16kA), fileLength: 970),
+            Par2TestPackets.BuildFileDescBody(
+                FileId(0x0B), "Show.S01E02.mkv", MD5.HashData(first16kB), fileLength: 1950)));
+#pragma warning restore CA5351
+
+        var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            VideoFile("obfuscated [AAAAAAAA].mkv", yencodedSize: 1000, first16kA),
+            VideoFile("obfuscated [BBBBBBBB].mkv", yencodedSize: 2000, first16kB),
+            VideoFile("obfuscated [CCCCCCCC].mkv", yencodedSize: 3000, new byte[64]),
+        };
+
+        var results = GetFileInfosStep.GetFileInfos(inputs, descriptors);
+
+        Assert.Equal("Show.S01E01.mkv", results[0].FileName);
+        Assert.Equal("Show.S01E02.mkv", results[1].FileName);
+        Assert.Equal("obfuscated [CCCCCCCC].mkv", results[2].FileName);
+    }
+
+    private static byte[] FileId(byte fill) => Enumerable.Repeat(fill, 16).ToArray();
+
+    private static FetchFirstSegmentsStep.NzbFileWithFirstSegment VideoFile(
+        string subject, long yencodedSize, byte[] first16Kb)
+    {
+        return new()
+        {
+            NzbFile = new NzbFile
+            {
+                Subject = $"\"{subject}\" yEnc (1/1)",
+                Segments = { new NzbSegment { MessageId = "video@example.com", Bytes = yencodedSize } },
+            },
+            Header = null,
+            First16KB = first16Kb,
+            MissingFirstSegment = false,
+            ReleaseDate = DateTimeOffset.UnixEpoch,
+        };
+    }
     private static readonly byte[] EbmlMagic = [0x1A, 0x45, 0xDF, 0xA3, 0x00, 0x00, 0x00, 0x00];
 
     [Fact]
