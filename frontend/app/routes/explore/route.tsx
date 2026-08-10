@@ -12,6 +12,7 @@ import { getDownloadKey } from "~/auth/downloads.server";
 import { Loading } from "../_index/components/loading/loading";
 import { formatFileSize } from "~/utils/file-size";
 import { parseExploreWebdavPath } from "~/utils/path";
+import { fileKindRank, getExtension, getIcon } from "./file-kind/file-kind";
 import { ItemMenu } from "./item-menu/item-menu";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { classNames } from "~/utils/styling";
@@ -59,7 +60,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
                 if (x.isDirectory) return x;
                 return {
                     ...x,
-                    mimeType: getMimeType(x.name),
+                    mimeType: getMimeType(x.name) || "",
                     downloadKey: getDownloadKey(getRelativePath(path, x.name))
                 };
             })
@@ -677,31 +678,8 @@ function compareItems(a: DirectoryItem, b: DirectoryItem, key: SortKey, dir: Sor
     return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
 }
 
-function fileKindRank(item: DirectoryItem): number {
-    const ext = getExtension(item.name)?.toLowerCase() ?? "";
-    const mime = (item as ExploreFile).mimeType ?? "";
-    if (mime.startsWith("video") || ext === ".mkv" || mime === "application/mp4") return 0;
-    if (mime.startsWith("image")) return 1;
-    if (mime.startsWith("audio")) return 2;
-    return 3;
-}
-
 function formatCount(n: number, label: string) {
     return `${n} ${label}${n === 1 ? "" : "s"}`;
-}
-
-function getExtension(filename: string): string | undefined {
-    const lastDotIndex = filename.lastIndexOf('.');
-    if (lastDotIndex === -1 || lastDotIndex === 0) return undefined;
-    return filename.slice(lastDotIndex);
-}
-
-function getIcon(file: ExploreFile) {
-    if (file.name.toLowerCase().endsWith(".mkv")) return "movie";
-    if (file.mimeType === "application/mp4") return "movie";
-    if (file.mimeType && file.mimeType.startsWith("video")) return "movie";
-    if (file.mimeType && file.mimeType.startsWith("image")) return "image";
-    return "draft";
 }
 
 function getWebdavPath(pathname: string): string {
