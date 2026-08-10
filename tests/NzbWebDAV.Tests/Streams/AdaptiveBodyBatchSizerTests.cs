@@ -7,7 +7,8 @@ public class AdaptiveBodyBatchSizerTests
     [Fact]
     public void TwoNonAdjacentStarvedInEight_NarrowsFourToTwoThenTwoToOne()
     {
-        var sizer = new AdaptiveBodyBatchSizer(4);
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(4, clock);
         // S-R-R-R-S-R-R-R → two starved in eight → 4→2
         ObservePattern(sizer, "SRRRSRRR");
         Assert.Equal(2, sizer.Current);
@@ -28,14 +29,17 @@ public class AdaptiveBodyBatchSizerTests
     [Fact]
     public void SixteenConsecutiveReady_RecoversOneStepAtATime()
     {
-        var sizer = new AdaptiveBodyBatchSizer(4);
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(4, clock);
         ObservePattern(sizer, "SRRRSRRR"); // 4→2
         ObservePattern(sizer, "SRRRSRRR"); // 2→1
         Assert.Equal(1, sizer.Current);
 
+        AdvancePastHold(clock);
         ObservePattern(sizer, new string('R', 16));
         Assert.Equal(2, sizer.Current);
 
+        AdvancePastHold(clock);
         ObservePattern(sizer, new string('R', 16));
         Assert.Equal(4, sizer.Current);
     }
@@ -43,7 +47,8 @@ public class AdaptiveBodyBatchSizerTests
     [Fact]
     public void FifteenReadyThenStarved_DoesNotRecover()
     {
-        var sizer = new AdaptiveBodyBatchSizer(4);
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(4, clock);
         ObservePattern(sizer, "SRRRSRRR"); // 4→2
         ObservePattern(sizer, new string('R', 15) + "S");
         Assert.Equal(2, sizer.Current);
@@ -52,7 +57,8 @@ public class AdaptiveBodyBatchSizerTests
     [Fact]
     public void AlternatingObservations_ResizeOnlyOncePerClearedWindow()
     {
-        var sizer = new AdaptiveBodyBatchSizer(4);
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(4, clock);
         // Alternating fills the window with four starved → one narrow, then clear.
         ObservePattern(sizer, "SRSRSRSR");
         Assert.Equal(2, sizer.Current);
@@ -72,7 +78,8 @@ public class AdaptiveBodyBatchSizerTests
     [InlineData(3)]
     public void MaximumSizesStayWithinBounds(int maximum)
     {
-        var sizer = new AdaptiveBodyBatchSizer(maximum);
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(maximum, clock);
         Assert.Equal(maximum, sizer.Current);
 
         // Drive starvation until the floor.
@@ -82,10 +89,96 @@ public class AdaptiveBodyBatchSizerTests
 
         // Recover past the configured maximum must clamp.
         for (var i = 0; i < 8; i++)
+        {
+            AdvancePastHold(clock);
             ObservePattern(sizer, new string('R', 16));
+        }
         Assert.Equal(maximum, sizer.Current);
         Assert.InRange(sizer.Current, 1, maximum);
     }
+
+    [Fact]
+    public void ReadyBurstWithinHold_DoesNotRewiden()
+    {
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(4, clock);
+        ObservePattern(sizer, "SRRRSRRR"); // 4→2
+        Assert.Equal(2, sizer.Current);
+
+        ObservePattern(sizer, new string('R', 16));
+        Assert.Equal(2, sizer.Current);
+
+        ObservePattern(sizer, new string('R', 16));
+        Assert.Equal(2, sizer.Current);
+
+        AdvancePastHold(clock);
+        ObservePattern(sizer, new string('R', 16));
+        Assert.Equal(4, sizer.Current);
+    }
+
+    [Fact]
+    public void NarrowsAreNotTimeDampened()
+    {
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(4, clock);
+        ObservePattern(sizer, "SRRRSRRR");
+        Assert.Equal(2, sizer.Current);
+
+        ObservePattern(sizer, "SRRRSRRR");
+        Assert.Equal(1, sizer.Current);
+    }
+
+    [Fact]
+    public void WideningLadderIsSpacedByHold()
+    {
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(4, clock);
+        ObservePattern(sizer, "SRRRSRRR"); // 4→2
+        ObservePattern(sizer, "SRRRSRRR"); // 2→1
+        Assert.Equal(1, sizer.Current);
+
+        AdvancePastHold(clock);
+        ObservePattern(sizer, new string('R', 16));
+        Assert.Equal(2, sizer.Current);
+
+        ObservePattern(sizer, new string('R', 16));
+        Assert.Equal(2, sizer.Current);
+
+        AdvancePastHold(clock);
+        ObservePattern(sizer, new string('R', 16));
+        Assert.Equal(4, sizer.Current);
+    }
+
+    [Fact]
+    public void SuppressedWiden_KeepsStarvationWindowArmed()
+    {
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(4, clock);
+        ObservePattern(sizer, "SRRRSRRR"); // 4→2
+        Assert.Equal(2, sizer.Current);
+
+        ObservePattern(sizer, new string('R', 16)); // suppressed widen within hold
+        Assert.Equal(2, sizer.Current);
+
+        ObservePattern(sizer, "SRRRSRRR"); // narrows 2→1 immediately
+        Assert.Equal(1, sizer.Current);
+    }
+
+    [Fact]
+    public void FirstWidenAfterConstruction_NotSuppressed()
+    {
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(4, clock);
+        ObservePattern(sizer, "SRRRSRRR"); // 4→2
+        Assert.Equal(2, sizer.Current);
+
+        AdvancePastHold(clock);
+        ObservePattern(sizer, new string('R', 16));
+        Assert.Equal(4, sizer.Current);
+    }
+
+    private static void AdvancePastHold(ManualTimeProvider clock) =>
+        clock.Advance(TimeSpan.FromMilliseconds(AdaptiveBodyBatchSizer.RewidenHoldMilliseconds + 50));
 
     private static void ObservePattern(AdaptiveBodyBatchSizer sizer, string pattern)
     {
@@ -94,5 +187,14 @@ public class AdaptiveBodyBatchSizerTests
             var ready = c is 'R' or 'r';
             sizer.Observe(ready);
         }
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _now = DateTimeOffset.UnixEpoch;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan duration) => _now += duration;
     }
 }
