@@ -21,7 +21,7 @@ public class GetWarningsController(
     internal GetWarningsResponse BuildResponse(string? name)
     {
         if (name is not null and not ("show" or "clear"))
-            throw new BadHttpRequestException("Invalid name");
+            throw new BadHttpRequestException($"Invalid name parameter '{name}'; expected 'show' or 'clear'");
 
         var snapshot = warningLogBuffer.Sink.Snapshot(
             50,

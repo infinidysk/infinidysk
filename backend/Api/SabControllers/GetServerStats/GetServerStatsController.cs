@@ -193,23 +193,22 @@ public class GetServerStatsController(
     private static long LocalBoundaryUnixMs(long nowMs, TimeZoneInfo timeZone, BoundaryKind kind)
     {
         var local = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(nowMs), timeZone);
-        return kind switch
+        var boundaryDate = kind switch
         {
-            BoundaryKind.Day => new DateTimeOffset(local.Year, local.Month, local.Day, 0, 0, 0, local.Offset)
-                .ToUnixTimeMilliseconds(),
-            BoundaryKind.Week => WeekBoundaryUnixMs(local),
-            BoundaryKind.Month => new DateTimeOffset(local.Year, local.Month, 1, 0, 0, 0, local.Offset)
-                .ToUnixTimeMilliseconds(),
+            BoundaryKind.Day => new DateTime(local.Year, local.Month, local.Day, 0, 0, 0, DateTimeKind.Unspecified),
+            BoundaryKind.Week => WeekBoundaryDate(local),
+            BoundaryKind.Month => new DateTime(local.Year, local.Month, 1, 0, 0, 0, DateTimeKind.Unspecified),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
         };
+        var boundaryOffset = timeZone.GetUtcOffset(boundaryDate);
+        return new DateTimeOffset(boundaryDate, boundaryOffset).ToUnixTimeMilliseconds();
     }
 
-    private static long WeekBoundaryUnixMs(DateTimeOffset local)
+    private static DateTime WeekBoundaryDate(DateTimeOffset local)
     {
         var daysSinceMonday = ((int)local.DayOfWeek + 6) % 7;
-        return new DateTimeOffset(local.Year, local.Month, local.Day, 0, 0, 0, local.Offset)
-            .AddDays(-daysSinceMonday)
-            .ToUnixTimeMilliseconds();
+        var monday = local.DateTime.Date.AddDays(-daysSinceMonday);
+        return new DateTime(monday.Year, monday.Month, monday.Day, 0, 0, 0, DateTimeKind.Unspecified);
     }
 
     private sealed class ProviderAgg
