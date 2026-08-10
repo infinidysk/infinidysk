@@ -126,6 +126,7 @@ const defaultConfig = {
     "db.is-startup-vacuum-enabled": "false",
     "database.history-retention-days": "90",
     "database.healthcheck-retention-days": "30",
+    "metrics.fetch-retention-hours": "24",
     "maintenance.remove-orphaned-schedule-enabled": "false",
     "maintenance.remove-orphaned-schedule-time": "0",
     "backup.schedule-enabled": "false",

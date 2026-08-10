@@ -33,6 +33,7 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                     "db.is-startup-vacuum-enabled",
                     "database.history-retention-days",
                     "database.healthcheck-retention-days",
+                    "metrics.fetch-retention-hours",
                 ]}>
                 <section className="overflow-hidden rounded-lg border border-base-content/10 bg-base-100">
                     <div className="flex items-start gap-3 border-b border-base-content/10 p-4">
@@ -110,6 +111,32 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                                 <p className="text-[11px] leading-relaxed text-base-content/45" id="healthcheck-retention-days-help">
                                     Prunes old health-check results. Set to 0 to keep everything.
                                     Environment: <code className="break-all font-mono">DATABASE_HEALTHCHECK_RETENTION_DAYS</code>.
+                                </p>
+                            </div>
+
+                            <div className="space-y-2 sm:col-span-2">
+                                <label className="block text-sm font-medium text-base-content" htmlFor="metrics-fetch-retention-hours">
+                                    Raw fetch-event retention
+                                </label>
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        className="w-full max-w-xs"
+                                        id="metrics-fetch-retention-hours"
+                                        type="number"
+                                        min={0}
+                                        aria-describedby="metrics-fetch-retention-hours-help"
+                                        value={config["metrics.fetch-retention-hours"] ?? "24"}
+                                        onChange={e => setNewConfig({
+                                            ...config,
+                                            "metrics.fetch-retention-hours": e.target.value,
+                                        })}
+                                    />
+                                    <span className="text-xs text-base-content/45">hours</span>
+                                </div>
+                                <p className="text-[11px] leading-relaxed text-base-content/45" id="metrics-fetch-retention-hours-help">
+                                    Prunes raw per-fetch metrics rows. Minute and hourly rollups are kept regardless.
+                                    Set to 0 for rollup-only retention (one-hour floor). Environment:
+                                    <code className="break-all font-mono">METRICS_FETCH_RETENTION_HOURS</code>.
                                 </p>
                             </div>
                         </div>
@@ -283,6 +310,7 @@ export function isMaintenanceSettingsUpdated(config: Record<string, string>, new
     return config["db.is-startup-vacuum-enabled"] !== newConfig["db.is-startup-vacuum-enabled"]
         || config["database.history-retention-days"] !== newConfig["database.history-retention-days"]
         || config["database.healthcheck-retention-days"] !== newConfig["database.healthcheck-retention-days"]
+        || config["metrics.fetch-retention-hours"] !== newConfig["metrics.fetch-retention-hours"]
         || config["maintenance.remove-orphaned-schedule-enabled"] !== newConfig["maintenance.remove-orphaned-schedule-enabled"]
         || config["maintenance.remove-orphaned-schedule-time"] !== newConfig["maintenance.remove-orphaned-schedule-time"];
 }
