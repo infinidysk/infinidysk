@@ -35,9 +35,10 @@ export function MediaPreview(props: MediaPreviewProps) {
     const kind = isVideoFile({ name: fileName, mimeType }) ? "video" : "audio";
     const downloadUrl = `${previewUrl}&download=true`;
 
+    // src is applied by the player hook's effect (see useMediaPlayer); a JSX
+    // src attribute would be wiped by StrictMode's simulated unmount cycle.
     const mediaElementProps = {
         ref: player.setMediaEl,
-        src,
         controls: true,
         playsInline: true,
         preload: "metadata" as const,
@@ -114,6 +115,8 @@ function StatusBanner({ player, mimeType }: { player: ReturnType<typeof useMedia
                     Loading…
                 </div>
             );
+        case "ready":
+            return null;
         case "playing":
             return player.buffering ? (
                 <div className="flex items-center gap-2 text-sm text-base-content/60" role="status">

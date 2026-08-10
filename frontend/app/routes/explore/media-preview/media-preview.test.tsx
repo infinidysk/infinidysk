@@ -163,6 +163,55 @@ describe("MediaPreview", () => {
         expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
     });
 
+    it("clears the recovering banner when the stream reloads while paused", () => {
+        vi.useFakeTimers();
+        try {
+            const { container } = renderPreview();
+            const video = container.querySelector("video")!;
+            // User never started playback (autoplay blocked path).
+            fireEvent(video, new Event("pause"));
+
+            fireMediaError(video, 2, "network down");
+            expect(screen.getByRole("status").textContent).toContain("Stream interrupted");
+
+            act(() => { vi.advanceTimersByTime(1000); });
+            fireEvent(video, new Event("loadedmetadata"));
+            fireEvent(video, new Event("canplay"));
+
+            // No play event follows while paused — the banner must still clear.
+            expect(screen.queryByRole("status")).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("re-arms the attempt budget after recovered playback stays stable", () => {
+        vi.useFakeTimers();
+        try {
+            const { container } = renderPreview();
+            const video = container.querySelector("video")!;
+
+            fireMediaError(video, 2, "first blip");
+            expect(screen.getByRole("status").textContent).toContain("attempt 1/3");
+            act(() => { vi.advanceTimersByTime(1000); });
+            fireEvent(video, new Event("loadedmetadata"));
+            fireEvent(video, new Event("canplay"));
+            fireEvent(video, new Event("play"));
+
+            // 15s of forward progress: lastGoodTime advances each timeupdate.
+            for (let t = 1; t <= 15; t++) {
+                Object.defineProperty(video, "currentTime", { configurable: true, value: t });
+                act(() => { vi.advanceTimersByTime(1000); });
+                fireEvent(video, new Event("timeupdate"));
+            }
+
+            fireMediaError(video, 2, "second blip");
+            expect(screen.getByRole("status").textContent).toContain("attempt 1/3");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("ignores self-inflicted abort errors from reload/close", () => {
         const { container } = renderPreview();
         const video = container.querySelector("video")!;

@@ -391,7 +391,7 @@ function videoDimensions(el: HTMLMediaElement | null): string {
     return `${el.videoWidth}×${el.videoHeight}`;
 }
 
-function buildDiagnosticsSnapshot(
+export function buildDiagnosticsSnapshot(
     props: MediaDiagnosticsProps,
     read: ActiveRead | null,
     liveStats: LiveStatsMessage | null,

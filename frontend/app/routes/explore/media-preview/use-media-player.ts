@@ -8,6 +8,7 @@ import {
 
 export type PlayerStatus =
     | "loading"
+    | "ready"
     | "playing"
     | "recovering"
     | "failed"
@@ -25,6 +26,10 @@ export type PlayerError = {
 };
 
 const MAX_EVENTS = 200;
+
+/** A recovery that holds playback for this long counts as stable and
+ *  re-arms the automatic attempt budget. */
+const RECOVERY_STABLE_MS = 10_000;
 
 /**
  * Drives a native media element pointed at a signed /view URL: autoplay on
@@ -50,6 +55,7 @@ export function useMediaPlayer({ src }: { src: string }) {
     const wasPlayingRef = useRef(true); // opening click implies intent to play
     const generationRef = useRef(0);
     const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastRecoveryAtRef = useRef<number | null>(null);
 
     const log = useCallback((kind: string, detail?: string) => {
         setEvents(prev => {
@@ -84,6 +90,7 @@ export function useMediaPlayer({ src }: { src: string }) {
         }
         const attempt = attemptsRef.current;
         attemptsRef.current = attempt + 1;
+        lastRecoveryAtRef.current = Date.now();
         setAttempts(attempt + 1);
         setStatus("recovering");
         setError(null);
@@ -138,6 +145,18 @@ export function useMediaPlayer({ src }: { src: string }) {
         setEvents([]);
     }, [src, clearRecoveryTimer]);
 
+    // The source is applied imperatively, not via the JSX src attribute:
+    // React 19 StrictMode's simulated unmount runs callback-ref cleanups
+    // (which strip src) without re-applying props, permanently wiping a
+    // JSX-set attribute. An effect re-establishes the source on every cycle.
+    useEffect(() => {
+        const el = mediaRef.current;
+        if (!el) return;
+        el.src = src;
+        loadStartedAtRef.current = Date.now();
+        el.load();
+    }, [src]);
+
     // On unmount/close: stop pending recovery. The source release itself is
     // handled by the callback-ref cleanup in setMediaEl (refs are already
     // detached by the time effect cleanups run).
@@ -181,6 +200,9 @@ export function useMediaPlayer({ src }: { src: string }) {
             const el = mediaRef.current;
             recordStartup();
             setBuffering(false);
+            // Recovered/loaded while paused: leave the recover/loading banner
+            // even though no play event will follow.
+            setStatus(prev => (prev === "recovering" || prev === "loading" ? "ready" : prev));
             if (el && wasPlayingRef.current) {
                 // play() may return undefined in non-standard environments.
                 void Promise.resolve(el.play()).catch(() => { /* autoplay blocked — controls remain */ });
@@ -194,13 +216,24 @@ export function useMediaPlayer({ src }: { src: string }) {
             setStatus("playing");
             setBuffering(false);
         },
-        onPause: () => log("pause"),
+        onPause: () => {
+            setStatus(prev => (prev === "playing" ? "ready" : prev));
+            log("pause");
+        },
         onTimeUpdate: () => {
             const el = mediaRef.current;
             if (!el) return;
             lastGoodTimeRef.current = el.currentTime;
             lastProgressAtRef.current = Date.now();
             setBuffering(false);
+            // A recovery that sustains playback re-arms the attempt budget.
+            if (attemptsRef.current > 0
+                && lastRecoveryAtRef.current !== null
+                && Date.now() - lastRecoveryAtRef.current > RECOVERY_STABLE_MS) {
+                attemptsRef.current = 0;
+                setAttempts(0);
+                log("recovered", "playback stable");
+            }
         },
         onSeeked: () => {
             const el = mediaRef.current;
