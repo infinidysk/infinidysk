@@ -56,4 +56,47 @@ public class MetricsFetchRetentionConfigTests
             },
         ]);
     }
+
+    [Fact]
+    public void GetMetricsFetchRetentionHours_FallsBackToEnvironmentVariable()
+    {
+        const string envVar = "METRICS_FETCH_RETENTION_HOURS";
+        var previous = Environment.GetEnvironmentVariable(envVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(envVar, "6");
+            var config = new ConfigManager();
+
+            Assert.Equal(6, config.GetMetricsFetchRetentionHours());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, previous);
+        }
+    }
+
+    [Fact]
+    public void GetMetricsFetchRetentionHours_ConfigTakesPrecedenceOverEnvironmentVariable()
+    {
+        const string envVar = "METRICS_FETCH_RETENTION_HOURS";
+        var previous = Environment.GetEnvironmentVariable(envVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(envVar, "6");
+            var config = new ConfigManager();
+            config.UpdateValues([
+                new ConfigItem
+                {
+                    ConfigName = ConfigKeys.MetricsFetchRetentionHours,
+                    ConfigValue = "48",
+                },
+            ]);
+
+            Assert.Equal(48, config.GetMetricsFetchRetentionHours());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, previous);
+        }
+    }
 }

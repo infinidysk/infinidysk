@@ -124,6 +124,7 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                                         id="metrics-fetch-retention-hours"
                                         type="number"
                                         min={0}
+                                        max={8760}
                                         aria-describedby="metrics-fetch-retention-hours-help"
                                         value={config["metrics.fetch-retention-hours"] ?? "24"}
                                         onChange={e => setNewConfig({
