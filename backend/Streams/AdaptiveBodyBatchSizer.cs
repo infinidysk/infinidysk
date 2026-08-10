@@ -13,6 +13,7 @@ internal sealed class AdaptiveBodyBatchSizer(int maximumBatchSize, TimeProvider?
     private const int ReadyBoundariesToRecover = 16;
 
     internal const int RewidenHoldMilliseconds = 250;
+    private static readonly TimeSpan RewidenHold = TimeSpan.FromMilliseconds(RewidenHoldMilliseconds);
 
     private readonly int _maximum = Math.Max(1, maximumBatchSize);
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
@@ -50,13 +51,13 @@ internal sealed class AdaptiveBodyBatchSizer(int maximumBatchSize, TimeProvider?
 
         if (next is null) return null;
 
-        if (isWiden
-            && (_timeProvider.GetUtcNow() - _lastTransition).TotalMilliseconds < RewidenHoldMilliseconds)
+        var now = _timeProvider.GetUtcNow();
+        if (isWiden && (now - _lastTransition) < RewidenHold)
         {
             return null;
         }
 
-        _lastTransition = _timeProvider.GetUtcNow();
+        _lastTransition = now;
         _starvationWindow = 0;
         _observations = 0;
         _ready = 0;
