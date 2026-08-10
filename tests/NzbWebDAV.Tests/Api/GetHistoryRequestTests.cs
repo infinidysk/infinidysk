@@ -57,16 +57,73 @@ public class GetHistoryRequestTests
     }
 
     [Fact]
-    public void ClampsNegativePageSizeToZero()
+    public void TreatsNegativePageSizeAsUnlimitedCappedAtCeiling()
     {
-        // A negative Take() becomes a negative SQLite LIMIT (= unbounded); must clamp.
         var config = CreateConfig(ignoreLimit: true);
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?pageSize=-1");
 
         var request = new GetHistoryRequest(context, config);
 
-        Assert.Equal(0, request.Limit);
+        Assert.Equal(10_000, request.Limit);
+    }
+
+    [Fact]
+    public void TreatsLimitZeroAsUnlimitedCappedAtCeiling()
+    {
+        var config = CreateConfig(ignoreLimit: false);
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?limit=0");
+
+        var request = new GetHistoryRequest(context, config);
+
+        Assert.Equal(10_000, request.Limit);
+    }
+
+    [Fact]
+    public void TreatsPageSizeZeroAsUnlimitedCappedAtCeiling()
+    {
+        var config = CreateConfig(ignoreLimit: false);
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?pageSize=0");
+
+        var request = new GetHistoryRequest(context, config);
+
+        Assert.Equal(10_000, request.Limit);
+    }
+
+    [Fact]
+    public void PageSizeZeroOverridesLimitWhenBothPresent()
+    {
+        var config = CreateConfig(ignoreLimit: false);
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?limit=60&pageSize=0");
+
+        var request = new GetHistoryRequest(context, config);
+
+        Assert.Equal(10_000, request.Limit);
+    }
+
+    [Fact]
+    public void RejectsNonIntegerLimit()
+    {
+        var config = CreateConfig(ignoreLimit: false);
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?limit=abc");
+
+        var ex = Assert.Throws<BadHttpRequestException>(() => new GetHistoryRequest(context, config));
+        Assert.Equal("Invalid limit parameter", ex.Message);
+    }
+
+    [Fact]
+    public void RejectsNonIntegerPageSize()
+    {
+        var config = CreateConfig(ignoreLimit: true);
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?pageSize=abc");
+
+        var ex = Assert.Throws<BadHttpRequestException>(() => new GetHistoryRequest(context, config));
+        Assert.Equal("Invalid pageSize parameter", ex.Message);
     }
 
     [Fact]

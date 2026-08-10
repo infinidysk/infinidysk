@@ -36,7 +36,8 @@ public class GetQueueController(
         var totalCount = await dbClient.GetQueueItemsCount(request.Category, ct).ConfigureAwait(false);
 
         // get queued items, then merge active items ahead for the requested page
-        var getQueueItemsTask = dbClient.GetQueueItems(request.Category, 0, request.Start + request.Limit, ct);
+        var fetchCount = request.Start + Math.Min(request.Limit, int.MaxValue - request.Start);
+        var getQueueItemsTask = dbClient.GetQueueItems(request.Category, 0, fetchCount, ct);
         var queuedItems = (await getQueueItemsTask.ConfigureAwait(false))
             .Where(x => !inProgressIds.Contains(x.Id))
             .ToArray();

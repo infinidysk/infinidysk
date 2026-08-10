@@ -16,7 +16,7 @@ public class GetHistoryController(
     ProviderUsageTracker providerUsageTracker
 ) : SabApiController.BaseController(httpContext, configManager)
 {
-    private async Task<GetHistoryResponse> GetHistoryAsync(GetHistoryRequest request)
+    internal async Task<GetHistoryResponse> GetHistoryAsync(GetHistoryRequest request)
     {
         // get query
         IQueryable<HistoryItem> query = dbClient.Ctx.HistoryItems;

@@ -30,7 +30,7 @@ public class GetQueueRequest
         {
             var isValidLimit = int.TryParse(limitParam, out int limit);
             if (!isValidLimit) throw new BadHttpRequestException("Invalid limit parameter");
-            Limit = limit;
+            Limit = limit > 0 ? limit : int.MaxValue;
         }
     }
 }

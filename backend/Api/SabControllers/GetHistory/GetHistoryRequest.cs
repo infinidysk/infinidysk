@@ -42,7 +42,7 @@ public class GetHistoryRequest
         {
             var isValidLimit = int.TryParse(limitParam, out var limit);
             if (!isValidLimit) throw new BadHttpRequestException("Invalid limit parameter");
-            Limit = limit;
+            Limit = limit > 0 ? limit : int.MaxValue;
         }
 
         // Even though we may want to ignore the `limit` param from the Arrs, NzbDAV frontend
@@ -53,7 +53,7 @@ public class GetHistoryRequest
         {
             var isValidPageSize = int.TryParse(pageSizeParam, out var pageSize);
             if (!isValidPageSize) throw new BadHttpRequestException("Invalid pageSize parameter");
-            Limit = pageSize;
+            Limit = pageSize > 0 ? pageSize : int.MaxValue;
         }
 
         // Server-side ceiling: keep ignore-limit semantics for Arrs but never materialize
