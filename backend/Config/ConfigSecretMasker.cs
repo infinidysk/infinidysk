@@ -13,6 +13,7 @@ public sealed class ConfigSecretMasker(string signingKey)
     private static readonly HashSet<string> ScalarSecretConfigNames =
     [
         "api.strm-key",
+        "prowlarr.api-key",
         "rclone.pass",
         "webdav.pass"
     ];

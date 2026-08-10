@@ -300,6 +300,36 @@ public class ConfigEnvironmentOverlayTests
     }
 
     [Fact]
+    public void LoadFromEnvironment_AcceptsProwlarrSettings()
+    {
+        var overlay = ConfigEnvironmentOverlay.LoadFromEnvironment(new Hashtable
+        {
+            ["NZBDAV_CONFIG__PROWLARR__URL"] = "http://prowlarr:9696/base",
+            ["NZBDAV_CONFIG__PROWLARR__API_KEY"] = "prowlarr-secret",
+            ["NZBDAV_CONFIG__PROWLARR__SYNC_ENABLED"] = "true",
+            ["NZBDAV_CONFIG__PROWLARR__SYNC_INTERVAL_MINUTES"] = "30",
+        });
+
+        Assert.Equal("http://prowlarr:9696/base", overlay.Values[ConfigKeys.ProwlarrUrl]);
+        Assert.Equal("prowlarr-secret", overlay.Values[ConfigKeys.ProwlarrApiKey]);
+        Assert.Equal("true", overlay.Values[ConfigKeys.ProwlarrSyncEnabled]);
+        Assert.Equal("30", overlay.Values[ConfigKeys.ProwlarrSyncIntervalMinutes]);
+    }
+
+    [Fact]
+    public void LoadFromEnvironment_RejectsInvalidProwlarrSettingsWithoutLeakingValues()
+    {
+        var ex = Assert.Throws<ConfigEnvironmentException>(() =>
+            ConfigEnvironmentOverlay.LoadFromEnvironment(new Hashtable
+            {
+                ["NZBDAV_CONFIG__PROWLARR__URL"] = "https://user:secret@prowlarr:9696",
+            }));
+
+        Assert.Contains("NZBDAV_CONFIG__PROWLARR__URL", ex.Message);
+        Assert.DoesNotContain("secret", ex.Message);
+    }
+
+    [Fact]
     public void LoadFromEnvironment_AcceptsSerializedIndexersInstances()
     {
         var indexers = JsonSerializer.Serialize(new IndexerConfig

@@ -20,6 +20,7 @@ public static class ConfigEnvMapping
     {
         ConfigKeys.SearchExcludePrefix,
         ConfigKeys.SearchExcludeSyncCache,
+        ConfigKeys.ProwlarrSyncStatus,
     }.ToFrozenSet(StringComparer.Ordinal);
 
     private static readonly Lazy<IReadOnlyDictionary<string, string>> ConfigKeyToEnvVar =

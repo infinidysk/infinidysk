@@ -84,6 +84,8 @@ public class IndexerConfig
         public string? ExtraTvCategories { get; set; }
         public bool IgnoreCategoryFilter { get; set; }
         public ResultFilter? Filter { get; set; }
+        // Non-null marks this entry as owned by Prowlarr pull-sync. Manual entries omit it.
+        public int? ProwlarrIndexerId { get; set; }
     }
 
     public class ResultFilter

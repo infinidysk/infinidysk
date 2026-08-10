@@ -57,6 +57,22 @@ public class ConfigSecretMaskerTests
     }
 
     [Fact]
+    public void ProwlarrApiKeyIsMaskedAndResolvedForRoundTripUpdates()
+    {
+        var masker = new ConfigSecretMasker("test-signing-key");
+
+        var masked = masker.MaskForResponse(ConfigKeys.ProwlarrApiKey, "prowlarr-secret");
+
+        Assert.StartsWith(ConfigSecretMasker.MaskPrefix, masked);
+        Assert.Equal(
+            "prowlarr-secret",
+            masker.ResolveForUpdate(ConfigKeys.ProwlarrApiKey, masked, "prowlarr-secret"));
+        Assert.Equal(
+            "replacement-secret",
+            masker.ResolveForUpdate(ConfigKeys.ProwlarrApiKey, "replacement-secret", "prowlarr-secret"));
+    }
+
+    [Fact]
     public void ResolveMaskedJsonSecret_ReturnsPlaintextUnchanged()
     {
         var masker = new ConfigSecretMasker("test-signing-key");

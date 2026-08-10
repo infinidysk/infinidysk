@@ -10,6 +10,10 @@ public class ConfigEnvMappingTests
     [InlineData("usenet.segment-cache.enabled", "NZBDAV_CONFIG__USENET__SEGMENT_CACHE__ENABLED")]
     [InlineData("api.addurl-trusted-hosts", "NZBDAV_CONFIG__API__ADDURL_TRUSTED_HOSTS")]
     [InlineData("maintenance.remove-orphaned-schedule-time", "NZBDAV_CONFIG__MAINTENANCE__REMOVE_ORPHANED_SCHEDULE_TIME")]
+    [InlineData("prowlarr.url", "NZBDAV_CONFIG__PROWLARR__URL")]
+    [InlineData("prowlarr.api-key", "NZBDAV_CONFIG__PROWLARR__API_KEY")]
+    [InlineData("prowlarr.sync-enabled", "NZBDAV_CONFIG__PROWLARR__SYNC_ENABLED")]
+    [InlineData("prowlarr.sync-interval-minutes", "NZBDAV_CONFIG__PROWLARR__SYNC_INTERVAL_MINUTES")]
     public void FormatEnvironmentVariableName_UsesDeterministicRules(string configKey, string expected)
     {
         Assert.Equal(expected, ConfigEnvMapping.FormatEnvironmentVariableName(configKey));
@@ -54,8 +58,12 @@ public class ConfigEnvMappingTests
     {
         Assert.Null(ConfigEnvMapping.ToEnvironmentVariableName(ConfigKeys.SearchExcludePrefix));
         Assert.Null(ConfigEnvMapping.ToEnvironmentVariableName(ConfigKeys.SearchExcludeSyncCache));
+        Assert.Null(ConfigEnvMapping.ToEnvironmentVariableName(ConfigKeys.ProwlarrSyncStatus));
         Assert.False(ConfigEnvMapping.TryGetConfigKey(
             ConfigEnvMapping.FormatEnvironmentVariableName(ConfigKeys.SearchExcludeSyncCache),
+            out _));
+        Assert.False(ConfigEnvMapping.TryGetConfigKey(
+            ConfigEnvMapping.FormatEnvironmentVariableName(ConfigKeys.ProwlarrSyncStatus),
             out _));
     }
 

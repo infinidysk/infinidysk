@@ -343,6 +343,14 @@ public class ConfigManager
                     RequireLong(item.ConfigName, value);
                     break;
 
+                case ConfigKeys.ProwlarrSyncIntervalMinutes:
+                    RequireLongInRange(item.ConfigName, value, 5, 10080);
+                    break;
+
+                case ConfigKeys.ProwlarrUrl:
+                    RequireHttpUrl(item.ConfigName, value);
+                    break;
+
                 case ConfigKeys.ApiEnsureImportableVideo:
                 case ConfigKeys.ApiSampleFilterEnabled:
                 case ConfigKeys.ApiIgnoreHistoryLimit:
@@ -379,6 +387,7 @@ public class ConfigManager
                 case ConfigKeys.MaintenanceRemoveOrphanedScheduleEnabled:
                 case ConfigKeys.BackupScheduleEnabled:
                 case ConfigKeys.QueuePaused:
+                case ConfigKeys.ProwlarrSyncEnabled:
                     RequireBool(item.ConfigName, value);
                     break;
 
@@ -409,6 +418,10 @@ public class ConfigManager
                 case ConfigKeys.ProfilesInstances:
                     RequireJson<ProfileConfig>(item.ConfigName, value, jsonOptions);
                     break;
+
+                case ConfigKeys.ProwlarrSyncStatus:
+                    RequireJson<ProwlarrSyncStatus>(item.ConfigName, value, jsonOptions);
+                    break;
             }
         }
 
@@ -425,6 +438,24 @@ public class ConfigManager
             if (!int.TryParse(value, out var parsed) || parsed < 0)
                 throw new ArgumentException(
                     $"Config value for '{key}' must be a non-negative whole number, but was '{value}'.");
+        }
+
+        void RequireLongInRange(string key, string value, long minimum, long maximum)
+        {
+            if (!long.TryParse(value, out var parsed) || parsed < minimum || parsed > maximum)
+                throw new ArgumentException(
+                    $"Config value for '{key}' must be a whole number from {minimum} through {maximum}.");
+        }
+
+        void RequireHttpUrl(string key, string value)
+        {
+            if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+                || !string.IsNullOrEmpty(uri.Query)
+                || !string.IsNullOrEmpty(uri.Fragment)
+                || !string.IsNullOrEmpty(uri.UserInfo))
+                throw new ArgumentException(
+                    $"Config value for '{key}' must be an absolute http(s) URL without credentials, query, or fragment.");
         }
 
         void RequireBool(string key, string value)
@@ -1141,6 +1172,39 @@ public class ConfigManager
         if (raw == null) return new ExcludeSyncCache();
         try { return JsonSerializer.Deserialize<ExcludeSyncCache>(raw) ?? new ExcludeSyncCache(); }
         catch (JsonException) { return new ExcludeSyncCache(); }
+    }
+
+    public const int DefaultProwlarrSyncIntervalMinutes = 60;
+
+    public string? GetProwlarrUrl()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ProwlarrUrl))?.TrimEnd('/');
+    }
+
+    public string? GetProwlarrApiKey()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ProwlarrApiKey));
+    }
+
+    public bool IsProwlarrSyncEnabled()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ProwlarrSyncEnabled));
+        return v is not null && bool.Parse(v);
+    }
+
+    public int GetProwlarrSyncIntervalMinutes()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ProwlarrSyncIntervalMinutes));
+        if (v == null) return DefaultProwlarrSyncIntervalMinutes;
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 5, 10080) : DefaultProwlarrSyncIntervalMinutes;
+    }
+
+    public ProwlarrSyncStatus GetProwlarrSyncStatus()
+    {
+        var raw = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ProwlarrSyncStatus));
+        if (raw == null) return new ProwlarrSyncStatus();
+        try { return JsonSerializer.Deserialize<ProwlarrSyncStatus>(raw) ?? new ProwlarrSyncStatus(); }
+        catch (JsonException) { return new ProwlarrSyncStatus(); }
     }
 
     public string GetVariantsMode()

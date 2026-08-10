@@ -182,6 +182,13 @@ public static class ConfigKeys
     public const string IndexersInstances = "indexers.instances";
     public const string ProfilesInstances = "profiles.instances";
 
+    // prowlarr
+    public const string ProwlarrUrl = "prowlarr.url";
+    public const string ProwlarrApiKey = "prowlarr.api-key";
+    public const string ProwlarrSyncEnabled = "prowlarr.sync-enabled";
+    public const string ProwlarrSyncIntervalMinutes = "prowlarr.sync-interval-minutes";
+    public const string ProwlarrSyncStatus = "prowlarr.sync-status";
+
     // database
     public const string DatabaseHealthcheckRetentionDays = "database.healthcheck-retention-days";
     public const string DatabaseHistoryRetentionDays = "database.history-retention-days";
