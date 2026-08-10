@@ -17,3 +17,11 @@ Content streams from Usenet on read — files are not fully downloaded to disk f
 Configure credentials and filesystem behavior under [WebDAV settings](../configuration/webdav.md),
 and playback behavior under [Streaming settings](../configuration/streaming.md).
 Mount with [rclone](../guides/mounting-webdav.md) for filesystem clients.
+
+## Deleting from Explore [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
+
+From **Explore**, you can delete individual files or entire release folders under `/content/{category}/{release}/…`. The confirmation dialog shows how many files, folders, bytes, and linked history entries will be affected.
+
+Deletion is limited to mounted content under `/content`. Use the **Queue** page to remove NZBs from `/nzbs`, and the **History** page to clear `completed-symlinks` entries. Internal paths such as `/.ids` cannot be deleted from Explore.
+
+When the last file referencing a history entry is removed, the history row is pruned automatically so external SAB clients do not keep pointing at deleted mounts.
