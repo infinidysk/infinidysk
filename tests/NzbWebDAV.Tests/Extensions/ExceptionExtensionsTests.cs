@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using Microsoft.Data.Sqlite;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 
@@ -114,6 +115,56 @@ public class ExceptionExtensionsTests
 
         Assert.True(aggregate.TryGetCausingException<TimeoutException>(out var found));
         Assert.Same(inner, found);
+    }
+
+    [Fact]
+    public void IsDatabaseCorruptionException_RecognizesSqliteCorrupt()
+    {
+        var ex = new SqliteException("SQLite Error 11: 'database disk image is malformed'.", 11);
+
+        Assert.True(ex.IsDatabaseCorruptionException());
+    }
+
+    [Fact]
+    public void IsDatabaseCorruptionException_RecognizesNestedCorrupt()
+    {
+        var inner = new SqliteException("SQLite Error 11: 'database disk image is malformed'.", 11);
+        var outer = new InvalidOperationException("An error occurred while saving changes.", inner);
+
+        Assert.True(outer.IsDatabaseCorruptionException());
+    }
+
+    [Theory]
+    [InlineData(5)] // SQLITE_BUSY
+    [InlineData(6)] // SQLITE_LOCKED
+    [InlineData(8)] // SQLITE_READONLY
+    [InlineData(13)] // SQLITE_FULL
+    [InlineData(26)] // SQLITE_NOTADB
+    public void IsDatabaseCorruptionException_RejectsTransientAndOtherSqliteErrors(int errorCode)
+    {
+        var ex = new SqliteException("some other sqlite error", errorCode);
+
+        Assert.False(ex.IsDatabaseCorruptionException());
+    }
+
+    [Fact]
+    public void TryGetKnownErrorMessage_Corruption_ReturnsRecoveryGuidance()
+    {
+        var ex = new SqliteException("SQLite Error 11: 'database disk image is malformed'.", 11);
+
+        Assert.True(ex.TryGetKnownErrorMessage(out var reason));
+        Assert.Contains("corrupt", reason);
+        Assert.Contains("Backup & Restore", reason);
+    }
+
+    [Fact]
+    public void TryGetKnownErrorMessage_OtherSqliteErrors_StayUnknown()
+    {
+        // Busy/locked and friends stay unclassified: they are transient and
+        // handled by their own retry paths, not by corruption guidance.
+        var ex = new SqliteException("SQLite Error 5: 'database is locked'.", 5);
+
+        Assert.False(ex.TryGetKnownErrorMessage(out _));
     }
 
     [Fact]
