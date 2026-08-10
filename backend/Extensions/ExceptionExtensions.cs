@@ -1,4 +1,5 @@
 ﻿using System.Net.Sockets;
+using Microsoft.Data.Sqlite;
 using NzbWebDAV.Exceptions;
 using Serilog;
 
@@ -6,9 +7,35 @@ namespace NzbWebDAV.Extensions;
 
 public static class ExceptionExtensions
 {
+    /// <summary>
+    /// Operator-facing guidance logged when the database file itself is corrupt.
+    /// Points at the guided restore flow and the recovery documentation.
+    /// </summary>
+    internal const string DatabaseCorruptionReason =
+        "Database file is corrupt (SQLite error 11: database disk image is malformed). " +
+        "Restore a backup from Settings → Backup & Restore, or see " +
+        "https://www.infinidysk.com/operations/database-corruption/ for recovery steps.";
+
     public static bool IsRetryableDownloadException(this Exception exception)
     {
         return exception is RetryableDownloadException;
+    }
+
+    /// <summary>
+    /// True when the exception chain contains SQLITE_CORRUPT (primary result code 11),
+    /// meaning the database file itself is damaged. Transient busy/locked errors
+    /// (codes 5/6/8/13) are deliberately excluded: corruption never heals on retry,
+    /// while busy/locked conditions do.
+    /// </summary>
+    public static bool IsDatabaseCorruptionException(this Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is SqliteException { SqliteErrorCode: 11 }) // SQLITE_CORRUPT
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -50,14 +77,20 @@ public static class ExceptionExtensions
     }
 
     /// <summary>
-    /// Returns a human-readable message for known/expected transport and download
-    /// failures so callers can log a single line without a stack dump. Walks the
-    /// exception chain and prefers the innermost matching message. Unexpected
-    /// exceptions return false so full stack traces are preserved.
+    /// Returns a human-readable message for known/expected failures (transport,
+    /// download, and database corruption) so callers can log a single line without
+    /// a stack dump. Walks the exception chain and prefers the innermost matching
+    /// message. Unexpected exceptions return false so full stack traces are preserved.
     /// </summary>
     public static bool TryGetKnownErrorMessage(this Exception exception, out string reason)
     {
         ArgumentNullException.ThrowIfNull(exception);
+
+        if (exception.IsDatabaseCorruptionException())
+        {
+            reason = DatabaseCorruptionReason;
+            return true;
+        }
 
         string? found = null;
         for (var current = exception; current != null; current = current.InnerException)
