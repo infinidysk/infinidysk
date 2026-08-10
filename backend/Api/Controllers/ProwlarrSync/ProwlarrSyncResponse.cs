@@ -15,6 +15,8 @@ public sealed class ProwlarrSyncResponse : BaseApiResponse
     public int Updated { get; set; }
     public int Removed { get; set; }
     public int Skipped { get; set; }
+    public string? IndexerConfigJson { get; set; }
+    public string? ProfileConfigJson { get; set; }
 
     public static ProwlarrSyncResponse FromSnapshot(ProwlarrSyncSnapshot snapshot) => new()
     {

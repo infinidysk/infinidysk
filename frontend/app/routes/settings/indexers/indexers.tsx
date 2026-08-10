@@ -25,6 +25,7 @@ type IndexersSettingsProps = {
     config: Record<string, string>
     setNewConfig: Dispatch<SetStateAction<Record<string, string>>>
     savedConfig?: Record<string, string>
+    onSyncedConfig?: (patch: Record<string, string>) => void
 };
 
 interface ResultFilter {
@@ -71,6 +72,7 @@ interface ConnectionDetails {
     ExtraTvCategories?: string;
     IgnoreCategoryFilter?: boolean;
     Filter?: ResultFilter;
+    ProwlarrIndexerId?: number;
 }
 
 interface IndexerConfig {
@@ -94,6 +96,11 @@ const DEFAULT_TIMEOUT_SECONDS = 30;
 // Mirrors IndexerConfig.DefaultSearchResultLimit in the backend.
 const DEFAULT_SEARCH_RESULT_LIMIT = 100;
 
+// Mirrors ConfigManager.DefaultProwlarrSyncIntervalMinutes and validation bounds.
+const DEFAULT_PROWLARR_SYNC_INTERVAL_MINUTES = 60;
+const MIN_PROWLARR_SYNC_INTERVAL_MINUTES = 5;
+const MAX_PROWLARR_SYNC_INTERVAL_MINUTES = 10080;
+
 type PatternIssue = { line: number, pattern: string, error: string };
 
 function validateExcludePatterns(raw: string): PatternIssue[] {
@@ -114,6 +121,29 @@ function validateExcludePatterns(raw: string): PatternIssue[] {
 // Response shape of /settings/exclude-sync (backend ExcludeSyncResponse).
 type ExcludeSyncResponse = {
     urls?: ExcludeSyncUrlStatus[];
+};
+
+type ProwlarrSyncStatus = {
+    configured?: boolean;
+    syncEnabled?: boolean;
+    indexersEnvironmentManaged?: boolean;
+    profilesEnvironmentManaged?: boolean;
+    lastAttemptAt?: number | null;
+    lastSuccessAt?: number | null;
+    error?: string | null;
+    remoteIndexerCount?: number;
+    added?: number;
+    updated?: number;
+    removed?: number;
+    skipped?: number;
+    indexerConfigJson?: string | null;
+    profileConfigJson?: string | null;
+};
+
+type ProwlarrConnectionTestResult = {
+    status?: boolean;
+    connected?: boolean;
+    error?: string | null;
 };
 
 type SyncUrlIssue = { line: number, value: string, error: string };
@@ -143,6 +173,31 @@ function isRefreshValid(raw: string): boolean {
     return Number.isInteger(n) && n >= 15 && n <= 10080;
 }
 
+function isProwlarrSyncIntervalValid(raw: string): boolean {
+    const trimmed = raw.trim();
+    if (trimmed === "") return true; // blank → server default (60)
+    const n = Number(trimmed);
+    return Number.isInteger(n)
+        && n >= MIN_PROWLARR_SYNC_INTERVAL_MINUTES
+        && n <= MAX_PROWLARR_SYNC_INTERVAL_MINUTES
+        && trimmed === n.toString();
+}
+
+function isProwlarrUrlValid(raw: string): boolean {
+    const trimmed = raw.trim();
+    if (trimmed === "") return true;
+    try {
+        const url = new URL(trimmed);
+        return (url.protocol === "http:" || url.protocol === "https:")
+            && !url.username
+            && !url.password
+            && !url.search
+            && !url.hash;
+    } catch {
+        return false;
+    }
+}
+
 function syncHostLabel(url: string): string {
     try { return new URL(url).host; } catch { return url; }
 }
@@ -153,6 +208,27 @@ function syncRelativeTime(unixSeconds: number): string {
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function prowlarrStatusSummary(status: ProwlarrSyncStatus): string {
+    if (status.indexersEnvironmentManaged) {
+        return "Prowlarr sync is unavailable because indexers.instances is managed by the environment.";
+    }
+    if (!status.configured) return "Prowlarr is not configured.";
+    if (status.error) {
+        const attempted = status.lastAttemptAt ? ` ${syncRelativeTime(status.lastAttemptAt)}` : "";
+        return `Last sync failed${attempted}: ${status.error}`;
+    }
+    if (status.lastSuccessAt) {
+        const changes = [
+            `${status.added ?? 0} added`,
+            `${status.updated ?? 0} updated`,
+            `${status.removed ?? 0} removed`,
+            `${status.skipped ?? 0} skipped`,
+        ].join(" · ");
+        return `Last synced ${syncRelativeTime(status.lastSuccessAt)} — ${status.remoteIndexerCount ?? 0} Prowlarr indexers, ${changes}.`;
+    }
+    return "Prowlarr is configured but has not synced yet.";
 }
 
 function parseConfig(raw: string): IndexerConfig {
@@ -208,7 +284,7 @@ function isProxyUrlValid(raw: string): boolean {
     }
 }
 
-export function IndexersSettings({ config, setNewConfig, savedConfig }: IndexersSettingsProps) {
+export function IndexersSettings({ config, setNewConfig, savedConfig, onSyncedConfig }: IndexersSettingsProps) {
     const indexerConfig = useMemo(() => parseConfig(config["indexers.instances"] ?? ""), [config]);
     const [showModal, setShowModal] = useState(false);
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -328,6 +404,85 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
         }
     }, [excludeSyncManaged]);
 
+    const prowlarrUrl = config["prowlarr.url"] ?? "";
+    const prowlarrApiKey = config["prowlarr.api-key"] ?? "";
+    const prowlarrSyncEnabled = (config["prowlarr.sync-enabled"] ?? "false") === "true";
+    const prowlarrSyncInterval = config["prowlarr.sync-interval-minutes"] ?? "";
+    const prowlarrConfigKeys = [
+        "prowlarr.url",
+        "prowlarr.api-key",
+        "prowlarr.sync-enabled",
+        "prowlarr.sync-interval-minutes",
+    ];
+    const prowlarrSettingsDirty = savedConfig !== undefined && [
+        ...prowlarrConfigKeys,
+        "indexers.instances",
+        "profiles.instances",
+    ].some(key => (config[key] ?? "") !== (savedConfig[key] ?? ""));
+
+    const [prowlarrStatus, setProwlarrStatus] = useState<ProwlarrSyncStatus | null>(null);
+    const [isProwlarrSyncing, setIsProwlarrSyncing] = useState(false);
+    const [prowlarrTestState, setProwlarrTestState] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+    const [prowlarrTestError, setProwlarrTestError] = useState<string | null>(null);
+    const loadProwlarrStatus = useCallback(async () => {
+        try {
+            const res = await fetch(withUrlBase("/api/prowlarr-sync"));
+            if (res.ok) setProwlarrStatus(await res.json() as ProwlarrSyncStatus);
+        } catch {
+            // Status is best-effort; the next load retries it.
+        }
+    }, []);
+    const savedProwlarrFingerprint = prowlarrConfigKeys
+        .map(key => savedConfig?.[key] ?? "")
+        .join("\u0000");
+    useEffect(() => {
+        void loadProwlarrStatus();
+        const timer = setTimeout(() => { void loadProwlarrStatus(); }, 2000);
+        return () => clearTimeout(timer);
+    }, [savedProwlarrFingerprint, loadProwlarrStatus]);
+    useEffect(() => {
+        setProwlarrTestState('idle');
+        setProwlarrTestError(null);
+    }, [prowlarrUrl, prowlarrApiKey]);
+
+    const handleProwlarrFieldChange = useCallback((key: string, value: string) => {
+        setNewConfig({ ...config, [key]: value });
+    }, [config, setNewConfig]);
+    const handleProwlarrTest = useCallback(async () => {
+        if (!prowlarrUrl.trim() || !prowlarrApiKey.trim() || !isProwlarrUrlValid(prowlarrUrl)) return;
+        setProwlarrTestState('testing');
+        setProwlarrTestError(null);
+        try {
+            const fd = new FormData();
+            fd.append('url', prowlarrUrl);
+            fd.append('apiKey', prowlarrApiKey);
+            const res = await fetch(withUrlBase('/api/test-prowlarr-connection'), { method: 'POST', body: fd });
+            const data = await res.json() as ProwlarrConnectionTestResult;
+            setProwlarrTestState(data.status && data.connected ? 'success' : 'error');
+            setProwlarrTestError(data.connected ? null : data.error ?? "Connection test failed");
+        } catch {
+            setProwlarrTestState('error');
+            setProwlarrTestError("Connection test failed");
+        }
+    }, [prowlarrUrl, prowlarrApiKey]);
+    const handleProwlarrSyncNow = useCallback(async () => {
+        if (prowlarrSettingsDirty || prowlarrStatus?.indexersEnvironmentManaged) return;
+        setIsProwlarrSyncing(true);
+        try {
+            const res = await fetch(withUrlBase("/api/prowlarr-sync"), { method: "POST" });
+            const data = await res.json() as ProwlarrSyncStatus;
+            setProwlarrStatus(data);
+            const patch: Record<string, string> = {};
+            if (!data.error && data.indexerConfigJson) patch["indexers.instances"] = data.indexerConfigJson;
+            if (!data.error && data.profileConfigJson) patch["profiles.instances"] = data.profileConfigJson;
+            if (Object.keys(patch).length > 0) onSyncedConfig?.(patch);
+        } catch {
+            await loadProwlarrStatus();
+        } finally {
+            setIsProwlarrSyncing(false);
+        }
+    }, [prowlarrSettingsDirty, prowlarrStatus?.indexersEnvironmentManaged, onSyncedConfig, loadProwlarrStatus]);
+
     const defaultSearchUserAgent = config["api.search-user-agent"] ?? "";
     const handleSearchUserAgentChange = useCallback((value: string) => {
         setNewConfig({ ...config, "api.search-user-agent": value });
@@ -340,6 +495,9 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
 
     const proxyUrl = indexerConfig.ProxyUrl ?? "";
     const proxyValid = isProxyUrlValid(proxyUrl);
+    const prowlarrUrlValid = isProwlarrUrlValid(prowlarrUrl);
+    const prowlarrIntervalValid = isProwlarrSyncIntervalValid(prowlarrSyncInterval);
+    const prowlarrReady = prowlarrUrl.trim() !== "" && prowlarrApiKey.trim() !== "" && prowlarrUrlValid;
     const globalTimeoutRaw = typeof indexerConfig.TimeoutSeconds === "number" && indexerConfig.TimeoutSeconds > 0
         ? indexerConfig.TimeoutSeconds.toString()
         : "";
@@ -439,6 +597,124 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
                         />
                     </div>
                     </ManagedSetting>
+            </SettingsCard>
+
+            <SettingsCard
+                icon="sync_alt"
+                title="Prowlarr pull sync"
+                description="Import enabled Usenet indexers from Prowlarr and keep their name, proxy URL, API key, and enabled state synchronized."
+                contentClassName="grid grid-cols-1 gap-3.5 sm:grid-cols-2"
+            >
+                <ManagedSetting configKey="prowlarr.url" className="sm:col-span-2">
+                    <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="prowlarr-url">Prowlarr URL</Label>
+                        <Input
+                            type="text"
+                            id="prowlarr-url"
+                            className={`w-full ${!prowlarrUrlValid ? "input-error" : ""}`}
+                            placeholder="http://prowlarr:9696"
+                            value={prowlarrUrl}
+                            onChange={e => handleProwlarrFieldChange("prowlarr.url", e.target.value)}
+                        />
+                        <HelpText>
+                            Include the port and URL base when needed. Credentials, query strings, and fragments are not supported.
+                        </HelpText>
+                    </div>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="prowlarr.api-key" className="sm:col-span-2">
+                    <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="prowlarr-api-key">Prowlarr API key</Label>
+                        <Input
+                            type="password"
+                            id="prowlarr-api-key"
+                            className="w-full"
+                            value={prowlarrApiKey}
+                            onChange={e => handleProwlarrFieldChange("prowlarr.api-key", e.target.value)}
+                        />
+                    </div>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="prowlarr.sync-enabled">
+                    <Tooltip content="Periodically refresh the Prowlarr-managed entries below. Manual Sync now works even when this is off.">
+                        <Toggle
+                            id="prowlarr-sync-enabled"
+                            className="cursor-pointer gap-2 p-0"
+                            checked={prowlarrSyncEnabled}
+                            onChange={e => handleProwlarrFieldChange("prowlarr.sync-enabled", e.target.checked ? "true" : "false")}
+                            label={<span className="text-sm text-base-content">Automatically sync</span>}
+                        />
+                    </Tooltip>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="prowlarr.sync-interval-minutes">
+                    <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="prowlarr-sync-interval">
+                            Sync every <span className="text-[11px] font-normal text-base-content/45">(minutes; blank = {DEFAULT_PROWLARR_SYNC_INTERVAL_MINUTES})</span>
+                        </Label>
+                        <Input
+                            type="text"
+                            inputMode="numeric"
+                            id="prowlarr-sync-interval"
+                            className={`w-full ${!prowlarrIntervalValid ? "input-error" : ""}`}
+                            placeholder={DEFAULT_PROWLARR_SYNC_INTERVAL_MINUTES.toString()}
+                            value={prowlarrSyncInterval}
+                            onChange={e => handleProwlarrFieldChange("prowlarr.sync-interval-minutes", e.target.value.replace(/[^0-9]/g, ""))}
+                        />
+                    </div>
+                </ManagedSetting>
+
+                <div className="flex flex-wrap items-center gap-2.5 sm:col-span-2">
+                    <Button
+                        variant={prowlarrTestState === 'success' ? 'success' : prowlarrTestState === 'error' ? 'danger' : 'secondary'}
+                        size="small"
+                        onClick={() => void handleProwlarrTest()}
+                        disabled={!prowlarrReady || prowlarrTestState === 'testing'}
+                    >
+                        {prowlarrTestState === 'testing'
+                            ? <Spinner size="sm" />
+                            : prowlarrTestState === 'success'
+                                ? '✓ Connected'
+                                : prowlarrTestState === 'error'
+                                    ? '✗ Failed'
+                                    : 'Test Connection'}
+                    </Button>
+                    <Button
+                        variant="primary"
+                        size="small"
+                        onClick={() => void handleProwlarrSyncNow()}
+                        disabled={!prowlarrReady || isProwlarrSyncing || prowlarrSettingsDirty || prowlarrStatus?.indexersEnvironmentManaged === true}
+                        title={prowlarrSettingsDirty
+                            ? "Save settings before syncing Prowlarr indexers"
+                            : prowlarrStatus?.indexersEnvironmentManaged === true
+                                ? "indexers.instances is managed by NZBDAV_CONFIG__INDEXERS__INSTANCES"
+                                : undefined}
+                    >
+                        <Icon name={isProwlarrSyncing ? "progress_activity" : "sync"} className={`!text-[18px] ${isProwlarrSyncing ? "animate-spin" : ""}`} />
+                        {isProwlarrSyncing ? "Syncing…" : "Sync now"}
+                    </Button>
+                </div>
+
+                {prowlarrTestState === 'error' && prowlarrTestError && (
+                    <Alert variant="danger" className="text-xs sm:col-span-2">{prowlarrTestError}</Alert>
+                )}
+                {prowlarrTestState === 'success' && (
+                    <Alert variant="success" className="text-xs sm:col-span-2">Prowlarr connection test successful.</Alert>
+                )}
+                {prowlarrStatus && (
+                    <Alert
+                        variant={prowlarrStatus.indexersEnvironmentManaged || prowlarrStatus.error ? "danger" : prowlarrStatus.lastSuccessAt ? "success" : "info"}
+                        className="text-xs sm:col-span-2"
+                    >
+                        {prowlarrStatusSummary(prowlarrStatus)}
+                    </Alert>
+                )}
+
+                <HelpText className="sm:col-span-2">
+                    Synced entries point at Prowlarr's per-indexer Newznab proxy and are marked below. Prowlarr owns their
+                    name, URL, API key, and enabled state; InfiniDysk keeps your rate limits, filters, category overrides,
+                    proxy, TLS, timeout, and user-agent tuning. Save changes before syncing.
+                </HelpText>
             </SettingsCard>
 
             <SettingsCard
@@ -602,6 +878,7 @@ type IndexerCardProps = {
 
 function IndexerCard({ indexer, onEdit, onToggle, onDelete }: IndexerCardProps) {
     const isDisabled = !indexer.Enabled;
+    const isProwlarrManaged = typeof indexer.ProwlarrIndexerId === "number";
     const host = (() => {
         try { return new URL(indexer.Url).host; }
         catch { return indexer.Url || "—"; }
@@ -645,6 +922,7 @@ function IndexerCard({ indexer, onEdit, onToggle, onDelete }: IndexerCardProps) 
                     <div className="min-w-0 flex-1">
                         <div className="break-all text-[15px] font-semibold leading-snug tracking-tight text-base-content">
                             {indexer.Name || "(unnamed)"}
+                            {isProwlarrManaged && <Badge className="badge-info badge-soft badge-sm ml-2 align-middle">Prowlarr</Badge>}
                             {isDisabled && <Badge className="badge-ghost badge-sm ml-2 align-middle">Disabled</Badge>}
                         </div>
                         <div className="break-all text-[10px] font-medium uppercase tracking-wide text-base-content/50">{host}</div>
@@ -903,6 +1181,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
     }, []);
 
     const [testState, setTestState] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+    const isProwlarrManaged = typeof indexer?.ProwlarrIndexerId === "number";
 
     useEffect(() => {
         if (show) {
@@ -994,6 +1273,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
             Url: url.trim(),
             ApiKey: apiKey.trim(),
             Enabled: enabled,
+            ...(indexer?.ProwlarrIndexerId != null ? { ProwlarrIndexerId: indexer.ProwlarrIndexerId } : {}),
             ...(searchUserAgent.trim() ? { SearchUserAgent: searchUserAgent.trim() } : {}),
             ...(retrieveUserAgent.trim() ? { RetrieveUserAgent: retrieveUserAgent.trim() } : {}),
             ...(url.trim().toLowerCase().startsWith("https://") && skipTlsVerification
@@ -1024,7 +1304,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
     }, [name, url, apiKey, searchUserAgent, retrieveUserAgent, skipTlsVerification, proxyUrl, timeoutSeconds, searchResultLimit, maxRpm, hitLimit, downloadLimit, hitResetTime, enabled, strict,
         extraMovieCategories, extraTvCategories, ignoreCategoryFilter,
         filterEnabled, filterSkipPassworded, filterMinGrabs, filterGrabsGraceHours,
-        filterMaxAgeDaysWithoutGrabs, filterPreferDownloaded, onSave]);
+        filterMaxAgeDaysWithoutGrabs, filterPreferDownloaded, indexer?.ProwlarrIndexerId, onSave]);
 
     const isUrlValid = (() => {
         if (!url.trim()) return false;
@@ -1085,6 +1365,11 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                 </>
             }
         >
+            {isProwlarrManaged && (
+                <Alert variant="info" className="mb-4 text-xs">
+                    Prowlarr manages this indexer's name, URL, API key, and enabled state. Your changes to those fields are overwritten on the next sync; InfiniDysk-specific tuning is preserved.
+                </Alert>
+            )}
             <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                         <div className="flex flex-col gap-1.5">
                             <Label htmlFor="indexer-name">Name</Label>
@@ -1475,7 +1760,11 @@ export function isIndexersSettingsUpdated(config: Record<string, string>, newCon
         || (config["api.search-user-agent"] ?? "") !== (newConfig["api.search-user-agent"] ?? "")
         || (config["search.exclude-patterns"] ?? "") !== (newConfig["search.exclude-patterns"] ?? "")
         || (config["search.exclude-sync-urls"] ?? "") !== (newConfig["search.exclude-sync-urls"] ?? "")
-        || (config["search.exclude-sync-refresh-minutes"] ?? "") !== (newConfig["search.exclude-sync-refresh-minutes"] ?? "");
+        || (config["search.exclude-sync-refresh-minutes"] ?? "") !== (newConfig["search.exclude-sync-refresh-minutes"] ?? "")
+        || (config["prowlarr.url"] ?? "") !== (newConfig["prowlarr.url"] ?? "")
+        || (config["prowlarr.api-key"] ?? "") !== (newConfig["prowlarr.api-key"] ?? "")
+        || (config["prowlarr.sync-enabled"] ?? "false") !== (newConfig["prowlarr.sync-enabled"] ?? "false")
+        || (config["prowlarr.sync-interval-minutes"] ?? "") !== (newConfig["prowlarr.sync-interval-minutes"] ?? "");
 }
 
 export function isIndexersSettingsValid(newConfig: Record<string, string>) {
@@ -1502,6 +1791,15 @@ export function isIndexersSettingsValid(newConfig: Record<string, string>) {
         if (validateSyncUrls(newConfig["search.exclude-sync-urls"] ?? "").length > 0) return false;
         const syncRefresh = newConfig["search.exclude-sync-refresh-minutes"] ?? "";
         if (syncRefresh.trim() !== "" && !isRefreshValid(syncRefresh)) return false;
+
+        const prowlarrUrl = newConfig["prowlarr.url"] ?? "";
+        const prowlarrApiKey = newConfig["prowlarr.api-key"] ?? "";
+        if (!isProwlarrUrlValid(prowlarrUrl)) return false;
+        if (!isProwlarrSyncIntervalValid(newConfig["prowlarr.sync-interval-minutes"] ?? "")) return false;
+        const syncEnabled = newConfig["prowlarr.sync-enabled"] ?? "false";
+        if (syncEnabled !== "true" && syncEnabled !== "false") return false;
+        if (prowlarrUrl.trim() === "" && prowlarrApiKey.trim() !== "") return false;
+        if (prowlarrUrl.trim() !== "" && prowlarrApiKey.trim() === "") return false;
         return true;
     } catch {
         return false;

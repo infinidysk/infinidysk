@@ -91,6 +91,10 @@ const defaultConfig = {
     "arr.instances": "{\"RadarrInstances\":[],\"SonarrInstances\":[],\"QueueRules\":[]}",
     "indexers.instances": "{\"Indexers\":[]}",
     "profiles.instances": "{\"Profiles\":[]}",
+    "prowlarr.url": "",
+    "prowlarr.api-key": "",
+    "prowlarr.sync-enabled": "false",
+    "prowlarr.sync-interval-minutes": "60",
     "play.watchdog-enabled": "true",
     "play.total-budget-seconds": "30",
     "play.hedge-delay-seconds": "3",
@@ -364,6 +368,17 @@ function Body(props: BodyProps) {
         setIsSaved(Object.keys(remaining).length === 0);
     }, [config, newConfig, managedEnv, postConfigUpdate]);
 
+    const applySyncedConfig = useCallback((patch: Record<string, string>) => {
+        const nextSaved = { ...config, ...patch };
+        setConfig(nextSaved);
+        setNewConfigState(pinManagedConfigKeys(
+            { ...newConfig, ...patch },
+            nextSaved,
+            managedEnv,
+        ));
+        setIsSaved(false);
+    }, [config, newConfig, managedEnv]);
+
     return (
         <ManagedEnvProvider value={managedEnv}>
         <div className="flex min-h-full flex-col gap-6 px-4 py-4 md:px-8">
@@ -398,7 +413,7 @@ function Body(props: BodyProps) {
                         persistConfigPatch={persistConfigPatch}
                     />
                 )}
-                {activeTab === "indexers" && <IndexersSettings config={newConfig} setNewConfig={setNewConfig} savedConfig={config} />}
+                {activeTab === "indexers" && <IndexersSettings config={newConfig} setNewConfig={setNewConfig} savedConfig={config} onSyncedConfig={applySyncedConfig} />}
                 {activeTab === "profiles" && <ProfilesSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "queue" && <QueueSettings config={newConfig} setNewConfig={setNewConfig} />}
                 {activeTab === "sabnzbd" && <SabnzbdSettings config={newConfig} setNewConfig={setNewConfig} />}
