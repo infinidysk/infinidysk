@@ -1928,7 +1928,7 @@ public static unsafe partial class Methods
                                 {
                                     last_pos++;
                                     opt[last_pos].price = 1 << 30;
-                                    opt[last_pos].litlen = 0 == 0 ? 1U : 0U;
+                                    opt[last_pos].litlen = 1U; // upstream: litlen = !0, "not an end of match"
                                 }
 
                                 opt[pos].mlen = mlen;

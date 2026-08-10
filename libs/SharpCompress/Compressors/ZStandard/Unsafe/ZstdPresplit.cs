@@ -142,7 +142,9 @@ public static unsafe partial class Methods
             fpstats->pastEvents.events[n] = fpstats->newEvents.events[n];
         }
 
-        fpstats->pastEvents.nbEvents = fpstats->newEvents.nbEvents;
+        // Read via local to avoid CodeQL false-positive self-assignment on pointer paths.
+        var nbEvents = fpstats->newEvents.nbEvents;
+        fpstats->pastEvents.nbEvents = nbEvents;
         fpstats->newEvents = new Fingerprint();
     }
 

@@ -111,9 +111,11 @@ public class SegmentBufferPoolTests
         var pool = new SegmentBufferPool(maxIdleBytes: 1024 * 1024);
         var weakBuffer = RentAndDropBuffer(pool);
 
+#pragma warning disable CA2001 // forced GC is the standard pattern for weak-reference leak tests
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
+#pragma warning restore CA2001
 
         Assert.False(weakBuffer.IsAlive);
         // The leak stays visible in diagnostics even though nothing is rooted.
