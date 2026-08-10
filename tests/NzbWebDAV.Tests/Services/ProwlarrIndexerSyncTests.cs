@@ -191,13 +191,13 @@ public class ProwlarrIndexerSyncTests
         bool enable,
         bool supportsSearch,
         string protocol) => new()
-    {
-        Id = id,
-        Name = name,
-        Enable = enable,
-        SupportsSearch = supportsSearch,
-        Protocol = protocol,
-    };
+        {
+            Id = id,
+            Name = name,
+            Enable = enable,
+            SupportsSearch = supportsSearch,
+            Protocol = protocol,
+        };
 
     private static IndexerConfig.ConnectionDetails Managed(int id, string name) => new()
     {
