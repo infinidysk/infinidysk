@@ -70,6 +70,56 @@ public class GetHistoryRequestTests
     }
 
     [Fact]
+    public void MalformedNzoId_ThrowsBadRequest()
+    {
+        var config = CreateConfig(ignoreLimit: true);
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?nzo_ids=not-a-guid");
+
+        var ex = Assert.Throws<BadHttpRequestException>(() => new GetHistoryRequest(context, config));
+        Assert.Contains("not-a-guid", ex.Message);
+    }
+
+    [Fact]
+    public void MixedValidAndInvalidNzoIds_ThrowsBadRequestNamingOnlyInvalidTokens()
+    {
+        var validId = Guid.NewGuid();
+        var config = CreateConfig(ignoreLimit: true);
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString($"?nzo_ids={validId},bad-one,also-bad");
+
+        var ex = Assert.Throws<BadHttpRequestException>(() => new GetHistoryRequest(context, config));
+        Assert.Contains("bad-one", ex.Message);
+        Assert.Contains("also-bad", ex.Message);
+        Assert.DoesNotContain(validId.ToString(), ex.Message);
+    }
+
+    [Fact]
+    public void ValidNzoIdsWithWhitespaceAndEmptyEntries_ParsesExpectedGuids()
+    {
+        var id1 = Guid.NewGuid();
+        var id2 = Guid.NewGuid();
+        var config = CreateConfig(ignoreLimit: true);
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString($"?nzo_ids= {id1} ,,{id2} ");
+
+        var request = new GetHistoryRequest(context, config);
+
+        Assert.Equal([id1, id2], request.NzoIds);
+    }
+
+    [Fact]
+    public void MissingNzoIds_KeepsEmptyList()
+    {
+        var config = CreateConfig(ignoreLimit: true);
+        var context = new DefaultHttpContext();
+
+        var request = new GetHistoryRequest(context, config);
+
+        Assert.Empty(request.NzoIds);
+    }
+
+    [Fact]
     public void GetHistoryMaxPageSize_DefaultsAndClamps()
     {
         Assert.Equal(10_000, new ConfigManager().GetHistoryMaxPageSize());

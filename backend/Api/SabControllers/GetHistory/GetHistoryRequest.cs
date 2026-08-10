@@ -63,11 +63,34 @@ public class GetHistoryRequest
 
         if (nzoIdsParam is not null)
         {
-            NzoIds = nzoIdsParam
-                .Split(',')
-                .Select(nzoId => nzoId.Trim())
-                .Select(Guid.Parse)
-                .ToList();
+            var nzoIds = new List<Guid>();
+            var badTokens = new List<string>();
+            foreach (var token in nzoIdsParam.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (Guid.TryParse(token, out var nzoId))
+                {
+                    nzoIds.Add(nzoId);
+                }
+                else
+                {
+                    badTokens.Add(token);
+                }
+            }
+
+            if (badTokens.Count > 0)
+            {
+                const int maxBadTokensShown = 5;
+                var shown = badTokens.Take(maxBadTokensShown).Select(t => $"'{t}'");
+                var bad = string.Join(", ", shown);
+                if (badTokens.Count > maxBadTokensShown)
+                {
+                    bad += $", ... ({badTokens.Count - maxBadTokensShown} more)";
+                }
+
+                throw new BadHttpRequestException($"Invalid nzo_ids parameter: {bad}");
+            }
+
+            NzoIds = nzoIds;
         }
     }
 }
