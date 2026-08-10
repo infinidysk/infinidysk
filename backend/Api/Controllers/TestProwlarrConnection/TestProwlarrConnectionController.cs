@@ -24,6 +24,16 @@ public class TestProwlarrConnectionController(ConfigManager configManager) : Bas
                     : null,
             });
         }
+        catch (TaskCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            // HttpClient timeout surfaces as TaskCanceledException, not TimeoutException.
+            return Ok(new TestProwlarrConnectionResponse
+            {
+                Status = true,
+                Connected = false,
+                Error = "Connection to Prowlarr timed out.",
+            });
+        }
         catch (Exception e) when (e is ProwlarrClientException
                                       or HttpRequestException
                                       or InvalidDataException

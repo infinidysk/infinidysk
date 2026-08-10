@@ -138,9 +138,10 @@ public static class ProwlarrIndexerSync
         }
 
         var removedNames = new List<string>();
-        foreach (var existing in indexerConfig.Indexers.ToList())
+        foreach (var existing in indexerConfig.Indexers
+                     .Where(x => x.ProwlarrIndexerId is { } id && !keptManagedIds.Contains(id))
+                     .ToList())
         {
-            if (existing.ProwlarrIndexerId is not { } id || keptManagedIds.Contains(id)) continue;
             removedNames.Add(existing.Name);
             indexerConfig.Indexers.Remove(existing);
             result.Removed++;
@@ -168,9 +169,8 @@ public static class ProwlarrIndexerSync
         {
             var next = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var oldName in profile.IndexerNames)
+            foreach (var oldName in profile.IndexerNames.Where(x => !removed.Contains(x)))
             {
-                if (removed.Contains(oldName)) continue;
                 var name = renames.GetValueOrDefault(oldName, oldName);
                 if (seen.Add(name)) next.Add(name);
             }

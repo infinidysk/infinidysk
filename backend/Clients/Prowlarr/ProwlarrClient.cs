@@ -69,11 +69,8 @@ public class ProwlarrClient : IProwlarrClient
     public async Task<IReadOnlyList<ProwlarrIndexer>> GetIndexersAsync(CancellationToken ct = default)
     {
         var indexers = await GetAsync<List<ProwlarrIndexer>>("indexer", ct).ConfigureAwait(false);
-        foreach (var indexer in indexers)
-        {
-            if (indexer.Id <= 0 || string.IsNullOrWhiteSpace(indexer.Name))
-                throw new InvalidDataException("Prowlarr returned an indexer without a valid ID or name.");
-        }
+        if (indexers.Any(indexer => indexer.Id <= 0 || string.IsNullOrWhiteSpace(indexer.Name)))
+            throw new InvalidDataException("Prowlarr returned an indexer without a valid ID or name.");
 
         return indexers;
     }
