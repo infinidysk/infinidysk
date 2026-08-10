@@ -435,6 +435,82 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             excludeHistoryIds: ids).ConfigureAwait(false);
     }
 
+    public sealed record DavSubtreeDeleteEntry(
+        Guid Id,
+        string Path,
+        Guid? HistoryItemId,
+        DavItem.ItemType Type);
+
+    public async Task<List<DavSubtreeDeleteEntry>> GetSubtreeForDeleteAsync(
+        Guid rootId,
+        CancellationToken ct = default)
+    {
+        const string sql = """
+            WITH RECURSIVE Subtree AS (
+                SELECT Id, Path, HistoryItemId, Type
+                FROM DavItems
+                WHERE Id = @rootId
+
+                UNION ALL
+
+                SELECT d.Id, d.Path, d.HistoryItemId, d.Type
+                FROM DavItems d
+                INNER JOIN Subtree s ON d.ParentId = s.Id
+            )
+            SELECT Id, Path, HistoryItemId, Type FROM Subtree;
+            """;
+
+        var connection = Ctx.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "@rootId";
+        parameter.Value = rootId;
+        command.Parameters.Add(parameter);
+
+        var entries = new List<DavSubtreeDeleteEntry>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            Guid? historyItemId = null;
+            if (!await reader.IsDBNullAsync(2, ct).ConfigureAwait(false))
+                historyItemId = reader.GetGuid(2);
+
+            entries.Add(new DavSubtreeDeleteEntry(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                historyItemId,
+                (DavItem.ItemType)reader.GetInt32(3)));
+        }
+
+        return entries;
+    }
+
+    public async Task<List<Guid>> PruneUnreferencedHistoryItemsAsync(
+        IReadOnlyCollection<Guid> historyItemIds,
+        CancellationToken ct = default)
+    {
+        if (historyItemIds.Count == 0) return [];
+
+        var distinctIds = historyItemIds.Distinct().ToList();
+        var stillReferenced = await Ctx.Items
+            .AsNoTracking()
+            .Where(x => x.HistoryItemId != null && distinctIds.Contains(x.HistoryItemId.Value))
+            .Select(x => x.HistoryItemId!.Value)
+            .Distinct()
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var orphanedIds = distinctIds.Except(stillReferenced).ToList();
+        if (orphanedIds.Count == 0) return [];
+
+        await RemoveHistoryItemsAsync(orphanedIds, deleteFiles: false, ct).ConfigureAwait(false);
+        return orphanedIds;
+    }
+
     private class FileSizeResult
     {
         public long TotalSize { get; init; }
