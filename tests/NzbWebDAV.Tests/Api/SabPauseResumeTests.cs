@@ -288,6 +288,26 @@ public sealed class SabPauseResumeTests : IAsyncLifetime
         Assert.Equal("Invalid mode", ex.Message);
     }
 
+
+    [Fact]
+    public async Task PerJobPause_SetsPriorityPaused()
+    {
+        var item = CreateQueueItem("job.nzb", QueueItem.PriorityOption.Normal, DateTime.UtcNow);
+        _context.QueueItems.Add(item);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString($"?value={item.Id}");
+        context.Request.Body = Stream.Null;
+        var response = await new PauseController(context, _dbClient, _configManager, _queueManager, _websocketManager)
+            .Pause(await PauseRequest.New(context), CancellationToken.None);
+
+        Assert.True(response.Status);
+        var updated = await _context.QueueItems.AsNoTracking().SingleAsync(q => q.Id == item.Id);
+        Assert.Equal(QueueItem.PriorityOption.Paused, updated.Priority);
+    }
+
     private SabApiController CreateSabApiController(HttpContext httpContext)
     {
         var controller = new SabApiController(
@@ -305,10 +325,10 @@ public sealed class SabPauseResumeTests : IAsyncLifetime
     }
 
     private PauseController CreatePauseController() =>
-        new(new DefaultHttpContext(), _dbClient, _configManager);
+        new(new DefaultHttpContext(), _dbClient, _configManager, _queueManager, _websocketManager);
 
     private ResumeController CreateResumeController() =>
-        new(new DefaultHttpContext(), _dbClient, _configManager, _queueManager);
+        new(new DefaultHttpContext(), _dbClient, _configManager, _queueManager, _websocketManager);
 
     private SpeedLimitController CreateSpeedLimitController() =>
         new(new DefaultHttpContext(), _dbClient, _configManager);

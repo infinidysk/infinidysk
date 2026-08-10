@@ -14,6 +14,8 @@ using NzbWebDAV.Api.SabControllers.Pause;
 using NzbWebDAV.Api.SabControllers.RemoveFromHistory;
 using NzbWebDAV.Api.SabControllers.RemoveFromQueue;
 using NzbWebDAV.Api.SabControllers.Resume;
+using NzbWebDAV.Api.SabControllers.SetQueueCategory;
+using NzbWebDAV.Api.SabControllers.SetQueuePriority;
 using NzbWebDAV.Api.SabControllers.RetryHistory;
 using NzbWebDAV.Api.SabControllers.SpeedLimit;
 using NzbWebDAV.Auth;
@@ -100,9 +102,9 @@ public class SabApiController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager, hitTracker);
 
             case "pause":
-                return new PauseController(HttpContext, dbClient, configManager);
+                return new PauseController(HttpContext, dbClient, configManager, queueManager, websocketManager);
             case "resume":
-                return new ResumeController(HttpContext, dbClient, configManager, queueManager);
+                return new ResumeController(HttpContext, dbClient, configManager, queueManager, websocketManager);
             case "speedlimit":
                 return new SpeedLimitController(HttpContext, dbClient, configManager);
 
@@ -112,10 +114,13 @@ public class SabApiController(
             case "queue" when HttpContext.GetRequestParam("name") == "move":
                 return new MoveInQueueController(
                     HttpContext, dbClient, configManager, websocketManager);
+            case "queue" when HttpContext.GetRequestParam("name") == "priority":
+                return new SetQueuePriorityController(
+                    HttpContext, dbClient, configManager, queueManager, websocketManager);
             case "queue" when HttpContext.GetRequestParam("name") == "pause":
-                return new PauseController(HttpContext, dbClient, configManager);
+                return new PauseController(HttpContext, dbClient, configManager, queueManager, websocketManager);
             case "queue" when HttpContext.GetRequestParam("name") == "resume":
-                return new ResumeController(HttpContext, dbClient, configManager, queueManager);
+                return new ResumeController(HttpContext, dbClient, configManager, queueManager, websocketManager);
             case "queue":
                 return new GetQueueController(
                     HttpContext, dbClient, queueManager, configManager, providerUsageTracker);
@@ -127,6 +132,9 @@ public class SabApiController(
                 return new GetHistoryController(
                     HttpContext, dbClient, configManager, providerUsageTracker);
 
+            case "change_cat":
+                return new SetQueueCategoryController(
+                    HttpContext, dbClient, configManager, queueManager, websocketManager);
             case "retry":
                 return new RetryHistoryController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager);

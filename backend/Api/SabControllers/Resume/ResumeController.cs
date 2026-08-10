@@ -3,23 +3,31 @@ using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Api.SabControllers.Resume;
 
-/// <summary>
-/// SAB-compatible <c>mode=resume</c> (and <c>mode=queue&amp;name=resume</c>).
-/// Clears the queue pause flag and wakes the queue coordinator so it starts
-/// claiming work again without waiting for its idle-poll interval.
-/// </summary>
 public class ResumeController(
     HttpContext httpContext,
     DavDatabaseClient dbClient,
     ConfigManager configManager,
-    QueueManager queueManager
+    QueueManager queueManager,
+    WebsocketManager websocketManager
 ) : SabApiController.BaseController(httpContext, configManager)
 {
-    public async Task<ResumeResponse> Resume(CancellationToken ct)
+    public async Task<ResumeResponse> Resume(CancellationToken ct) =>
+        await Resume(new ResumeRequest { NzoIds = [], CancellationToken = ct }, ct).ConfigureAwait(false);
+
+    public async Task<ResumeResponse> Resume(ResumeRequest request, CancellationToken ct)
     {
+        if (request.NzoIds.Count > 0)
+        {
+            await queueManager.ResumeQueueItemsAsync(request.NzoIds, dbClient, ct).ConfigureAwait(false);
+            foreach (var id in request.NzoIds)
+                _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{id}|Queued");
+            return new ResumeResponse { Status = true };
+        }
+
         await ConfigPersistenceUtil.SetValueAsync(
             dbClient, Config, ConfigKeys.QueuePaused, "false", ct).ConfigureAwait(false);
         queueManager.AwakenQueue();
@@ -28,6 +36,7 @@ public class ResumeController(
 
     protected override async Task<IActionResult> Handle()
     {
-        return Ok(await Resume(Context.RequestAborted).ConfigureAwait(false));
+        var request = await ResumeRequest.New(Context).ConfigureAwait(false);
+        return Ok(await Resume(request, Context.RequestAborted).ConfigureAwait(false));
     }
 }

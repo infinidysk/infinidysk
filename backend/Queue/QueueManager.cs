@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Config;
@@ -238,6 +239,126 @@ public sealed class QueueManager : IDisposable
             foreach (var id in queueItemIds) _retryAttempts.TryRemove(id, out _);
         }, ct).ConfigureAwait(false);
     }
+
+
+    public async Task PauseQueueItemsAsync(
+        List<Guid> queueItemIds,
+        DavDatabaseClient dbClient,
+        CancellationToken ct = default)
+    {
+        if (queueItemIds.Count == 0) return;
+
+        await LockAsync(async () =>
+        {
+            await dbClient.Ctx.QueueItems
+                .Where(item => queueItemIds.Contains(item.Id))
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(q => q.Priority, QueueItem.PriorityOption.Paused),
+                    ct)
+                .ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+
+        await CancelInProgressQueueItemsAsync(queueItemIds, ct).ConfigureAwait(false);
+        AwakenQueue();
+    }
+
+    public async Task ResumeQueueItemsAsync(
+        List<Guid> queueItemIds,
+        DavDatabaseClient dbClient,
+        CancellationToken ct = default)
+    {
+        if (queueItemIds.Count == 0) return;
+
+        await LockAsync(async () =>
+        {
+            await dbClient.Ctx.QueueItems
+                .Where(item => queueItemIds.Contains(item.Id))
+                .ExecuteUpdateAsync(
+                    s => s
+                        .SetProperty(q => q.Priority, QueueItem.PriorityOption.Normal)
+                        .SetProperty(q => q.PauseUntil, (DateTime?)null),
+                    ct)
+                .ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+
+        AwakenQueue();
+    }
+
+    public async Task SetQueueItemsPriorityAsync(
+        List<Guid> queueItemIds,
+        QueueItem.PriorityOption priority,
+        DavDatabaseClient dbClient,
+        CancellationToken ct = default)
+    {
+        if (queueItemIds.Count == 0) return;
+
+        await LockAsync(async () =>
+        {
+            await dbClient.Ctx.QueueItems
+                .Where(item => queueItemIds.Contains(item.Id))
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(q => q.Priority, priority),
+                    ct)
+                .ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+
+        if (priority == QueueItem.PriorityOption.Paused)
+            await CancelInProgressQueueItemsAsync(queueItemIds, ct).ConfigureAwait(false);
+
+        AwakenQueue();
+    }
+
+    public async Task SetQueueItemsCategoryAsync(
+        List<Guid> queueItemIds,
+        string category,
+        DavDatabaseClient dbClient,
+        CancellationToken ct = default)
+    {
+        if (queueItemIds.Count == 0) return;
+
+        var inProgressIds = _inProgress.Keys.ToHashSet();
+        var eligibleIds = queueItemIds.Where(id => !inProgressIds.Contains(id)).ToList();
+        if (eligibleIds.Count == 0) return;
+
+        await LockAsync(async () =>
+        {
+            await dbClient.Ctx.QueueItems
+                .Where(item => eligibleIds.Contains(item.Id))
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(q => q.Category, category),
+                    ct)
+                .ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+    }
+
+    private async Task CancelInProgressQueueItemsAsync(List<Guid> queueItemIds, CancellationToken ct)
+    {
+        if (queueItemIds.Count == 0) return;
+
+        List<InProgressQueueItem> toCancel = [];
+        await LockAsync(() =>
+        {
+            toCancel = _inProgress.Values
+                .Where(x => queueItemIds.Contains(x.QueueItem.Id))
+                .ToList();
+        }, ct).ConfigureAwait(false);
+
+        foreach (var item in toCancel)
+        {
+            try
+            {
+                await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
+                await item.ProcessingTask.ConfigureAwait(false);
+            }
+#pragma warning disable CA2016
+            catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+#pragma warning restore CA2016
+            {
+                Log.Debug(e, "Queue item {QueueItemId} exited with error after cancel", item.QueueItem.Id);
+            }
+        }
+    }
+
 
     internal async Task ProcessQueueAsync(CancellationToken ct)
     {
