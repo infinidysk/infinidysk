@@ -214,6 +214,31 @@ public sealed class ProwlarrSyncServiceTests : IAsyncLifetime
             persisted.Indexers.Select(x => x.Name));
     }
 
+    [Fact]
+    public async Task SyncNow_AbandonsFetchWhenConnectionSettingsChangeDuringRequest()
+    {
+        var fetchStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFetch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _clientFactory.Enqueue(async _ =>
+        {
+            fetchStarted.SetResult();
+            await releaseFetch.Task;
+            return [Remote(7, "Managed", enable: true)];
+        });
+
+        var syncTask = _service.SyncNowAsync();
+        await fetchStarted.Task;
+        _configManager.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.ProwlarrUrl, ConfigValue = "http://prowlarr-other:9696" },
+        ]);
+        releaseFetch.SetResult();
+
+        var snapshot = await syncTask;
+
+        Assert.Contains("settings changed", snapshot.LastError);
+        await AssertNoConfigItem(ConfigKeys.IndexersInstances);
+    }
+
     private void ConfigureProwlarr()
     {
         _configManager.UpdateValues([

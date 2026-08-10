@@ -165,6 +165,12 @@ public sealed class ProwlarrSyncService : BackgroundService
                             || x.ConfigName == ConfigKeys.ProwlarrSyncStatus)
                 .ToListAsync(ct).ConfigureAwait(false);
 
+            if (!string.Equals(_configManager.GetProwlarrUrl(), prowlarrUrl, StringComparison.Ordinal)
+                || !string.Equals(_configManager.GetProwlarrApiKey(), apiKey, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Prowlarr settings changed while synchronization was in progress; retrying is required.");
+            }
+
             var indexerConfig = DeserializeConfig<IndexerConfig>(configItems, ConfigKeys.IndexersInstances);
             var profileConfig = DeserializeConfig<ProfileConfig>(configItems, ConfigKeys.ProfilesInstances).Normalized();
 
