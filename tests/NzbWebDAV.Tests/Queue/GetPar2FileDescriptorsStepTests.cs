@@ -41,8 +41,9 @@ public class GetPar2FileDescriptorsStepTests
 
         var descriptors = await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(files, client);
 
+        // Sorted by message-id for deterministic ordering: index-a before index-b
         Assert.Equal(
-            [Convert.ToHexString(idB), Convert.ToHexString(idA)],
+            [Convert.ToHexString(idA), Convert.ToHexString(idB)],
             descriptors.Select(x => Convert.ToHexString(x.FileID)).ToArray());
         // Recovery volumes duplicate index descriptors; they must not be read.
         Assert.DoesNotContain("vol@example.com", client.RequestedSegmentIds);

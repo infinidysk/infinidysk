@@ -20,17 +20,23 @@ public static class GetPar2FileDescriptorsStep
         // file, each with its own index holding FileDesc packets we need.
         // Recovery volumes duplicate the index descriptors, so they are only
         // used as a fallback when no index file can be identified.
+        // Sort by segment count then first message-id so dedup/fallback
+        // selection is deterministic regardless of network completion
+        // order. Smallest files first preserves the original preference
+        // for index files over larger recovery volumes in the fallback.
         var par2Candidates = files
             .Where(x => !x.MissingFirstSegment)
             .Where(x => Par2.HasPar2MagicBytes(x.First16KB!))
+            .OrderBy(x => x.NzbFile.Segments.Count)
+            .ThenBy(x => x.NzbFile.Segments[0].MessageId, StringComparer.Ordinal)
             .ToList();
         var par2Indexes = par2Candidates
             .Where(x => !Par2.ParVolume.IsMatch(x.NzbFile.GetSubjectFileName()))
             .ToList();
         if (par2Indexes.Count == 0
-            && par2Candidates.MinBy(x => x.NzbFile.Segments.Count) is { } fallback)
+            && par2Candidates.Count > 0)
         {
-            par2Indexes.Add(fallback);
+            par2Indexes.Add(par2Candidates[0]);
         }
 
         // return all file descriptors, deduplicated by FileID
