@@ -5,6 +5,7 @@ InfiniDysk implements the SABnzbd-compatible operations used by Sonarr, Radarr, 
 ## Supported operations
 
 - `version`, `status`, `fullstatus`, `get_config`, and `get_cats`
+- `server_stats` and `warnings` [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 - `addfile` and `addurl`
 - `queue` listing and `queue&name=delete`
 - `pause` / `resume` (also `queue&name=pause` / `queue&name=resume`) and `speedlimit` [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
@@ -26,6 +27,8 @@ Queue and history filters accept both `cat` and `category`. The default category
 - History has no separate archive tier. `history&name=delete` permanently removes matching history rows.
 - **Ignore SAB history limit** can ignore a client's `limit`; InfiniDysk still enforces a server-side maximum page size.
 - Authentication failures use HTTP error status codes instead of always returning HTTP 200 with an error body.
+- `server_stats` aggregates provider bandwidth from retained `ProviderHourly` rollups (plus folded lifetime totals for all-time bytes). The per-server `daily` map and article counters are bounded by the hourly retention window — pruned buckets are not reconstructed.
+- `warnings` returns recent Warning-and-above log entries from the in-memory buffer. `name=clear` is accepted for SAB client compatibility but does not clear the buffer (support packs rely on it). Use Settings → Support to collect the full warning log.
 
 ## `addurl` and private / LAN hosts [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }
 
