@@ -24,8 +24,14 @@ export function classifyMediaError(code: number | null): MediaErrorKind {
     }
 }
 
+/** Append a query parameter, choosing `?` vs `&` from the existing URL. */
+export function appendQueryParam(url: string, key: string, value: string): string {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}${key}=${encodeURIComponent(value)}`;
+}
+
 export function buildMediaSrc(previewUrl: string, playerSession: string): string {
-    return `${previewUrl}&playerSession=${encodeURIComponent(playerSession)}`;
+    return appendQueryParam(previewUrl, "playerSession", playerSession);
 }
 
 export function formatClock(seconds: number): string {

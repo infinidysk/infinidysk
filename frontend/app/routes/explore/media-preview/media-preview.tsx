@@ -3,7 +3,7 @@ import { Alert, Button, Icon, Modal } from "~/components/ui";
 import { formatFileSize } from "~/utils/file-size";
 import { isVideoFile } from "../file-kind/file-kind";
 import { MediaDiagnostics } from "./media-diagnostics";
-import { buildMediaSrc, formatClock } from "./media-utils";
+import { appendQueryParam, buildMediaSrc, formatClock } from "./media-utils";
 import { useMediaPlayer } from "./use-media-player";
 
 export type MediaPreviewProps = {
@@ -33,7 +33,7 @@ export function MediaPreview(props: MediaPreviewProps) {
     const [showDiagnostics, setShowDiagnostics] = useState(false);
 
     const kind = isVideoFile({ name: fileName, mimeType }) ? "video" : "audio";
-    const downloadUrl = `${previewUrl}&download=true`;
+    const downloadUrl = appendQueryParam(previewUrl, "download", "true");
 
     // src is applied by the player hook's effect (see useMediaPlayer); a JSX
     // src attribute would be wiped by StrictMode's simulated unmount cycle.

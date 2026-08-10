@@ -113,10 +113,10 @@ public class GetWebdavItemRequest
     internal static string? NormalizePlayerSession(string? raw)
     {
         if (string.IsNullOrEmpty(raw) || raw.Length > 64) return null;
-        foreach (var c in raw)
-            if (!char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_'))
-                return null;
-        return raw;
+        return raw.All(IsValidPlayerSessionChar) ? raw : null;
+
+        static bool IsValidPlayerSessionChar(char c)
+            => char.IsAsciiLetterOrDigit(c) || c is '-' or '_';
     }
 
     private static bool VerifyDownloadKey(string? downloadKey, string path, ConfigManager configManager)

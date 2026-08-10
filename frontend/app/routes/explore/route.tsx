@@ -435,6 +435,9 @@ function Body(props: ExplorePageData) {
                                     href={getFilePath(x as ExploreFile)}
                                     className={getItemContentClassName(canDelete, true)}
                                     onClick={e => {
+                                        // Only intercept plain left-clicks — keep
+                                        // Cmd/Ctrl/middle-click opening the raw link.
+                                        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
                                         if (openPreview(x as ExploreFile)) e.preventDefault();
                                     }}
                                 >

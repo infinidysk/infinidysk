@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    appendQueryParam,
     backoffMs,
     bufferedAhead,
     buildMediaSrc,
@@ -44,6 +45,17 @@ describe("buildMediaSrc", () => {
 
     it("encodes the session value", () => {
         expect(buildMediaSrc("/view/a.mkv?downloadKey=abc", "a b")).toContain("playerSession=a%20b");
+    });
+});
+
+describe("appendQueryParam", () => {
+    it("uses ? when the url has no query string", () => {
+        expect(appendQueryParam("/view/a.mkv", "download", "true")).toBe("/view/a.mkv?download=true");
+    });
+
+    it("uses & when the url already has a query string", () => {
+        expect(appendQueryParam("/view/a.mkv?downloadKey=k", "download", "true"))
+            .toBe("/view/a.mkv?downloadKey=k&download=true");
     });
 });
 
