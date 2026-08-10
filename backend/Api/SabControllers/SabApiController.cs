@@ -10,6 +10,7 @@ using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Api.SabControllers.GetServerStats;
 using NzbWebDAV.Api.SabControllers.GetStatus;
 using NzbWebDAV.Api.SabControllers.GetVersion;
+using NzbWebDAV.Api.SabControllers.GetWarnings;
 using NzbWebDAV.Api.SabControllers.MoveInQueue;
 using NzbWebDAV.Api.SabControllers.Pause;
 using NzbWebDAV.Api.SabControllers.RemoveFromHistory;
@@ -21,6 +22,7 @@ using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -35,7 +37,8 @@ public class SabApiController(
     QueueManager queueManager,
     WebsocketManager websocketManager,
     NzbWebDAV.Services.ProviderUsageTracker providerUsageTracker,
-    NzbWebDAV.Services.IndexerHitTracker hitTracker
+    NzbWebDAV.Services.IndexerHitTracker hitTracker,
+    WarningLogBuffer warningLogBuffer
 ) : ControllerBase
 {
     [HttpGet]
@@ -95,6 +98,8 @@ public class SabApiController(
                     HttpContext, configManager);
             case "server_stats":
                 return new GetServerStatsController(HttpContext, configManager);
+            case "warnings":
+                return new GetWarningsController(HttpContext, configManager, warningLogBuffer);
             case "addfile":
                 return new AddFileController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager);

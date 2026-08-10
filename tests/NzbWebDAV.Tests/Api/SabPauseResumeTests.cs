@@ -13,6 +13,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
@@ -296,7 +297,8 @@ public sealed class SabPauseResumeTests : IAsyncLifetime
             _queueManager,
             _websocketManager,
             new ProviderUsageTracker(),
-            new IndexerHitTracker());
+            new IndexerHitTracker(),
+            new WarningLogBuffer(new LogBufferSink(50)));
         controller.ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
         {
             HttpContext = httpContext,
