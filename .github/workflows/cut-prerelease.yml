@@ -131,7 +131,7 @@ jobs:
             --title "$RELEASE_TAG" \
             --prerelease --generate-notes
 
-          ROLLING_TITLE="Rolling release candidate ($RELEASE_TAG)"
+          ROLLING_TITLE="Rolling :rc ($RELEASE_TAG)"
           ROLLING_NOTES="Currently points to [$RELEASE_TAG](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG). See that release for versioned notes and assets."
           if gh release view rc --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release edit rc \

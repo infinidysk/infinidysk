@@ -36,8 +36,50 @@ jobs:
       dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
       old_ghcr_token: ${{ secrets.OLD_GHCR_TOKEN }}
 
+  publish-release:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create or update rolling dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ github.sha }}
+          SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          ROLLING_TITLE="Rolling :dev (dev-${SHORT_SHA})"
+          ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Not a release candidate — use for testing only."
+          if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release edit dev \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$ROLLING_TITLE" \
+              --notes "$ROLLING_NOTES" \
+              --prerelease
+          else
+            gh release create dev \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$ROLLING_TITLE" \
+              --notes "$ROLLING_NOTES" \
+              --prerelease
+          fi
+
+  assets:
+    needs: [resolve, publish-release]
+    uses: ./.github/workflows/build-release-assets.yml
+    permissions:
+      contents: write
+    with:
+      version: dev
+      checkout_ref: ${{ github.sha }}
+      release_tag: dev
+      rolling_tag: dev
+
   tag-dev:
-    needs: build
+    needs: [build, publish-release]
     uses: ./.github/workflows/move-movable-tag.yml
     permissions:
       contents: write
@@ -49,6 +91,7 @@ jobs:
     needs:
       - build
       - tag-dev
+      - assets
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -82,8 +125,8 @@ jobs:
             CHANGELOG="- (no new commits since last dev build)"
           fi
 
-          ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `dev-%s`)\n%s\n%s' \
-            "${SHORT_SHA}" "${BASE_LABEL}" "${CHANGELOG}")
+          ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `dev-%s`)\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s\n%s' \
+            "${SHORT_SHA}" "${REPO}" "${BASE_LABEL}" "${CHANGELOG}")
 
           MAX_LEN=1900
           if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then
