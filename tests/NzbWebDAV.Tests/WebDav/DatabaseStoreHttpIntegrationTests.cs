@@ -33,7 +33,7 @@ public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactor
         Assert.All(
             document.Descendants(Dav + "response"),
             response => Assert.Contains(response.Elements(Dav + "propstat"), propStat =>
-                propStat.Element(Dav + "status")?.Value.StartsWith("HTTP/1.1 200", StringComparison.Ordinal) == true));
+                propStat.Element(Dav + "status")?.Value.StartsWith("HTTP/1.1 200", StringComparison.Ordinal) is true));
 
         var hrefs = ReadHrefs(document);
         Assert.Contains(hrefs, href => href.EndsWith("/nzbs", StringComparison.Ordinal));

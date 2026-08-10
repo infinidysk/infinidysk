@@ -64,7 +64,7 @@ public class PropFindHandlerPatch(PropFindHandler inner) : IRequestHandler
     // RFC 4918 allows 404 propstats inside a 207 Multi-Status, but rclone v1.74+
     // treats them as fatal and shows an empty directory. Real clients only need the
     // 200 propstat blocks, so strip the 404 entries before serializing the response.
-    internal static byte[] SanitizePropFindMultiStatus(Stream body)
+    internal static byte[] SanitizePropFindMultiStatus(MemoryStream body)
     {
         body.Position = 0;
         var document = XDocument.Load(body, LoadOptions.PreserveWhitespace);
@@ -84,7 +84,7 @@ public class PropFindHandlerPatch(PropFindHandler inner) : IRequestHandler
         if (!removed)
         {
             body.Position = 0;
-            return ((MemoryStream)body).ToArray();
+            return body.ToArray();
         }
 
         return Encoding.UTF8.GetBytes(document.ToString(SaveOptions.DisableFormatting));
