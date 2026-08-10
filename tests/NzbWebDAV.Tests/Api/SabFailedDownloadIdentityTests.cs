@@ -163,11 +163,11 @@ public sealed class SabFailedDownloadIdentityTests : IAsyncLifetime
         _context.ChangeTracker.Clear();
     }
 
-    private static GetHistoryRequest BuildHistoryRequest(string queryString)
+    private GetHistoryRequest BuildHistoryRequest(string queryString)
     {
         var httpContext = new DefaultHttpContext();
         httpContext.Request.QueryString = new QueryString(queryString);
-        return new GetHistoryRequest(httpContext, new ConfigManager());
+        return new GetHistoryRequest(httpContext, _configManager);
     }
 
     private AddFileController CreateAddFileController() =>
