@@ -40,7 +40,7 @@ public partial class WardenBackupService : BackgroundService
         {
             try { await PushDueAsync(stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
-            catch (Exception e) { Log.Debug(e, "Warden backup: loop error"); }
+            catch (Exception e) when (e is not OutOfMemoryException) { Log.Debug(e, "Warden backup: loop error"); }
 
             try { await Task.Delay(TimeSpan.FromMinutes(15), stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
@@ -87,7 +87,7 @@ public partial class WardenBackupService : BackgroundService
             bytes = ms.ToArray();
             count = s.Scope == "merged" ? _store.Count : _store.LocalCount;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException)
         {
             Log.Debug(e, "Warden backup: export failed");
             return Fail(now, "error: export failed");
@@ -124,7 +124,7 @@ public partial class WardenBackupService : BackgroundService
         {
             return Fail(now, $"error: {ge.Message}");
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
             Log.Debug(e, "Warden backup: push failed");
             return Fail(now, "error: push failed");

@@ -209,7 +209,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 conn = await _factory(linked.Token).ConfigureAwait(false);
             }
-            catch (Exception factoryError)
+            catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
             {
                 Interlocked.Increment(ref _handshakeFailures);
                 TryShrinkOnConnectionLimit(factoryError);

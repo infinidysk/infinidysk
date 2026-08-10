@@ -139,7 +139,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
             {
                 return;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 if (e.TryGetKnownErrorMessage(out var reason))
                 {
@@ -167,7 +167,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
             {
                 return;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 e.LogWarningKnownOrStack("Usenet migration tick failed.");
                 await Task.Delay(TickInterval, stoppingToken).ConfigureAwait(false);
@@ -284,7 +284,7 @@ public sealed class UsenetMigrationRunner : BackgroundService
             // Keep the durable active state so a restart can resume the operation.
             throw;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             if (e.TryGetKnownErrorMessage(out var reason))
             {

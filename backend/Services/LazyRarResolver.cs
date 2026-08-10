@@ -318,7 +318,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
                     .ConfigureAwait(false);
             }
         }
-        catch (Exception e)
+        catch (Exception e) when (e is IOException or InvalidOperationException)
         {
             Log.Warning(e,
                 "Failed to persist lazy-resolved RAR multipart {Id}; will re-resolve on next restart",
@@ -359,7 +359,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
                     fileBlobId, publishedSize);
             }
         }
-        catch (Exception e)
+        catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
         {
             Log.Warning(
                 "Failed to reconcile DavItem FileSize for multipart blob {BlobId} after resolve. Reason: {Reason}",

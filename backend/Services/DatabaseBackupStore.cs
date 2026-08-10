@@ -50,7 +50,7 @@ public sealed class DatabaseBackupStore
                 if (manifest is not null)
                     results.Add(manifest);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
                 Log.Warning(ex, "Skipping unreadable database backup {BackupId}", name);
             }
@@ -149,7 +149,7 @@ public sealed class DatabaseBackupStore
             if (Directory.Exists(stagingPath))
                 Directory.Delete(stagingPath, recursive: true);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Log.Warning(ex, "Failed to discard backup staging folder {Path}", stagingPath);
         }
@@ -205,7 +205,7 @@ public sealed class DatabaseBackupStore
                 Delete(candidates[i].Id);
                 removed++;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 Log.Warning(ex, "Failed to prune database backup {BackupId}", candidates[i].Id);
             }
@@ -302,7 +302,7 @@ public sealed class DatabaseBackupStore
             {
                 Directory.Delete(dir, recursive: true);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 Log.Warning(ex, "Failed to clean leftover backup staging folder {Path}", dir);
             }

@@ -132,7 +132,7 @@ public partial class UsenetClient
                     "The NNTP connection closed before a response was received.");
             return (ParseResponseCode(line), line);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             // Once bytes may be on the wire the response FIFO cannot be trusted.
             RecordConnectionFailure(e);

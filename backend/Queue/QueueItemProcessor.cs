@@ -110,13 +110,13 @@ public class QueueItemProcessor(
 
         // When a queue-item is removed while processing,
         // then we need to clear any db changes and finish early.
-        catch (Exception e) when (e.GetBaseException().IsCancellationException())
+        catch (Exception e) when (e.GetBaseException().IsCancellationException() && e is not OutOfMemoryException)
         {
             Log.Information("Processing of queue item {JobName} was cancelled", queueItem.JobName);
             dbClient.Ctx.ClearChangeTracker();
         }
 
-        catch (Exception e) when (e.IsRetryableDownloadException())
+        catch (Exception e) when (e.IsRetryableDownloadException() && e is not OutOfMemoryException)
         {
             try
             {
@@ -152,7 +152,7 @@ public class QueueItemProcessor(
                     .ConfigureAwait(false);
                 _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Queued");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
             {
                 Log.Error(ex, "Failed to schedule retry for queue item {JobName}", queueItem.JobName);
             }
@@ -161,7 +161,7 @@ public class QueueItemProcessor(
         // when any other error is encountered,
         // we must still remove the queue-item and add
         // it to the history as a failed job.
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             // Remember definitively missing articles so retries of this item and re-grabs
             // of the same release fail in milliseconds at the step-0 precheck instead of
@@ -176,7 +176,7 @@ public class QueueItemProcessor(
             {
                 await MarkQueueItemCompleted(startTime, error: e.Message).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
             {
                 Log.Error(
                     ex,
@@ -743,7 +743,7 @@ public class QueueItemProcessor(
             var queueCount = await arrClient.GetQueueCountAsync().ConfigureAwait(false);
             if (queueCount < 300) await arrClient.RefreshMonitoredDownloads().ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
             Log.Debug(e, "Could not refresh monitored downloads for Arr instance {Host}", arrClient.Host);
         }

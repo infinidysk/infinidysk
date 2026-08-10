@@ -77,7 +77,7 @@ public class NzbProxyController(
         {
             return new EmptyResult();
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException)
         {
             Log.Debug(e, "NZB proxy fetch failed for {Url}", candidate.NzbUrl);
             return StatusCode(502, "Failed to fetch NZB from source indexer.");

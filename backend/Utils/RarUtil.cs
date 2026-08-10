@@ -61,7 +61,7 @@ public static class RarUtil
             }
             return null;
         }
-        catch (Exception e) when (TryMapHeaderParseFailure(e, stream, out var mapped))
+        catch (Exception e) when (TryMapHeaderParseFailure(e, stream, out var mapped) && e is not OutOfMemoryException)
         {
             throw mapped;
         }
@@ -107,7 +107,7 @@ public static class RarUtil
             }
             return headers;
         }
-        catch (Exception e) when (TryMapHeaderParseFailure(e, stream, out var mapped))
+        catch (Exception e) when (TryMapHeaderParseFailure(e, stream, out var mapped) && e is not OutOfMemoryException)
         {
             throw mapped;
         }
@@ -156,7 +156,7 @@ public static class RarUtil
 
             return headers;
         }
-        catch (Exception e) when (TryMapHeaderParseFailure(e, stream, out var mapped))
+        catch (Exception e) when (TryMapHeaderParseFailure(e, stream, out var mapped) && e is not OutOfMemoryException)
         {
             throw mapped;
         }

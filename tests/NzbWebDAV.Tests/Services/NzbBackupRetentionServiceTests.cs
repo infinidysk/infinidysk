@@ -14,7 +14,7 @@ public sealed class NzbBackupRetentionServiceTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_backupRoot, recursive: true); } catch { /* best effort */ }
+        try { Directory.Delete(_backupRoot, recursive: true); } catch (IOException) { /* best effort */ }
     }
 
     [Fact]

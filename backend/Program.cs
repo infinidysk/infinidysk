@@ -623,7 +623,7 @@ public partial class Program
             if (statusServerFull is not null)
                 await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             progressFull.Fail(ex.Message);
             Log.Error(ex, "Database migration failed");
@@ -632,7 +632,7 @@ public partial class Program
             if (statusServerFull is not null)
             {
                 try { await Task.Delay(TimeSpan.FromSeconds(3), CancellationToken.None).ConfigureAwait(false); }
-                catch { /* ignore */ }
+                catch (OperationCanceledException) { /* shutting down */ }
             }
 
             throw;

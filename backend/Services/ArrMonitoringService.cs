@@ -2,6 +2,7 @@
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Config;
+using NzbWebDAV.Extensions;
 using Serilog;
 
 namespace NzbWebDAV.Services;
@@ -44,9 +45,9 @@ public class ArrMonitoringService : BackgroundService
             {
                 return;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
-                Log.Error(e, "Unexpected error in Arr queue monitoring loop.");
+                e.LogWarningKnownOrStack("Unexpected error in Arr queue monitoring loop.");
             }
         }
     }
@@ -83,9 +84,9 @@ public class ArrMonitoringService : BackgroundService
         {
             Log.Debug(e, "Could not reach Arr instance {Host} for queue monitoring", client.Host);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
-            Log.Error(e, "Error occurred while monitoring queue for {Host}", client.Host);
+            e.LogWarningKnownOrStack("Error occurred while monitoring queue for {Host}", client.Host);
         }
         finally
         {

@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using System.Text.Json;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Backup;
 using Serilog;
@@ -111,7 +112,7 @@ public static class DatabaseRestoreRunner
                     store.SaveManifest(pre);
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
                 Log.Warning(ex, "Could not update pre-restore backup manifest with rollback files");
             }
@@ -137,7 +138,7 @@ public static class DatabaseRestoreRunner
 
             progress.CompleteStep(BlobScanStepId);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             Log.Error(ex, "Database restore swap failed; attempting to restore pre-swap databases");
             try
@@ -149,7 +150,7 @@ public static class DatabaseRestoreRunner
                         MoveDatabaseFiles(rollbackPath, originalPath);
                 }
             }
-            catch (Exception rollbackEx)
+            catch (Exception rollbackEx) when (rollbackEx is not OutOfMemoryException)
             {
                 Log.Error(rollbackEx, "Failed to roll back database files after a failed restore swap");
             }

@@ -224,7 +224,7 @@ public sealed class QueueManager : IDisposable
                 await item.ProcessingTask.ConfigureAwait(false);
             }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-            catch (Exception e) when (!e.IsCancellationException())
+            catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
             {
                 Log.Debug(e, "Queue item {QueueItemId} exited with error after cancel", item.QueueItem.Id);
@@ -287,7 +287,7 @@ public sealed class QueueManager : IDisposable
                 if (!await WaitForWorkerOrAwakenAsync(workerTasks, ct).ConfigureAwait(false))
                     break;
             }
-            catch (Exception e) when (!e.IsCancellationException(ct))
+            catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
                 Log.Error(e, "An unexpected error occurred while processing the queue");
                 try { await Task.Delay(ErrorBackoffDelay, ct).ConfigureAwait(false); }
@@ -304,7 +304,7 @@ public sealed class QueueManager : IDisposable
         {
             try { await Task.WhenAll(remaining).ConfigureAwait(false); }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-            catch (Exception e) when (!e.IsCancellationException())
+            catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
             {
                 Log.Debug(e, "Queue workers finished with errors during shutdown");
@@ -532,7 +532,7 @@ public sealed class QueueManager : IDisposable
                 await item.ProcessingTask.ConfigureAwait(false);
             }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-            catch (Exception e) when (!e.IsCancellationException())
+            catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
             {
                 Log.Error(e, "Queue worker for {QueueItemId} faulted", item.QueueItem.Id);
@@ -696,7 +696,7 @@ public sealed class QueueManager : IDisposable
                 providersDebounce(() => _websocketManager.SendMessage(
                     WebsocketTopic.QueueItemProviders, BuildProvidersMessage(queueItem.Id)));
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 Log.Warning(e, "Queue progress broadcast failed for {QueueItemId}", queueItem.Id);
             }
@@ -778,7 +778,7 @@ public sealed class QueueManager : IDisposable
             return untilNextPause < IdleDelay ? untilNextPause : IdleDelay;
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             Log.Debug(e, "Failed to compute next queue pause; falling back to idle delay");
@@ -793,7 +793,7 @@ public sealed class QueueManager : IDisposable
         {
             _coordinatorTask?.GetAwaiter().GetResult();
         }
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
         {
             Log.Debug(e, "Queue coordinator exited with error during dispose");
         }

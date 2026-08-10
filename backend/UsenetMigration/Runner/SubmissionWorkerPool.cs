@@ -111,7 +111,7 @@ public sealed class SubmissionWorkerPool(
                         ? await BuildNzbAsync(release, session, workerContext, workerToken).ConfigureAwait(false)
                         : await BuildNzbOverride(release, workerToken).ConfigureAwait(false);
                 }
-                catch (Exception e) when (e is not OperationCanceledException)
+                catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
                 {
                     Log.Warning(
                         "Failed to prepare migration release {StoreRef}. Reason: {Reason}",
@@ -162,7 +162,7 @@ public sealed class SubmissionWorkerPool(
 
                     Interlocked.Increment(ref submitted);
                 }
-                catch (Exception e) when (e is not OperationCanceledException)
+                catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
                 {
                     Interlocked.Exchange(ref stopScheduling, 1);
                     Log.Warning(
@@ -339,7 +339,7 @@ public sealed class SubmissionWorkerPool(
             {
                 meta = await AltmountMetaReader.ReadAsync(metaPath, ct).ConfigureAwait(false);
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
                 continue;
             }

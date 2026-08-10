@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
 using NzbWebDAV.Utils;
+using NzbWebDAV.Extensions;
 using Serilog;
 
 namespace NzbWebDAV.Services;
@@ -37,9 +38,9 @@ public class NzbBlobCleanupService : BackgroundService
                 // OperationCanceledException is expected on sigterm
                 return;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
-                Log.Error(e, $"Error processing NZB blob cleanup queue: {e.Message}");
+                e.LogWarningKnownOrStack("Error processing NZB blob cleanup queue.");
 
                 // Wait 10 seconds before continuing on exception
                 await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);

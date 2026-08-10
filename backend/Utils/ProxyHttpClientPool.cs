@@ -109,7 +109,7 @@ public static class ProxyHttpClientPool
                 socket.Dispose();
                 throw;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is SocketException or IOException)
             {
                 socket.Dispose();
                 lastError = e;
@@ -123,11 +123,11 @@ public static class ProxyHttpClientPool
     {
         // Keep-alive tuning is best-effort; platforms missing an option simply skip it.
         try { socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 30); }
-        catch { /* unsupported on this platform */ }
+        catch (SocketException) { /* unsupported on this platform */ }
         try { socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 5); }
-        catch { /* unsupported on this platform */ }
+        catch (SocketException) { /* unsupported on this platform */ }
         try { socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3); }
-        catch { /* unsupported on this platform */ }
+        catch (SocketException) { /* unsupported on this platform */ }
     }
 
     private static string? Normalize(string? raw)

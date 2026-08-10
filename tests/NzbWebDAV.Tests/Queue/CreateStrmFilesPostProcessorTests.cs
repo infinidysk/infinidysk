@@ -41,8 +41,8 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
     public void Dispose()
     {
         _context.Dispose();
-        try { File.Delete(_dbPath); } catch { /* ignore */ }
-        try { Directory.Delete(_strmDir, recursive: true); } catch { /* ignore */ }
+        try { File.Delete(_dbPath); } catch (IOException) { /* ignore */ }
+        try { Directory.Delete(_strmDir, recursive: true); } catch (IOException) { /* ignore */ }
     }
 
     [Fact]

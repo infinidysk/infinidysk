@@ -32,7 +32,7 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _context.DisposeAsync();
-        try { File.Delete(_databasePath); } catch { /* best effort */ }
+        try { File.Delete(_databasePath); } catch (IOException) { /* best effort */ }
     }
 
     [Fact]

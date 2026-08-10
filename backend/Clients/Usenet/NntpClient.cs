@@ -307,7 +307,7 @@ public abstract class NntpClient : INntpClient
                     {
                         await batchCts.CancelAsync().ConfigureAwait(false);
                     }
-                    catch (Exception e)
+                    catch (ObjectDisposedException e)
                     {
                         // Releasing the bodies matters more than the cancellation succeeding.
                         Log.Debug(e, "Failed to cancel an abandoned pipelined BODY batch");
@@ -347,7 +347,7 @@ public abstract class NntpClient : INntpClient
             {
                 // Expected: a definitive miss is the usual reason a consumer stops early.
             }
-            catch (Exception e)
+            catch (Exception e) when (e is IOException or InvalidOperationException)
             {
                 Log.Debug(e, "Failed to release abandoned pipelined BODY response");
             }
@@ -409,7 +409,7 @@ public abstract class NntpClient : INntpClient
                 if (response.Stream != null)
                 {
                     try { await response.Stream.DisposeAsync().ConfigureAwait(false); }
-                    catch (Exception e) { Log.Debug(e, "Failed to dispose mismatched pipelined BODY stream"); }
+                    catch (ObjectDisposedException e) { Log.Debug(e, "Failed to dispose mismatched pipelined BODY stream"); }
                 }
 
                 return new PipelinedBodyResult
@@ -557,7 +557,7 @@ public abstract class NntpClient : INntpClient
             }
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             // Session/protocol/transport failure during the primary-only sweep (e.g.

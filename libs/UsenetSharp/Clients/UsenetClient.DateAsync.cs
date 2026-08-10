@@ -30,7 +30,7 @@ public partial class UsenetClient
                 {
                     dateTime = ParseNntpDateTime(response);
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
                     RecordConnectionFailure(e);
                     throw;

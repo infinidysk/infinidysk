@@ -88,7 +88,7 @@ public class NzbFileStream(
         {
             _pendingInnerDispose = null;
             try { await pendingDispose.ConfigureAwait(false); }
-            catch (Exception)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 // Teardown-only; producer failures surface on ReadAsync.
             }
@@ -203,7 +203,7 @@ public class NzbFileStream(
                     var end = Math.Min(fileSize, start + avg);
                     return new LongRange(start, end);
                 }
-                catch (Exception e) when (articleBufferSize > 0 && !ct.IsCancellationRequested)
+                catch (Exception e) when (articleBufferSize > 0 && !ct.IsCancellationRequested && e is not OutOfMemoryException)
                 {
                     e.LogWarningKnownOrStack(
                         "Seek probe transient failure on segment index {Index}. Using estimated range.", guess);
@@ -350,7 +350,7 @@ public class NzbFileStream(
                     bodyDisposeAttempted = true;
                     await body.DisposeAsync().ConfigureAwait(false);
                 }
-                catch (Exception e) when (!ct.IsCancellationRequested)
+                catch (Exception e) when (!ct.IsCancellationRequested && e is not OutOfMemoryException)
                 {
                     // The guess was right (headers matched) but the body read failed,
                     // e.g. a mid-stream NNTP read timeout. Fall back to the slow seek
@@ -474,7 +474,7 @@ public class NzbFileStream(
         {
             _pendingInnerDispose = null;
             try { await pending.ConfigureAwait(false); }
-            catch (Exception)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 // Teardown-only.
             }

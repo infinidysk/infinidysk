@@ -99,7 +99,7 @@ public sealed class AltmountScanRunner(UsenetMigrationStore store, ConfigManager
             {
                 meta = await AltmountMetaReader.ReadAsync(metaPath, ct).ConfigureAwait(false);
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
                 scanErrors.Add(new PendingScanError(metaPath, "meta_read", e.Message));
                 continue;

@@ -53,7 +53,7 @@ public sealed class MigrationStatusServer : IAsyncDisposable
             await app.StartAsync(ct).ConfigureAwait(false);
             return new MigrationStatusServer(app);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // A missing status page must never block the actual migration.
             Log.Warning(ex, "Could not start migration status server; migration progress UI is unavailable");
@@ -122,7 +122,7 @@ public sealed class MigrationStatusServer : IAsyncDisposable
             using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             await _app.StopAsync(stopCts.Token).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             Log.Warning(ex, "Error stopping migration status server");
         }

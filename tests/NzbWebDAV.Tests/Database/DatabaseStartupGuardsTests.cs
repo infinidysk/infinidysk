@@ -60,7 +60,7 @@ public class DatabaseStartupGuardsTests
 
     private static void TryDelete(string path)
     {
-        try { File.Delete(path); } catch { /* best effort */ }
+        try { File.Delete(path); } catch (IOException) { /* best effort */ }
     }
 
     /// <summary>

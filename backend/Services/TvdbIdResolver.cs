@@ -62,7 +62,7 @@ public class TvdbIdResolver
             }
             return null;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
         {
             if (!ct.IsCancellationRequested)
                 Log.Debug("TvdbResolver: tvmaze lookup failed for tt{Imdb}: {Message}", imdbDigits, e.Message);
@@ -97,7 +97,7 @@ public class TvdbIdResolver
             }
             return null;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
         {
             if (!ct.IsCancellationRequested)
                 Log.Debug("TvdbResolver: wikidata lookup failed for tt{Imdb}: {Message}", imdbDigits, e.Message);
@@ -149,7 +149,7 @@ public class TvdbIdResolver
             }
             return null;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
         {
             if (!ct.IsCancellationRequested)
                 Log.Debug("TvdbResolver: tvmaze title search failed for {Title}: {Message}", title, e.Message);
@@ -194,7 +194,7 @@ public class TvdbIdResolver
             }
             return (string.IsNullOrWhiteSpace(title) ? null : title, year);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
         {
             if (!ct.IsCancellationRequested)
                 Log.Debug("TvdbResolver: wikidata title lookup failed for tt{Imdb}: {Message}", imdbDigits, e.Message);

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -39,9 +40,9 @@ public class WatchdogPurgeService : BackgroundService
             {
                 return;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
-                Log.Error(e, "Error purging watchdog entries: {Message}", e.Message);
+                e.LogWarningKnownOrStack("Error purging watchdog entries.");
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken).ConfigureAwait(false);
             }
         }

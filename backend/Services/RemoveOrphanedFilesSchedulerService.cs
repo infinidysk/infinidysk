@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Tasks;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
@@ -115,9 +116,9 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
             {
                 // Config changed — loop and recompute the next run time
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
-                Log.Error(e, "RemoveOrphanedFilesScheduler: error running scheduled task: {Message}", e.Message);
+                e.LogWarningKnownOrStack("RemoveOrphanedFilesScheduler: error running scheduled task");
                 await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
             }
         }

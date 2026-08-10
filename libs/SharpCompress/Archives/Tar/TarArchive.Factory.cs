@@ -180,7 +180,7 @@ public partial class TarArchive
                 && IsDefined(tarHeader.EntryType);
             return readSucceeded || isEmptyArchive;
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // Catch all exceptions during tar header reading to determine if this is a valid tar file
             // Invalid tar files or corrupted streams will throw various exceptions
@@ -206,7 +206,7 @@ public partial class TarArchive
                 && IsDefined(tarHeader.EntryType);
             return readSucceeded || isEmptyArchive;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
         {
             // Catch all exceptions during tar header reading to determine if this is a valid tar file
             // Invalid tar files or corrupted streams will throw various exceptions

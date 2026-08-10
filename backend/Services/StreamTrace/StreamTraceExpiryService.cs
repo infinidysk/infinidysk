@@ -52,7 +52,7 @@ public sealed class StreamTraceExpiryService(
             {
                 return;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 Log.Warning(e, "Stream tracing expiry sweep failed");
             }

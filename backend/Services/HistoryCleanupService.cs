@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -81,9 +82,9 @@ public class HistoryCleanupService : BackgroundService
                 // OperationCanceledException is expected on sigterm
                 return;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
-                Log.Error(e, $"Error processing history cleanup queue: {e.Message}");
+                e.LogWarningKnownOrStack("Error processing history cleanup queue");
 
                 // Wait 10 seconds before continuing on exception
                 await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);

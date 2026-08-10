@@ -48,7 +48,7 @@ public sealed class RuntimeUsageSampler(
                         activeReadRegistry.Snapshot().Count,
                         DateTimeOffset.UtcNow);
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
                     Log.Debug(e, "Runtime usage sampler could not record a sample");
                 }
@@ -67,7 +67,7 @@ public sealed class RuntimeUsageSampler(
             var cpu = Environment.CpuUsage.TotalTime;
             return new Counters(cpu, GC.GetTotalPauseDuration(), Stopwatch.GetTimestamp());
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             // Debug only: a counter that is unavailable on this platform would
             // otherwise dump a stack into the operator's log every five seconds.

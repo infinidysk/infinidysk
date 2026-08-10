@@ -54,7 +54,7 @@ public class TestArrConnectionController(ConfigManager configManager) : BaseApiC
                 Error = error
             };
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException or InvalidOperationException)
         {
             return new TestArrConnectionResponse
             {

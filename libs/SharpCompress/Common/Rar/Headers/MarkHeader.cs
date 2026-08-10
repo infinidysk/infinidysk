@@ -133,7 +133,7 @@ internal partial class MarkHeader : IRarHeader
             }
             throw;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             if (!leaveStreamOpen)
             {

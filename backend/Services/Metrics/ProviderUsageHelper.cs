@@ -163,7 +163,7 @@ public static class ProviderUsageHelper
                 tracker.SetLifetime(key, bytes);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
         {
             Log.Warning(ex, "Failed to seed ProviderBytesTracker from metrics DB; continuing with zeros.");
         }

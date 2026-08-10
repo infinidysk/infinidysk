@@ -212,7 +212,7 @@ public class ListSourceEnumerator
     private static JsonDocument ParseOrThrow(string json)
     {
         try { return JsonDocument.Parse(json); }
-        catch (Exception e) when (!e.IsCancellationException()) { throw new InvalidOperationException("The addon response was not valid JSON.", e); }
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException) { throw new InvalidOperationException("The addon response was not valid JSON.", e); }
     }
 
     public sealed class CatalogChoice
@@ -286,7 +286,7 @@ public class ListSourceEnumerator
                 }
             }
         }
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
         {
             // Malformed list payload; yield whatever refs parsed before the failure.
         }
@@ -334,7 +334,7 @@ public class ListSourceEnumerator
         {
             throw;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
             Log.Debug(e, "Watchtower: list fetch failed for {Url}", url);
             return null;

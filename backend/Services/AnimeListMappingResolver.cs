@@ -66,7 +66,7 @@ public sealed class AnimeListMappingResolver : IDisposable
                     "Anime-list mapping loaded ({Kitsu} kitsu / {Mal} mal / {Anilist} anilist ids)",
                     byKitsu.Count, byMal.Count, byAnilist.Count);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
             {
                 // keep any previously-loaded data; throttle retries via LastAttempt
                 _index = _index with { LastAttempt = attemptAt };

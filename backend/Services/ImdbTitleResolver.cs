@@ -32,7 +32,7 @@ public class ImdbTitleResolver
                 title = await TryWikidataAsync(imdbDigits, ct).ConfigureAwait(false);
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
         {
             Log.Warning("ImdbTitleResolver lookup failed for {Key}: {Message}", key, ex.Message);
         }

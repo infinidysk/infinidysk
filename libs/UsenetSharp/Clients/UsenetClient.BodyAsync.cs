@@ -473,7 +473,7 @@ public partial class UsenetClient
                 }
             }
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             failure = e;
             connectionReusable = false;
@@ -778,7 +778,7 @@ public partial class UsenetClient
                 }
             }
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             failure = e;
             RecordConnectionFailure(e);
@@ -842,7 +842,7 @@ public partial class UsenetClient
                 }
             }
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             return e;
         }

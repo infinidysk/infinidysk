@@ -552,7 +552,7 @@ public class SearchProfileService(
                 verified.Count, type, id);
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception e)
+        catch (Exception e) when (e is DbUpdateException or InvalidOperationException or HttpRequestException)
         {
             Log.Debug(e, "Watchtower: exact-match candidate boost failed for {Type}/{Id}", type, id);
         }
@@ -595,7 +595,7 @@ public class SearchProfileService(
             }
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception e)
+        catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
         {
             Log.Debug(e, "Watchtower: season-bundle candidate augment failed for {Id}", id);
         }
@@ -672,7 +672,7 @@ public class SearchProfileService(
                 var filtered = IndexerResultFilter.Apply(limited, x.Filter, now);
                 return filtered.Select(i => new IndexerHit(x.Name, retrieveUa, proxy, i));
             }
-            catch (Exception e)
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException or OperationCanceledException)
             {
                 if (!e.IsCancellationException())
                     Log.Warning("Indexer {Indexer} search failed: {Message}", x.Name, e.Message);

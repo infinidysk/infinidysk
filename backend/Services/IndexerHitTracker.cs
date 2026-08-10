@@ -127,7 +127,7 @@ public class IndexerHitTracker
 #pragma warning restore CA5394
                 _ = Task.Run(() => PruneAsync(CancellationToken.None), CancellationToken.None);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
         {
             // Hit tracking is best-effort — don't fail the user's request if the DB
             // write hiccups. Just log and move on.
@@ -146,7 +146,7 @@ public class IndexerHitTracker
                 .ExecuteDeleteAsync(ct)
                 .ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
         {
             Log.Debug(e, "Indexer hit pruning failed");
         }

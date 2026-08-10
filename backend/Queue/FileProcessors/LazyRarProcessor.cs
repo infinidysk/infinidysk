@@ -57,7 +57,7 @@ public class LazyRarProcessor(
             headers = await RarUtil.ReadHeadersUntilFirstFileAsync(firstStream, password, ct)
                 .ConfigureAwait(false);
         }
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
         {
             Log.Information(
                 "LazyRarProcessor: first-volume parse failed for {File}, falling back to eager: {Msg}",

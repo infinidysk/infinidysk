@@ -123,7 +123,7 @@ public class VariantResolver(ConfigManager configManager)
                     WebsocketTopic.HistoryItemRemoved, string.Join(",", toRemove));
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             Log.Warning(e, "Variants: failed to evict surplus variants for group {Group}", contentGroupKey);
@@ -146,7 +146,7 @@ public class VariantResolver(ConfigManager configManager)
             await ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             Log.Debug(e, "Variants: failed to update LastPlayedAt for {Id}", historyItemId);

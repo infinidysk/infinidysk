@@ -24,7 +24,7 @@ public class WatchdogLog
                 ctx.WatchdogEntries.Add(entry);
                 await ctx.SaveChangesAsync().ConfigureAwait(false);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
             {
                 Log.Warning(e, "Failed to persist watchdog entry: {Message}", e.Message);
             }

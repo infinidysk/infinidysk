@@ -23,10 +23,10 @@ public class StrmToSymlinksTask(
             var ct = SigtermUtil.GetCancellationToken();
             await ConvertAllStrmFilesToSymlinks(ct).ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Report($"Failed: {e.Message}");
-            Log.Error(e, "Failed to convert *.strm files to symlinks.");
+            e.LogWarningKnownOrStack("Failed to convert *.strm files to symlinks.");
         }
     }
 

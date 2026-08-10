@@ -38,8 +38,9 @@ public abstract class UsenetMigrationBaseController : ControllerBase
         {
             return Unauthorized(new BaseApiResponse { Status = false, Error = e.Message });
         }
-        catch (Exception e) when (e is not OperationCanceledException ||
-                                  !HttpContext.RequestAborted.IsCancellationRequested)
+        catch (Exception e) when ((e is not OperationCanceledException ||
+                                   !HttpContext.RequestAborted.IsCancellationRequested) &&
+                                  e is not OutOfMemoryException)
         {
             if (e.TryGetKnownErrorMessage(out var reason))
             {

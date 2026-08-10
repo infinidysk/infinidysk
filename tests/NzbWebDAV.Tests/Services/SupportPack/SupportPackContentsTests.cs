@@ -39,7 +39,7 @@ public sealed class SupportPackContentsTests : IDisposable
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
-        try { Directory.Delete(_configRoot, recursive: true); } catch { /* best effort */ }
+        try { Directory.Delete(_configRoot, recursive: true); } catch (IOException) { /* best effort */ }
     }
 
     [Fact]

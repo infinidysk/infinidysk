@@ -257,7 +257,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                 }
             }
         }
-        catch (Exception e)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             Log.Warning(e, "Segment cache: failed to scan {Dir}; starting empty.", _dir);
         }

@@ -314,7 +314,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
                         throw;
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
                     {
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, ex.Message);
                         throw;

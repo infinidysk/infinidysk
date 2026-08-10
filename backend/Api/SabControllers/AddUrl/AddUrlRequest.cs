@@ -127,7 +127,7 @@ public class AddUrlRequest() : AddFileRequest
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or IOException)
         {
             throw new BadHttpRequestException($"Failed to fetch nzb-file url `{url}`: {ex.Message}");
         }
@@ -319,7 +319,7 @@ public class AddUrlRequest() : AddFileRequest
                 ).ConfigureAwait(false);
                 return new NetworkStream(socket, ownsSocket: true);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
             {
                 lastException = ex;
                 socket.Dispose();
@@ -448,7 +448,7 @@ public class AddUrlRequest() : AddFileRequest
             filename = AddNzbExtension(filename);
             return filename;
         }
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (e is UriFormatException or ArgumentException)
         {
             return null;
         }

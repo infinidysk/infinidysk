@@ -42,7 +42,7 @@ public class SqliteMainDbPragmasTests
         }
         finally
         {
-            try { File.Delete(databasePath); } catch { /* best effort */ }
+            try { File.Delete(databasePath); } catch (IOException) { /* best effort */ }
         }
     }
 
@@ -87,7 +87,7 @@ public class SqliteMainDbPragmasTests
         }
         finally
         {
-            try { Directory.Delete(configPath, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(configPath, recursive: true); } catch (IOException) { /* best effort */ }
         }
     }
 
@@ -133,7 +133,7 @@ public class SqliteMetricsPragmasTests
         }
         finally
         {
-            try { File.Delete(databasePath); } catch { /* best effort */ }
+            try { File.Delete(databasePath); } catch (IOException) { /* best effort */ }
         }
     }
 }

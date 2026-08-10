@@ -21,7 +21,7 @@ public class WatchtowerStore(PreflightCache preflightCache)
                     await TryWarmKeyAsync(ctx, $"season:{parts[0]}:{season}", ct).ConfigureAwait(false);
             }
         }
-        catch (Exception e)
+        catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
         {
             Log.Debug(e, "Watchtower: cache warm failed for {Type}/{Id}", type, contentId);
         }

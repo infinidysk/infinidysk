@@ -29,7 +29,7 @@ public class TestIndexerConnectionController(NzbWebDAV.Config.ConfigManager conf
             var ok = await client.TestAsync(HttpContext.RequestAborted).ConfigureAwait(false);
             return Ok(new TestIndexerConnectionResponse { Status = true, Connected = ok });
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException or InvalidOperationException)
         {
             return Ok(new TestIndexerConnectionResponse { Status = true, Connected = false, Error = e.Message });
         }

@@ -26,7 +26,7 @@ internal static class SegmentResponseValidator
             {
                 await response.Stream.DisposeAsync().ConfigureAwait(false);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 Log.Debug(e, "Failed to dispose mismatched BODY stream");
             }

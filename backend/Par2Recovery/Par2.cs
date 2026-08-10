@@ -147,7 +147,7 @@ namespace NzbWebDAV.Par2Recovery
                 var magic = Encoding.ASCII.GetString(header.Magic);
                 return Par2PacketHeaderMagic.Equals(magic, StringComparison.Ordinal);
             }
-            catch (Exception)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 return false;
             }

@@ -196,7 +196,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             _streamTasks.Writer.TryComplete();
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             _streamTasks.Writer.TryComplete(exception);
         }
@@ -475,7 +475,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (Exception e) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
             {
                 lease?.Dispose();
                 lease = null;
@@ -567,7 +567,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     persistent);
             }
         }
-        catch (Exception e) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
         {
             lease?.Dispose();
             lease = null;
@@ -654,7 +654,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 throw;
             }
-            catch (Exception e) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
             {
                 Log.Debug(e, "Individual rescue of segment {SegmentId} failed (attempt {Attempt}).",
                     segmentId, attempt);

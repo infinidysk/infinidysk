@@ -310,7 +310,7 @@ public class ProviderCircuitBreaker
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 cooldown));
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             Log.Warning(
                 exception,

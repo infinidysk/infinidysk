@@ -140,7 +140,7 @@ internal partial class MarkHeader
             }
             throw;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             if (!leaveStreamOpen)
             {

@@ -126,7 +126,7 @@ public static class MetadataReader
         {
             return DecodeFileMetadata(fileBytes[MetaMagicV3.Length..], isV3: true).StoreRef;
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return "";
         }

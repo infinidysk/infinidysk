@@ -78,7 +78,7 @@ public sealed class UsenetMigrationStore : IDisposable
             {
                 await MigrateAndCreateSessionAsync(ct).ConfigureAwait(false);
             }
-            catch (Exception e) when (IsIncompatibleMigrationLedger(e))
+            catch (Exception e) when (IsIncompatibleMigrationLedger(e) && e is not OutOfMemoryException)
             {
                 var path = DatabaseFilePath();
                 Log.Warning(
@@ -122,7 +122,7 @@ public sealed class UsenetMigrationStore : IDisposable
                 if (File.Exists(path))
                     File.Delete(path);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 Log.Debug(e, "Failed to delete usenet migration ledger file {Path}", path);
             }

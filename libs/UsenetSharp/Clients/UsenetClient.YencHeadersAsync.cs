@@ -74,7 +74,7 @@ public partial class UsenetClient
                 header = await ReadYencHeaderProbeAsync(releasePolicy, operationCts.Token)
                     .ConfigureAwait(false);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 // Unread body data remains buffered; the response FIFO cannot
                 // be trusted (RFC 3977 §3.5).

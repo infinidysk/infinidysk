@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -92,9 +93,9 @@ public class HistoryRetentionService(ConfigManager configManager) : BackgroundSe
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            Log.Warning(ex, "History retention sweep failed: {Message}", ex.Message);
+            ex.LogWarningKnownOrStack("History retention sweep failed.");
         }
     }
 

@@ -84,7 +84,7 @@ public partial class WardenStore
             cmd.Parameters.AddWithValue("$k", key);
             return cmd.ExecuteScalar() as string;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is SqliteException or InvalidOperationException)
         {
             Log.Debug(e, "Warden: backup-meta read failed");
             return null;
@@ -103,7 +103,7 @@ public partial class WardenStore
             using var r = cmd.ExecuteReader();
             while (r.Read()) d[r.GetString(0)] = r.GetString(1);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is SqliteException or InvalidOperationException)
         {
             Log.Debug(e, "Warden: backup-meta read-all failed");
         }
@@ -136,7 +136,7 @@ public partial class WardenStore
             }
             tx.Commit();
         }
-        catch (Exception e)
+        catch (Exception e) when (e is SqliteException or InvalidOperationException)
         {
             Log.Debug(e, "Warden: backup-meta write failed");
         }

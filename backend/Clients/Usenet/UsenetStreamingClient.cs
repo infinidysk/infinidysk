@@ -66,7 +66,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                     // would drop healthy TLS connections mid-playback.
                     UpdateProviderPriorityOdds(configManager.GetStreamingPriority());
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
                     // Keep the previous (working) client and let remaining OnConfigChanged
                     // subscribers run — a throw from a multicast handler aborts the rest.
@@ -113,7 +113,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                     metricsWriter
                 );
             }
-            catch (Exception e)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
             {
                 Log.Warning(e, "Segment cache disabled: failed to initialise at {Path}.",
                     configManager.GetSegmentCachePath());
@@ -378,7 +378,7 @@ public class UsenetStreamingClient : WrappingNntpClient
             catch (Exception e) when (e.IsCancellationException() &&
 #pragma warning restore CA2016
                                       timeoutCts.IsCancellationRequested &&
-                                      !ct.IsCancellationRequested)
+                                      !ct.IsCancellationRequested && e is not OutOfMemoryException)
             {
                 // Only the CancelAfter deadline — not an unrelated internal cancel, and
                 // not caller abort. Typed so Test Connection / middleware / breaker paths
@@ -402,7 +402,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                 catch (Exception e) when (e.IsCancellationException() &&
 #pragma warning restore CA2016
                                           timeoutCts.IsCancellationRequested &&
-                                          !ct.IsCancellationRequested)
+                                          !ct.IsCancellationRequested && e is not OutOfMemoryException)
                 {
                     throw new CouldNotLoginToUsenetException(
                         $"Authentication to {connectionDetails.Host}:{connectionDetails.Port} " +

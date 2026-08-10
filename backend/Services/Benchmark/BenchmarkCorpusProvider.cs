@@ -36,7 +36,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
             if (pool.Count < maxSegments / 4)
                 await CollectFromQueuedNzbsAsync(pool, seen, maxSegments, ct).ConfigureAwait(false);
         }
-        catch (Exception e) when (e is not OperationCanceledException)
+        catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
         {
             // A corpus hiccup shouldn't sink the whole benchmark — degrade to
             // whatever we managed to gather (possibly latency-only).
@@ -104,7 +104,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
                     if (pool.Count >= maxSegments) return;
                 }
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
                 Log.Debug(e, "Skipping unparseable queued nzb during benchmark corpus build.");
             }

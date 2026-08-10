@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Backup;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -90,12 +91,12 @@ public class DatabaseRestoreStageTask(
             Report("Restore staged. Restarting into maintenance mode…");
             restartService.RequestRestartForRestore();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             store.ClearPendingRestore();
             store.ClearRestoreStaging();
             Report($"Failed: {ex.Message}");
-            Log.Error(ex, "Database restore staging failed");
+            ex.LogWarningKnownOrStack("Database restore staging failed");
             throw;
         }
     }

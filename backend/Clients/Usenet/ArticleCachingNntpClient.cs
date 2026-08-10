@@ -544,7 +544,7 @@ public class ArticleCachingNntpClient(
             {
                 return; // already gone — success
             }
-            catch (Exception e)
+            catch (IOException e)
             {
                 if (attempt == maxAttempts)
                 {

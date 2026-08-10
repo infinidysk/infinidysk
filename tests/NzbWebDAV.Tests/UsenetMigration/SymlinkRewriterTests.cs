@@ -139,7 +139,7 @@ public class SymlinkRewriterTests
         await mig.Entry(row).ReloadAsync();
         Assert.Equal("rewrite", row.Status);
 
-        try { Directory.Delete(backupDir, recursive: true); } catch { /* best effort */ }
+        try { Directory.Delete(backupDir, recursive: true); } catch (IOException) { /* best effort */ }
     }
 
     [Fact]
@@ -241,7 +241,7 @@ public class SymlinkRewriterTests
             Assert.Equal(caseChangedTarget, ops.Links["/lib/a.mkv"]);
         }
 
-        try { Directory.Delete(backupDir, recursive: true); } catch { /* best effort */ }
+        try { Directory.Delete(backupDir, recursive: true); } catch (IOException) { /* best effort */ }
     }
 
     [Fact]
@@ -274,7 +274,7 @@ public class SymlinkRewriterTests
         Assert.Equal("failed", row.Status);
         Assert.Contains("DavItem no longer exists", row.Error);
         Assert.Null(summary.BackupPath);
-        try { Directory.Delete(backupDir, recursive: true); } catch { /* best effort */ }
+        try { Directory.Delete(backupDir, recursive: true); } catch (IOException) { /* best effort */ }
     }
 
     [Fact]
@@ -304,7 +304,7 @@ public class SymlinkRewriterTests
         await using var mig = h.Mig();
         var row = await mig.SymlinkRewrites.SingleAsync();
         Assert.Contains("rclone mount dir changed", row.Error);
-        try { Directory.Delete(backupDir, recursive: true); } catch { /* best effort */ }
+        try { Directory.Delete(backupDir, recursive: true); } catch (IOException) { /* best effort */ }
     }
 
     [Fact]

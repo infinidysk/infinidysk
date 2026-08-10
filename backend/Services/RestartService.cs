@@ -23,7 +23,7 @@ public sealed class RestartService(IHostApplicationLifetime lifetime)
                     RestartUtil.RestartForRestoreExitCode);
                 lifetime.StopApplication();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 Log.Error(ex, "Failed to request restart for database restore");
             }

@@ -58,7 +58,7 @@ public class NzbFile
                     Segments[^1].ByteRange = LongRange.FromStartAndSize(finalStart, finalSize);
             }
         }
-        catch (Exception e) when (e is not OperationCanceledException)
+        catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
         {
             // Known transport failures get a single human-friendly Warning line;
             // unexpected failures keep the stack. Playback still works either way,

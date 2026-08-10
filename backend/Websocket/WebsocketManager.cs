@@ -193,7 +193,7 @@ public class WebsocketManager
             if (session.Socket.State == WebSocketState.Open)
                 await session.Socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server shutting down", CancellationToken.None).ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Warning(e, "Websocket receive loop failed");
         }
@@ -308,7 +308,7 @@ public class WebsocketManager
         {
             // Expected when the socket disconnects or the application shuts down.
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug(e, "Failed to send message to websocket");
             AbortSocket(session);
@@ -352,7 +352,7 @@ public class WebsocketManager
         if (!session.Stop()) return;
 
         try { session.Socket.Abort(); }
-        catch { /* best-effort cleanup */ }
+        catch (ObjectDisposedException) { /* socket already disposed */ }
     }
 
     /// <summary>

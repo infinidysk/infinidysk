@@ -62,14 +62,14 @@ public class SqliteMainDbPragmas : DbConnectionInterceptor
                 command.CommandText = "PRAGMA journal_size_limit = 67108864;";
                 command.ExecuteNonQuery();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException)
             {
                 Log.Warning(
                     ex,
                     "Could not set WAL/synchronous PRAGMA on main SQLite connection; database may be read-only.");
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException)
         {
             Log.Warning(ex, "SQLite main connection opened but PRAGMA commands failed. Continuing without PRAGMA changes.");
         }

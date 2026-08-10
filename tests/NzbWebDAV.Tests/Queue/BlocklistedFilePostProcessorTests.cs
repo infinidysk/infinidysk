@@ -42,7 +42,7 @@ public class BlocklistedFilePostProcessorTests : IDisposable
     public void Dispose()
     {
         _context.Dispose();
-        try { File.Delete(_dbPath); } catch { /* ignore */ }
+        try { File.Delete(_dbPath); } catch (IOException) { /* ignore */ }
     }
 
     [Fact]

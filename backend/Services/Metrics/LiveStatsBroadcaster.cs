@@ -5,10 +5,10 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.Metrics;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
-using Serilog;
 
 namespace NzbWebDAV.Services.Metrics;
 
@@ -54,9 +54,9 @@ public class LiveStatsBroadcaster(
             {
                 return;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                Log.Debug(ex, "LiveStatsBroadcaster tick failed");
+                ex.LogWarningKnownOrStack("LiveStatsBroadcaster tick failed.");
             }
         }
     }

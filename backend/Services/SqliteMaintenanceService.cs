@@ -51,7 +51,7 @@ public class SqliteMaintenanceService : BackgroundService
             await using var metrics = new MetricsDbContext();
             await SweepAsync(db, metrics).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
         {
             Log.Warning(ex, "SqliteMaintenanceService sweep failed");
         }

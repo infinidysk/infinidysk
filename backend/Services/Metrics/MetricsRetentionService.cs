@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
-using Serilog;
 
 namespace NzbWebDAV.Services.Metrics;
 
@@ -66,9 +66,9 @@ public class MetricsRetentionService : BackgroundService
 
             await db.Database.ExecuteSqlRawAsync("PRAGMA incremental_vacuum;").ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            Log.Warning(ex, "MetricsRetentionService sweep failed");
+            ex.LogWarningKnownOrStack("MetricsRetentionService sweep failed.");
         }
     }
 

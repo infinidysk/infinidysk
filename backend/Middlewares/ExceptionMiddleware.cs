@@ -34,7 +34,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         {
             await next(context).ConfigureAwait(false);
         }
-        catch (Exception e) when (IsCausedByAbortedRequest(e, context))
+        catch (Exception e) when (IsCausedByAbortedRequest(e, context) && e is not OutOfMemoryException)
         {
             // If the response has not started, we can write our custom response
             if (!context.Response.HasStarted)
@@ -73,7 +73,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             });
             Log.Debug(e, "WebDAV streaming-write-timeout stack");
         }
-        catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? notFound))
+        catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? notFound) && e is not OutOfMemoryException)
         {
             if (!context.Response.HasStarted)
             {
@@ -176,7 +176,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             Log.Error("File {FilePath} could not connect to usenet provider: {ErrorMessage}", filePath, e.Message);
             AbortStartedResponse(context);
         }
-        catch (Exception e) when (e.TryGetCausingException(out StreamingReadTimeoutException? _))
+        catch (Exception e) when (e.TryGetCausingException(out StreamingReadTimeoutException? _) && e is not OutOfMemoryException)
         {
             // Backend-wait deadline (not client disconnect). Fail fast before headers so
             // rclone/FUSE can surface an HTTP error instead of wedging in D-state; after
@@ -228,7 +228,8 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         }
         catch (Exception e) when (
             IsDavItemRequest(context) &&
-            e.TryGetCausingException(out CorruptRarException? corruptRar))
+            e.TryGetCausingException(out CorruptRarException? corruptRar) &&
+            e is not OutOfMemoryException)
         {
             if (!context.Response.HasStarted)
             {
@@ -262,7 +263,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             AbortStartedResponse(context);
         }
-        catch (Exception e) when (IsDavItemRequest(context))
+        catch (Exception e) when (IsDavItemRequest(context) && e is not OutOfMemoryException)
         {
             // A volume that is short or unresolvable is missing data, not a server
             // fault, and repairing the item is what can actually fix it.
@@ -418,7 +419,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                 await dbContext.SaveChangesAsync().ConfigureAwait(false);
                 Log.Information("Scheduled dynamic repair for {FilePath}", item.Path);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 Log.Warning(ex, "Failed to schedule dynamic repair for DavItem {DavItemId}", davItemId);
             }

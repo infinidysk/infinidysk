@@ -163,7 +163,7 @@ public class LazyRarResolverTests
         finally
         {
             Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
-            try { Directory.Delete(configRoot, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(configRoot, recursive: true); } catch (IOException) { /* best effort */ }
         }
     }
 

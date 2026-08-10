@@ -30,10 +30,10 @@ public class RecreateStrmFilesTask(
             var ct = SigtermUtil.GetCancellationToken();
             await RecreateAllAsync(ct).ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Report($"Failed: {e.Message}");
-            Log.Error(e, "Failed to recreate STRM files.");
+            e.LogWarningKnownOrStack("Failed to recreate STRM files.");
         }
     }
 

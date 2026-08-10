@@ -55,14 +55,14 @@ public class SqliteMetricsPragmas : DbConnectionInterceptor
                     "PRAGMA auto_vacuum = INCREMENTAL;";
                 command.ExecuteNonQuery();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException)
             {
                 Log.Warning(
                     ex,
                     "Could not set metrics SQLite PRAGMAs; database may be read-only.");
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException)
         {
             Log.Warning(ex, "SQLite metrics connection opened but PRAGMA commands failed. Continuing without PRAGMA changes.");
         }

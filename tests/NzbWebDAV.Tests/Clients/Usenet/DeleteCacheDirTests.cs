@@ -34,7 +34,7 @@ public class DeleteCacheDirTests
         finally
         {
             ArticleCachingNntpClient.DeleteCacheDirInitialDelayMs = previous;
-            try { File.Delete(blocker); } catch { /* ignore */ }
+            try { File.Delete(blocker); } catch (IOException) { /* ignore */ }
         }
     }
 }

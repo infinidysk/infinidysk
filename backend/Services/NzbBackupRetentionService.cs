@@ -69,7 +69,7 @@ public class NzbBackupRetentionService(ConfigManager configManager) : Background
                 File.Delete(path);
                 deleted++;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 Log.Debug(ex, "Failed to prune NZB backup file {Path}", path);
             }
@@ -101,7 +101,7 @@ public class NzbBackupRetentionService(ConfigManager configManager) : Background
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Log.Error(ex, "Error pruning NZB backup directory: {Message}", ex.Message);
         }

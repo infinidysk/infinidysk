@@ -53,7 +53,7 @@ public static class UsenetProviderIdentity
             Log.Information("Assigned and persisted ProviderId for {Count} usenet provider(s).",
                 assignedCount);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or DbUpdateException or InvalidOperationException)
         {
             Log.Warning(ex,
                 "Failed to persist assigned usenet ProviderIds; continuing with in-memory ids. " +
@@ -269,7 +269,7 @@ public static class UsenetProviderIdentity
         {
             Log.Information("Host-keyed metrics remap interrupted by shutdown; it will resume on next startup.");
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException)
         {
             Log.Warning(ex, "Failed to remap host-keyed provider metrics; continuing with ProviderId keys going forward.");
         }

@@ -64,7 +64,7 @@ public class SabApiController(
         }
         catch (Exception e)
         {
-            Log.Error(e, "Unhandled SAB API request failure");
+            e.LogWarningKnownOrStack("Unhandled SAB API request failure");
             return StatusCode(500, new SabBaseResponse()
             {
                 Status = false,

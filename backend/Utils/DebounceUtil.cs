@@ -48,7 +48,7 @@ public static class DebounceUtil
                             {
                                 trailingAction?.Invoke();
                             }
-                            catch (Exception e)
+                            catch (Exception e) when (e is not OutOfMemoryException)
                             {
                                 Log.Warning(e, "Debounced trailing action failed");
                             }
@@ -62,7 +62,7 @@ public static class DebounceUtil
             {
                 invokeNow?.Invoke();
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 Log.Warning(e, "Debounced action failed");
             }

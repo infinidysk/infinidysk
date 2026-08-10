@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.Metrics;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -253,15 +254,15 @@ public class MetricsWriter : BackgroundService
             {
                 break;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                Log.Warning(ex, "MetricsWriter flush failed");
+                ex.LogWarningKnownOrStack("MetricsWriter flush failed.");
             }
         }
 
         // Best-effort drain on shutdown so we don't lose the trailing batch.
         try { await FlushAsync().ConfigureAwait(false); }
-        catch (Exception ex) { Log.Debug(ex, "MetricsWriter final flush failed"); }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { Log.Debug(ex, "MetricsWriter final flush failed"); }
     }
 
     private async Task WaitForFlushAsync(CancellationToken stoppingToken)
@@ -352,7 +353,7 @@ public class MetricsWriter : BackgroundService
             Interlocked.Exchange(ref _lastSuccessfulFlushAtMs, completed);
             Interlocked.Exchange(ref _lastFlushError, null);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // Only requeue if this flush still belongs to the current generation.
             // A reset that started mid-flush must not resurrect wiped rows.

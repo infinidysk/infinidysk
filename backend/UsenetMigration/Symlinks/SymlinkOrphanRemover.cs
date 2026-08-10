@@ -69,7 +69,7 @@ public sealed class SymlinkOrphanRemover(UsenetMigrationStore store)
                     candidates.Add(row);
                 }
             }
-            catch (Exception e)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 Fail(row, e.Message);
                 failed++;
@@ -127,7 +127,7 @@ public sealed class SymlinkOrphanRemover(UsenetMigrationStore store)
                     row.Error = null;
                     removed++;
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                 {
                     Fail(row, e.Message);
                     failed++;

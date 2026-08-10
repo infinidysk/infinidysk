@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Backup;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -77,11 +78,11 @@ public class DatabaseBackupTask(
             Report($"Completed backup {manifest.Id}");
             return manifest;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             store.DiscardStaging(stagingPath);
             Report($"Failed: {ex.Message}");
-            Log.Error(ex, "Database backup failed");
+            ex.LogWarningKnownOrStack("Database backup failed");
             throw;
         }
     }
@@ -113,7 +114,7 @@ public class DatabaseBackupTask(
             var applied = await ctx.Database.GetAppliedMigrationsAsync().ConfigureAwait(false);
             return applied.LastOrDefault();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is InvalidOperationException or SqliteException)
         {
             Log.Warning(ex, "Could not read last applied main-database migration for backup manifest");
 

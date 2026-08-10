@@ -53,7 +53,7 @@ public partial class UsenetClient
                 capabilities = await ReadCapabilityLinesAsync(operationCts.Token)
                     .ConfigureAwait(false);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 RecordConnectionFailure(e);            // framing failure: FIFO unknown
                 throw;

@@ -120,7 +120,7 @@ public class MultiProviderNntpClient(
                     "Stopped provider recovery probes because the NNTP client generation was retired.");
                 return;
             }
-            catch (Exception e) when (!e.IsCancellationException(cancellationToken))
+            catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
                 Log.Debug(
                     e,
@@ -356,7 +356,7 @@ public class MultiProviderNntpClient(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
                 }
-                catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _))
+                catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _) && e is not OutOfMemoryException)
                 {
                     // Invalid / permanently missing segment ids are invalid on every provider.
                     deferredCallback.Discard();
@@ -364,7 +364,7 @@ public class MultiProviderNntpClient(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
                 }
-                catch (Exception e) when (!e.IsCancellationException(cancellationToken))
+                catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
                 {
                     deferredCallback.Discard();
                     lastException = ExceptionDispatchInfo.Capture(e);
@@ -421,7 +421,7 @@ public class MultiProviderNntpClient(
             {
                 throw;
             }
-            catch (Exception e) when (!e.IsCancellationException(cancellationToken))
+            catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
                 primaryStopwatch.Stop();
                 var reason = ClassifyAndRecordFailure(
@@ -576,7 +576,7 @@ public class MultiProviderNntpClient(
                         coordinator.CompleteAttempt();
                         throw;
                     }
-                    catch (Exception e) when (!e.IsCancellationException(cancellationToken))
+                    catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
                     {
                         stopwatch.Stop();
                         var reason = ClassifyAndRecordFailure(
@@ -787,7 +787,7 @@ public class MultiProviderNntpClient(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 throw;
             }
-            catch (Exception e) when (!e.IsCancellationException(cancellationToken))
+            catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
                 stopwatch.Stop();
                 var reason = ClassifyAndRecordFailure(
@@ -923,7 +923,7 @@ public class MultiProviderNntpClient(
             {
                 throw;
             }
-            catch (Exception e) when (!e.IsCancellationException(cancellationToken))
+            catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
                 stopwatch.Stop();
                 var reason = ClassifyAndRecordFailure(
@@ -1372,7 +1372,7 @@ public class MultiProviderNntpClient(
         {
             callback?.Invoke(result, failureReason);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Warning(e, "NNTP completion callback failed");
         }

@@ -78,7 +78,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 .EnsureResolvedThroughAsync(_mpf, long.MaxValue, CancellationToken.None)
                 .ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug(e,
                 "Background RAR pre-warm for {Id} did not finish; trailing volumes will resolve on demand.",
@@ -99,7 +99,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         {
             _pendingInnerDispose = null;
             try { await pendingDispose.ConfigureAwait(false); }
-            catch (Exception)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 // Teardown-only.
             }
@@ -353,7 +353,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         {
             _pendingInnerDispose = null;
             try { await pending.ConfigureAwait(false); }
-            catch (Exception)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 // Teardown-only.
             }

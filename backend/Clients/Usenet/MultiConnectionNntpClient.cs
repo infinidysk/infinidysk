@@ -315,7 +315,7 @@ public class MultiConnectionNntpClient(
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
                 && e.IsCancellationException()
 #pragma warning restore CA2016
-                && !ct.IsCancellationRequested)
+                && !ct.IsCancellationRequested && e is not OutOfMemoryException)
             {
                 // Per-segment deadline fired while the caller is still reading. The
                 // connection has an in-flight pipeline → replace it and try again, so a
@@ -341,7 +341,7 @@ public class MultiConnectionNntpClient(
                     "Timeout executing pipelined nntp BODY commands after " +
                     $"{streamingTimeout.MaxRetries + 1} attempts.");
             }
-            catch (Exception e) when (e.IsCancellationException(ct))
+            catch (Exception e) when (e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
                 LogException(() => connectionLock?.Replace());
@@ -360,7 +360,7 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _))
+            catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _) && e is not OutOfMemoryException)
             {
                 // Permanently missing / invalid segment ids are not connection failures.
                 deferredCallback.Discard();
@@ -368,7 +368,7 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
                 var wasReused = connectionLock?.WasReused ?? false;
@@ -462,7 +462,7 @@ public class MultiConnectionNntpClient(
                 connectionLock = await AcquireConnectionLockAsync(priority, workload, operation, ct)
                     .ConfigureAwait(false);
             }
-            catch (Exception e) when (e.IsCancellationException(ct))
+            catch (Exception e) when (e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
@@ -473,7 +473,7 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 // A client abort (seek/stop) mid-connect can surface as an
                 // IOException/SocketException rather than a cancellation
@@ -531,7 +531,7 @@ public class MultiConnectionNntpClient(
             catch (Exception e) when (
                 streamingTimeout != null
                 && e.IsCancellationException()
-                && !ct.IsCancellationRequested)
+                && !ct.IsCancellationRequested && e is not OutOfMemoryException)
             {
                 // Per-segment CancelAfter fired while the caller is still alive.
                 // The connection has an in-flight command → NotRetrieved (replace).
@@ -560,7 +560,7 @@ public class MultiConnectionNntpClient(
                 throw new TimeoutException(
                     $"Timeout executing nntp {name} command after {streamingTimeout.MaxRetries + 1} attempts.");
             }
-            catch (Exception e) when (e.IsCancellationException(ct))
+            catch (Exception e) when (e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
                 LogException(() => connectionLock?.Replace());
@@ -568,14 +568,14 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _))
+            catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _) && e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e) when (IsBodyCommand(name) && e.TryGetCausingException(out TimeoutException? _))
+            catch (Exception e) when (IsBodyCommand(name) && e.TryGetCausingException(out TimeoutException? _) && e is not OutOfMemoryException)
             {
                 // Read-timeout on BODY/ARTICLE means the provider stopped responding
                 // mid-command. A fresh socket to the same provider is unlikely to fare
@@ -591,7 +591,7 @@ public class MultiConnectionNntpClient(
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
                 var wasReused = connectionLock?.WasReused ?? false;
@@ -755,7 +755,7 @@ public class MultiConnectionNntpClient(
                         Stopwatch.GetElapsedTime(moveStarted));
                 }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-                catch (Exception e) when (!e.IsCancellationException())
+                catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
                 {
                     // Do not RecordFailure — STAT must not feed the breaker — but the
@@ -810,7 +810,7 @@ public class MultiConnectionNntpClient(
                         Stopwatch.GetElapsedTime(moveStarted));
                 }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-                catch (Exception e) when (!e.IsCancellationException())
+                catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
                 {
                     circuitBreaker.RecordFailure($"pipelined-enum-{e.GetType().Name}");
@@ -853,7 +853,7 @@ public class MultiConnectionNntpClient(
             connectionLock = await connectionPool.GetConnectionLockAsync(priority, ct)
                 .ConfigureAwait(false);
         }
-        catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e))
+        catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e) && e is not OutOfMemoryException)
         {
             throw CreateRetiredPoolException(e);
         }
@@ -886,7 +886,7 @@ public class MultiConnectionNntpClient(
             throw;
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             // A client abort mid-connect can surface as an IOException rather than
@@ -943,7 +943,7 @@ public class MultiConnectionNntpClient(
         {
             action?.Invoke();
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Warning(e, "Unhandled exception");
         }

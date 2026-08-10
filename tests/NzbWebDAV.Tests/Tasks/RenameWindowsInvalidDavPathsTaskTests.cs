@@ -400,9 +400,9 @@ public class RenameWindowsInvalidDavPathsTaskTests
         public async ValueTask DisposeAsync()
         {
             await Context.DisposeAsync();
-            try { File.Delete(_path); } catch { /* best effort */ }
-            try { File.Delete(_path + "-wal"); } catch { /* best effort */ }
-            try { File.Delete(_path + "-shm"); } catch { /* best effort */ }
+            try { File.Delete(_path); } catch (IOException) { /* best effort */ }
+            try { File.Delete(_path + "-wal"); } catch (IOException) { /* best effort */ }
+            try { File.Delete(_path + "-shm"); } catch (IOException) { /* best effort */ }
         }
     }
 }

@@ -33,7 +33,7 @@ public class ExternalIdResolver(AnimeListMappingResolver animeList)
             };
             if (sourceId is { } s) mapping = await FetchMappingAsync(s, ct).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
         {
             Log.Warning("ExternalIdResolver {Provider}:{Id} lookup failed: {Message}", provider, externalId, ex.Message);
         }
@@ -56,7 +56,7 @@ public class ExternalIdResolver(AnimeListMappingResolver animeList)
                         Title: mapping?.Title);
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
             {
                 Log.Warning("AnimeList fallback {Provider}:{Id} failed: {Message}", provider, externalId, ex.Message);
             }

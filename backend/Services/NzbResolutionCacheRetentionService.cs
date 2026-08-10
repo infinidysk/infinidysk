@@ -32,7 +32,7 @@ public class NzbResolutionCacheRetentionService(
             Log.Debug(ex, "Play-token cache hydrate cancellation stack");
             return;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             Log.Warning("Failed to hydrate play-token cache; starting empty. Reason: {Reason}", ex.Message);
             Log.Debug(ex, "Play-token cache hydrate failure stack");
@@ -54,7 +54,7 @@ public class NzbResolutionCacheRetentionService(
             {
                 return;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 Log.Warning("Play-token retention sweep failed. Reason: {Reason}", ex.Message);
                 Log.Debug(ex, "Play-token retention sweep failure stack");

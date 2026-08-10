@@ -110,7 +110,7 @@ public sealed class RealSymlinkOps : ISymlinkOps
             BeforeCreateSymlink?.Invoke(safePath);
             File.CreateSymbolicLink(safePath, newTarget);
         }
-        catch (Exception createError)
+        catch (Exception createError) when (createError is not OutOfMemoryException)
         {
             Exception? recreateError = null;
             try
@@ -122,7 +122,7 @@ public sealed class RealSymlinkOps : ISymlinkOps
                     File.CreateSymbolicLink(safePath, expectedOldTarget);
                 }
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 recreateError = e;
             }

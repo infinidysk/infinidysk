@@ -986,7 +986,7 @@ public sealed class UsenetMigrationController(
             System.IO.File.WriteAllText(probe, "ok");
             System.IO.File.Delete(probe);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             throw new BadHttpRequestException($"{field} is not writable: {e.Message}");
         }

@@ -46,7 +46,7 @@ public partial class LzwStream
                 );
             }
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return false;
         }

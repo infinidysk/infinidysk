@@ -208,7 +208,7 @@ public sealed class SymlinkRestoreService(UsenetMigrationStore store)
                 restored++;
                 QueuePlanUpdate(pendingPlanUpdates, entry, expectedReplacement, isOrphanRemoval);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 if (e is IOException)
                 {

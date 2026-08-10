@@ -36,7 +36,7 @@ public class PlaybackFastVerifier
         {
             nzb = await NzbDocument.LoadAsync(nzbStream).ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug("Fast-verify: NZB parse failed: {Message}", e.Message);
             return new VerifyOutcome(Verdict.Dead, null);
@@ -105,7 +105,7 @@ public class PlaybackFastVerifier
             return Verdict.Timeout;
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             Log.Debug("Fast-verify errored on {Segment}: {Message}", messageId, e.Message);
@@ -144,7 +144,7 @@ public class PlaybackFastVerifier
                 {
                     await resp.Stream.DisposeAsync().ConfigureAwait(false);
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
                     Log.Debug(e, "Failed to release verified article body for {SegmentId}", messageId);
                 }

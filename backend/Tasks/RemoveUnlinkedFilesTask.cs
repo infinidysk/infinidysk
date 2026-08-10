@@ -60,7 +60,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         {
             await RemoveUnlinkedFiles().ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Complete($"Failed: {e.Message}");
             if (TryGetKnownFailureReason(e, out var reason))

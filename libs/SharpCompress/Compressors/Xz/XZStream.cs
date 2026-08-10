@@ -24,7 +24,7 @@ public sealed partial class XZStream : XZReadOnlyStream
         {
             return null != XZHeader.FromStream(stream);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return false;
         }

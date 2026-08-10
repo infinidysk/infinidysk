@@ -3,8 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.Metrics;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
-using Serilog;
 
 namespace NzbWebDAV.Services.Metrics;
 
@@ -43,9 +43,9 @@ public class MetricsRollupService(
             {
                 return;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                Log.Warning(ex, "MetricsRollupService tick failed");
+                ex.LogWarningKnownOrStack("MetricsRollupService tick failed.");
             }
         }
     }

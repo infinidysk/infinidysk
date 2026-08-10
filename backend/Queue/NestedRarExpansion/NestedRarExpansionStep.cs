@@ -8,6 +8,7 @@ using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using Serilog;
+using SharpCompress.Common;
 using SharpCompress.Common.Rar.Headers;
 
 namespace NzbWebDAV.Queue.NestedRarExpansion;
@@ -142,7 +143,7 @@ public static class NestedRarExpansionStep
             RarAggregator.ValidateVolumes(members);
             sorted = RarAggregator.SortByPartNumber(members);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is InvalidOperationException or IncompleteArchiveException)
         {
             Log.Information(e,
                 "NestedRarExpansion: outer volume set for {Path} is incomplete; keeping opaque",
@@ -239,7 +240,7 @@ public static class NestedRarExpansionStep
             return expanded;
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             Log.Information(e,

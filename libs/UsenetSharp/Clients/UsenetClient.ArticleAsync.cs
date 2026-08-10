@@ -58,7 +58,7 @@ public partial class UsenetClient
                 {
                     headers = await ParseArticleHeadersAsync(operationCts.Token).ConfigureAwait(false);
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
                     RecordConnectionFailure(e);
                     throw;

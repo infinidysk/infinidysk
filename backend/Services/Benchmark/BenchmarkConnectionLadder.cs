@@ -37,7 +37,7 @@ internal sealed class BenchmarkConnectionLadder(UsenetProviderConfig.ConnectionD
                 {
                     throw;
                 }
-                catch (Exception e) when (!e.IsCancellationException(ct))
+                catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
                 {
                     failure = e;
                     // Give the provider a beat to free a lingering slot before retrying.
@@ -88,7 +88,7 @@ internal sealed class BenchmarkConnectionLadder(UsenetProviderConfig.ConnectionD
         {
             conn.Dispose();
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug(e, "Failed to dispose benchmark connection.");
         }

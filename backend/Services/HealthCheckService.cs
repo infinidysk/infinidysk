@@ -164,7 +164,7 @@ public class HealthCheckService : BackgroundService
                 // OperationCanceledException is expected on sigterm
                 return;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 if (e.TryGetKnownErrorMessage(out var reason))
                 {
@@ -335,7 +335,7 @@ public class HealthCheckService : BackgroundService
                 HealthCheckResult.RepairAction.ActionNeeded,
                 $"Unexpected NNTP response during health check: {e.Message}", ct).ConfigureAwait(false);
         }
-        catch (Exception e) when (e.IsTransientTransportException())
+        catch (Exception e) when (e.IsTransientTransportException() && e is not OutOfMemoryException)
         {
             // STAT/read timeouts and socket/IO failures must not dump stacks or trigger Arr repair —
             // defer and surface ActionNeeded with a single human-readable Warning.
@@ -354,7 +354,7 @@ public class HealthCheckService : BackgroundService
                 HealthCheckResult.RepairAction.ActionNeeded,
                 FormatTransportFailureHealthMessage(reason), ct).ConfigureAwait(false);
         }
-        catch (Exception e) when (!e.IsCancellationException(ct))
+        catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
         {
             await DeferHealthCheck(davItem, dbClient, e, ct).ConfigureAwait(false);
         }
@@ -409,7 +409,7 @@ public class HealthCheckService : BackgroundService
         {
             throw;
         }
-        catch (Exception persistenceException)
+        catch (Exception persistenceException) when (persistenceException is DbUpdateException or InvalidOperationException)
         {
             Log.Error(
                 persistenceException,
@@ -428,7 +428,7 @@ public class HealthCheckService : BackgroundService
             {
                 throw;
             }
-            catch (Exception scheduleException)
+            catch (Exception scheduleException) when (scheduleException is DbUpdateException or InvalidOperationException)
             {
                 Log.Error(
                     scheduleException,
@@ -728,7 +728,7 @@ public class HealthCheckService : BackgroundService
             {
                 rootFolders = await arrClient.GetRootFolders(ct).ConfigureAwait(false);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
             {
                 anInstanceFailed = true;
                 LogArrRepairFailure(
@@ -759,7 +759,7 @@ public class HealthCheckService : BackgroundService
                     downloadId.Value,
                     ct).ConfigureAwait(false);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
             {
                 anInstanceFailed = true;
                 LogArrRepairFailure(
@@ -1095,7 +1095,7 @@ public class HealthCheckService : BackgroundService
                     $"Deleted the webdav-file and {linkType} after {noMatchConfirmations} consecutive confirmations."
                 ]), ct).ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             // if an error is encountered during repairs,
             // then mark the item as unhealthy, and check again in a day.
@@ -1162,7 +1162,7 @@ public class HealthCheckService : BackgroundService
             var segments = await GetAllSegments(davItem, dbClient, ct).ConfigureAwait(false);
             AddMissingSegmentIds(SelectRejectedReleaseSeedSegments(segments));
         }
-        catch (Exception e) when (!e.IsCancellationException(ct))
+        catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
         {
             // A missing blob must not abort the repair; the release is already
             // blocklisted in Arr, we only lose the pre-import fail-fast.

@@ -107,7 +107,7 @@ public class WatchtowerMutateController(DavDatabaseClient dbClient) : BaseApiCon
         {
             inputs = JsonSerializer.Deserialize<List<SourceInput>>(payload);
         }
-        catch (Exception e)
+        catch (JsonException e)
         {
             throw new BadHttpRequestException($"Invalid catalog selection: {e.Message}");
         }

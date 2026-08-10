@@ -84,7 +84,7 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         _queueManager.Dispose();
         await _context.DisposeAsync();
         Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
-        try { Directory.Delete(_configRoot, recursive: true); } catch { /* best effort */ }
+        try { Directory.Delete(_configRoot, recursive: true); } catch (IOException) { /* best effort */ }
     }
 
     [Fact]

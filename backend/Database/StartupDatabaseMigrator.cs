@@ -93,7 +93,7 @@ internal static class StartupDatabaseMigrator
             progress.Complete();
             Log.Information("Database migrations completed");
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             progress.Fail(ex.Message);
             if (statusServer is not null)

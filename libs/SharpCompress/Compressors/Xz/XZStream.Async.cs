@@ -20,7 +20,7 @@ public sealed partial class XZStream
             return null
                 != await XZHeader.FromStreamAsync(stream, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException and not OperationCanceledException)
         {
             return false;
         }

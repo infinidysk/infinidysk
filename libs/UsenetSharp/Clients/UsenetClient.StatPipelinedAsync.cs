@@ -122,7 +122,7 @@ public partial class UsenetClient
 
             throw;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             if (writeStarted)
             {
@@ -230,7 +230,7 @@ public partial class UsenetClient
 
             return null;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             return exception;
         }

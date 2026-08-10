@@ -294,7 +294,7 @@ public class RemoveUnlinkedFilesTaskTests
         {
             await BaseTask.ResetRunningTaskForTestsAsync();
             RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
-            try { Directory.Delete(libraryDir, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(libraryDir, recursive: true); } catch (IOException) { /* best effort */ }
         }
     }
 
@@ -393,7 +393,7 @@ public class RemoveUnlinkedFilesTaskTests
         {
             await BaseTask.ResetRunningTaskForTestsAsync();
             RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
-            try { Directory.Delete(libraryDir, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(libraryDir, recursive: true); } catch (IOException) { /* best effort */ }
         }
     }
 
@@ -467,7 +467,7 @@ public class RemoveUnlinkedFilesTaskTests
         {
             await BaseTask.ResetRunningTaskForTestsAsync();
             RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
-            try { Directory.Delete(libraryDir, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(libraryDir, recursive: true); } catch (IOException) { /* best effort */ }
         }
     }
 
@@ -613,9 +613,9 @@ public class RemoveUnlinkedFilesTaskTests
         public async ValueTask DisposeAsync()
         {
             await Context.DisposeAsync();
-            try { File.Delete(_path); } catch { /* best effort */ }
-            try { File.Delete(_path + "-wal"); } catch { /* best effort */ }
-            try { File.Delete(_path + "-shm"); } catch { /* best effort */ }
+            try { File.Delete(_path); } catch (IOException) { /* best effort */ }
+            try { File.Delete(_path + "-wal"); } catch (IOException) { /* best effort */ }
+            try { File.Delete(_path + "-shm"); } catch (IOException) { /* best effort */ }
         }
     }
 }

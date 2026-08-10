@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Utils;
 using Serilog;
@@ -58,7 +59,7 @@ public sealed class SearchExcludeSyncService : BackgroundService
         _ = Task.Run(async () =>
         {
             try { await RefreshAllAsync(force: true, CancellationToken.None).ConfigureAwait(false); }
-            catch (Exception ex) { Log.Debug(ex, "Exclude-sync: post-config refresh failed"); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { Log.Debug(ex, "Exclude-sync: post-config refresh failed"); }
         });
     }
 
@@ -71,7 +72,7 @@ public sealed class SearchExcludeSyncService : BackgroundService
         {
             try { await RefreshAllAsync(force: false, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-            catch (Exception e) { Log.Debug(e, "Exclude-sync: refresh loop error"); }
+            catch (Exception e) when (e is not OutOfMemoryException) { e.LogWarningKnownOrStack("Exclude-sync: refresh loop error."); }
 
             try { await Task.Delay(TickInterval, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
@@ -192,7 +193,7 @@ public sealed class SearchExcludeSyncService : BackgroundService
         {
             throw;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
         {
             entry.Error = e.Message;
             Log.Warning("Exclude-sync: failed to fetch {Url}: {Message} (keeping last-good)", url, e.Message);

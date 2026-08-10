@@ -857,7 +857,7 @@ public sealed class DavDatabaseContext : DbContext
             var json = reader.ReadToEnd();
             return JsonSerializer.Deserialize<T>(json, (JsonSerializerOptions?)null);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is JsonException or FormatException or InvalidDataException or IOException)
         {
             Log.Error(ex, "Failed to deserialize column value. Raw value (first 200 chars): {Preview}",
                 value.Length > 200 ? value[..200] : value);

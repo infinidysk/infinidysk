@@ -62,7 +62,7 @@ public class ProfilePlayController(
         {
             return await HandleAsync(token, nzbToken).ConfigureAwait(false);
         }
-        catch (Exception e) when (!e.IsCancellationException(HttpContext.RequestAborted))
+        catch (Exception e) when (!e.IsCancellationException(HttpContext.RequestAborted) && e is not OutOfMemoryException)
         {
             Log.Error(e, "Play handler crashed for token {Token} / nzbToken {NzbToken}", token, nzbToken);
             if (HttpContext.Response.HasStarted) return new EmptyResult();
@@ -597,7 +597,7 @@ public class ProfilePlayController(
                     var r = await t.ConfigureAwait(false);
                     candidate = r.Candidate;
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
                     // Fall back to the task→candidate map so the entry still shows up
                     // — previously this was silently dropped.
@@ -653,7 +653,7 @@ public class ProfilePlayController(
                     .ConfigureAwait(false);
                 _playLastSeen.TryRemove(nzoId, out _);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
             {
                 Log.Debug(e, "Orphan cleanup for {NzoId} failed", nzoId);
                 _playLastSeen.TryRemove(nzoId, out _);
@@ -671,7 +671,7 @@ public class ProfilePlayController(
             await queueManager.RemoveQueueItemsAsync(new List<Guid> { nzoId }, freshClient, CancellationToken.None)
                 .ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
         {
             Log.Debug(e, "Stall-failover abort cleanup failed for {NzoId}", nzoId);
         }
@@ -793,7 +793,7 @@ public class ProfilePlayController(
             return new PreVerifyResult(candidate, null, PlaybackFastVerifier.Verdict.Timeout, null, false);
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             Log.Debug(e, "Pre-verify failed for {Url}", candidate.NzbUrl);
@@ -812,7 +812,7 @@ public class ProfilePlayController(
             var nzb = await NzbDocument.LoadAsync(stream).ConfigureAwait(false);
             return nzb.Files.Any(f => SubtitlePreference.IsSubtitleFile(f.GetSubjectFileName()));
         }
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
         {
             return false; // malformed NZB → no subtitle signal; never fail playback over this
         }
@@ -873,7 +873,7 @@ public class ProfilePlayController(
                 return bytes;
             }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-            catch (Exception e) when (!e.IsCancellationException())
+            catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
             {
                 Log.Debug("NZB fetch failed for {Url}: {Message}", c.NzbUrl, e.Message);
@@ -951,7 +951,7 @@ public class ProfilePlayController(
         {
             return (null, CommitReason.Cancelled, null);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug(e, "Enqueue failed for {Url}", c.NzbUrl);
             return (null, CommitReason.EnqueueFailed, null);
@@ -1007,7 +1007,7 @@ public class ProfilePlayController(
                             await variantResolver.EnforceCapAsync(bgClient, websocketManager, keyCopy, CancellationToken.None)
                                 .ConfigureAwait(false);
                         }
-                        catch (Exception e)
+                        catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
                         {
                             Log.Debug(e, "Variants: background cap enforcement failed for group {Group}", keyCopy);
                         }

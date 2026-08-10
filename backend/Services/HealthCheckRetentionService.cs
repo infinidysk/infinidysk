@@ -68,7 +68,7 @@ public class HealthCheckRetentionService(ConfigManager configManager) : Backgrou
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             Log.Warning(ex, "Health-check retention sweep failed: {Message}", ex.Message);
         }

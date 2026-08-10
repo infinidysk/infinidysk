@@ -23,7 +23,7 @@ public class TestRcloneConnectionController(ConfigManager configManager) : BaseA
                 Error = result.Error
             };
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException or InvalidOperationException)
         {
             return new TestRcloneConnectionResponse
             {

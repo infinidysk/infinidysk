@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Backup;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tasks;
 using NzbWebDAV.Utils;
@@ -118,9 +119,9 @@ public class DatabaseBackupSchedulerService : BackgroundService
             {
                 // Config changed — loop and recompute the next run time
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
-                Log.Error(e, "DatabaseBackupScheduler: error running scheduled task: {Message}", e.Message);
+                e.LogWarningKnownOrStack("DatabaseBackupScheduler: error running scheduled task");
                 await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
             }
         }

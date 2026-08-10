@@ -41,7 +41,7 @@ public class ActiveReadsBroadcaster(
             {
                 return;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 Log.Debug(e, "ActiveReadsBroadcaster tick failed");
             }

@@ -24,7 +24,7 @@ public class MultipartFileSizeRepairService : BackgroundService
         {
             // shutdown
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Error(e, "Unexpected error repairing multipart FileSize sentinels: {Message}", e.Message);
         }
@@ -65,7 +65,7 @@ public class MultipartFileSizeRepairService : BackgroundService
             {
                 multipart = await dbClient.GetDavMultipartFileAsync(item, ct).ConfigureAwait(false);
             }
-            catch (Exception e) when (!e.IsCancellationException(ct))
+            catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
                 missing++;
                 Log.Warning(

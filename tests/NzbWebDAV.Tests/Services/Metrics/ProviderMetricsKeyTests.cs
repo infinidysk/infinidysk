@@ -213,7 +213,7 @@ public class ProviderMetricsKeyTests
         finally
         {
             try { Directory.Delete(dir, recursive: true); }
-            catch { /* best effort */ }
+            catch (IOException) { /* best effort */ }
         }
     }
 

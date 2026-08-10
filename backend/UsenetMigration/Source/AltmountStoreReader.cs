@@ -22,7 +22,7 @@ public static class AltmountStoreReader
         {
             compressed = await File.ReadAllBytesAsync(path, ct).ConfigureAwait(false);
         }
-        catch (Exception e) when (e is not OperationCanceledException)
+        catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
         {
             throw new AltmountStoreException($"Failed to read store file '{path}'.", e);
         }
@@ -39,7 +39,7 @@ public static class AltmountStoreReader
             using var decompressor = new Decompressor();
             raw = decompressor.Unwrap(compressed).ToArray();
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             throw new AltmountStoreException($"Failed to zstd-decompress store '{pathForError}'.", e);
         }
@@ -48,7 +48,7 @@ public static class AltmountStoreReader
         {
             return MetadataReader.ReadNzbStore(raw);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             throw new AltmountStoreException($"Failed to decode NzbStore proto '{pathForError}'.", e);
         }

@@ -138,7 +138,7 @@ public sealed class SymlinkRewriter(UsenetMigrationStore store, ConfigManager co
                     applied++;
                 }
             }
-            catch (Exception e)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 Fail(row, e.Message);
                 failed++;

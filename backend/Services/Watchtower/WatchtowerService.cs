@@ -5,6 +5,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Utils;
 using Serilog;
@@ -122,9 +123,9 @@ public class WatchtowerService(
                 {
                     return;
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
-                    Log.Error(e, "Watchtower loop error: {Message}", e.Message);
+                    e.LogWarningKnownOrStack("Watchtower loop error.");
                     await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
                 }
             }
@@ -217,7 +218,7 @@ public class WatchtowerService(
                 await ReconcileSourceAsync(ctx, source, refs, now, ct).ConfigureAwait(false);
                 source.LastSyncError = null;
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
                 source.LastSyncError = e.Message;
                 Log.Warning(e, "Watchtower: sync failed for source {Name}", source.Name);
@@ -410,7 +411,7 @@ public class WatchtowerService(
                 {
                     await ExpandOneAsync(ctx, expander, scopes, now, ct).ConfigureAwait(false);
                 }
-                catch (Exception e) when (e is not OperationCanceledException)
+                catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
                 {
                     LogActivity(e, "Watchtower: expand failed for {Key}", expander.Key);
                 }
@@ -801,7 +802,7 @@ public class WatchtowerService(
                     await ResolveOneAsync(itemCtx, profileToken, item, itemCt).ConfigureAwait(false);
                     resolved = true;
                 }
-                catch (Exception e) when (e is not OperationCanceledException)
+                catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
                 {
                     LogActivity(e, "Watchtower: resolve failed for {Key}", item.Key);
                 }
@@ -1208,7 +1209,7 @@ public class WatchtowerService(
             {
                 throw;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
             {
                 LogActivity(e, "Watchtower: NZB fetch failed for {Url}", c.NzbUrl);
                 return null;

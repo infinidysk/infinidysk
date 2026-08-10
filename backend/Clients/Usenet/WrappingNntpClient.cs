@@ -209,9 +209,9 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
         {
             client.Dispose();
         }
-        catch (Exception e)
+        catch (ObjectDisposedException e)
         {
-            Log.Warning(e, "Failed to dispose replaced NNTP client");
+            Log.Debug(e, "NNTP client already disposed");
         }
     }
 

@@ -59,7 +59,7 @@ public partial class WardenStore
             cmd.Parameters.AddWithValue("$q", q);
             return Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
         }
-        catch (Exception e)
+        catch (SqliteException e)
         {
             Log.Debug(e, "Warden: effective-count failed");
             return 0;
@@ -89,7 +89,7 @@ public partial class WardenStore
             cmd.Parameters.AddWithValue("$bk", MergeBackbones(existing, CurrentBackbones()));
             cmd.ExecuteNonQuery();
         }
-        catch (Exception e)
+        catch (SqliteException e)
         {
             Log.Debug(e, "Warden: mark failed");
         }
@@ -124,7 +124,7 @@ public partial class WardenStore
             }
             return false;
         }
-        catch (Exception e)
+        catch (SqliteException e)
         {
             Log.Debug(e, "Warden: lookup failed");
             return false;
@@ -162,7 +162,7 @@ public partial class WardenStore
                 });
             }
         }
-        catch (Exception e)
+        catch (SqliteException e)
         {
             Log.Debug(e, "Warden: get-sources failed");
         }
@@ -402,7 +402,7 @@ public partial class WardenStore
 
             WardenRecord? rec;
             try { rec = JsonSerializer.Deserialize<WardenRecord>(line, JsonOptions); }
-            catch { continue; }
+            catch (JsonException) { continue; }
             if (rec is null || !IsValidFp(rec.Fp)) continue;
 
             if (processed >= cap)
@@ -528,7 +528,7 @@ public partial class WardenStore
             cmd.CommandText = sql;
             return Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
         }
-        catch (Exception e)
+        catch (SqliteException e)
         {
             Log.Debug(e, "Warden: scalar failed");
             return 0;
@@ -559,7 +559,7 @@ public partial class WardenStore
                 "INSERT OR IGNORE INTO warden_sources (id, kind, name, url, enabled, trust, refresh_hours) " +
                 "VALUES ('local', 'local', 'My list', NULL, 1, 'full', 24);");
         }
-        catch (Exception e)
+        catch (SqliteException e)
         {
             Log.Warning(e, "Warden: initialize failed");
         }
@@ -636,7 +636,7 @@ public partial class WardenStore
             File.Move(jsonPath, jsonPath + ".migrated", overwrite: true);
             Log.Information("Warden: migrated {Count} fingerprint(s) from legacy warden.json", migrated);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is JsonException or SqliteException or IOException)
         {
             Log.Warning(e, "Warden: legacy migration failed");
         }

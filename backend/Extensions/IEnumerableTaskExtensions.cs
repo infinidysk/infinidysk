@@ -101,7 +101,7 @@ public static class IEnumerableTaskExtensions
             if (runningTasks.Count > 0)
             {
                 try { await Task.WhenAll(runningTasks).ConfigureAwait(false); }
-                catch { /* original exception stays authoritative */ }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { /* original exception stays authoritative */ }
             }
         }
     }

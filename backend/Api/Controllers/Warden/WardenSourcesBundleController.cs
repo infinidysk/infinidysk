@@ -55,7 +55,7 @@ public class WardenSourcesImportController(WardenStore warden, WardenRemoteSourc
             _ = Task.Run(async () =>
             {
                 try { await remote.RefreshDueAsync(CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception e) { Log.Debug(e, "Warden: post-import refresh failed"); }
+                catch (Exception e) when (e is not OutOfMemoryException) { Log.Debug(e, "Warden: post-import refresh failed"); }
             });
 
         return Ok(new WardenSourcesImportResponse

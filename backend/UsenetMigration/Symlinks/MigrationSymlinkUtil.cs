@@ -74,7 +74,7 @@ internal static class MigrationSymlinkUtil
                     else
                         unreadable.Add(new UnreadableLink(fullPath, DescribeUnreadable(fullPath)));
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                 {
                     unreadable.Add(new UnreadableLink(fullPath, e.Message));
                 }
@@ -171,7 +171,7 @@ internal static class MigrationSymlinkUtil
                 else
                     unreadable.Add(new UnreadableLink(info.FullName, DescribeUnreadable(info.FullName)));
             }
-            catch (Exception e)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 unreadable.Add(new UnreadableLink(info.FullName, e.Message));
             }
@@ -188,7 +188,7 @@ internal static class MigrationSymlinkUtil
                 ? "The path is no longer a symlink."
                 : "The link target could not be read.";
         }
-        catch (Exception e)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return e.Message;
         }

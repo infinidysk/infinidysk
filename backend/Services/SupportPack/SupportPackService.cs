@@ -547,7 +547,7 @@ public sealed class SupportPackService(
                 generations,
             };
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug(e, "Support pack: could not read GC diagnostics");
             return new { rolling, unavailable = true };
@@ -599,7 +599,7 @@ public sealed class SupportPackService(
                 })
                 .ToList<object>();
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug(e, "Support pack: could not read connection-pool diagnostics");
             return Array.Empty<object>();
@@ -613,7 +613,7 @@ public sealed class SupportPackService(
             using var process = Process.GetCurrentProcess();
             return process.Threads.Count;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug(e, "Support pack: could not read the process thread count");
             return null;
@@ -637,7 +637,7 @@ public sealed class SupportPackService(
         {
             await metricsWriter.FlushNowAsync().ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             Log.Debug(ex, "Support pack best-effort metrics flush failed; continuing with queued/tracker data");
         }
@@ -1039,7 +1039,7 @@ public sealed class SupportPackService(
             var uptime = DateTimeOffset.UtcNow - process.StartTime.ToUniversalTime();
             if (uptime > TimeSpan.Zero) return uptime;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug(e, "Support pack: could not read the process start time");
         }

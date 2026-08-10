@@ -72,7 +72,7 @@ public class SearchIndexersController(
                     ElapsedMs = sw.ElapsedMilliseconds,
                 }, Results: mapped);
             }
-            catch (Exception e) when (!e.IsCancellationException(ct))
+            catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
                 return (Status: new SearchIndexersResponse.IndexerStatus
                 {

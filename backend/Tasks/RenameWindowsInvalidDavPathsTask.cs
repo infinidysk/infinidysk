@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -30,10 +31,10 @@ public class RenameWindowsInvalidDavPathsTask(
         {
             await RenameInvalidPaths().ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Report($"Failed: {e.Message}");
-            Log.Error(e, "Failed to rename Windows-invalid Dav paths.");
+            e.LogWarningKnownOrStack("Failed to rename Windows-invalid Dav paths.");
         }
     }
 

@@ -111,7 +111,7 @@ public static class FetchFirstSegmentsStep
                     if (article.Stream != null)
                     {
                         try { await article.Stream.DisposeAsync().ConfigureAwait(false); }
-                        catch (Exception e) { Log.Debug(e, "Failed to dispose unmatched first-segment stream"); }
+                        catch (Exception e) when (e is not OutOfMemoryException) { Log.Debug(e, "Failed to dispose unmatched first-segment stream"); }
                     }
                     continue;
                 }
@@ -142,15 +142,15 @@ public static class FetchFirstSegmentsStep
                 else if (article.Stream != null)
                 {
                     try { await article.Stream.DisposeAsync().ConfigureAwait(false); }
-                    catch (Exception e) { Log.Debug(e, "Failed to dispose missing first-segment stream"); }
+                    catch (Exception e) when (e is not OutOfMemoryException) { Log.Debug(e, "Failed to dispose missing first-segment stream"); }
                 }
             }
         }
-        catch (Exception e) when (e.IsCancellationException() && abortFile is not null)
+        catch (Exception e) when (e.IsCancellationException() && abortFile is not null && e is not OutOfMemoryException)
         {
             // Expected when cancelling the pipeline after an important miss.
         }
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
         {
             Log.Debug($"Pipelined first-segment fetch aborted early ({e.Message}); " +
                       "falling back to per-article failover for the remainder.");
@@ -212,7 +212,7 @@ public static class FetchFirstSegmentsStep
             return (index, BuildMissingFirstSegment(nzbFile));
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException())
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             // Transient provider errors must not be treated as permanent missing segments
@@ -322,7 +322,7 @@ public static class FetchFirstSegmentsStep
         }
         catch (Exception e) when (
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-            e.IsTransientTransportException() && !e.IsCancellationException())
+            e.IsTransientTransportException() && !e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             throw new RetryableDownloadException(

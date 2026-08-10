@@ -42,8 +42,9 @@ public abstract class BaseApiController : ControllerBase
                 Error = e.Message
             });
         }
-        catch (Exception e) when (e is not OperationCanceledException ||
-                                  !HttpContext.RequestAborted.IsCancellationRequested)
+        catch (Exception e) when ((e is not OperationCanceledException ||
+                                   !HttpContext.RequestAborted.IsCancellationRequested) &&
+                                  e is not OutOfMemoryException)
         {
             Log.Error(e, "Unhandled admin API request failure");
             // Once headers/body have started (e.g. a streamed zip), writing a JSON

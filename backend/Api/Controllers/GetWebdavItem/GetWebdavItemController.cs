@@ -204,7 +204,7 @@ public class GetWebdavItemController(
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
                     throw;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, ex.Message);
                     throw;
@@ -270,7 +270,7 @@ public class GetWebdavItemController(
             {
                 throw;
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 if (HttpContext.Items["historyItemId"] is Guid hid)
                 {
@@ -306,7 +306,7 @@ public class GetWebdavItemController(
                 if (!string.IsNullOrEmpty(fileName))
                     negativeCache.MarkFileNameBroken(fileName);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
             {
                 Serilog.Log.Debug(ex, "PoisonFileNameAsync for {HistoryItemId} failed", historyItemId);
             }

@@ -41,7 +41,7 @@ public class NzbResolutionCache(Func<DavDatabaseContext> contextFactory)
             });
             await ctx.SaveChangesAsync().ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException or JsonException)
         {
             Log.Warning(ex, "Failed to persist play-token group; tokens will not survive a restart");
         }
@@ -109,7 +109,7 @@ public class NzbResolutionCache(Func<DavDatabaseContext> contextFactory)
 
                 loaded++;
             }
-            catch (Exception ex)
+            catch (JsonException ex)
             {
                 Log.Debug(ex, "Skipping resolution group {Id}: failed to deserialize", row.Id);
             }

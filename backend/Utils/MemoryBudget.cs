@@ -66,7 +66,7 @@ public static class MemoryBudget
 
             if (available > 0) return available;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is InvalidOperationException or NotSupportedException)
         {
             Log.Warning(e, "[MemoryBudget] Could not read the GC configuration; falling back to {FallbackMB}MB.",
                 FallbackHeapLimitBytes / Mb);

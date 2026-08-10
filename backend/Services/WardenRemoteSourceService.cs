@@ -30,7 +30,7 @@ public class WardenRemoteSourceService : BackgroundService
         {
             try { await RefreshDueAsync(stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
-            catch (Exception e) { Log.Debug(e, "Warden: remote-source loop error"); }
+            catch (Exception e) when (e is not OutOfMemoryException) { Log.Debug(e, "Warden: remote-source loop error"); }
 
             try { await Task.Delay(TimeSpan.FromMinutes(15), stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
@@ -84,7 +84,7 @@ public class WardenRemoteSourceService : BackgroundService
             Log.Information("Warden: refreshed remote list {Name} ({Count} fingerprints)", source.Name, count);
             return $"ok ({count})";
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException or IOException)
         {
             var msg = "error: " + e.Message;
             _store.TouchChecked(source.Id, now, msg);
