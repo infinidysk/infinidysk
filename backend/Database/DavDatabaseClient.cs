@@ -495,19 +495,29 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     {
         if (historyItemIds.Count == 0) return [];
 
+        const int batchSize = 500;
         var distinctIds = historyItemIds.Distinct().ToList();
-        var stillReferenced = await Ctx.Items
-            .AsNoTracking()
-            .Where(x => x.HistoryItemId != null && distinctIds.Contains(x.HistoryItemId.Value))
-            .Select(x => x.HistoryItemId!.Value)
-            .Distinct()
-            .ToListAsync(ct)
-            .ConfigureAwait(false);
 
-        var orphanedIds = distinctIds.Except(stillReferenced).ToList();
+        var stillReferenced = new HashSet<Guid>();
+        foreach (var chunk in distinctIds.Chunk(batchSize))
+        {
+            var batch = chunk.ToList();
+            var refs = await Ctx.Items
+                .AsNoTracking()
+                .Where(x => x.HistoryItemId != null && batch.Contains(x.HistoryItemId.Value))
+                .Select(x => x.HistoryItemId!.Value)
+                .Distinct()
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+            stillReferenced.UnionWith(refs);
+        }
+
+        var orphanedIds = distinctIds.Where(id => !stillReferenced.Contains(id)).ToList();
         if (orphanedIds.Count == 0) return [];
 
-        await RemoveHistoryItemsAsync(orphanedIds, deleteFiles: false, ct).ConfigureAwait(false);
+        foreach (var chunk in orphanedIds.Chunk(batchSize))
+            await RemoveHistoryItemsAsync(chunk.ToList(), deleteFiles: false, ct).ConfigureAwait(false);
+
         return orphanedIds;
     }
 

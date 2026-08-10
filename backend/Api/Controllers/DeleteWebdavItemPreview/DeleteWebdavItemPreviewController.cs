@@ -26,8 +26,13 @@ public class DeleteWebdavItemPreviewController(
                 Error = "WebDAV is read-only. Disable 'Enforce Read-Only' in Settings → WebDAV."
             });
 
-        var path = HttpContext.Request.Query["path"].FirstOrDefault()
-                   ?? throw new BadHttpRequestException("path is required");
+        var path = HttpContext.Request.Query["path"].FirstOrDefault();
+        if (string.IsNullOrEmpty(path))
+            return BadRequest(new DeleteWebdavItemPreviewResponse
+            {
+                Status = false,
+                Error = "path is required"
+            });
         var ct = HttpContext.RequestAborted;
 
         var item = await ResolvePathAsync(path, ct).ConfigureAwait(false);

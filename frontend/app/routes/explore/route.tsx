@@ -190,16 +190,16 @@ function Body(props: ExplorePageData) {
         let cancelled = false;
         (async () => {
             try {
-                const previews = await Promise.all(
-                    pendingDelete.map(async (name) => {
-                        const fullPath = pathname ? `${pathname}/${name}` : name;
-                        const resp = await fetch(
-                            withUrlBase(`/api/delete-webdav-item-preview?path=${encodeURIComponent(fullPath)}`),
-                        );
-                        if (!resp.ok) throw new Error("preview failed");
-                        return await resp.json() as DeletePreviewResponse;
-                    }),
-                );
+                const previews: DeletePreviewResponse[] = [];
+                for (const name of pendingDelete) {
+                    if (cancelled) return;
+                    const fullPath = pathname ? `${pathname}/${name}` : name;
+                    const resp = await fetch(
+                        withUrlBase(`/api/delete-webdav-item-preview?path=${encodeURIComponent(fullPath)}`),
+                    );
+                    if (!resp.ok) throw new Error("preview failed");
+                    previews.push(await resp.json() as DeletePreviewResponse);
+                }
                 if (cancelled) return;
                 setDeletePreview({
                     fileCount: previews.reduce((acc, p) => acc + p.fileCount, 0),
