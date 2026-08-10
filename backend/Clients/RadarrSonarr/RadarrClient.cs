@@ -2,6 +2,7 @@
 using System.Net;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.RadarrSonarr.RadarrModels;
+using Serilog;
 
 namespace NzbWebDAV.Clients.RadarrSonarr;
 
@@ -30,20 +31,38 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         Guid downloadId,
         CancellationToken ct = default)
     {
-        var movieFileId = await GetMovieFileId(symlinkOrStrmPath, ct).ConfigureAwait(false);
-        if (movieFileId == null) return ArrRepairOutcome.MediaItemNotFound;
+        var movieIds = await GetMovieFileIds(symlinkOrStrmPath, ct).ConfigureAwait(false);
+        if (movieIds == null) return ArrRepairOutcome.MediaItemNotFound;
 
         var historyId = await GetHistoryRecordId(downloadId, ct).ConfigureAwait(false);
         if (historyId == null) return ArrRepairOutcome.DownloadHistoryNotFound;
 
-        if (!Is2xx(await DeleteMovieFile(movieFileId.Value, ct).ConfigureAwait(false)))
+        if (!Is2xx(await DeleteMovieFile(movieIds.MovieFileId, ct).ConfigureAwait(false)))
             throw new InvalidOperationException($"Failed to delete movie file `{symlinkOrStrmPath}` from radarr instance `{Host}`.");
 
         await MarkHistoryFailed(historyId.Value, ct).ConfigureAwait(false);
+
+        try
+        {
+            await CommandAsync(
+                new { name = "MoviesSearch", movieIds = new[] { movieIds.MovieId } },
+                ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(
+                ex,
+                "Radarr repair on {Host}: failed to request MoviesSearch for movie {MovieId}",
+                Host,
+                movieIds.MovieId);
+        }
+
         return ArrRepairOutcome.RemoveAndBlocklistSucceeded;
     }
 
-    private async Task<int?> GetMovieFileId(string symlinkOrStrmPath, CancellationToken ct)
+    private sealed record MovieFileIds(int MovieFileId, int MovieId);
+
+    private async Task<MovieFileIds?> GetMovieFileIds(string symlinkOrStrmPath, CancellationToken ct)
     {
         var cacheKey = (Host, symlinkOrStrmPath);
 
@@ -54,21 +73,21 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
             var movie = await GetMovieOrNullAsync(movieId, ct).ConfigureAwait(false);
             var movieFile = movie?.MovieFile;
             if (movieFile is not null && movieFile.Path == symlinkOrStrmPath)
-                return movieFile.Id;
+                return new MovieFileIds(movieFile.Id, movieId);
             SymlinkOrStrmToMovieIdCache.TryRemove(cacheKey, out _);
         }
 
         // otherwise, let's fetch all movies, cache all movie files
         // and return the matching movie-id and movie-file-id
         var allMovies = await GetMoviesAsync(ct).ConfigureAwait(false);
-        int? result = null;
+        MovieFileIds? result = null;
         foreach (var movie in allMovies)
         {
             var movieFile = movie.MovieFile;
             if (movieFile?.Path != null)
                 SymlinkOrStrmToMovieIdCache[(Host, movieFile.Path)] = movie.Id;
             if (movieFile is not null && movieFile.Path == symlinkOrStrmPath)
-                result = movieFile.Id;
+                result = new MovieFileIds(movieFile.Id, movie.Id);
         }
 
         return result;

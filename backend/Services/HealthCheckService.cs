@@ -1002,7 +1002,7 @@ public class HealthCheckService : BackgroundService
                         "File failed health validation.",
                         $"Corresponding {linkType} found within Library Dir.",
                         "Removed the Arr media file and blocklisted its original download.",
-                        "Arr will apply its configured failed-download redownload policy."
+                        "A replacement search was requested in Arr."
                     ]), ct).ConfigureAwait(false);
                 return;
             }
