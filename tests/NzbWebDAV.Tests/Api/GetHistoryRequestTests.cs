@@ -126,6 +126,22 @@ public class GetHistoryRequestTests
         Assert.Equal("Invalid pageSize parameter", ex.Message);
     }
 
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(-100, 0)]
+    [InlineData(0, 0)]
+    [InlineData(5, 5)]
+    public void ClampsNegativeStartToZero(int startParam, int expectedStart)
+    {
+        var config = CreateConfig(ignoreLimit: false);
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString($"?start={startParam}");
+
+        var request = new GetHistoryRequest(context, config);
+
+        Assert.Equal(expectedStart, request.Start);
+    }
+
     [Fact]
     public void GetHistoryMaxPageSize_DefaultsAndClamps()
     {

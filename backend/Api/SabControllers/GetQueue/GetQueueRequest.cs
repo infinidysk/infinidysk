@@ -23,7 +23,7 @@ public class GetQueueRequest
         {
             var isValidStartParam = int.TryParse(startParam, out int start);
             if (!isValidStartParam) throw new BadHttpRequestException("Invalid start parameter");
-            Start = start;
+            Start = Math.Max(0, start);
         }
 
         if (limitParam is not null)

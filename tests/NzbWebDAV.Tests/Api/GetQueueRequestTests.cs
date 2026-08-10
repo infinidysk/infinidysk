@@ -29,6 +29,21 @@ public class GetQueueRequestTests
         Assert.Equal(expectedLimit, request.Limit);
     }
 
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(-100, 0)]
+    [InlineData(0, 0)]
+    [InlineData(5, 5)]
+    public void ClampsNegativeStartToZero(int startParam, int expectedStart)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString($"?start={startParam}");
+
+        var request = new GetQueueRequest(context, new ConfigManager());
+
+        Assert.Equal(expectedStart, request.Start);
+    }
+
     [Fact]
     public void RejectsNonIntegerLimit()
     {
