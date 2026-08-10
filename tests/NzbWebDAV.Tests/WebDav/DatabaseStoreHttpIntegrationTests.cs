@@ -1,5 +1,6 @@
 using System.Net;
 using System.Xml.Linq;
+using NWebDav.Server;
 using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Tests.TestUtils;
@@ -11,6 +12,7 @@ namespace NzbWebDAV.Tests.WebDav;
 public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactory factory)
 {
     private static readonly HttpMethod PropFind = new("PROPFIND");
+    private static readonly XNamespace Dav = WebDavNamespaces.DavNs;
 
     [Fact]
     public async Task PropFindRoot_RequiresBasicAuthenticationAndListsCoreMounts()
@@ -26,7 +28,14 @@ public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactor
         using var accepted = await client.SendAsync(acceptedRequest);
         Assert.Equal((HttpStatusCode)207, accepted.StatusCode);
 
-        var hrefs = await ReadHrefsAsync(accepted);
+        var document = await ReadMultiStatusDocumentAsync(accepted);
+        AssertNoNotFoundPropStats(document);
+        Assert.All(
+            document.Descendants(Dav + "response"),
+            response => Assert.Contains(response.Elements(Dav + "propstat"), propStat =>
+                propStat.Element(Dav + "status")?.Value.StartsWith("HTTP/1.1 200", StringComparison.Ordinal) == true));
+
+        var hrefs = ReadHrefs(document);
         Assert.Contains(hrefs, href => href.EndsWith("/nzbs", StringComparison.Ordinal));
         Assert.Contains(hrefs, href => href.EndsWith("/content", StringComparison.Ordinal));
         Assert.Contains(hrefs, href => href.EndsWith("/completed-symlinks", StringComparison.Ordinal));
@@ -69,7 +78,9 @@ public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactor
         using var response = await client.SendAsync(request);
 
         Assert.Equal((HttpStatusCode)207, response.StatusCode);
-        var hrefs = await ReadHrefsAsync(response);
+        var document = await ReadMultiStatusDocumentAsync(response);
+        AssertNoNotFoundPropStats(document);
+        var hrefs = ReadHrefs(document);
         Assert.Contains(
             hrefs,
             href => href.EndsWith(
@@ -151,16 +162,26 @@ public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactor
         return item;
     }
 
-    private static async Task<string[]> ReadHrefsAsync(HttpResponseMessage response)
+    private static async Task<XDocument> ReadMultiStatusDocumentAsync(HttpResponseMessage response)
     {
-        var document = await XDocument.LoadAsync(
+        return await XDocument.LoadAsync(
             await response.Content.ReadAsStreamAsync(),
             LoadOptions.None,
             CancellationToken.None);
+    }
+
+    private static string[] ReadHrefs(XDocument document)
+    {
         return document
-            .Descendants()
-            .Where(element => element.Name.LocalName == "href")
+            .Descendants(Dav + "href")
             .Select(element => Uri.UnescapeDataString(element.Value))
             .ToArray();
+    }
+
+    private static void AssertNoNotFoundPropStats(XDocument document)
+    {
+        Assert.DoesNotContain(
+            document.Descendants(Dav + "status"),
+            status => status.Value.StartsWith("HTTP/1.1 404", StringComparison.Ordinal));
     }
 }

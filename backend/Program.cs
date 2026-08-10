@@ -79,6 +79,8 @@ public partial class Program
             // NWebDav logs every remaining property as an Error after a
             // PROPFIND client disconnects. Suppress only that known event.
             .Filter.ByExcluding(NWebDavLogFilter.IsCancelledPropFindPropertyError)
+            // Unsupported PROPFIND properties are expected for clients like rclone.
+            .Filter.ByExcluding(NWebDavLogFilter.IsUnsupportedPropFindPropertyWarning)
             .WriteTo.Console(new ExpressionTemplate(
                 "[{@t:HH:mm:ss} {@l:u3}] " +
                 "{#if SourceContext is not null}" +

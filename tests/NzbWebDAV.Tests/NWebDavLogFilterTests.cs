@@ -47,6 +47,39 @@ public class NWebDavLogFilterTests
         Assert.Single(events);
     }
 
+    [Fact]
+    public void UnsupportedPropFindPropertyWarning_IsExcluded()
+    {
+        var events = CaptureUnsupportedWarningFilteredLogs(logger =>
+            logger
+                .ForContext("SourceContext", PropFindHandlerSource)
+                .Warning("Property {PropertyName} is not supported.", "{DAV:}quota-available-bytes"));
+
+        Assert.Empty(events);
+    }
+
+    [Fact]
+    public void UnsupportedPropFindPropertyWarningFromAnotherSource_IsRetained()
+    {
+        var events = CaptureUnsupportedWarningFilteredLogs(logger =>
+            logger
+                .ForContext("SourceContext", "NzbWebDAV.SomeComponent")
+                .Warning("Property {PropertyName} is not supported.", "{DAV:}quota-available-bytes"));
+
+        Assert.Single(events);
+    }
+
+    [Fact]
+    public void OtherPropFindWarning_IsRetained()
+    {
+        var events = CaptureUnsupportedWarningFilteredLogs(logger =>
+            logger
+                .ForContext("SourceContext", PropFindHandlerSource)
+                .Warning("PROPFIND depth exceeded"));
+
+        Assert.Single(events);
+    }
+
     private static void WritePropertyError(ILogger logger, string source, Exception exception)
     {
         logger
@@ -64,6 +97,19 @@ public class NWebDavLogFilterTests
         using var logger = new LoggerConfiguration()
             .MinimumLevel.Verbose()
             .Filter.ByExcluding(NWebDavLogFilter.IsCancelledPropFindPropertyError)
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+
+        write(logger);
+        return sink.Events;
+    }
+
+    private static IReadOnlyList<LogEvent> CaptureUnsupportedWarningFilteredLogs(Action<ILogger> write)
+    {
+        var sink = new CollectingSink();
+        using var logger = new LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .Filter.ByExcluding(NWebDavLogFilter.IsUnsupportedPropFindPropertyWarning)
             .WriteTo.Sink(sink)
             .CreateLogger();
 
