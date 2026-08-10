@@ -95,10 +95,10 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         var historyId = Guid.NewGuid();
         await SeedFailedHistoryAsync(historyId, fileName, category, writeBlob: true);
 
-        var response = await CreateController().RetryHistoryAsync(CreateRequest(historyId));
+        var response = await CreateController().RetryHistoryAsync(await CreateRequest(historyId));
 
         Assert.True(response.Status);
-        var newId = Guid.Parse(response.NzoId);
+        var newId = Guid.Parse(response.NzoId!);
         Assert.NotEqual(historyId, newId);
 
         Assert.NotNull(await _context.HistoryItems.AsNoTracking()
@@ -118,8 +118,9 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         var historyId = Guid.NewGuid();
         await SeedFailedHistoryAsync(historyId, "Missing.Blob.nzb", "tv", writeBlob: false);
 
+        var request = await CreateRequest(historyId);
         var ex = await Assert.ThrowsAsync<BadHttpRequestException>(
-            () => CreateController().RetryHistoryAsync(CreateRequest(historyId)));
+            () => CreateController().RetryHistoryAsync(request));
         Assert.Equal("The NZB file could not be found.", ex.Message);
         Assert.Empty(await _context.QueueItems.AsNoTracking().ToListAsync());
     }
@@ -135,8 +136,9 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
             HistoryItem.DownloadStatusOption.Completed,
             writeBlob: true);
 
+        var request = await CreateRequest(historyId);
         var ex = await Assert.ThrowsAsync<BadHttpRequestException>(
-            () => CreateController().RetryHistoryAsync(CreateRequest(historyId)));
+            () => CreateController().RetryHistoryAsync(request));
         Assert.Equal("Only failed history items can be retried.", ex.Message);
         Assert.Empty(await _context.QueueItems.AsNoTracking().ToListAsync());
     }
@@ -144,27 +146,30 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
     [Fact]
     public async Task RetryHistoryAsync_UnknownId_ThrowsBadRequest()
     {
+        var request = await CreateRequest(Guid.NewGuid());
         var ex = await Assert.ThrowsAsync<BadHttpRequestException>(
-            () => CreateController().RetryHistoryAsync(CreateRequest(Guid.NewGuid())));
+            () => CreateController().RetryHistoryAsync(request));
         Assert.Equal("History item not found.", ex.Message);
     }
 
     [Fact]
-    public void RetryHistoryRequest_MalformedValue_ThrowsBadRequest()
+    public async Task RetryHistoryRequest_MalformedValue_ThrowsBadRequest()
     {
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?value=not-a-guid");
+        context.Request.Body = Stream.Null;
 
-        var ex = Assert.Throws<BadHttpRequestException>(() => RetryHistoryRequest.New(context));
+        var ex = await Assert.ThrowsAsync<BadHttpRequestException>(() => RetryHistoryRequest.New(context));
         Assert.Equal("Missing or invalid value (nzo_id).", ex.Message);
     }
 
     [Fact]
-    public void RetryHistoryRequest_MissingValue_ThrowsBadRequest()
+    public async Task RetryHistoryRequest_MissingValue_ThrowsBadRequest()
     {
         var context = new DefaultHttpContext();
+        context.Request.Body = Stream.Null;
 
-        var ex = Assert.Throws<BadHttpRequestException>(() => RetryHistoryRequest.New(context));
+        var ex = await Assert.ThrowsAsync<BadHttpRequestException>(() => RetryHistoryRequest.New(context));
         Assert.Equal("Missing or invalid value (nzo_id).", ex.Message);
     }
 
@@ -193,10 +198,10 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
-        var response = await CreateController().RetryHistoryAsync(CreateRequest(historyId));
+        var response = await CreateController().RetryHistoryAsync(await CreateRequest(historyId));
 
         Assert.True(response.Status);
-        var newId = Guid.Parse(response.NzoId);
+        var newId = Guid.Parse(response.NzoId!);
         Assert.NotEqual(existingQueueId, newId);
         Assert.Null(await _context.QueueItems.AsNoTracking()
             .SingleOrDefaultAsync(q => q.Id == existingQueueId));
@@ -204,6 +209,27 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
             .SingleAsync(q => q.Category == category && q.FileName == fileName)).Id);
         Assert.NotNull(await _context.HistoryItems.AsNoTracking()
             .SingleOrDefaultAsync(h => h.Id == historyId));
+    }
+
+
+    [Fact]
+    public async Task RetryHistoryAsync_PartialFailure_ReturnsSucceededAndFailed()
+    {
+        var okId = Guid.NewGuid();
+        var badId = Guid.NewGuid();
+        await SeedFailedHistoryAsync(okId, "Ok.nzb", "tv", writeBlob: true);
+
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString($"?value={okId}&value={badId}");
+        context.Request.Body = Stream.Null;
+        var request = await RetryHistoryRequest.New(context);
+        var response = await CreateController().RetryHistoryAsync(request);
+
+        Assert.True(response.Status);
+        Assert.NotNull(response.NzoIds);
+        Assert.Single(response.NzoIds!);
+        Assert.NotNull(response.Failed);
+        Assert.Single(response.Failed!);
     }
 
     private RetryHistoryController CreateController() =>
@@ -214,11 +240,12 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
             _configManager,
             _websocketManager);
 
-    private static RetryHistoryRequest CreateRequest(Guid nzoId)
+    private static async Task<RetryHistoryRequest> CreateRequest(Guid nzoId)
     {
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString($"?value={nzoId}");
-        return RetryHistoryRequest.New(context);
+        context.Request.Body = Stream.Null;
+        return await RetryHistoryRequest.New(context);
     }
 
     private Task SeedFailedHistoryAsync(Guid id, string fileName, string category, bool writeBlob) =>

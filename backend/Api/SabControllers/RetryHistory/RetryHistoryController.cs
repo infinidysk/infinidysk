@@ -20,8 +20,46 @@ public class RetryHistoryController(
 {
     public async Task<RetryHistoryResponse> RetryHistoryAsync(RetryHistoryRequest request)
     {
+        var succeeded = new List<string>();
+        var failed = new List<RetryHistoryFailedItem>();
+
+        foreach (var nzoId in request.NzoIds)
+        {
+            try
+            {
+                var newId = await RetrySingleHistoryItemAsync(nzoId, request.CancellationToken)
+                    .ConfigureAwait(false);
+                succeeded.Add(newId.ToString());
+            }
+            catch (BadHttpRequestException e)
+            {
+                failed.Add(new RetryHistoryFailedItem
+                {
+                    NzoId = nzoId.ToString(),
+                    Error = e.Message,
+                });
+            }
+        }
+
+        if (succeeded.Count == 0 && failed.Count > 0)
+            throw new BadHttpRequestException(failed[0].Error);
+
+        var response = new RetryHistoryResponse
+        {
+            Status = succeeded.Count > 0,
+            NzoIds = succeeded.Count > 0 ? succeeded : null,
+            Failed = failed.Count > 0 ? failed : null,
+        };
+        if (succeeded.Count == 1)
+            response.NzoId = succeeded[0];
+
+        return response;
+    }
+
+    private async Task<Guid> RetrySingleHistoryItemAsync(Guid nzoId, CancellationToken ct)
+    {
         var historyItem = await dbClient.Ctx.HistoryItems.AsNoTracking()
-            .FirstOrDefaultAsync(item => item.Id == request.NzoId, request.CancellationToken)
+            .FirstOrDefaultAsync(item => item.Id == nzoId, ct)
             .ConfigureAwait(false);
 
         if (historyItem is null)
@@ -47,7 +85,7 @@ public class RetryHistoryController(
             PostProcessing = QueueItem.PostProcessingOption.None,
             IndexerName = historyItem.IndexerName,
             ContentGroupKey = historyItem.ContentGroupKey,
-            CancellationToken = request.CancellationToken,
+            CancellationToken = ct,
         };
 
         var addFileController = new AddFileController(
@@ -56,16 +94,12 @@ public class RetryHistoryController(
         if (addResponse.NzoIds.Count == 0)
             throw new BadHttpRequestException("Failed to re-queue NZB.");
 
-        return new RetryHistoryResponse
-        {
-            Status = true,
-            NzoId = addResponse.NzoIds[0],
-        };
+        return Guid.Parse(addResponse.NzoIds[0]);
     }
 
     protected override async Task<IActionResult> Handle()
     {
-        var request = RetryHistoryRequest.New(Context);
+        var request = await RetryHistoryRequest.New(Context).ConfigureAwait(false);
         return Ok(await RetryHistoryAsync(request).ConfigureAwait(false));
     }
 }
