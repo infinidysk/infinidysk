@@ -44,7 +44,7 @@ public static class DatabaseStoreItemFactory
                     lazyRarResolver, inFlightArticleBudget),
             DavItem.ItemSubType.SymlinkRoot =>
                 new DatabaseStoreSymlinkCollection(
-                    davItem, dbClient, configManager),
+                    davItem, dbClient, configManager, websocketManager),
             DavItem.ItemSubType.NzbFile =>
                 new DatabaseStoreNzbFile(
                     davItem, httpContext, dbClient, usenetClient, configManager, inFlightArticleBudget),

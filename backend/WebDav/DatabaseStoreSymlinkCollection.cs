@@ -1,20 +1,24 @@
 ﻿using System.Text.RegularExpressions;
 using System.Runtime.CompilerServices;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.WebDav.Requests;
+using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.WebDav;
 
 public class DatabaseStoreSymlinkCollection(
     DavItem davDirectory,
     DavDatabaseClient dbClient,
-    ConfigManager configManager
+    ConfigManager configManager,
+    WebsocketManager websocketManager
 ) : BaseStoreReadonlyCollection
 {
     public override string Name => davDirectory.Name;
@@ -89,43 +93,25 @@ public class DatabaseStoreSymlinkCollection(
         }
     }
 
-    protected override Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)
+    protected override async Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)
     {
-        // Cannot delete from symlink root folder
         var isSymlinkFolder = davDirectory.Id == DavItem.SymlinkFolder.Id;
-        if (isSymlinkFolder) return base.DeleteItemAsync(request);
-
-        // Items cannot be deleted from the '/completed-symlinks' folder.
-        // This path simply mirrors the '/content' folder, except with symlinks.
-        // This allows radarr/sonarr to import the lightweight symlink, instead
-        // of trying to import large-sized media.
-        //
-        // However, when radarr attempts to import the symlink, it does so by moving
-        // it to the media library. But since the symlinks lives in a separate
-        // file-system (rclone-mounted webdav), the operating system will instead
-        // perform a copy-and-delete operation. For the import to succeed, we must
-        // trick the OS into thinking that the "delete" worked.
-        //
-        // The symlink doesn't actually exist anywhere. It takes zero storage and
-        // just gets created in memory, as needed, for webdav requests. The only
-        // thing that exists is the underlying data within the '/content' directory
-        // But in this request, we only want to "delete" the symlink. We don't want
-        // to delete the underlying media within the '/content' directory.
-        //
-        // Instead, we store the filename in a temporary cache (for 30 seconds).
-        // While the filename is in the cache, we will no longer create that
-        // symlink on-the-fly in subsequent webdav requests. It essentially
-        // mimics a deletion even though there was nothing to delete in the first
-        // place, since everything is created on the fly, mirroring the '/content'
-        // directory.
-        //
-        // (204 No Content) is the correct status code to return for a successful
-        // deletion of a file. This status code means the server has successfully
-        // processed the request, and there is no additional content to send in the
-        // response body. (200 OK) is also acceptable, but more appropriate for when
-        // the server also returns a response body with the status of the operation.
+        if (isSymlinkFolder) return await base.DeleteItemAsync(request).ConfigureAwait(false);
+        if (configManager.IsEnforceReadonlyWebdavEnabled()) return DavStatusCode.Forbidden;
+        var child = await dbClient.GetDirectoryChildAsync(TargetId, request.Name, request.CancellationToken).ConfigureAwait(false);
+        if (child is { Type: DavItem.ItemType.Directory } && !child.IsProtected() && davDirectory.ParentId == DavItem.ContentFolder.Id)
+        {
+            var historyIds = await dbClient.Ctx.HistoryItems.AsNoTracking()
+                .Where(h => h.DownloadDirId == child.Id && h.DownloadStatus == HistoryItem.DownloadStatusOption.Completed)
+                .Select(h => h.Id).ToListAsync(request.CancellationToken).ConfigureAwait(false);
+            if (historyIds.Count == 0) return DavStatusCode.NotFound;
+            await dbClient.RemoveHistoryItemsAsync(historyIds, deleteFiles: false, request.CancellationToken).ConfigureAwait(false);
+            await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
+            _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", historyIds));
+            return DavStatusCode.NoContent;
+        }
         DeletedFiles.AddDeletedFile(request.Name, TimeSpan.FromSeconds(30));
-        return Task.FromResult(DavStatusCode.NoContent);
+        return DavStatusCode.NoContent;
     }
 
     private IStoreItem GetItem(DavItem davItem)
@@ -133,7 +119,7 @@ public class DatabaseStoreSymlinkCollection(
         return davItem.SubType switch
         {
             DavItem.ItemSubType.Directory =>
-                new DatabaseStoreSymlinkCollection(davItem, dbClient, configManager),
+                new DatabaseStoreSymlinkCollection(davItem, dbClient, configManager, websocketManager),
             DavItem.ItemSubType.NzbFile =>
                 new DatabaseStoreSymlinkFile(davItem, configManager),
             DavItem.ItemSubType.RarFile =>
