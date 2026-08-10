@@ -565,7 +565,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     {
         return context.Items["DavItem"] is DavItem davItem
             ? davItem.Path
-            : context.Request.Path;
+            : context.Request.Path.Value ?? context.Request.Path.ToUriComponent();
     }
 
     private static bool IsDavItemRequest(HttpContext context)

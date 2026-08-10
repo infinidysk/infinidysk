@@ -1,4 +1,3 @@
-using System.Text;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Services.Metrics;
