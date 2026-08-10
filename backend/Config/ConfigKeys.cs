@@ -185,4 +185,5 @@ public static class ConfigKeys
     // database
     public const string DatabaseHealthcheckRetentionDays = "database.healthcheck-retention-days";
     public const string DatabaseHistoryRetentionDays = "database.history-retention-days";
+    public const string MetricsFetchRetentionHours = "metrics.fetch-retention-hours";
 }

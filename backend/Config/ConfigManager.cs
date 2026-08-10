@@ -276,6 +276,7 @@ public class ConfigManager
             {
                 case ConfigKeys.QueueMaxItems:
                 case ConfigKeys.QueueResumeThreshold:
+                case ConfigKeys.MetricsFetchRetentionHours:
                     RequireNonNegativeInt(item.ConfigName, value);
                     break;
 
@@ -1679,6 +1680,17 @@ public class ConfigManager
             ConfigKeys.DatabaseHealthcheckRetentionDays,
             "DATABASE_HEALTHCHECK_RETENTION_DAYS",
             defaultValue: 30);
+    }
+
+    /// <summary>
+    /// Hours to keep raw per-fetch metrics rows (<c>SegmentFetches</c>, <c>FailoverMisses</c>).
+    /// Rollups retain aggregates longer. 0 requests rollup-only retention; the sweep enforces
+    /// a one-hour floor. Default is 24; max is 8760 (one year).
+    /// </summary>
+    public int GetMetricsFetchRetentionHours()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.MetricsFetchRetentionHours));
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 0, 8760) : 24;
     }
 
     private int GetRetentionDaysSetting(string configKey, string? environmentVariable, int defaultValue)

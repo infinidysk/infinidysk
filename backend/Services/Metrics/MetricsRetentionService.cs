@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Extensions;
@@ -9,15 +10,16 @@ namespace NzbWebDAV.Services.Metrics;
 
 /// <summary>
 /// Enforces retention windows on the metrics database. Raw fetch events have
-/// the shortest TTL (24 h) since the rollups already carry the aggregate
-/// information; minute rollups keep a week; hour rollups stay a year; the
-/// daily catalogue snapshot is small enough to keep forever. Runs hourly,
+/// the shortest TTL (configurable, default 24 h) since the rollups already carry
+/// the aggregate information; minute rollups keep a week; hour rollups stay a year;
+/// the daily catalogue snapshot is small enough to keep forever. Runs hourly,
 /// re-claims free pages via incremental_vacuum on the same pass.
 /// </summary>
-public class MetricsRetentionService : BackgroundService
+public class MetricsRetentionService(ConfigManager configManager) : BackgroundService
 {
+    internal const int MinFetchRetentionHours = 1;
+
     private static readonly TimeSpan TickInterval = TimeSpan.FromHours(1);
-    private static readonly TimeSpan FetchTtl = TimeSpan.FromHours(24);
     private static readonly TimeSpan EventTtl = TimeSpan.FromDays(7);
     private static readonly TimeSpan MinuteRollupTtl = TimeSpan.FromDays(7);
     private static readonly TimeSpan SessionTtl = TimeSpan.FromDays(90);
@@ -42,13 +44,15 @@ public class MetricsRetentionService : BackgroundService
         }
     }
 
-    private static async Task SafeSweepAsync()
+    private async Task SafeSweepAsync()
     {
         try
         {
+            var fetchTtl = TimeSpan.FromHours(
+                Math.Max(configManager.GetMetricsFetchRetentionHours(), MinFetchRetentionHours));
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             await using var db = new MetricsDbContext();
-            await SweepAsync(db, nowMs).ConfigureAwait(false);
+            await SweepAsync(db, nowMs, fetchTtl).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -56,10 +60,10 @@ public class MetricsRetentionService : BackgroundService
         }
     }
 
-    internal static async Task SweepAsync(MetricsDbContext db, long nowMs)
+    internal static async Task SweepAsync(MetricsDbContext db, long nowMs, TimeSpan fetchTtl)
     {
         await db.Database.ExecuteSqlRawAsync(
-            "DELETE FROM SegmentFetches WHERE At < {0}", Cutoff(nowMs, FetchTtl)).ConfigureAwait(false);
+            "DELETE FROM SegmentFetches WHERE At < {0}", Cutoff(nowMs, fetchTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM MetricEvents WHERE At < {0}", Cutoff(nowMs, EventTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
@@ -70,7 +74,7 @@ public class MetricsRetentionService : BackgroundService
             "DELETE FROM ReadSessions WHERE EndedAt < {0}", Cutoff(nowMs, SessionTtl)).ConfigureAwait(false);
         await FoldAndPruneProviderHourlyAsync(db, Cutoff(nowMs, HourlyRollupTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
-            "DELETE FROM FailoverMisses WHERE At < {0}", Cutoff(nowMs, FetchTtl)).ConfigureAwait(false);
+            "DELETE FROM FailoverMisses WHERE At < {0}", Cutoff(nowMs, fetchTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM FailoverHourly WHERE Hour < {0}", Cutoff(nowMs, HourlyRollupTtl)).ConfigureAwait(false);
 

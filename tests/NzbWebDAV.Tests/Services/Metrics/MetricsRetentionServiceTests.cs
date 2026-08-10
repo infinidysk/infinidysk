@@ -11,6 +11,7 @@ namespace NzbWebDAV.Tests.Services.Metrics;
 public sealed class MetricsRetentionServiceTests
 {
     private const long OneDayMs = 24 * 60 * 60 * 1000L;
+    private const long OneHourMs = 60 * 60 * 1000L;
 
     [Fact]
     public async Task SweepAsync_FoldsPrunedProviderHourlyIntoLifetimeTotals()
@@ -58,7 +59,7 @@ public sealed class MetricsRetentionServiceTests
             });
         await db.SaveChangesAsync();
 
-        await MetricsRetentionService.SweepAsync(db, nowMs);
+        await MetricsRetentionService.SweepAsync(db, nowMs, TimeSpan.FromHours(24));
 
         var lifetimeA = await db.ProviderLifetimeTotals.SingleAsync(x => x.Provider == "provider-a");
         Assert.Equal(15, lifetimeA.Articles);
@@ -66,11 +67,73 @@ public sealed class MetricsRetentionServiceTests
         Assert.Equal(cutoff - 2 * OneDayMs, lifetimeA.FirstHour);
         Assert.Equal(1, await db.ProviderHourly.CountAsync());
 
-        await MetricsRetentionService.SweepAsync(db, nowMs);
+        await MetricsRetentionService.SweepAsync(db, nowMs, TimeSpan.FromHours(24));
         var lifetimeAAgain = await db.ProviderLifetimeTotals.SingleAsync(x => x.Provider == "provider-a");
         Assert.Equal(lifetimeA.Articles, lifetimeAAgain.Articles);
         Assert.Equal(lifetimeA.BytesFetched, lifetimeAAgain.BytesFetched);
         Assert.Equal(lifetimeA.FirstHour, lifetimeAAgain.FirstHour);
+    }
+
+    [Fact]
+    public async Task SweepAsync_PrunesSegmentFetchesOlderThanFetchTtl()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var db = harness.Context;
+        var nowMs = 100L * OneHourMs;
+        var fetchTtl = TimeSpan.FromHours(6);
+        var cutoff = MetricsRetentionService.Cutoff(nowMs, fetchTtl);
+
+        db.SegmentFetches.AddRange(
+            new SegmentFetch { At = cutoff - OneHourMs, Provider = "old" },
+            new SegmentFetch { At = cutoff + OneHourMs, Provider = "fresh" });
+        await db.SaveChangesAsync();
+
+        await MetricsRetentionService.SweepAsync(db, nowMs, fetchTtl);
+
+        Assert.Equal(1, await db.SegmentFetches.CountAsync());
+        Assert.Equal("fresh", await db.SegmentFetches.Select(x => x.Provider).SingleAsync());
+    }
+
+    [Fact]
+    public async Task SweepAsync_PrunesFailoverMissesWithSameFetchTtl()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var db = harness.Context;
+        var nowMs = 100L * OneHourMs;
+        var fetchTtl = TimeSpan.FromHours(3);
+        var cutoff = MetricsRetentionService.Cutoff(nowMs, fetchTtl);
+
+        db.FailoverMisses.AddRange(
+            new FailoverMiss { At = cutoff - OneHourMs, FromProvider = "old", ToProvider = "backup" },
+            new FailoverMiss { At = cutoff + OneHourMs, FromProvider = "fresh", ToProvider = "backup" });
+        await db.SaveChangesAsync();
+
+        await MetricsRetentionService.SweepAsync(db, nowMs, fetchTtl);
+
+        Assert.Equal(1, await db.FailoverMisses.CountAsync());
+        Assert.Equal("fresh", await db.FailoverMisses.Select(x => x.FromProvider).SingleAsync());
+    }
+
+    [Fact]
+    public async Task SweepAsync_UsesOneHourFloorWhenConfiguredRetentionIsZero()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var db = harness.Context;
+        var nowMs = 10L * OneHourMs;
+        var floorTtl = TimeSpan.FromHours(MetricsRetentionService.MinFetchRetentionHours);
+        var cutoff = MetricsRetentionService.Cutoff(nowMs, floorTtl);
+
+        db.SegmentFetches.AddRange(
+            new SegmentFetch { At = cutoff - OneHourMs, Provider = "old" },
+            new SegmentFetch { At = cutoff + OneHourMs, Provider = "fresh" });
+        await db.SaveChangesAsync();
+
+        var configuredHours = 0;
+        var effectiveHours = Math.Max(configuredHours, MetricsRetentionService.MinFetchRetentionHours);
+        await MetricsRetentionService.SweepAsync(db, nowMs, TimeSpan.FromHours(effectiveHours));
+
+        Assert.Equal(1, await db.SegmentFetches.CountAsync());
+        Assert.Equal("fresh", await db.SegmentFetches.Select(x => x.Provider).SingleAsync());
     }
 
     private sealed class MetricsHarness : IAsyncDisposable
