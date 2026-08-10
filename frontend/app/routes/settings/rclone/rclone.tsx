@@ -14,10 +14,12 @@ type RcloneSettingsProps = {
 export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
     const [connectionState, setConnectionState] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
     const [testError, setTestError] = useState<string | null>(null);
+    const [invalidationError, setInvalidationError] = useState<string | null>(null);
 
     useEffect(() => {
         setConnectionState('idle');
         setTestError(null);
+        setInvalidationError(null);
     }, [config["rclone.host"], config["rclone.user"], config["rclone.pass"]]);
 
     const testConnection = useCallback(async () => {
@@ -28,6 +30,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
 
         setConnectionState('testing');
         setTestError(null);
+        setInvalidationError(null);
 
         try {
             const formData = new FormData();
@@ -45,6 +48,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
             if (result.status && result.connected) {
                 setConnectionState('success');
                 setTestError(null);
+                setInvalidationError(result.lastInvalidationError ?? null);
             } else {
                 setConnectionState('error');
                 setTestError(result.error || "Connection test failed");
@@ -130,6 +134,12 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                 {connectionState === 'success' && (
                     <Alert variant="success" className="text-xs py-2">
                         Connection test successful
+                    </Alert>
+                )}
+                {connectionState === 'success' && invalidationError && (
+                    <Alert variant="warning" className="text-xs py-2">
+                        Recent VFS cache invalidation failed: {invalidationError}. Mounted clients may show stale
+                        entries until rclone&apos;s dir-cache expires.
                     </Alert>
                 )}
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="rclone-host-help">
