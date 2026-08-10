@@ -50,6 +50,7 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
                     ct),
                 ct).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             Log.Warning(

@@ -54,9 +54,23 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         var historyId = await GetHistoryRecordId(downloadId, ct).ConfigureAwait(false);
         if (historyId == null) return ArrRepairOutcome.DownloadHistoryNotFound;
 
-        var episodeIds = (await GetEpisodesFromEpisodeFileId(episodeFileId.Value, ct).ConfigureAwait(false))
-            .Select(episode => episode.Id)
-            .ToList();
+        List<int> episodeIds;
+        try
+        {
+            episodeIds = (await GetEpisodesFromEpisodeFileId(episodeFileId.Value, ct).ConfigureAwait(false))
+                .Select(episode => episode.Id)
+                .ToList();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Log.Warning(
+                ex,
+                "Sonarr repair on {Host}: could not resolve episodes for episode file {EpisodeFileId}; repair will continue without explicit search",
+                Host,
+                episodeFileId.Value);
+            episodeIds = [];
+        }
 
         if (!Is2xx(await DeleteEpisodeFile(episodeFileId.Value, ct).ConfigureAwait(false)))
             throw new InvalidOperationException($"Failed to delete episode file `{symlinkOrStrmPath}` from sonarr instance `{Host}`.");
@@ -79,6 +93,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
                     ct).ConfigureAwait(false);
             }
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             Log.Warning(

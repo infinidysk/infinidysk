@@ -89,7 +89,7 @@ public class ArrClient(string host, string apiKey)
                 await operation(ct).ConfigureAwait(false);
                 return;
             }
-            catch (Exception ex) when (IsTransientArrFailure(ex) && attempt < maxAttempts)
+            catch (Exception ex) when (!ct.IsCancellationRequested && IsTransientArrFailure(ex) && attempt < maxAttempts)
             {
 #pragma warning disable CA5394 // retry backoff jitter is not security-sensitive
                 var delayMs = (int)Math.Pow(2, attempt - 1) * 1000 + Random.Shared.Next(0, 250);
@@ -107,7 +107,7 @@ public class ArrClient(string host, string apiKey)
 
     private static bool IsTransientArrFailure(Exception ex)
     {
-        if (ex is TaskCanceledException) return true;
+        if (ex is TaskCanceledException or OperationCanceledException) return true;
         if (ex is not HttpRequestException httpEx) return false;
         if (!httpEx.StatusCode.HasValue) return true;
         var statusCode = (int)httpEx.StatusCode.Value;
