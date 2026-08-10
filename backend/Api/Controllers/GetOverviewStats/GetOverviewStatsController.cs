@@ -253,6 +253,7 @@ public class GetOverviewStatsController(
         List<GetOverviewStatsResponse.ThroughputPoint> throughput;
         List<GetOverviewStatsResponse.ProviderRow> providers;
         long totalArticles, totalMisses, totalErrors, totalBytesFetched;
+        List<ProviderLifetimeTotal> lifetimeTotals = [];
 
         if (useRollups)
         {
@@ -279,7 +280,7 @@ public class GetOverviewStatsController(
             var hours = await hoursTask.ConfigureAwait(false);
             var sessions = await sessionsTask.ConfigureAwait(false);
             var failoverEdges = await failoverEdgesTask.ConfigureAwait(false);
-            var lifetimeTotals = lifetimeTotalsTask is not null
+            lifetimeTotals = lifetimeTotalsTask is not null
                 ? await lifetimeTotalsTask.ConfigureAwait(false)
                 : [];
 
