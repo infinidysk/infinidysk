@@ -51,6 +51,11 @@ internal static class DatabaseIntegrityCheck
             LogCorruption([ex.Message]);
             return false;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Startup is shutting down; a cancelled check is not a corruption finding.
+            return false;
+        }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // A diagnostic must never break startup.

@@ -6,11 +6,11 @@ namespace NzbWebDAV.Tests.Database;
 
 public class DatabaseIntegrityCheckTests : IAsyncLifetime
 {
-    private readonly string _tempDir = Path.Combine(
+    private readonly string _tempDir = Path.Join(
         Path.GetTempPath(),
-        "nzbdav-db-integrity-" + Guid.NewGuid().ToString("N"));
+        $"nzbdav-db-integrity-{Guid.NewGuid():N}");
 
-    private string DatabasePath => Path.Combine(_tempDir, "db.sqlite");
+    private string DatabasePath => Path.Join(_tempDir, "db.sqlite");
 
     public Task InitializeAsync()
     {
@@ -21,7 +21,11 @@ public class DatabaseIntegrityCheckTests : IAsyncLifetime
     public Task DisposeAsync()
     {
         SqliteConnection.ClearAllPools();
-        try { Directory.Delete(_tempDir, recursive: true); } catch (IOException) { }
+        try { Directory.Delete(_tempDir, recursive: true); }
+        catch (IOException)
+        {
+            // best-effort cleanup
+        }
         return Task.CompletedTask;
     }
 
