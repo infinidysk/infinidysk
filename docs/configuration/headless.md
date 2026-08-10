@@ -47,6 +47,7 @@ configuration variable:
 
 - `search.exclude` (prefix constant — not a persisted setting)
 - `search.exclude-sync-cache` (runtime cache state)
+- `prowlarr.sync-status` (runtime sync status)
 
 Persisted exclude settings such as `search.exclude-patterns` → `NZBDAV_CONFIG__SEARCH__EXCLUDE_PATTERNS` **are** supported.
 

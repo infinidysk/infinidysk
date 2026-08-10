@@ -1,6 +1,6 @@
 # Indexer search
 
-Configure Newznab indexers under **Settings → Indexers**, then search from the UI or expose them through **Search profiles**.
+Configure Newznab indexers under **Settings → Indexers**, then search from the UI or expose them through **Search profiles**. InfiniDysk can also pull-sync Prowlarr-managed Usenet indexers from one Prowlarr instance [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }.
 
 ## Profiles and adapters
 
