@@ -17,6 +17,19 @@ namespace NzbWebDAV.Clients.Rclone;
 public static class RcloneClient
 {
     private static readonly HttpClient HttpClient = new();
+    private static ForgetErrorEntry? _lastForgetError;
+
+    internal static HttpMessageHandler? TestHandler { get; set; }
+    internal static Func<int, TimeSpan>? BackoffOverride { get; set; }
+
+    public static (string Message, DateTimeOffset At)? LastForgetError
+    {
+        get
+        {
+            var entry = Volatile.Read(ref _lastForgetError);
+            return entry is null ? null : (entry.Message, entry.At);
+        }
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -96,8 +109,44 @@ public static class RcloneClient
         }
 
         Log.Debug("Rclone vfs/forget: {0}", paths.ToIndentedJson());
-        return await Post<VfsForgetResponse>("vfs/forget", request).ConfigureAwait(false);
+
+        const int maxAttempts = 4;
+        VfsForgetResponse? lastResponse = null;
+        var pathsDisplay = string.Join(", ", pathList);
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            lastResponse = await Post<VfsForgetResponse>("vfs/forget", request).ConfigureAwait(false);
+
+            if (lastResponse.Success)
+            {
+                Interlocked.Exchange(ref _lastForgetError, null);
+                return lastResponse;
+            }
+
+            if (lastResponse.Error == "Authentication failed")
+                return lastResponse;
+
+            if (attempt < maxAttempts)
+                await Task.Delay(GetBackoff(attempt)).ConfigureAwait(false);
+        }
+
+        var reason = lastResponse?.Error ?? "Unknown error";
+        Interlocked.Exchange(ref _lastForgetError, new ForgetErrorEntry(reason, DateTimeOffset.UtcNow));
+        Log.Warning(
+            "Rclone vfs/forget failed after {Attempts} attempts for paths {Paths}. Reason: {Reason}; mounted clients may show stale entries until rclone's dir-cache expires",
+            maxAttempts,
+            pathsDisplay,
+            reason);
+
+        return lastResponse!;
     }
+
+    private static TimeSpan GetForgetBackoff(int attempt) =>
+        TimeSpan.FromSeconds(Math.Min(60d, 5d * Math.Pow(2, attempt - 1)));
+
+    private static TimeSpan GetBackoff(int attempt) =>
+        BackoffOverride?.Invoke(attempt) ?? GetForgetBackoff(attempt);
 
     /// <summary>
     /// Get VFS statistics including cache information.
@@ -178,7 +227,7 @@ public static class RcloneClient
 
         try
         {
-            using var response = await HttpClient.SendAsync(request).ConfigureAwait(false);
+            using var response = await SendRequest(request).ConfigureAwait(false);
             var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
@@ -229,6 +278,17 @@ public static class RcloneClient
     private static Task<T> Post<T>(string endpoint, object? body) where T : RcloneResponse, new()
         => Post<T>(Host!, User, Pass, endpoint, body);
 
+    private static async Task<HttpResponseMessage> SendRequest(HttpRequestMessage request)
+    {
+        if (TestHandler != null)
+        {
+            using var client = new HttpClient(TestHandler, disposeHandler: false);
+            return await client.SendAsync(request).ConfigureAwait(false);
+        }
+
+        return await HttpClient.SendAsync(request).ConfigureAwait(false);
+    }
+
     private static void AddAuthHeader(HttpRequestMessage request, string? user, string? pass)
     {
         if (string.IsNullOrEmpty(user) && string.IsNullOrEmpty(pass))
@@ -237,5 +297,11 @@ public static class RcloneClient
         var credentials = $"{user ?? ""}:{pass ?? ""}";
         var encodedCredentials = Convert.ToBase64String(Encoding.UTF8.GetBytes(credentials));
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", encodedCredentials);
+    }
+
+    private sealed class ForgetErrorEntry(string message, DateTimeOffset at)
+    {
+        public string Message { get; } = message;
+        public DateTimeOffset At { get; } = at;
     }
 }
