@@ -409,7 +409,7 @@ public abstract class NntpClient : INntpClient
                 if (response.Stream != null)
                 {
                     try { await response.Stream.DisposeAsync().ConfigureAwait(false); }
-                    catch (ObjectDisposedException e) { Log.Debug(e, "Failed to dispose mismatched pipelined BODY stream"); }
+                    catch (Exception e) when (e is not OutOfMemoryException) { Log.Debug(e, "Failed to dispose mismatched pipelined BODY stream"); }
                 }
 
                 return new PipelinedBodyResult
