@@ -132,6 +132,12 @@ public partial class Program
                 .RunAsync(databaseContext, metricsBootstrap, startupCancellationToken)
                 .ConfigureAwait(false);
 
+            // Surface database corruption as one clear event with recovery guidance,
+            // before any background service trips over it. Non-fatal by design.
+            await DatabaseIntegrityCheck
+                .VerifyMainDatabaseAsync(databaseContext, startupCancellationToken)
+                .ConfigureAwait(false);
+
             // initialize the config-manager
             var configManager = new ConfigManager();
             await configManager.LoadConfig().ConfigureAwait(false);
