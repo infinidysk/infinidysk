@@ -15,6 +15,9 @@ public class ArrClient(string host, string apiKey)
     private string ApiKey { get; } = apiKey;
     private const string BasePath = "/api/v3";
 
+    protected static bool Is2xx(HttpStatusCode statusCode) =>
+        (int)statusCode is >= 200 and < 300;
+
     public Task<ArrApiInfoResponse> GetApiInfo(CancellationToken ct = default) =>
         GetRoot<ArrApiInfoResponse>($"/api", ct);
 

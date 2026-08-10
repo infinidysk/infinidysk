@@ -53,7 +53,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         var historyId = await GetHistoryRecordId(downloadId, ct).ConfigureAwait(false);
         if (historyId == null) return ArrRepairOutcome.DownloadHistoryNotFound;
 
-        if (await DeleteEpisodeFile(episodeFileId.Value, ct).ConfigureAwait(false) != HttpStatusCode.OK)
+        if (!Is2xx(await DeleteEpisodeFile(episodeFileId.Value, ct).ConfigureAwait(false)))
             throw new InvalidOperationException($"Failed to delete episode file `{symlinkOrStrmPath}` from sonarr instance `{Host}`.");
 
         await MarkHistoryFailed(historyId.Value, ct).ConfigureAwait(false);
