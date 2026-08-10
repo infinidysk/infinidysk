@@ -91,9 +91,15 @@ public sealed class DatabaseStoreSymlinkCollectionTests : IAsyncLifetime
 
     private static HistoryItem CreateHistory(Guid id, string fileName, string category, Guid downloadDirId) => new()
     {
-        Id = id, CreatedAt = DateTime.UtcNow, FileName = fileName, JobName = Path.GetFileNameWithoutExtension(fileName),
-        Category = category, DownloadStatus = HistoryItem.DownloadStatusOption.Completed, DownloadDirId = downloadDirId,
-        TotalSegmentBytes = 100, DownloadTimeSeconds = 1,
+        Id = id,
+        CreatedAt = DateTime.UtcNow,
+        FileName = fileName,
+        JobName = Path.GetFileNameWithoutExtension(fileName),
+        Category = category,
+        DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+        DownloadDirId = downloadDirId,
+        TotalSegmentBytes = 100,
+        DownloadTimeSeconds = 1,
     };
 
     public async Task DisposeAsync() { await _context.DisposeAsync(); try { File.Delete(_databasePath); } catch (IOException) { } }

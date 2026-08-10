@@ -84,7 +84,11 @@ public class PruneCompletedHistoryTask : BaseTask
     {
         var query = dbContext.HistoryItems.AsNoTracking().Where(h => h.DownloadStatus == HistoryItem.DownloadStatusOption.Completed);
         if (!string.IsNullOrWhiteSpace(category)) query = query.Where(h => h.Category == category);
-        if (olderThanDays is > 0) query = query.Where(h => h.CreatedAt < DateTime.UtcNow.AddDays(-olderThanDays.Value));
+        if (olderThanDays is > 0)
+        {
+            var days = olderThanDays.Value;
+            query = query.Where(h => h.CreatedAt < DateTime.UtcNow.AddDays(-days));
+        }
         return query;
     }
 

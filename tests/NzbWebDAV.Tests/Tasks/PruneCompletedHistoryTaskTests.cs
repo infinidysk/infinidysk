@@ -85,10 +85,16 @@ public class PruneCompletedHistoryTaskTests
 
     private static HistoryItem CreateHistory(Guid id, string fileName, string category, DateTime createdAt,
         HistoryItem.DownloadStatusOption status = HistoryItem.DownloadStatusOption.Completed) => new()
-    {
-        Id = id, CreatedAt = createdAt, FileName = fileName, JobName = Path.GetFileNameWithoutExtension(fileName),
-        Category = category, DownloadStatus = status, TotalSegmentBytes = 100, DownloadTimeSeconds = 1,
-    };
+        {
+            Id = id,
+            CreatedAt = createdAt,
+            FileName = fileName,
+            JobName = Path.GetFileNameWithoutExtension(fileName),
+            Category = category,
+            DownloadStatus = status,
+            TotalSegmentBytes = 100,
+            DownloadTimeSeconds = 1,
+        };
 
     private sealed class TempDb : IAsyncDisposable
     {
