@@ -119,7 +119,7 @@ describe("handleBackendProxyResponse", () => {
 
     const proxy = createProxyMiddleware({
       target: `http://127.0.0.1:${backendPort}`,
-      changeOrigin: true,
+      changeOrigin: false,
       selfHandleResponse: true,
       on: { proxyRes: handleBackendProxyResponse },
     });

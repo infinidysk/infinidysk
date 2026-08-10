@@ -85,7 +85,7 @@ describe("backend proxy keep-alive timeout listeners", () => {
 
     const proxy = createProxyMiddleware({
       target: `http://127.0.0.1:${backendPort}`,
-      changeOrigin: true,
+      changeOrigin: false,
       ...backendProxyTimeoutOptions,
     });
 

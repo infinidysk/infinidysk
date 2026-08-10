@@ -65,7 +65,7 @@ function logProxyFailure(message: string, error: unknown) {
 // `timeout` option, which leaks socket listeners under keep-alive (#486).
 const forwardToBackend = createProxyMiddleware({
   target: process.env["BACKEND_URL"]!,
-  changeOrigin: true,
+  changeOrigin: false,
   selfHandleResponse: true,
   ...backendProxyTimeoutOptions,
   on: {
