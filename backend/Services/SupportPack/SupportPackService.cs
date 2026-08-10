@@ -584,6 +584,8 @@ public sealed class SupportPackService(
                     snapshot.ActiveConnections,
                     snapshot.AvailableConnections,
                     snapshot.PendingSelections,
+                    snapshot.LearnedConnectionLimit,
+                    snapshot.EffectiveMaxConnections,
                     churn = new
                     {
                         snapshot.Churn.ConnectionsOpened,

@@ -250,7 +250,20 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionFactory: ct => CreateNewConnection(connectionDetails, ct),
             onConnectionPoolChanged,
             idleTimeoutSeconds,
-            streamingPriority
+            streamingPriority,
+            connectionLimitDetector: ex =>
+                UsenetConnectionLimitDetector.TryLearn(ex, out var learned) ? learned : null,
+            onConnectionLimitLearned: (learned, effective) =>
+            {
+                var label = string.IsNullOrWhiteSpace(connectionDetails.Nickname)
+                    ? connectionDetails.Host
+                    : connectionDetails.Nickname;
+                Log.Warning(
+                    "Provider '{Provider}' reported a server-side connection limit of {Learned} " +
+                    "(configured MaxConnections={Configured}). Pool width reduced to {Effective} until restart. " +
+                    "Lower MaxConnections in settings to make this permanent.",
+                    label, learned, maxConnections, effective);
+            }
         );
         // Ensure a metrics key even if startup backfill was skipped somehow.
         if (connectionDetails.ProviderId == Guid.Empty)
@@ -299,7 +312,9 @@ public class UsenetStreamingClient : WrappingNntpClient
         Func<CancellationToken, ValueTask<INntpClient>> connectionFactory,
         EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs> onConnectionPoolChanged,
         int idleTimeoutSeconds,
-        SemaphorePriorityOdds? streamingPriority = null
+        SemaphorePriorityOdds? streamingPriority = null,
+        Func<Exception, int?>? connectionLimitDetector = null,
+        Action<int, int>? onConnectionLimitLearned = null
     )
     {
         var idleTimeout = TimeSpan.FromSeconds(idleTimeoutSeconds);
@@ -307,7 +322,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             "Creating NNTP connection pool max={Max} idleTimeout={IdleTimeoutSeconds}s streamingPriority={StreamingPriority}",
             maxConnections, idleTimeoutSeconds, streamingPriority?.HighPriorityOdds);
         var connectionPool = new ConnectionPool<INntpClient>(
-            maxConnections, connectionFactory, idleTimeout, streamingPriority);
+            maxConnections, connectionFactory, idleTimeout, streamingPriority,
+            connectionLimitDetector, onConnectionLimitLearned);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         onConnectionPoolChanged(connectionPool, args);

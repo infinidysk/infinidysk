@@ -77,7 +77,7 @@ public class BaseNntpClient : NntpClient
             if (!response.Success)
             {
                 var message = $"Could not login to usenet host: {response.ResponseMessage}";
-                throw new CouldNotLoginToUsenetException(message);
+                throw new CouldNotLoginToUsenetException(message, responseCode: response.ResponseCode);
             }
 
             return response;

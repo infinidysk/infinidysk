@@ -28,5 +28,15 @@ public class GetProviderUsageResponse : BaseApiResponse
         // the cap is already exceeded — in any of those cases there's no
         // honest number to display.
         public double? DaysRemaining { get; set; }
+        /// <summary>
+        /// Server-reported connection limit learned from a 502 rejection, if any.
+        /// Null when the provider has not hit a connection-limit rejection.
+        /// </summary>
+        public int? LearnedConnectionLimit { get; set; }
+        /// <summary>
+        /// The pool's current effective max (after any learned-limit shrink).
+        /// Equals configured MaxConnections when no shrink has occurred.
+        /// </summary>
+        public int? EffectiveMaxConnections { get; set; }
     }
 }

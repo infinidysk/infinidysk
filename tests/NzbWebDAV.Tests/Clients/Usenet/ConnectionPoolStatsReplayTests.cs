@@ -44,6 +44,41 @@ public class ConnectionPoolStatsReplayTests
             websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));
     }
 
+    [Fact]
+    public async Task EffectiveMax_ReflectedInTotalMax()
+    {
+        var websocketManager = new WebsocketManager();
+        var connectionStats = new ConnectionPoolStats(
+            new UsenetProviderConfig
+            {
+                Providers =
+                [
+                    new UsenetProviderConfig.ConnectionDetails
+                    {
+                        Type = ProviderType.Pooled,
+                        Host = "news.example.com",
+                        Port = 563,
+                        UseSsl = true,
+                        User = "user",
+                        Pass = "pass",
+                        MaxConnections = 150,
+                    },
+                ],
+            },
+            websocketManager);
+        var onChanged = connectionStats.GetOnConnectionPoolChanged(0);
+
+        // Simulate a learned-limit shrink: pool reports effective max 135.
+        onChanged(
+            this,
+            new ConnectionPoolStats.ConnectionPoolChangedEventArgs(5, 2, 135));
+
+        await WaitUntil(() => websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections) is not null);
+        Assert.Equal(
+            "0|5|2|5|135|2",
+            websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));

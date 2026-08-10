@@ -98,6 +98,8 @@ public class MultiConnectionNntpClient(
     public bool IsTripped => circuitBreaker.IsTripped;
     public ProviderCircuitBreakerSnapshot GetCircuitBreakerSnapshot() => circuitBreaker.GetSnapshot();
     public int MaxConnections => connectionPool.MaxConnections;
+    public int EffectiveMaxConnections => connectionPool.EffectiveMaxConnections;
+    public int? LearnedConnectionLimit => connectionPool.LearnedConnectionLimit;
     public int LiveConnections => connectionPool.LiveConnections;
     public int IdleConnections => connectionPool.IdleConnections;
     public int ActiveConnections => connectionPool.ActiveConnections;

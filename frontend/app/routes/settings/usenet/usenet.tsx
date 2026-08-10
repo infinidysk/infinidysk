@@ -245,6 +245,8 @@ type ProviderUsage = {
     overLimit: boolean;
     bytesPerDay: number;
     daysRemaining: number | null;
+    learnedConnectionLimit?: number | null;
+    effectiveMaxConnections?: number | null;
 };
 
 function formatDaysRemaining(days: number): string {
@@ -642,6 +644,9 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
         const isDisabled = provider.Type === ProviderType.Disabled;
         const displayName = provider.Nickname?.trim() || provider.Host;
         const liveConnections = isDemoPreview ? 0 : connections[providerIdentity(provider)]?.live ?? 0;
+        const providerUsage = isDemoPreview ? undefined : usage[providerIdentity(provider)];
+        const learnedLimit = providerUsage?.learnedConnectionLimit;
+        const effectiveMax = providerUsage?.effectiveMaxConnections ?? provider.MaxConnections;
 
         return (
             <SortableItem key={providerKey(provider)} id={providerKey(provider)} disabled={!cascadeEnabled || isDemoPreview}>
@@ -730,14 +735,20 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
                                     <ProviderCardMeta
                                         icon="hub"
                                         label="Connections"
-                                        value={`${liveConnections} / ${provider.MaxConnections} max`}
+                                        value={`${liveConnections} / ${effectiveMax} max`}
                                         emphasize
                                     />
+                                    {learnedLimit != null && (
+                                        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-warning">
+                                            <Icon name="warning" className="!text-[13px] shrink-0" />
+                                            <span>Provider caps at {learnedLimit} — lower MaxConnections</span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 <UsageRow
                                     provider={provider}
-                                    usage={isDemoPreview ? undefined : usage[providerIdentity(provider)]}
+                                    usage={providerUsage}
                                     onReset={() => handleResetUsage(index)}
                                     resetDisabled={isDemoPreview}
                                 />

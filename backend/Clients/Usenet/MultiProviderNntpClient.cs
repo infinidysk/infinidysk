@@ -79,7 +79,9 @@ public class MultiProviderNntpClient(
                 p.ActiveConnections,
                 p.AvailableConnections,
                 p.PendingSelections,
-                p.GetConnectionChurn()))
+                p.GetConnectionChurn(),
+                p.LearnedConnectionLimit,
+                p.EffectiveMaxConnections))
             .ToList();
     }
 

@@ -47,16 +47,20 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     public TimeSpan IdleTimeout { get; }
     public int MaxConnections => _maxConnections;
+    public int EffectiveMaxConnections => Volatile.Read(ref _effectiveMaxConnections);
+    public int? LearnedConnectionLimit => _learnedConnectionLimit;
     public int LiveConnections => _live;
     public int IdleConnections => _idleConnections.Count;
     public int ActiveConnections => _live - _idleConnections.Count;
-    public int AvailableConnections => _maxConnections - ActiveConnections;
+    public int AvailableConnections => Math.Max(0, EffectiveMaxConnections - ActiveConnections);
     internal bool IsDisposed => Volatile.Read(ref _disposed) == 1;
 
     public event EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs>? OnConnectionPoolChanged;
 
     private readonly Func<CancellationToken, ValueTask<T>> _factory;
     private readonly int _maxConnections;
+    private readonly Func<Exception, int?>? _connectionLimitDetector;
+    private readonly Action<int, int>? _onConnectionLimitLearned;
 
     /* --------------------------------- state --------------------------------------- */
 
@@ -69,6 +73,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     private int _live; // number of connections currently alive
     private int _disposed; // 0 == false, 1 == true
+    private int _effectiveMaxConnections;
+    private int? _learnedConnectionLimit;
 
     // Lifetime churn counters. A pool that keeps destroying and re-opening connections
     // pays the handshake cost repeatedly and can never reach its configured width, which
@@ -96,7 +102,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         int maxConnections,
         Func<CancellationToken, ValueTask<T>> connectionFactory,
         TimeSpan? idleTimeout = null,
-        SemaphorePriorityOdds? priorityOdds = null)
+        SemaphorePriorityOdds? priorityOdds = null,
+        Func<Exception, int?>? connectionLimitDetector = null,
+        Action<int, int>? onConnectionLimitLearned = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
 
@@ -109,6 +117,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(idleTimeout));
 
         _maxConnections = maxConnections;
+        _effectiveMaxConnections = maxConnections;
+        _connectionLimitDetector = connectionLimitDetector;
+        _onConnectionLimitLearned = onConnectionLimitLearned;
         _gate = new PrioritizedSemaphore(maxConnections, maxConnections, priorityOdds);
         _sweeperTask = Task.Run(SweepLoop); // background idle-reaper
     }
@@ -198,9 +209,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 conn = await _factory(linked.Token).ConfigureAwait(false);
             }
-            catch
+            catch (Exception factoryError)
             {
                 Interlocked.Increment(ref _handshakeFailures);
+                TryShrinkOnConnectionLimit(factoryError);
                 ReleaseGateIfActive(); // free the permit on failure
                 throw;
             }
@@ -339,8 +351,44 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         OnConnectionPoolChanged?.Invoke(this, new ConnectionPoolStats.ConnectionPoolChangedEventArgs(
             _live,
             _idleConnections.Count,
-            _maxConnections
+            EffectiveMaxConnections
         ));
+    }
+
+    /// <summary>
+    /// When the server rejects a login with "502 connection limit (N) reached", shrink the
+    /// gate so subsequent refills stop hitting the same rejection at the same width.
+    /// Monotonic — only ever shrinks, never grows. The check-compute-write is atomic under
+    /// <see cref="_lifecycleLock"/> so concurrent factory failures fire the callback at most
+    /// once per distinct effective value.
+    /// </summary>
+    private void TryShrinkOnConnectionLimit(Exception exception)
+    {
+        if (_connectionLimitDetector?.Invoke(exception) is not { } learned)
+            return;
+
+        // ~10% headroom for server-side teardown sockets; hard floor at 1.
+        var headroom = Math.Max(2, learned / 10);
+        var candidate = Math.Max(learned - headroom, 1);
+
+        int newEffective;
+        bool shrank;
+        lock (_lifecycleLock)
+        {
+            newEffective = Math.Min(candidate, _effectiveMaxConnections);
+            shrank = newEffective < _effectiveMaxConnections;
+            if (shrank)
+            {
+                _effectiveMaxConnections = newEffective;
+                _learnedConnectionLimit = learned;
+            }
+        }
+
+        if (!shrank) return;
+
+        _gate.UpdateMaxAllowed(newEffective);
+        TriggerConnectionPoolChangedEvent();
+        _onConnectionLimitLearned?.Invoke(learned, newEffective);
     }
 
     /* =================== idle sweeper (background) ================================= */

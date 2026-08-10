@@ -16,10 +16,11 @@ public class ConnectionPoolStats
     private readonly int[] _idle;
     private readonly int[] _latestLive;
     private readonly int[] _latestIdle;
+    private readonly int[] _latestMax;
     private readonly bool[] _dirty;
-    private readonly int _max;
     private int _totalLive;
     private int _totalIdle;
+    private int _totalMax;
     private int _flushScheduled; // 0 == false, 1 == true
     private int _active = 1;
     private readonly Lock _lock = new();
@@ -35,8 +36,14 @@ public class ConnectionPoolStats
         _idle = new int[count];
         _latestLive = new int[count];
         _latestIdle = new int[count];
+        _latestMax = new int[count];
         _dirty = new bool[count];
-        _max = providerConfig.Providers
+
+        // Initialize from config so the header shows the configured ceiling before
+        // the first pool event arrives; events then keep it current (effective max).
+        for (var i = 0; i < count; i++)
+            _latestMax[i] = providerConfig.Providers[i].MaxConnections;
+        _totalMax = providerConfig.Providers
             .Where(x => x.Type == ProviderType.Pooled)
             .Select(x => x.MaxConnections)
             .Sum();
@@ -61,6 +68,7 @@ public class ConnectionPoolStats
 
                 _latestLive[providerIndex] = args.Live;
                 _latestIdle[providerIndex] = args.Idle;
+                _latestMax[providerIndex] = args.Max;
                 _dirty[providerIndex] = true;
 
                 if (_providerConfig.Providers[providerIndex].Type == ProviderType.Pooled)
@@ -69,6 +77,9 @@ public class ConnectionPoolStats
                     _idle[providerIndex] = args.Idle;
                     _totalLive = _live.Sum();
                     _totalIdle = _idle.Sum();
+                    _totalMax = _latestMax
+                        .Where((_, i) => _providerConfig.Providers[i].Type == ProviderType.Pooled)
+                        .Sum();
                 }
             }
 
@@ -103,7 +114,7 @@ public class ConnectionPoolStats
                 if (!_dirty[i]) continue;
                 _dirty[i] = false;
                 var message =
-                    $"{i}|{_latestLive[i]}|{_latestIdle[i]}|{_totalLive}|{_max}|{_totalIdle}";
+                    $"{i}|{_latestLive[i]}|{_latestIdle[i]}|{_totalLive}|{_totalMax}|{_totalIdle}";
                 _ = _websocketManager.SendMessage(WebsocketTopic.UsenetConnections, message);
             }
         }
