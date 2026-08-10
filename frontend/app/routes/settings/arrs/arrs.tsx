@@ -21,6 +21,13 @@ interface QueueRule {
     Action: number;
 }
 
+// Mirrors backend TestArrConnectionResponse (BaseApiResponse + Connected), camelCase JSON.
+interface TestConnectionResult {
+    status?: boolean;
+    connected?: boolean;
+    error?: string | null;
+}
+
 interface ArrConfig {
     RadarrInstances: ConnectionDetails[];
     SonarrInstances: ConnectionDetails[];
@@ -29,7 +36,8 @@ interface ArrConfig {
 
 function parseArrConfig(value: string): ArrConfig {
     try {
-        const parsed = JSON.parse(value);
+        // Config key "arr.instances" holds the backend ArrConfig JSON.
+        const parsed = JSON.parse(value) as ArrConfig | null;
         if (parsed &&
             Array.isArray(parsed.RadarrInstances) &&
             Array.isArray(parsed.SonarrInstances) &&
@@ -130,7 +138,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
         updateConfig({
             ...arrConfig,
             RadarrInstances: arrConfig.RadarrInstances
-                .filter((_: any, i: number) => i !== index)
+                .filter((_, i) => i !== index)
         });
     }, [arrConfig, updateConfig]);
 
@@ -138,7 +146,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
         updateConfig({
             ...arrConfig,
             RadarrInstances: arrConfig.RadarrInstances
-                .map((instance: any, i: number) =>
+                .map((instance, i) =>
                     i === index ? { ...instance, [field]: value } : instance
                 )
         });
@@ -158,7 +166,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
         updateConfig({
             ...arrConfig,
             SonarrInstances: arrConfig.SonarrInstances
-                .filter((_: any, i: number) => i !== index)
+                .filter((_, i) => i !== index)
         });
     }, [arrConfig, updateConfig]);
 
@@ -166,7 +174,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
         updateConfig({
             ...arrConfig,
             SonarrInstances: arrConfig.SonarrInstances
-                .map((instance: any, i: number) =>
+                .map((instance, i) =>
                     i === index ? { ...instance, [field]: value } : instance
                 )
         });
@@ -218,7 +226,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
                 {arrConfig.RadarrInstances.length === 0 ? (
                     <div role="alert" className="alert alert-info alert-soft text-sm">No Radarr instances configured. Click on the "Add" button to get started.</div>
                 ) : (
-                    arrConfig.RadarrInstances.map((instance: any, index: number) =>
+                    arrConfig.RadarrInstances.map((instance, index) =>
                         <InstanceForm
                             key={index}
                             instance={instance}
@@ -245,7 +253,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
                 {arrConfig.SonarrInstances.length === 0 ? (
                     <div role="alert" className="alert alert-info alert-soft text-sm">No Sonarr instances configured. Click on the "Add" button to get started.</div>
                 ) : (
-                    arrConfig.SonarrInstances.map((instance: any, index: number) =>
+                    arrConfig.SonarrInstances.map((instance, index) =>
                         <InstanceForm
                             key={index}
                             instance={instance}
@@ -337,7 +345,8 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
                 body: formData
             });
 
-            const result = await response.json();
+            // Response of POST /api/test-arr-connection (backend TestArrConnectionResponse).
+            const result = await response.json() as TestConnectionResult;
 
             if (result.status && result.connected) {
                 setConnectionState('success');
@@ -375,7 +384,7 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
                                 <Button
                                     variant={connectionState === 'success' ? 'success' :
                                         connectionState === 'error' ? 'danger' : 'secondary'}
-                                    onClick={() => testConnection(instance.Host, instance.ApiKey)}
+                                    onClick={() => void testConnection(instance.Host, instance.ApiKey)}
                                     disabled={connectionState === 'testing'}
                                     className={'shrink-0'}
                                 >
@@ -424,7 +433,8 @@ export function isArrsSettingsUpdated(config: Record<string, string>, newConfig:
 
 export function isArrsSettingsValid(newConfig: Record<string, string>) {
     try {
-        const arrConfig: ArrConfig = JSON.parse(newConfig["arr.instances"] || "{}");
+        // Config key "arr.instances" holds the backend ArrConfig JSON.
+        const arrConfig = JSON.parse(newConfig["arr.instances"] || "{}") as ArrConfig;
 
         // Validate all Radarr instances
         for (const instance of arrConfig.RadarrInstances || []) {

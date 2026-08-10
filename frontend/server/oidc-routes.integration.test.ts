@@ -107,7 +107,7 @@ describe("OIDC callback integration", () => {
     );
     const res = mockResponse();
 
-    await oidcCallbackHandler(req, res);
+    await oidcCallbackHandler(req, res as unknown as Response);
 
     expect(fixture.tokenRequest()).toEqual(expect.any(URLSearchParams));
     expect(fixture.tokenRequest()?.get("client_id")).toBe(CLIENT_ID);
@@ -128,7 +128,7 @@ describe("OIDC callback integration", () => {
     );
     const res = mockResponse();
 
-    await oidcCallbackHandler(req, res);
+    await oidcCallbackHandler(req, res as unknown as Response);
 
     expect(mocks.setSessionUser).not.toHaveBeenCalled();
     expect(mocks.clearOidcFlowState).toHaveBeenCalledWith(req);
@@ -280,15 +280,14 @@ function mockRequest(originalUrl: string): Request {
   } as unknown as Request;
 }
 
-function mockResponse(): Response & {
+type MockResponse = Omit<Response, "redirect" | "setHeader"> & {
   redirect: ReturnType<typeof vi.fn>;
   setHeader: ReturnType<typeof vi.fn>;
-} {
+};
+
+function mockResponse(): MockResponse {
   return {
     redirect: vi.fn(),
     setHeader: vi.fn(),
-  } as unknown as Response & {
-    redirect: ReturnType<typeof vi.fn>;
-    setHeader: ReturnType<typeof vi.fn>;
-  };
+  } as unknown as MockResponse;
 }

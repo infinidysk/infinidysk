@@ -23,6 +23,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function firstCalledUrl(): string {
+  const input = fetchMock.mock.calls[0]?.[0];
+  if (typeof input !== "string") throw new Error("Expected fetch to be called with a string URL");
+  return input;
+}
+
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   resetUpdateCheckCache();
@@ -198,7 +204,7 @@ describe("checkForUpdate", () => {
 
     expect(getBuildCommitMock).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/releases/latest");
+    expect(firstCalledUrl()).toContain("/releases/latest");
   });
 
   it("returns commits behind for an up-to-date source checkout on main", async () => {
@@ -247,7 +253,7 @@ describe("checkForUpdate", () => {
 
     await expect(checkForUpdate("0.7.5")).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/releases/latest");
+    expect(firstCalledUrl()).toContain("/releases/latest");
   });
 
   it("does not compare release builds using version-embedded SHAs", async () => {
@@ -265,7 +271,7 @@ describe("checkForUpdate", () => {
 
     await expect(checkForUpdate("0.7.5")).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/releases/latest");
+    expect(firstCalledUrl()).toContain("/releases/latest");
   });
 
   it("notifies main-<sha> builds when main is ahead", async () => {
@@ -289,7 +295,7 @@ describe("checkForUpdate", () => {
       trackRef: "main",
     });
     expect(getBuildCommitMock).toHaveBeenCalledWith({ version: "main-e0eef520" });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/compare/e0eef520...main");
+    expect(firstCalledUrl()).toContain("/compare/e0eef520...main");
   });
 });
 
@@ -319,7 +325,7 @@ describe("checkForUpdate (dev builds)", () => {
       compareUrl: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       trackRef: "dev",
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+    expect(firstCalledUrl()).toContain(
       `/compare/${encodeURIComponent(buildSha)}...dev`,
     );
   });
@@ -334,7 +340,7 @@ describe("checkForUpdate (dev builds)", () => {
     );
 
     await expect(checkForUpdate("dev-e0eef52")).resolves.toBeNull();
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+    expect(firstCalledUrl()).toContain(
       `/compare/${encodeURIComponent(buildSha)}...dev`,
     );
   });

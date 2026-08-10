@@ -9,13 +9,15 @@ export async function loader() {
 
 export async function action({ request }: { request: Request }) {
     const formData = await request.formData();
-    if (formData.get("intent")?.toString() === "discard") {
+    if (formData.get("intent") === "discard") {
         return Response.json(await backendClient.discardStreamTraces());
     }
-    const enabled = formData.get("enabled")?.toString() === "true";
-    const minutesRaw = Number(formData.get("minutes")?.toString() ?? "30");
+    const enabled = formData.get("enabled") === "true";
+    const minutesEntry = formData.get("minutes");
+    const minutesRaw = Number(typeof minutesEntry === "string" ? minutesEntry : "30");
     const minutes = [15, 30, 60].includes(minutesRaw) ? minutesRaw : 30;
-    const capacityRaw = Number(formData.get("capacity")?.toString() ?? "100000");
+    const capacityEntry = formData.get("capacity");
+    const capacityRaw = Number(typeof capacityEntry === "string" ? capacityEntry : "100000");
     const capacity = (ALLOWED_CAPACITIES as readonly number[]).includes(capacityRaw)
         ? capacityRaw
         : 100_000;

@@ -118,7 +118,7 @@ export function MigrationBoundary({ fallback }: { fallback: FallbackProps }) {
         });
         if (cancelled) return;
 
-        const body = res.ok ? await res.json().catch(() => null) : null;
+        const body: unknown = res.ok ? await res.json().catch(() => null) : null;
         if (cancelled) return;
 
         const decision = decideMigrationStatusPoll(res.status, body);
@@ -146,8 +146,9 @@ export function MigrationBoundary({ fallback }: { fallback: FallbackProps }) {
       }
     };
 
-    poll();
-    interval = window.setInterval(poll, 2000);
+    // fire-and-forget: polling errors are handled inside poll()
+    void poll();
+    interval = window.setInterval(() => void poll(), 2000);
     return () => {
       cancelled = true;
       stopPolling();

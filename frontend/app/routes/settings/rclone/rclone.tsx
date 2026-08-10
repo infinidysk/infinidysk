@@ -56,7 +56,14 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                 body: formData
             });
 
-            const result = await response.json();
+            // Response of POST /api/test-rclone-connection (backend contract).
+            const result = await response.json() as {
+                status?: boolean;
+                connected?: boolean;
+                error?: string;
+                lastInvalidationError?: string | null;
+                lastInvalidationErrorAt?: string | null;
+            };
 
             if (result.status && result.connected) {
                 setConnectionState('success');
@@ -121,7 +128,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                             <Button
                                 variant={connectionState === 'success' ? 'success' :
                                     connectionState === 'error' ? 'danger' : 'secondary'}
-                                onClick={testConnection}
+                                onClick={() => void testConnection()}
                                 disabled={connectionState === 'testing'}
                                 className={'shrink-0'}
                             >

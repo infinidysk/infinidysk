@@ -19,6 +19,7 @@ import {
     useIsAnyManaged,
 } from "~/components/ui";
 import { withUrlBase } from "~/utils/url-base";
+import type { ExcludeSyncUrlStatus } from "~/clients/backend-client.server";
 
 type IndexersSettingsProps = {
     config: Record<string, string>
@@ -79,6 +80,12 @@ interface IndexerConfig {
     Indexers: ConnectionDetails[];
 }
 
+// Mirrors backend TestIndexerConnectionResponse (BaseApiResponse + Connected), camelCase JSON.
+interface TestIndexerConnectionResult {
+    status?: boolean;
+    connected?: boolean;
+}
+
 // Hard fallback when neither the indexer nor the global override sets a timeout.
 // Mirrors IndexerConfig.DefaultTimeoutSeconds in the backend.
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -97,19 +104,16 @@ function validateExcludePatterns(raw: string): PatternIssue[] {
         if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
         try {
             new RegExp(trimmed, "i");
-        } catch (e: any) {
-            issues.push({ line: i + 1, pattern: trimmed, error: e?.message ?? "invalid regex" });
+        } catch (e) {
+            issues.push({ line: i + 1, pattern: trimmed, error: e instanceof Error ? e.message : "invalid regex" });
         }
     }
     return issues;
 }
 
-type ExcludeSyncUrlStatus = {
-    url: string,
-    count: number,
-    fetchedAt: number | null,
-    lastChecked: number | null,
-    error: string | null,
+// Response shape of /settings/exclude-sync (backend ExcludeSyncResponse).
+type ExcludeSyncResponse = {
+    urls?: ExcludeSyncUrlStatus[];
 };
 
 type SyncUrlIssue = { line: number, value: string, error: string };
@@ -153,13 +157,19 @@ function syncRelativeTime(unixSeconds: number): string {
 
 function parseConfig(raw: string): IndexerConfig {
     try {
-        const parsed = JSON.parse(raw || "{}");
-        return {
+        // Config key "indexers.instances" holds the backend IndexerConfig JSON.
+        const parsed = JSON.parse(raw || "{}") as Partial<IndexerConfig>;
+        const config: IndexerConfig = {
             ProxyUrl: parsed.ProxyUrl ?? "",
-            TimeoutSeconds: typeof parsed.TimeoutSeconds === "number" ? parsed.TimeoutSeconds : undefined,
-            SearchResultLimit: typeof parsed.SearchResultLimit === "number" ? parsed.SearchResultLimit : undefined,
             Indexers: parsed.Indexers ?? [],
         };
+        if (typeof parsed.TimeoutSeconds === "number") {
+            config.TimeoutSeconds = parsed.TimeoutSeconds;
+        }
+        if (typeof parsed.SearchResultLimit === "number") {
+            config.SearchResultLimit = parsed.SearchResultLimit;
+        }
+        return config;
     } catch {
         return { ProxyUrl: "", Indexers: [] };
     }
@@ -288,7 +298,7 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
     const loadSyncStatus = useCallback(async () => {
         try {
             const res = await fetch(withUrlBase("/settings/exclude-sync"));
-            if (res.ok) setSyncStatus((await res.json()).urls ?? []);
+            if (res.ok) setSyncStatus((await res.json() as ExcludeSyncResponse).urls ?? []);
         } catch {
             // status is best-effort; ignore transient failures
         }
@@ -310,7 +320,7 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
         setIsSyncing(true);
         try {
             const res = await fetch(withUrlBase("/settings/exclude-sync"), { method: "POST" });
-            if (res.ok) setSyncStatus((await res.json()).urls ?? []);
+            if (res.ok) setSyncStatus((await res.json() as ExcludeSyncResponse).urls ?? []);
         } catch {
             // ignore; the row shows the backend-reported error on the next status load
         } finally {
@@ -512,7 +522,7 @@ export function IndexersSettings({ config, setNewConfig, savedConfig }: Indexers
                             <Button
                                 variant="primary"
                                 size="small"
-                                onClick={handleSyncNow}
+                                onClick={() => void handleSyncNow()}
                                 disabled={isSyncing || excludeSyncManaged}
                                 title={excludeSyncManaged
                                     ? "Synced exclude URLs are managed by NZBDAV_CONFIG__... — change the container environment and restart"
@@ -948,7 +958,8 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
             if (timeoutSeconds.trim()) fd.append('timeoutSeconds', timeoutSeconds);
             fd.append('skipTlsVerification', skipTlsVerification.toString());
             const r = await fetch(withUrlBase('/api/test-indexer-connection'), { method: 'POST', body: fd });
-            const data = await r.json();
+            // Response of POST /api/test-indexer-connection (backend TestIndexerConnectionResponse).
+            const data = await r.json() as TestIndexerConnectionResult;
             setTestState(data.status && data.connected ? 'success' : 'error');
         } catch {
             setTestState('error');
@@ -1056,7 +1067,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
                 <>
                     <Button
                         variant={testState === 'success' ? 'success' : testState === 'error' ? 'danger' : 'secondary'}
-                        onClick={handleTest}
+                        onClick={() => void handleTest()}
                         disabled={!isUrlValid || !apiKey.trim() || testState === 'testing'}
                     >
                         {testState === 'testing'

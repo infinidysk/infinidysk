@@ -18,7 +18,8 @@ export function useUploadController(
     setUploadingFiles: (value: React.SetStateAction<UploadingFile[]>) => void,
 ) {
     useEffect(() => {
-        processUploadQueue(isUploadingRef, uploadQueueRef, setUploadingFiles);
+        // fire-and-forget: the queue processor runs in the background and updates state itself
+        void processUploadQueue(isUploadingRef, uploadQueueRef, setUploadingFiles);
     }, [uploadingFiles]);
 }
 
@@ -33,14 +34,15 @@ export function buildAddFileUploadUrl(category: string): string {
 }
 
 export function getXhrErrorMessage(xhr: XhrErrorResponse): string {
+    const response: unknown = xhr.response;
     if (
-        typeof xhr.response === "object" &&
-        xhr.response !== null &&
-        "error" in xhr.response &&
-        typeof xhr.response.error === "string" &&
-        xhr.response.error.trim() !== ""
+        typeof response === "object" &&
+        response !== null &&
+        "error" in response &&
+        typeof response.error === "string" &&
+        response.error.trim() !== ""
     ) {
-        return xhr.response.error;
+        return response.error;
     }
 
     if (xhr.statusText.trim() !== "") return xhr.statusText;

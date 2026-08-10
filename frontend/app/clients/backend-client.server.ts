@@ -62,7 +62,7 @@ function form(...entries: [string, string | Blob, string?][]): FormData {
  * shared api key, and converts a non-2xx response into an Error whose message is
  * prefixed with `errorPrefix` and suffixed with the backend's reported error.
  */
-async function call(path: string, errorPrefix: string, init?: RequestInit): Promise<any> {
+async function call<T = unknown>(path: string, errorPrefix: string, init?: RequestInit): Promise<T> {
     let response: Response;
     try {
         response = await fetch(process.env["BACKEND_URL"] + path, {
@@ -84,7 +84,7 @@ async function call(path: string, errorPrefix: string, init?: RequestInit): Prom
 
     if (!response.ok) {
         const body = await response.json().catch(() => null) as
-            | { error?: unknown; status?: unknown }
+            | { error?: string; status?: string }
             | null;
         if (response.status === 503 || body?.status === "migrating") {
             throw new BackendUnavailableError(
@@ -95,17 +95,19 @@ async function call(path: string, errorPrefix: string, init?: RequestInit): Prom
 
         const backendError =
             body && typeof body === "object" && "error" in body
-                ? String(body.error ?? "unknown error")
+                ? (body.error ?? "unknown error")
                 : `HTTP ${response.status}`;
         throw new Error(`${errorPrefix}: ${backendError}`);
     }
 
-    return response.json();
+    // The type parameter is the caller's declared contract for the backend
+    // response shape; the assertion is centralized here.
+    return (await response.json()) as T;
 }
 
 class BackendClient {
     public async isOnboarding(): Promise<boolean> {
-        const data = await call("/api/is-onboarding", "Failed to fetch onboarding status", {
+        const data = await call<{ isOnboarding: boolean }>("/api/is-onboarding", "Failed to fetch onboarding status", {
             method: "GET",
             headers: { "Content-Type": "application/json" },
         });
@@ -113,7 +115,7 @@ class BackendClient {
     }
 
     public async createAccount(username: string, password: string): Promise<boolean> {
-        const data = await call("/api/create-account", "Failed to create account", {
+        const data = await call<{ status: boolean }>("/api/create-account", "Failed to create account", {
             method: "POST",
             body: form(["username", username], ["password", password], ["type", "admin"]),
         });
@@ -121,7 +123,7 @@ class BackendClient {
     }
 
     public async authenticate(username: string, password: string): Promise<boolean> {
-        const data = await call("/api/authenticate", "Failed to authenticate", {
+        const data = await call<{ authenticated: boolean }>("/api/authenticate", "Failed to authenticate", {
             method: "POST",
             body: form(["username", username], ["password", password], ["type", "admin"]),
         });
@@ -129,12 +131,12 @@ class BackendClient {
     }
 
     public async getQueue(limit: number, start: number = 0): Promise<QueueResponse> {
-        const data = await call(`/api?mode=queue&start=${start}&limit=${limit}`, "Failed to get queue");
+        const data = await call<{ queue: QueueResponse }>(`/api?mode=queue&start=${start}&limit=${limit}`, "Failed to get queue");
         return data.queue;
     }
 
     public async getHistory(limit: number, start: number = 0): Promise<HistoryResponse> {
-        const data = await call(`/api?mode=history&start=${start}&pageSize=${limit}`, "Failed to get history");
+        const data = await call<{ history: HistoryResponse }>(`/api?mode=history&start=${start}&pageSize=${limit}`, "Failed to get history");
         return data.history;
     }
 
@@ -147,18 +149,18 @@ class BackendClient {
             priority: "0",
             pp: "0",
         });
-        const data = await call(`/api?${params.toString()}`, "Failed to add nzb file", {
+        const data = await call<{ nzo_ids?: string[] }>(`/api?${params.toString()}`, "Failed to add nzb file", {
             method: "POST",
             body: form(["nzbFile", nzbFile, nzbFile.name]),
         });
         if (!data.nzo_ids || data.nzo_ids.length != 1) {
             throw new Error(`Failed to add nzb file: unexpected response format`);
         }
-        return data.nzo_ids[0];
+        return data.nzo_ids[0]!;
     }
 
     public async searchIndexers(q: string, limit: number = 100): Promise<SearchIndexersResponse> {
-        return await call("/api/search-indexers", "Failed to search indexers", {
+        return await call<SearchIndexersResponse>("/api/search-indexers", "Failed to search indexers", {
             method: "POST",
             body: form(["q", q], ["limit", String(limit)]),
         });
@@ -175,18 +177,18 @@ class BackendClient {
             name: nzbUrl,
             nzbname: nzbName,
         });
-        const data = await call(`/api?${params.toString()}`, "Failed to add nzb url", {
+        const data = await call<{ nzo_ids?: string[] }>(`/api?${params.toString()}`, "Failed to add nzb url", {
             method: "POST",
         });
         if (!data.nzo_ids || data.nzo_ids.length !== 1) {
             throw new Error("Failed to add nzb url: unexpected response format");
         }
-        return data.nzo_ids[0];
+        return data.nzo_ids[0]!;
     }
 
     public async listWebdavDirectory(directory: string): Promise<DirectoryItem[]> {
         try {
-            const data = await call("/api/list-webdav-directory", "Failed to list webdav directory", {
+            const data = await call<{ items: DirectoryItem[] }>("/api/list-webdav-directory", "Failed to list webdav directory", {
                 method: "POST",
                 body: form(["directory", directory]),
             });
@@ -200,7 +202,7 @@ class BackendClient {
     }
 
     public async getConfig(keys: string[]): Promise<ConfigItem[]> {
-        const data = await call("/api/get-config", "Failed to get config items", {
+        const data = await call<{ configItems?: ConfigItem[] }>("/api/get-config", "Failed to get config items", {
             method: "POST",
             body: form(...keys.map(key => ["config-keys", key] as [string, string])),
         });
@@ -208,7 +210,7 @@ class BackendClient {
     }
 
     public async updateConfig(configItems: ConfigItem[]): Promise<boolean> {
-        const data = await call("/api/update-config", "Failed to update config items", {
+        const data = await call<{ status: boolean }>("/api/update-config", "Failed to update config items", {
             method: "POST",
             body: form(...configItems.map(item => [item.configName, item.configValue] as [string, string])),
         });
@@ -217,41 +219,41 @@ class BackendClient {
 
     public async getHealthCheckQueue(pageSize?: number): Promise<HealthCheckQueueResponse> {
         const query = pageSize !== undefined ? `?pageSize=${pageSize}` : "";
-        return await call(`/api/get-health-check-queue${query}`, "Failed to get health check queue", {
+        return await call<HealthCheckQueueResponse>(`/api/get-health-check-queue${query}`, "Failed to get health check queue", {
             method: "GET",
         });
     }
 
     public async getWatchdogEntries(limit: number = 200): Promise<WatchdogEntry[]> {
-        const data = await call(`/api/get-watchdog-entries?limit=${limit}`, "Failed to get watchdog entries", {
+        const data = await call<{ entries?: WatchdogEntry[] }>(`/api/get-watchdog-entries?limit=${limit}`, "Failed to get watchdog entries", {
             method: "GET",
         });
         return data.entries ?? [];
     }
 
     public async getExcludeSyncStatus(): Promise<ExcludeSyncUrlStatus[]> {
-        const data = await call("/api/exclude-sync", "Failed to get exclude-sync status", {
+        const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>("/api/exclude-sync", "Failed to get exclude-sync status", {
             method: "GET",
         });
         return data.urls || [];
     }
 
     public async refreshExcludeSync(): Promise<ExcludeSyncUrlStatus[]> {
-        const data = await call("/api/exclude-sync", "Failed to refresh exclude-sync", {
+        const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>("/api/exclude-sync", "Failed to refresh exclude-sync", {
             method: "POST",
         });
         return data.urls || [];
     }
 
     public async clearWatchdogEntries(): Promise<number> {
-        const data = await call(`/api/clear-watchdog-entries`, "Failed to clear watchdog entries", {
+        const data = await call<{ deleted?: number }>(`/api/clear-watchdog-entries`, "Failed to clear watchdog entries", {
             method: "POST",
         });
         return data.deleted ?? 0;
     }
 
     public async clearHealthCheckHistory(): Promise<{ deletedResults: number; deletedStats: number }> {
-        const data = await call(`/api/clear-health-check-history`, "Failed to clear health-check history", {
+        const data = await call<{ deletedResults?: number; deletedStats?: number }>(`/api/clear-health-check-history`, "Failed to clear health-check history", {
             method: "POST",
         });
         return {
@@ -262,7 +264,7 @@ class BackendClient {
 
     public async clearOverviewStats(providerId?: string): Promise<number> {
         const query = providerId ? `?provider=${encodeURIComponent(providerId)}` : "";
-        const data = await call(`/api/clear-overview-stats${query}`, "Failed to clear overview statistics", {
+        const data = await call<{ deletedRows?: number }>(`/api/clear-overview-stats${query}`, "Failed to clear overview statistics", {
             method: "POST",
         });
         return data.deletedRows ?? 0;
@@ -270,7 +272,7 @@ class BackendClient {
 
     public async getHealthCheckHistory(pageSize?: number): Promise<HealthCheckHistoryResponse> {
         const query = pageSize !== undefined ? `?pageSize=${pageSize}` : "";
-        return await call(`/api/get-health-check-history${query}`, "Failed to get health check history", {
+        return await call<HealthCheckHistoryResponse>(`/api/get-health-check-history${query}`, "Failed to get health check history", {
             method: "GET",
         });
     }
@@ -279,7 +281,7 @@ class BackendClient {
         window: OverviewWindow = "24h",
         sections: OverviewSections = "all",
     ): Promise<OverviewStatsResponse> {
-        return await call(
+        return await call<OverviewStatsResponse>(
             `/api/get-overview-stats?window=${window}&sections=${sections}`,
             "Failed to get overview stats",
             { method: "GET" },
@@ -294,13 +296,13 @@ class BackendClient {
         if (params.search) qs.set("search", params.search);
         if (params.beforeSequence !== undefined) qs.set("beforeSequence", String(params.beforeSequence));
         const query = qs.toString();
-        return await call(`/api/get-logs${query ? `?${query}` : ""}`, "Failed to get logs", {
+        return await call<GetLogsResponse>(`/api/get-logs${query ? `?${query}` : ""}`, "Failed to get logs", {
             method: "GET",
         });
     }
 
     public async getStreamTracingStatus(): Promise<StreamTracingStatus> {
-        const data = await call("/api/get-stream-traces?limit=1", "Failed to get stream tracing status", {
+        const data = await call<Record<string, unknown>>("/api/get-stream-traces?limit=1", "Failed to get stream tracing status", {
             method: "GET",
         });
         return toStreamTracingStatus(data);
@@ -311,7 +313,7 @@ class BackendClient {
         minutes: number = 30,
         capacity: number = 100_000,
     ): Promise<StreamTracingStatus> {
-        const data = await call("/api/set-stream-tracing", "Failed to update stream tracing", {
+        const data = await call<Record<string, unknown>>("/api/set-stream-tracing", "Failed to update stream tracing", {
             method: "POST",
             body: form(
                 ["enabled", enabled ? "true" : "false"],
@@ -323,7 +325,7 @@ class BackendClient {
     }
 
     public async discardStreamTraces(): Promise<StreamTracingStatus> {
-        const data = await call("/api/discard-stream-traces", "Failed to discard stream traces", {
+        const data = await call<Record<string, unknown>>("/api/discard-stream-traces", "Failed to discard stream traces", {
             method: "POST",
         });
         return toStreamTracingStatus(data);
@@ -339,13 +341,13 @@ class BackendClient {
         if (params.expander) qs.set("expander", params.expander);
         if (params.statsOnly) qs.set("statsOnly", "1");
         const query = qs.toString();
-        return await call(`/api/get-watchtower${query ? `?${query}` : ""}`, "Failed to get watchtower", {
+        return await call<WatchtowerData>(`/api/get-watchtower${query ? `?${query}` : ""}`, "Failed to get watchtower", {
             method: "GET",
         });
     }
 
     public async watchtowerMutate(fields: Record<string, string>): Promise<boolean> {
-        const data = await call("/api/watchtower-mutate", "Watchtower action failed", {
+        const data = await call<{ status: boolean }>("/api/watchtower-mutate", "Watchtower action failed", {
             method: "POST",
             body: form(...Object.entries(fields).map(([k, v]) => [k, v] as [string, string])),
         });
@@ -353,7 +355,7 @@ class BackendClient {
     }
 
     public async discoverStremioCatalogs(manifestUrl: string): Promise<DiscoverCatalogsResponse> {
-        return await call("/api/watchtower-discover-catalogs", "Failed to discover catalogs", {
+        return await call<DiscoverCatalogsResponse>("/api/watchtower-discover-catalogs", "Failed to discover catalogs", {
             method: "POST",
             body: form(["url", manifestUrl]),
         });
@@ -615,7 +617,7 @@ export enum RepairAction {
 }
 
 export type OverviewWindow = "1h" | "24h" | "7d" | "30d" | "all";
-export type OverviewSections = "all" | "window" | "detail" | "static" | string;
+export type OverviewSections = "all" | "window" | "detail" | "static" | (string & {});
 
 export type OverviewStatsResponse = {
     window: OverviewWindow,

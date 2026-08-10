@@ -20,6 +20,12 @@ import {
     type SessionStatus,
 } from "./use-altmount-migration";
 
+function parseRequestJsonBody(init: RequestInit | undefined): unknown {
+    const body = init?.body;
+    if (typeof body !== "string") throw new Error("Expected request body to be a JSON string");
+    return JSON.parse(body);
+}
+
 describe("requestAltmountPathDetection", () => {
     it("asks the backend to inspect the trimmed container path", async () => {
         const originalFetch = globalThis.fetch;
@@ -46,7 +52,7 @@ describe("requestAltmountPathDetection", () => {
             const [url, init] = fetchMock.mock.calls[0]!; // asserted by toHaveBeenCalledOnce above
             expect(url).toBe("/api/migration/altmount/detect");
             expect(init?.method).toBe("POST");
-            expect(JSON.parse(String(init?.body))).toEqual({ root: "/altmount-data/config" });
+            expect(parseRequestJsonBody(init)).toEqual({ root: "/altmount-data/config" });
         } finally {
             globalThis.fetch = originalFetch;
         }
@@ -72,7 +78,7 @@ describe("requestAltmountPathDetection", () => {
             await requestAltmountPathDetection();
 
             const [, init] = fetchMock.mock.calls[0]!; // asserted by toHaveBeenCalledOnce
-            expect(JSON.parse(String(init?.body))).toEqual({ root: null });
+            expect(parseRequestJsonBody(init)).toEqual({ root: null });
         } finally {
             globalThis.fetch = originalFetch;
         }
@@ -183,7 +189,7 @@ describe("requestSymlinkApply", () => {
             const [url, init] = fetchMock.mock.calls[0]!; // asserted by toHaveBeenCalledOnce
             expect(url).toBe("/api/migration/altmount/symlinks/apply");
             expect(init?.method).toBe("POST");
-            expect(JSON.parse(String(init?.body))).toEqual({
+            expect(parseRequestJsonBody(init)).toEqual({
                 confirm: true,
                 acknowledgeUnreadable: expected,
             });
@@ -210,7 +216,7 @@ describe("requestOrphanSymlinkRemoval", () => {
             const [url, init] = fetchMock.mock.calls[0]!; // asserted by toHaveBeenCalledOnce
             expect(url).toBe("/api/migration/altmount/symlinks/orphans/remove");
             expect(init?.method).toBe("POST");
-            expect(JSON.parse(String(init?.body))).toEqual({ confirm: true });
+            expect(parseRequestJsonBody(init)).toEqual({ confirm: true });
         } finally {
             globalThis.fetch = originalFetch;
         }

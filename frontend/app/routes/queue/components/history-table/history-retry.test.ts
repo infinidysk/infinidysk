@@ -34,7 +34,7 @@ describe("retryHistoryItem", () => {
     it("posts to the retry endpoint and returns success", async () => {
         const fetchImpl = vi.fn().mockResolvedValue({
             ok: true,
-            json: async () => ({ status: true, nzo_id: "new-id" }),
+            json: () => Promise.resolve({ status: true, nzo_id: "new-id" }),
         });
 
         const result = await retryHistoryItem("old-id", fetchImpl as typeof fetch);
@@ -46,7 +46,7 @@ describe("retryHistoryItem", () => {
     it("returns the API error when retry fails", async () => {
         const fetchImpl = vi.fn().mockResolvedValue({
             ok: false,
-            json: async () => ({ status: false, error: "The NZB file could not be found." }),
+            json: () => Promise.resolve({ status: false, error: "The NZB file could not be found." }),
         });
 
         const result = await retryHistoryItem("old-id", fetchImpl as typeof fetch);

@@ -39,7 +39,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 export async function action({ request }: Route.ActionArgs) {
     const form = await request.formData();
     const fields: Record<string, string> = {};
-    for (const [k, v] of form.entries()) fields[k] = String(v);
+    for (const [k, v] of form.entries()) fields[k] = typeof v === "string" ? v : v.name;
     try {
         if (fields["action"] === "discover-catalogs") {
             const discovered = await backendClient.discoverStremioCatalogs(fields["url"] ?? "");
@@ -52,8 +52,8 @@ export async function action({ request }: Route.ActionArgs) {
         }
         await backendClient.watchtowerMutate(fields);
         return { ok: true as const };
-    } catch (e: any) {
-        return { ok: false as const, error: e?.message ?? String(e) };
+    } catch (e: unknown) {
+        return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
     }
 }
 
@@ -169,7 +169,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
         if (stateFilter) sp.set("state", stateFilter);
         if (urlQuery) sp.set("q", urlQuery);
         sp.set("expander", next);
-        childFetcher.load(`${location.pathname}?${sp.toString()}`);
+        void childFetcher.load(`${location.pathname}?${sp.toString()}`); // fire-and-forget: result handled via fetcher state
     }, [shows, expandedShows, childLoaded, childFetcher.state, stateFilter, urlQuery, location.pathname]);
 
     useEffect(() => {
@@ -191,11 +191,11 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
         if (urlQuery) sp.set("q", urlQuery);
         if (sortKey !== "default") sp.set("sort", sortKey);
         sp.set("offset", String(offset));
-        moreFetcher.load(`${location.pathname}?${sp.toString()}`);
+        void moreFetcher.load(`${location.pathname}?${sp.toString()}`); // fire-and-forget: result handled via fetcher state
     };
     const pollRef = useRef<() => void>(() => {});
     pollRef.current = () => {
-        if (statsFetcher.state === "idle") statsFetcher.load(`${location.pathname}?statsOnly=1`);
+        if (statsFetcher.state === "idle") void statsFetcher.load(`${location.pathname}?statsOnly=1`); // fire-and-forget poll
     };
 
     useEffect(() => {
@@ -305,7 +305,8 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
 
     const handleConfirmRemove = useCallback(() => {
         if (pendingRemove === "bulk") {
-            bulkItemFetcher.submit(
+            // fire-and-forget: result handled via fetcher state
+            void bulkItemFetcher.submit(
                 { action: "bulk-remove", keys: bulkKeysValue },
                 { method: "post" },
             );
@@ -313,7 +314,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
             const formData: Record<string, string> = { action: "remove-by-filter" };
             if (stateFilter) formData["state"] = stateFilter;
             if (urlQuery) formData["q"] = urlQuery;
-            filterFetcher.submit(formData, { method: "post" });
+            void filterFetcher.submit(formData, { method: "post" }); // fire-and-forget: result handled via fetcher state
         }
         setPendingRemove(null);
     }, [pendingRemove, bulkKeysValue, bulkItemFetcher, filterFetcher, stateFilter, urlQuery]);

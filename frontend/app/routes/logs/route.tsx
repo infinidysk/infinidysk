@@ -8,7 +8,7 @@ import {
     useRef,
     useState,
 } from "react";
-import { backendClient, type LogEntry, type LogLevel } from "~/clients/backend-client.server";
+import { backendClient, type GetLogsResponse, type LogEntry, type LogLevel } from "~/clients/backend-client.server";
 import { useLogsWebsocket, type ConnectionStatus } from "./controllers/websocket-controller";
 import { Alert, Badge, Icon } from "~/components/ui";
 import { Input } from "~/components/ui/form";
@@ -111,9 +111,10 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
         if (search) params.set("search", search);
         if (source) params.set("source", source);
         fetch(withUrlBase(`/api/get-logs?${params.toString()}`))
-            .then(async r => {
+            .then(r => {
                 if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                return r.json();
+                // /api/get-logs returns GetLogsResponse
+                return r.json() as Promise<GetLogsResponse>;
             })
             .then(data => {
                 if (cancelled) return;
@@ -122,9 +123,9 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
                 setErrorText(null);
                 if (followTailRef.current) requestAnimationFrame(scrollToBottom);
             })
-            .catch(e => {
+            .catch((e: unknown) => {
                 if (cancelled) return;
-                setErrorText(String(e?.message ?? e));
+                setErrorText(e instanceof Error ? e.message : String(e));
             });
         return () => {
             cancelled = true;
@@ -200,7 +201,6 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
     // when the entries list mounts/first-loads, scroll to bottom
     useEffect(() => {
         requestAnimationFrame(scrollToBottom);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // keyboard shortcuts

@@ -11,7 +11,7 @@ export type BreadcrumbProps = {
 export function Breadcrumbs({ parentDirectories }: BreadcrumbProps): ReactNode {
     const navigate = useNavigate();
     const onClick = useCallback((index: number) => {
-        navigate(getExploreBreadcrumbHref(parentDirectories, index));
+        void navigate(getExploreBreadcrumbHref(parentDirectories, index));
     }, [parentDirectories, navigate]);
 
     return (

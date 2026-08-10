@@ -101,7 +101,7 @@ export default function handleRequest(
           );
         },
         onShellError(error: unknown) {
-          reject(error);
+          reject(error instanceof Error ? error : new Error("Unknown shell rendering error"));
         },
         onError(error: unknown) {
           responseStatusCode = 500;

@@ -57,8 +57,8 @@ export function PruneCompletedHistory({ savedConfig }: PruneCompletedHistoryProp
                 </div>
                 <div className="rounded-lg border border-base-content/10 bg-base-200/40 p-3 flex flex-wrap gap-2 items-center justify-between">
                     <div className="flex gap-2">
-                        <Button variant={connected && !isRunning ? "danger" : "secondary"} disabled={!connected || isRunning} onClick={() => startTask("/api/prune-completed-history")}>{isRunning ? "Running..." : "Run Task"}</Button>
-                        <Button variant="outline" size="small" disabled={!connected || isRunning} onClick={() => startTask("/api/prune-completed-history/dry-run")}>Dry Run</Button>
+                        <Button variant={connected && !isRunning ? "danger" : "secondary"} disabled={!connected || isRunning} onClick={() => void startTask("/api/prune-completed-history")}>{isRunning ? "Running..." : "Run Task"}</Button>
+                        <Button variant="outline" size="small" disabled={!connected || isRunning} onClick={() => void startTask("/api/prune-completed-history/dry-run")}>Dry Run</Button>
                     </div>
                     <div aria-live="polite" className="font-mono text-xs text-base-content/70 whitespace-pre-line">{statusError ?? progress ?? "Ready to prune."}</div>
                 </div>

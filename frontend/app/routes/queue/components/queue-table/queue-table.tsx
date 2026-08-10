@@ -42,7 +42,8 @@ async function moveQueueItemsToTop(nzoIds: string[]): Promise<boolean> {
             body: JSON.stringify({ nzo_ids: nzoIds }),
         });
         if (!response.ok) return false;
-        const data = await response.json();
+        // SABnzbd API (`/api?mode=queue&name=move`) response shape
+        const data = await response.json() as { status?: boolean };
         return data.status === true;
     } catch {
         return false;
@@ -126,7 +127,8 @@ export function QueueTable({
                 body: JSON.stringify({ nzo_ids: Array.from(queued_nzo_ids) }),
             });
             if (response.ok) {
-                const data = await response.json();
+                // SABnzbd API (`/api?mode=queue&name=delete`) response shape
+                const data = await response.json() as { status?: boolean };
                 if (data.status === true) {
                     onRemoved(queued_nzo_ids);
                     return;
@@ -164,7 +166,7 @@ export function QueueTable({
                 <>
                     {selectedMovableIds.length > 0 &&
                         <Tooltip content="Move selected to top of queue">
-                            <ActionButton type="move-top" onClick={onMoveSelectedToTop} />
+                            <ActionButton type="move-top" onClick={() => void onMoveSelectedToTop()} />
                         </Tooltip>
                     }
                     <ActionButton type="delete" onClick={onRemove} />
@@ -229,7 +231,7 @@ export function QueueTable({
                 show={isConfirmingRemoval}
                 title="Remove From Queue?"
                 message={`${selectedCount} item(s) will be removed`}
-                onConfirm={onConfirmRemoval}
+                onConfirm={() => void onConfirmRemoval()}
                 onCancel={onCancelRemoval} />
         </PageSection>
     );
@@ -274,7 +276,8 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
                 + `&value=${encodeURIComponent(slot.nzo_id)}`;
             const response = await fetch(url);
             if (response.ok) {
-                const data = await response.json();
+                // SABnzbd API (`/api?mode=queue&name=delete`) response shape
+                const data = await response.json() as { status?: boolean };
                 if (data.status === true) {
                     onRemoved(slot.nzo_id);
                     return;
@@ -314,7 +317,7 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
                                 <ActionButton
                                     type="move-top"
                                     disabled={!!slot.isRemoving || isMoving}
-                                    onClick={onMoveToTop}
+                                    onClick={() => void onMoveToTop()}
                                 />
                             </Tooltip>
                         }
@@ -331,7 +334,7 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
                 show={isConfirmingRemoval}
                 title="Remove From Queue?"
                 message={slot.filename}
-                onConfirm={onConfirmRemoval}
+                onConfirm={() => void onConfirmRemoval()}
                 onCancel={onCancelRemoval} />
         </>
     )

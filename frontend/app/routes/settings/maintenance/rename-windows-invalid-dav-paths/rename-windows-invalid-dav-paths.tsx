@@ -105,7 +105,7 @@ export function RenameWindowsInvalidDavPaths({ savedConfig }: RenameWindowsInval
                             <Button
                                 className="shrink-0"
                                 variant={runButtonVariant}
-                                onClick={onApply}
+                                onClick={() => void onApply()}
                                 disabled={!isRunButtonEnabled}
                             >
                                 <Icon name={isRunning ? "progress_activity" : "drive_file_rename_outline"} className={`!text-[18px] ${isRunning ? "animate-spin" : ""}`} />
@@ -114,7 +114,7 @@ export function RenameWindowsInvalidDavPaths({ savedConfig }: RenameWindowsInval
                             <Button
                                 className="shrink-0"
                                 disabled={!isRunButtonEnabled}
-                                onClick={onDryRun}
+                                onClick={() => void onDryRun()}
                                 variant="outline"
                                 size="small"
                             >

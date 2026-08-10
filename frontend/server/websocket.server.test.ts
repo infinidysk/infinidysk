@@ -131,7 +131,7 @@ describe("UpstreamSubscriptionForwarder", () => {
         forwarder.sendFullSubscriptionSet();
 
         expect(sent).toHaveLength(1);
-        const parsed = JSON.parse(sent[0]!);
+        const parsed = JSON.parse(sent[0]!) as { sub: string[] };
         expect(parsed.sub.sort()).toEqual(["cxs", "ls"]);
     });
 

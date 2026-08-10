@@ -7,6 +7,17 @@ import { withUrlBase } from "~/utils/url-base";
 
 type ProviderOption = { providerId: string; label: string };
 
+// Response shape of GET /api/get-provider-usage (GetProviderUsageResponse).
+type ProviderUsageItem = {
+    providerId?: string | null;
+    host: string;
+    nickname?: string | null;
+};
+
+type ProviderUsageResponse = {
+    providers?: ProviderUsageItem[];
+};
+
 export function ResetOverviewStats() {
     const [isRunning, setIsRunning] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
@@ -17,13 +28,13 @@ export function ResetOverviewStats() {
     useEffect(() => {
         let cancelled = false;
         fetch(withUrlBase("/api/get-provider-usage"))
-            .then(r => (r.ok ? r.json() : Promise.reject()))
+            .then(r => (r.ok ? r.json() as Promise<ProviderUsageResponse> : Promise.reject(new Error("Failed to load provider usage"))))
             .then(data => {
                 if (cancelled) return;
                 setProviders(
                     (data.providers ?? [])
-                        .filter((p: { providerId?: string }) => p.providerId)
-                        .map((p: { providerId: string; host: string; nickname?: string }) => ({
+                        .filter((p): p is ProviderUsageItem & { providerId: string } => Boolean(p.providerId))
+                        .map((p) => ({
                             providerId: p.providerId,
                             label: p.nickname?.trim() || p.host,
                         }))
@@ -59,10 +70,12 @@ export function ResetOverviewStats() {
                 : "/api/clear-overview-stats";
             const response = await fetch(url, { method: "POST" });
             if (!response.ok) {
-                const body = await response.json().catch(() => ({}));
+                // Error body from POST /api/clear-overview-stats (BaseApiResponse).
+                const body = await response.json().catch(() => ({})) as { error?: string };
                 throw new Error(body.error || `Request failed (${response.status})`);
             }
-            const data = await response.json();
+            // Success body from POST /api/clear-overview-stats (ClearOverviewStatsResponse).
+            const data = await response.json() as { deletedRows?: number };
             setMessage(`Reset complete. Removed ${data.deletedRows ?? 0} metric row(s).`);
         } catch (e) {
             setError(e instanceof Error ? e.message : "Failed to reset Overview statistics.");
@@ -117,7 +130,7 @@ export function ResetOverviewStats() {
                         variant={isRunning ? "secondary" : "danger"}
                         disabled={isRunning}
                         className="shrink-0"
-                        onClick={onReset}
+                        onClick={() => void onReset()}
                     >
                         <Icon
                             name={isRunning ? "progress_activity" : "delete_sweep"}

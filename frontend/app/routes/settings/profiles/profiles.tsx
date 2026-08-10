@@ -59,7 +59,8 @@ const ALL_ADAPTER_KEYS: AdapterKey[] = ADAPTERS.map(a => a.key);
 
 function parseProfileConfig(raw: string): ProfileConfig {
     try {
-        const parsed = JSON.parse(raw || "{}");
+        // The profiles.instances config value stores a serialized ProfileConfig.
+        const parsed = JSON.parse(raw || "{}") as Partial<ProfileConfig>;
         return { Profiles: parsed.Profiles ?? [] };
     } catch {
         return { Profiles: [] };
@@ -68,7 +69,8 @@ function parseProfileConfig(raw: string): ProfileConfig {
 
 function parseIndexerNames(raw: string): string[] {
     try {
-        const parsed = JSON.parse(raw || "{}");
+        // The indexers.instances config value stores a serialized { Indexers: IndexerSummary[] }.
+        const parsed = JSON.parse(raw || "{}") as { Indexers?: IndexerSummary[] };
         const list: IndexerSummary[] = parsed.Indexers ?? [];
         return list.filter(i => i.Enabled && i.Name?.trim()).map(i => i.Name);
     } catch {
@@ -387,7 +389,7 @@ function AdapterRow({ token, origin, adapter, enabled, onToggle }: AdapterRowPro
                         value={url}
                         onFocus={e => e.currentTarget.select()}
                     />
-                    <Button variant={copied ? "success" : "secondary"} size="xsmall" onClick={onCopy}>
+                    <Button variant={copied ? "success" : "secondary"} size="xsmall" onClick={() => void onCopy()}>
                         {copied ? "Copied" : "Copy"}
                     </Button>
                 </div>

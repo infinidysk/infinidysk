@@ -19,15 +19,22 @@ export type HistoryRetryResult =
     | { ok: true; nzoId?: string | undefined }
     | { ok: false; error: string };
 
+// SABnzbd API (`/api?mode=retry`) response shape
+type HistoryRetryResponse = {
+    status?: boolean;
+    error?: string;
+    nzo_id?: string;
+};
+
 export async function retryHistoryItem(
     nzoId: string,
     fetchImpl: typeof fetch = fetch,
 ): Promise<HistoryRetryResult> {
     try {
         const response = await fetchImpl(buildHistoryRetryUrl(nzoId), { method: "POST" });
-        let data: { status?: boolean; error?: string; nzo_id?: string } | null = null;
+        let data: HistoryRetryResponse | null = null;
         try {
-            data = await response.json();
+            data = await response.json() as HistoryRetryResponse;
         } catch {
             data = null;
         }

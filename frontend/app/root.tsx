@@ -102,8 +102,12 @@ function hasConfiguredUsenetProviders(configValue?: string): boolean {
   if (!configValue) return false;
 
   try {
-    const config = JSON.parse(configValue);
-    return Array.isArray(config?.Providers) && config.Providers.length > 0;
+    const config: unknown = JSON.parse(configValue);
+    return typeof config === "object"
+      && config !== null
+      && "Providers" in config
+      && Array.isArray(config.Providers)
+      && config.Providers.length > 0;
   } catch {
     return false;
   }

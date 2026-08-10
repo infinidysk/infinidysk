@@ -170,9 +170,11 @@ export async function clearOidcFlowState(
 
 async function authenticate(request: Request): Promise<User> {
   const formData = await request.formData();
-  const username = formData.get("username")?.toString();
-  const password = formData.get("password")?.toString();
-  if (!username || !password) throw new Error("username and password required");
+  const username = formData.get("username");
+  const password = formData.get("password");
+  if (typeof username !== "string" || typeof password !== "string" || !username || !password) {
+    throw new Error("username and password required");
+  }
   if (await backendClient.authenticate(username, password)) {
     return { username, role: "admin" };
   }
