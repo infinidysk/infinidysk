@@ -131,7 +131,7 @@ export function HistoryTable({
                 <>
                     {selectedRetryableIds.length > 0 &&
                         <Tooltip content="Retry selected failed items">
-                            <ActionButton type="retry" onClick={onBulkRetry} />
+                            <ActionButton type="retry" onClick={() => void onBulkRetry()} />
                         </Tooltip>
                     }
                     <ActionButton type="delete" onClick={onRemove} />
@@ -191,14 +191,14 @@ export function HistoryTable({
                 title="Clear failed history?"
                 message="All failed history items will be removed."
                 checkboxMessage="Delete mounted files"
-                onConfirm={onConfirmClearFailed}
+                onConfirm={(isChecked) => void onConfirmClearFailed(isChecked)}
                 onCancel={() => setIsConfirmingClearFailed(false)} />
             <ConfirmModal
                 show={isConfirmingClearAll}
                 title="Clear all history?"
                 message="All history items will be removed."
                 checkboxMessage="Delete mounted files"
-                onConfirm={onConfirmClearAllHistory}
+                onConfirm={(isChecked) => void onConfirmClearAllHistory(isChecked)}
                 onCancel={() => setIsConfirmingClearAll(false)} />
         </PageSection>
     );

@@ -188,7 +188,7 @@ function Body(props: ExplorePageData) {
         }
         const pathname = getWebdavPathDecoded(location.pathname);
         let cancelled = false;
-        (async () => {
+        void (async () => {
             try {
                 const previews: DeletePreviewResponse[] = [];
                 for (const name of pendingDelete) {

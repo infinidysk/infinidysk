@@ -59,6 +59,14 @@ export type BulkHistoryRetryResult = {
     failed: Array<{ nzoId: string; error: string }>;
 };
 
+// SABnzbd API (`/api?mode=retry` bulk) response shape
+type BulkRetryResponse = {
+    status?: boolean;
+    error?: string;
+    nzo_ids?: string[];
+    failed?: Array<{ nzo_id: string; error: string }>;
+};
+
 export async function retryHistoryItems(
     nzoIds: string[],
     fetchImpl: typeof fetch = fetch,
@@ -73,14 +81,9 @@ export async function retryHistoryItems(
             headers: { "Content-Type": "application/json;charset=UTF-8" },
             body: JSON.stringify({ nzo_ids: nzoIds }),
         });
-        let data: {
-            status?: boolean;
-            error?: string;
-            nzo_ids?: string[];
-            failed?: Array<{ nzo_id: string; error: string }>;
-        } | null = null;
+        let data: BulkRetryResponse | null = null;
         try {
-            data = await response.json();
+            data = (await response.json()) as BulkRetryResponse;
         } catch {
             data = null;
         }

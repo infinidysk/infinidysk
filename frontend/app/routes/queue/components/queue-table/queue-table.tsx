@@ -231,12 +231,12 @@ export function QueueTable({
                 <>
                     {selectedPausableIds.length > 0 &&
                         <Tooltip content="Pause selected">
-                            <ActionButton type="pause" onClick={onPauseSelected} />
+                            <ActionButton type="pause" onClick={() => void onPauseSelected()} />
                         </Tooltip>
                     }
                     {selectedResumableIds.length > 0 &&
                         <Tooltip content="Resume selected">
-                            <ActionButton type="resume" onClick={onResumeSelected} />
+                            <ActionButton type="resume" onClick={() => void onResumeSelected()} />
                         </Tooltip>
                     }
                     {selectedMovableIds.length > 0 &&
@@ -247,13 +247,13 @@ export function QueueTable({
                     {selectedMovableIds.length > 0 && categories.length > 0 &&
                         <>
                             <SimpleDropdown options={categories} value={bulkSetCategory} onChange={setBulkSetCategory} />
-                            <Button variant="secondary" size="xsmall" onClick={onSetCategorySelected}>Set category</Button>
+                            <Button variant="secondary" size="xsmall" onClick={() => void onSetCategorySelected()}>Set category</Button>
                         </>
                     }
                     {selectedMovableIds.length > 0 &&
                         <>
                             <SimpleDropdown options={["-1", "0", "1", "2"]} value={bulkPriority} onChange={setBulkPriority} />
-                            <Button variant="secondary" size="xsmall" onClick={() => onSetPrioritySelected(bulkPriority)}>Set priority</Button>
+                            <Button variant="secondary" size="xsmall" onClick={() => void onSetPrioritySelected(bulkPriority)}>Set priority</Button>
                         </>
                     }
                     <ActionButton type="delete" onClick={onRemove} />
@@ -324,13 +324,13 @@ export function QueueTable({
                 show={isConfirmingClearAll}
                 title="Clear entire queue?"
                 message="All queued items will be removed. In-progress downloads will be cancelled."
-                onConfirm={onConfirmClearAll}
+                onConfirm={() => void onConfirmClearAll()}
                 onCancel={() => setIsConfirmingClearAll(false)} />
             <ConfirmModal
                 show={isConfirmingClearCategory}
                 title="Clear category?"
                 message={`All items in category "${clearCategory}" will be removed.`}
-                onConfirm={onConfirmClearCategory}
+                onConfirm={() => void onConfirmClearCategory()}
                 onCancel={() => setIsConfirmingClearCategory(false)} />
         </PageSection>
     );

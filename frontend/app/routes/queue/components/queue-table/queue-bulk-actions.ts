@@ -39,7 +39,7 @@ async function postQueueIds(url: string, nzoIds: string[]): Promise<boolean> {
             body: JSON.stringify({ nzo_ids: nzoIds }),
         });
         if (!response.ok) return false;
-        const data = await response.json();
+        const data = await response.json() as { status?: boolean };
         return data.status === true;
     } catch {
         return false;
@@ -66,7 +66,7 @@ export async function postClearQueue(category?: string): Promise<boolean> {
     try {
         const response = await fetch(buildClearQueueUrl(category), { method: "POST" });
         if (!response.ok) return false;
-        const data = await response.json();
+        const data = await response.json() as { status?: boolean };
         return data.status === true;
     } catch {
         return false;

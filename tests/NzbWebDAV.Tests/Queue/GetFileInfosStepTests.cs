@@ -58,6 +58,7 @@ public class GetFileInfosStepTests
             ReleaseDate = DateTimeOffset.UnixEpoch,
         };
     }
+
     private static readonly byte[] EbmlMagic = [0x1A, 0x45, 0xDF, 0xA3, 0x00, 0x00, 0x00, 0x00];
 
     [Fact]
