@@ -56,6 +56,13 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                 context.Response.Clear();
                 context.Response.StatusCode = 499; // Client closed request (stalled read)
             }
+            else
+            {
+                // Headers already sent: abort the truncated body for parity with every other
+                // post-headers failure path, rather than relying on Kestrel to RST the
+                // incomplete Content-Length response.
+                AbortStartedResponse(context);
+            }
 
             var filePath = GetRequestFilePath(context);
             LogWithDedup(RecentStreamingWriteTimeouts, filePath, suppressed =>

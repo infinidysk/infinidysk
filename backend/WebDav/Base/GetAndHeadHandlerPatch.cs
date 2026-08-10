@@ -104,7 +104,9 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     httpContext, request, response, isHeadRequest, range, copyStart, copyEnd, readCts, ct)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException oce) when (!httpContext.RequestAborted.IsCancellationRequested)
+        catch (OperationCanceledException oce) when (
+            oce is not StreamingWriteTimeoutException
+            && !httpContext.RequestAborted.IsCancellationRequested)
         {
             throw new StreamingReadTimeoutException(
                 "WebDAV read exceeded the " +

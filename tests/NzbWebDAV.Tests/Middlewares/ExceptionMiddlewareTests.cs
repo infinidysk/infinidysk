@@ -256,6 +256,54 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task StreamingWriteTimeout_AfterResponseStarted_AbortsAndLogsWriteStall()
+    {
+        // SWTE must reach the dedicated StreamingWriteTimeoutException branch and log
+        // "streaming-write-timeout", not be wrapped into SRTE and mislabeled as
+        // "streaming-read-timeout-after-headers" (issue #949).
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: true, lifetimeFeature);
+        context.Request.Path = $"/content/write-stall-after-{Guid.NewGuid():N}.mkv";
+        var middleware = CreateMiddleware(
+            _ => throw new StreamingWriteTimeoutException(
+                "Client stopped reading; streaming write timed out."));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        Assert.True(lifetimeFeature.Aborted);
+        var logged = Assert.Single(
+            events,
+            e => e.RenderMessage().Contains("streaming-write-timeout", StringComparison.Ordinal)
+                 && e.Level == LogEventLevel.Warning
+                 && e.Exception is null);
+        Assert.Contains("write stalled", logged.RenderMessage(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            logged.RenderMessage(),
+            "streaming-read-timeout",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task StreamingWriteTimeout_BeforeResponseStarted_Returns499WithoutAborting()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: false, lifetimeFeature);
+        context.Request.Path = $"/content/write-stall-before-{Guid.NewGuid():N}.mkv";
+        var middleware = CreateMiddleware(
+            _ => throw new StreamingWriteTimeoutException(
+                "Client stopped reading; streaming write timed out."));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        Assert.Equal(499, context.Response.StatusCode);
+        Assert.False(lifetimeFeature.Aborted);
+        Assert.Single(
+            events,
+            e => e.RenderMessage().Contains("streaming-write-timeout", StringComparison.Ordinal)
+                 && e.Level == LogEventLevel.Warning);
+    }
+
+    [Fact]
     public async Task MissingArticle_CoalescesUnicodePathVariants()
     {
         var segmentId = $"<{Guid.NewGuid():N}@test>";

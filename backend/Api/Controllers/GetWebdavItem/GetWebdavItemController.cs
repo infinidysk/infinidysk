@@ -210,7 +210,9 @@ public class GetWebdavItemController(
                     throw;
                 }
             }
-            catch (OperationCanceledException oce) when (!HttpContext.RequestAborted.IsCancellationRequested)
+            catch (OperationCanceledException oce) when (
+                oce is not StreamingWriteTimeoutException
+                && !HttpContext.RequestAborted.IsCancellationRequested)
             {
                 FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, "streaming-read-timeout");
                 throw new StreamingReadTimeoutException(
