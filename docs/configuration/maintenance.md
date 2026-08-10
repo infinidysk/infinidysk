@@ -16,6 +16,7 @@ Database housekeeping, scheduled orphan cleanup, and one-off tools.
 | Vacuum on startup | `db.is-startup-vacuum-enabled` | off | Reclaim SQLite space; may slow start |
 | SAB history retention (days) | `database.history-retention-days` | `90` | Does not delete WebDAV; `0` = keep all |
 | Health-check retention (days) | `database.healthcheck-retention-days` | `30` | `0` = keep all |
+| Raw fetch-event retention (hours) [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since } | `metrics.fetch-retention-hours` | `24` | Raw `SegmentFetches` / `FailoverMisses`; rollups kept; `0` = rollup-only (~1 h floor) |
 | Enable daily orphan cleanup | `maintenance.remove-orphaned-schedule-enabled` | off | Remove Orphaned Files schedule |
 | Daily run time | `maintenance.remove-orphaned-schedule-time` | midnight (`0`) | Minutes from midnight; uses container `TZ` |
 

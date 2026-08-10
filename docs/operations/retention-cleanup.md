@@ -10,6 +10,21 @@
 
 Configure in **Settings → Maintenance**.
 
+## Metrics database
+
+InfiniDysk stores streaming and provider metrics in a separate SQLite file (`metrics.sqlite` under `CONFIG_PATH`). Size grows with throughput because each article fetch writes a raw row to `SegmentFetches`.
+
+| Tier | Tables | Default retention |
+|------|--------|-------------------|
+| Raw fetch events | `SegmentFetches`, `FailoverMisses` | 24 hours (`metrics.fetch-retention-hours`) |
+| Events + minute rollups | `MetricEvents`, `ThroughputMinutes`, `ProviderMinutes` | 7 days |
+| Read sessions | `ReadSessions` | 90 days |
+| Hourly rollups | `ProviderHourly`, `FailoverHourly` | 365 days (folded into lifetime totals) |
+
+**Size expectations:** on high-throughput hosts, a few hundred MB per TB/day of sustained throughput is normal — proportional growth from raw fetch rows, not a leak. Shrinking `metrics.fetch-retention-hours` reduces raw-row depth; minute and hourly rollups still carry aggregate throughput and provider stats.
+
+Setting `metrics.fetch-retention-hours` to `0` requests rollup-only retention; the hourly sweep enforces a one-hour floor on raw rows. Configure in **Settings → Maintenance** or via `METRICS_FETCH_RETENTION_HOURS` (headless ENV).
+
 ## NZB blobs
 
 Blobs under `{CONFIG_PATH}/blobs/` remain while referenced by queue, history, or mounted `/content`. When the last reference drops, background cleanup removes them. History retention alone does not make mounts eligible for orphan deletion.
