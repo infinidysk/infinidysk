@@ -1,11 +1,11 @@
 name: Feature request
-description: Suggest an improvement to NzbDav
+description: Suggest an improvement to InfiniDysk
 type: Feature
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for sharing an idea. Feature requests should describe a legitimate use case for NzbDav; the project supports legally obtained content only.
+        Thanks for sharing an idea. Feature requests should describe a legitimate use case for InfiniDysk; the project supports legally obtained content only.
 
   - type: checkboxes
     id: prerequisites

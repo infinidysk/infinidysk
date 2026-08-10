@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem in NzbDav
+description: Report a reproducible problem in InfiniDysk
 type: Bug
 body:
   - type: markdown
@@ -7,7 +7,7 @@ body:
       value: |
         Thanks for taking the time to report a problem.
 
-        Please do not include Usenet credentials, API keys, passwords, NZB contents, or other private data. NzbDav supports legally obtained content only; reports involving copyright infringement will be closed.
+        Please do not include Usenet credentials, API keys, passwords, NZB contents, or other private data. InfiniDysk supports legally obtained content only; reports involving copyright infringement will be closed.
 
   - type: checkboxes
     id: prerequisites
@@ -16,14 +16,14 @@ body:
       options:
         - label: I have searched existing issues and did not find a duplicate.
           required: true
-        - label: I am using NzbDav with legally obtained content.
+        - label: I am using InfiniDysk with legally obtained content.
           required: true
 
   - type: input
     id: version
     attributes:
-      label: NzbDav version
-      description: Enter the version shown in the NzbDav UI or the Docker image tag.
+      label: InfiniDysk version
+      description: Enter the version shown in the InfiniDysk UI or the Docker image tag.
       placeholder: "e.g. 0.6.4 or ghcr.io/infinidysk/infinidysk:0.6.4"
     validations:
       required: true
@@ -88,7 +88,7 @@ body:
     attributes:
       label: Technical support pack, relevant logs, or screenshots
       description: |
-        For the most useful diagnostics, open **Settings → Support** in NzbDav and select
+        For the most useful diagnostics, open **Settings → Support** in InfiniDysk and select
         **Generate & download**. Review the downloaded ZIP, then drag it into this field to upload it.
         The pack automatically redacts credentials, API keys, tokens, URL credentials, sensitive URL
         parameters, and IP addresses; it can still contain file names, paths, account usernames, and DNS
