@@ -8,6 +8,7 @@ import { websocketServer } from "./websocket.server";
 import { safeDecodePath, shouldProxyToBackend } from "./proxy-path";
 import { logger } from "./logger";
 import { authMiddleware } from "~/auth/auth-middleware.server";
+import { getSessionUser } from "~/auth/authentication.server";
 import { setApiKeyForAuthenticatedRequests } from "./inject-api-key.server";
 import {
   BACKEND_FAILURE_LOG_THROTTLE_MS,
@@ -130,6 +131,24 @@ const credentialRateLimiter = rateLimit({
 app.use(async (req, res, next) => {
   if (shouldProxyToBackend(req.method, req.path)) {
     await setApiKeyForAuthenticatedRequests(req);
+
+    const decodedPath = safeDecodePath(req.path);
+    if (
+      decodedPath !== null
+      && req.method.toUpperCase() === "POST"
+      && (decodedPath === "/api/delete-webdav-item"
+        || decodedPath.startsWith("/api/delete-webdav-item/"))
+    ) {
+      const user = await getSessionUser(req);
+      if (user?.role === "readonly") {
+        res.status(403).json({
+          status: false,
+          error: "Read-only users cannot delete files.",
+        });
+        return;
+      }
+    }
+
     return forwardToBackend(req, res, next);
   }
   next();
