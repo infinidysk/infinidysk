@@ -1,3 +1,4 @@
+using System.Text;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Services.Metrics;
@@ -164,6 +165,67 @@ public class StreamHelperTests
                 logEvent.RenderMessage().Contains(fileName, StringComparison.Ordinal));
             Assert.Single(sink.Events, logEvent =>
                 logEvent.RenderMessage().Contains(otherFileName, StringComparison.Ordinal));
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+    }
+
+
+    [Fact]
+    public async Task ZeroFillLogLimiter_CoalescesUnicodeFilenameVariants()
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        var baseName = $"unicode-{Guid.NewGuid():N}";
+        var fileNameNfc = baseName + "\u00E9.bin";
+        var fileNameNfd = baseName + "e\u0301.bin";
+
+        try
+        {
+            ZeroFillLogLimiter.Write(
+                "Article {SegmentId} missing from {FileName}; filling {Bytes} bytes.",
+                "one", fileNameNfc, 100);
+            ZeroFillLogLimiter.Write(
+                "Article {SegmentId} missing from {FileName}; filling {Bytes} bytes.",
+                "two", fileNameNfd, 100);
+
+            await Task.Yield();
+
+            Assert.Single(sink.Events, logEvent =>
+                logEvent.RenderMessage().Contains(baseName, StringComparison.Ordinal));
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+    }
+
+    [Fact]
+    public async Task ThrottledSegmentWarning_CoalescesUnicodeFilenameVariants()
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        var baseName = $"unicode-{Guid.NewGuid():N}";
+        var keyNfc = $"provider|segment|{baseName}\u00E9.bin";
+        var keyNfd = $"provider|segment|{baseName}e\u0301.bin";
+
+        try
+        {
+            ThrottledSegmentWarning.Write(keyNfc, "Segment warning for {Key}", keyNfc);
+            ThrottledSegmentWarning.Write(keyNfd, "Segment warning for {Key}", keyNfd);
+            await Task.Yield();
+            Assert.Single(sink.Events, logEvent =>
+                logEvent.RenderMessage().Contains("Segment warning", StringComparison.Ordinal));
         }
         finally
         {

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using NzbWebDAV.Extensions;
 using Serilog;
 
@@ -29,7 +30,8 @@ internal static class ZeroFillLogLimiter
         string? context = null)
     {
         var now = DateTime.UtcNow;
-        var state = Windows.GetOrAdd(fileName, static _ => new WindowState());
+        var key = fileName.Normalize(NormalizationForm.FormC);
+        var state = Windows.GetOrAdd(key, static _ => new WindowState());
         var shouldLog = false;
         var suppressed = 0;
 

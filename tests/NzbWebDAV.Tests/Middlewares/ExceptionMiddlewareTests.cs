@@ -256,6 +256,29 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task MissingArticle_CoalescesUnicodePathVariants()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var baseName = $"unicode-{Guid.NewGuid():N}";
+        var pathNfc = $"/content/{baseName}\u00E9.mkv";
+        var pathNfd = $"/content/{baseName}e\u0301.mkv";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var contextNfc = CreateContext(hasStarted: false, lifetimeFeature);
+        contextNfc.Request.Path = pathNfc;
+        var contextNfd = CreateContext(hasStarted: false, lifetimeFeature);
+        contextNfd.Request.Path = pathNfd;
+        var middleware = CreateMiddleware(_ => throw new UsenetArticleNotFoundException(segmentId));
+        var events = await CaptureLogsAsync(async () =>
+        {
+            await middleware.InvokeAsync(contextNfc);
+            await middleware.InvokeAsync(contextNfd);
+        });
+        Assert.Single(events, e => e.Level == LogEventLevel.Error
+            && e.RenderMessage().Contains("missing articles", StringComparison.Ordinal)
+            && e.RenderMessage().Contains(segmentId, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task MissingArticleWithDavItem_RecordsSegmentForQueueFailFast()
     {
         // Re-grabs of the same release must fail the step-0 queue precheck pre-import

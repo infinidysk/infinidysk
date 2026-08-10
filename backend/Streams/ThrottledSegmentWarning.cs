@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using Serilog;
 
 namespace NzbWebDAV.Streams;
@@ -21,7 +22,8 @@ internal static class ThrottledSegmentWarning
         params object?[] propertyValues)
     {
         var now = DateTime.UtcNow;
-        var state = Windows.GetOrAdd(key, static _ => new WindowState());
+        var dedupeKey = key.Normalize(NormalizationForm.FormC);
+        var state = Windows.GetOrAdd(dedupeKey, static _ => new WindowState());
         var shouldLog = false;
         var suppressed = 0;
 
