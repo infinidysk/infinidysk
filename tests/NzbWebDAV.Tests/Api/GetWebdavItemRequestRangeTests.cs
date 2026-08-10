@@ -44,4 +44,31 @@ public class GetWebdavItemRequestRangeTests
     {
         Assert.Equal(expected, GetWebdavItemController.ResolveRangeEnd(rangeEnd, fileSize));
     }
+
+    [Theory]
+    [InlineData("550e8400-e29b-41d4-a716-446655440000")]
+    [InlineData("abc123")]
+    [InlineData("player_session-1")]
+    public void NormalizePlayerSession_AcceptsShortOpaqueTokens(string raw)
+    {
+        Assert.Equal(raw, GetWebdavItemRequest.NormalizePlayerSession(raw));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("has spaces")]
+    [InlineData("has?query&chars")]
+    [InlineData("newline\ninjection")]
+    public void NormalizePlayerSession_RejectsMissingOrUnsafeValues(string? raw)
+    {
+        Assert.Null(GetWebdavItemRequest.NormalizePlayerSession(raw));
+    }
+
+    [Fact]
+    public void NormalizePlayerSession_RejectsOverlongValues()
+    {
+        Assert.Null(GetWebdavItemRequest.NormalizePlayerSession(new string('a', 65)));
+        Assert.NotNull(GetWebdavItemRequest.NormalizePlayerSession(new string('a', 64)));
+    }
 }

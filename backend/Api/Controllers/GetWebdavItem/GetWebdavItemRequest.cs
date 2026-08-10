@@ -16,6 +16,9 @@ public class GetWebdavItemRequest
     // The controller resolves this to a concrete start/end once fileSize is known.
     public long? SuffixLength { get; init; }
     public bool ShouldDownload { get; init; }
+    // Optional non-secret id that lets an in-app player instance correlate its
+    // requests with the active-read broadcast. Carries no authority.
+    public string? PlayerSession { get; init; }
 
     public GetWebdavItemRequest(HttpContext context)
     {
@@ -28,6 +31,9 @@ public class GetWebdavItemRequest
 
         // determine whether to download
         ShouldDownload = context.GetQueryParam("download")?.ToLowerInvariant() == "true";
+
+        // short opaque client-supplied correlation token; ignore invalid values
+        PlayerSession = NormalizePlayerSession(context.GetQueryParam("playerSession"));
 
         // authenticate the downloadKey
         var downloadKey = context.Request.Query["downloadKey"];
@@ -97,6 +103,20 @@ public class GetWebdavItemRequest
         rangeStart = start;
         rangeEnd = parsedEnd;
         return true;
+    }
+
+    /// <summary>
+    /// Keep only short, URL-safe opaque tokens. The value flows into the
+    /// active-read dedupe key, so reject anything long or exotic rather than
+    /// letting a client mint unbounded key cardinality.
+    /// </summary>
+    internal static string? NormalizePlayerSession(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw) || raw.Length > 64) return null;
+        foreach (var c in raw)
+            if (!char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_'))
+                return null;
+        return raw;
     }
 
     private static bool VerifyDownloadKey(string? downloadKey, string path, ConfigManager configManager)

@@ -160,7 +160,7 @@ public class GetWebdavItemController(
                 request.Item,
                 request.SuffixLength.HasValue ? null : request.RangeStart ?? 0,
                 ResolveReadRegion(request));
-            var sessionId = TrackReadSession(request.Item);
+            var sessionId = TrackReadSession(request);
             HttpContext.Items["readSessionId"] = sessionId;
             using var scope = providerUsageTracker.BeginScope(sessionId);
             using var metricsScope = MultiProviderNntpClient.BeginReadSessionScope(sessionId);
@@ -313,15 +313,16 @@ public class GetWebdavItemController(
         });
     }
 
-    private Guid TrackReadSession(string itemPath)
+    private Guid TrackReadSession(GetWebdavItemRequest request)
     {
         // Provisional name from the URL path. GetWebdavItem replaces it with
         // item.Name (the real human-readable filename) once the store lookup runs.
-        var fileName = Path.GetFileName(itemPath);
+        var fileName = Path.GetFileName(request.Item);
         var userAgent = Request.Headers.UserAgent.ToString();
         var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString();
         var clientKey = $"{clientIp}|{userAgent}";
-        return activeReadRegistry.GetOrCreate(itemPath, clientKey, fileName, fileSize: null, userAgent, clientIp);
+        return activeReadRegistry.GetOrCreate(
+            request.Item, clientKey, fileName, fileSize: null, userAgent, clientIp, request.PlayerSession);
     }
 
     [HttpHead]

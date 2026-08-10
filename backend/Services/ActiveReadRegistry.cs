@@ -34,9 +34,10 @@ public class ActiveReadRegistry
         string fileName,
         long? fileSize,
         string? clientUserAgent = null,
-        string? clientIp = null)
+        string? clientIp = null,
+        string? playerSession = null)
     {
-        var key = BuildKey(path, clientKey);
+        var key = BuildKey(path, clientKey, playerSession);
         var now = DateTimeOffset.UtcNow;
 
         while (true)
@@ -61,6 +62,7 @@ public class ActiveReadRegistry
                 ClientKey = clientKey,
                 ClientUserAgent = clientUserAgent,
                 ClientIp = clientIp,
+                PlayerSession = playerSession,
                 StartedAt = now,
                 LastActivityAt = now,
             };
@@ -132,9 +134,13 @@ public class ActiveReadRegistry
     /// Returns the pruned entries so callers can clear external bookkeeping
     /// and persist a terminal record of the session.
     /// </summary>
-    public IReadOnlyList<Entry> PruneExpired()
+    public IReadOnlyList<Entry> PruneExpired() => PruneExpired(DateTimeOffset.UtcNow);
+
+    // Test-visible overload: lets tests expire entries without waiting out the
+    // activity window in real time.
+    internal IReadOnlyList<Entry> PruneExpired(DateTimeOffset now)
     {
-        var cutoff = DateTimeOffset.UtcNow - ActivityWindow;
+        var cutoff = now - ActivityWindow;
         var expired = _entries
             .Where(kv => kv.Value.LastActivityAt < cutoff)
             .Select(kv => kv.Value)
@@ -145,7 +151,7 @@ public class ActiveReadRegistry
             // this expired entry — a fresh session for the same player and
             // file may have already claimed the key, in which case we leave
             // the new mapping intact.
-            var key = BuildKey(entry.Path, entry.ClientKey);
+            var key = BuildKey(entry.Path, entry.ClientKey, entry.PlayerSession);
             ((ICollection<KeyValuePair<string, Guid>>)_keyToId)
                 .Remove(new KeyValuePair<string, Guid>(key, entry.Id));
             _entries.TryRemove(entry.Id, out _);
@@ -155,7 +161,13 @@ public class ActiveReadRegistry
 
     public int Count => _entries.Count;
 
-    private static string BuildKey(string path, string clientKey) => path + "\n" + clientKey;
+    // The player-session token joins the dedupe key so two in-app players
+    // streaming the same file from the same browser/IP still get distinct
+    // sessions; requests without one (external players) dedupe as before.
+    private static string BuildKey(string path, string clientKey, string? playerSession)
+        => playerSession is null
+            ? path + "\n" + clientKey
+            : path + "\n" + clientKey + "\nps:" + playerSession;
 
     public sealed class Entry
     {
@@ -166,6 +178,7 @@ public class ActiveReadRegistry
         public string ClientKey { get; init; } = "";
         public string? ClientUserAgent { get; set; }
         public string? ClientIp { get; set; }
+        public string? PlayerSession { get; init; }
         public DateTimeOffset StartedAt { get; init; }
         public DateTimeOffset LastActivityAt { get; set; }
         public long BytesRead;

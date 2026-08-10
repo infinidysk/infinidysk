@@ -822,10 +822,12 @@ export type ActiveRead = {
     startedAt: number,
     lastActivityAt: number,
     bytesRead: number,
+    bytesFetched?: number,
     currentOffset: number,
     fileSize: number | null,
     clientIp?: string | null | undefined,
     clientUserAgent?: string | null | undefined,
+    playerSession?: string | null | undefined,
     providers: { host: string, nickname?: string | null | undefined, segments: number }[],
 }
 
