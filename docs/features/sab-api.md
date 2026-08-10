@@ -6,15 +6,26 @@ InfiniDysk implements the SABnzbd-compatible operations used by Sonarr, Radarr, 
 
 - `version`, `status`, `fullstatus`, `get_config`, and `get_cats`
 - `addfile` and `addurl`
-- `queue` listing and `queue&name=delete`
+- `queue` listing and `queue&name=delete`, `queue&name=pause`, `queue&name=resume`, `queue&name=priority`, and `queue&name=move`
 - `pause` / `resume` (also `queue&name=pause` / `queue&name=resume`) and `speedlimit` [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
+- `change_cat` for per-job category changes on queued items
+- `retry` for failed history re-queue (single or bulk) [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 - `history` listing and `history&name=delete`
 
 Queue and history filters accept both `cat` and `category`. The default category sentinel returned by `get_cats` is `*`.
 
 ## Pause, resume, and speed limit [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
-`mode=pause` / `mode=resume` stop and restart **new** queue dequeues. Workers already downloading finish naturally. WebDAV mounts keep serving — pause does not interrupt playback. Queue JSON reports `paused` accurately. Items added with SAB priority `-2` (Paused) are skipped until their priority changes; queue slots report `status: Paused` for those jobs.
+`mode=pause` / `mode=resume` stop and restart **new** queue dequeues. Workers already downloading finish naturally unless a per-job pause cancels them. WebDAV mounts keep serving — pause does not interrupt playback. Queue JSON reports `paused` accurately. Items added with SAB priority `-2` (Paused) are skipped until their priority changes; queue slots report `status: Paused` for those jobs.
+
+
+Per-job pause and resume accept UUID(s) via `value` (comma-separated or repeated) or a JSON body `{"nzo_ids":["…"]}` on `mode=pause`, `mode=resume`, and the `queue&name=pause` / `queue&name=resume` aliases. Without ids, pause/resume applies to the whole queue coordinator (legacy global behavior).
+
+`mode=queue&name=priority` sets priority for one or more jobs. Pass the SAB priority code as `value2` (or `priority`): `-2` Paused, `-1` Low, `0` Normal, `1` High, `2` Force. Paused uses the same per-job pause path as `queue&name=pause`.
+
+`mode=change_cat` sets category for queued jobs (not actively downloading). Pass `cat` / `category` plus job id(s) in `value` or `nzo_ids`. Categories must match configured API categories.
+
+`mode=retry` re-queues failed history items. Accepts a single `value` id or multiple ids (comma-separated / repeated `value`, or `nzo_ids` JSON). Bulk retry returns `nzo_ids` for successes and a `failed` array with per-item errors when some items cannot be retried. History bulk actions in the admin UI do not change category on retry (category is copied from the history row).
 
 `mode=speedlimit` is **accepted and stored** and reflected in queue JSON (`speedlimit` / `speedlimit_abs`). Byte-accurate download throttling is **not** enforced yet — that work is tracked in [#375](https://github.com/infinidysk/infinidysk/issues/375).
 
@@ -46,8 +57,8 @@ The same allowlist can be set with `TRUSTED_INTERNAL_HOSTS` when the UI setting 
 
 ## Delete behavior
 
-Queue delete accepts UUID(s), repeated `value` parameters, or `value=all`. SAB `del_files=1` has no extra effect (no incomplete-download directory).
+Queue delete accepts UUID(s), repeated `value` parameters, `value=all`, or `value=all` with `cat` / `category` to clear only that category. SAB `del_files=1` has no extra effect (no incomplete-download directory).
 
-History delete accepts UUIDs, `value=all`, or `value=failed`. The admin UI can delete mounted content for completed jobs with InfiniDysk-specific `del_completed_files=1` — download clients should **not** send this after importing a symlink/STRM, or playback sources disappear.
+History delete accepts UUIDs, `value=all`, or `value=failed`. The admin UI can delete mounted content for completed jobs with InfiniDysk-specific `del_completed_files=1` — download clients should **not** send this after importing a symlink/STRM, or playback sources disappear. The history UI also offers **Clear failed** and **Clear all** actions that call `history&name=delete` with `value=failed` or `value=all`.
 
 [SABnzbd settings](../configuration/sabnzbd.md)
