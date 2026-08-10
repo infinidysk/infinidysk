@@ -41,12 +41,9 @@ public class GetHistoryController(
         var historyItems = await historyItemsPromise.ConfigureAwait(false);
 
         // get download folders
-        var downloadFolderIds = historyItems.Select(x => x.DownloadDirId).ToHashSet();
-        var davItems = await dbClient.Ctx.Items
-            .Where(x => downloadFolderIds.Contains(x.Id))
-            .ToArrayAsync(request.CancellationToken).ConfigureAwait(false);
-        var davItemsDict = davItems
-            .ToDictionary(x => x.Id, x => x);
+        var downloadFolderIds = historyItems.Select(x => x.DownloadDirId).Where(x => x.HasValue).Select(x => x!.Value);
+        var davItems = await dbClient.GetItemsByIdsBatchedAsync(downloadFolderIds, ct: request.CancellationToken).ConfigureAwait(false);
+        var davItemsDict = davItems.ToDictionary(x => x.Id, x => x);
 
         // get slots (in-memory provider counts only survive until app restart)
         var providerUsages = providerUsageTracker.SnapshotMany(historyItems.Select(x => x.Id));

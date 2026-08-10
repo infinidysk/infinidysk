@@ -2,6 +2,7 @@ using System.Text;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Database;
@@ -44,6 +45,15 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         {
             yield return child;
         }
+    }
+
+    public async Task<List<DavItem>> GetItemsByIdsBatchedAsync(
+        IEnumerable<Guid> ids, int batchSize = 500, CancellationToken ct = default)
+    {
+        var result = new List<DavItem>();
+        foreach (var batch in ids.Distinct().ToBatches(batchSize))
+            result.AddRange(await Ctx.Items.AsNoTracking().Where(x => batch.Contains(x.Id)).ToListAsync(ct).ConfigureAwait(false));
+        return result;
     }
 
     public Task<DavItem?> GetDirectoryChildAsync(Guid dirId, string childName, CancellationToken ct = default)

@@ -154,6 +154,18 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetItemsByIdsBatchedAsync_ReturnsAllItemsAcrossLargeIdSets()
+    {
+        var ids = Enumerable.Range(0, 600).Select(_ => Guid.NewGuid()).ToList();
+        _context.Items.AddRange(ids.Select(id => DavItem.New(id, DavItem.Root, $"{id:N}.mkv", 10,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile, null, null, null, null)));
+        await _context.SaveChangesAsync(); _context.ChangeTracker.Clear();
+        var found = await _client.GetItemsByIdsBatchedAsync(ids, batchSize: 500);
+        Assert.Equal(600, found.Count);
+        Assert.Equal(ids.OrderBy(x => x).ToList(), found.Select(x => x.Id).OrderBy(x => x).ToList());
+    }
+
+    [Fact]
     public async Task GetFileById_NonGuidName_ReturnsNull()
     {
         Assert.Null(await _client.GetFileById("not-a-guid"));
