@@ -167,6 +167,18 @@ public class RarAggregatorTests
             () => RarAggregator.ResolvePublishedFileSize([a, b]));
     }
 
+    [Fact]
+    public void ImportableVideoNamer_NormalizesSingleFileArchiveObfuscatedName()
+    {
+        Assert.Equal(
+            "Movie.Release.2026.mkv",
+            ImportableVideoNamer.Normalize(
+                "b082fa0beaa644d3aa01045d5b8d0b36.xyz",
+                ".mkv",
+                "Movie.Release.2026",
+                allowBaseRename: true));
+    }
+
     private static RarProcessor.StoredFileSegment WithSize(
         RarProcessor.StoredFileSegment segment,
         long fileUncompressedSize,

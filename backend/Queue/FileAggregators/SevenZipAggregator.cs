@@ -31,12 +31,11 @@ public class SevenZipAggregator(
             var pathWithinArchive = sevenZipFile.PathWithinArchive;
             var davMultipartFileMeta = sevenZipFile.DavMultipartFileMeta;
             var parentDirectory = EnsureParentDirectory(pathWithinArchive);
-            var name = SanitizeDavName(Path.GetFileName(pathWithinArchive));
-
-            // If there is only one file in the archive and the file-name is obfuscated,
-            // then rename the file to the same name as the containing mount directory.
-            if (sevenZipFiles.Count == 1 && ObfuscationUtil.IsProbablyObfuscated(name))
-                name = mountDirectory.Name + Path.GetExtension(name);
+            var name = ImportableVideoNamer.Normalize(
+                SanitizeDavName(Path.GetFileName(pathWithinArchive)),
+                sevenZipFile.SniffedVideoExtension,
+                mountDirectory.Name,
+                allowBaseRename: sevenZipFiles.Count == 1);
 
             var davMultipartFile = new DavMultipartFile()
             {

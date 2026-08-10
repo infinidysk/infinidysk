@@ -32,12 +32,11 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
     {
         var pathInArchive = result.PathInArchive;
         var parentDirectory = EnsureParentDirectory(pathInArchive);
-        var name = SanitizeDavName(Path.GetFileName(pathInArchive));
-
-        // Mirror the eager path's obfuscation rename: when the archive
-        // contains a single obfuscated file, name it after the mount folder.
-        if (ObfuscationUtil.IsProbablyObfuscated(name))
-            name = SanitizeDavName(mountDirectory.Name + Path.GetExtension(name));
+        var name = ImportableVideoNamer.Normalize(
+            SanitizeDavName(Path.GetFileName(pathInArchive)),
+            result.SniffedVideoExtension,
+            mountDirectory.Name,
+            allowBaseRename: true);
 
         var davMultipartFile = new DavMultipartFile
         {
@@ -94,12 +93,14 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
             var fileParts = SortByPartNumber(archiveFile.Value);
             var (fileSize, aesParams) = ResolvePublishedSizeAndAes(fileParts);
             var parentDirectory = EnsureParentDirectory(pathWithinArchive);
-            var name = SanitizeDavName(Path.GetFileName(pathWithinArchive));
-
-            // If there is only one file in the archive and the file-name is obfuscated,
-            // then rename the file to the same name as the containing mount directory.
-            if (archiveFiles.Count == 1 && ObfuscationUtil.IsProbablyObfuscated(name))
-                name = SanitizeDavName(mountDirectory.Name + Path.GetExtension(name));
+            var sniffedVideoExtension = archiveFile.Value
+                .Select(x => x.SniffedVideoExtension)
+                .FirstOrDefault(x => x is not null);
+            var name = ImportableVideoNamer.Normalize(
+                SanitizeDavName(Path.GetFileName(pathWithinArchive)),
+                sniffedVideoExtension,
+                mountDirectory.Name,
+                allowBaseRename: archiveFiles.Count == 1);
 
             var davMultipartFile = new DavMultipartFile()
             {
