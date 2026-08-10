@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
@@ -20,6 +20,7 @@ public class RemoveFromQueueController(
     {
         var ids = request.DeleteAll
             ? await dbClient.Ctx.QueueItems.AsNoTracking()
+                .Where(item => request.Category == null || item.Category == request.Category)
                 .Select(item => item.Id)
                 .ToListAsync(request.CancellationToken)
                 .ConfigureAwait(false)
