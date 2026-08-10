@@ -10,11 +10,14 @@ export type ModalProps = {
   footer?: ReactNode;
   onClose: () => void;
   className?: string;
+  /** Box width preset; "default" matches the historical max-w-xl. */
+  size?: "default" | "wide";
   /** When true, backdrop / Escape / X cannot dismiss the dialog. */
   preventClose?: boolean;
 };
 
-export function Modal({ open, title, children, footer, onClose, className = "", preventClose = false }: ModalProps) {
+export function Modal({ open, title, children, footer, onClose, className = "", size = "default", preventClose = false }: ModalProps) {
+  const sizeClass = size === "wide" ? "max-w-5xl" : "max-w-xl";
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -45,7 +48,7 @@ export function Modal({ open, title, children, footer, onClose, className = "", 
         if (open) onClose();
       }}
     >
-      <div className={`modal-box max-h-[90dvh] w-full max-w-xl overflow-y-auto ${className}`}>
+      <div className={`modal-box max-h-[90dvh] w-full ${sizeClass} overflow-y-auto ${className}`}>
         <form method="dialog">
           <Button
             type="submit"

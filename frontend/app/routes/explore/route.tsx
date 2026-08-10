@@ -12,8 +12,9 @@ import { getDownloadKey } from "~/auth/downloads.server";
 import { Loading } from "../_index/components/loading/loading";
 import { formatFileSize } from "~/utils/file-size";
 import { parseExploreWebdavPath } from "~/utils/path";
-import { fileKindRank, getExtension, getIcon } from "./file-kind/file-kind";
+import { fileKindRank, getExtension, getIcon, isPlayableMedia } from "./file-kind/file-kind";
 import { ItemMenu } from "./item-menu/item-menu";
+import { MediaPreview } from "./media-preview/media-preview";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { classNames } from "~/utils/styling";
 import { Icon, Checkbox, Button } from "~/components/ui";
@@ -102,12 +103,15 @@ function Body(props: ExplorePageData) {
     const [deletePreview, setDeletePreview] = useState<DeletePreviewAggregate | null>(null);
     const [deleteError, setDeleteError] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [preview, setPreview] = useState<{ file: ExploreFile, url: string } | null>(null);
     const lastClickedRef = useRef<string | null>(null);
 
-    // Reset selection and query when navigating between folders.
+    // Reset selection and query when navigating between folders; closing the
+    // preview here also releases its stream instead of leaving it orphaned.
     useEffect(() => {
         setSelected(new Set());
         setQuery("");
+        setPreview(null);
         lastClickedRef.current = null;
     }, [location.pathname]);
 
@@ -168,6 +172,14 @@ function Body(props: ExplorePageData) {
         const extensionQueryParam = extension ? `&extension=${extension}` : '';
         return `/view/${relativePath}?downloadKey=${file.downloadKey}${extensionQueryParam}`;
     }, [location.pathname]);
+
+    // Playable media opens in the in-app preview; everything else keeps the
+    // direct-link behavior. Returns true when the preview took over.
+    const openPreview = useCallback((file: ExploreFile) => {
+        if (!isPlayableMedia(file)) return false;
+        setPreview({ file, url: getFilePath(file) });
+        return true;
+    }, [getFilePath]);
 
     const requestDelete = useCallback((names: string[]) => {
         if (names.length === 0) return;
@@ -422,8 +434,11 @@ function Body(props: ExplorePageData) {
                                 <a
                                     href={getFilePath(x as ExploreFile)}
                                     className={getItemContentClassName(canDelete, true)}
+                                    onClick={e => {
+                                        if (openPreview(x as ExploreFile)) e.preventDefault();
+                                    }}
                                 >
-                                    <Icon name={getIcon(x as ExploreFile)} className="text-base-content/50 shrink-0 !text-[34px]" />
+                                    <Icon name={getIcon(x)} className="text-base-content/50 shrink-0 !text-[34px]" />
                                     <div className="flex flex-col gap-1 leading-snug text-base-content">
                                         <div className="break-all font-medium">{x.name}</div>
                                         <div className="text-xs text-base-content/50">{formatFileSize(x.size)}</div>
@@ -434,6 +449,9 @@ function Body(props: ExplorePageData) {
                                     openClassName={ITEM_MENU_OPEN_CLASS}
                                     exploreFile={x as ExploreFile}
                                     previewPath={getFilePath(x as ExploreFile)}
+                                    {...(isPlayableMedia(x)
+                                        ? { onPreview: () => { openPreview(x as ExploreFile); } }
+                                        : {})}
                                     {...(canDelete ? { onRemove: () => requestDelete([x.name]) } : {})} />
                             </div>
                         );
@@ -442,6 +460,16 @@ function Body(props: ExplorePageData) {
             }
             </>}
             {showSkeleton && <Loading className="w-[calc(100%-75px)] min-h-0 flex-1 grow" />}
+            {preview && (
+                <MediaPreview
+                    fileName={preview.file.name}
+                    filePath={getRelativePath(getWebdavPathDecoded(location.pathname), preview.file.name)}
+                    mimeType={preview.file.mimeType}
+                    sizeBytes={preview.file.size ?? null}
+                    previewUrl={preview.url}
+                    onClose={() => setPreview(null)}
+                />
+            )}
             <ConfirmModal
                 show={pendingDelete !== null}
                 title={pendingDelete && pendingDelete.length > 1 ? "Delete items" : "Delete item"}

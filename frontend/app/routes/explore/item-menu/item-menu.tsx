@@ -8,10 +8,12 @@ export type ItemMenuProps = {
     openClassName?: string
     exploreFile?: ExploreFile,
     previewPath?: string,
+    /** When set, Preview opens the in-app player instead of navigating. */
+    onPreview?: () => void,
     onRemove?: () => void,
 }
 
-export function ItemMenu({ className, openClassName, exploreFile, previewPath, onRemove }: ItemMenuProps): ReactNode {
+export function ItemMenu({ className, openClassName, exploreFile, previewPath, onPreview, onRemove }: ItemMenuProps): ReactNode {
     const [isOpen, setIsOpen] = useState(false);
     const exportNzbUrl = exploreFile ? `/api/download-nzb?nzbBlobId=${exploreFile.nzbBlobId}` : undefined;
     const downloadUrl = previewPath ? `${previewPath}&download=true` : undefined;
@@ -23,7 +25,9 @@ export function ItemMenu({ className, openClassName, exploreFile, previewPath, o
     }, []);
 
     const options = [
-        previewPath ? { option: <Preview />, linkTo: previewPath } : undefined,
+        onPreview
+            ? { option: <Preview />, onSelect: onPreview }
+            : previewPath ? { option: <Preview />, linkTo: previewPath } : undefined,
         downloadUrl ? { option: <Download />, linkTo: downloadUrl } : undefined,
         exploreFile?.nzbBlobId && exportNzbUrl ? { option: <ExportNzb />, linkTo: exportNzbUrl } : undefined,
         onRemove ? { option: <Remove />, variant: "danger" as const, onSelect: onRemove } : undefined,
