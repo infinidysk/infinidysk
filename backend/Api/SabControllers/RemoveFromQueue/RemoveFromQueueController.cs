@@ -20,7 +20,8 @@ public class RemoveFromQueueController(
     {
         var ids = request.DeleteAll
             ? await dbClient.Ctx.QueueItems.AsNoTracking()
-                .Where(item => request.Category == null || item.Category == request.Category)
+                .Where(item => request.Category == null ||
+                              EF.Functions.Collate(item.Category, "NOCASE") == request.Category)
                 .Select(item => item.Id)
                 .ToListAsync(request.CancellationToken)
                 .ConfigureAwait(false)

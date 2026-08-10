@@ -17,7 +17,8 @@ public class SetQueuePriorityRequest
     {
         var parsed = await SabNzoIdsParser.ParseAsync(httpContext, SigtermUtil.GetCancellationToken())
             .ConfigureAwait(false);
-        var priority = AddFileRequest.MapPriorityOption(httpContext.GetRequestParam("value2"));
+        var priority = AddFileRequest.MapPriorityOption(
+            httpContext.GetRequestParam("value2") ?? httpContext.GetRequestParam("priority"));
         return new SetQueuePriorityRequest
         {
             NzoIds = parsed.NzoIds,

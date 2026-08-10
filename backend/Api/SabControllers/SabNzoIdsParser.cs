@@ -35,12 +35,12 @@ internal static class SabNzoIdsParser
     {
         try
         {
-            await using var stream = context.Request.Body;
-            var deserialized = await JsonSerializer.DeserializeAsync<RequestBody>(stream, cancellationToken: ct)
+            var deserialized = await JsonSerializer.DeserializeAsync<RequestBody>(
+                    context.Request.Body, cancellationToken: ct)
                 .ConfigureAwait(false);
             return deserialized?.NzoIds ?? [];
         }
-        catch
+        catch (JsonException)
         {
             return [];
         }

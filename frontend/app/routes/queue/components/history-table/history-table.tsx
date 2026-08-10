@@ -215,9 +215,6 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
     const isReadOnly = useIsReadOnly();
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
-    const [isConfirmingClearFailed, setIsConfirmingClearFailed] = useState(false);
-    const [isConfirmingClearAll, setIsConfirmingClearAll] = useState(false);
-    const [bulkRetryError, setBulkRetryError] = useState<string | null>(null);
     const [isRetrying, setIsRetrying] = useState(false);
     const [retryError, setRetryError] = useState<string | null>(null);
 

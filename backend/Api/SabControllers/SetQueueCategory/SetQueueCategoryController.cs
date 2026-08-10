@@ -20,10 +20,10 @@ public class SetQueueCategoryController(
         if (request.NzoIds.Count == 0)
             return new SetQueueCategoryResponse { Status = true };
 
-        await queueManager.SetQueueItemsCategoryAsync(
+        var updatedIds = await queueManager.SetQueueItemsCategoryAsync(
             request.NzoIds, request.Category, dbClient, request.CancellationToken).ConfigureAwait(false);
 
-        foreach (var id in request.NzoIds)
+        foreach (var id in updatedIds)
             _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{id}|Queued");
 
         return new SetQueueCategoryResponse { Status = true };

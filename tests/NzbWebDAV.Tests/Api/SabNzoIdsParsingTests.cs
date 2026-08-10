@@ -27,7 +27,8 @@ public class SabNzoIdsParsingTests
         var fromBody = Guid.NewGuid();
         var context = CreateContext($"?value={fromQuery}");
         var json = JsonSerializer.Serialize(new { nzo_ids = new[] { fromBody } });
-        context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        await using var body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        context.Request.Body = body;
         context.Request.ContentType = "application/json";
 
         var result = await SabNzoIdsParser.ParseAsync(context, CancellationToken.None);

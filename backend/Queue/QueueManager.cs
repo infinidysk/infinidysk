@@ -294,12 +294,22 @@ public sealed class QueueManager : IDisposable
 
         await LockAsync(async () =>
         {
-            await dbClient.Ctx.QueueItems
-                .Where(item => queueItemIds.Contains(item.Id))
-                .ExecuteUpdateAsync(
+            var update = dbClient.Ctx.QueueItems
+                .Where(item => queueItemIds.Contains(item.Id));
+            if (priority != QueueItem.PriorityOption.Paused)
+            {
+                await update.ExecuteUpdateAsync(
+                    s => s
+                        .SetProperty(q => q.Priority, priority)
+                        .SetProperty(q => q.PauseUntil, (DateTime?)null),
+                    ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await update.ExecuteUpdateAsync(
                     s => s.SetProperty(q => q.Priority, priority),
-                    ct)
-                .ConfigureAwait(false);
+                    ct).ConfigureAwait(false);
+            }
         }, ct).ConfigureAwait(false);
 
         if (priority == QueueItem.PriorityOption.Paused)
@@ -308,17 +318,17 @@ public sealed class QueueManager : IDisposable
         AwakenQueue();
     }
 
-    public async Task SetQueueItemsCategoryAsync(
+    public async Task<List<Guid>> SetQueueItemsCategoryAsync(
         List<Guid> queueItemIds,
         string category,
         DavDatabaseClient dbClient,
         CancellationToken ct = default)
     {
-        if (queueItemIds.Count == 0) return;
+        if (queueItemIds.Count == 0) return [];
 
         var inProgressIds = _inProgress.Keys.ToHashSet();
         var eligibleIds = queueItemIds.Where(id => !inProgressIds.Contains(id)).ToList();
-        if (eligibleIds.Count == 0) return;
+        if (eligibleIds.Count == 0) return [];
 
         await LockAsync(async () =>
         {
@@ -329,6 +339,8 @@ public sealed class QueueManager : IDisposable
                     ct)
                 .ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
+
+        return eligibleIds;
     }
 
     private async Task CancelInProgressQueueItemsAsync(List<Guid> queueItemIds, CancellationToken ct)
