@@ -120,7 +120,7 @@ public class PropFindHandlerPatchTests
         var sanitized = PropFindHandlerPatch.SanitizePropFindMultiStatus(body);
         var document = XDocument.Parse(Encoding.UTF8.GetString(sanitized));
 
-        Assert.Equal(2, document.Descendants(Dav + "propstat").Count());
+        Assert.Single(document.Descendants(Dav + "propstat"));
         Assert.Contains(
             document.Descendants(Dav + "status").Select(element => element.Value),
             status => status.StartsWith("HTTP/1.1 500", StringComparison.Ordinal));
