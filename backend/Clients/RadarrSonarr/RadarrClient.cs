@@ -44,8 +44,10 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 
         try
         {
-            await CommandAsync(
-                new { name = "MoviesSearch", movieIds = new[] { movieIds.MovieId } },
+            await ExecuteWithTransientRetryAsync(
+                ct => CommandAsync(
+                    new { name = "MoviesSearch", movieIds = new[] { movieIds.MovieId } },
+                    ct),
                 ct).ConfigureAwait(false);
         }
         catch (Exception ex)

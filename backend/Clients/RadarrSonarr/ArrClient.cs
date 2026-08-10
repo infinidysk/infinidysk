@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Config;
+using Serilog;
 
 namespace NzbWebDAV.Clients.RadarrSonarr;
 
@@ -70,6 +71,47 @@ public class ArrClient(string host, string apiKey)
     protected async Task MarkHistoryFailed(int historyId, CancellationToken ct = default)
     {
         _ = await Post<object>($"/history/failed/{historyId}", new { }, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Retries transient Arr API failures for repair search notifications.
+    /// Delete/blocklist steps rely on <see cref="NzbWebDAV.Services.HealthCheckService.DecideArrLinkedRepairAsync"/> fail-safe instead.
+    /// </summary>
+    protected async Task ExecuteWithTransientRetryAsync(
+        Func<CancellationToken, Task> operation,
+        CancellationToken ct)
+    {
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                await operation(ct).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex) when (IsTransientArrFailure(ex) && attempt < maxAttempts)
+            {
+#pragma warning disable CA5394 // retry backoff jitter is not security-sensitive
+                var delayMs = (int)Math.Pow(2, attempt - 1) * 1000 + Random.Shared.Next(0, 250);
+#pragma warning restore CA5394
+                Log.Debug(
+                    ex,
+                    "Transient Arr API failure on attempt {Attempt}/{MaxAttempts}; retrying in {DelayMs}ms",
+                    attempt,
+                    maxAttempts,
+                    delayMs);
+                await Task.Delay(delayMs, ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static bool IsTransientArrFailure(Exception ex)
+    {
+        if (ex is TaskCanceledException) return true;
+        if (ex is not HttpRequestException httpEx) return false;
+        if (!httpEx.StatusCode.HasValue) return true;
+        var statusCode = (int)httpEx.StatusCode.Value;
+        return statusCode is < 400 or >= 500;
     }
 
     protected Task<T> Get<T>(string path, CancellationToken ct = default) =>

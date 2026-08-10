@@ -74,7 +74,9 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
             }
             else
             {
-                await CommandAsync(new { name = "EpisodeSearch", episodeIds }, ct).ConfigureAwait(false);
+                await ExecuteWithTransientRetryAsync(
+                    ct => CommandAsync(new { name = "EpisodeSearch", episodeIds }, ct),
+                    ct).ConfigureAwait(false);
             }
         }
         catch (Exception ex)
