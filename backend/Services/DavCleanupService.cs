@@ -4,8 +4,6 @@ using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
-using NzbWebDAV.Extensions;
-using Serilog;
 
 namespace NzbWebDAV.Services;
 
@@ -35,10 +33,11 @@ public class DavCleanupService : BackgroundService
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
-                e.LogWarningKnownOrStack("Error processing dav cleanup queue.");
-
-                // Wait 10 seconds before continuing on exception
-                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+                var retryDelay = BackgroundServiceErrorHandler.LogAndGetRetryDelay(
+                    e,
+                    "Error processing dav cleanup queue.",
+                    TimeSpan.FromSeconds(10));
+                await Task.Delay(retryDelay, stoppingToken).ConfigureAwait(false);
             }
         }
     }

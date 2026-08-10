@@ -2,7 +2,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
-using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -95,7 +94,9 @@ public class HistoryRetentionService(ConfigManager configManager) : BackgroundSe
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            ex.LogWarningKnownOrStack("History retention sweep failed.");
+            // No delay here: the outer loop already waits the configured sweep
+            // interval. The handler throttles corruption logging regardless.
+            _ = BackgroundServiceErrorHandler.LogAndGetRetryDelay(ex, "History retention sweep failed.", TimeSpan.Zero);
         }
     }
 
