@@ -338,11 +338,9 @@ public class UsenetStreamingClient : WrappingNntpClient
         CancellationToken ct
     )
     {
-        if (ContainsControlChars(connectionDetails.Host) ||
+        if (ContainsControlCharsOrSpace(connectionDetails.Host) ||
             ContainsControlChars(connectionDetails.User) ||
-            ContainsControlChars(connectionDetails.Pass) ||
-            // codeql[cs/user-controlled-bypass] — false positive: the operator configures their own NNTP provider host; connecting to a user-specified host is the core feature of a Usenet streaming server (not a multi-tenant app). This ContainsControlChars check is a format guard (no control chars / whitespace in hostnames), not an authorization boundary.
-            connectionDetails.Host.Contains(' ', StringComparison.Ordinal))
+            ContainsControlChars(connectionDetails.Pass))
         {
             throw new ArgumentException(
                 "Provider host/username/password must not contain whitespace or control characters.");
@@ -406,5 +404,8 @@ public class UsenetStreamingClient : WrappingNntpClient
 
         static bool ContainsControlChars(string? s) =>
             !string.IsNullOrEmpty(s) && s.Any(c => c < 0x20 || c == 0x7F);
+
+        static bool ContainsControlCharsOrSpace(string? s) =>
+            !string.IsNullOrEmpty(s) && s.Any(c => c <= 0x20 || c == 0x7F);
     }
 }
