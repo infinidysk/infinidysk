@@ -21,7 +21,8 @@ public class TestRcloneConnectionController(ConfigManager configManager) : BaseA
                 Status = true,
                 Connected = result.Success,
                 Error = result.Error,
-                LastInvalidationError = RcloneClient.LastForgetError?.Message
+                LastInvalidationError = RcloneClient.LastForgetError?.Message,
+                LastInvalidationErrorAt = RcloneClient.LastForgetError?.At
             };
         }
         catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException or InvalidOperationException)

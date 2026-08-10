@@ -47,6 +47,26 @@ public class RcloneClientTests : IDisposable
     }
 
     [Fact]
+    public async Task ForgetVfsPaths_AuthenticationFailureClearsPriorError()
+    {
+        RcloneClient.TestHandler = CreateHandler(
+            ("POST /vfs/forget", FailResponse("transient failure")),
+            ("POST /vfs/forget", FailResponse("transient failure")),
+            ("POST /vfs/forget", FailResponse("transient failure")),
+            ("POST /vfs/forget", FailResponse("transient failure")),
+            ("POST /vfs/forget", UnauthorizedResponse()));
+
+        await RcloneClient.ForgetVfsPaths(["/content/seed-error"]);
+        Assert.NotNull(RcloneClient.LastForgetError);
+
+        var result = await RcloneClient.ForgetVfsPaths(["/content/test"]);
+
+        Assert.False(result.Success);
+        Assert.Equal("Authentication failed", result.Error);
+        Assert.Null(RcloneClient.LastForgetError);
+    }
+
+    [Fact]
     public async Task ForgetVfsPaths_SetsLastForgetErrorAfterAllAttemptsFail()
     {
         RcloneClient.TestHandler = CreateHandler(

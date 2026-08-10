@@ -4,4 +4,5 @@ public class TestRcloneConnectionResponse : BaseApiResponse
 {
     public bool Connected { get; set; }
     public string? LastInvalidationError { get; set; }
+    public DateTimeOffset? LastInvalidationErrorAt { get; set; }
 }

@@ -125,7 +125,10 @@ public static class RcloneClient
             }
 
             if (lastResponse.Error == "Authentication failed")
+            {
+                Interlocked.Exchange(ref _lastForgetError, null);
                 return lastResponse;
+            }
 
             if (attempt < maxAttempts)
                 await Task.Delay(GetBackoff(attempt)).ConfigureAwait(false);
