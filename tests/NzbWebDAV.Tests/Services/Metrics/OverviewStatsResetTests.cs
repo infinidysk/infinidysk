@@ -53,11 +53,18 @@ public class OverviewStatsResetTests
             Count = 1,
         });
         db.CatalogueDaily.Add(new CatalogueDaily { Day = now, FileCount = 1 });
+        db.ProviderLifetimeTotals.Add(new ProviderLifetimeTotal
+        {
+            Provider = "a",
+            Articles = 9,
+            BytesFetched = 90,
+            FirstHour = now - 1,
+        });
         await db.SaveChangesAsync();
 
         var deleted = await OverviewStatsReset.WipeAsync(db, CancellationToken.None);
 
-        Assert.Equal(9, deleted);
+        Assert.Equal(10, deleted);
         Assert.Equal(0, await db.SegmentFetches.CountAsync());
         Assert.Equal(0, await db.ReadSessions.CountAsync());
         Assert.Equal(0, await db.MetricEvents.CountAsync());
@@ -67,6 +74,7 @@ public class OverviewStatsResetTests
         Assert.Equal(0, await db.FailoverMisses.CountAsync());
         Assert.Equal(0, await db.FailoverHourly.CountAsync());
         Assert.Equal(0, await db.CatalogueDaily.CountAsync());
+        Assert.Equal(0, await db.ProviderLifetimeTotals.CountAsync());
     }
 
     [Fact]
@@ -87,6 +95,9 @@ public class OverviewStatsResetTests
         db.ProviderHourly.AddRange(
             new ProviderHourly { Hour = now, Provider = target, Articles = 1 },
             new ProviderHourly { Hour = now, Provider = other, Articles = 2 });
+        db.ProviderLifetimeTotals.AddRange(
+            new ProviderLifetimeTotal { Provider = target, Articles = 5, BytesFetched = 50 },
+            new ProviderLifetimeTotal { Provider = other, Articles = 6, BytesFetched = 60 });
         db.MetricEvents.AddRange(
             new MetricEvent { At = now, Kind = "circuit", Tag1 = target, Tag2 = "open" },
             new MetricEvent { At = now, Kind = "circuit", Tag1 = other, Tag2 = "open" },
@@ -155,6 +166,8 @@ public class OverviewStatsResetTests
         Assert.Equal(1, await db.ProviderMinutes.CountAsync(x => x.Provider == other));
         Assert.Equal(0, await db.ProviderHourly.CountAsync(x => x.Provider == target));
         Assert.Equal(1, await db.ProviderHourly.CountAsync(x => x.Provider == other));
+        Assert.Equal(0, await db.ProviderLifetimeTotals.CountAsync(x => x.Provider == target));
+        Assert.Equal(1, await db.ProviderLifetimeTotals.CountAsync(x => x.Provider == other));
         Assert.Equal(0, await db.MetricEvents.CountAsync(x =>
             x.Kind == "circuit" && x.Tag1 == target));
         Assert.Equal(0, await db.MetricEvents.CountAsync(x =>

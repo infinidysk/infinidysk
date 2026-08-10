@@ -84,6 +84,7 @@ public static class OverviewStatsReset
         deleted += await db.FailoverMisses.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         deleted += await db.FailoverHourly.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         deleted += await db.CatalogueDaily.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        deleted += await db.ProviderLifetimeTotals.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         return deleted;
     }
 
@@ -133,6 +134,8 @@ public static class OverviewStatsReset
         deleted += await db.FailoverHourly
             .Where(x => x.FromProvider == providerKey || x.ToProvider == providerKey)
             .ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        deleted += await db.ProviderLifetimeTotals
+            .Where(x => x.Provider == providerKey).ExecuteDeleteAsync(ct).ConfigureAwait(false);
         return deleted;
     }
 }

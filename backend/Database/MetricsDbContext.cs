@@ -49,6 +49,7 @@ public sealed class MetricsDbContext : DbContext
     public DbSet<FailoverMiss> FailoverMisses => Set<FailoverMiss>();
     public DbSet<FailoverHourly> FailoverHourly => Set<FailoverHourly>();
     public DbSet<CatalogueDaily> CatalogueDaily => Set<CatalogueDaily>();
+    public DbSet<ProviderLifetimeTotal> ProviderLifetimeTotals => Set<ProviderLifetimeTotal>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -177,5 +178,6 @@ public sealed class MetricsDbContext : DbContext
             e.Property(x => x.AddedCount).IsRequired();
             e.Property(x => x.RemovedCount).IsRequired();
         });
+        b.Entity<ProviderLifetimeTotal>(e => { e.ToTable("ProviderLifetimeTotals"); e.HasKey(x => x.Provider); e.Property(x => x.Provider).IsRequired().HasMaxLength(255); e.Property(x => x.BytesFetched).IsRequired(); e.Property(x => x.Articles).IsRequired(); e.Property(x => x.Misses).IsRequired(); e.Property(x => x.Errors).IsRequired(); e.Property(x => x.Retries).IsRequired(); e.Property(x => x.SumDurationMs).IsRequired(); e.Property(x => x.FailoverSaves).IsRequired(); });
     }
 }
