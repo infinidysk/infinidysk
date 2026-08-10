@@ -7,6 +7,7 @@ using NzbWebDAV.Api.SabControllers.GetConfig;
 using NzbWebDAV.Api.SabControllers.GetFullStatus;
 using NzbWebDAV.Api.SabControllers.GetHistory;
 using NzbWebDAV.Api.SabControllers.GetQueue;
+using NzbWebDAV.Api.SabControllers.GetServerStats;
 using NzbWebDAV.Api.SabControllers.GetStatus;
 using NzbWebDAV.Api.SabControllers.GetVersion;
 using NzbWebDAV.Api.SabControllers.MoveInQueue;
@@ -92,6 +93,8 @@ public class SabApiController(
             case "fullstatus":
                 return new GetFullStatusController(
                     HttpContext, configManager);
+            case "server_stats":
+                return new GetServerStatsController(HttpContext, configManager);
             case "addfile":
                 return new AddFileController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager);
