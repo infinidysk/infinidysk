@@ -11,7 +11,10 @@ namespace NzbWebDAV.Api.Controllers.UpdateConfig;
 
 [ApiController]
 [Route("api/update-config")]
-public class UpdateConfigController(DavDatabaseClient dbClient, ConfigManager configManager) : BaseApiController
+public class UpdateConfigController(
+    DavDatabaseClient dbClient,
+    ConfigManager configManager,
+    NzbWebDAV.Services.IndexerConfigWriteLock indexerConfigWriteLock) : BaseApiController
 {
     private async Task<UpdateConfigResponse> UpdateConfig(UpdateConfigRequest request)
     {
@@ -125,7 +128,13 @@ public class UpdateConfigController(DavDatabaseClient dbClient, ConfigManager co
     protected override async Task<IActionResult> HandleRequest()
     {
         var request = new UpdateConfigRequest(HttpContext);
-        var response = await UpdateConfig(request).ConfigureAwait(false);
+        var touchesIndexerConfig = request.ConfigItems.Any(x =>
+            x.ConfigName is ConfigKeys.IndexersInstances or ConfigKeys.ProfilesInstances);
+        var response = touchesIndexerConfig
+            ? await indexerConfigWriteLock.RunAsync(
+                () => UpdateConfig(request),
+                HttpContext.RequestAborted).ConfigureAwait(false)
+            : await UpdateConfig(request).ConfigureAwait(false);
         return Ok(response);
     }
 }

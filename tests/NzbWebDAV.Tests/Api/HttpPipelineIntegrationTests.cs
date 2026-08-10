@@ -31,6 +31,23 @@ public sealed class HttpPipelineIntegrationTests(NzbDavWebApplicationFactory fac
     }
 
     [Fact]
+    public async Task ProwlarrSyncStatus_RequiresApiKey()
+    {
+        using var client = factory.CreateClient();
+
+        using var rejected = await client.GetAsync("/api/prowlarr-sync");
+        Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/prowlarr-sync");
+        request.Headers.Add("x-api-key", NzbDavWebApplicationFactory.ApiKey);
+        using var accepted = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        using var json = await JsonDocument.ParseAsync(await accepted.Content.ReadAsStreamAsync());
+        Assert.True(json.RootElement.GetProperty("status").GetBoolean());
+        Assert.False(json.RootElement.GetProperty("configured").GetBoolean());
+    }
+
+    [Fact]
     public async Task HealthEndpoint_IsAvailableWithoutAuthentication()
     {
         using var client = factory.CreateClient();
