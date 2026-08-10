@@ -1689,7 +1689,8 @@ public class ConfigManager
     /// </summary>
     public int GetMetricsFetchRetentionHours()
     {
-        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.MetricsFetchRetentionHours));
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.MetricsFetchRetentionHours))
+                ?? EnvironmentUtil.GetEnvironmentVariable("METRICS_FETCH_RETENTION_HOURS");
         return int.TryParse(v, out var n) ? Math.Clamp(n, 0, 8760) : 24;
     }
 
