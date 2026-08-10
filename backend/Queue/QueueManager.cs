@@ -774,8 +774,16 @@ public sealed class QueueManager : IDisposable
                 .ExecuteUpdateAsync(s => s.SetProperty(q => q.PauseUntil, pauseUntil), writeCts.Token)
                 .ConfigureAwait(false);
         }
-#pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+        catch (OperationCanceledException)
+        {
+            Log.Warning(
+                "Timed out persisting PauseUntil for stuck queue item {QueueItemId} ({JobName}); " +
+                "proceeding with worker cancellation",
+                queueItem.Id,
+                queueItem.JobName);
+        }
+#pragma warning disable CA2016
+        catch (Exception e) when (e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             Log.Warning(e,
@@ -945,6 +953,7 @@ public sealed class QueueManager : IDisposable
                 // Watchdog may fault after the worker is torn down; ignore during cleanup.
             }
 
+            WatchdogCts.Dispose();
             QueueContextRegistration.Dispose();
             CancellationTokenSource.Dispose();
             CachingUsenetClient.Dispose();

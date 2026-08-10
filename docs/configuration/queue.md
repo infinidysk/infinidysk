@@ -44,7 +44,7 @@ The resume threshold adds hysteresis after the maximum is reached. Set it to
 submissions that replace an existing queue item remain allowed because they do
 not increase queue depth.
 
-## Stuck-item watchdog
+## Stuck-item watchdog [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 
 Each active queue worker runs a progress watchdog. If `ProgressPercentage` does not
 increase for `QUEUE_ITEM_STUCK_MINUTES` (default **5**), InfiniDysk pauses the item

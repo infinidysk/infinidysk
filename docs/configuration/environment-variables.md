@@ -95,7 +95,7 @@ or restrict backend capabilities when enforcement is required.
 | `THREADPOOL_MIN_THREADS` | `max(2×CPU, 50)` | Override min worker/IOCP threads |
 | `THREADPOOL_MAX_THREADS` | `max(50×CPU, 1000)` | Override max threads |
 | `MAX_REQUEST_BODY_SIZE` | 100 MiB | Max request body bytes |
-| `QUEUE_ITEM_STUCK_MINUTES` | `5` | Minutes without queue progress before the stuck-item watchdog pauses and cancels the worker |
+| `QUEUE_ITEM_STUCK_MINUTES` [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since } | `5` | Minutes without queue progress before the stuck-item watchdog pauses and cancels the worker |
 | `NZBDAV_VERSION` | `0.0.0` | Reported app version |
 | `DOTNET_DbgEnableMiniDump` | off | Opt-in crash dumps — [Logs](../operations/logs-crash-dumps.md) |
 

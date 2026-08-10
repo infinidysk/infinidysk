@@ -268,8 +268,8 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         var item2ClaimedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         DateTime item1CompleteAt = default;
         DateTime item2ClaimedAt = default;
-        var gate1 = new ManualResetEventSlim(true);
-        var gate2 = new ManualResetEventSlim(true);
+        using var gate1 = new ManualResetEventSlim(true);
+        using var gate2 = new ManualResetEventSlim(true);
 
         _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
         {
