@@ -175,11 +175,8 @@ public class ConnectionPoolConnectionLimitTests
             factory: _ => throw new CouldNotLoginToUsenetException(
                 "502 connection limit (3) reached", responseCode: 502));
 
-        // Acquire 3 connections (the max the pool will allow after shrink to 2).
-        var locks = new List<ConnectionLock<object>>();
-        // First, fill the pool with 5 successful connections.
-        // We can't do that with a failing factory, so let's test the property directly.
-        // After shrink to 2 with 0 active, available should be 2 (not negative).
+        // learned=3, headroom=max(2,0)=2, candidate=max(1,1)=1 → effective shrinks to 1.
+        // With 0 active connections, AvailableConnections should be 1 (not negative).
         await Assert.ThrowsAsync<CouldNotLoginToUsenetException>(
             () => pool.GetConnectionLockAsync(SemaphorePriority.High, CancellationToken.None).WaitAsync(WaitBudget));
 

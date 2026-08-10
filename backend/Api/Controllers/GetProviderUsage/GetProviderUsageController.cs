@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Services.Metrics;
 
@@ -33,7 +34,9 @@ public class GetProviderUsageController(
                 if (provider.ProviderId != Guid.Empty)
                     recentHoursByKey.TryGetValue(UsenetProviderIdentity.MetricsKey(provider), out recentHours);
                 var (bytesPerDay, daysRemaining) = ProviderUsageHelper.ComputeBurnRate(provider, used, recentHours);
-                snapshotsByKey.TryGetValue(UsenetProviderIdentity.MetricsKey(provider), out var snapshot);
+                ProviderConnectionSnapshot? snapshot = null;
+                if (provider.ProviderId != Guid.Empty)
+                    snapshotsByKey.TryGetValue(UsenetProviderIdentity.MetricsKey(provider), out snapshot);
                 return new GetProviderUsageResponse.ProviderUsageItem
                 {
                     Index = index,
