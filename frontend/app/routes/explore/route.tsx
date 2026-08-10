@@ -98,6 +98,7 @@ function Body(props: ExplorePageData) {
     const [sortDir, setSortDir] = useState<SortDir>("asc");
     const [selected, setSelected] = useState<Set<string>>(() => new Set());
     const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
+    const [deletePreview, setDeletePreview] = useState<DeletePreviewAggregate | null>(null);
     const [deleteError, setDeleteError] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const lastClickedRef = useRef<string | null>(null);
@@ -176,8 +177,42 @@ function Body(props: ExplorePageData) {
     const cancelDelete = useCallback(() => {
         if (isDeleting) return;
         setPendingDelete(null);
+        setDeletePreview(null);
         setDeleteError(null);
     }, [isDeleting]);
+
+    useEffect(() => {
+        if (!pendingDelete || pendingDelete.length === 0) {
+            setDeletePreview(null);
+            return;
+        }
+        const pathname = getWebdavPathDecoded(location.pathname);
+        let cancelled = false;
+        (async () => {
+            try {
+                const previews = await Promise.all(
+                    pendingDelete.map(async (name) => {
+                        const fullPath = pathname ? `${pathname}/${name}` : name;
+                        const resp = await fetch(
+                            withUrlBase(`/api/delete-webdav-item-preview?path=${encodeURIComponent(fullPath)}`),
+                        );
+                        if (!resp.ok) throw new Error("preview failed");
+                        return await resp.json() as DeletePreviewResponse;
+                    }),
+                );
+                if (cancelled) return;
+                setDeletePreview({
+                    fileCount: previews.reduce((acc, p) => acc + p.fileCount, 0),
+                    dirCount: previews.reduce((acc, p) => acc + p.dirCount, 0),
+                    totalBytes: previews.reduce((acc, p) => acc + p.totalBytes, 0),
+                    linkedHistoryCount: previews.reduce((acc, p) => acc + p.linkedHistoryCount, 0),
+                });
+            } catch {
+                if (!cancelled) setDeletePreview(null);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [pendingDelete, location.pathname]);
 
     const performDelete = useCallback(async () => {
         if (!pendingDelete || pendingDelete.length === 0) return;
@@ -408,7 +443,7 @@ function Body(props: ExplorePageData) {
             <ConfirmModal
                 show={pendingDelete !== null}
                 title={pendingDelete && pendingDelete.length > 1 ? "Delete items" : "Delete item"}
-                message={renderDeleteMessage(pendingDelete)}
+                message={renderDeleteMessage(pendingDelete, deletePreview)}
                 confirmText={isDeleting ? "Deleting..." : "Delete"}
                 cancelText="Cancel"
                 {...(deleteError != null ? { errorMessage: deleteError } : {})}
@@ -584,12 +619,26 @@ function CheckCell(props: { name: string, checked: boolean, onToggle: (name: str
     );
 }
 
-function renderDeleteMessage(pending: string[] | null) {
+function renderDeleteMessage(
+    pending: string[] | null,
+    preview: DeletePreviewAggregate | null,
+) {
     if (!pending || pending.length === 0) return null;
+    const impact = preview
+        ? (
+            <div className="mt-2 text-base-content/70">
+                Deletes {preview.fileCount} file{preview.fileCount === 1 ? "" : "s"} / {preview.dirCount} folder{preview.dirCount === 1 ? "" : "s"} ({formatFileSize(preview.totalBytes)}).
+                {preview.linkedHistoryCount > 0 && (
+                    <> Removes {preview.linkedHistoryCount} history entr{preview.linkedHistoryCount === 1 ? "y" : "ies"}.</>
+                )}
+            </div>
+        )
+        : null;
     if (pending.length === 1) {
         return (
             <div>
                 Delete <strong>{pending[0]}</strong>?
+                {impact}
                 <div className="mt-2 text-base-content/50">This cannot be undone.</div>
             </div>
         );
@@ -601,6 +650,7 @@ function renderDeleteMessage(pending: string[] | null) {
                 {pending.slice(0, 30).map(n => <li key={n}>{n}</li>)}
                 {pending.length > 30 && <li>…and {pending.length - 30} more</li>}
             </ul>
+            {impact}
             <div className="mt-2 text-base-content/50">This cannot be undone.</div>
         </div>
     );
@@ -675,8 +725,17 @@ function getParentDirectories(webdavPath: string): string[] {
 }
 
 function isDeletable(parentDirectories: string[]): boolean {
-    return parentDirectories.length >= 2;
+    return parentDirectories[0] === "content" && parentDirectories.length >= 2;
 }
+
+type DeletePreviewResponse = {
+    fileCount: number,
+    dirCount: number,
+    totalBytes: number,
+    linkedHistoryCount: number,
+};
+
+type DeletePreviewAggregate = DeletePreviewResponse;
 
 function getClassName(item: DirectoryItem | ExploreFile, isSelected: boolean) {
     return classNames([
