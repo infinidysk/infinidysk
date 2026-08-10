@@ -25,4 +25,6 @@ Actions: Create / Upload / Download / Preserve / Restore / Delete.
 
     Backups deliberately exclude `usenet-migration.db` (experimental Altmount migration wizard state and provenance). Deleting that file only loses migration bookkeeping — never mounted WebDAV content. If you restore a database backup mid-migration and the wizard shows many `evicted` releases, reset or forget migration data and re-scan; already-imported releases are re-detected and not resubmitted. See [Migrate from Altmount](../guides/altmount-migration.md).
 
+Restoring after `SQLite Error 11` ("database disk image is malformed")? See [Database corruption](../operations/database-corruption.md).
+
 [Backups and upgrades](../guides/backups-upgrades.md)
