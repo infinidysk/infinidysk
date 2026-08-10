@@ -130,6 +130,50 @@ public class LazyRarProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_SniffsVideoExtensionFromStoredPayload()
+    {
+        var payload = new byte[] { 0x1A, 0x45, 0xDF, 0xA3, 0x00, 0x00, 0x00, 0x00 };
+        const int packed = 1_000;
+        const int uncompressed = 3_000;
+        var volumeBytes = BuildRar4SplitFirstVolume(
+            "b082fa0beaa644d3aa01045d5b8d0b36.xyz", packed, uncompressed, payload);
+        var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
+        var trailing = FileInfoFor("vol.r00", "r00@example.com", encodedBytes: 2_100, fileSize: null);
+
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["first@example.com"] = volumeBytes,
+        });
+
+        var result = await new LazyRarProcessor([first, trailing], client, password: null, CancellationToken.None)
+            .ProcessAsync() as LazyRarProcessor.Result;
+
+        Assert.NotNull(result);
+        Assert.Equal(".mkv", result!.SniffedVideoExtension);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SniffFailureLeavesNullExtension()
+    {
+        const int packed = 1_000;
+        const int uncompressed = 3_000;
+        var volumeBytes = BuildRar4SplitFirstVolume("movie.mkv", packed, uncompressed);
+        var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
+        var trailing = FileInfoFor("vol.r00", "r00@example.com", encodedBytes: 2_100, fileSize: null);
+
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["first@example.com"] = volumeBytes,
+        });
+
+        var result = await new LazyRarProcessor([first, trailing], client, password: null, CancellationToken.None)
+            .ProcessAsync() as LazyRarProcessor.Result;
+
+        Assert.NotNull(result);
+        Assert.Null(result!.SniffedVideoExtension);
+    }
+
+    [Fact]
     public async Task BuildRar4SplitFirstVolume_IsFirstVolumeStoredSplit()
     {
         var bytes = BuildRar4SplitFirstVolume("movie.mkv", packedSize: 100, uncompressedSize: 500);
@@ -166,7 +210,8 @@ public class LazyRarProcessorTests
 
     // Minimal RAR4 multi-volume first part: mark + archive(VOLUME|FIRSTVOLUME) +
     // stored file header (HAS_DATA|SPLIT_AFTER) with full UNP_SIZE + packed payload.
-    private static byte[] BuildRar4SplitFirstVolume(string fileName, int packedSize, int uncompressedSize)
+    private static byte[] BuildRar4SplitFirstVolume(
+        string fileName, int packedSize, int uncompressedSize, ReadOnlySpan<byte> payloadPrefix = default)
     {
         using var ms = new MemoryStream();
         ms.Write([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
@@ -213,7 +258,9 @@ public class LazyRarProcessorTests
             WriteHeader(ms, body);
         }
 
-        ms.Write(new byte[packedSize]);
+        var payload = new byte[packedSize];
+        payloadPrefix.CopyTo(payload);
+        ms.Write(payload);
         return ms.ToArray();
     }
 

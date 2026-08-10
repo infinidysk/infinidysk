@@ -43,6 +43,7 @@ public class SevenZipProcessor : BaseProcessor
             var progress95 = progress.Scale(95, 100);
             var multipartFile = await GetMultipartFile(progress95).ConfigureAwait(false);
             await using var stream = new MultipartFileStream(multipartFile, _usenetClient);
+            var first16KB = await VideoSignatureUtil.ReadFirst16KBAsync(stream, _ct).ConfigureAwait(false);
             var sevenZipEntries = await SevenZipUtil
                 .GetSevenZipEntriesAsync(stream, _archivePassword, _ct)
                 .ConfigureAwait(false);
@@ -67,6 +68,10 @@ public class SevenZipProcessor : BaseProcessor
                     PathWithinArchive = x.PathWithinArchive,
                     DavMultipartFileMeta = GetDavMultipartFileMeta(x, multipartFile),
                     ReleaseDate = _fileInfos.First().ReleaseDate,
+                    SniffedVideoExtension = VideoSignatureUtil.SniffMemberFromFirst16KB(
+                        first16KB,
+                        x.ByteRangeWithinArchive.StartInclusive,
+                        x.IsEncrypted),
                 }).ToList(),
             };
         }
@@ -215,5 +220,6 @@ public class SevenZipProcessor : BaseProcessor
         public required string PathWithinArchive { get; init; }
         public required DavMultipartFile.Meta DavMultipartFileMeta { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
+        public string? SniffedVideoExtension { get; init; }
     }
 }

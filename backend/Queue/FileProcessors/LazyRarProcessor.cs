@@ -48,10 +48,12 @@ public class LazyRarProcessor(
             ?? await usenetClient.GetFileSizeAsync(firstInfo.NzbFile, ct).ConfigureAwait(false);
 
         List<IRarHeader> headers;
+        byte[] first16KB;
         try
         {
             await using var firstStream = usenetClient.GetFileStream(
                 firstInfo.NzbFile, firstFileSize, articleBufferSize: 0);
+            first16KB = await VideoSignatureUtil.ReadFirst16KBAsync(firstStream, ct).ConfigureAwait(false);
             // Stop as soon as the first file header lands. NzbDav.SharpCompress
             // deferred data-skip means this does not seek past packed payload.
             headers = await RarUtil.ReadHeadersUntilFirstFileAsync(firstStream, password, ct)
@@ -106,6 +108,11 @@ public class LazyRarProcessor(
                 pathInArchive);
             return null;
         }
+
+        var sniffedVideoExtension = VideoSignatureUtil.SniffMemberFromFirst16KB(
+            first16KB,
+            fileHeader.DataStartPosition,
+            fileHeader.GetAesParams(password) is not null);
 
         if (fileHeader.IsUncompressedSizeUnknown)
         {
@@ -231,6 +238,7 @@ public class LazyRarProcessor(
             PendingParts = pending.ToArray(),
             ReleaseDate = firstInfo.ReleaseDate,
             ArchiveName = GetArchiveName(firstInfo.FileName),
+            SniffedVideoExtension = sniffedVideoExtension,
         };
     }
 
@@ -278,5 +286,6 @@ public class LazyRarProcessor(
         public required DavMultipartFile.PendingPart[] PendingParts { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
         public required string ArchiveName { get; init; }
+        public string? SniffedVideoExtension { get; init; }
     }
 }

@@ -32,11 +32,14 @@ public class FileProcessor(
                 FileName = fileInfo.FileName,
                 FileSize = fileSize,
                 ReleaseDate = fileInfo.ReleaseDate,
+                SniffedVideoExtension = fileInfo.SniffedVideoExtension,
             };
         }
 
         // Ignore missing articles if it's not a video file (default).
         // In that case, simply skip the file altogether.
+        // Accepted limitation: this check uses the original filename, not a
+        // sniffed extension applied later at mount time.
         catch (UsenetArticleNotFoundException) when (
             !FilenameUtil.IsVideoFile(fileInfo.FileName)
             && configManager.IsSkipNonVideoOnMissingArticlesEnabled())
@@ -54,5 +57,6 @@ public class FileProcessor(
         public required string FileName { get; init; }
         public required long FileSize { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
+        public string? SniffedVideoExtension { get; init; }
     }
 }

@@ -69,13 +69,24 @@ public static class GetFileInfosStep
             (FileName: headerFileName, Priority: GetFilenamePriority(headerFileName, 1)),
         }.Where(x => x.FileName is not null).MaxBy(x => x.Priority).FileName ?? "";
 
+        var isRar = file.HasRar4Magic() || file.HasRar5Magic();
+        string? sniffedVideoExtension = null;
+        if (!file.MissingFirstSegment
+            && file.First16KB is not null
+            && !isRar
+            && !FilenameUtil.Is7zFile(filename))
+        {
+            sniffedVideoExtension = VideoSignatureUtil.GuessVideoExtension(file.First16KB);
+        }
+
         return new FileInfo()
         {
             NzbFile = file.NzbFile,
             FileName = filename,
             ReleaseDate = file.ReleaseDate,
             FileSize = (long?)fileDesc?.FileLength,
-            IsRar = file.HasRar4Magic() || file.HasRar5Magic(),
+            IsRar = isRar,
+            SniffedVideoExtension = sniffedVideoExtension,
         };
     }
 
@@ -156,5 +167,6 @@ public static class GetFileInfosStep
         public required DateTimeOffset ReleaseDate { get; init; }
         public long? FileSize { get; init; }
         public bool IsRar { get; init; }
+        public string? SniffedVideoExtension { get; init; }
     }
 }

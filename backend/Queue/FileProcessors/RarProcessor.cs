@@ -20,6 +20,7 @@ public class RarProcessor(
     public override async Task<BaseProcessor.Result?> ProcessAsync()
     {
         await using var stream = await GetNzbFileStream().ConfigureAwait(false);
+        var first16KB = await VideoSignatureUtil.ReadFirst16KBAsync(stream, ct).ConfigureAwait(false);
         var headers = await RarUtil.GetRarHeadersAsync(stream, password, ct).ConfigureAwait(false);
         // Validate the uniform-size inference before StoredFileSegments flow into
         // RarAggregator (or NestedRarExpansionStep), which persists the part's
@@ -51,6 +52,10 @@ public class RarProcessor(
                     FileUncompressedSize = x.UncompressedSize,
                     IsUncompressedSizeUnknown = x.IsUncompressedSizeUnknown,
                     ReleaseDate = fileInfo.ReleaseDate,
+                    SniffedVideoExtension = VideoSignatureUtil.SniffMemberFromFirst16KB(
+                        first16KB,
+                        x.DataStartPosition,
+                        x.GetAesParams(password) is not null),
                 }).ToArray(),
         };
     }
@@ -139,6 +144,8 @@ public class RarProcessor(
         public required long FileUncompressedSize { get; init; }
 
         public bool IsUncompressedSizeUnknown { get; init; }
+
+        public string? SniffedVideoExtension { get; init; }
     }
 
     public record PartNumber

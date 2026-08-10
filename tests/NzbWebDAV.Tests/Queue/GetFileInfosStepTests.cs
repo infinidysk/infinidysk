@@ -8,6 +8,7 @@ namespace NzbWebDAV.Tests.Queue;
 public class GetFileInfosStepTests
 {
     private static readonly byte[] Rar4Magic = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00];
+    private static readonly byte[] EbmlMagic = [0x1A, 0x45, 0xDF, 0xA3, 0x00, 0x00, 0x00, 0x00];
 
     [Fact]
     public void GetFileInfos_UsesSubjectNameAndDetectsRarMagic()
@@ -33,6 +34,44 @@ public class GetFileInfosStepTests
         Assert.Equal(releaseDate, result.ReleaseDate);
         Assert.True(result.IsRar);
         Assert.Null(result.FileSize);
+    }
+
+    [Fact]
+    public void GetFileInfos_SniffsObfuscatedVideoExtensionFromFirstSegment()
+    {
+        var file = new NzbFile { Subject = "\"b082fa0beaa644d3aa01045d5b8d0b36.xyz\" yEnc" };
+        var input = new FetchFirstSegmentsStep.NzbFileWithFirstSegment
+        {
+            NzbFile = file,
+            Header = null,
+            First16KB = EbmlMagic,
+            MissingFirstSegment = false,
+            ReleaseDate = DateTimeOffset.UtcNow
+        };
+
+        var result = Assert.Single(GetFileInfosStep.GetFileInfos([input], []));
+
+        Assert.Equal("b082fa0beaa644d3aa01045d5b8d0b36.xyz", result.FileName);
+        Assert.Equal(".mkv", result.SniffedVideoExtension);
+    }
+
+    [Fact]
+    public void GetFileInfos_SkipsVideoSniffingForRarMagic()
+    {
+        var file = new NzbFile { Subject = "\"archive.rar\" yEnc" };
+        var input = new FetchFirstSegmentsStep.NzbFileWithFirstSegment
+        {
+            NzbFile = file,
+            Header = null,
+            First16KB = Rar4Magic,
+            MissingFirstSegment = false,
+            ReleaseDate = DateTimeOffset.UtcNow
+        };
+
+        var result = Assert.Single(GetFileInfosStep.GetFileInfos([input], []));
+
+        Assert.True(result.IsRar);
+        Assert.Null(result.SniffedVideoExtension);
     }
 
     [Fact]
