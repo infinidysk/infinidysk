@@ -2,6 +2,7 @@ import { ManagedSetting, SettingsIntro, SettingsPage, Tooltip } from "~/componen
 import { Input, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
+import { PruneCompletedHistory } from "./prune-completed-history/prune-completed-history";
 import { RemoveUnlinkedFiles } from "./remove-unlinked-files/remove-unlinked-files";
 import { RenameWindowsInvalidDavPaths } from "./rename-windows-invalid-dav-paths/rename-windows-invalid-dav-paths";
 import { ConvertStrmToSymlinks } from "./strm-to-symlinks/strm-to-symlinks";
@@ -232,11 +233,14 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                             Run repair, migration, and destructive cleanup tools on demand.
                         </p>
                     </div>
-                    <span className="badge badge-ghost badge-sm shrink-0">7 tools</span>
+                    <span className="badge badge-ghost badge-sm shrink-0">8 tools</span>
                 </div>
                 <div className="space-y-3">
                     <MaintenanceTaskDetails title="Remove Orphaned Files">
                         <RemoveUnlinkedFiles savedConfig={savedConfig} />
+                    </MaintenanceTaskDetails>
+                    <MaintenanceTaskDetails title="Prune Completed History">
+                        <PruneCompletedHistory savedConfig={savedConfig} />
                     </MaintenanceTaskDetails>
                     <MaintenanceTaskDetails title="Rename Windows-Invalid Paths">
                         <RenameWindowsInvalidDavPaths savedConfig={savedConfig} />
