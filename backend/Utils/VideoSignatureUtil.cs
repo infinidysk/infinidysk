@@ -94,7 +94,7 @@ public static class VideoSignatureUtil
     /// </summary>
     public static string? SniffMemberFromFirst16KB(byte[] first16KB, long dataStart, bool encrypted)
     {
-        if (encrypted || dataStart < 0 || dataStart + 16 > first16KB.Length || dataStart + 16 > First16KBLength)
+        if (encrypted || dataStart < 0 || dataStart >= first16KB.Length || dataStart >= First16KBLength)
             return null;
 
         var slice = first16KB.AsSpan((int)dataStart);

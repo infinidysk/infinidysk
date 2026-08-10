@@ -117,4 +117,14 @@ public class VideoSignatureUtilTests
         Assert.Null(VideoSignatureUtil.SniffMemberFromFirst16KB(first16KB, 100, encrypted: true));
         Assert.Null(VideoSignatureUtil.SniffMemberFromFirst16KB(first16KB, 16_384, encrypted: false));
     }
+
+    [Fact]
+    public void SniffMemberFromFirst16KB_DetectsSignatureNearEndOfBuffer()
+    {
+        var first16KB = new byte[VideoSignatureUtil.First16KBLength];
+        var offset = VideoSignatureUtil.First16KBLength - 8;
+        EbmlMagic.CopyTo(first16KB, offset);
+
+        Assert.Equal(".mkv", VideoSignatureUtil.SniffMemberFromFirst16KB(first16KB, offset, encrypted: false));
+    }
 }
