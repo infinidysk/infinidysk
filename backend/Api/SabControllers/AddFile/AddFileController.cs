@@ -302,6 +302,7 @@ public class AddFileController(
         try
         {
             ValidateBackupCategory(category);
+            ValidateBackupLeafName(fileName);
             fileName = Path.GetFileName(fileName);
 
             var backupRoot = Path.GetFullPath(backupLocation);

@@ -343,7 +343,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             ContainsControlChars(connectionDetails.Pass))
         {
             throw new ArgumentException(
-                "Provider host/username/password must not contain whitespace or control characters.");
+                "Provider host must not contain whitespace or control characters; " +
+                "username/password must not contain control characters.");
         }
 
         var connection = connectionFactory();
