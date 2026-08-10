@@ -71,7 +71,7 @@ public class AddFileRequest()
         return NzbStreamUtil.NormalizeFileName(fileName);
     }
 
-    protected static QueueItem.PriorityOption MapPriorityOption(string? priority)
+    internal static QueueItem.PriorityOption MapPriorityOption(string? priority)
     {
         return priority switch
         {
