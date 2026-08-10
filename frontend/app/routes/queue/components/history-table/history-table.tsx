@@ -10,8 +10,9 @@ import { PageSection } from "../page-section/page-section"
 import { Pagination } from "../pagination/pagination"
 import { DropdownOptions } from "~/routes/explore/dropdown-options/dropdown-options"
 import { ExportNzb, Remove } from "~/routes/explore/item-menu/item-menu"
-import { canRetryHistorySlot, retryHistoryItem, shouldAcceptRetryClick } from "./history-retry"
+import { canRetryHistorySlot, retryHistoryItem, retryHistoryItems, shouldAcceptRetryClick } from "./history-retry"
 import { useIsReadOnly } from "~/auth/authorization"
+import { Button, Tooltip } from "~/components/ui"
 
 export type HistoryTableProps = {
     historySlots: PresentationHistorySlot[],
@@ -44,8 +45,41 @@ export function HistoryTable({
 }: HistoryTableProps) {
     const isReadOnly = useIsReadOnly();
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
+    const [isConfirmingClearFailed, setIsConfirmingClearFailed] = useState(false);
+    const [isConfirmingClearAll, setIsConfirmingClearAll] = useState(false);
+    const [bulkRetryError, setBulkRetryError] = useState<string | null>(null);
     const selectedCount = historySlots.filter(x => !!x.isSelected).length;
     const headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === historySlots.length ? 'all' : 'some';
+
+
+    const selectedRetryableIds = historySlots
+        .filter(x => !!x.isSelected && canRetryHistorySlot(x))
+        .map(x => x.nzo_id);
+
+    const onBulkRetry = useCallback(async () => {
+        if (selectedRetryableIds.length === 0) return;
+        setBulkRetryError(null);
+        const result = await retryHistoryItems(selectedRetryableIds);
+        if (!result.ok) {
+            setBulkRetryError(result.failed[0]?.error ?? "Failed to retry history items.");
+        }
+    }, [selectedRetryableIds]);
+
+    const onConfirmClearFailed = useCallback(async (deleteCompletedFiles?: boolean) => {
+        setIsConfirmingClearFailed(false);
+        try {
+            const url = `/api?mode=history&name=delete&value=failed&del_completed_files=${deleteCompletedFiles ? 1 : 0}`;
+            await fetch(url, { method: "POST" });
+        } catch { /* best effort */ }
+    }, []);
+
+    const onConfirmClearAllHistory = useCallback(async (deleteCompletedFiles?: boolean) => {
+        setIsConfirmingClearAll(false);
+        try {
+            const url = `/api?mode=history&name=delete&value=all&del_completed_files=${deleteCompletedFiles ? 1 : 0}`;
+            await fetch(url, { method: "POST" });
+        } catch { /* best effort */ }
+    }, []);
 
     const onSelectAll = useCallback((isSelected: boolean) => {
         onIsSelectedChanged(new Set<string>(historySlots.map(x => x.nzo_id)), isSelected);
@@ -84,11 +118,25 @@ export function HistoryTable({
     }, [historySlots, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
 
     const sectionTitle = (
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
             <h2 className="text-xl font-semibold text-base-content">History</h2>
-            {!isReadOnly && headerCheckboxState !== 'none' &&
-                <ActionButton type="delete" onClick={onRemove} />
+            {!isReadOnly && totalHistoryCount > 0 &&
+                <>
+                    <Button variant="secondary" size="xsmall" onClick={() => setIsConfirmingClearFailed(true)}>Clear failed</Button>
+                    <Button variant="secondary" size="xsmall" onClick={() => setIsConfirmingClearAll(true)}>Clear all</Button>
+                </>
             }
+            {!isReadOnly && headerCheckboxState !== 'none' &&
+                <>
+                    {selectedRetryableIds.length > 0 &&
+                        <Tooltip content="Retry selected failed items">
+                            <ActionButton type="retry" onClick={onBulkRetry} />
+                        </Tooltip>
+                    }
+                    <ActionButton type="delete" onClick={onRemove} />
+                </>
+            }
+            {bulkRetryError && <span className="text-xs text-error">{bulkRetryError}</span>}
         </div>
     );
 
@@ -137,6 +185,20 @@ export function HistoryTable({
                 checkboxMessage="Delete mounted files"
                 onConfirm={onConfirmRemoval}
                 onCancel={onCancelRemoval} />
+            <ConfirmModal
+                show={isConfirmingClearFailed}
+                title="Clear failed history?"
+                message="All failed history items will be removed."
+                checkboxMessage="Delete mounted files"
+                onConfirm={onConfirmClearFailed}
+                onCancel={() => setIsConfirmingClearFailed(false)} />
+            <ConfirmModal
+                show={isConfirmingClearAll}
+                title="Clear all history?"
+                message="All history items will be removed."
+                checkboxMessage="Delete mounted files"
+                onConfirm={onConfirmClearAllHistory}
+                onCancel={() => setIsConfirmingClearAll(false)} />
         </PageSection>
     );
 }
@@ -153,6 +215,9 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
     const isReadOnly = useIsReadOnly();
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
+    const [isConfirmingClearFailed, setIsConfirmingClearFailed] = useState(false);
+    const [isConfirmingClearAll, setIsConfirmingClearAll] = useState(false);
+    const [bulkRetryError, setBulkRetryError] = useState<string | null>(null);
     const [isRetrying, setIsRetrying] = useState(false);
     const [retryError, setRetryError] = useState<string | null>(null);
 
