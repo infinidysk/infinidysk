@@ -7,7 +7,7 @@ public class DeleteCacheDirTests
     [Fact]
     public async Task DeleteCacheDir_NonexistentPath_ReturnsPromptly()
     {
-        var path = Path.Combine(Path.GetTempPath(), "nzbdav-missing-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Join(Path.GetTempPath(), "nzbdav-missing-" + Guid.NewGuid().ToString("N"));
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await ArticleCachingNntpClient.DeleteCacheDir(path);
         sw.Stop();
@@ -19,7 +19,7 @@ public class DeleteCacheDirTests
     {
         var previous = ArticleCachingNntpClient.DeleteCacheDirInitialDelayMs;
         ArticleCachingNntpClient.DeleteCacheDirInitialDelayMs = 1;
-        var blocker = Path.Combine(Path.GetTempPath(), "nzbdav-block-" + Guid.NewGuid().ToString("N"));
+        var blocker = Path.Join(Path.GetTempPath(), "nzbdav-block-" + Guid.NewGuid().ToString("N"));
         try
         {
             // A file at the target path makes Directory.Delete throw IOException.

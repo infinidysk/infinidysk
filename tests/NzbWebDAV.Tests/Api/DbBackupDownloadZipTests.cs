@@ -76,14 +76,14 @@ public class DbBackupDownloadZipTests
 
     private static string CreateStagingBackup()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "nzbdav-backup-zip-test-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Join(Path.GetTempPath(), "nzbdav-backup-zip-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        Directory.CreateDirectory(Path.Combine(dir, DatabaseBackupStore.RollbackFolderName));
+        Directory.CreateDirectory(Path.Join(dir, DatabaseBackupStore.RollbackFolderName));
 
-        File.WriteAllText(Path.Combine(dir, "db.sql"), "SELECT 1;");
-        File.WriteAllText(Path.Combine(dir, "manifest.json"), """{"id":"test"}""");
+        File.WriteAllText(Path.Join(dir, "db.sql"), "SELECT 1;");
+        File.WriteAllText(Path.Join(dir, "manifest.json"), """{"id":"test"}""");
         File.WriteAllText(
-            Path.Combine(dir, DatabaseBackupStore.RollbackFolderName, "db.sql"),
+            Path.Join(dir, DatabaseBackupStore.RollbackFolderName, "db.sql"),
             "SHOULD_NOT_BE_IN_ZIP");
 
         return dir;

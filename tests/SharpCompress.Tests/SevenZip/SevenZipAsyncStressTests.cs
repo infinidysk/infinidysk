@@ -46,7 +46,7 @@ public class SevenZipAsyncStressTests : TestBase
     [InlineData("7Zip.solid.7z")]
     public async Task SevenZip_OpenAsyncArchive_OddBuffers(string archiveName)
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, archiveName);
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, archiveName);
         foreach (var bufferSize in BufferSizes)
         {
             CleanScratch();
@@ -57,7 +57,7 @@ public class SevenZipAsyncStressTests : TestBase
 
             await foreach (var entry in archive.EntriesAsync.Where(e => !e.IsDirectory))
             {
-                var targetPath = Path.Combine(SCRATCH_FILES_PATH, entry.Key!);
+                var targetPath = Path.Join(SCRATCH_FILES_PATH, entry.Key!);
                 var targetDir = Path.GetDirectoryName(targetPath);
                 if (!string.IsNullOrEmpty(targetDir))
                 {
@@ -79,7 +79,7 @@ public class SevenZipAsyncStressTests : TestBase
     [InlineData("7Zip.solid.7z")]
     public async Task SevenZip_ExtractAllEntriesAsync_OddBuffers(string archiveName)
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, archiveName);
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, archiveName);
         foreach (var bufferSize in BufferSizes)
         {
             CleanScratch();
@@ -96,7 +96,7 @@ public class SevenZipAsyncStressTests : TestBase
                     continue;
                 }
 
-                var targetPath = Path.Combine(SCRATCH_FILES_PATH, reader.Entry.Key!);
+                var targetPath = Path.Join(SCRATCH_FILES_PATH, reader.Entry.Key!);
                 var targetDir = Path.GetDirectoryName(targetPath);
                 if (!string.IsNullOrEmpty(targetDir))
                 {

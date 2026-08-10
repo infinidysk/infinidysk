@@ -219,7 +219,7 @@ public class RemoveUnlinkedFilesTaskTests
     public async Task DryRun_DoesNotTreatLowercaseLinkedIdAsUnlinked()
     {
         await BaseTask.ResetRunningTaskForTestsAsync();
-        var libraryDir = Path.Combine(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
         Directory.CreateDirectory(libraryDir);
         await using var harness = await TempDb.CreateAsync();
         try
@@ -266,7 +266,7 @@ public class RemoveUnlinkedFilesTaskTests
             foreach (var id in linkedIds.Append(lowercaseId))
             {
                 await File.WriteAllTextAsync(
-                    Path.Combine(libraryDir, $"{id:N}.strm"),
+                    Path.Join(libraryDir, $"{id:N}.strm"),
                     $"http://localhost/view/.ids/{id}.mkv");
             }
 
@@ -326,7 +326,7 @@ public class RemoveUnlinkedFilesTaskTests
     public async Task DryRun_ReportsDone_WithTerminalProgress()
     {
         await BaseTask.ResetRunningTaskForTestsAsync();
-        var libraryDir = Path.Combine(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
         Directory.CreateDirectory(libraryDir);
         await using var harness = await TempDb.CreateAsync();
         try
@@ -356,7 +356,7 @@ public class RemoveUnlinkedFilesTaskTests
             foreach (var id in linkedIds)
             {
                 await File.WriteAllTextAsync(
-                    Path.Combine(libraryDir, $"{id:N}.strm"),
+                    Path.Join(libraryDir, $"{id:N}.strm"),
                     $"http://localhost/view/.ids/{id}.mkv");
             }
 
@@ -401,7 +401,7 @@ public class RemoveUnlinkedFilesTaskTests
     public async Task DryRun_Succeeds_WhenPreviousRunLeftUniqueTempTableBehind()
     {
         await BaseTask.ResetRunningTaskForTestsAsync();
-        var libraryDir = Path.Combine(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
         Directory.CreateDirectory(libraryDir);
         await using var harness = await TempDb.CreateAsync();
         try
@@ -431,7 +431,7 @@ public class RemoveUnlinkedFilesTaskTests
             foreach (var id in linkedIds)
             {
                 await File.WriteAllTextAsync(
-                    Path.Combine(libraryDir, $"{id:N}.strm"),
+                    Path.Join(libraryDir, $"{id:N}.strm"),
                     $"http://localhost/view/.ids/{id}.mkv");
             }
 
@@ -599,7 +599,7 @@ public class RemoveUnlinkedFilesTaskTests
 
         public static async Task<TempDb> CreateAsync()
         {
-            var path = Path.Combine(Path.GetTempPath(), $"nzbdav-unlinked-{Guid.NewGuid():N}.sqlite");
+            var path = Path.Join(Path.GetTempPath(), $"nzbdav-unlinked-{Guid.NewGuid():N}.sqlite");
             var options = new DbContextOptionsBuilder<DavDatabaseContext>()
                 .UseSqlite($"Data Source={path}")
                 .AddInterceptors(new SqliteMainDbPragmas())

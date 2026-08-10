@@ -40,12 +40,12 @@ public class SymlinkRestoreServiceTests
     public async Task Restore_LeavesDriftedAndOutOfRootLinksUntouched()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
-        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
-        var inRoot = Path.Combine(root, "movie.mkv");
-        var outsideRoot = Path.Combine(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}.mkv");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
+        var backupDir = Path.Join(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
+        var inRoot = Path.Join(root, "movie.mkv");
+        var outsideRoot = Path.Join(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}.mkv");
         var archiveName = "altmount-symlink-backup-20260720-120000.tar.gz";
-        var archivePath = Path.Combine(backupDir, archiveName);
+        var archivePath = Path.Join(backupDir, archiveName);
         await h.Store.UpdateSessionAsync(s =>
         {
             s.Status = "linked";
@@ -82,9 +82,9 @@ public class SymlinkRestoreServiceTests
     public async Task Restore_LegacyArchiveUsesCurrentPlanForDriftGuard()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
-        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
-        var link = Path.Combine(root, "episode.mkv");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
+        var backupDir = Path.Join(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
+        var link = Path.Join(root, "episode.mkv");
         var archiveName = "altmount-symlink-backup-20260720-120001.tar.gz";
         await h.Store.UpdateSessionAsync(s =>
         {
@@ -105,7 +105,7 @@ public class SymlinkRestoreServiceTests
             await ctx.SaveChangesAsync();
         }
         await SymlinkBackup.WriteAsync(
-            Path.Combine(backupDir, archiveName),
+            Path.Join(backupDir, archiveName),
             [new SymlinkBackup.Entry(link, "/alt/original.mkv")]);
         var ops = new FakeSymlinkOps { Links = { [link] = "/nzbdav/replacement.mkv" } };
 
@@ -124,9 +124,9 @@ public class SymlinkRestoreServiceTests
     public async Task Restore_CurrentArchiveRecreatesMissingRewritePlanRow()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
-        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
-        var link = Path.Combine(root, "movie.mkv");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
+        var backupDir = Path.Join(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
+        var link = Path.Join(root, "movie.mkv");
         var archiveName = "altmount-symlink-backup-20260720-120002.tar.gz";
         await h.Store.UpdateSessionAsync(s =>
         {
@@ -135,7 +135,7 @@ public class SymlinkRestoreServiceTests
             s.SymlinkBackupDir = backupDir;
         });
         await SymlinkBackup.WriteAsync(
-            Path.Combine(backupDir, archiveName),
+            Path.Join(backupDir, archiveName),
             [new SymlinkBackup.Entry(link, "/alt/original.mkv", "/nzbdav/replacement.mkv")]);
         var ops = new FakeSymlinkOps { Links = { [link] = "/nzbdav/replacement.mkv" } };
 
@@ -157,10 +157,10 @@ public class SymlinkRestoreServiceTests
     public async Task Restore_RecreatesEntirelyMissingSymlink()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
-        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
-        var link = Path.Combine(root, "movie.mkv");
+        var backupDir = Path.Join(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
+        var link = Path.Join(root, "movie.mkv");
         var archiveName = "altmount-symlink-backup-20260720-120003.tar.gz";
         await h.Store.UpdateSessionAsync(s =>
         {
@@ -169,7 +169,7 @@ public class SymlinkRestoreServiceTests
             s.SymlinkBackupDir = backupDir;
         });
         await SymlinkBackup.WriteAsync(
-            Path.Combine(backupDir, archiveName),
+            Path.Join(backupDir, archiveName),
             [new SymlinkBackup.Entry(link, "/alt/original.mkv", "/nzbdav/replacement.mkv")]);
         var ops = new FakeSymlinkOps(); // link absent
 
@@ -186,10 +186,10 @@ public class SymlinkRestoreServiceTests
     public async Task Restore_RefusesRealFileAtPath()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
-        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
-        var link = Path.Combine(root, "movie.mkv");
+        var backupDir = Path.Join(Path.GetTempPath(), $"altmig-backups-{Guid.NewGuid():N}");
+        var link = Path.Join(root, "movie.mkv");
         File.WriteAllText(link, "precious");
         var archiveName = "altmount-symlink-backup-20260720-120004.tar.gz";
         await h.Store.UpdateSessionAsync(s =>
@@ -199,7 +199,7 @@ public class SymlinkRestoreServiceTests
             s.SymlinkBackupDir = backupDir;
         });
         await SymlinkBackup.WriteAsync(
-            Path.Combine(backupDir, archiveName),
+            Path.Join(backupDir, archiveName),
             [new SymlinkBackup.Entry(link, "/alt/original.mkv", "/nzbdav/replacement.mkv")]);
         var ops = new FakeSymlinkOps();
 
@@ -221,7 +221,7 @@ public class SymlinkRestoreServiceTests
         await using var h = await MigrationTestHarness.CreateAsync();
         var root = Directory.CreateTempSubdirectory("altmig-library-");
         var backupDir = Directory.CreateTempSubdirectory("altmig-backups-");
-        var link = Path.Combine(root.FullName, "orphan.mkv");
+        var link = Path.Join(root.FullName, "orphan.mkv");
         const string target = "/mnt/altmount/orphan.mkv";
         var archiveName = "altmount-orphan-symlink-backup-20260720-120005.tar.gz";
         try
@@ -244,7 +244,7 @@ public class SymlinkRestoreServiceTests
                 await migration.SaveChangesAsync();
             }
             await SymlinkBackup.WriteAsync(
-                Path.Combine(backupDir.FullName, archiveName),
+                Path.Join(backupDir.FullName, archiveName),
                 [new SymlinkBackup.Entry(
                     link,
                     target,
@@ -279,10 +279,10 @@ public class SymlinkRestoreServiceTests
         {
             await h.Store.UpdateSessionAsync(s => s.SymlinkBackupDir = backupDir.FullName);
             await SymlinkBackup.WriteAsync(
-                Path.Combine(backupDir.FullName, "altmount-symlink-backup-20260720-120006.tar.gz"),
+                Path.Join(backupDir.FullName, "altmount-symlink-backup-20260720-120006.tar.gz"),
                 [new SymlinkBackup.Entry("/lib/rewrite.mkv", "/alt/rewrite.mkv", "/nzbdav/rewrite.mkv")]);
             await SymlinkBackup.WriteAsync(
-                Path.Combine(backupDir.FullName, "altmount-orphan-symlink-backup-20260720-120007.tar.gz"),
+                Path.Join(backupDir.FullName, "altmount-orphan-symlink-backup-20260720-120007.tar.gz"),
                 [new SymlinkBackup.Entry(
                     "/lib/orphan.mkv",
                     "/alt/orphan.mkv",
@@ -311,7 +311,7 @@ public class SymlinkRestoreServiceTests
         {
             await h.Store.UpdateSessionAsync(s => s.SymlinkBackupDir = backupDir.FullName);
             await SymlinkBackup.WriteAsync(
-                Path.Combine(backupDir.FullName, archiveName),
+                Path.Join(backupDir.FullName, archiveName),
                 [new SymlinkBackup.Entry(
                     "/lib/orphan.mkv",
                     "/alt/orphan.mkv",
@@ -333,7 +333,7 @@ public class SymlinkRestoreServiceTests
     {
         const string name = "altmount-orphan-symlink-backup-20260720-120008.tar.gz";
         Assert.Equal(
-            Path.GetFullPath(Path.Combine(Path.GetTempPath(), name)),
+            Path.GetFullPath(Path.Join(Path.GetTempPath(), name)),
             SymlinkRestoreService.ResolveArchivePath(Path.GetTempPath(), name));
     }
 

@@ -312,8 +312,8 @@ public class SymlinkPlannerTests
         Skip.IfNot(OperatingSystem.IsLinux(), "Directory symlink behavior is validated on the Linux deployment platform.");
 
         await using var h = await MigrationTestHarness.CreateAsync();
-        var realRoot = Path.Combine(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
-        var linkedRoot = Path.Combine(Path.GetTempPath(), $"altmig-library-link-{Guid.NewGuid():N}");
+        var realRoot = Path.Join(Path.GetTempPath(), $"altmig-library-{Guid.NewGuid():N}");
+        var linkedRoot = Path.Join(Path.GetTempPath(), $"altmig-library-link-{Guid.NewGuid():N}");
         Directory.CreateDirectory(realRoot);
         Directory.CreateSymbolicLink(linkedRoot, realRoot);
 

@@ -14,7 +14,7 @@ public class MetricsWriterTests
         try
         {
             var options = new DbContextOptionsBuilder<MetricsDbContext>()
-                .UseSqlite($"Data Source={Path.Combine(invalidParent, "metrics.sqlite")}")
+                .UseSqlite($"Data Source={Path.Join(invalidParent, "metrics.sqlite")}")
                 .Options;
             var writer = new MetricsWriter(() => new MetricsDbContext(options));
             writer.RecordFetch(new SegmentFetch

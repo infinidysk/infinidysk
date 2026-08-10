@@ -29,7 +29,7 @@ public class ZipShortReadTests : ReaderTests
     public void Zip_Reader_Handles_Short_Reads(string zipFile, int firstReadSize, int chunkSize)
     {
         // Use an existing test ZIP file
-        var zipPath = Path.Combine(TEST_ARCHIVES_PATH, zipFile);
+        var zipPath = Path.Join(TEST_ARCHIVES_PATH, zipFile);
         if (!File.Exists(zipPath))
         {
             return; // Skip if file doesn't exist

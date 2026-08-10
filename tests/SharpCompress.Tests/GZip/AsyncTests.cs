@@ -21,7 +21,7 @@ public class AsyncTests : TestBase
     [Fact]
     public async ValueTask Reader_Async_Extract_All()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz");
         await using var stream = File.OpenRead(testArchive);
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
 
@@ -39,7 +39,7 @@ public class AsyncTests : TestBase
     [Fact]
     public async ValueTask Reader_Async_Extract_Single_Entry()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz");
         await using var stream = File.OpenRead(testArchive);
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
 
@@ -47,7 +47,7 @@ public class AsyncTests : TestBase
         {
             if (!reader.Entry.IsDirectory)
             {
-                var outputPath = Path.Combine(SCRATCH_FILES_PATH, reader.Entry.Key!);
+                var outputPath = Path.Join(SCRATCH_FILES_PATH, reader.Entry.Key!);
                 Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
                 await using var outputStream = File.Create(outputPath);
                 await reader.WriteEntryToAsync(outputStream);
@@ -59,7 +59,7 @@ public class AsyncTests : TestBase
     [Fact]
     public async ValueTask Archive_Entry_Async_Open_Stream()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz");
         await using var archive = await GZipArchive.OpenAsyncArchive(
             new AsyncOnlyStream(File.OpenRead(testArchive))
         );
@@ -80,7 +80,7 @@ public class AsyncTests : TestBase
     [Fact]
     public async ValueTask Writer_Async_Write_Single_File()
     {
-        var outputPath = Path.Combine(SCRATCH_FILES_PATH, "async_test.zip");
+        var outputPath = Path.Join(SCRATCH_FILES_PATH, "async_test.zip");
 
         await using (var stream = File.Create(outputPath))
         await using (
@@ -91,7 +91,7 @@ public class AsyncTests : TestBase
             )
         )
         {
-            var testFile = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz");
+            var testFile = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz");
 
             await using var fileStream = File.OpenRead(testFile);
             await writer.WriteAsync("test_entry.bin", fileStream, new DateTime(2023, 1, 1));
@@ -109,7 +109,7 @@ public class AsyncTests : TestBase
         using var cts = new CancellationTokenSource();
         cts.CancelAfter(10000); // 10 seconds should be plenty
 
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz");
         await using var stream = File.OpenRead(testArchive);
         await using var reader = await ReaderFactory.OpenAsyncReader(
             new AsyncOnlyStream(stream),
@@ -130,8 +130,8 @@ public class AsyncTests : TestBase
     [Fact]
     public async ValueTask Stream_Extensions_Async()
     {
-        var testFile = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz");
-        var outputPath = Path.Combine(SCRATCH_FILES_PATH, "async_copy.bin");
+        var testFile = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz");
+        var outputPath = Path.Join(SCRATCH_FILES_PATH, "async_copy.bin");
         await using var inputStream = File.OpenRead(testFile);
         await using var outputStream = File.Create(outputPath);
 
@@ -150,7 +150,7 @@ public class AsyncTests : TestBase
     [Fact]
     public async ValueTask EntryStream_ReadAsync_Works()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz");
         await using var stream = File.OpenRead(testArchive);
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
 
@@ -181,7 +181,7 @@ public class AsyncTests : TestBase
         var testData = new byte[1024];
         new Random(42).NextBytes(testData);
 
-        var compressedPath = Path.Combine(SCRATCH_FILES_PATH, "async_compressed.gz");
+        var compressedPath = Path.Join(SCRATCH_FILES_PATH, "async_compressed.gz");
 
         // Test async write with GZipStream
         await using (var fileStream = File.Create(compressedPath))

@@ -104,7 +104,7 @@ public class LazyRarResolverTests
         var reconcileSawPersistedBlob = false;
 
         var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
-        var configRoot = Path.Combine(Path.GetTempPath(), $"nzbdav-lazy-reconcile-{Guid.NewGuid():N}");
+        var configRoot = Path.Join(Path.GetTempPath(), $"nzbdav-lazy-reconcile-{Guid.NewGuid():N}");
         Directory.CreateDirectory(configRoot);
         Environment.SetEnvironmentVariable("CONFIG_PATH", configRoot);
         try

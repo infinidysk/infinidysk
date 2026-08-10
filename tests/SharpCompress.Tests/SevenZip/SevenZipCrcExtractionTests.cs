@@ -15,10 +15,10 @@ public class SevenZipCrcExtractionTests : ArchiveTests
     public void SevenZip_Archive_WriteToFile_Throws_On_Crc_Mismatch()
     {
         using var archive = SevenZipArchive.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
         );
         var entry = CorruptFirstFileCrc(archive);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "7zip-crc-mismatch.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "7zip-crc-mismatch.txt");
 
         var exception = Assert.Throws<InvalidFormatException>(() => entry.WriteToFile(destination));
 
@@ -29,10 +29,10 @@ public class SevenZipCrcExtractionTests : ArchiveTests
     public void SevenZip_Archive_WriteToFile_Skips_Crc_Mismatch_When_Disabled()
     {
         using var archive = SevenZipArchive.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
         );
         var entry = CorruptFirstFileCrc(archive);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "7zip-crc-disabled.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "7zip-crc-disabled.txt");
 
         entry.WriteToFile(destination, new ExtractionOptions { CheckCrc = false });
 
@@ -43,11 +43,11 @@ public class SevenZipCrcExtractionTests : ArchiveTests
     public async Task SevenZip_Archive_WriteToFileAsync_Throws_On_Crc_Mismatch()
     {
         await using var archive = await SevenZipArchive.OpenAsyncArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
         );
         var entries = await archive.EntriesAsync.ToListAsync();
         var entry = CorruptFirstFileCrc(entries);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "7zip-crc-mismatch-async.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "7zip-crc-mismatch-async.txt");
 
         var exception = await Assert.ThrowsAsync<InvalidFormatException>(async () =>
             await entry.WriteToFileAsync(destination)

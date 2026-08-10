@@ -84,7 +84,7 @@ public class SymlinkBackupAndCsvTests
     [Fact]
     public async Task WriteAsync_RoundTripsAndSurvivesReadBackVerification()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"altmig-bak-{Guid.NewGuid():N}.tar.gz");
+        var path = Path.Join(Path.GetTempPath(), $"altmig-bak-{Guid.NewGuid():N}.tar.gz");
         try
         {
             var entries = new[]
@@ -110,14 +110,14 @@ public class SymlinkBackupAndCsvTests
         Skip.If(OperatingSystem.IsLinux(), "Linux path uses find(1); this covers the managed walker.");
         Skip.If(OperatingSystem.IsWindows(), "Directory symlink recursion is validated on macOS.");
 
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-walk-{Guid.NewGuid():N}");
-        var nested = Path.Combine(root, "real");
-        var linked = Path.Combine(root, "linked-dir");
-        var outside = Path.Combine(Path.GetTempPath(), $"altmig-outside-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-walk-{Guid.NewGuid():N}");
+        var nested = Path.Join(root, "real");
+        var linked = Path.Join(root, "linked-dir");
+        var outside = Path.Join(Path.GetTempPath(), $"altmig-outside-{Guid.NewGuid():N}");
         Directory.CreateDirectory(nested);
         Directory.CreateDirectory(outside);
-        File.CreateSymbolicLink(Path.Combine(nested, "file.link"), "/tmp/target");
-        File.CreateSymbolicLink(Path.Combine(outside, "hidden.link"), "/tmp/hidden");
+        File.CreateSymbolicLink(Path.Join(nested, "file.link"), "/tmp/target");
+        File.CreateSymbolicLink(Path.Join(outside, "hidden.link"), "/tmp/hidden");
         Directory.CreateSymbolicLink(linked, outside);
 
         try

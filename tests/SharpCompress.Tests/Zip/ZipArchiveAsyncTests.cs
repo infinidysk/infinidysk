@@ -122,9 +122,9 @@ public class ZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Zip_Random_Write_Remove_Async()
     {
-        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "Zip.deflate.mod.zip");
-        var unmodified = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.noEmptyDirs.zip");
-        var modified = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.mod.zip");
+        var scratchPath = Path.Join(SCRATCH_FILES_PATH, "Zip.deflate.mod.zip");
+        var unmodified = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.noEmptyDirs.zip");
+        var modified = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.mod.zip");
 
         await using (var archive = await ZipArchive.OpenAsyncArchive(unmodified))
         {
@@ -146,10 +146,10 @@ public class ZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Zip_Random_Write_Add_Async()
     {
-        var jpg = Path.Combine(ORIGINAL_FILES_PATH, "jpg", "test.jpg");
-        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "Zip.deflate.mod.zip");
-        var unmodified = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.mod.zip");
-        var modified = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.noEmptyDirs.zip");
+        var jpg = Path.Join(ORIGINAL_FILES_PATH, "jpg", "test.jpg");
+        var scratchPath = Path.Join(SCRATCH_FILES_PATH, "Zip.deflate.mod.zip");
+        var unmodified = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.mod.zip");
+        var modified = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.noEmptyDirs.zip");
 
         await using (var archive = await ZipArchive.OpenAsyncArchive(unmodified))
         {
@@ -168,8 +168,8 @@ public class ZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Zip_Create_New_Async()
     {
-        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "Zip.deflate.noEmptyDirs.zip");
-        var unmodified = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.noEmptyDirs.zip");
+        var scratchPath = Path.Join(SCRATCH_FILES_PATH, "Zip.deflate.noEmptyDirs.zip");
+        var unmodified = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.noEmptyDirs.zip");
 
         await using (var archive = (ZipArchive)await ZipArchive.CreateAsyncArchive())
         {
@@ -212,7 +212,7 @@ public class ZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Zip_Deflate_Entry_Stream_Async()
     {
-        using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip")))
+        using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip")))
         {
             IAsyncArchive archive = await ZipArchive.OpenAsyncArchive(new AsyncOnlyStream(stream));
             try
@@ -233,7 +233,7 @@ public class ZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Zip_Deflate_Archive_WriteToDirectoryAsync()
     {
-        using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip")))
+        using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip")))
         {
             IAsyncArchive archive = await ZipArchive.OpenAsyncArchive(new AsyncOnlyStream(stream));
             try
@@ -255,7 +255,7 @@ public class ZipArchiveAsyncTests : ArchiveTests
         var progress = new Progress<ProgressReport>(report => progressReports.Add(report));
 
         await using (
-            Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip"))
+            Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip"))
         )
         {
             await using IAsyncArchive archive = await ZipArchive.OpenAsyncArchive(

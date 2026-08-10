@@ -16,7 +16,7 @@ public class ExtractAllEntriesTests : TestBase
     [Fact]
     public void ExtractAllEntries_WithProgressReporting_NonSolidArchive()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
 
         using var archive = ArchiveFactory.OpenArchive(archivePath);
         Assert.Throws<SharpCompressException>(() =>
@@ -28,7 +28,7 @@ public class ExtractAllEntriesTests : TestBase
     [Fact]
     public void ExtractAllEntries_WithProgressReporting_SolidArchive()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Rar.solid.rar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Rar.solid.rar");
 
         using var archive = ArchiveFactory.OpenArchive(archivePath);
         Assert.True(archive.IsSolid);

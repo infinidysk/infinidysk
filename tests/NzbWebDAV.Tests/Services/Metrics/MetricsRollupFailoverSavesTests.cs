@@ -118,7 +118,7 @@ public sealed class MetricsRollupFailoverSavesTests
 
     private static async Task withMetricsDb(Func<MetricsDbContext, Task> body)
     {
-        var databasePath = Path.Combine(
+        var databasePath = Path.Join(
             Path.GetTempPath(),
             $"nzbdav-metrics-rollup-{Guid.NewGuid():N}.sqlite");
         var options = new DbContextOptionsBuilder<MetricsDbContext>()

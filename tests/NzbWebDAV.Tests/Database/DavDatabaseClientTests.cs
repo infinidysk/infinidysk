@@ -14,7 +14,7 @@ namespace NzbWebDAV.Tests.Database;
 public sealed class DavDatabaseClientTests : IAsyncLifetime
 {
     private readonly string _databasePath =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-tests-{Guid.NewGuid():N}.sqlite");
+        Path.Join(Path.GetTempPath(), $"nzbdav-tests-{Guid.NewGuid():N}.sqlite");
     private DavDatabaseContext _context = null!;
     private DavDatabaseClient _client = null!;
 

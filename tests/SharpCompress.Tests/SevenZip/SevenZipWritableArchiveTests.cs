@@ -51,7 +51,7 @@ public class SevenZipWritableArchiveTests : TestBase
     [Fact]
     public void SevenZipWritableArchive_ModifyExisting_RemoveAndAdd_RoundTrip()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, FixtureArchive);
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, FixtureArchive);
         var newContent = "Freshly added entry during modify-existing test."u8.ToArray();
 
         using var outputStream = new MemoryStream();
@@ -130,7 +130,7 @@ public class SevenZipWritableArchiveTests : TestBase
     [Fact]
     public async ValueTask SevenZipWritableArchive_ModifyExisting_RemoveAndAdd_RoundTrip_Async()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, FixtureArchive);
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, FixtureArchive);
         var newContent = "Async freshly added entry during modify-existing test."u8.ToArray();
 
         using var outputStream = new MemoryStream();

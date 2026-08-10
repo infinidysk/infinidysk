@@ -11,7 +11,7 @@ public class DatabaseStartupGuardsTests
     [Fact]
     public async Task ConfigItemsTableExistsAsync_ReturnsFalse_OnEmptySqliteFile()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), $"nzbdav-startup-{Guid.NewGuid():N}.sqlite");
+        var databasePath = Path.Join(Path.GetTempPath(), $"nzbdav-startup-{Guid.NewGuid():N}.sqlite");
         try
         {
             // Mimic a WAL-created empty file: open and close without migrating.
@@ -38,7 +38,7 @@ public class DatabaseStartupGuardsTests
     [Fact]
     public async Task ConfigItemsTableExistsAsync_ReturnsTrue_AfterMigrate()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), $"nzbdav-startup-{Guid.NewGuid():N}.sqlite");
+        var databasePath = Path.Join(Path.GetTempPath(), $"nzbdav-startup-{Guid.NewGuid():N}.sqlite");
         try
         {
             var options = new DbContextOptionsBuilder<DavDatabaseContext>()

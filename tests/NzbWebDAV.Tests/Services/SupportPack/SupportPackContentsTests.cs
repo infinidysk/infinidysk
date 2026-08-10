@@ -25,7 +25,7 @@ namespace NzbWebDAV.Tests.Services.SupportPack;
 public sealed class SupportPackContentsTests : IDisposable
 {
     private readonly string _configRoot =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-support-{Guid.NewGuid():N}");
+        Path.Join(Path.GetTempPath(), $"nzbdav-support-{Guid.NewGuid():N}");
 
     private readonly string? _previousConfigPath;
 

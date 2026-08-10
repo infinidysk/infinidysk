@@ -59,7 +59,7 @@ public class EntryStreamDisposeTests : TestBase
     [Fact]
     public void ZeroLengthRead_DoesNotMarkEntryCompleted()
     {
-        var archiveBytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var archiveBytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         string expectedContent;
         using (
             var reader = ReaderFactory.OpenReader(
@@ -94,7 +94,7 @@ public class EntryStreamDisposeTests : TestBase
     [Fact]
     public void ZeroLengthSpanRead_DoesNotMarkEntryCompleted()
     {
-        var archiveBytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var archiveBytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         string expectedContent;
         using (
             var reader = ReaderFactory.OpenReader(
@@ -128,7 +128,7 @@ public class EntryStreamDisposeTests : TestBase
     [Fact]
     public async Task ZeroLengthReadAsync_DoesNotMarkEntryCompleted()
     {
-        var archiveBytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var archiveBytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         string expectedContent;
         await using (
             var reader = await ReaderFactory.OpenAsyncReader(
@@ -163,7 +163,7 @@ public class EntryStreamDisposeTests : TestBase
     [Fact]
     public void Dispose_Default_DrainsRemainingEntryBytes()
     {
-        var archiveBytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var archiveBytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         var counting = new CountingReadStream(
             new ForwardOnlyStream(new MemoryStream(archiveBytes)),
             leaveOpen: false
@@ -192,7 +192,7 @@ public class EntryStreamDisposeTests : TestBase
     [Fact]
     public void Dispose_Default_SeekableSourceSeeksPastRemainingEntryBytes()
     {
-        var archiveBytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var archiveBytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         var counting = new CountingReadStream(new MemoryStream(archiveBytes), leaveOpen: false);
         using var reader = ReaderFactory.OpenReader(counting, ReaderOptions.ForExternalStream);
 
@@ -218,7 +218,7 @@ public class EntryStreamDisposeTests : TestBase
     [Fact]
     public async Task DisposeAsync_Default_SeekableSourceSeeksPastRemainingEntryBytes()
     {
-        var archiveBytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var archiveBytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         var counting = new CountingReadStream(new MemoryStream(archiveBytes), leaveOpen: false);
         await using var reader = await ReaderFactory.OpenAsyncReader(
             counting,
@@ -247,7 +247,7 @@ public class EntryStreamDisposeTests : TestBase
     [Fact]
     public void Dispose_CancelOnEntryStreamDispose_DoesNotDrain()
     {
-        var archiveBytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var archiveBytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         var counting = new CountingReadStream(new MemoryStream(archiveBytes), leaveOpen: false);
         using var reader = ReaderFactory.OpenReader(
             counting,
@@ -277,7 +277,7 @@ public class EntryStreamDisposeTests : TestBase
     [Fact]
     public async Task DisposeAsync_CancelOnEntryStreamDispose_DoesNotDrain()
     {
-        var archiveBytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var archiveBytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         var counting = new CountingReadStream(new MemoryStream(archiveBytes), leaveOpen: false);
         await using var reader = await ReaderFactory.OpenAsyncReader(
             counting,

@@ -104,7 +104,7 @@ public class Zip64AsyncTests : WriterTests
     [Trait("format", "zip64")]
     public async ValueTask Zip64_Large_File_Then_Small_File_NonSeekable_Async()
     {
-        var filename = Path.Combine(SCRATCH2_FILES_PATH, "zip64-nonseekable-async.zip");
+        var filename = Path.Join(SCRATCH2_FILES_PATH, "zip64-nonseekable-async.zip");
 
         // A small trailing entry with recognizable content. Its bytes can only be read back
         // correctly if the reader stays byte-aligned after the preceding >=4GB Zip64 entry.
@@ -223,7 +223,7 @@ public class Zip64AsyncTests : WriterTests
         string filename = "zip64-test-async.zip"
     )
     {
-        filename = Path.Combine(SCRATCH2_FILES_PATH, filename);
+        filename = Path.Join(SCRATCH2_FILES_PATH, filename);
 
         try
         {

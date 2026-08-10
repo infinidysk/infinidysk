@@ -12,7 +12,7 @@ public sealed class SegmentCacheNntpClientTests
     [Fact]
     public async Task CatalogHydration_DoesNotBlockConstruction_AndServesEntriesAfterLoad()
     {
-        var cacheDir = Path.Combine(
+        var cacheDir = Path.Join(
             Path.GetTempPath(), "nzbdav-segment-cache-" + Guid.NewGuid().ToString("N"));
         var loadStarted = new ManualResetEventSlim();
         var allowLoad = new ManualResetEventSlim();
@@ -71,7 +71,7 @@ public sealed class SegmentCacheNntpClientTests
     [Fact]
     public async Task CatalogHydration_DoesNotDoubleCountEntryFinalizedDuringLoad()
     {
-        var cacheDir = Path.Combine(
+        var cacheDir = Path.Join(
             Path.GetTempPath(), "nzbdav-segment-cache-" + Guid.NewGuid().ToString("N"));
         var loadStarted = new ManualResetEventSlim();
         var allowLoad = new ManualResetEventSlim();
@@ -122,9 +122,9 @@ public sealed class SegmentCacheNntpClientTests
     private static void WriteCacheEntry(string cacheDir, string segmentId, byte[] content)
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(segmentId)));
-        var directory = Path.Combine(cacheDir, hash[..2]);
+        var directory = Path.Join(cacheDir, hash[..2]);
         Directory.CreateDirectory(directory);
-        File.WriteAllBytes(Path.Combine(directory, hash), content);
+        File.WriteAllBytes(Path.Join(directory, hash), content);
 
         var header = new UsenetYencHeader
         {
@@ -137,7 +137,7 @@ public sealed class SegmentCacheNntpClientTests
             TotalParts = 1,
         };
         File.WriteAllText(
-            Path.Combine(directory, hash) + ".h",
+            Path.Join(directory, hash) + ".h",
             JsonSerializer.Serialize(header, new JsonSerializerOptions { IncludeFields = true }));
     }
 }

@@ -21,7 +21,7 @@ public class GZipReaderAsyncTests : ReaderTests
     public async ValueTask GZip_Reader_Generic2_Async()
     {
         //read only as GZip item
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
         await using var reader = await GZipReader.OpenAsyncReader(new AsyncOnlyStream(stream));
         while (await reader.MoveToNextEntryAsync())
         {

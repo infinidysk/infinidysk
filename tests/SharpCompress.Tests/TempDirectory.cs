@@ -11,7 +11,7 @@ internal sealed class TempDirectory : IAsyncDisposable
 
     public TempDirectory(string prefix)
     {
-        Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"{prefix}.{Guid.NewGuid():N}");
+        Path = System.IO.Path.Join(System.IO.Path.GetTempPath(), $"{prefix}.{Guid.NewGuid():N}");
         Directory.CreateDirectory(Path);
     }
 
@@ -19,22 +19,22 @@ internal sealed class TempDirectory : IAsyncDisposable
 
     public string GetDirectory(string name)
     {
-        var path = System.IO.Path.Combine(Path, name);
+        var path = System.IO.Path.Join(Path, name);
         Directory.CreateDirectory(path);
         return path;
     }
 
     public string CreateDirectory(string name)
     {
-        var path = System.IO.Path.Combine(Path, name, System.IO.Path.GetRandomFileName());
+        var path = System.IO.Path.Join(Path, name, System.IO.Path.GetRandomFileName());
         Directory.CreateDirectory(path);
         return path;
     }
 
     public void ResetDirectory(string name)
     {
-        DeleteDirectory(System.IO.Path.Combine(Path, name));
-        Directory.CreateDirectory(System.IO.Path.Combine(Path, name));
+        DeleteDirectory(System.IO.Path.Join(Path, name));
+        Directory.CreateDirectory(System.IO.Path.Join(Path, name));
     }
 
     public async ValueTask DisposeAsync()

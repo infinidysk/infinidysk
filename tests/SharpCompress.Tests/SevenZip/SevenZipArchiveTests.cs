@@ -138,7 +138,7 @@ public class SevenZipArchiveTests : ArchiveTests
     public void SevenZipArchive_Entry_Attrib_ReturnsNullOrValueWithoutThrowing()
     {
         using var archive = ArchiveFactory.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
         );
 
         Assert.NotEmpty(archive.Entries);
@@ -206,7 +206,7 @@ public class SevenZipArchiveTests : ArchiveTests
     [Fact]
     public void SevenZipArchive_Copy_CompressionType()
     {
-        using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "7Zip.Copy.7z")))
+        using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "7Zip.Copy.7z")))
         using (var archive = SevenZipArchive.OpenArchive(stream))
         {
             foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
@@ -277,23 +277,23 @@ public class SevenZipArchiveTests : ArchiveTests
     [Fact]
     public void SevenZipArchive_Tar_PathRead()
     {
-        using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "7Zip.Tar.tar.7z")))
+        using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "7Zip.Tar.tar.7z")))
         using (var archive = SevenZipArchive.OpenArchive(stream))
         {
             var entry = archive.Entries.First();
-            entry.WriteToFile(Path.Combine(SCRATCH_FILES_PATH, entry.Key.NotNull()));
+            entry.WriteToFile(Path.Join(SCRATCH_FILES_PATH, entry.Key.NotNull()));
 
             var size = entry.Size;
-            var scratch = new FileInfo(Path.Combine(SCRATCH_FILES_PATH, "7Zip.Tar.tar"));
-            var test = new FileInfo(Path.Combine(TEST_ARCHIVES_PATH, "7Zip.Tar.tar"));
+            var scratch = new FileInfo(Path.Join(SCRATCH_FILES_PATH, "7Zip.Tar.tar"));
+            var test = new FileInfo(Path.Join(TEST_ARCHIVES_PATH, "7Zip.Tar.tar"));
 
             Assert.Equal(size, scratch.Length);
             Assert.Equal(size, test.Length);
         }
 
         CompareArchivesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "7Zip.Tar.tar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.Tar.tar")
+            Path.Join(SCRATCH_FILES_PATH, "7Zip.Tar.tar"),
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.Tar.tar")
         );
     }
 
@@ -301,7 +301,7 @@ public class SevenZipArchiveTests : ArchiveTests
     public void SevenZipArchive_TestEncryptedDetection()
     {
         using var passwordProtectedFilesArchive = SevenZipArchive.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.encryptedFiles.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.encryptedFiles.7z")
         );
         Assert.True(passwordProtectedFilesArchive.IsEncrypted);
     }
@@ -330,17 +330,17 @@ public class SevenZipArchiveTests : ArchiveTests
     public void SevenZipArchive_TestSolidDetection()
     {
         using var oneBlockSolidArchive = SevenZipArchive.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.1block.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.1block.7z")
         );
         Assert.True(oneBlockSolidArchive.IsSolid);
 
         using var solidArchive = SevenZipArchive.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z")
         );
         Assert.True(solidArchive.IsSolid);
 
         using var nonSolidArchive = SevenZipArchive.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.nonsolid.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.nonsolid.7z")
         );
         Assert.False(nonSolidArchive.IsSolid);
     }
@@ -350,7 +350,7 @@ public class SevenZipArchiveTests : ArchiveTests
     {
         // This test verifies that solid archives iterate entries as contiguous streams
         // rather than recreating the decompression stream for each entry
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         using var archive = SevenZipArchive.OpenArchive(testArchive);
         Assert.True(archive.IsSolid);
 
@@ -371,7 +371,7 @@ public class SevenZipArchiveTests : ArchiveTests
     {
         // This test verifies that the folder stream is reused within each folder
         // and not recreated for each entry in solid archives
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         using var archive = SevenZipArchive.OpenArchive(testArchive);
         Assert.True(archive.IsSolid);
 
@@ -439,7 +439,7 @@ public class SevenZipArchiveTests : ArchiveTests
     [Fact]
     public void SevenZipArchive_Solid_ArchiveApi_SequentialMatchesExtractAllEntries()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         var expected = ReadSolidEntriesViaExtractAllEntries(testArchive);
 
         using var archive = SevenZipArchive.OpenArchive(testArchive);
@@ -457,7 +457,7 @@ public class SevenZipArchiveTests : ArchiveTests
     [Fact]
     public void SevenZipArchive_Solid_ArchiveApi_OutOfOrderOpen_StillCorrect()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         var expected = ReadSolidEntriesViaExtractAllEntries(testArchive);
 
         using var archive = SevenZipArchive.OpenArchive(testArchive);
@@ -477,7 +477,7 @@ public class SevenZipArchiveTests : ArchiveTests
     [Fact]
     public void SevenZipArchive_Solid_ArchiveApi_EarlyDispose_ThenNextEntryCorrect()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         var expected = ReadSolidEntriesViaExtractAllEntries(testArchive);
 
         using var archive = SevenZipArchive.OpenArchive(testArchive);
@@ -499,7 +499,7 @@ public class SevenZipArchiveTests : ArchiveTests
     [Fact]
     public void SevenZipArchive_Solid_ArchiveApi_ReOpenSameEntry_UsesDecodedCache()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         var expected = ReadSolidEntriesViaExtractAllEntries(testArchive);
 
         using var archive = SevenZipArchive.OpenArchive(testArchive);
@@ -544,7 +544,7 @@ public class SevenZipArchiveTests : ArchiveTests
         // (files with size 0 and no compressed data) can be extracted without throwing
         // NullReferenceException. This was previously failing because the folder was null
         // for empty-stream entries.
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.EmptyStream.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.EmptyStream.7z");
         using var archive = SevenZipArchive.OpenArchive(testArchive);
 
         var emptyStreamFileCount = 0;
@@ -589,7 +589,7 @@ public class SevenZipArchiveTests : ArchiveTests
     [Fact]
     public void SevenZipArchive_LookForHeader_FindsSignatureAfterLargeStub()
     {
-        var archiveBytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z"));
+        var archiveBytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z"));
         const int stubSize = 5 * 1024;
         using var stream = new MemoryStream(stubSize + archiveBytes.Length);
         stream.Write(new byte[stubSize]);

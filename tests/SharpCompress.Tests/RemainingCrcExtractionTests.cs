@@ -20,7 +20,7 @@ public class RemainingCrcExtractionTests : TestBase
     {
         using var stream = new MemoryStream(ReadCorruptedArchive(archiveName, payloadMarker));
         using var reader = ReaderFactory.OpenReader(stream);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
+        var destination = Path.Join(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
         Directory.CreateDirectory(destination);
 
         Assert.Throws<InvalidFormatException>(() => reader.WriteAllToDirectory(destination));
@@ -37,7 +37,7 @@ public class RemainingCrcExtractionTests : TestBase
     {
         using var stream = new MemoryStream(ReadCorruptedArchive(archiveName, payloadMarker));
         using var reader = ReaderFactory.OpenReader(stream);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
+        var destination = Path.Join(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
         Directory.CreateDirectory(destination);
 
         reader.WriteAllToDirectory(destination, new ExtractionOptions { CheckCrc = false });
@@ -48,7 +48,7 @@ public class RemainingCrcExtractionTests : TestBase
     [Fact]
     public void LZipStream_Throws_On_Trailer_Crc_Mismatch()
     {
-        var bytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.lz"));
+        var bytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.lz"));
         bytes[^20] ^= 1;
         using var stream = LZipStream.Create(
             new MemoryStream(bytes),
@@ -61,7 +61,7 @@ public class RemainingCrcExtractionTests : TestBase
 
     private static byte[] ReadCorruptedArchive(string archiveName, string payloadMarker)
     {
-        var bytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        var bytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var marker = System.Text.Encoding.ASCII.GetBytes(payloadMarker);
         var offset = bytes.AsSpan().IndexOf(marker);
         if (offset < 0)

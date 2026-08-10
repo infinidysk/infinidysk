@@ -16,7 +16,7 @@ public class GZipWriterTests : WriterTests
     {
         using (
             Stream stream = File.Open(
-                Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+                Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
                 FileMode.OpenOrCreate,
                 FileAccess.Write
             )
@@ -29,11 +29,11 @@ public class GZipWriterTests : WriterTests
             )
         )
         {
-            writer.Write("Tar.tar", Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+            writer.Write("Tar.tar", Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         }
         CompareArchivesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz")
+            Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+            Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz")
         );
     }
 
@@ -42,18 +42,18 @@ public class GZipWriterTests : WriterTests
     {
         using (
             Stream stream = File.Open(
-                Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+                Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
                 FileMode.OpenOrCreate,
                 FileAccess.Write
             )
         )
         using (var writer = new GZipWriter(stream))
         {
-            writer.Write("Tar.tar", Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+            writer.Write("Tar.tar", Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         }
         CompareArchivesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz")
+            Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+            Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz")
         );
     }
 
@@ -61,7 +61,7 @@ public class GZipWriterTests : WriterTests
     public void GZip_Writer_Generic_Bad_Compression() =>
         Assert.Throws<InvalidFormatException>(() =>
         {
-            using Stream stream = File.OpenWrite(Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"));
+            using Stream stream = File.OpenWrite(Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"));
             using var writer = WriterFactory.OpenWriter(
                 stream,
                 ArchiveType.GZip,
@@ -74,19 +74,19 @@ public class GZipWriterTests : WriterTests
     {
         using (
             Stream stream = File.Open(
-                Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+                Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
                 FileMode.OpenOrCreate,
                 FileAccess.Write
             )
         )
         using (var writer = new GZipWriter(stream))
         {
-            var path = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar");
+            var path = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar");
             writer.Write(path, path); //covers issue #532
         }
         CompareArchivesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz")
+            Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+            Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz")
         );
     }
 }

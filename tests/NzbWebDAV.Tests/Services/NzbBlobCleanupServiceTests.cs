@@ -13,9 +13,9 @@ namespace NzbWebDAV.Tests.Services;
 public sealed class NzbBlobCleanupServiceTests : IAsyncLifetime
 {
     private readonly string _configRoot =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-nzb-blob-cleanup-cfg-{Guid.NewGuid():N}");
+        Path.Join(Path.GetTempPath(), $"nzbdav-nzb-blob-cleanup-cfg-{Guid.NewGuid():N}");
     private readonly string _databasePath =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-nzb-blob-cleanup-{Guid.NewGuid():N}.sqlite");
+        Path.Join(Path.GetTempPath(), $"nzbdav-nzb-blob-cleanup-{Guid.NewGuid():N}.sqlite");
     private string? _previousConfigPath;
     private DavDatabaseContext _context = null!;
 

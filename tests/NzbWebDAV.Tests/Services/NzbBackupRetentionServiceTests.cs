@@ -5,11 +5,11 @@ namespace NzbWebDAV.Tests.Services;
 public sealed class NzbBackupRetentionServiceTests : IDisposable
 {
     private readonly string _backupRoot =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-nzb-backup-retention-{Guid.NewGuid():N}");
+        Path.Join(Path.GetTempPath(), $"nzbdav-nzb-backup-retention-{Guid.NewGuid():N}");
 
     public NzbBackupRetentionServiceTests()
     {
-        Directory.CreateDirectory(Path.Combine(_backupRoot, "tv"));
+        Directory.CreateDirectory(Path.Join(_backupRoot, "tv"));
     }
 
     public void Dispose()
@@ -20,9 +20,9 @@ public sealed class NzbBackupRetentionServiceTests : IDisposable
     [Fact]
     public void SweepDirectory_DeletesAgedNzbFiles_KeepsRecent()
     {
-        var oldPath = Path.Combine(_backupRoot, "tv", "old.nzb");
-        var recentPath = Path.Combine(_backupRoot, "tv", "recent.nzb");
-        var otherPath = Path.Combine(_backupRoot, "tv", "notes.txt");
+        var oldPath = Path.Join(_backupRoot, "tv", "old.nzb");
+        var recentPath = Path.Join(_backupRoot, "tv", "recent.nzb");
+        var otherPath = Path.Join(_backupRoot, "tv", "notes.txt");
         File.WriteAllText(oldPath, "old");
         File.WriteAllText(recentPath, "recent");
         File.WriteAllText(otherPath, "keep");
@@ -40,7 +40,7 @@ public sealed class NzbBackupRetentionServiceTests : IDisposable
     [Fact]
     public void SweepDirectory_WithZeroRetention_DeletesNothing()
     {
-        var path = Path.Combine(_backupRoot, "tv", "old.nzb");
+        var path = Path.Join(_backupRoot, "tv", "old.nzb");
         File.WriteAllText(path, "old");
         File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddDays(-400));
 

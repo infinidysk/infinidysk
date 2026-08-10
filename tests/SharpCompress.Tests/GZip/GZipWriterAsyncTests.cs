@@ -18,7 +18,7 @@ public class GZipWriterAsyncTests : WriterTests
     {
         using (
             Stream stream = File.Open(
-                Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+                Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
                 FileMode.OpenOrCreate,
                 FileAccess.Write
             )
@@ -31,11 +31,11 @@ public class GZipWriterAsyncTests : WriterTests
             )
         )
         {
-            await writer.WriteAsync("Tar.tar", Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+            await writer.WriteAsync("Tar.tar", Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         }
         CompareArchivesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz")
+            Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+            Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz")
         );
     }
 
@@ -44,18 +44,18 @@ public class GZipWriterAsyncTests : WriterTests
     {
         using (
             Stream stream = File.Open(
-                Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+                Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
                 FileMode.OpenOrCreate,
                 FileAccess.Write
             )
         )
         await using (var writer = new GZipWriter(new AsyncOnlyStream(stream)))
         {
-            await writer.WriteAsync("Tar.tar", Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+            await writer.WriteAsync("Tar.tar", Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         }
         CompareArchivesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz")
+            Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+            Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz")
         );
     }
 
@@ -63,7 +63,7 @@ public class GZipWriterAsyncTests : WriterTests
     public void GZip_Writer_Generic_Bad_Compression_Async() =>
         Assert.Throws<InvalidFormatException>(() =>
         {
-            using Stream stream = File.OpenWrite(Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"));
+            using Stream stream = File.OpenWrite(Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"));
             using var writer = WriterFactory.OpenWriter(
                 new AsyncOnlyStream(stream),
                 ArchiveType.GZip,
@@ -76,19 +76,19 @@ public class GZipWriterAsyncTests : WriterTests
     {
         using (
             Stream stream = File.Open(
-                Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+                Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
                 FileMode.OpenOrCreate,
                 FileAccess.Write
             )
         )
         await using (var writer = new GZipWriter(new AsyncOnlyStream(stream)))
         {
-            var path = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar");
+            var path = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar");
             await writer.WriteAsync(path, path);
         }
         CompareArchivesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz")
+            Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+            Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz")
         );
     }
 }

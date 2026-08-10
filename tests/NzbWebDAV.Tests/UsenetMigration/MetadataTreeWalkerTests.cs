@@ -4,7 +4,7 @@ namespace NzbWebDAV.Tests.UsenetMigration;
 
 public class MetadataTreeWalkerTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), $"meta-walk-{Guid.NewGuid():N}");
+    private readonly string _root = Path.Join(Path.GetTempPath(), $"meta-walk-{Guid.NewGuid():N}");
 
     public MetadataTreeWalkerTests() => Directory.CreateDirectory(_root);
 
@@ -16,17 +16,17 @@ public class MetadataTreeWalkerTests : IDisposable
     [Fact]
     public void EnumerateMetaFiles_SkipsIdsAndCorruptedMetadataDirs()
     {
-        var keep = Path.Combine(_root, "tv", "Show.mkv.meta");
+        var keep = Path.Join(_root, "tv", "Show.mkv.meta");
         Directory.CreateDirectory(Path.GetDirectoryName(keep)!);
         File.WriteAllText(keep, "ok");
 
-        var ids = Path.Combine(_root, ".ids", "a", "b", "c", "d", "e");
+        var ids = Path.Join(_root, ".ids", "a", "b", "c", "d", "e");
         Directory.CreateDirectory(ids);
-        File.WriteAllText(Path.Combine(ids, $"{Guid.NewGuid()}.meta"), "id");
+        File.WriteAllText(Path.Join(ids, $"{Guid.NewGuid()}.meta"), "id");
 
-        var corrupted = Path.Combine(_root, "corrupted_metadata", "tv");
+        var corrupted = Path.Join(_root, "corrupted_metadata", "tv");
         Directory.CreateDirectory(corrupted);
-        File.WriteAllText(Path.Combine(corrupted, "bad.mkv.meta"), "bad");
+        File.WriteAllText(Path.Join(corrupted, "bad.mkv.meta"), "bad");
 
         var found = MetadataTreeWalker.EnumerateMetaFiles(_root).ToList();
         Assert.Single(found);
@@ -39,9 +39,9 @@ public class MetadataTreeWalkerTests : IDisposable
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
             return;
 
-        var real = Path.Combine(_root, "real.mkv.meta");
+        var real = Path.Join(_root, "real.mkv.meta");
         File.WriteAllText(real, "ok");
-        var link = Path.Combine(_root, "link.mkv.meta");
+        var link = Path.Join(_root, "link.mkv.meta");
         File.CreateSymbolicLink(link, real);
 
         var found = MetadataTreeWalker.EnumerateMetaFiles(_root).ToList();
@@ -55,15 +55,15 @@ public class MetadataTreeWalkerTests : IDisposable
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
             return;
 
-        var outside = Path.Combine(Path.GetTempPath(), $"meta-walk-out-{Guid.NewGuid():N}");
+        var outside = Path.Join(Path.GetTempPath(), $"meta-walk-out-{Guid.NewGuid():N}");
         Directory.CreateDirectory(outside);
         try
         {
-            File.WriteAllText(Path.Combine(outside, "escaped.mkv.meta"), "x");
-            var linkDir = Path.Combine(_root, "linked");
+            File.WriteAllText(Path.Join(outside, "escaped.mkv.meta"), "x");
+            var linkDir = Path.Join(_root, "linked");
             Directory.CreateSymbolicLink(linkDir, outside);
 
-            File.WriteAllText(Path.Combine(_root, "local.mkv.meta"), "ok");
+            File.WriteAllText(Path.Join(_root, "local.mkv.meta"), "ok");
             var found = MetadataTreeWalker.EnumerateMetaFiles(_root).ToList();
             Assert.Single(found);
             Assert.EndsWith("local.mkv.meta", found[0]);
@@ -80,9 +80,9 @@ public class MetadataTreeWalkerTests : IDisposable
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
             return;
 
-        var locked = Path.Combine(_root, "locked");
+        var locked = Path.Join(_root, "locked");
         Directory.CreateDirectory(locked);
-        File.WriteAllText(Path.Combine(locked, "x.meta"), "x");
+        File.WriteAllText(Path.Join(locked, "x.meta"), "x");
         // Remove all permissions so GetFiles/GetDirectories fail.
         File.SetUnixFileMode(locked, (UnixFileMode)0);
 

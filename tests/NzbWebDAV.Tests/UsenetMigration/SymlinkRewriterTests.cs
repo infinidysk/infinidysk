@@ -80,7 +80,7 @@ public class SymlinkRewriterTests
     public async Task Apply_RetargetsRewrites_LeavesOrphansAndOthersUntouched_AndBacksUpFirst()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-backup-{Guid.NewGuid():N}");
+        var backupDir = Path.Join(Path.GetTempPath(), $"altmig-backup-{Guid.NewGuid():N}");
         var (_, newTarget) = await SeedDavTargetAsync(h);
         await h.Store.UpdateSessionAsync(s =>
         {
@@ -150,7 +150,7 @@ public class SymlinkRewriterTests
         await h.Store.UpdateSessionAsync(s =>
         {
             s.SymlinkLibraryRoot = "/lib";
-            s.SymlinkBackupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
+            s.SymlinkBackupDir = Path.Join(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
         });
         await SeedPlanAsync(h, Row("rewrite", "/lib/a.mkv", "/mnt/altmount/tv/a.mkv", newTarget));
 
@@ -182,7 +182,7 @@ public class SymlinkRewriterTests
         await h.Store.UpdateSessionAsync(s =>
         {
             s.SymlinkLibraryRoot = "/lib";
-            s.SymlinkBackupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
+            s.SymlinkBackupDir = Path.Join(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
         });
         await SeedPlanAsync(h, Row("rewrite", "/lib/a.mkv", "/mnt/altmount/tv/a.mkv", newTarget));
 
@@ -204,7 +204,7 @@ public class SymlinkRewriterTests
     public async Task Apply_DriftGuard_UsesOperatingSystemCaseSemantics()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
+        var backupDir = Path.Join(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
         var (_, newTarget) = await SeedDavTargetAsync(h);
         await h.Store.UpdateSessionAsync(s =>
         {
@@ -249,7 +249,7 @@ public class SymlinkRewriterTests
     {
         await using var h = await MigrationTestHarness.CreateAsync();
         var (id, newTarget) = await SeedDavTargetAsync(h);
-        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
+        var backupDir = Path.Join(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
         await h.Store.UpdateSessionAsync(s =>
         {
             s.SymlinkLibraryRoot = "/lib";
@@ -282,7 +282,7 @@ public class SymlinkRewriterTests
     {
         await using var h = await MigrationTestHarness.CreateAsync();
         var (_, newTarget) = await SeedDavTargetAsync(h, mountDir: "/mnt/nzbdav");
-        var backupDir = Path.Combine(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
+        var backupDir = Path.Join(Path.GetTempPath(), $"altmig-{Guid.NewGuid():N}");
         await h.Store.UpdateSessionAsync(s =>
         {
             s.SymlinkLibraryRoot = "/lib";
@@ -312,9 +312,9 @@ public class SymlinkRewriterTests
     {
         // The never-delete invariant, tested on the real filesystem without needing
         // symlink privileges: a real file at the path must not be replaced.
-        var dir = Path.Combine(Path.GetTempPath(), $"altmig-realops-{Guid.NewGuid():N}");
+        var dir = Path.Join(Path.GetTempPath(), $"altmig-realops-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
-        var realFile = Path.Combine(dir, "real.mkv");
+        var realFile = Path.Join(dir, "real.mkv");
         File.WriteAllText(realFile, "precious content");
 
         try
@@ -335,9 +335,9 @@ public class SymlinkRewriterTests
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "Symlink race behavior is validated on the Linux deployment platform.");
 
-        var dir = Path.Combine(Path.GetTempPath(), $"altmig-leaf-race-{Guid.NewGuid():N}");
+        var dir = Path.Join(Path.GetTempPath(), $"altmig-leaf-race-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
-        var link = Path.Combine(dir, "movie.mkv");
+        var link = Path.Join(dir, "movie.mkv");
         File.CreateSymbolicLink(link, "/mnt/altmount/movie.mkv");
 
         try
@@ -366,11 +366,11 @@ public class SymlinkRewriterTests
     [Fact]
     public void RealOps_RejectsPathsOutsideLibraryRoot()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-root-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-root-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try
         {
-            var outside = Path.Combine(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}.mkv");
+            var outside = Path.Join(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}.mkv");
             var ex = Assert.Throws<IOException>(() => RealSymlinkOps.Instance.ReadLink(root, outside));
             Assert.Contains("outside the configured Library Root", ex.Message);
         }
@@ -385,18 +385,18 @@ public class SymlinkRewriterTests
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "Directory symlink behavior is validated on the Linux deployment platform.");
 
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-root-{Guid.NewGuid():N}");
-        var outside = Path.Combine(Path.GetTempPath(), $"altmig-outside-{Guid.NewGuid():N}");
-        var escape = Path.Combine(root, "escape");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-root-{Guid.NewGuid():N}");
+        var outside = Path.Join(Path.GetTempPath(), $"altmig-outside-{Guid.NewGuid():N}");
+        var escape = Path.Join(root, "escape");
         Directory.CreateDirectory(root);
         Directory.CreateDirectory(outside);
         Directory.CreateSymbolicLink(escape, outside);
-        var outsideFile = Path.Combine(outside, "movie.mkv");
+        var outsideFile = Path.Join(outside, "movie.mkv");
         File.WriteAllText(outsideFile, "precious content");
 
         try
         {
-            var escapedPath = Path.Combine(escape, "movie.mkv");
+            var escapedPath = Path.Join(escape, "movie.mkv");
             var ex = Assert.Throws<IOException>(() => RealSymlinkOps.Instance.ReplaceSymlink(
                 root,
                 escapedPath,
@@ -418,9 +418,9 @@ public class SymlinkRewriterTests
     {
         Skip.If(OperatingSystem.IsWindows(), "Symbolic link create/recreate is validated on Unix.");
 
-        var dir = Path.Combine(Path.GetTempPath(), $"altmig-recreate-{Guid.NewGuid():N}");
+        var dir = Path.Join(Path.GetTempPath(), $"altmig-recreate-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
-        var link = Path.Combine(dir, "movie.mkv");
+        var link = Path.Join(dir, "movie.mkv");
         const string oldTarget = "/mnt/altmount/movie.mkv";
         File.CreateSymbolicLink(link, oldTarget);
 

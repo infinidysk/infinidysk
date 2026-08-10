@@ -68,7 +68,7 @@ public class TarWriterTests : WriterTests
     public void Tar_Finalize_Archive(bool finalizeArchive)
     {
         using var stream = new MemoryStream();
-        using Stream content = File.OpenRead(Path.Combine(ORIGINAL_FILES_PATH, "jpg", "test.jpg"));
+        using Stream content = File.OpenRead(Path.Join(ORIGINAL_FILES_PATH, "jpg", "test.jpg"));
         using (
             var writer = new TarWriter(
                 stream,

@@ -77,7 +77,7 @@ public class RarEncryptedStoredEntryStreamTests : ArchiveTests
     public void EncryptedStored_WrongPassword_Throws()
     {
         using var archive = RarArchive.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar"),
             new ReaderOptions { Password = "wrong" }
         );
         var entry = archive.Entries.First(e => !e.IsDirectory && e.Size > 0);
@@ -109,7 +109,7 @@ public class RarEncryptedStoredEntryStreamTests : ArchiveTests
     {
         await using var archive = (RarArchive)
             await RarArchive.OpenAsyncArchive(
-                Path.Combine(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar"),
+                Path.Join(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar"),
                 new ReaderOptions { Password = Password }
             );
         var entry = (RarArchiveEntry)archive.Entries.First(e => !e.IsDirectory && e.Size > 0);
@@ -141,14 +141,14 @@ public class RarEncryptedStoredEntryStreamTests : ArchiveTests
     private static RarArchive OpenEncrypted(string archiveName) =>
         (RarArchive)
             RarArchive.OpenArchive(
-                Path.Combine(TEST_ARCHIVES_PATH, archiveName),
+                Path.Join(TEST_ARCHIVES_PATH, archiveName),
                 new ReaderOptions { Password = Password }
             );
 
     private static RarArchive OpenEncryptedMulti()
     {
         var streams = MultiEncryptedParts
-            .Select(p => (Stream)File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, p)))
+            .Select(p => (Stream)File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, p)))
             .ToArray();
         return (RarArchive)
             RarArchive.OpenArchive(streams, new ReaderOptions { Password = Password });

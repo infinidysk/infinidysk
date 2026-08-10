@@ -132,7 +132,7 @@ public sealed class HealthyTreePathMigrationTests
 
         public static async Task<MigrationHarness> CreateAsync()
         {
-            var databasePath = Path.Combine(Path.GetTempPath(), $"nzbdav-healthy-tree-{Guid.NewGuid():N}.sqlite");
+            var databasePath = Path.Join(Path.GetTempPath(), $"nzbdav-healthy-tree-{Guid.NewGuid():N}.sqlite");
             var options = new DbContextOptionsBuilder<DavDatabaseContext>()
                 .UseSqlite($"Data Source={databasePath}")
                 .AddInterceptors(new SqliteForeignKeyEnabler())

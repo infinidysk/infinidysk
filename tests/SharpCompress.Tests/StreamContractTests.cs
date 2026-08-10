@@ -52,9 +52,9 @@ public class StreamContractTests : TestBase
     {
         var paths = new[]
         {
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar5.multi.none.part01.rar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar5.multi.none.part02.rar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar5.multi.none.part03.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar5.multi.none.part01.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar5.multi.none.part02.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar5.multi.none.part03.rar"),
         };
         var streams = paths.Select(p => (Stream)File.OpenRead(p)).ToArray();
         try
@@ -80,7 +80,7 @@ public class StreamContractTests : TestBase
     [Fact]
     public void SharpCompressStream_NonSeekableReader_Contract()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Rar5.none.rar");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Rar5.none.rar");
         var bytes = File.ReadAllBytes(path);
         using var nonSeekable = new NonSeekableStream(new MemoryStream(bytes));
         using var reader = ReaderFactory.OpenReader(nonSeekable);
@@ -99,7 +99,7 @@ public class StreamContractTests : TestBase
     [Fact]
     public async Task EntryStream_DisposeAsync_AfterDispose_DoesNotThrow()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Rar5.none.rar");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Rar5.none.rar");
         await using var archive = (RarArchive)await RarArchive.OpenAsyncArchive(path);
         var entry = archive.Entries.First(e => !e.IsDirectory);
         var entryStream = await entry.OpenEntryStreamAsync();
@@ -139,12 +139,12 @@ public class StreamContractTests : TestBase
     private static string GetArchivePath(string caseName) =>
         caseName switch
         {
-            "Zip.deflate" => Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip"),
-            "Rar4" => Path.Combine(TEST_ARCHIVES_PATH, "Rar.rar"),
-            "Rar5.stored" => Path.Combine(TEST_ARCHIVES_PATH, "Rar5.none.rar"),
-            "Rar5.compressed" => Path.Combine(TEST_ARCHIVES_PATH, "Rar5.rar"),
-            "7z" => Path.Combine(TEST_ARCHIVES_PATH, "7Zip.nonsolid.7z"),
-            "Tar.gz" => Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz"),
+            "Zip.deflate" => Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip"),
+            "Rar4" => Path.Join(TEST_ARCHIVES_PATH, "Rar.rar"),
+            "Rar5.stored" => Path.Join(TEST_ARCHIVES_PATH, "Rar5.none.rar"),
+            "Rar5.compressed" => Path.Join(TEST_ARCHIVES_PATH, "Rar5.rar"),
+            "7z" => Path.Join(TEST_ARCHIVES_PATH, "7Zip.nonsolid.7z"),
+            "Tar.gz" => Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz"),
             _ => throw new ArgumentOutOfRangeException(nameof(caseName)),
         };
 

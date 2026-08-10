@@ -18,7 +18,7 @@ public class ZipSlip : TestBase
         Console.WriteLine("--- Sync: archive.WriteToDirectory() ---");
         var (extractDir, parentDir) = SetupDirs("sync");
         Directory.CreateDirectory(extractDir);
-        var archivePath = Path.Combine(parentDir, "malicious.zip");
+        var archivePath = Path.Join(parentDir, "malicious.zip");
 
         BuildMaliciousZip(archivePath);
 
@@ -45,7 +45,7 @@ public class ZipSlip : TestBase
         Console.WriteLine("--- Async: archive.WriteToDirectoryAsync() ---");
         var (extractDir, parentDir) = SetupDirs("async");
         Directory.CreateDirectory(extractDir);
-        var archivePath = Path.Combine(parentDir, "malicious.zip");
+        var archivePath = Path.Join(parentDir, "malicious.zip");
 
         BuildMaliciousZip(archivePath);
 
@@ -77,7 +77,7 @@ public class ZipSlip : TestBase
         // 1. Relative traversal: two levels up, then "escaped_relative/"
         zip.CreateEntry("../../escaped_relative/");
 
-        // 2. Absolute Unix path (Path.Combine discards the base when second arg is rooted)
+        // 2. Absolute Unix path (Path.Join discards the base when second arg is rooted)
         zip.CreateEntry("/tmp/escaped_absolute/");
 
         // 3. A legitimate entry for contrast
@@ -86,12 +86,12 @@ public class ZipSlip : TestBase
 
     private (string extractDir, string parentDir) SetupDirs(string label)
     {
-        var parentDir = Path.Combine(
+        var parentDir = Path.Join(
             SCRATCH_FILES_PATH,
             $"sc_poc_{label}_{Path.GetRandomFileName()}"
         );
         Directory.CreateDirectory(parentDir);
-        var extractDir = Path.Combine(parentDir, "extract_target");
+        var extractDir = Path.Join(parentDir, "extract_target");
 
         Console.WriteLine($"  Parent  : {parentDir}");
         Console.WriteLine($"  Target  : {extractDir}");
@@ -110,7 +110,7 @@ public class ZipSlip : TestBase
 
         // Relative traversal "../../escaped_relative/" escapes two levels above extractDir
         // (which is parentDir/extract_target), landing in Path.GetTempPath()
-        var relTarget = Path.GetFullPath(Path.Combine(extractDir, "../../escaped_relative"));
+        var relTarget = Path.GetFullPath(Path.Join(extractDir, "../../escaped_relative"));
         if (Directory.Exists(relTarget))
         {
             Console.WriteLine($"    [ESCAPED] relative traversal created: {relTarget}");

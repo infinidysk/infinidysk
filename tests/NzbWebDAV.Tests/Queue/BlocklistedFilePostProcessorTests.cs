@@ -15,7 +15,7 @@ public class BlocklistedFilePostProcessorTests : IDisposable
 
     public BlocklistedFilePostProcessorTests()
     {
-        _dbPath = Path.Combine(Path.GetTempPath(), $"blocklist-test-{Guid.NewGuid():N}.sqlite");
+        _dbPath = Path.Join(Path.GetTempPath(), $"blocklist-test-{Guid.NewGuid():N}.sqlite");
         var options = new DbContextOptionsBuilder<DavDatabaseContext>()
             .UseSqlite($"Data Source={_dbPath}")
             .Options;

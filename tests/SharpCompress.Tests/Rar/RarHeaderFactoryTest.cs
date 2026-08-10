@@ -39,7 +39,7 @@ public class RarHeaderFactoryTest : TestBase
     private void ReadEncryptedFlag(string testArchive, bool isEncrypted)
     {
         using var stream = new FileStream(
-            Path.Combine(TEST_ARCHIVES_PATH, testArchive),
+            Path.Join(TEST_ARCHIVES_PATH, testArchive),
             FileMode.Open,
             FileAccess.Read
         );

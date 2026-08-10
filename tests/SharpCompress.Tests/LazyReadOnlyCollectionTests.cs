@@ -419,7 +419,7 @@ public class LazyReadOnlyCollectionTests
     [Fact]
     public async Task ArchiveConcurrentEntriesEnumeration_IsSafe()
     {
-        var archivePath = Path.Combine(TestBase.TEST_ARCHIVES_PATH, "WinZip26.nocomp.multi.zip");
+        var archivePath = Path.Join(TestBase.TEST_ARCHIVES_PATH, "WinZip26.nocomp.multi.zip");
         using var archive = ArchiveFactory.OpenArchive(archivePath);
         const int taskCount = 8;
 

@@ -12,7 +12,7 @@ public class RarReaderDisposeAsyncTests : ReaderTests
     [Fact]
     public async ValueTask RarReader_AwaitUsing_DisposesUnpackV1_AfterEntryExtract()
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Rar.rar"));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Rar.rar"));
         RarReader rarReader;
         await using (
             var reader = await ReaderFactory.OpenAsyncReader(
@@ -39,7 +39,7 @@ public class RarReaderDisposeAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Rar5Reader_AwaitUsing_DisposesUnpackV2017_AfterEntryExtract()
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Rar5.rar"));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Rar5.rar"));
         RarReader rarReader;
         await using (
             var reader = await ReaderFactory.OpenAsyncReader(

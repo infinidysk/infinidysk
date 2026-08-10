@@ -21,7 +21,7 @@ public class ArchiveTests : ReaderTests
 {
     protected void ArchiveGetParts(IEnumerable<string> testArchives)
     {
-        var arcs = testArchives.Select(a => Path.Combine(TEST_ARCHIVES_PATH, a)).ToArray();
+        var arcs = testArchives.Select(a => Path.Join(TEST_ARCHIVES_PATH, a)).ToArray();
         var found = ArchiveFactory.GetFileParts(arcs[0]).ToArray();
         Assert.Equal(arcs.Length, found.Length);
         for (var i = 0; i < arcs.Length; i++)
@@ -32,7 +32,7 @@ public class ArchiveTests : ReaderTests
 
     protected void ArchiveStreamReadExtractAll(string testArchive, CompressionType compression)
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         ArchiveStreamReadExtractAll(new[] { testArchive }, compression);
     }
 
@@ -77,10 +77,10 @@ public class ArchiveTests : ReaderTests
 
     protected void ArchiveStreamRead(string testArchive, ReaderOptions? readerOptions = null)
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        var fullPath = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         ArchiveStreamRead(
-            ArchiveFactory.FindFactory<IArchiveFactory>(testArchive),
-            Path.GetExtension(testArchive),
+            ArchiveFactory.FindFactory<IArchiveFactory>(fullPath),
+            Path.GetExtension(fullPath),
             readerOptions,
             testArchive
         );
@@ -92,10 +92,10 @@ public class ArchiveTests : ReaderTests
         ReaderOptions? readerOptions = null
     )
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        var fullPath = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         ArchiveStreamRead(
             archiveFactory,
-            Path.GetExtension(testArchive),
+            Path.GetExtension(fullPath),
             readerOptions,
             testArchive
         );
@@ -107,7 +107,7 @@ public class ArchiveTests : ReaderTests
         params string[] testArchives
     )
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchives[0]);
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchives[0]);
         ArchiveStreamRead(
             ArchiveFactory.FindFactory<IArchiveFactory>(testArchive),
             extension,
@@ -125,7 +125,7 @@ public class ArchiveTests : ReaderTests
         ArchiveStreamRead(
             archiveFactory,
             readerOptions,
-            testArchives.Select(x => Path.Combine(TEST_ARCHIVES_PATH, x)),
+            testArchives.Select(x => Path.Join(TEST_ARCHIVES_PATH, x)),
             extension
         );
 
@@ -166,7 +166,7 @@ public class ArchiveTests : ReaderTests
     ) =>
         ArchiveStreamMultiRead(
             readerOptions,
-            testArchives.Select(x => Path.Combine(TEST_ARCHIVES_PATH, x))
+            testArchives.Select(x => Path.Join(TEST_ARCHIVES_PATH, x))
         );
 
     protected void ArchiveStreamMultiRead(
@@ -195,7 +195,7 @@ public class ArchiveTests : ReaderTests
     ) =>
         ArchiveOpenStreamRead(
             readerOptions,
-            testArchives.Select(x => Path.Combine(TEST_ARCHIVES_PATH, x))
+            testArchives.Select(x => Path.Join(TEST_ARCHIVES_PATH, x))
         );
 
     protected void ArchiveOpenStreamRead(
@@ -226,7 +226,7 @@ public class ArchiveTests : ReaderTests
         ArchiveOpenEntryVolumeIndexTest(
             results,
             readerOptions,
-            testArchives.Select(x => Path.Combine(TEST_ARCHIVES_PATH, x))
+            testArchives.Select(x => Path.Join(TEST_ARCHIVES_PATH, x))
         );
 
     private void ArchiveOpenEntryVolumeIndexTest(
@@ -263,7 +263,7 @@ public class ArchiveTests : ReaderTests
         ReaderOptions? readerOptions = null
     )
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using (var archive = ArchiveFactory.OpenArchive(new FileInfo(testArchive), readerOptions))
         {
             archive.WriteToDirectory(SCRATCH_FILES_PATH);
@@ -277,7 +277,7 @@ public class ArchiveTests : ReaderTests
         IArchiveFactory? archiveFactory = null
     )
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         archiveFactory ??= ArchiveFactory.FindFactory<IArchiveFactory>(testArchive);
         ExtensionTest(testArchive, archiveFactory);
         using (var archive = archiveFactory.OpenArchive(new FileInfo(testArchive), readerOptions))
@@ -310,7 +310,7 @@ public class ArchiveTests : ReaderTests
             fileOrder = fileOrder.Replace('\\', '/');
         }
         var expected = new Stack<string>(fileOrder.Split(' '));
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using var archive = ArchiveFactory.OpenArchive(testArchive, readerOptions);
         foreach (var entry in archive.Entries)
         {
@@ -323,7 +323,7 @@ public class ArchiveTests : ReaderTests
     /// </summary>
     protected void ArchiveFileReadEx(string testArchive)
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using (var archive = ArchiveFactory.OpenArchive(testArchive))
         {
             foreach (var entry in archive.Entries.Where(entry => !entry.IsDirectory))
@@ -336,7 +336,7 @@ public class ArchiveTests : ReaderTests
 
     protected void ArchiveDeltaDistanceRead(string testArchive)
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using var archive = ArchiveFactory.OpenArchive(testArchive);
         foreach (var entry in archive.Entries)
         {
@@ -594,7 +594,7 @@ public class ArchiveTests : ReaderTests
         ReaderOptions? readerOptions = null
     )
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         await ArchiveStreamReadAsync(
             ArchiveFactory.FindFactory<IArchiveFactory>(testArchive),
             readerOptions,

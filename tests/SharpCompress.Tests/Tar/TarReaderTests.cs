@@ -25,7 +25,7 @@ public class TarReaderTests : ReaderTests
     public void Tar_Skip()
     {
         using Stream stream = new ForwardOnlyStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"))
         );
         using var reader = ReaderFactory.OpenReader(stream);
         var x = 0;
@@ -69,7 +69,7 @@ public class TarReaderTests : ReaderTests
         // Regression test for: Dynamic default RingBuffer for BZip2
         // Opening a .tar.bz2 from a non-seekable stream should succeed
         // because the ring buffer is sized to hold the BZip2 block before calling IsTarFile.
-        using var fs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.bz2"));
+        using var fs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.bz2"));
         using var nonSeekable = new ForwardOnlyStream(fs);
         using var reader = ReaderFactory.OpenReader(nonSeekable);
         var entryCount = 0;
@@ -112,7 +112,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_BZip2_Entry_Stream()
     {
-        using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.bz2")))
+        using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.bz2")))
         using (var reader = TarReader.OpenReader(stream))
         {
             while (reader.MoveToNextEntry())
@@ -125,12 +125,12 @@ public class TarReaderTests : ReaderTests
                     var folder =
                         Path.GetDirectoryName(reader.Entry.Key)
                         ?? throw new ArgumentNullException();
-                    var destdir = Path.Combine(SCRATCH_FILES_PATH, folder);
+                    var destdir = Path.Join(SCRATCH_FILES_PATH, folder);
                     if (!Directory.Exists(destdir))
                     {
                         Directory.CreateDirectory(destdir);
                     }
-                    var destinationFileName = Path.Combine(destdir, file.NotNull());
+                    var destinationFileName = Path.Join(destdir, file.NotNull());
 
                     using var fs = File.OpenWrite(destinationFileName);
                     entryStream.CopyTo(fs);
@@ -147,7 +147,7 @@ public class TarReaderTests : ReaderTests
 
         using (
             Stream stream = File.OpenRead(
-                Path.Combine(TEST_ARCHIVES_PATH, "Tar.LongPathsWithLongNameExtension.tar")
+                Path.Join(TEST_ARCHIVES_PATH, "Tar.LongPathsWithLongNameExtension.tar")
             )
         )
         using (var reader = TarReader.OpenReader(stream))
@@ -176,7 +176,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_PaxLocalHeader_Reader()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.tar");
 
         using Stream stream = File.OpenRead(archivePath);
         using var reader = TarReader.OpenReader(stream);
@@ -213,7 +213,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_PaxLocalHeader_Link_Reader()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.Link.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.Link.tar");
 
         using Stream stream = File.OpenRead(archivePath);
         using var reader = TarReader.OpenReader(stream);
@@ -228,7 +228,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_PaxGlobalHeader_Reader()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.tar");
 
         using Stream stream = File.OpenRead(archivePath);
         using var reader = TarReader.OpenReader(stream);
@@ -266,7 +266,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_PaxGlobalHeader_Link_Reader()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.Link.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.Link.tar");
 
         using Stream stream = File.OpenRead(archivePath);
         using var reader = TarReader.OpenReader(stream);
@@ -293,7 +293,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_WithSymlink_Reader_SurfacesLinkTargets()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "TarWithSymlink.tar.gz");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "TarWithSymlink.tar.gz");
 
         using Stream stream = File.OpenRead(archivePath);
         using var reader = TarReader.OpenReader(stream);
@@ -323,7 +323,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_BZip2_Skip_Entry_Stream()
     {
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.bz2"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.bz2"));
         using var reader = TarReader.OpenReader(stream);
         var names = new List<string>();
         while (reader.MoveToNextEntry())
@@ -342,7 +342,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_Containing_Rar_Reader()
     {
-        var archiveFullPath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.ContainsRar.tar");
+        var archiveFullPath = Path.Join(TEST_ARCHIVES_PATH, "Tar.ContainsRar.tar");
         using Stream stream = File.OpenRead(archiveFullPath);
         using var reader = ReaderFactory.OpenReader(stream);
         Assert.True(reader.Type == ArchiveType.Tar);
@@ -351,7 +351,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_With_TarGz_With_Flushed_EntryStream()
     {
-        var archiveFullPath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.ContainsTarGz.tar");
+        var archiveFullPath = Path.Join(TEST_ARCHIVES_PATH, "Tar.ContainsTarGz.tar");
         using Stream stream = File.OpenRead(archiveFullPath);
         using var reader = ReaderFactory.OpenReader(stream);
         Assert.True(reader.MoveToNextEntry());
@@ -369,7 +369,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_Broken_Stream()
     {
-        var archiveFullPath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar");
+        var archiveFullPath = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar");
         using Stream stream = File.OpenRead(archiveFullPath);
         using var reader = ReaderFactory.OpenReader(stream);
         using var memoryStream = new MemoryStream();
@@ -441,7 +441,7 @@ public class TarReaderTests : ReaderTests
     [Fact]
     public void Tar_Corrupted()
     {
-        var archiveFullPath = Path.Combine(TEST_ARCHIVES_PATH, "TarCorrupted.tar");
+        var archiveFullPath = Path.Join(TEST_ARCHIVES_PATH, "TarCorrupted.tar");
         using Stream stream = File.OpenRead(archiveFullPath);
         using var reader = ReaderFactory.OpenReader(stream);
         using var memoryStream = new MemoryStream();

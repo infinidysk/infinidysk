@@ -10,8 +10,8 @@ public sealed class AltmountPathDetectorTests
         var root = Directory.CreateTempSubdirectory("altmig-detect-");
         try
         {
-            var metadataRoot = Directory.CreateDirectory(Path.Combine(root.FullName, "metadata"));
-            var configPath = Path.Combine(root.FullName, "config.yaml");
+            var metadataRoot = Directory.CreateDirectory(Path.Join(root.FullName, "metadata"));
+            var configPath = Path.Join(root.FullName, "config.yaml");
             await File.WriteAllTextAsync(
                 configPath,
                 "sabnzbd:\n  categories:\n  - name: 'movies'\n    dir: 'movies'\n");
@@ -35,7 +35,7 @@ public sealed class AltmountPathDetectorTests
     [Fact]
     public async Task Detect_ReportsMissingRoot()
     {
-        var root = Path.Combine(
+        var root = Path.Join(
             Path.GetTempPath(),
             $"missing-altmig-detect-{Guid.NewGuid():N}");
 
@@ -44,8 +44,8 @@ public sealed class AltmountPathDetectorTests
         Assert.False(result.Detected);
         Assert.Equal(AltmountPathDetector.FailureReason, result.Reason);
         Assert.DoesNotContain(root, result.Reason);
-        Assert.Equal(Path.Combine(Path.GetFullPath(root), "metadata"), result.MetadataRoot);
-        Assert.Equal(Path.Combine(Path.GetFullPath(root), "config.yaml"), result.ConfigPath);
+        Assert.Equal(Path.Join(Path.GetFullPath(root), "metadata"), result.MetadataRoot);
+        Assert.Equal(Path.Join(Path.GetFullPath(root), "config.yaml"), result.ConfigPath);
         Assert.Equal(Path.GetFullPath(root), result.StoreRoot);
     }
 
@@ -75,7 +75,7 @@ public sealed class AltmountPathDetectorTests
         var root = Directory.CreateTempSubdirectory("altmig-detect-");
         try
         {
-            Directory.CreateDirectory(Path.Combine(root.FullName, "metadata"));
+            Directory.CreateDirectory(Path.Join(root.FullName, "metadata"));
 
             var result = await AltmountPathDetector.DetectAsync(root.FullName);
 
@@ -100,9 +100,9 @@ public sealed class AltmountPathDetectorTests
     [Fact]
     public async Task Detect_RejectsNavigationSegmentsBeforeCanonicalization()
     {
-        var parent = Path.Combine(Path.GetTempPath(), $"altmig-parent-{Guid.NewGuid():N}");
-        var withParentTraversal = Path.Combine(parent, "child", "..", "altmount");
-        var withCurrentTraversal = Path.Combine(parent, ".", "altmount");
+        var parent = Path.Join(Path.GetTempPath(), $"altmig-parent-{Guid.NewGuid():N}");
+        var withParentTraversal = Path.Join(parent, "child", "..", "altmount");
+        var withCurrentTraversal = Path.Join(parent, ".", "altmount");
 
         await Assert.ThrowsAsync<ArgumentException>(
             () => AltmountPathDetector.DetectAsync(withParentTraversal));
@@ -126,9 +126,9 @@ public sealed class AltmountPathDetectorTests
         var root = Directory.CreateTempSubdirectory("altmig-detect-");
         try
         {
-            Directory.CreateDirectory(Path.Combine(root.FullName, "metadata"));
+            Directory.CreateDirectory(Path.Join(root.FullName, "metadata"));
             await File.WriteAllTextAsync(
-                Path.Combine(root.FullName, "config.yaml"),
+                Path.Join(root.FullName, "config.yaml"),
                 "sabnzbd:\n  categories:\n");
 
             var result = await AltmountPathDetector.DetectAsync(root.FullName);
@@ -149,9 +149,9 @@ public sealed class AltmountPathDetectorTests
         var root = Directory.CreateTempSubdirectory("altmig-detect-");
         try
         {
-            Directory.CreateDirectory(Path.Combine(root.FullName, "metadata"));
+            Directory.CreateDirectory(Path.Join(root.FullName, "metadata"));
             await File.WriteAllTextAsync(
-                Path.Combine(root.FullName, "config.yaml"),
+                Path.Join(root.FullName, "config.yaml"),
                 "sabnzbd:\n  categories: [{ name: 'movies' }]\n");
 
             var result = await AltmountPathDetector.DetectAsync(root.FullName);

@@ -18,7 +18,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async Task SevenZipArchive_LZMA_AsyncStreamExtraction()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z");
         await using var stream = File.OpenRead(testArchive);
         await using var archive = await ArchiveFactory.OpenAsyncArchive(
             new AsyncOnlyStream(stream)
@@ -26,7 +26,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
 
         await foreach (var entry in archive.EntriesAsync.Where(entry => !entry.IsDirectory))
         {
-            var targetPath = Path.Combine(SCRATCH_FILES_PATH, entry.Key!);
+            var targetPath = Path.Join(SCRATCH_FILES_PATH, entry.Key!);
             var targetDir = Path.GetDirectoryName(targetPath);
 
             if (!string.IsNullOrEmpty(targetDir) && !Directory.Exists(targetDir))
@@ -45,7 +45,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
     //[Fact]
     public async Task SevenZipArchive_LZMA2_AsyncStreamExtraction()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.LZMA2.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA2.7z");
         await using var stream = File.OpenRead(testArchive);
         await using var archive = await ArchiveFactory.OpenAsyncArchive(
             new AsyncOnlyStream(stream)
@@ -53,7 +53,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
 
         await foreach (var entry in archive.EntriesAsync.Where(entry => !entry.IsDirectory))
         {
-            var targetPath = Path.Combine(SCRATCH_FILES_PATH, entry.Key!);
+            var targetPath = Path.Join(SCRATCH_FILES_PATH, entry.Key!);
             var targetDir = Path.GetDirectoryName(targetPath);
 
             if (!string.IsNullOrEmpty(targetDir) && !Directory.Exists(targetDir))
@@ -72,7 +72,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async Task SevenZipArchive_Solid_AsyncStreamExtraction()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         await using var stream = File.OpenRead(testArchive);
         await using var archive = await ArchiveFactory.OpenAsyncArchive(
             new AsyncOnlyStream(stream)
@@ -80,7 +80,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
 
         await foreach (var entry in archive.EntriesAsync.Where(entry => !entry.IsDirectory))
         {
-            var targetPath = Path.Combine(SCRATCH_FILES_PATH, entry.Key!);
+            var targetPath = Path.Join(SCRATCH_FILES_PATH, entry.Key!);
             var targetDir = Path.GetDirectoryName(targetPath);
 
             if (!string.IsNullOrEmpty(targetDir) && !Directory.Exists(targetDir))
@@ -103,7 +103,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
         var progress = new SynchronousProgress<ProgressReport>(report =>
             progressReports.Add(report)
         );
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         await using var stream = File.OpenRead(testArchive);
         await using var archive = await ArchiveFactory.OpenAsyncArchive(
             new AsyncOnlyStream(stream)
@@ -118,7 +118,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async Task SevenZipArchive_BZip2_AsyncStreamExtraction()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.BZip2.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.BZip2.7z");
         await using var stream = File.OpenRead(testArchive);
         await using var archive = await ArchiveFactory.OpenAsyncArchive(
             new AsyncOnlyStream(stream)
@@ -126,7 +126,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
 
         await foreach (var entry in archive.EntriesAsync.Where(entry => !entry.IsDirectory))
         {
-            var targetPath = Path.Combine(SCRATCH_FILES_PATH, entry.Key!);
+            var targetPath = Path.Join(SCRATCH_FILES_PATH, entry.Key!);
             var targetDir = Path.GetDirectoryName(targetPath);
 
             if (!string.IsNullOrEmpty(targetDir) && !Directory.Exists(targetDir))
@@ -145,7 +145,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async Task SevenZipArchive_PPMd_AsyncStreamExtraction()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.PPMd.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.PPMd.7z");
         await using var stream = File.OpenRead(testArchive);
         await using var archive = await ArchiveFactory.OpenAsyncArchive(
             new AsyncOnlyStream(stream)
@@ -153,7 +153,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
 
         await foreach (var entry in archive.EntriesAsync.Where(entry => !entry.IsDirectory))
         {
-            var targetPath = Path.Combine(SCRATCH_FILES_PATH, entry.Key!);
+            var targetPath = Path.Join(SCRATCH_FILES_PATH, entry.Key!);
             var targetDir = Path.GetDirectoryName(targetPath);
 
             if (!string.IsNullOrEmpty(targetDir) && !Directory.Exists(targetDir))
@@ -173,17 +173,17 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
     public async Task SevenZipArchive_TestSolidDetectionAsync()
     {
         await using var oneBlockSolidArchive = await SevenZipArchive.OpenAsyncArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.1block.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.1block.7z")
         );
         Assert.True(await oneBlockSolidArchive.IsSolidAsync());
 
         await using var solidArchive = await SevenZipArchive.OpenAsyncArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z")
         );
         Assert.True(await solidArchive.IsSolidAsync());
 
         await using var nonSolidArchive = await SevenZipArchive.OpenAsyncArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.nonsolid.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.nonsolid.7z")
         );
         Assert.False(await nonSolidArchive.IsSolidAsync());
     }
@@ -193,7 +193,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
     {
         // This test verifies that solid archives iterate entries as contiguous streams
         // rather than recreating the decompression stream for each entry
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         await using var archive = await SevenZipArchive.OpenAsyncArchive(testArchive);
         Assert.True(await archive.IsSolidAsync());
 
@@ -214,7 +214,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
     {
         // This test verifies that the folder stream is reused within each folder
         // and not recreated for each entry in solid archives
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         await using var archive = await SevenZipArchive.OpenAsyncArchive(testArchive);
         Assert.True(await archive.IsSolidAsync());
 
@@ -282,7 +282,7 @@ public class SevenZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async Task SevenZipArchive_ExtractAllEntriesAsync_Dispose_DoesNotDisposeVolumeStream()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         await using var archive = (SevenZipArchive)
             await SevenZipArchive.OpenAsyncArchive(testArchive);
         var volumeStream = ((SevenZipVolume)archive.Volumes.Single()).Stream;

@@ -197,12 +197,12 @@ public class ProviderMetricsKeyTests
     {
         // Un-migrated database: every table query throws "no such table". The remap
         // must contain the failure — throwing here used to crash backend startup.
-        var dir = Path.Combine(Path.GetTempPath(), $"nzbdav-metrics-broken-{Guid.NewGuid():N}");
+        var dir = Path.Join(Path.GetTempPath(), $"nzbdav-metrics-broken-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         try
         {
             var options = new DbContextOptionsBuilder<MetricsDbContext>()
-                .UseSqlite($"Data Source={Path.Combine(dir, "metrics.sqlite")}")
+                .UseSqlite($"Data Source={Path.Join(dir, "metrics.sqlite")}")
                 .Options;
             await using var context = new MetricsDbContext(options);
 
@@ -307,9 +307,9 @@ public class ProviderMetricsKeyTests
 
         public static async Task<MetricsHarness> CreateAsync()
         {
-            var dir = Path.Combine(Path.GetTempPath(), $"nzbdav-metrics-key-{Guid.NewGuid():N}");
+            var dir = Path.Join(Path.GetTempPath(), $"nzbdav-metrics-key-{Guid.NewGuid():N}");
             Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, "metrics.sqlite");
+            var path = Path.Join(dir, "metrics.sqlite");
             var options = new DbContextOptionsBuilder<MetricsDbContext>()
                 .UseSqlite($"Data Source={path}")
                 .AddInterceptors(new SqliteMetricsPragmas())

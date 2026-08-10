@@ -24,7 +24,7 @@ public class ArchiveFactoryTests : TestBase
     )
     {
         var factory = await ArchiveFactory.FindFactoryAsync<IArchiveFactory>(
-            Path.Combine(TEST_ARCHIVES_PATH, archiveName)
+            Path.Join(TEST_ARCHIVES_PATH, archiveName)
         );
 
         Assert.IsType(expectedFactoryType, factory);
@@ -41,7 +41,7 @@ public class ArchiveFactoryTests : TestBase
     )
     {
         var factory = await ArchiveFactory.FindFactoryAsync<IArchiveFactory>(
-            new FileInfo(Path.Combine(TEST_ARCHIVES_PATH, archiveName))
+            new FileInfo(Path.Join(TEST_ARCHIVES_PATH, archiveName))
         );
 
         Assert.IsType(expectedFactoryType, factory);
@@ -134,7 +134,7 @@ public class ArchiveFactoryTests : TestBase
     public void IsArchive_String_ReturnsExpectedType(string archiveName, ArchiveType expectedType)
     {
         var result = ArchiveFactory.IsArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, archiveName),
+            Path.Join(TEST_ARCHIVES_PATH, archiveName),
             out var type
         );
 
@@ -203,7 +203,7 @@ public class ArchiveFactoryTests : TestBase
     )
     {
         var result = await ArchiveFactory.IsArchiveAsync(
-            Path.Combine(TEST_ARCHIVES_PATH, archiveName)
+            Path.Join(TEST_ARCHIVES_PATH, archiveName)
         );
 
         Assert.True(result.IsArchive);
@@ -254,7 +254,7 @@ public class ArchiveFactoryTests : TestBase
     )
     {
         var info = ArchiveFactory.GetArchiveInformation(
-            Path.Combine(TEST_ARCHIVES_PATH, archiveName)
+            Path.Join(TEST_ARCHIVES_PATH, archiveName)
         );
 
         Assert.NotNull(info);
@@ -295,7 +295,7 @@ public class ArchiveFactoryTests : TestBase
     )
     {
         var info = await ArchiveFactory.GetArchiveInformationAsync(
-            Path.Combine(TEST_ARCHIVES_PATH, archiveName)
+            Path.Join(TEST_ARCHIVES_PATH, archiveName)
         );
 
         Assert.NotNull(info);
@@ -774,12 +774,12 @@ public class ArchiveFactoryTests : TestBase
 
     private static string GetTestArchivePath(string archiveName)
     {
-        var archivesPath = Path.Combine(TEST_ARCHIVES_PATH, archiveName);
+        var archivesPath = Path.Join(TEST_ARCHIVES_PATH, archiveName);
         if (File.Exists(archivesPath))
         {
             return archivesPath;
         }
 
-        return Path.GetFullPath(Path.Combine(TEST_ARCHIVES_PATH, "..", archiveName));
+        return Path.GetFullPath(Path.Join(TEST_ARCHIVES_PATH, "..", archiveName));
     }
 }

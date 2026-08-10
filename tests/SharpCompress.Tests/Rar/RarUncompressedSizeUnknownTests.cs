@@ -61,7 +61,7 @@ public class RarUncompressedSizeUnknownTests
     [Fact]
     public void ExistingRar5Fixture_KnownSize_IsNotUnknown()
     {
-        var path = Path.Combine(TestBase.TEST_ARCHIVES_PATH, "Rar5.none.rar");
+        var path = Path.Join(TestBase.TEST_ARCHIVES_PATH, "Rar5.none.rar");
         using var stream = File.OpenRead(path);
         var factory = new RarHeaderFactory(
             StreamingMode.Seekable,

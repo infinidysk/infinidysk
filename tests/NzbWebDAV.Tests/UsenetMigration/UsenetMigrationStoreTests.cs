@@ -25,7 +25,7 @@ public class UsenetMigrationStoreTests
     [Fact]
     public async Task ConcurrentFirstRequests_CreateDatabaseAndOneSingletonSession()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), $"altmig-first-use-{Guid.NewGuid():N}.db");
+        var databasePath = Path.Join(Path.GetTempPath(), $"altmig-first-use-{Guid.NewGuid():N}.db");
         var options = new DbContextOptionsBuilder<UsenetMigrationDbContext>()
             .UseSqlite($"Data Source={databasePath}")
             .Options;
@@ -63,7 +63,7 @@ public class UsenetMigrationStoreTests
     [Fact]
     public async Task EnsureDatabase_RecreatesIncompatiblePreSquashLedger()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), $"altmig-stale-{Guid.NewGuid():N}.db");
+        var databasePath = Path.Join(Path.GetTempPath(), $"altmig-stale-{Guid.NewGuid():N}.db");
         await CreatePreSquashStaleLedgerAsync(databasePath);
 
         var options = new DbContextOptionsBuilder<UsenetMigrationDbContext>()

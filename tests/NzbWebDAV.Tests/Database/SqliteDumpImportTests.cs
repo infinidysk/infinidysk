@@ -13,14 +13,14 @@ public sealed class SqliteDumpImportTests
     [Fact]
     public async Task DumpAndImport_RoundTripsRepresentativeContent()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"nzbdav-dump-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-dump-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try
         {
-            var sourcePath = Path.Combine(root, "source.sqlite");
-            var dumpPath = Path.Combine(root, "dump.sql");
-            var restoredPath = Path.Combine(root, "restored.sqlite");
-            var redumpPath = Path.Combine(root, "redump.sql");
+            var sourcePath = Path.Join(root, "source.sqlite");
+            var dumpPath = Path.Join(root, "dump.sql");
+            var restoredPath = Path.Join(root, "restored.sqlite");
+            var redumpPath = Path.Join(root, "redump.sql");
 
             await CreateRepresentativeDatabaseAsync(sourcePath);
 
@@ -96,12 +96,12 @@ public sealed class SqliteDumpImportTests
     [Fact]
     public async Task Importer_HandlesSemicolonsCommentsAndMultilineStatements()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"nzbdav-import-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-import-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try
         {
-            var sqlPath = Path.Combine(root, "special.sql");
-            var dbPath = Path.Combine(root, "special.sqlite");
+            var sqlPath = Path.Join(root, "special.sql");
+            var dbPath = Path.Join(root, "special.sqlite");
             await File.WriteAllTextAsync(sqlPath, """
                 PRAGMA foreign_keys=OFF;
                 BEGIN TRANSACTION;
@@ -143,13 +143,13 @@ public sealed class SqliteDumpImportTests
     [Fact]
     public async Task Importer_RejectsAttachedDatabaseAndLeavesItUnchanged()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"nzbdav-import-authorizer-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-import-authorizer-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try
         {
-            var sqlPath = Path.Combine(root, "malicious.sql");
-            var stagedPath = Path.Combine(root, "staged.sqlite");
-            var livePath = Path.Combine(root, "live.sqlite");
+            var sqlPath = Path.Join(root, "malicious.sql");
+            var stagedPath = Path.Join(root, "staged.sqlite");
+            var livePath = Path.Join(root, "live.sqlite");
             await File.WriteAllTextAsync(sqlPath, $"""
                 CREATE TABLE Safe(Value TEXT);
                 aTtAcH DATABASE '{livePath.Replace("'", "''", StringComparison.Ordinal)}' AS live;
@@ -185,11 +185,11 @@ public sealed class SqliteDumpImportTests
     [Fact]
     public async Task DumpAndImport_RoundTripsRealDavSchema()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"nzbdav-schema-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-schema-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
-        var sourceDb = Path.Combine(root, "source.sqlite");
-        var dumpPath = Path.Combine(root, "db.sql");
-        var restoredDb = Path.Combine(root, "restored-db.sqlite");
+        var sourceDb = Path.Join(root, "source.sqlite");
+        var dumpPath = Path.Join(root, "db.sql");
+        var restoredDb = Path.Join(root, "restored-db.sqlite");
         try
         {
             var sourceOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
@@ -323,7 +323,7 @@ public sealed class DatabaseBackupStoreTests
     [Fact]
     public void Retention_RespectsPreservedAndZeroDisablesPruning()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"nzbdav-store-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-store-{Guid.NewGuid():N}");
         var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
         Environment.SetEnvironmentVariable("CONFIG_PATH", root);
         try
@@ -362,7 +362,7 @@ public sealed class DatabaseBackupStoreTests
     [Fact]
     public void IncompletePendingRestore_IsReadableAndClearable()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"nzbdav-intent-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-intent-{Guid.NewGuid():N}");
         var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
         Environment.SetEnvironmentVariable("CONFIG_PATH", root);
         try
@@ -391,7 +391,7 @@ public sealed class DatabaseBackupStoreTests
     private static void CreateCommittedBackup(DatabaseBackupStore store, string kind, bool preserved)
     {
         var staging = store.CreateStaging(kind);
-        File.WriteAllText(Path.Combine(staging, DatabaseBackupStore.DbSqlName), "PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\nCOMMIT;\n");
+        File.WriteAllText(Path.Join(staging, DatabaseBackupStore.DbSqlName), "PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\nCOMMIT;\n");
         store.CommitStaging(staging, kind, notes: null, preserved: preserved, appVersion: "test", lastMainMigration: null);
     }
 
@@ -415,7 +415,7 @@ public sealed class DatabaseRestoreRunnerTests
     [Fact]
     public async Task ApplyPendingRestore_DiscardsMissingStagingFiles()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"nzbdav-restore-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-restore-{Guid.NewGuid():N}");
         var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
         Environment.SetEnvironmentVariable("CONFIG_PATH", root);
         try
@@ -457,7 +457,7 @@ public sealed class DatabaseRestoreRunnerTests
     [Fact]
     public async Task ApplyPendingRestore_SwapsStagedDatabaseAndWritesReport()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"nzbdav-swap-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-swap-{Guid.NewGuid():N}");
         var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
         Environment.SetEnvironmentVariable("CONFIG_PATH", root);
         try
@@ -477,12 +477,12 @@ public sealed class DatabaseRestoreRunnerTests
 
             // Pre-restore backup folder for rollback target
             var preStaging = store.CreateStaging(DatabaseBackupKinds.PreRestore);
-            File.WriteAllText(Path.Combine(preStaging, DatabaseBackupStore.DbSqlName), "PRAGMA foreign_keys=OFF;\nBEGIN;\nCOMMIT;\n");
+            File.WriteAllText(Path.Join(preStaging, DatabaseBackupStore.DbSqlName), "PRAGMA foreign_keys=OFF;\nBEGIN;\nCOMMIT;\n");
             var pre = store.CommitStaging(preStaging, DatabaseBackupKinds.PreRestore, "safety", preserved: true, "test", null);
 
             // Staged restored DB
             store.PrepareRestoreStaging();
-            var stagedPath = Path.Combine(store.RestoreStagingRoot, "db.sqlite");
+            var stagedPath = Path.Join(store.RestoreStagingRoot, "db.sqlite");
             await using (var staged = new SqliteConnection($"Data Source={stagedPath};Pooling=False"))
             {
                 await staged.OpenAsync();
@@ -517,7 +517,7 @@ public sealed class DatabaseRestoreRunnerTests
                 Assert.Equal("restored", (string)(await cmd.ExecuteScalarAsync())!);
             }
 
-            var rollbackDb = Path.Combine(store.GetBackupDirectory(pre.Id), DatabaseBackupStore.RollbackFolderName, "db.sqlite");
+            var rollbackDb = Path.Join(store.GetBackupDirectory(pre.Id), DatabaseBackupStore.RollbackFolderName, "db.sqlite");
             Assert.True(File.Exists(rollbackDb));
 
             var report = store.ReadLastRestoreReport();

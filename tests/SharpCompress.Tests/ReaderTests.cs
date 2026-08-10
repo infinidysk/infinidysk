@@ -31,7 +31,7 @@ public abstract class ReaderTests : TestBase
         Action<string, ReaderOptions> readImpl
     )
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         options ??= ReaderOptions.ForFilePath.WithBufferSize(0x20000);
 
         var optionsWithStreamOpen = options.WithLeaveStreamOpen(true);
@@ -98,7 +98,7 @@ public abstract class ReaderTests : TestBase
         CancellationToken cancellationToken = default
     )
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         var factory = new TarFactory();
         (
             await factory.IsArchiveAsync(
@@ -127,7 +127,7 @@ public abstract class ReaderTests : TestBase
         CancellationToken cancellationToken = default
     )
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
 
         options ??= ReaderOptions.ForExternalStream.WithBufferSize(0x20000);
 
@@ -205,7 +205,7 @@ public abstract class ReaderTests : TestBase
 
     protected void ReadForBufferBoundaryCheck(string fileName, CompressionType compressionType)
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, fileName));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, fileName));
         using var reader = ReaderFactory.OpenReader(
             stream,
             ReaderOptions.ForExternalStream with
@@ -222,8 +222,8 @@ public abstract class ReaderTests : TestBase
         }
 
         CompareFilesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "alice29.txt"),
-            Path.Combine(MISC_TEST_FILES_PATH, "alice29.txt")
+            Path.Join(SCRATCH_FILES_PATH, "alice29.txt"),
+            Path.Join(MISC_TEST_FILES_PATH, "alice29.txt")
         );
     }
 
@@ -240,7 +240,7 @@ public abstract class ReaderTests : TestBase
         }
         var expected = new Stack<string>(fileOrder.Split(' '));
 
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using var file = File.OpenRead(testArchive);
         using var forward = new ForwardOnlyStream(file);
         using var reader = ReaderFactory.OpenReader(forward, options);
@@ -257,7 +257,7 @@ public abstract class ReaderTests : TestBase
     )
     {
         using var reader = readerFactory(
-            archives.Select(s => Path.Combine(TEST_ARCHIVES_PATH, s)).Select(File.OpenRead)
+            archives.Select(s => Path.Join(TEST_ARCHIVES_PATH, s)).Select(File.OpenRead)
         );
 
         while (reader.MoveToNextEntry())

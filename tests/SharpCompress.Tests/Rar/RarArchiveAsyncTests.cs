@@ -24,7 +24,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     {
         var extractedEntries = 0;
         await using var archive = await RarArchive.OpenAsyncArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, filename),
+            Path.Join(TEST_ARCHIVES_PATH, filename),
             new ReaderOptions { LookForHeader = true }
         );
 
@@ -92,7 +92,7 @@ public class RarArchiveAsyncTests : ArchiveTests
 
     private async ValueTask ReadRarPasswordAsync(string testArchive, string? password)
     {
-        using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, testArchive)))
+        using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, testArchive)))
         await using (
             var archive = await RarArchive.OpenAsyncArchive(
                 stream,
@@ -126,7 +126,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     {
         using (
             var archive = RarArchive.OpenArchive(
-                Path.Combine(TEST_ARCHIVES_PATH, archiveName),
+                Path.Join(TEST_ARCHIVES_PATH, archiveName),
                 ReaderOptions.ForFilePath with
                 {
                     Password = password,
@@ -164,7 +164,7 @@ public class RarArchiveAsyncTests : ArchiveTests
 
     private async ValueTask DoRar_test_invalid_exttime_ArchiveStreamReadAsync(string filename)
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, filename));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, filename));
         using var archive = ArchiveFactory.OpenArchive(stream);
         foreach (var entry in archive.Entries.Where(entry => !entry.IsDirectory))
         {
@@ -175,7 +175,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Rar_Jpg_ArchiveStreamRead_Async()
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Rar.jpeg.jpg"));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Rar.jpeg.jpg"));
         using (
             var archive = RarArchive.OpenArchive(
                 stream,
@@ -204,7 +204,7 @@ public class RarArchiveAsyncTests : ArchiveTests
 
     private async ValueTask DoRar_IsSolidArchiveCheckAsync(string filename)
     {
-        using (var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, filename)))
+        using (var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, filename)))
         {
             using var archive = RarArchive.OpenArchive(stream);
             Assert.False(archive.IsSolid);
@@ -222,7 +222,7 @@ public class RarArchiveAsyncTests : ArchiveTests
 
     private async ValueTask DoRar_IsSolidEntryStreamCheckAsync(string filename)
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, filename));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, filename));
         using var archive = RarArchive.OpenArchive(stream);
         Assert.True(archive.IsSolid);
         IArchiveEntry[] entries = archive.Entries.Where(a => !a.IsDirectory).ToArray();
@@ -296,7 +296,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     {
         using var archive = RarArchive.OpenArchive(
             archives
-                .Select(s => Path.Combine(TEST_ARCHIVES_PATH, s))
+                .Select(s => Path.Join(TEST_ARCHIVES_PATH, s))
                 .Select(File.OpenRead)
                 .ToArray()
         );
@@ -345,7 +345,7 @@ public class RarArchiveAsyncTests : ArchiveTests
 
     private Task DoRar_ArchiveFileRead_HasDirectoriesAsync(string filename)
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, filename));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, filename));
         using var archive = RarArchive.OpenArchive(stream);
         Assert.False(archive.IsSolid);
         Assert.Contains(true, archive.Entries.Select(entry => entry.IsDirectory));
@@ -357,7 +357,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     {
         using (
             var archive = RarArchive.OpenArchive(
-                Path.Combine(TEST_ARCHIVES_PATH, "Rar.jpeg.jpg"),
+                Path.Join(TEST_ARCHIVES_PATH, "Rar.jpeg.jpg"),
                 ReaderOptions.ForFilePath with
                 {
                     LookForHeader = true,
@@ -414,7 +414,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     [Fact]
     public void Rar15_ArchiveVersionTest_Async()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Rar15.rar");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Rar15.rar");
 
         using var archive = RarArchive.OpenArchive(testArchive);
         Assert.Equal(1, archive.MinVersion);
@@ -424,7 +424,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     [Fact]
     public void Rar2_ArchiveVersionTest_Async()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Rar2.rar");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Rar2.rar");
 
         using var archive = RarArchive.OpenArchive(testArchive);
         Assert.Equal(2, archive.MinVersion);
@@ -434,7 +434,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     [Fact]
     public void Rar4_ArchiveVersionTest_Async()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Rar4.multi.part01.rar");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Rar4.multi.part01.rar");
 
         using var archive = RarArchive.OpenArchive(testArchive);
         Assert.Equal(3, archive.MinVersion);
@@ -444,7 +444,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     [Fact]
     public void Rar5_ArchiveVersionTest_Async()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Rar5.solid.rar");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Rar5.solid.rar");
 
         using var archive = RarArchive.OpenArchive(testArchive);
         Assert.Equal(5, archive.MinVersion);
@@ -603,7 +603,7 @@ public class RarArchiveAsyncTests : ArchiveTests
 
     private void DoRar_IsFirstVolume_True(string firstFilename)
     {
-        using var archive = RarArchive.OpenArchive(Path.Combine(TEST_ARCHIVES_PATH, firstFilename));
+        using var archive = RarArchive.OpenArchive(Path.Join(TEST_ARCHIVES_PATH, firstFilename));
         Assert.True(archive.IsMultipartVolume());
         Assert.True(archive.IsFirstVolume());
     }
@@ -619,7 +619,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     private void DoRar_IsFirstVolume_False(string notFirstFilename)
     {
         using var archive = RarArchive.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, notFirstFilename)
+            Path.Join(TEST_ARCHIVES_PATH, notFirstFilename)
         );
         Assert.True(archive.IsMultipartVolume());
         Assert.False(archive.IsFirstVolume());
@@ -661,7 +661,7 @@ public class RarArchiveAsyncTests : ArchiveTests
 
     private async ValueTask ArchiveStreamReadAsync(string testArchive)
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using var stream = File.OpenRead(testArchive);
         using var archive = ArchiveFactory.OpenArchive(stream);
         foreach (var entry in archive.Entries.Where(entry => !entry.IsDirectory))
@@ -676,7 +676,7 @@ public class RarArchiveAsyncTests : ArchiveTests
         CompressionType compression
     )
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using var stream = File.OpenRead(testArchive);
         await using var archive = await ArchiveFactory.OpenAsyncArchive(
             new AsyncOnlyStream(stream)
@@ -704,7 +704,7 @@ public class RarArchiveAsyncTests : ArchiveTests
 
     private async ValueTask ArchiveFileReadAsync(string testArchive)
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using var archive = ArchiveFactory.OpenArchive(testArchive);
         foreach (var entry in archive.Entries.Where(entry => !entry.IsDirectory))
         {
@@ -718,7 +718,7 @@ public class RarArchiveAsyncTests : ArchiveTests
         params string[] testArchives
     )
     {
-        var paths = testArchives.Select(x => Path.Combine(TEST_ARCHIVES_PATH, x));
+        var paths = testArchives.Select(x => Path.Join(TEST_ARCHIVES_PATH, x));
         using var archive = ArchiveFactory.OpenArchive(
             paths.Select(a => new FileInfo(a)).ToArray(),
             readerOptions
@@ -738,7 +738,7 @@ public class RarArchiveAsyncTests : ArchiveTests
     public async ValueTask Rar_Issue1050_WriteToDirectoryAsync_ExtractsToSubdirectories()
     {
         var testFile = "Rar.issue1050.rar";
-        using var fileStream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, testFile));
+        using var fileStream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, testFile));
         await using var archive = await RarArchive.OpenAsyncArchive(fileStream);
 
         // Extract using archive.WriteToDirectoryAsync without explicit options
@@ -746,23 +746,23 @@ public class RarArchiveAsyncTests : ArchiveTests
 
         // Verify files are in their subdirectories, not at the root
         Assert.True(
-            File.Exists(Path.Combine(SCRATCH_FILES_PATH, "PhysicsBraid", "263825.tr11dtp")),
+            File.Exists(Path.Join(SCRATCH_FILES_PATH, "PhysicsBraid", "263825.tr11dtp")),
             "File should be in PhysicsBraid subdirectory"
         );
         Assert.True(
-            File.Exists(Path.Combine(SCRATCH_FILES_PATH, "Animations", "15441.tr11anim")),
+            File.Exists(Path.Join(SCRATCH_FILES_PATH, "Animations", "15441.tr11anim")),
             "File should be in Animations subdirectory"
         );
         Assert.True(
-            File.Exists(Path.Combine(SCRATCH_FILES_PATH, "Braid", "766728.tr11dtp")),
+            File.Exists(Path.Join(SCRATCH_FILES_PATH, "Braid", "766728.tr11dtp")),
             "File should be in Braid subdirectory"
         );
         Assert.True(
-            File.Exists(Path.Combine(SCRATCH_FILES_PATH, "Braid", "766832.tr11dtp")),
+            File.Exists(Path.Join(SCRATCH_FILES_PATH, "Braid", "766832.tr11dtp")),
             "File should be in Braid subdirectory"
         );
         Assert.True(
-            File.Exists(Path.Combine(SCRATCH_FILES_PATH, "HeadBraid", "321353.tr11modeldata")),
+            File.Exists(Path.Join(SCRATCH_FILES_PATH, "HeadBraid", "321353.tr11modeldata")),
             "File should be in HeadBraid subdirectory"
         );
 
@@ -776,7 +776,7 @@ public class RarArchiveAsyncTests : ArchiveTests
         params string[] testArchives
     )
     {
-        var paths = testArchives.Select(x => Path.Combine(TEST_ARCHIVES_PATH, x));
+        var paths = testArchives.Select(x => Path.Join(TEST_ARCHIVES_PATH, x));
         using var archive = ArchiveFactory.OpenArchive(
             paths.Select(f => new FileInfo(f)).ToArray(),
             readerOptions

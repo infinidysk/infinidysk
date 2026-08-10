@@ -26,7 +26,7 @@ public class TarArchiveAsyncTests : ArchiveTests
     public async ValueTask TarArchiveOpenAsyncStream_Throws_On_NonSeekable_Stream()
     {
         using Stream stream = new ForwardOnlyStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"))
         );
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -43,7 +43,7 @@ public class TarArchiveAsyncTests : ArchiveTests
     [InlineData("Tar.tar.Z")]
     public async ValueTask TarArchiveOpenAsyncArchive_RejectsCompressedTar(string archiveName)
     {
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, archiveName));
 
         await Assert.ThrowsAsync<InvalidFormatException>(async () =>
             await TarArchive.OpenAsyncArchive(stream)
@@ -59,7 +59,7 @@ public class TarArchiveAsyncTests : ArchiveTests
     [InlineData("Tar.tar.Z")]
     public async ValueTask ArchiveFactoryOpenAsyncArchive_RejectsCompressedTar(string archiveName)
     {
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, archiveName));
 
         await Assert.ThrowsAsync<ArchiveOperationException>(async () =>
             await ArchiveFactory.OpenAsyncArchive(stream)
@@ -86,7 +86,7 @@ public class TarArchiveAsyncTests : ArchiveTests
             "filename_with_exactly_100_characters_______________________________________________________________X";
 
         // Step 1: create a tar file containing a file with the test name
-        using (Stream stream = File.OpenWrite(Path.Combine(SCRATCH2_FILES_PATH, archive)))
+        using (Stream stream = File.OpenWrite(Path.Join(SCRATCH2_FILES_PATH, archive)))
         {
             await using (
                 var writer = await WriterFactory.OpenAsyncWriter(
@@ -107,7 +107,7 @@ public class TarArchiveAsyncTests : ArchiveTests
         }
 
         // Step 2: check if the written tar file can be read correctly
-        var unmodified = Path.Combine(SCRATCH2_FILES_PATH, archive);
+        var unmodified = Path.Join(SCRATCH2_FILES_PATH, archive);
         await using (
             var archive2 = await TarArchive.OpenAsyncArchive(
                 new AsyncOnlyStream(File.OpenRead(unmodified)),
@@ -146,7 +146,7 @@ public class TarArchiveAsyncTests : ArchiveTests
         longFilename += ".txt";
 
         // Step 1: create a tar file containing a file with a long name
-        using (Stream stream = File.OpenWrite(Path.Combine(SCRATCH2_FILES_PATH, archive)))
+        using (Stream stream = File.OpenWrite(Path.Join(SCRATCH2_FILES_PATH, archive)))
         await using (
             var writer = await WriterFactory.OpenAsyncWriter(
                 new AsyncOnlyStream(stream),
@@ -165,7 +165,7 @@ public class TarArchiveAsyncTests : ArchiveTests
         }
 
         // Step 2: check if the written tar file can be read correctly
-        var unmodified = Path.Combine(SCRATCH2_FILES_PATH, archive);
+        var unmodified = Path.Join(SCRATCH2_FILES_PATH, archive);
         await using (
             var archive2 = await TarArchive.OpenAsyncArchive(
                 new AsyncOnlyStream(File.OpenRead(unmodified)),
@@ -192,8 +192,8 @@ public class TarArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Tar_Create_New_Async()
     {
-        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "Tar.tar");
-        var unmodified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.noEmptyDirs.tar");
+        var scratchPath = Path.Join(SCRATCH_FILES_PATH, "Tar.tar");
+        var unmodified = Path.Join(TEST_ARCHIVES_PATH, "Tar.noEmptyDirs.tar");
 
         await using (var archive = await TarArchive.CreateAsyncArchive())
         {
@@ -233,10 +233,10 @@ public class TarArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Tar_Random_Write_Add_Async()
     {
-        var jpg = Path.Combine(ORIGINAL_FILES_PATH, "jpg", "test.jpg");
-        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "Tar.mod.tar");
-        var unmodified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.mod.tar");
-        var modified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.noEmptyDirs.tar");
+        var jpg = Path.Join(ORIGINAL_FILES_PATH, "jpg", "test.jpg");
+        var scratchPath = Path.Join(SCRATCH_FILES_PATH, "Tar.mod.tar");
+        var unmodified = Path.Join(TEST_ARCHIVES_PATH, "Tar.mod.tar");
+        var modified = Path.Join(TEST_ARCHIVES_PATH, "Tar.noEmptyDirs.tar");
 
         await using (var archive = await TarArchive.OpenAsyncArchive(unmodified))
         {
@@ -252,9 +252,9 @@ public class TarArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Tar_Random_Write_Remove_Async()
     {
-        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "Tar.mod.tar");
-        var modified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.mod.tar");
-        var unmodified = Path.Combine(TEST_ARCHIVES_PATH, "Tar.noEmptyDirs.tar");
+        var scratchPath = Path.Join(SCRATCH_FILES_PATH, "Tar.mod.tar");
+        var modified = Path.Join(TEST_ARCHIVES_PATH, "Tar.mod.tar");
+        var unmodified = Path.Join(TEST_ARCHIVES_PATH, "Tar.noEmptyDirs.tar");
 
         await using (var archive = await TarArchive.OpenAsyncArchive(unmodified))
         {
@@ -348,7 +348,7 @@ public class TarArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Tar_PaxLocalHeader_Archive_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.tar");
         await using var archive = await TarArchive.OpenAsyncArchive(
             new AsyncOnlyStream(File.OpenRead(archivePath))
         );
@@ -374,7 +374,7 @@ public class TarArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Tar_PaxLocalHeader_Link_Archive_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.Link.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.Link.tar");
         await using var archive = await TarArchive.OpenAsyncArchive(
             new AsyncOnlyStream(File.OpenRead(archivePath))
         );
@@ -387,7 +387,7 @@ public class TarArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Tar_PaxGlobalHeader_Archive_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.tar");
         await using var archive = await TarArchive.OpenAsyncArchive(
             new AsyncOnlyStream(File.OpenRead(archivePath))
         );
@@ -422,7 +422,7 @@ public class TarArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask Tar_PaxGlobalHeader_Link_Archive_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.Link.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.Link.tar");
         await using var archive = await TarArchive.OpenAsyncArchive(
             new AsyncOnlyStream(File.OpenRead(archivePath))
         );

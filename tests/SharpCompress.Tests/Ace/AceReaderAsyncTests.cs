@@ -69,7 +69,7 @@ public class AceReaderAsyncTests : ReaderTests
 
     private async Task ReadAsync(string testArchive, CompressionType expectedCompression)
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using Stream stream = File.OpenRead(testArchive);
         await using var reader = await ReaderFactory.OpenAsyncReader(
             new AsyncOnlyStream(stream),
@@ -91,7 +91,7 @@ public class AceReaderAsyncTests : ReaderTests
         CompressionType expectedCompression
     )
     {
-        testArchive = Path.Combine(TEST_ARCHIVES_PATH, testArchive);
+        testArchive = Path.Join(TEST_ARCHIVES_PATH, testArchive);
         using Stream stream = File.OpenRead(testArchive);
         await using var reader = await ReaderFactory.OpenAsyncReader(
             new AsyncOnlyStream(stream),
@@ -109,8 +109,8 @@ public class AceReaderAsyncTests : ReaderTests
             }
         }
         CompareFilesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "alice29.txt"),
-            Path.Combine(MISC_TEST_FILES_PATH, "alice29.txt")
+            Path.Join(SCRATCH_FILES_PATH, "alice29.txt"),
+            Path.Join(MISC_TEST_FILES_PATH, "alice29.txt")
         );
     }
 
@@ -120,7 +120,7 @@ public class AceReaderAsyncTests : ReaderTests
     )
     {
         await using var reader = readerFactory(
-            archives.Select(s => Path.Combine(TEST_ARCHIVES_PATH, s)).Select(File.OpenRead)
+            archives.Select(s => Path.Join(TEST_ARCHIVES_PATH, s)).Select(File.OpenRead)
         );
 
         while (await reader.MoveToNextEntryAsync())

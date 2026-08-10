@@ -17,8 +17,8 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
 
     public CreateStrmFilesPostProcessorTests()
     {
-        _dbPath = Path.Combine(Path.GetTempPath(), $"strm-test-{Guid.NewGuid():N}.sqlite");
-        _strmDir = Path.Combine(Path.GetTempPath(), $"strm-out-{Guid.NewGuid():N}");
+        _dbPath = Path.Join(Path.GetTempPath(), $"strm-test-{Guid.NewGuid():N}.sqlite");
+        _strmDir = Path.Join(Path.GetTempPath(), $"strm-out-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_strmDir);
 
         var options = new DbContextOptionsBuilder<DavDatabaseContext>()

@@ -61,7 +61,7 @@ public class ZipArchiveDirectoryTests : TestBase
     [Fact]
     public void ZipArchive_AddDirectoryEntry_SaveAndReload()
     {
-        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "zip-directory-test.zip");
+        var scratchPath = Path.Join(SCRATCH_FILES_PATH, "zip-directory-test.zip");
 
         using (var archive = ZipArchive.CreateArchive())
         {

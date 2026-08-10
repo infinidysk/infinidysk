@@ -25,7 +25,7 @@ public class TarReaderAsyncTests : ReaderTests
     public async ValueTask Tar_Skip_Async()
     {
         using Stream stream = new ForwardOnlyStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"))
         );
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
         var x = 0;
@@ -55,7 +55,7 @@ public class TarReaderAsyncTests : ReaderTests
         CompressionType compressionType
     )
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var options = ReaderOptions.ForExternalStream.WithExtensionHint(extensionHint);
 
         await using var reader = await ReaderFactory.OpenAsyncReader(stream, options);
@@ -95,7 +95,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_BZip2_Entry_Stream_Async()
     {
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.bz2"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.bz2"));
         await using var reader = await TarReader.OpenAsyncReader(stream);
         while (await reader.MoveToNextEntryAsync())
         {
@@ -106,12 +106,12 @@ public class TarReaderAsyncTests : ReaderTests
                 var file = Path.GetFileName(reader.Entry.Key);
                 var folder =
                     Path.GetDirectoryName(reader.Entry.Key) ?? throw new ArgumentNullException();
-                var destdir = Path.Combine(SCRATCH_FILES_PATH, folder);
+                var destdir = Path.Join(SCRATCH_FILES_PATH, folder);
                 if (!Directory.Exists(destdir))
                 {
                     Directory.CreateDirectory(destdir);
                 }
-                var destinationFileName = Path.Combine(destdir, file.NotNull());
+                var destinationFileName = Path.Join(destdir, file.NotNull());
 
                 using var fs = File.OpenWrite(destinationFileName);
                 await entryStream.CopyToAsync(fs);
@@ -127,7 +127,7 @@ public class TarReaderAsyncTests : ReaderTests
 
         using (
             Stream stream = File.OpenRead(
-                Path.Combine(TEST_ARCHIVES_PATH, "Tar.LongPathsWithLongNameExtension.tar")
+                Path.Join(TEST_ARCHIVES_PATH, "Tar.LongPathsWithLongNameExtension.tar")
             )
         )
         using (var reader = TarReader.OpenReader(stream))
@@ -156,7 +156,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_BZip2_Skip_Entry_Stream_Async()
     {
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.bz2"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.bz2"));
         await using var reader = await TarReader.OpenAsyncReader(stream);
         var names = new List<string>();
         while (await reader.MoveToNextEntryAsync())
@@ -175,7 +175,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_PaxLocalHeader_Reader_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.tar");
 
         using Stream stream = File.OpenRead(archivePath);
         await using var reader = await TarReader.OpenAsyncReader(stream);
@@ -212,7 +212,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_PaxLocalHeader_Link_Reader_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.Link.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxLocalHeader.Link.tar");
 
         using Stream stream = File.OpenRead(archivePath);
         await using var reader = await TarReader.OpenAsyncReader(stream);
@@ -227,7 +227,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_PaxGlobalHeader_Reader_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.tar");
 
         using Stream stream = File.OpenRead(archivePath);
         await using var reader = await TarReader.OpenAsyncReader(stream);
@@ -265,7 +265,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_PaxGlobalHeader_Link_Reader_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.Link.tar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Tar.PaxGlobalHeader.Link.tar");
 
         using Stream stream = File.OpenRead(archivePath);
         await using var reader = await TarReader.OpenAsyncReader(stream);
@@ -292,7 +292,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_WithSymlink_Reader_SurfacesLinkTargets_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "TarWithSymlink.tar.gz");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "TarWithSymlink.tar.gz");
 
         using Stream stream = File.OpenRead(archivePath);
         await using var reader = await TarReader.OpenAsyncReader(stream);
@@ -322,7 +322,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public void Tar_Containing_Rar_Reader_Async()
     {
-        var archiveFullPath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.ContainsRar.tar");
+        var archiveFullPath = Path.Join(TEST_ARCHIVES_PATH, "Tar.ContainsRar.tar");
         using Stream stream = File.OpenRead(archiveFullPath);
         using var reader = ReaderFactory.OpenReader(stream);
         Assert.True(reader.Type == ArchiveType.Tar);
@@ -331,7 +331,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_With_TarGz_With_Flushed_EntryStream_Async()
     {
-        var archiveFullPath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.ContainsTarGz.tar");
+        var archiveFullPath = Path.Join(TEST_ARCHIVES_PATH, "Tar.ContainsTarGz.tar");
         using Stream stream = File.OpenRead(archiveFullPath);
         await using var reader = await ReaderFactory.OpenAsyncReader(stream);
         Assert.True(await reader.MoveToNextEntryAsync());
@@ -349,7 +349,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_Broken_Stream_Async()
     {
-        var archiveFullPath = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar");
+        var archiveFullPath = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar");
         using Stream stream = File.OpenRead(archiveFullPath);
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
         using var memoryStream = new MemoryStream();
@@ -425,7 +425,7 @@ public class TarReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Tar_Corrupted_Async()
     {
-        var archiveFullPath = Path.Combine(TEST_ARCHIVES_PATH, "TarCorrupted.tar");
+        var archiveFullPath = Path.Join(TEST_ARCHIVES_PATH, "TarCorrupted.tar");
         using Stream stream = File.OpenRead(archiveFullPath);
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
         using var memoryStream = new MemoryStream();

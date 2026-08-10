@@ -335,7 +335,7 @@ public class OverviewStatsResetTests
         try
         {
             var options = new DbContextOptionsBuilder<MetricsDbContext>()
-                .UseSqlite($"Data Source={Path.Combine(invalidParent, "metrics.sqlite")}")
+                .UseSqlite($"Data Source={Path.Join(invalidParent, "metrics.sqlite")}")
                 .Options;
             var writer = new MetricsWriter(() => new MetricsDbContext(options));
             writer.RecordFetch(new SegmentFetch
@@ -372,7 +372,7 @@ public class OverviewStatsResetTests
         try
         {
             var options = new DbContextOptionsBuilder<MetricsDbContext>()
-                .UseSqlite($"Data Source={Path.Combine(invalidParent, "metrics.sqlite")}")
+                .UseSqlite($"Data Source={Path.Join(invalidParent, "metrics.sqlite")}")
                 .Options;
             var writer = new MetricsWriter(() => new MetricsDbContext(options));
             writer.RecordFetch(new SegmentFetch
@@ -562,9 +562,9 @@ public class OverviewStatsResetTests
 
         public static async Task<MetricsHarness> CreateAsync()
         {
-            var dir = Path.Combine(Path.GetTempPath(), $"nzbdav-overview-reset-{Guid.NewGuid():N}");
+            var dir = Path.Join(Path.GetTempPath(), $"nzbdav-overview-reset-{Guid.NewGuid():N}");
             Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, "metrics.sqlite");
+            var path = Path.Join(dir, "metrics.sqlite");
             var options = new DbContextOptionsBuilder<MetricsDbContext>()
                 .UseSqlite($"Data Source={path}")
                 .AddInterceptors(new SqliteMetricsPragmas())

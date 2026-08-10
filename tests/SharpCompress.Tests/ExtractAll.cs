@@ -20,7 +20,7 @@ public class ExtractAllTests : TestBase
     [InlineData("7Zip.LZMA.7z")]
     public async ValueTask ExtractAllEntriesAsync(string archivePath)
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, archivePath);
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, archivePath);
 
         await using var archive = await ArchiveFactory.OpenAsyncArchive(testArchive);
         await archive.WriteToDirectoryAsync(SCRATCH_FILES_PATH);
@@ -36,7 +36,7 @@ public class ExtractAllTests : TestBase
     [InlineData("7Zip.LZMA.7z")]
     public void ExtractAllEntriesSync(string archivePath)
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, archivePath);
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, archivePath);
 
         using var archive = ArchiveFactory.OpenArchive(testArchive);
         archive.WriteToDirectory(SCRATCH_FILES_PATH);

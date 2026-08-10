@@ -20,7 +20,7 @@ public sealed class NzbDavWebApplicationFactory : WebApplicationFactory<Program>
     public const string WebDavPassword = "integration-password";
 
     private readonly string _configPath =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-http-tests-{Guid.NewGuid():N}");
+        Path.Join(Path.GetTempPath(), $"nzbdav-http-tests-{Guid.NewGuid():N}");
     private readonly Dictionary<string, string?> _previousEnvironment = new();
     private int _disposed;
 
@@ -107,7 +107,7 @@ public sealed class NzbDavWebApplicationFactory : WebApplicationFactory<Program>
     private void InitializeDatabases()
     {
         var databaseOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
-            .UseSqlite($"Data Source={Path.Combine(_configPath, "db.sqlite")}")
+            .UseSqlite($"Data Source={Path.Join(_configPath, "db.sqlite")}")
             .AddInterceptors(new SqliteMainDbPragmas())
             .ReplaceService<
                 IMigrationsSqlGenerator,
@@ -117,7 +117,7 @@ public sealed class NzbDavWebApplicationFactory : WebApplicationFactory<Program>
         databaseContext.Database.Migrate();
 
         var metricsOptions = new DbContextOptionsBuilder<MetricsDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_configPath, "metrics.sqlite")}")
+            .UseSqlite($"Data Source={Path.Join(_configPath, "metrics.sqlite")}")
             .AddInterceptors(new SqliteMetricsPragmas())
             .ReplaceService<
                 IMigrationsSqlGenerator,

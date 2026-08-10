@@ -15,7 +15,7 @@ public class LzmaStreamAsyncTests : TestBase
     [Fact]
     public async ValueTask TestLzma2Decompress()
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "bad-1-lzma2-7.xz"));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "bad-1-lzma2-7.xz"));
 
         using var xz = new XZStream(stream);
         await Assert.ThrowsAnyAsync<SharpCompressException>(async () =>

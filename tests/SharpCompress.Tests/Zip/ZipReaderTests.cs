@@ -21,7 +21,7 @@ public class ZipReaderTests : ReaderTests
     [Fact]
     public void Issue_269_Double_Skip()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "PrePostHeaders.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "PrePostHeaders.zip");
         using Stream stream = new ForwardOnlyStream(File.OpenRead(path));
         using var reader = ReaderFactory.OpenReader(stream);
         var count = 0;
@@ -41,7 +41,7 @@ public class ZipReaderTests : ReaderTests
     [Fact]
     public void SkipUnreadEntry_SeekableSourceDoesNotReadEntryPayload()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "PrePostHeaders.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "PrePostHeaders.zip");
         using var stream = new ReadGuardStream(File.OpenRead(path));
         using var reader = ReaderFactory.OpenReader(stream);
 
@@ -79,7 +79,7 @@ public class ZipReaderTests : ReaderTests
     public void Zip_Deflate_Streamed_Skip()
     {
         using Stream stream = new ForwardOnlyStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
         );
         using var reader = ReaderFactory.OpenReader(stream);
         var x = 0;
@@ -100,7 +100,7 @@ public class ZipReaderTests : ReaderTests
     public void Zip_Deflate_Streamed2_Skip()
     {
         using Stream stream = new ForwardOnlyStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd-.zip"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd-.zip"))
         );
         using var reader = ReaderFactory.OpenReader(stream);
         var x = 0;
@@ -146,7 +146,7 @@ public class ZipReaderTests : ReaderTests
     public void Zip_BZip2_PkwareEncryption_Read()
     {
         using (
-            Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.bzip2.pkware.zip"))
+            Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.bzip2.pkware.zip"))
         )
         using (
             var reader = ZipReader.OpenReader(
@@ -174,7 +174,7 @@ public class ZipReaderTests : ReaderTests
     public void Zip_Reader_Disposal_Test()
     {
         using var stream = new TestStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
         );
         using (
             var reader = ReaderFactory.OpenReader(
@@ -198,7 +198,7 @@ public class ZipReaderTests : ReaderTests
     public void Zip_Reader_Disposal_Test2()
     {
         using var stream = new TestStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
         );
         var reader = ReaderFactory.OpenReader(stream);
         while (reader.MoveToNextEntry())
@@ -217,7 +217,7 @@ public class ZipReaderTests : ReaderTests
         {
             using (
                 Stream stream = File.OpenRead(
-                    Path.Combine(TEST_ARCHIVES_PATH, "Zip.lzma.WinzipAES.zip")
+                    Path.Join(TEST_ARCHIVES_PATH, "Zip.lzma.WinzipAES.zip")
                 )
             )
             using (
@@ -247,7 +247,7 @@ public class ZipReaderTests : ReaderTests
     {
         using (
             Stream stream = File.OpenRead(
-                Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.WinzipAES.zip")
+                Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.WinzipAES.zip")
             )
         )
         using (
@@ -276,7 +276,7 @@ public class ZipReaderTests : ReaderTests
     public void Zip_Deflate_ZipCrypto_Read()
     {
         var count = 0;
-        using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "zipcrypto.zip")))
+        using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "zipcrypto.zip")))
         using (
             var reader = ZipReader.OpenReader(
                 stream,
@@ -327,7 +327,7 @@ public class ZipReaderTests : ReaderTests
         }
 
         stream = new MemoryStream(memory.ToArray());
-        File.WriteAllBytes(Path.Combine(SCRATCH_FILES_PATH, "foo.zip"), memory.ToArray());
+        File.WriteAllBytes(Path.Join(SCRATCH_FILES_PATH, "foo.zip"), memory.ToArray());
 
         using IReader zipReader = ZipReader.OpenReader(
             SharpCompressStream.CreateNonDisposing(stream)
@@ -359,7 +359,7 @@ public class ZipReaderTests : ReaderTests
         var keys = new[] { "Empty1", "Empty2", "Dir1/", "Dir2/", "Fake1", "Fake2", "Internal.zip" };
 
         using Stream stream = File.OpenRead(
-            Path.Combine(TEST_ARCHIVES_PATH, "Zip.none.issue86.zip")
+            Path.Join(TEST_ARCHIVES_PATH, "Zip.none.issue86.zip")
         );
         using var reader = ZipReader.OpenReader(stream);
         foreach (var key in keys)
@@ -382,7 +382,7 @@ public class ZipReaderTests : ReaderTests
     {
         var keys = new[] { "version", "sizehint", "data/0/metadata", "data/0/records" };
 
-        using var fileStream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "test_477.zip"));
+        using var fileStream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "test_477.zip"));
         using var reader = ZipReader.OpenReader(fileStream);
         foreach (var key in keys)
         {
@@ -396,7 +396,7 @@ public class ZipReaderTests : ReaderTests
     public void Issue_685()
     {
         var count = 0;
-        using var fileStream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Issue_685.zip"));
+        using var fileStream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Issue_685.zip"));
         using var reader = ZipReader.OpenReader(fileStream);
         while (reader.MoveToNextEntry())
         {
@@ -412,7 +412,7 @@ public class ZipReaderTests : ReaderTests
         // Regression for #42: partially reading a Deflate entry and then disposing its
         // EntryStream must return the decompressor's over-read (rewind the buffered
         // underlying stream) so the following entry starts at the correct position.
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
 
         var expected = new Dictionary<string, byte[]>();
         using (var archive = ZipArchive.OpenArchive(File.OpenRead(path)))
@@ -461,7 +461,7 @@ public class ZipReaderTests : ReaderTests
     [Fact]
     public void Zip_ReaderFactory_Uncompressed_Read_All()
     {
-        var zipPath = Path.Combine(TEST_ARCHIVES_PATH, "Zip.uncompressed.zip");
+        var zipPath = Path.Join(TEST_ARCHIVES_PATH, "Zip.uncompressed.zip");
         using var stream = File.OpenRead(zipPath);
         using var reader = ReaderFactory.OpenReader(stream);
         while (reader.MoveToNextEntry())
@@ -474,7 +474,7 @@ public class ZipReaderTests : ReaderTests
     [Fact]
     public void Zip_ReaderFactory_Uncompressed_Skip_All()
     {
-        var zipPath = Path.Combine(TEST_ARCHIVES_PATH, "Zip.uncompressed.zip");
+        var zipPath = Path.Join(TEST_ARCHIVES_PATH, "Zip.uncompressed.zip");
         using var stream = File.OpenRead(zipPath);
         using var reader = ReaderFactory.OpenReader(stream);
         while (reader.MoveToNextEntry()) { }
@@ -485,7 +485,7 @@ public class ZipReaderTests : ReaderTests
     [Fact]
     public void Zip_Uncompressed_64bit()
     {
-        var zipPath = Path.Combine(TEST_ARCHIVES_PATH, "64bitstream.zip.7z");
+        var zipPath = Path.Join(TEST_ARCHIVES_PATH, "64bitstream.zip.7z");
         using var stream = File.OpenRead(zipPath);
         var archive = ArchiveFactory.OpenArchive(stream);
         var reader = archive.ExtractAllEntries();
@@ -504,7 +504,7 @@ public class ZipReaderTests : ReaderTests
     public void Zip_Uncompressed_Encrypted_Read()
     {
         using var reader = ReaderFactory.OpenReader(
-            Path.Combine(TEST_ARCHIVES_PATH, "Zip.none.encrypted.zip"),
+            Path.Join(TEST_ARCHIVES_PATH, "Zip.none.encrypted.zip"),
             ReaderOptions.ForFilePath with
             {
                 Password = "test",
@@ -530,7 +530,7 @@ public class ZipReaderTests : ReaderTests
 
         foreach (var testFile in testFiles)
         {
-            var path = Path.Combine(TEST_ARCHIVES_PATH, testFile);
+            var path = Path.Join(TEST_ARCHIVES_PATH, testFile);
 
             var readerKeys = new List<string>();
             using (var stream = File.OpenRead(path))
@@ -561,7 +561,7 @@ public class ZipReaderTests : ReaderTests
     {
         // Since version 0.41.0: EntryStream.Dispose() should not throw NotSupportedException
         // when Flush() fails on non-seekable streams (Deflate compression)
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip");
         using Stream stream = new ForwardOnlyStream(File.OpenRead(path));
         using var reader = ReaderFactory.OpenReader(stream);
 
@@ -584,7 +584,7 @@ public class ZipReaderTests : ReaderTests
     {
         // Since version 0.41.0: EntryStream.Dispose() should not throw NotSupportedException
         // when Flush() fails on non-seekable streams (LZMA compression)
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.lzma.dd.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.lzma.dd.zip");
         using Stream stream = new ForwardOnlyStream(File.OpenRead(path));
         using var reader = ReaderFactory.OpenReader(stream);
 
@@ -608,7 +608,7 @@ public class ZipReaderTests : ReaderTests
         // Regression test: since 0.41.0, archive iteration would silently break
         // when the input stream throws NotSupportedException in Flush().
         // Only the first entry would be returned, then iteration would stop without exception.
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip");
         using var fileStream = File.OpenRead(path);
         using Stream stream = new ThrowOnFlushStream(fileStream);
         using var reader = ReaderFactory.OpenReader(stream);
@@ -632,7 +632,7 @@ public class ZipReaderTests : ReaderTests
         // Regression test: since 0.41.0, archive iteration would silently break
         // when the input stream throws NotSupportedException in Flush().
         // Only the first entry would be returned, then iteration would stop without exception.
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.lzma.dd.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.lzma.dd.zip");
         using var fileStream = File.OpenRead(path);
         using Stream stream = new ThrowOnFlushStream(fileStream);
         using var reader = ReaderFactory.OpenReader(stream);
@@ -653,7 +653,7 @@ public class ZipReaderTests : ReaderTests
     [Fact]
     public void Zip_LZMA_ZeroSizeEntry_CanExtract_Streaming()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.lzma.empty.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.lzma.empty.zip");
         using var fileStream = File.OpenRead(path);
         using Stream stream = new ForwardOnlyStream(fileStream);
         using var reader = ReaderFactory.OpenReader(stream);

@@ -24,7 +24,7 @@ public class Zip64VersionConsistencyTests : WriterTests
     public void Zip64_Small_File_With_UseZip64_Should_Have_Matching_Versions()
     {
         // Create a zip with UseZip64=true but with a small file
-        var filename = Path.Combine(SCRATCH2_FILES_PATH, "zip64_version_test.zip");
+        var filename = Path.Join(SCRATCH2_FILES_PATH, "zip64_version_test.zip");
 
         if (File.Exists(filename))
         {
@@ -129,7 +129,7 @@ public class Zip64VersionConsistencyTests : WriterTests
     public void Zip64_Small_File_Without_UseZip64_Should_Have_Version_20()
     {
         // Create a zip without UseZip64
-        var filename = Path.Combine(SCRATCH2_FILES_PATH, "no_zip64_version_test.zip");
+        var filename = Path.Join(SCRATCH2_FILES_PATH, "no_zip64_version_test.zip");
 
         if (File.Exists(filename))
         {
@@ -182,7 +182,7 @@ public class Zip64VersionConsistencyTests : WriterTests
     public void LZMA_Compression_Should_Use_Version_63()
     {
         // Create a zip with LZMA compression
-        var filename = Path.Combine(SCRATCH2_FILES_PATH, "lzma_version_test.zip");
+        var filename = Path.Join(SCRATCH2_FILES_PATH, "lzma_version_test.zip");
 
         if (File.Exists(filename))
         {
@@ -236,7 +236,7 @@ public class Zip64VersionConsistencyTests : WriterTests
     public void PPMd_Compression_Should_Use_Version_63()
     {
         // Create a zip with PPMd compression
-        var filename = Path.Combine(SCRATCH2_FILES_PATH, "ppmd_version_test.zip");
+        var filename = Path.Join(SCRATCH2_FILES_PATH, "ppmd_version_test.zip");
 
         if (File.Exists(filename))
         {
@@ -290,7 +290,7 @@ public class Zip64VersionConsistencyTests : WriterTests
     public void Zip64_Multiple_Small_Files_With_UseZip64_Should_Have_Matching_Versions()
     {
         // Create a zip with UseZip64=true but with multiple small files
-        var filename = Path.Combine(SCRATCH2_FILES_PATH, "zip64_version_multiple_test.zip");
+        var filename = Path.Join(SCRATCH2_FILES_PATH, "zip64_version_multiple_test.zip");
 
         if (File.Exists(filename))
         {

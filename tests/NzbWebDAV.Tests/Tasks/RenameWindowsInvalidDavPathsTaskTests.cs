@@ -386,7 +386,7 @@ public class RenameWindowsInvalidDavPathsTaskTests
 
         public static async Task<TempDb> CreateAsync()
         {
-            var path = Path.Combine(Path.GetTempPath(), $"nzbdav-winrename-{Guid.NewGuid():N}.sqlite");
+            var path = Path.Join(Path.GetTempPath(), $"nzbdav-winrename-{Guid.NewGuid():N}.sqlite");
             var options = new DbContextOptionsBuilder<DavDatabaseContext>()
                 .UseSqlite($"Data Source={path}")
                 .AddInterceptors(new SqliteMainDbPragmas())

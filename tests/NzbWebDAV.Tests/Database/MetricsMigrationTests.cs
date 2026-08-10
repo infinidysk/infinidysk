@@ -13,7 +13,7 @@ public sealed class MetricsMigrationTests
     [Fact]
     public async Task AddMissesCounters_MovesExistingErrorsWithoutScanningRawFetches()
     {
-        var databasePath = Path.Combine(
+        var databasePath = Path.Join(
             Path.GetTempPath(),
             $"nzbdav-metrics-migration-{Guid.NewGuid():N}.sqlite");
         var options = new DbContextOptionsBuilder<MetricsDbContext>()

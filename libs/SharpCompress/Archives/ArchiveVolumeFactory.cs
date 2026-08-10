@@ -16,7 +16,7 @@ internal abstract class ArchiveVolumeFactory
         if (m.Success)
         {
             item = new FileInfo(
-                Path.Combine(
+                Path.Join(
                     part1.DirectoryName!,
                     String.Concat(
                         m.Groups[1].Value,

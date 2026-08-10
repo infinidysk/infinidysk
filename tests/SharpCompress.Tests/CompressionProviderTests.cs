@@ -669,7 +669,7 @@ public class CompressionProviderTests
     [Fact]
     public void LzwReader_OpenReader_UsesCustomLzwProvider()
     {
-        var archivePath = Path.Combine(TestBase.TEST_ARCHIVES_PATH, "Tar.tar.Z");
+        var archivePath = Path.Join(TestBase.TEST_ARCHIVES_PATH, "Tar.tar.Z");
         var trackingProvider = new TrackingCompressionProvider(new LzwCompressionProvider());
         var registry = CompressionProviderRegistry.Default.With(trackingProvider);
         var options = ReaderOptions.ForExternalStream.WithProviders(registry);

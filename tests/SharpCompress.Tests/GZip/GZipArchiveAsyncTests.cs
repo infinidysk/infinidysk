@@ -21,63 +21,63 @@ public class GZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask GZip_Archive_Generic_Async()
     {
-        await using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz")))
+        await using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz")))
         await using (var archive = await GZipArchive.OpenAsyncArchive(new AsyncOnlyStream(stream)))
         {
             var entry = await archive.EntriesAsync.FirstAsync();
-            await entry.WriteToFileAsync(Path.Combine(SCRATCH_FILES_PATH, entry.Key.NotNull()));
+            await entry.WriteToFileAsync(Path.Join(SCRATCH_FILES_PATH, entry.Key.NotNull()));
 
             var size = entry.Size;
-            var scratch = new FileInfo(Path.Combine(SCRATCH_FILES_PATH, "Tar.tar"));
-            var test = new FileInfo(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+            var scratch = new FileInfo(Path.Join(SCRATCH_FILES_PATH, "Tar.tar"));
+            var test = new FileInfo(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
 
             Assert.Equal(size, scratch.Length);
             Assert.Equal(size, test.Length);
         }
         CompareArchivesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "Tar.tar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar")
+            Path.Join(SCRATCH_FILES_PATH, "Tar.tar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Tar.tar")
         );
     }
 
     [Fact]
     public async ValueTask GZip_Archive_Async()
     {
-        await using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz")))
+        await using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz")))
         {
             await using (
                 var archive = await GZipArchive.OpenAsyncArchive(new AsyncOnlyStream(stream))
             )
             {
                 var entry = await archive.EntriesAsync.FirstAsync();
-                await entry.WriteToFileAsync(Path.Combine(SCRATCH_FILES_PATH, entry.Key.NotNull()));
+                await entry.WriteToFileAsync(Path.Join(SCRATCH_FILES_PATH, entry.Key.NotNull()));
 
                 var size = entry.Size;
-                var scratch = new FileInfo(Path.Combine(SCRATCH_FILES_PATH, "Tar.tar"));
-                var test = new FileInfo(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+                var scratch = new FileInfo(Path.Join(SCRATCH_FILES_PATH, "Tar.tar"));
+                var test = new FileInfo(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
 
                 Assert.Equal(size, scratch.Length);
                 Assert.Equal(size, test.Length);
             }
         }
         CompareArchivesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "Tar.tar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar")
+            Path.Join(SCRATCH_FILES_PATH, "Tar.tar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Tar.tar")
         );
     }
 
     [Fact]
     public async ValueTask GZip_Archive_NoAdd_Async()
     {
-        var jpg = Path.Combine(ORIGINAL_FILES_PATH, "jpg", "test.jpg");
-        await using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
+        var jpg = Path.Join(ORIGINAL_FILES_PATH, "jpg", "test.jpg");
+        await using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
         await using (var archive = await GZipArchive.OpenAsyncArchive(new AsyncOnlyStream(stream)))
         {
             await Assert.ThrowsAsync<NotSupportedException>(async () =>
                 await archive.AddEntryAsync("jpg\\test.jpg", File.OpenRead(jpg), closeStream: true)
             );
             await archive.SaveToAsync(
-                Path.Combine(SCRATCH_FILES_PATH, "Tar.tar.gz"),
+                Path.Join(SCRATCH_FILES_PATH, "Tar.tar.gz"),
                 new GZipWriterOptions()
             );
         }
@@ -87,7 +87,7 @@ public class GZipArchiveAsyncTests : ArchiveTests
     public async ValueTask GZip_Archive_Multiple_Reads_Async()
     {
         var inputStream = new MemoryStream();
-        await using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz")))
+        await using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz")))
         {
             await stream.CopyToAsync(inputStream);
             inputStream.Position = 0;
@@ -130,7 +130,7 @@ public class GZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async Task TestGzCrcWithMostSignificantBitNotNegative_Async()
     {
-        await using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
+        await using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
         await using var archive = await GZipArchive.OpenAsyncArchive(new AsyncOnlyStream(stream));
         await foreach (var entry in archive.EntriesAsync.Where(entry => !entry.IsDirectory))
         {
@@ -141,7 +141,7 @@ public class GZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async Task TestGzArchiveTypeGzip_Async()
     {
-        await using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
+        await using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
         await using var archive = await GZipArchive.OpenAsyncArchive(new AsyncOnlyStream(stream));
         Assert.Equal(archive.Type, ArchiveType.GZip);
     }
@@ -149,18 +149,18 @@ public class GZipArchiveAsyncTests : ArchiveTests
     [Fact]
     public async ValueTask GZip_Create_New_Async()
     {
-        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
-        var filePath = Path.Combine(scratchPath, "test.gz");
+        var scratchPath = Path.Join(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
+        var filePath = Path.Join(scratchPath, "test.gz");
         if (!Directory.Exists(scratchPath))
         {
             Directory.CreateDirectory(scratchPath);
         }
         await using (var archive = (GZipArchive)await GZipArchive.CreateAsyncArchive())
         {
-            await archive.AddEntryAsync("Tar.tar", Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+            await archive.AddEntryAsync("Tar.tar", Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
             await archive.SaveToAsync(filePath, new GZipWriterOptions(CompressionLevel.BestSpeed));
         }
-        var scratchPath2 = Path.Combine(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
+        var scratchPath2 = Path.Join(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
         if (!Directory.Exists(scratchPath2))
         {
             Directory.CreateDirectory(scratchPath2);
@@ -175,8 +175,8 @@ public class GZipArchiveAsyncTests : ArchiveTests
             await entry.WriteToDirectoryAsync(scratchPath2);
         }
         CompareFilesByPath(
-            Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"),
-            Path.Combine(scratchPath2, "Tar.tar")
+            Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"),
+            Path.Join(scratchPath2, "Tar.tar")
         );
     }
 

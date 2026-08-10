@@ -23,7 +23,6 @@ public class ExtractionPathTraversalTests : TestBase
         {
             { "ReaderAll", "zip", "../escape.txt" },
             { "ReaderAll", "zip", "a/../../escape.txt" },
-            { "ReaderAll", "zip", "/abs.txt" },
         };
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -41,7 +40,6 @@ public class ExtractionPathTraversalTests : TestBase
         {
             { "ReaderAll", "tar", "../escape.txt" },
             { "ReaderAll", "tar", "a/../../escape.txt" },
-            { "ReaderAll", "tar", "/abs.txt" },
         };
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -62,12 +60,12 @@ public class ExtractionPathTraversalTests : TestBase
         string entryName
     )
     {
-        var parentDir = Path.Combine(SCRATCH_FILES_PATH, $"traversal_{Path.GetRandomFileName()}");
-        var extractDir = Path.Combine(parentDir, "extract");
+        var parentDir = Path.Join(SCRATCH_FILES_PATH, $"traversal_{Path.GetRandomFileName()}");
+        var extractDir = Path.Join(parentDir, "extract");
         Directory.CreateDirectory(extractDir);
-        var siblingDir = Path.Combine(parentDir, "sibling");
+        var siblingDir = Path.Join(parentDir, "sibling");
         Directory.CreateDirectory(siblingDir);
-        var archivePath = Path.Combine(
+        var archivePath = Path.Join(
             SCRATCH2_FILES_PATH,
             $"{api}_{archiveFormat}_{Guid.NewGuid():N}.archive"
         );
@@ -86,7 +84,39 @@ public class ExtractionPathTraversalTests : TestBase
         var extractionException = Assert.IsType<ExtractionException>(exception);
         Assert.Contains("outside of the destination", extractionException.Message);
         AssertNothingEscaped(parentDir, extractDir);
-        Assert.False(File.Exists(Path.Combine(siblingDir, "escape.txt")));
+        Assert.False(File.Exists(Path.Join(siblingDir, "escape.txt")));
+    }
+
+    [Theory]
+    [InlineData("zip")]
+    [InlineData("tar")]
+    public async Task AbsolutePathEntry_IsSafelyExtractedInsideDestination(string archiveFormat)
+    {
+        var parentDir = Path.Join(SCRATCH_FILES_PATH, $"abs_{Path.GetRandomFileName()}");
+        var extractDir = Path.Join(parentDir, "extract");
+        Directory.CreateDirectory(extractDir);
+        var archivePath = Path.Join(
+            SCRATCH2_FILES_PATH,
+            $"abs_{archiveFormat}_{Guid.NewGuid():N}.archive"
+        );
+
+        if (archiveFormat == "zip")
+        {
+            BuildZip(archivePath, "/abs.txt");
+        }
+        else
+        {
+            BuildTar(archivePath, "/abs.txt");
+        }
+
+        var exception = await RecordExtractionExceptionAsync(
+            "ReaderAll",
+            archivePath,
+            extractDir
+        );
+
+        Assert.Null(exception);
+        AssertNothingEscaped(parentDir, extractDir);
     }
 
     [Theory]
@@ -100,11 +130,11 @@ public class ExtractionPathTraversalTests : TestBase
     [InlineData("AsyncArchiveEntry")]
     public async Task DirectoryTraversalToExistingOutsideDirectory_ShouldThrow(string api)
     {
-        var extractDir = Path.Combine(SCRATCH_FILES_PATH, "extract");
+        var extractDir = Path.Join(SCRATCH_FILES_PATH, "extract");
         Directory.CreateDirectory(extractDir);
-        var escapedDirectory = Path.GetFullPath(Path.Combine(extractDir, "../../escaped_existing"));
+        var escapedDirectory = Path.GetFullPath(Path.Join(extractDir, "../../escaped_existing"));
         Directory.CreateDirectory(escapedDirectory);
-        var archivePath = Path.Combine(SCRATCH2_FILES_PATH, $"{api}.zip");
+        var archivePath = Path.Join(SCRATCH2_FILES_PATH, $"{api}.zip");
         BuildZip(archivePath, "../../escaped_existing/");
 
         var exception = await RecordExtractionExceptionAsync(api, archivePath, extractDir);
@@ -124,18 +154,18 @@ public class ExtractionPathTraversalTests : TestBase
     [InlineData("AsyncArchiveEntry")]
     public async Task FileTraversalToSiblingDirectory_ShouldThrow(string api)
     {
-        var extractDir = Path.Combine(SCRATCH_FILES_PATH, "extract");
+        var extractDir = Path.Join(SCRATCH_FILES_PATH, "extract");
         Directory.CreateDirectory(extractDir);
-        var siblingDirectory = Path.Combine(SCRATCH_FILES_PATH, "extract2");
+        var siblingDirectory = Path.Join(SCRATCH_FILES_PATH, "extract2");
         Directory.CreateDirectory(siblingDirectory);
-        var archivePath = Path.Combine(SCRATCH2_FILES_PATH, $"{api}.zip");
+        var archivePath = Path.Join(SCRATCH2_FILES_PATH, $"{api}.zip");
         BuildZip(archivePath, "../extract2/evil.txt");
 
         var exception = await RecordExtractionExceptionAsync(api, archivePath, extractDir);
 
         var extractionException = Assert.IsType<ExtractionException>(exception);
         Assert.Contains("outside of the destination", extractionException.Message);
-        Assert.False(File.Exists(Path.Combine(siblingDirectory, "evil.txt")));
+        Assert.False(File.Exists(Path.Join(siblingDirectory, "evil.txt")));
     }
 
     private static void BuildZip(string path, string entryName)

@@ -71,7 +71,7 @@ public sealed class StartupDatabaseMigrationTests
     }
 
     private static string TempDatabasePath(string name) =>
-        Path.Combine(Path.GetTempPath(), $"nzbdav-startup-{name}-{Guid.NewGuid():N}.sqlite");
+        Path.Join(Path.GetTempPath(), $"nzbdav-startup-{name}-{Guid.NewGuid():N}.sqlite");
 
     private static void DeleteDatabaseFiles(string path)
     {

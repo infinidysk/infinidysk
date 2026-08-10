@@ -25,7 +25,7 @@ public class ZipCrcExtractionTests : ArchiveTests
         using var zipStream = CreateZipWithInvalidCrc(useDataDescriptor: false);
         using var archive = ZipArchive.OpenArchive(zipStream);
         var entry = archive.Entries.Single(e => !e.IsDirectory);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "zip-crc-mismatch.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "zip-crc-mismatch.txt");
 
         var exception = Assert.Throws<InvalidFormatException>(() => entry.WriteToFile(destination));
 
@@ -38,7 +38,7 @@ public class ZipCrcExtractionTests : ArchiveTests
         using var zipStream = CreateZipWithInvalidCrc(useDataDescriptor: false);
         using var archive = ZipArchive.OpenArchive(zipStream);
         var entry = archive.Entries.Single(e => !e.IsDirectory);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "zip-crc-disabled.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "zip-crc-disabled.txt");
 
         entry.WriteToFile(destination, new ExtractionOptions { CheckCrc = false });
 
@@ -78,7 +78,7 @@ public class ZipCrcExtractionTests : ArchiveTests
     {
         using var zipStream = CreateZipWithInvalidCrc(useDataDescriptor: false);
         using var reader = ReaderFactory.OpenReader(zipStream);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "zip-reader-crc-mismatch.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "zip-reader-crc-mismatch.txt");
 
         Assert.True(reader.MoveToNextEntry());
         var exception = Assert.Throws<InvalidFormatException>(() =>
@@ -93,7 +93,7 @@ public class ZipCrcExtractionTests : ArchiveTests
     {
         using var zipStream = CreateZipWithInvalidCrc(useDataDescriptor: false);
         using var reader = ReaderFactory.OpenReader(zipStream);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "zip-reader-crc-disabled.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "zip-reader-crc-disabled.txt");
 
         Assert.True(reader.MoveToNextEntry());
         reader.WriteEntryToFile(destination, new ExtractionOptions { CheckCrc = false });
@@ -107,7 +107,7 @@ public class ZipCrcExtractionTests : ArchiveTests
         using var zipStream = CreateZipWithInvalidCrc(useDataDescriptor: false);
         using var archive = ZipArchive.OpenArchive(zipStream);
         var entry = archive.Entries.Single(e => !e.IsDirectory);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "zip-crc-mismatch-async.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "zip-crc-mismatch-async.txt");
 
         var exception = await Assert.ThrowsAsync<InvalidFormatException>(async () =>
             await entry.WriteToFileAsync(destination)
@@ -149,7 +149,7 @@ public class ZipCrcExtractionTests : ArchiveTests
     {
         using var zipStream = CreateZipWithInvalidCrc(useDataDescriptor: false);
         await using var reader = await ReaderFactory.OpenAsyncReader(zipStream);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "zip-reader-crc-mismatch-async.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "zip-reader-crc-mismatch-async.txt");
 
         Assert.True(await reader.MoveToNextEntryAsync());
         var exception = await Assert.ThrowsAsync<InvalidFormatException>(async () =>
@@ -165,7 +165,7 @@ public class ZipCrcExtractionTests : ArchiveTests
         using var zipStream = CreateZipWithInvalidCrc(useDataDescriptor: true);
         using var archive = ZipArchive.OpenArchive(zipStream);
         var entry = archive.Entries.Single(e => !e.IsDirectory);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "zip-dd-crc-mismatch.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "zip-dd-crc-mismatch.txt");
 
         var exception = Assert.Throws<InvalidFormatException>(() => entry.WriteToFile(destination));
 

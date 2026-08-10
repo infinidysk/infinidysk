@@ -81,8 +81,8 @@ public sealed class UsenetMigrationControllerAuthTests
         var root = Directory.CreateTempSubdirectory("altmig-connect-");
         try
         {
-            var metadataRoot = Directory.CreateDirectory(Path.Combine(root.FullName, "metadata"));
-            var configPath = Path.Combine(root.FullName, "config.yaml");
+            var metadataRoot = Directory.CreateDirectory(Path.Join(root.FullName, "metadata"));
+            var configPath = Path.Join(root.FullName, "config.yaml");
             await File.WriteAllTextAsync(configPath, string.Join('\n',
             [
                 "sabnzbd:",
@@ -121,8 +121,8 @@ public sealed class UsenetMigrationControllerAuthTests
         var root = Directory.CreateTempSubdirectory("altmig-connect-");
         try
         {
-            var metadataRoot = Directory.CreateDirectory(Path.Combine(root.FullName, "metadata"));
-            var configPath = Path.Combine(root.FullName, "config.yaml");
+            var metadataRoot = Directory.CreateDirectory(Path.Join(root.FullName, "metadata"));
+            var configPath = Path.Join(root.FullName, "config.yaml");
             await File.WriteAllTextAsync(configPath, "sabnzbd:\n  categories:\n");
 
             await WithAuthorizedControllerAsync(h, async controller =>
@@ -152,8 +152,8 @@ public sealed class UsenetMigrationControllerAuthTests
         var root = Directory.CreateTempSubdirectory("altmig-connect-");
         try
         {
-            var metadataRoot = Directory.CreateDirectory(Path.Combine(root.FullName, "metadata"));
-            var configPath = Path.Combine(root.FullName, "config.yaml");
+            var metadataRoot = Directory.CreateDirectory(Path.Join(root.FullName, "metadata"));
+            var configPath = Path.Join(root.FullName, "config.yaml");
             await File.WriteAllTextAsync(
                 configPath,
                 "sabnzbd:\n  categories: [{ name: 'movies' }]\n");
@@ -182,7 +182,7 @@ public sealed class UsenetMigrationControllerAuthTests
         var root = Directory.CreateTempSubdirectory("altmig-connect-");
         try
         {
-            var metadataRoot = Directory.CreateDirectory(Path.Combine(root.FullName, "metadata"));
+            var metadataRoot = Directory.CreateDirectory(Path.Join(root.FullName, "metadata"));
 
             await WithAuthorizedControllerAsync(h, async controller =>
             {
@@ -276,7 +276,7 @@ public sealed class UsenetMigrationControllerAuthTests
     [Fact]
     public void EveryHttpAction_DelegatesThroughGuardedAsync()
     {
-        var source = File.ReadAllText(Path.Combine(
+        var source = File.ReadAllText(Path.Join(
             FindRepoRoot(),
             "backend",
             "Api",
@@ -319,7 +319,7 @@ public sealed class UsenetMigrationControllerAuthTests
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            if (File.Exists(Path.Combine(dir.FullName, "backend", "NzbWebDAV.csproj")))
+            if (File.Exists(Path.Join(dir.FullName, "backend", "NzbWebDAV.csproj")))
                 return dir.FullName;
             dir = dir.Parent;
         }

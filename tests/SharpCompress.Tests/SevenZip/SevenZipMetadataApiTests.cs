@@ -18,7 +18,7 @@ public class SevenZipMetadataApiTests : TestBase
     [Fact]
     public void StoredCopy_TryGetPackedByteRange_SlicesExactPayload()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.Copy.7z");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "7Zip.Copy.7z");
         using var archive = (SevenZipArchive)SevenZipArchive.OpenArchive(path);
 
         var any = false;
@@ -42,7 +42,7 @@ public class SevenZipMetadataApiTests : TestBase
     [Fact]
     public void AesCopy_ReportsNoneAndWholeFolderRange()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.Copy.Aes.7z");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "7Zip.Copy.Aes.7z");
         using var archive = (SevenZipArchive)
             SevenZipArchive.OpenArchive(
                 path,
@@ -71,7 +71,7 @@ public class SevenZipMetadataApiTests : TestBase
     [InlineData("7Zip.LZMA2.Aes.7z")]
     public void AesLzma_ReportsLzma_And_NoContiguousRange(string archiveName)
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, archiveName);
+        var path = Path.Join(TEST_ARCHIVES_PATH, archiveName);
         using var archive = (SevenZipArchive)
             SevenZipArchive.OpenArchive(
                 path,
@@ -94,7 +94,7 @@ public class SevenZipMetadataApiTests : TestBase
     [InlineData("7Zip.solid.7z")]
     public void Compressed_HasNoContiguousRange(string archiveName)
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, archiveName);
+        var path = Path.Join(TEST_ARCHIVES_PATH, archiveName);
         using var archive = (SevenZipArchive)SevenZipArchive.OpenArchive(path);
 
         foreach (var entry in archive.Entries.Where(e => !e.IsDirectory && e.Size > 0))

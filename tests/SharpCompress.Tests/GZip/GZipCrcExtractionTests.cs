@@ -21,7 +21,7 @@ public class GZipCrcExtractionTests : TestBase
         using var stream = new MemoryStream(ReadCorruptedGZipTrailer(corruptCrc: true));
         using var archive = GZipArchive.OpenArchive(stream);
         var entry = archive.Entries.Single();
-        var destination = Path.Combine(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
+        var destination = Path.Join(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
 
         Assert.Throws<InvalidFormatException>(() => entry.WriteToFile(destination));
     }
@@ -32,7 +32,7 @@ public class GZipCrcExtractionTests : TestBase
         using var stream = new MemoryStream(ReadCorruptedGZipTrailer(corruptCrc: false));
         using var archive = GZipArchive.OpenArchive(stream);
         var entry = archive.Entries.Single();
-        var destination = Path.Combine(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
+        var destination = Path.Join(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
 
         Assert.Throws<InvalidFormatException>(() => entry.WriteToFile(destination));
     }
@@ -43,7 +43,7 @@ public class GZipCrcExtractionTests : TestBase
         using var stream = new MemoryStream(ReadCorruptedGZipTrailer(corruptCrc: true));
         using var nonSeekableStream = new ForwardOnlyStream(stream);
         using var reader = GZipReader.OpenReader(nonSeekableStream);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
+        var destination = Path.Join(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
 
         Assert.True(reader.MoveToNextEntry());
         Assert.Throws<InvalidFormatException>(() => reader.WriteEntryToFile(destination));
@@ -55,12 +55,12 @@ public class GZipCrcExtractionTests : TestBase
         using var stream = new MemoryStream(ReadCorruptedGZipTrailer(corruptCrc: true));
         using var archive = GZipArchive.OpenArchive(stream);
         var entry = archive.Entries.Single();
-        var destination = Path.Combine(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
+        var destination = Path.Join(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
 
         entry.WriteToFile(destination, new ExtractionOptions { CheckCrc = false });
 
         Assert.Equal(
-            new FileInfo(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar")).Length,
+            new FileInfo(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar")).Length,
             new FileInfo(destination).Length
         );
     }
@@ -71,7 +71,7 @@ public class GZipCrcExtractionTests : TestBase
         await using var stream = new MemoryStream(ReadCorruptedGZipTrailer(corruptCrc: true));
         await using var archive = await GZipArchive.OpenAsyncArchive(stream);
         var entry = await archive.EntriesAsync.SingleAsync();
-        var destination = Path.Combine(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
+        var destination = Path.Join(SCRATCH_FILES_PATH, Guid.NewGuid().ToString());
 
         await Assert.ThrowsAsync<InvalidFormatException>(async () =>
             await entry.WriteToFileAsync(destination)
@@ -80,7 +80,7 @@ public class GZipCrcExtractionTests : TestBase
 
     private static byte[] ReadCorruptedGZipTrailer(bool corruptCrc)
     {
-        var bytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
+        var bytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
         var trailer = bytes.AsSpan(bytes.Length - 8);
         var offset = corruptCrc ? 0 : 4;
         var value = BinaryPrimitives.ReadUInt32LittleEndian(trailer[offset..]);

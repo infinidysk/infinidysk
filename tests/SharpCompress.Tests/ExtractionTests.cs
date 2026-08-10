@@ -20,7 +20,7 @@ public class ExtractionTests : TestBase
         // Windows file systems are case-insensitive. On Unix-like systems, this test
         // verifies that the case-sensitive comparison is used correctly.
 
-        var testArchive = Path.Combine(SCRATCH2_FILES_PATH, "test-extraction.zip");
+        var testArchive = Path.Join(SCRATCH2_FILES_PATH, "test-extraction.zip");
         var extractPath = SCRATCH_FILES_PATH;
 
         // Create a simple test archive with a single file
@@ -34,7 +34,7 @@ public class ExtractionTests : TestBase
                 );
 
             // Create a test file to add to the archive
-            var testFilePath = Path.Combine(SCRATCH2_FILES_PATH, "testfile.txt");
+            var testFilePath = Path.Join(SCRATCH2_FILES_PATH, "testfile.txt");
             File.WriteAllText(testFilePath, "Test content");
 
             writer.Write("testfile.txt", testFilePath);
@@ -58,7 +58,7 @@ public class ExtractionTests : TestBase
         }
 
         // Verify the file was extracted successfully
-        var extractedFile = Path.Combine(extractPath, "testfile.txt");
+        var extractedFile = Path.Join(extractPath, "testfile.txt");
         Assert.True(File.Exists(extractedFile));
         Assert.Equal("Test content", File.ReadAllText(extractedFile));
     }
@@ -69,7 +69,7 @@ public class ExtractionTests : TestBase
         // This test ensures that the security check still works to prevent
         // path traversal attacks (e.g., using "../" to escape the destination directory)
 
-        var testArchive = Path.Combine(SCRATCH2_FILES_PATH, "test-traversal.zip");
+        var testArchive = Path.Join(SCRATCH2_FILES_PATH, "test-traversal.zip");
         var extractPath = SCRATCH_FILES_PATH;
 
         // Create a test archive with a path traversal attempt
@@ -82,7 +82,7 @@ public class ExtractionTests : TestBase
                     new WriterOptions(CompressionType.Deflate)
                 );
 
-            var testFilePath = Path.Combine(SCRATCH2_FILES_PATH, "testfile2.txt");
+            var testFilePath = Path.Join(SCRATCH2_FILES_PATH, "testfile2.txt");
             File.WriteAllText(testFilePath, "Test content");
 
             // Try to write with a path that attempts to escape the destination directory

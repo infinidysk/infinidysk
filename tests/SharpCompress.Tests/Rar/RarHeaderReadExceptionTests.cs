@@ -67,7 +67,7 @@ public class RarHeaderReadExceptionTests : TestBase
     [Fact]
     public void SuccessfulParse_Unchanged()
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Rar5.none.rar"));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Rar5.none.rar"));
         var factory = NewFactory();
 
         var count = 0;
@@ -83,7 +83,7 @@ public class RarHeaderReadExceptionTests : TestBase
     [Fact]
     public void SeekPastEnd_OnDeferredSkip_ThrowsTruncated()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Rar.none.rar");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Rar.none.rar");
         var bytes = File.ReadAllBytes(path);
 
         long skipTarget = 0;

@@ -24,7 +24,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     [InlineData("Rar5.none.rar")]
     public void Stored_SingleVolume_CanSeek_And_MatchesFullRead(string archiveName)
     {
-        using var archive = RarArchive.OpenArchive(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var archive = RarArchive.OpenArchive(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var entry = archive.Entries.First(e => !e.IsDirectory && e.Size > 0);
         var full = ReadFully(entry);
 
@@ -41,7 +41,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     [InlineData("Rar5.none.rar")]
     public void Stored_SingleVolume_SeekRead_MatchesSlice(string archiveName)
     {
-        using var archive = RarArchive.OpenArchive(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var archive = RarArchive.OpenArchive(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var entry = archive.Entries.First(e => !e.IsDirectory && e.Size > 0);
         var full = ReadFully(entry);
         long[] offsets = [0, 1, full.Length / 4, full.Length / 2, Math.Max(0, full.Length - 16)];
@@ -64,7 +64,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     [InlineData("Rar5.none.rar")]
     public void Stored_SequentialEof_Throws_On_CrcMismatch(string archiveName)
     {
-        using var archive = RarArchive.OpenArchive(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var archive = RarArchive.OpenArchive(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var entry = archive
             .Entries.OfType<RarArchiveEntry>()
             .First(e => !e.IsDirectory && e.Size > 0);
@@ -81,7 +81,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     [InlineData("Rar5.none.rar")]
     public void Stored_AfterSeek_DoesNotValidateCrc(string archiveName)
     {
-        using var archive = RarArchive.OpenArchive(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var archive = RarArchive.OpenArchive(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var entry = archive
             .Entries.OfType<RarArchiveEntry>()
             .First(e => !e.IsDirectory && e.Size > 0);
@@ -97,7 +97,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     [InlineData("Rar5.none.rar")]
     public void Stored_EofAtLength_ReturnsZero(string archiveName)
     {
-        using var archive = RarArchive.OpenArchive(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var archive = RarArchive.OpenArchive(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var entry = archive.Entries.First(e => !e.IsDirectory && e.Size > 0);
         using var stream = entry.OpenEntryStream();
         Assert.IsType<StoredRarEntryStream>(stream);
@@ -110,7 +110,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     [InlineData("Rar5.none.rar")]
     public void Stored_InterleavedConcurrentStreams_MatchReference(string archiveName)
     {
-        using var archive = RarArchive.OpenArchive(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var archive = RarArchive.OpenArchive(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var entries = archive.Entries.Where(e => !e.IsDirectory && e.Size > 0).Take(2).ToList();
         Assert.True(entries.Count >= 2);
 
@@ -208,7 +208,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     [InlineData("Rar.solid.rar")]
     public void NonStored_Or_Solid_Uses_NonSeekable_SlowPath(string archiveName)
     {
-        using var archive = RarArchive.OpenArchive(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var archive = RarArchive.OpenArchive(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var entry = archive.Entries.First(e => !e.IsDirectory && e.Size > 0);
         using var stream = entry.OpenEntryStream();
         Assert.False(stream.CanSeek);
@@ -221,7 +221,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     public async Task Stored_Async_SeekRead_MatchesSlice(string archiveName)
     {
         await using var archive = await RarArchive.OpenAsyncArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, archiveName)
+            Path.Join(TEST_ARCHIVES_PATH, archiveName)
         );
         SharpCompress.Archives.IArchiveEntry? entry = null;
         await foreach (var e in archive.EntriesAsync)
@@ -253,7 +253,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     public async Task Stored_MultiVolume_Async_FullRead()
     {
         var streams = MultiNoneParts
-            .Select(p => (Stream)File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, p)))
+            .Select(p => (Stream)File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, p)))
             .ToArray();
         try
         {
@@ -287,7 +287,7 @@ public class RarStoredEntryStreamTests : ArchiveTests
     private static IRarArchive OpenMultiNone()
     {
         var streams = MultiNoneParts
-            .Select(p => (Stream)File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, p)))
+            .Select(p => (Stream)File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, p)))
             .ToArray();
         return RarArchive.OpenArchive(streams);
     }

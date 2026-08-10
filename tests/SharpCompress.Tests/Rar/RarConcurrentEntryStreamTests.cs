@@ -14,7 +14,7 @@ public class RarConcurrentEntryStreamTests : ArchiveTests
     [Fact]
     public void NonSolid_InterleavedEntryStreams_MatchReference()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Rar.rar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Rar.rar");
         using var archive = RarArchive.OpenArchive(archivePath);
         Assert.False(archive.IsSolid);
 
@@ -68,7 +68,7 @@ public class RarConcurrentEntryStreamTests : ArchiveTests
     [Fact]
     public async Task NonSolid_InterleavedEntryStreams_MatchReference_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Rar.rar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Rar.rar");
         await using var archive = await RarArchive.OpenAsyncArchive(archivePath);
         Assert.False(await archive.IsSolidAsync());
 
@@ -138,7 +138,7 @@ public class RarConcurrentEntryStreamTests : ArchiveTests
     [Fact]
     public void Solid_ConcurrentOpenEntryStream_Throws()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Rar.solid.rar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Rar.solid.rar");
         using var archive = RarArchive.OpenArchive(archivePath);
         Assert.True(archive.IsSolid);
 
@@ -156,7 +156,7 @@ public class RarConcurrentEntryStreamTests : ArchiveTests
     [Fact]
     public async Task Solid_ConcurrentOpenEntryStream_Throws_Async()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Rar.solid.rar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Rar.solid.rar");
         await using var archive = await RarArchive.OpenAsyncArchive(archivePath);
         Assert.True(await archive.IsSolidAsync());
 
@@ -186,7 +186,7 @@ public class RarConcurrentEntryStreamTests : ArchiveTests
     [Fact]
     public void Solid_SequentialOpenAfterDispose_Succeeds()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Rar.solid.rar");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Rar.solid.rar");
         using var archive = RarArchive.OpenArchive(archivePath);
         Assert.True(archive.IsSolid);
 

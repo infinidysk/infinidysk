@@ -52,8 +52,8 @@ public sealed class SymlinkOrphanRemoverTests
         await using var h = await MigrationTestHarness.CreateAsync();
         var library = Directory.CreateTempSubdirectory("altmig-orphan-library-");
         var backups = Directory.CreateTempSubdirectory("altmig-orphan-backups-");
-        var orphan = Path.Combine(library.FullName, "orphan.mkv");
-        var rewrite = Path.Combine(library.FullName, "rewrite.mkv");
+        var orphan = Path.Join(library.FullName, "orphan.mkv");
+        var rewrite = Path.Join(library.FullName, "rewrite.mkv");
         const string orphanTarget = "/mnt/altmount/orphan.mkv";
         const string rewriteTarget = "/mnt/altmount/rewrite.mkv";
         var ops = new FakeSymlinkOps
@@ -71,7 +71,7 @@ public sealed class SymlinkOrphanRemoverTests
             await SeedPlanAsync(h,
                 Row(orphan, orphanTarget, "orphan"),
                 Row(rewrite, rewriteTarget, "rewrite"),
-                Row(Path.Combine(library.FullName, "unreadable.mkv"), "", "unreadable"));
+                Row(Path.Join(library.FullName, "unreadable.mkv"), "", "unreadable"));
 
             var remover = new SymlinkOrphanRemover(h.Store)
             {
@@ -86,7 +86,7 @@ public sealed class SymlinkOrphanRemoverTests
             Assert.DoesNotContain(orphan, ops.Links.Keys);
             Assert.Equal(rewriteTarget, ops.Links[rewrite]);
             Assert.Equal(
-                Path.Combine(backups.FullName, "altmount-orphan-symlink-backup-20260802-123456.tar.gz"),
+                Path.Join(backups.FullName, "altmount-orphan-symlink-backup-20260802-123456.tar.gz"),
                 result.BackupPath);
 
             var entries = await SymlinkBackup.ReadAsync(result.BackupPath!);
@@ -112,7 +112,7 @@ public sealed class SymlinkOrphanRemoverTests
         await using var h = await MigrationTestHarness.CreateAsync();
         var library = Directory.CreateTempSubdirectory("altmig-orphan-library-");
         var backupPathThatIsAFile = Path.GetTempFileName();
-        var orphan = Path.Combine(library.FullName, "orphan.mkv");
+        var orphan = Path.Join(library.FullName, "orphan.mkv");
         const string target = "/mnt/altmount/orphan.mkv";
         var ops = new FakeSymlinkOps { Links = { [orphan] = target } };
 
@@ -142,7 +142,7 @@ public sealed class SymlinkOrphanRemoverTests
         await using var h = await MigrationTestHarness.CreateAsync();
         var library = Directory.CreateTempSubdirectory("altmig-orphan-library-");
         var backups = Directory.CreateTempSubdirectory("altmig-orphan-backups-");
-        var orphan = Path.Combine(library.FullName, "orphan.mkv");
+        var orphan = Path.Join(library.FullName, "orphan.mkv");
         const string planned = "/mnt/altmount/original.mkv";
         const string current = "/mnt/elsewhere/replaced.mkv";
         var ops = new FakeSymlinkOps { Links = { [orphan] = current } };
@@ -176,8 +176,8 @@ public sealed class SymlinkOrphanRemoverTests
         await using var h = await MigrationTestHarness.CreateAsync();
         var library = Directory.CreateTempSubdirectory("altmig-orphan-library-");
         var backups = Directory.CreateTempSubdirectory("altmig-orphan-backups-");
-        var first = Path.Combine(library.FullName, "a.mkv");
-        var second = Path.Combine(library.FullName, "b.mkv");
+        var first = Path.Join(library.FullName, "a.mkv");
+        var second = Path.Join(library.FullName, "b.mkv");
         using var cancel = new CancellationTokenSource();
         var ops = new FakeSymlinkOps
         {
@@ -209,7 +209,7 @@ public sealed class SymlinkOrphanRemoverTests
             Assert.Equal(1, ops.DeleteCalls);
             Assert.False(ops.Links.ContainsKey(first));
             Assert.True(ops.Links.ContainsKey(second));
-            var archive = Path.Combine(
+            var archive = Path.Join(
                 backups.FullName, "altmount-orphan-symlink-backup-20260802-130000.tar.gz");
             Assert.Equal(2, (await SymlinkBackup.ReadAsync(archive)).Count);
 
@@ -229,8 +229,8 @@ public sealed class SymlinkOrphanRemoverTests
     {
         Skip.If(OperatingSystem.IsWindows(), "Creating symlinks may require Windows developer mode.");
         var root = Directory.CreateTempSubdirectory("altmig-real-delete-");
-        var target = Path.Combine(root.FullName, "target.mkv");
-        var link = Path.Combine(root.FullName, "link.mkv");
+        var target = Path.Join(root.FullName, "target.mkv");
+        var link = Path.Join(root.FullName, "link.mkv");
         File.WriteAllText(target, "precious content");
         File.CreateSymbolicLink(link, target);
 
@@ -251,7 +251,7 @@ public sealed class SymlinkOrphanRemoverTests
     public void RealOps_DeleteRefusesRealFile()
     {
         var root = Directory.CreateTempSubdirectory("altmig-real-delete-");
-        var path = Path.Combine(root.FullName, "real.mkv");
+        var path = Path.Join(root.FullName, "real.mkv");
         File.WriteAllText(path, "precious content");
 
         try
@@ -272,7 +272,7 @@ public sealed class SymlinkOrphanRemoverTests
     {
         Skip.If(OperatingSystem.IsWindows(), "Creating symlinks may require Windows developer mode.");
         var root = Directory.CreateTempSubdirectory("altmig-delete-race-");
-        var link = Path.Combine(root.FullName, "movie.mkv");
+        var link = Path.Join(root.FullName, "movie.mkv");
         const string target = "/mnt/altmount/movie.mkv";
         File.CreateSymbolicLink(link, target);
 
@@ -303,7 +303,7 @@ public sealed class SymlinkOrphanRemoverTests
     public void RealOps_DeleteRejectsPathOutsideLibraryRoot()
     {
         var root = Directory.CreateTempSubdirectory("altmig-delete-root-");
-        var outside = Path.Combine(Path.GetTempPath(), $"altmig-outside-{Guid.NewGuid():N}.mkv");
+        var outside = Path.Join(Path.GetTempPath(), $"altmig-outside-{Guid.NewGuid():N}.mkv");
         try
         {
             var error = Assert.Throws<IOException>(() =>

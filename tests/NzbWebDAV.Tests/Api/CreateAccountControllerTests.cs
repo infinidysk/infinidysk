@@ -16,7 +16,7 @@ namespace NzbWebDAV.Tests.Api;
 public sealed class CreateAccountControllerTests : IAsyncLifetime
 {
     private readonly string _configRoot =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-createaccount-cfg-{Guid.NewGuid():N}");
+        Path.Join(Path.GetTempPath(), $"nzbdav-createaccount-cfg-{Guid.NewGuid():N}");
     private string? _previousConfigPath;
     private DbContextOptions<DavDatabaseContext> _options = null!;
     private DavDatabaseContext _context = null!;
@@ -135,7 +135,7 @@ public sealed class CreateAccountControllerTests : IAsyncLifetime
     [Fact]
     public async Task SingleAdminMigration_ExistingDuplicates_KeepsEarliestAdmin()
     {
-        var migrationDbPath = Path.Combine(_configRoot, "duplicate-admin-migration.sqlite");
+        var migrationDbPath = Path.Join(_configRoot, "duplicate-admin-migration.sqlite");
         var migrationOptions = new DbContextOptionsBuilder<DavDatabaseContext>()
             .UseSqlite($"Data Source={migrationDbPath}")
             .AddInterceptors(new SqliteForeignKeyEnabler())

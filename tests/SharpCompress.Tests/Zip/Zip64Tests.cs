@@ -100,7 +100,7 @@ public class Zip64Tests : WriterTests
         string filename = "zip64-test.zip"
     )
     {
-        filename = Path.Combine(SCRATCH2_FILES_PATH, filename);
+        filename = Path.Join(SCRATCH2_FILES_PATH, filename);
 
         if (File.Exists(filename))
         {

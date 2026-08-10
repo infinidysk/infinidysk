@@ -39,11 +39,11 @@ public class AdcTest : TestBase
     [Fact]
     public void TestBuffer()
     {
-        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        using var decFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
         var decompressed = new byte[decFs.Length];
         decFs.Read(decompressed, 0, decompressed.Length);
 
-        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        using var cmpFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
         var compressed = new byte[cmpFs.Length];
         cmpFs.Read(compressed, 0, compressed.Length);
 
@@ -55,11 +55,11 @@ public class AdcTest : TestBase
     [Fact]
     public void TestBaseStream()
     {
-        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        using var decFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
         var decompressed = new byte[decFs.Length];
         decFs.Read(decompressed, 0, decompressed.Length);
 
-        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        using var cmpFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
 
         ADCBase.Decompress(cmpFs, out var test);
 
@@ -69,11 +69,11 @@ public class AdcTest : TestBase
     [Fact]
     public void TestAdcStreamWholeChunk()
     {
-        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        using var decFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
         var decompressed = new byte[decFs.Length];
         decFs.Read(decompressed, 0, decompressed.Length);
 
-        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        using var cmpFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
         using var decStream = new ADCStream(cmpFs);
         var test = new byte[262144];
 
@@ -85,11 +85,11 @@ public class AdcTest : TestBase
     [Fact]
     public void TestAdcStream()
     {
-        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        using var decFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
         var decompressed = new byte[decFs.Length];
         decFs.Read(decompressed, 0, decompressed.Length);
 
-        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        using var cmpFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
         using var decStream = new ADCStream(cmpFs);
         using var decMs = new MemoryStream();
         var test = new byte[512];
@@ -107,7 +107,7 @@ public class AdcTest : TestBase
     [Fact]
     public void TestCrc32Stream()
     {
-        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        using var decFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         var crc32 = new CRC32().GetCrc32(decFs);
         decFs.Seek(0, SeekOrigin.Begin);
 
@@ -128,7 +128,7 @@ public class AdcTest : TestBase
     [Fact]
     public async Task TestCrc32StreamWriteAsync()
     {
-        var buffer = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var buffer = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         var crc32 = Crc32Stream.Compute(buffer);
 
         using var memory = new MemoryStream();
@@ -143,7 +143,7 @@ public class AdcTest : TestBase
     [Fact]
     public async Task TestCrc32StreamWriteMemoryAsync()
     {
-        var buffer = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        var buffer = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         var crc32 = Crc32Stream.Compute(buffer);
 
         using var memory = new MemoryStream();

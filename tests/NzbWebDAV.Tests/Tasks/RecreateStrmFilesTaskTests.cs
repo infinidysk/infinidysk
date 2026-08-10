@@ -11,8 +11,8 @@ namespace NzbWebDAV.Tests.Tasks;
 [Collection(nameof(BaseTaskCollection))]
 public class RecreateStrmFilesTaskTests : IAsyncLifetime
 {
-    private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"recreate-strm-{Guid.NewGuid():N}.sqlite");
-    private readonly string _strmDir = Path.Combine(Path.GetTempPath(), $"recreate-strm-out-{Guid.NewGuid():N}");
+    private readonly string _dbPath = Path.Join(Path.GetTempPath(), $"recreate-strm-{Guid.NewGuid():N}.sqlite");
+    private readonly string _strmDir = Path.Join(Path.GetTempPath(), $"recreate-strm-out-{Guid.NewGuid():N}");
     private DavDatabaseContext _context = null!;
     private DavDatabaseClient _dbClient = null!;
     private ConfigManager _config = null!;

@@ -61,7 +61,7 @@ public class TarArchiveDirectoryTests : TestBase
     [Fact]
     public void TarArchive_AddDirectoryEntry_SaveAndReload()
     {
-        var scratchPath = Path.Combine(SCRATCH_FILES_PATH, "tar-directory-test.tar");
+        var scratchPath = Path.Join(SCRATCH_FILES_PATH, "tar-directory-test.tar");
 
         using (var archive = TarArchive.CreateArchive())
         {

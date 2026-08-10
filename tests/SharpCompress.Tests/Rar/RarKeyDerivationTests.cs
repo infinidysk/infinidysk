@@ -51,7 +51,7 @@ public class RarKeyDerivationTests : TestBase
         // Round-trip through the Archive API (which uses CryptKey5 internally) and assert the
         // public DeriveKey material matches that path. Full CBC decrypt of packed bytes is
         // covered by EncryptedStoredRarEntryStream tests; here we only validate the public API.
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar");
 
         using (
             var archive = RarArchive.OpenArchive(path, new ReaderOptions { Password = Password })
@@ -81,7 +81,7 @@ public class RarKeyDerivationTests : TestBase
     [Fact]
     public void DeriveKey_Rar5_MatchesInternalCryptKey()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar");
         using var stream = File.OpenRead(path);
         var factory = NewFactory();
         var fh = (FileHeader)FirstEncryptedFileHeader(stream, factory);
@@ -99,7 +99,7 @@ public class RarKeyDerivationTests : TestBase
     [Fact]
     public void DeriveKey_Rar5_WrongPassword_Throws()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Rar5.none.encrypted.rar");
         using var stream = File.OpenRead(path);
         var factory = NewFactory();
         var fh = FirstEncryptedFileHeader(stream, factory);

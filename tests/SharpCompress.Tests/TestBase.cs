@@ -23,7 +23,7 @@ public class TestBase : IAsyncDisposable
         var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
         while (
             dir != null
-            && !Directory.Exists(Path.Combine(dir.FullName, "TestArchives"))
+            && !Directory.Exists(Path.Join(dir.FullName, "TestArchives"))
         )
         {
             dir = dir.Parent;
@@ -35,9 +35,9 @@ public class TestBase : IAsyncDisposable
                 "Could not locate TestArchives relative to the SharpCompress test output directory."
             );
 
-        TEST_ARCHIVES_PATH = Path.Combine(SOLUTION_BASE_PATH, "TestArchives", "Archives");
-        ORIGINAL_FILES_PATH = Path.Combine(SOLUTION_BASE_PATH, "TestArchives", "Original");
-        MISC_TEST_FILES_PATH = Path.Combine(SOLUTION_BASE_PATH, "TestArchives", "MiscTest");
+        TEST_ARCHIVES_PATH = Path.Join(SOLUTION_BASE_PATH, "TestArchives", "Archives");
+        ORIGINAL_FILES_PATH = Path.Join(SOLUTION_BASE_PATH, "TestArchives", "Original");
+        MISC_TEST_FILES_PATH = Path.Join(SOLUTION_BASE_PATH, "TestArchives", "MiscTest");
     }
 
     private readonly TempDirectory _tempDirectory;
@@ -61,10 +61,10 @@ public class TestBase : IAsyncDisposable
     }
 
     protected string CreateScratchDirectory(string name) =>
-        _tempDirectory.CreateDirectory(Path.Combine("Scratch", name));
+        _tempDirectory.CreateDirectory(Path.Join("Scratch", name));
 
     protected string CreateScratch2Directory(string name) =>
-        _tempDirectory.CreateDirectory(Path.Combine("Scratch2", name));
+        _tempDirectory.CreateDirectory(Path.Join("Scratch2", name));
 
     protected string GetScratchPath(params string[] parts) =>
         CombinePath(SCRATCH_FILES_PATH, parts);
@@ -73,7 +73,7 @@ public class TestBase : IAsyncDisposable
         CombinePath(SCRATCH2_FILES_PATH, parts);
 
     private static string CombinePath(string root, string[] parts) =>
-        parts.Length == 0 ? root : Path.Combine(root, Path.Combine(parts));
+        parts.Length == 0 ? root : Path.Join(root, Path.Join(parts));
 
     public void VerifyFiles()
     {

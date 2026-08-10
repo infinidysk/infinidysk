@@ -8,7 +8,7 @@ public sealed class MigrationSymlinkUtilTests
     [Fact]
     public void LinuxFindStartInfo_PassesHostileRootAsOneOpaqueArgument()
     {
-        var hostileRoot = Path.Combine(
+        var hostileRoot = Path.Join(
             Path.GetTempPath(),
             "library-\"-'-$()-; touch injected-line1\nline2");
 
@@ -27,11 +27,11 @@ public sealed class MigrationSymlinkUtilTests
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "Linux find traversal is only used on Linux.");
 
-        var root = Path.Combine(
+        var root = Path.Join(
             Path.GetTempPath(),
             $"library-\"-'-$()-; touch injected-line1\nline2-{Guid.NewGuid():N}");
-        var strmPath = Path.Combine(root, "movie.strm");
-        var symlinkPath = Path.Combine(root, "episode-\nlink.mkv");
+        var strmPath = Path.Join(root, "movie.strm");
+        var symlinkPath = Path.Join(root, "episode-\nlink.mkv");
         const string targetUrl = "http://localhost:8080/content/movie.mkv?token=a&part=1";
         const string linkTarget = "missing-target.mkv";
 
@@ -61,7 +61,7 @@ public sealed class MigrationSymlinkUtilTests
     [Fact]
     public void Enumeration_MissingRootFailsWithoutReturningPartialResults()
     {
-        var missingRoot = Path.Combine(
+        var missingRoot = Path.Join(
             Path.GetTempPath(),
             $"missing-altmount-library-{Guid.NewGuid():N}");
 
@@ -83,7 +83,7 @@ public sealed class MigrationSymlinkUtilTests
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "Linux filenames may contain arbitrary non-UTF-8 bytes.");
 
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-nonutf8-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-nonutf8-{Guid.NewGuid():N}");
         try
         {
             Directory.CreateDirectory(root);
@@ -107,13 +107,13 @@ public sealed class MigrationSymlinkUtilTests
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "Linux find traversal is only used on Linux.");
 
-        var root = Path.Combine(Path.GetTempPath(), $"altmig-census-{Guid.NewGuid():N}");
+        var root = Path.Join(Path.GetTempPath(), $"altmig-census-{Guid.NewGuid():N}");
         try
         {
             Directory.CreateDirectory(root);
-            File.WriteAllText(Path.Combine(root, "present.mkv"), "fixture");
-            File.CreateSymbolicLink(Path.Combine(root, "readable.mkv"), "present.mkv");
-            File.CreateSymbolicLink(Path.Combine(root, "dangling.mkv"), "missing.mkv");
+            File.WriteAllText(Path.Join(root, "present.mkv"), "fixture");
+            File.CreateSymbolicLink(Path.Join(root, "readable.mkv"), "present.mkv");
+            File.CreateSymbolicLink(Path.Join(root, "dangling.mkv"), "missing.mkv");
             CreateNonUtf8Symlink(root);
 
             var result = MigrationSymlinkUtil.GetAllSymlinks(root);

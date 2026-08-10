@@ -18,7 +18,7 @@ public class LzwReaderTests : ReaderTests
     public void Lzw_Reader_Generic2()
     {
         //read only as Lzw item
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.Z"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.Z"));
         using var reader = LzwReader.OpenReader(SharpCompressStream.CreateNonDisposing(stream));
         while (reader.MoveToNextEntry())
         {
@@ -34,7 +34,7 @@ public class LzwReaderTests : ReaderTests
         // 1. LzwStream only supports decompression, not compression
         // 2. This tests the important tar wrapper detection code path in LzwFactory.TryOpenReader
         // 3. Verifies that tar.Z files correctly return TarReader with CompressionType.Lzw
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.Z"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.Z"));
         using var reader = ReaderFactory.OpenReader(
             stream,
             ReaderOptions.ForExternalStream with
@@ -54,7 +54,7 @@ public class LzwReaderTests : ReaderTests
     public void Lzw_Reader_Plain_Z_File()
     {
         // Test with a plain .Z file (not tar-wrapped) using LzwReader directly
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "large_test.txt.Z"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "large_test.txt.Z"));
         using var reader = LzwReader.OpenReader(stream);
 
         Assert.True(reader.MoveToNextEntry());
@@ -79,7 +79,7 @@ public class LzwReaderTests : ReaderTests
     public void Lzw_Reader_Factory_Detects_Plain_Z_File()
     {
         // Test that ReaderFactory correctly identifies a plain .Z file (not tar-wrapped)
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "large_test.txt.Z"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "large_test.txt.Z"));
         using var reader = ReaderFactory.OpenReader(stream);
 
         // Should detect as Lzw archive (not Tar)

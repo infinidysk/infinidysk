@@ -9,7 +9,7 @@ public sealed class SymlinkAndStrmUtilTests
     [Fact]
     public void LinuxFindStartInfo_PassesHostileRootAsOneOpaqueArgument()
     {
-        var hostileRoot = Path.Combine(
+        var hostileRoot = Path.Join(
             Path.GetTempPath(),
             "-library-\"-'-$()-; touch injected-line1\nline2-ユニコード");
 
@@ -44,23 +44,23 @@ public sealed class SymlinkAndStrmUtilTests
         var root = CreateTempDirectory();
         try
         {
-            var multiLine = Path.Combine(root, "multi.strm");
+            var multiLine = Path.Join(root, "multi.strm");
             File.WriteAllText(multiLine, "\n\r\nhttp://localhost/view/.ids/a.mkv?extension=mkv\nsecond-line\n");
 
-            var withBom = Path.Combine(root, "bom.strm");
+            var withBom = Path.Join(root, "bom.strm");
             File.WriteAllBytes(
                 withBom,
                 new byte[] { 0xEF, 0xBB, 0xBF }
                     .Concat(Encoding.UTF8.GetBytes("http://localhost/view/.ids/b.mkv\r\n"))
                     .ToArray());
 
-            var empty = Path.Combine(root, "empty.strm");
+            var empty = Path.Join(root, "empty.strm");
             File.WriteAllText(empty, "");
 
-            var oversized = Path.Combine(root, "oversized.strm");
+            var oversized = Path.Join(root, "oversized.strm");
             File.WriteAllText(oversized, new string('a', SymlinkAndStrmUtil.MaxStrmTargetBytes + 1));
 
-            var hugeLaterLine = Path.Combine(root, "huge-later.strm");
+            var hugeLaterLine = Path.Join(root, "huge-later.strm");
             File.WriteAllText(
                 hugeLaterLine,
                 "http://localhost/view/.ids/c.mkv\n" + new string('b', SymlinkAndStrmUtil.MaxStrmTargetBytes * 4));
@@ -95,7 +95,7 @@ public sealed class SymlinkAndStrmUtilTests
     public void ReadLinuxFindEntry_FailsClosedWhenSymlinkTargetDisappears()
     {
         var root = CreateTempDirectory();
-        var path = Path.Combine(root, "victim.mkv");
+        var path = Path.Join(root, "victim.mkv");
         try
         {
             File.CreateSymbolicLink(path, "original-target.mkv");
@@ -117,13 +117,13 @@ public sealed class SymlinkAndStrmUtilTests
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "Linux find traversal is only used on Linux.");
 
-        var root = Path.Combine(
+        var root = Path.Join(
             Path.GetTempPath(),
             $"-library-\"-'-$()-; touch injected-line1\nline2-ユニコード-{Guid.NewGuid():N}");
         var newlineName = "file\nwith\nnewlines.mkv";
-        var symlinkPath = Path.Combine(root, newlineName);
-        var strmPath = Path.Combine(root, "movie.strm");
-        var trailingSymlinkPath = Path.Combine(root, "trailing.mkv");
+        var symlinkPath = Path.Join(root, newlineName);
+        var strmPath = Path.Join(root, "movie.strm");
+        var trailingSymlinkPath = Path.Join(root, "trailing.mkv");
         const string targetUrl = "http://localhost:8080/view/.ids/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.mkv?extension=mkv";
         const string linkTarget = "missing-target\nwith\nnewlines.mkv";
         const string trailingTarget = "next-target.mkv";
@@ -164,10 +164,10 @@ public sealed class SymlinkAndStrmUtilTests
         Skip.IfNot(OperatingSystem.IsLinux(), "Linux find traversal is only used on Linux.");
 
         var parent = CreateTempDirectory();
-        var realRoot = Path.Combine(parent, "real-root");
-        var linkRoot = Path.Combine(parent, "link-root");
-        var nestedReal = Path.Combine(parent, "nested-real");
-        var nestedLink = Path.Combine(realRoot, "nested-link");
+        var realRoot = Path.Join(parent, "real-root");
+        var linkRoot = Path.Join(parent, "link-root");
+        var nestedReal = Path.Join(parent, "nested-real");
+        var nestedLink = Path.Join(realRoot, "nested-link");
 
         try
         {
@@ -176,8 +176,8 @@ public sealed class SymlinkAndStrmUtilTests
             File.CreateSymbolicLink(linkRoot, realRoot);
             Directory.CreateSymbolicLink(nestedLink, nestedReal);
 
-            File.WriteAllText(Path.Combine(realRoot, "root.strm"), "http://localhost/view/.ids/root.mkv");
-            File.WriteAllText(Path.Combine(nestedReal, "nested.strm"), "http://localhost/view/.ids/nested.mkv");
+            File.WriteAllText(Path.Join(realRoot, "root.strm"), "http://localhost/view/.ids/root.mkv");
+            File.WriteAllText(Path.Join(nestedReal, "nested.strm"), "http://localhost/view/.ids/nested.mkv");
 
             var results = SymlinkAndStrmUtil.GetAllSymlinksAndStrms(linkRoot).ToList();
             var strmPaths = results.OfType<SymlinkAndStrmUtil.StrmInfo>()
@@ -186,18 +186,18 @@ public sealed class SymlinkAndStrmUtilTests
 
             // find -H may report the strm under the symlink root path or the real path.
             Assert.True(
-                strmPaths.Contains(Path.Combine(realRoot, "root.strm")) ||
-                strmPaths.Contains(Path.Combine(linkRoot, "root.strm")),
+                strmPaths.Contains(Path.Join(realRoot, "root.strm")) ||
+                strmPaths.Contains(Path.Join(linkRoot, "root.strm")),
                 $"Expected root.strm under the followed symlink root. Found: {string.Join(", ", strmPaths)}");
-            Assert.DoesNotContain(Path.Combine(nestedReal, "nested.strm"), strmPaths);
-            Assert.DoesNotContain(Path.Combine(nestedLink, "nested.strm"), strmPaths);
+            Assert.DoesNotContain(Path.Join(nestedReal, "nested.strm"), strmPaths);
+            Assert.DoesNotContain(Path.Join(nestedLink, "nested.strm"), strmPaths);
 
             // The nested directory symlink itself is still a -type l match.
             Assert.Contains(
                 results.OfType<SymlinkAndStrmUtil.SymlinkInfo>(),
                 x =>
                     (x.SymlinkPath == nestedLink ||
-                     x.SymlinkPath == Path.Combine(linkRoot, "nested-link")) &&
+                     x.SymlinkPath == Path.Join(linkRoot, "nested-link")) &&
                     (x.TargetPath == nestedReal ||
                      Path.GetFullPath(x.TargetPath, Path.GetDirectoryName(x.SymlinkPath)!) == nestedReal));
         }
@@ -217,14 +217,14 @@ public sealed class SymlinkAndStrmUtilTests
         var deniedDirs = new List<string>();
         try
         {
-            File.WriteAllText(Path.Combine(root, "ok.strm"), "http://localhost/view/.ids/ok.mkv");
+            File.WriteAllText(Path.Join(root, "ok.strm"), "http://localhost/view/.ids/ok.mkv");
 
             // Enough denied subtrees to exceed MaxStderrChars when find reports each one.
             for (var i = 0; i < 80; i++)
             {
-                var denied = Path.Combine(root, $"denied-{i:D3}");
+                var denied = Path.Join(root, $"denied-{i:D3}");
                 Directory.CreateDirectory(denied);
-                File.WriteAllText(Path.Combine(denied, $"hidden-{i}.strm"), "http://localhost/view/.ids/hidden.mkv");
+                File.WriteAllText(Path.Join(denied, $"hidden-{i}.strm"), "http://localhost/view/.ids/hidden.mkv");
                 chmod(denied, 0);
                 deniedDirs.Add(denied);
             }
@@ -256,7 +256,7 @@ public sealed class SymlinkAndStrmUtilTests
 
     private static string CreateTempDirectory()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"nzbdav-symlink-tests-{Guid.NewGuid():N}");
+        var path = Path.Join(Path.GetTempPath(), $"nzbdav-symlink-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }

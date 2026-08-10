@@ -24,7 +24,7 @@ public class SqliteMainDbPragmasTests
     [Fact]
     public async Task ConnectionOpened_AppliesMemoryAndJournalPragmas()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), $"nzbdav-main-pragmas-{Guid.NewGuid():N}.sqlite");
+        var databasePath = Path.Join(Path.GetTempPath(), $"nzbdav-main-pragmas-{Guid.NewGuid():N}.sqlite");
         try
         {
             var options = new DbContextOptionsBuilder<DavDatabaseContext>()
@@ -49,10 +49,10 @@ public class SqliteMainDbPragmasTests
     [Fact]
     public async Task MaintenanceSweep_PopulatesSqliteStat1()
     {
-        var configPath = Path.Combine(Path.GetTempPath(), $"nzbdav-maint-{Guid.NewGuid():N}");
+        var configPath = Path.Join(Path.GetTempPath(), $"nzbdav-maint-{Guid.NewGuid():N}");
         Directory.CreateDirectory(configPath);
-        var mainPath = Path.Combine(configPath, "db.sqlite");
-        var metricsPath = Path.Combine(configPath, "metrics.sqlite");
+        var mainPath = Path.Join(configPath, "db.sqlite");
+        var metricsPath = Path.Join(configPath, "metrics.sqlite");
 
         try
         {
@@ -115,7 +115,7 @@ public class SqliteMetricsPragmasTests
     [Fact]
     public async Task ConnectionOpened_AppliesBusyTimeout()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), $"nzbdav-metrics-pragmas-{Guid.NewGuid():N}.sqlite");
+        var databasePath = Path.Join(Path.GetTempPath(), $"nzbdav-metrics-pragmas-{Guid.NewGuid():N}.sqlite");
         try
         {
             var options = new DbContextOptionsBuilder<MetricsDbContext>()

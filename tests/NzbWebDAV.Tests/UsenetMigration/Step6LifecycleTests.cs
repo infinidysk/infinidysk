@@ -51,12 +51,12 @@ public sealed class Step6LifecycleTests
         await using var h = await MigrationTestHarness.CreateAsync();
         var root = Directory.CreateTempSubdirectory("altmig-library-");
         var backups = Directory.CreateTempSubdirectory("altmig-backups-");
-        var link = Path.Combine(root.FullName, "movie.mkv");
+        var link = Path.Join(root.FullName, "movie.mkv");
         var original = "/mnt/altmount/movie.mkv";
         var replacement = "/mnt/nzbdav/.ids/x";
         var archiveName = "altmount-symlink-backup-20260721-120000.tar.gz";
         await SymlinkBackup.WriteAsync(
-            Path.Combine(backups.FullName, archiveName),
+            Path.Join(backups.FullName, archiveName),
             [new SymlinkBackup.Entry(link, original, replacement)]);
         await h.Store.UpdateSessionAsync(s =>
         {
@@ -352,11 +352,11 @@ public sealed class Step6LifecycleTests
                     await controller.PlanSymlinks(new SymlinkPlanRequest(configDir.FullName, backups.FullName)));
                 Assert.Contains("config directory", Assert.IsType<BaseApiResponse>(configRejected.Value).Error!);
 
-                var nestedBackup = Path.Combine(configDir.FullName, "nested-backup");
+                var nestedBackup = Path.Join(configDir.FullName, "nested-backup");
                 Directory.CreateDirectory(nestedBackup);
                 // Use a valid library that is not config, but put backup inside it.
                 var library = Directory.CreateTempSubdirectory("altmig-lib-");
-                var inside = Path.Combine(library.FullName, "backups");
+                var inside = Path.Join(library.FullName, "backups");
                 var insideRejected = Assert.IsType<BadRequestObjectResult>(
                     await controller.PlanSymlinks(new SymlinkPlanRequest(library.FullName, inside)));
                 Assert.Contains("inside libraryRoot", Assert.IsType<BaseApiResponse>(insideRejected.Value).Error!);
@@ -391,7 +391,7 @@ public sealed class Step6LifecycleTests
         {
             migration.SymlinkRewrites.Add(new MigrationSymlinkRewrite
             {
-                SymlinkPath = Path.Combine(library.FullName, "orphan.mkv"),
+                SymlinkPath = Path.Join(library.FullName, "orphan.mkv"),
                 OldTarget = "/mnt/altmount/orphan.mkv",
                 Status = "orphan",
                 UpdatedAt = DateTime.UtcNow,
@@ -442,7 +442,7 @@ public sealed class Step6LifecycleTests
         await using var h = await MigrationTestHarness.CreateAsync();
         var library = Directory.CreateTempSubdirectory("altmig-library-");
         var backups = Directory.CreateTempSubdirectory("altmig-backups-");
-        var link = Path.Combine(library.FullName, "orphan.mkv");
+        var link = Path.Join(library.FullName, "orphan.mkv");
         const string target = "/mnt/altmount/orphan.mkv";
         await h.Store.UpdateSessionAsync(s =>
         {

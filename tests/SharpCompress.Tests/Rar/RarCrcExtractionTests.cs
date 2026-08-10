@@ -14,9 +14,9 @@ public class RarCrcExtractionTests : ArchiveTests
     [InlineData("Rar5.rar")]
     public void Rar_Archive_WriteToFile_Throws_On_Crc_Mismatch(string archiveName)
     {
-        using var archive = RarArchive.OpenArchive(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var archive = RarArchive.OpenArchive(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var entry = CorruptFirstFileCrc(archive);
-        var destination = Path.Combine(SCRATCH_FILES_PATH, $"{archiveName}-crc-mismatch.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, $"{archiveName}-crc-mismatch.txt");
 
         Assert.Throws<InvalidFormatException>(() => entry.WriteToFile(destination));
     }

@@ -107,7 +107,7 @@ public sealed class DatabaseMigrationLeaseTests
     }
 
     private static string TempDatabasePath() =>
-        Path.Combine(Path.GetTempPath(), $"nzbdav-migration-lease-{Guid.NewGuid():N}.sqlite");
+        Path.Join(Path.GetTempPath(), $"nzbdav-migration-lease-{Guid.NewGuid():N}.sqlite");
 
     private static void DeleteDatabaseFiles(string path)
     {

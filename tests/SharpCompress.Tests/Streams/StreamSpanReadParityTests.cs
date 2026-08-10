@@ -58,7 +58,7 @@ public class StreamSpanReadParityTests : TestBase
     {
         AssertArrayAndSpanReadsMatch(() =>
         {
-            var reader = ReaderFactory.OpenReader(Path.Combine(TEST_ARCHIVES_PATH, "Rar.rar"));
+            var reader = ReaderFactory.OpenReader(Path.Join(TEST_ARCHIVES_PATH, "Rar.rar"));
             reader.MoveToNextEntry();
             return reader.OpenEntryStream();
         });
@@ -67,7 +67,7 @@ public class StreamSpanReadParityTests : TestBase
     [Fact]
     public void SevenZipEntryStream_SpanRead_MatchesArrayRead()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z");
 
         byte[] arrayResult;
         using (var archive = SevenZipArchive.OpenArchive(path))
@@ -98,7 +98,7 @@ public class StreamSpanReadParityTests : TestBase
         AssertArrayAndSpanReadsMatch(() =>
         {
             var reader = ReaderFactory.OpenReader(
-                Path.Combine(TEST_ARCHIVES_PATH, "Zip.none.datadescriptors.zip")
+                Path.Join(TEST_ARCHIVES_PATH, "Zip.none.datadescriptors.zip")
             );
             reader.MoveToNextEntry();
             return reader.OpenEntryStream();

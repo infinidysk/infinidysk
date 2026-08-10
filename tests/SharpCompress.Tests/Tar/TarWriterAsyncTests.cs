@@ -80,7 +80,7 @@ public class TarWriterAsyncTests : WriterTests
     public async ValueTask Tar_Finalize_Archive_Async(bool finalizeArchive)
     {
         using var stream = new MemoryStream();
-        using Stream content = File.OpenRead(Path.Combine(ORIGINAL_FILES_PATH, "jpg", "test.jpg"));
+        using Stream content = File.OpenRead(Path.Join(ORIGINAL_FILES_PATH, "jpg", "test.jpg"));
         await using (
             var writer = new TarWriter(
                 new AsyncOnlyStream(stream, false),

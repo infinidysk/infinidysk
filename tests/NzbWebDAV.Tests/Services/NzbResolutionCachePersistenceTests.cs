@@ -11,7 +11,7 @@ namespace NzbWebDAV.Tests.Services;
 public sealed class NzbResolutionCachePersistenceTests : IAsyncLifetime
 {
     private readonly string _databasePath =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-resolution-cache-{Guid.NewGuid():N}.sqlite");
+        Path.Join(Path.GetTempPath(), $"nzbdav-resolution-cache-{Guid.NewGuid():N}.sqlite");
     private DbContextOptions<DavDatabaseContext> _options = null!;
     private DavDatabaseContext _context = null!;
 

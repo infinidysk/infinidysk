@@ -15,7 +15,7 @@ namespace NzbWebDAV.Tests.Services;
 public sealed class MultipartFileSizeRepairServiceTests : IAsyncLifetime
 {
     private readonly string _configRoot =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-filesize-repair-cfg-{Guid.NewGuid():N}");
+        Path.Join(Path.GetTempPath(), $"nzbdav-filesize-repair-cfg-{Guid.NewGuid():N}");
     private string? _previousConfigPath;
     private DavDatabaseContext _context = null!;
 

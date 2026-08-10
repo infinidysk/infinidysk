@@ -13,7 +13,7 @@ public class LzwStreamAsyncTests : TestBase
     [Fact]
     public async Task LzwStream_ReadAsync_ByteArray()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.Z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.Z");
         using var stream = File.OpenRead(testArchive);
         using var lzwStream = new LzwStream(stream);
 
@@ -26,7 +26,7 @@ public class LzwStreamAsyncTests : TestBase
     [Fact]
     public async Task LzwStream_ReadAsync_Memory()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.Z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.Z");
         using var stream = File.OpenRead(testArchive);
         using var lzwStream = new LzwStream(stream);
 
@@ -39,7 +39,7 @@ public class LzwStreamAsyncTests : TestBase
     [Fact]
     public async Task LzwStream_ReadAsync_ProducesSameResultAsSync()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.Z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.Z");
 
         byte[] syncResult;
         byte[] asyncResult;
@@ -62,7 +62,7 @@ public class LzwStreamAsyncTests : TestBase
     [Fact]
     public async Task LzwStream_ReadAsync_MultipleReads()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.Z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.Z");
         using var stream = File.OpenRead(testArchive);
         using var lzwStream = new LzwStream(stream);
 
@@ -87,7 +87,7 @@ public class LzwStreamAsyncTests : TestBase
     [Fact]
     public async Task LzwStream_ReadAsync_Cancellation()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.Z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.Z");
         using var stream = File.OpenRead(testArchive);
         using var lzwStream = new LzwStream(stream);
 
@@ -104,7 +104,7 @@ public class LzwStreamAsyncTests : TestBase
     [Fact]
     public async Task LzwStream_ReadAsync_EmptyBuffer()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.Z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.Z");
         using var stream = File.OpenRead(testArchive);
         using var lzwStream = new LzwStream(stream);
 
@@ -117,7 +117,7 @@ public class LzwStreamAsyncTests : TestBase
     [Fact]
     public async Task LzwStream_ReadAsync_ReturnsZeroAtEndOfStream()
     {
-        var testArchive = Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.Z");
+        var testArchive = Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.Z");
         using var stream = File.OpenRead(testArchive);
         using var lzwStream = new LzwStream(stream);
 

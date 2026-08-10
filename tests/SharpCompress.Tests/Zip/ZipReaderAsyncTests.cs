@@ -19,7 +19,7 @@ public class ZipReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask Issue_269_Double_Skip_Async()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "PrePostHeaders.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "PrePostHeaders.zip");
         using Stream stream = new ForwardOnlyStream(File.OpenRead(path));
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
         var count = 0;
@@ -39,7 +39,7 @@ public class ZipReaderAsyncTests : ReaderTests
     [Fact]
     public async ValueTask SkipUnreadEntryAsync_SeekableSourceDoesNotReadEntryPayload()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "PrePostHeaders.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "PrePostHeaders.zip");
         await using var stream = new ReadGuardStream(File.OpenRead(path));
         await using var reader = await ReaderFactory.OpenAsyncReader(stream);
 
@@ -82,7 +82,7 @@ public class ZipReaderAsyncTests : ReaderTests
     public async ValueTask Zip_Deflate_Streamed_Skip_Async()
     {
         using Stream stream = new ForwardOnlyStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
         );
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
         var x = 0;
@@ -103,7 +103,7 @@ public class ZipReaderAsyncTests : ReaderTests
     public async ValueTask Zip_Deflate_Streamed2_Skip_Async()
     {
         using Stream stream = new ForwardOnlyStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd-.zip"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd-.zip"))
         );
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
         var x = 0;
@@ -156,7 +156,7 @@ public class ZipReaderAsyncTests : ReaderTests
     public async ValueTask Zip_BZip2_PkwareEncryption_Read_Async()
     {
         using (
-            Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.bzip2.pkware.zip"))
+            Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.bzip2.pkware.zip"))
         )
         using (
             IReader baseReader = ZipReader.OpenReader(
@@ -185,7 +185,7 @@ public class ZipReaderAsyncTests : ReaderTests
     public async ValueTask Zip_Reader_Disposal_Test_Async()
     {
         using var stream = new TestStream(
-            File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
+            File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
         );
         await using (
             var reader = await ReaderFactory.OpenAsyncReader(
@@ -210,7 +210,7 @@ public class ZipReaderAsyncTests : ReaderTests
     {
         using var stream = new TestStream(
             new AsyncOnlyStream(
-                File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
+                File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip"))
             )
         );
         await using var reader = await ReaderFactory.OpenAsyncReader(stream);
@@ -230,7 +230,7 @@ public class ZipReaderAsyncTests : ReaderTests
         {
             using (
                 Stream stream = new AsyncOnlyStream(
-                    File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.lzma.WinzipAES.zip"))
+                    File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.lzma.WinzipAES.zip"))
                 )
             )
             using (
@@ -261,7 +261,7 @@ public class ZipReaderAsyncTests : ReaderTests
     {
         using (
             Stream stream = new AsyncOnlyStream(
-                File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.WinzipAES.zip"))
+                File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.WinzipAES.zip"))
             )
         )
 
@@ -293,7 +293,7 @@ public class ZipReaderAsyncTests : ReaderTests
         var count = 0;
         using (
             Stream stream = new AsyncOnlyStream(
-                File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "zipcrypto.zip"))
+                File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "zipcrypto.zip"))
             )
         )
         await using (
@@ -324,7 +324,7 @@ public class ZipReaderAsyncTests : ReaderTests
     {
         // Since version 0.41.0: EntryStream.DisposeAsync() should not throw NotSupportedException
         // when FlushAsync() fails on non-seekable streams (Deflate compression)
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip");
         using Stream stream = new ForwardOnlyStream(File.OpenRead(path));
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
 
@@ -347,7 +347,7 @@ public class ZipReaderAsyncTests : ReaderTests
     {
         // Since version 0.41.0: EntryStream.DisposeAsync() should not throw NotSupportedException
         // when FlushAsync() fails on non-seekable streams (LZMA compression)
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.lzma.dd.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.lzma.dd.zip");
         using Stream stream = new ForwardOnlyStream(File.OpenRead(path));
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
 
@@ -371,7 +371,7 @@ public class ZipReaderAsyncTests : ReaderTests
         // Regression test: since 0.41.0, archive iteration would silently break
         // when the input stream throws NotSupportedException in Flush().
         // Only the first entry would be returned, then iteration would stop without exception.
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.dd.zip");
         using var fileStream = File.OpenRead(path);
         using Stream stream = new ThrowOnFlushStream(fileStream);
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));
@@ -395,7 +395,7 @@ public class ZipReaderAsyncTests : ReaderTests
         // Regression test: since 0.41.0, archive iteration would silently break
         // when the input stream throws NotSupportedException in Flush().
         // Only the first entry would be returned, then iteration would stop without exception.
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.lzma.dd.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.lzma.dd.zip");
         using var fileStream = File.OpenRead(path);
         using Stream stream = new ThrowOnFlushStream(fileStream);
         await using var reader = await ReaderFactory.OpenAsyncReader(new AsyncOnlyStream(stream));

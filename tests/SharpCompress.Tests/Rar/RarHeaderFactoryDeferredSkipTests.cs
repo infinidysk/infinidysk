@@ -31,7 +31,7 @@ public class RarHeaderFactoryDeferredSkipTests : TestBase
     [InlineData("Rar5.none.rar")]
     public void StopAfterFirstFileHeader_PerformsNoDataSeek(string archiveName)
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var factory = NewFactory();
 
         IRarFileHeader? first = null;
@@ -59,7 +59,7 @@ public class RarHeaderFactoryDeferredSkipTests : TestBase
     [InlineData("Rar5.none.rar")]
     public void FullWalk_StoredEntries_DataStartPositionsSliceExactPayload(string archiveName)
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, archiveName);
+        var path = Path.Join(TEST_ARCHIVES_PATH, archiveName);
 
         Dictionary<string, byte[]> expected;
         using (var archive = RarArchive.OpenArchive(path))
@@ -100,7 +100,7 @@ public class RarHeaderFactoryDeferredSkipTests : TestBase
     [Fact]
     public void CommentVolume_FullEnumeration_Succeeds_WithoutManualDrain()
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Rar5.comment.rar"));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Rar5.comment.rar"));
         var factory = NewFactory();
 
         var sawComment = false;
@@ -138,7 +138,7 @@ public class RarHeaderFactoryDeferredSkipTests : TestBase
     public void CommentVolume_ArchiveStillReadsComment()
     {
         using var archive = RarArchive.OpenArchive(
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar5.comment.rar")
+            Path.Join(TEST_ARCHIVES_PATH, "Rar5.comment.rar")
         );
         // Comment is populated while enumerating volume file parts (on the CMT service
         // header); force that load before reading Volumes.Comment.

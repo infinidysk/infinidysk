@@ -39,7 +39,7 @@ public class RarReaderTests : ReaderTests
         using (
             var reader = RarReader.OpenReader(
                 archives
-                    .Select(s => Path.Combine(TEST_ARCHIVES_PATH, s))
+                    .Select(s => Path.Join(TEST_ARCHIVES_PATH, s))
                     .Select(p => File.OpenRead(p))
             )
         )
@@ -69,7 +69,7 @@ public class RarReaderTests : ReaderTests
             using (
                 var reader = RarReader.OpenReader(
                     archives
-                        .Select(s => Path.Combine(TEST_ARCHIVES_PATH, s))
+                        .Select(s => Path.Join(TEST_ARCHIVES_PATH, s))
                         .Select(p => File.OpenRead(p)),
                     ReaderOptions.ForExternalStream with
                     {
@@ -113,12 +113,12 @@ public class RarReaderTests : ReaderTests
         foreach (var file in archives)
         {
             File.Copy(
-                Path.Combine(TEST_ARCHIVES_PATH, file),
-                Path.Combine(SCRATCH2_FILES_PATH, file)
+                Path.Join(TEST_ARCHIVES_PATH, file),
+                Path.Join(SCRATCH2_FILES_PATH, file)
             );
         }
         var streams = archives
-            .Select(s => Path.Combine(SCRATCH2_FILES_PATH, s))
+            .Select(s => Path.Join(SCRATCH2_FILES_PATH, s))
             .Select(File.OpenRead)
             .ToList();
         using (var reader = RarReader.OpenReader(streams))
@@ -134,7 +134,7 @@ public class RarReaderTests : ReaderTests
         }
         VerifyFiles();
 
-        foreach (var file in archives.Select(s => Path.Combine(SCRATCH2_FILES_PATH, s)))
+        foreach (var file in archives.Select(s => Path.Join(SCRATCH2_FILES_PATH, s)))
         {
             File.Delete(file);
         }
@@ -193,7 +193,7 @@ public class RarReaderTests : ReaderTests
 
     private void DoRar_Entry_Stream(string filename)
     {
-        using (Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, filename)))
+        using (Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, filename)))
         using (var reader = ReaderFactory.OpenReader(stream))
         {
             while (reader.MoveToNextEntry())
@@ -208,12 +208,12 @@ public class RarReaderTests : ReaderTests
                         ?? throw new InvalidOperationException(
                             "Entry key must have a directory name."
                         );
-                    var destdir = Path.Combine(SCRATCH_FILES_PATH, folder);
+                    var destdir = Path.Join(SCRATCH_FILES_PATH, folder);
                     if (!Directory.Exists(destdir))
                     {
                         Directory.CreateDirectory(destdir);
                     }
-                    var destinationFileName = Path.Combine(destdir, file);
+                    var destinationFileName = Path.Join(destdir, file);
 
                     using var fs = File.OpenWrite(destinationFileName);
                     entryStream.CopyTo(fs);
@@ -227,7 +227,7 @@ public class RarReaderTests : ReaderTests
     public void Rar_Reader_Audio_program()
     {
         using (
-            var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Rar.Audio_program.rar"))
+            var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Rar.Audio_program.rar"))
         )
         using (
             var reader = ReaderFactory.OpenReader(
@@ -246,15 +246,15 @@ public class RarReaderTests : ReaderTests
             }
         }
         CompareFilesByPath(
-            Path.Combine(SCRATCH_FILES_PATH, "test.dat"),
-            Path.Combine(MISC_TEST_FILES_PATH, "test.dat")
+            Path.Join(SCRATCH_FILES_PATH, "test.dat"),
+            Path.Join(MISC_TEST_FILES_PATH, "test.dat")
         );
     }
 
     [Fact]
     public void Rar_Jpg_Reader()
     {
-        using (var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Rar.jpeg.jpg")))
+        using (var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Rar.jpeg.jpg")))
         using (
             var reader = RarReader.OpenReader(
                 stream,
@@ -294,7 +294,7 @@ public class RarReaderTests : ReaderTests
 
     private void DoRar_Solid_Skip_Reader(string filename)
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, filename));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, filename));
         using var reader = ReaderFactory.OpenReader(
             stream,
             ReaderOptions.ForExternalStream with
@@ -320,7 +320,7 @@ public class RarReaderTests : ReaderTests
 
     private void DoRar_Reader_Skip(string filename)
     {
-        using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, filename));
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, filename));
         using var reader = ReaderFactory.OpenReader(
             stream,
             ReaderOptions.ForExternalStream with
@@ -342,7 +342,7 @@ public class RarReaderTests : ReaderTests
     public void Rar_SkipEncryptedFilesWithoutPassword()
     {
         using var stream = File.OpenRead(
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar.encrypted_filesOnly.rar")
+            Path.Join(TEST_ARCHIVES_PATH, "Rar.encrypted_filesOnly.rar")
         );
         using var reader = ReaderFactory.OpenReader(
             stream,
@@ -418,17 +418,17 @@ public class RarReaderTests : ReaderTests
                 "exe",
                 "Empty",
                 "тест.txt",
-                Path.Combine("jpg", "test.jpg"),
-                Path.Combine("exe", "test.exe"),
+                Path.Join("jpg", "test.jpg"),
+                Path.Join("exe", "test.exe"),
             }
         );
         using var reader = RarReader.OpenReader([
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar.multi.part01.rar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar.multi.part02.rar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar.multi.part03.rar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar.multi.part04.rar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar.multi.part05.rar"),
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar.multi.part06.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar.multi.part01.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar.multi.part02.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar.multi.part03.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar.multi.part04.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar.multi.part05.rar"),
+            Path.Join(TEST_ARCHIVES_PATH, "Rar.multi.part06.rar"),
         ]);
         while (reader.MoveToNextEntry())
         {

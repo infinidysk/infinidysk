@@ -20,7 +20,7 @@ public class Aes7zKeyCacheTests : TestBase
     [Fact]
     public void SevenZip_LZMAAES_ExtractTwice_ProducesIdenticalOutput()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, EncryptedArchive);
+        var path = Path.Join(TEST_ARCHIVES_PATH, EncryptedArchive);
         var options = ReaderOptions.ForFilePath with { Password = Password };
 
         var first = ExtractAllEntryBytes(path, options);
@@ -36,7 +36,7 @@ public class Aes7zKeyCacheTests : TestBase
     [Fact]
     public void SevenZip_LZMAAES_WrongPassword_DoesNotContaminateCorrectExtraction()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, EncryptedArchive);
+        var path = Path.Join(TEST_ARCHIVES_PATH, EncryptedArchive);
         var correctOptions = ReaderOptions.ForFilePath with { Password = Password };
         var wrongOptions = ReaderOptions.ForFilePath with { Password = "wrongpassword" };
 

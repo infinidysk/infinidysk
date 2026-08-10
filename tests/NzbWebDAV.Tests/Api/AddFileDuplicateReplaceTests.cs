@@ -23,7 +23,7 @@ namespace NzbWebDAV.Tests.Api;
 public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
 {
     private readonly string _configRoot =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-addfile-cfg-{Guid.NewGuid():N}");
+        Path.Join(Path.GetTempPath(), $"nzbdav-addfile-cfg-{Guid.NewGuid():N}");
     private string? _previousConfigPath;
     private DbContextOptions<DavDatabaseContext> _options = null!;
     private DavDatabaseContext _context = null!;

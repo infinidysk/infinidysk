@@ -20,7 +20,7 @@ public class LzwReaderAsyncTests : ReaderTests
     public async System.Threading.Tasks.Task Lzw_Reader_Plain_Z_File_Async()
     {
         // Test async reading of a plain .Z file (not tar-wrapped) using LzwReader directly
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "large_test.txt.Z"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "large_test.txt.Z"));
         using var reader = LzwReader.OpenReader(stream);
 
         Assert.Equal(ArchiveType.Lzw, reader.Type);

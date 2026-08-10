@@ -17,7 +17,7 @@ public class GZipReaderTests : ReaderTests
     public void GZip_Reader_Generic2()
     {
         //read only as GZip itme
-        using Stream stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
+        using Stream stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar.gz"));
         using var reader = GZipReader.OpenReader(SharpCompressStream.CreateNonDisposing(stream));
         while (reader.MoveToNextEntry()) // Crash here
         {

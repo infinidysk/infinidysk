@@ -323,9 +323,9 @@ public sealed class SubmissionWorkerPoolTests
     public async Task BuildNzb_V1Release_LoadsOriginalNzbGzFromDisk()
     {
         await using var h = await MigrationTestHarness.CreateAsync();
-        var root = Path.Combine(Path.GetTempPath(), "nzbdav-v1sub-" + Guid.NewGuid().ToString("N"));
-        var metaDir = Path.Combine(root, "meta", "tv");
-        var nzbsDir = Path.Combine(root, ".nzbs", "tv");
+        var root = Path.Join(Path.GetTempPath(), "nzbdav-v1sub-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Join(root, "meta", "tv");
+        var nzbsDir = Path.Join(root, ".nzbs", "tv");
         Directory.CreateDirectory(metaDir);
         Directory.CreateDirectory(nzbsDir);
 
@@ -333,7 +333,7 @@ public sealed class SubmissionWorkerPoolTests
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
             "<nzb xmlns=\"http://www.newzbin.com/DTD/2003/nzb\">\n" +
             "  <file poster=\"p\" date=\"1\" subject=\"s\">\n  </file>\n</nzb>\n";
-        var nzbPath = Path.Combine(nzbsDir, "Show.nzb.gz");
+        var nzbPath = Path.Join(nzbsDir, "Show.nzb.gz");
         await using (var fs = File.Create(nzbPath))
         await using (var gz = new System.IO.Compression.GZipStream(fs, System.IO.Compression.CompressionLevel.Optimal))
         {
@@ -341,7 +341,7 @@ public sealed class SubmissionWorkerPoolTests
             await gz.WriteAsync(bytes);
         }
 
-        var metaPath = Path.Combine(metaDir, "Show.meta");
+        var metaPath = Path.Join(metaDir, "Show.meta");
         var metaBytes = new TestProtoWriter()
             .Varint(1, 100)
             .String(2, "/foreign/.nzbs/tv/Show.nzb")

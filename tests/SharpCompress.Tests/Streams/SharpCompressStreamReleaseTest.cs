@@ -14,7 +14,7 @@ public class SharpCompressStreamReleaseTest
     [Fact]
     public void RarFactory_OpenReader_ReleasesRingBufferAfterDetection()
     {
-        var path = Path.Combine(TestBase.TEST_ARCHIVES_PATH, "Rar5.none.rar");
+        var path = Path.Join(TestBase.TEST_ARCHIVES_PATH, "Rar5.none.rar");
         var data = File.ReadAllBytes(path);
         var inner = new MemoryStream(data);
         var nonSeekable = new ForwardOnlyStream(inner);

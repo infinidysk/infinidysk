@@ -92,7 +92,7 @@ internal static partial class IEntryExtensions
             {
                 var folder = Path.GetDirectoryName(entry.Key.NotNull("Entry Key is null"))
                     .NotNull("Directory is null");
-                var destdir = Path.GetFullPath(Path.Combine(fullDestinationDirectoryPath, folder));
+                var destdir = Path.GetFullPath(Path.Join(fullDestinationDirectoryPath, folder));
 
                 DirectoryManagement.EnsurePathInDestinationDirectory(
                     destdir,
@@ -107,10 +107,10 @@ internal static partial class IEntryExtensions
                     Directory.CreateDirectory(destdir);
                 }
 
-                return Path.Combine(destdir, file);
+                return Path.Join(destdir, file);
             }
 
-            return Path.Combine(fullDestinationDirectoryPath, file);
+            return Path.Join(fullDestinationDirectoryPath, file);
         }
 
         public void WriteEntryToFile(

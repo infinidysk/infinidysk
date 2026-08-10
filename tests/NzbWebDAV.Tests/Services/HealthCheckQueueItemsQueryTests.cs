@@ -11,7 +11,7 @@ namespace NzbWebDAV.Tests.Services;
 public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
 {
     private readonly string _databasePath =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-health-queue-{Guid.NewGuid():N}.sqlite");
+        Path.Join(Path.GetTempPath(), $"nzbdav-health-queue-{Guid.NewGuid():N}.sqlite");
     private DavDatabaseContext _context = null!;
     private DavDatabaseClient _dbClient = null!;
 

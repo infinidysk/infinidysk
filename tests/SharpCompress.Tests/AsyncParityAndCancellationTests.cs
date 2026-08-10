@@ -23,7 +23,7 @@ public class AsyncParityAndCancellationTests : TestBase
     [InlineData("7Zip.nonsolid.7z")]
     public async Task ArchiveAsyncEntries_ShouldMatchSyncEntries(string archiveName)
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, archiveName);
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, archiveName);
 
         var syncEntries = ReadArchiveEntries(archivePath);
         var asyncEntries = await ReadArchiveEntriesAsync(archivePath);
@@ -38,7 +38,7 @@ public class AsyncParityAndCancellationTests : TestBase
     [InlineData("Rar.rar")]
     public async Task ReaderAsyncEntries_ShouldMatchSyncEntries(string archiveName)
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, archiveName);
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, archiveName);
 
         var syncEntries = ReadReaderEntries(archivePath);
         var asyncEntries = await ReadReaderEntriesAsync(archivePath);
@@ -49,7 +49,7 @@ public class AsyncParityAndCancellationTests : TestBase
     [Fact]
     public async Task AsyncReaderExtraction_ShouldRespectCancellationBeforeStart()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
         await using var stream = File.OpenRead(archivePath);
         await using var reader = await ReaderFactory.OpenAsyncReader(stream);
         using var cts = new CancellationTokenSource();
@@ -63,7 +63,7 @@ public class AsyncParityAndCancellationTests : TestBase
     [Fact]
     public async Task AsyncArchiveExtraction_ShouldRespectCancellationBeforeStart()
     {
-        var archivePath = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
+        var archivePath = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
         await using var archive = await ArchiveFactory.OpenAsyncArchive(archivePath);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -76,7 +76,7 @@ public class AsyncParityAndCancellationTests : TestBase
     [Fact]
     public async Task TarArchiveOpenAsyncArchive_ShouldRespectCancellationBeforeValidationAsync()
     {
-        await using var stream = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Tar.tar"));
+        await using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Tar.tar"));
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
@@ -125,7 +125,7 @@ public class AsyncParityAndCancellationTests : TestBase
     public async Task SevenZip_AsyncExtraction_ShouldRespectCancellationDuringRead()
     {
         var archiveBytes = await File.ReadAllBytesAsync(
-            Path.Combine(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
         );
         using var cts = new CancellationTokenSource();
         await using var stream = new CancelAfterBytesReadStream(
@@ -148,7 +148,7 @@ public class AsyncParityAndCancellationTests : TestBase
     public async Task Zip_AsyncExtraction_ShouldRespectCancellationDuringRead()
     {
         var archiveBytes = await File.ReadAllBytesAsync(
-            Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip")
+            Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip")
         );
         using var cts = new CancellationTokenSource();
         await using var stream = new CancelAfterBytesReadStream(
@@ -171,7 +171,7 @@ public class AsyncParityAndCancellationTests : TestBase
     public async Task OpenAsyncReader_CallerProvidedStream_ShouldRemainOpenByDefault()
     {
         var archiveBytes = await File.ReadAllBytesAsync(
-            Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip")
+            Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip")
         );
         var stream = new TestStream(new MemoryStream(archiveBytes));
 
@@ -194,7 +194,7 @@ public class AsyncParityAndCancellationTests : TestBase
     public async Task OpenAsyncArchive_CallerProvidedStream_ShouldRemainOpenByDefault()
     {
         var archiveBytes = await File.ReadAllBytesAsync(
-            Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip")
+            Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip")
         );
         var stream = new TestStream(new MemoryStream(archiveBytes));
 

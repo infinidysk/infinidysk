@@ -32,8 +32,8 @@ internal sealed class MigrationTestHarness : IAsyncDisposable
 
     private MigrationTestHarness()
     {
-        _migPath = Path.Combine(Path.GetTempPath(), $"altmig-tests-{Guid.NewGuid():N}.db");
-        _davPath = Path.Combine(Path.GetTempPath(), $"altmig-dav-{Guid.NewGuid():N}.sqlite");
+        _migPath = Path.Join(Path.GetTempPath(), $"altmig-tests-{Guid.NewGuid():N}.db");
+        _davPath = Path.Join(Path.GetTempPath(), $"altmig-dav-{Guid.NewGuid():N}.sqlite");
 
         MigOptions = new DbContextOptionsBuilder<UsenetMigrationDbContext>()
             .UseSqlite($"Data Source={_migPath}")

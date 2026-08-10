@@ -22,7 +22,7 @@ public class OptionsUsabilityTests : TestBase
     [Fact]
     public void ReaderFactory_Stream_Default_Leaves_Stream_Open()
     {
-        using var file = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip"));
+        using var file = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip"));
         using var testStream = new TestStream(file);
 
         using (var reader = ReaderFactory.OpenReader(testStream))
@@ -36,7 +36,7 @@ public class OptionsUsabilityTests : TestBase
     [Fact]
     public void ArchiveFactory_Stream_Default_Leaves_Stream_Open()
     {
-        using var file = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip"));
+        using var file = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip"));
         using var testStream = new TestStream(file);
 
         using (var archive = ArchiveFactory.OpenArchive(testStream))
@@ -50,7 +50,7 @@ public class OptionsUsabilityTests : TestBase
     [Fact]
     public async Task ReaderFactory_Stream_Default_Leaves_Stream_Open_Async()
     {
-        using var file = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip"));
+        using var file = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip"));
         using var testStream = new TestStream(file);
 
         await using (
@@ -312,7 +312,7 @@ public class OptionsUsabilityTests : TestBase
     public void Reader_WriteEntryToFile_Uses_ExtractionOptions_BufferSize()
     {
         using var reader = new TrackingReader();
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "reader-buffer-size.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "reader-buffer-size.txt");
 
         reader.WriteEntryToFile(destination, new ExtractionOptions { BufferSize = 11 });
 
@@ -323,7 +323,7 @@ public class OptionsUsabilityTests : TestBase
     public async Task Reader_WriteEntryToFileAsync_Uses_ExtractionOptions_BufferSize()
     {
         await using var reader = new TrackingReader();
-        var destination = Path.Combine(SCRATCH_FILES_PATH, "reader-buffer-size-async.txt");
+        var destination = Path.Join(SCRATCH_FILES_PATH, "reader-buffer-size-async.txt");
 
         await reader.WriteEntryToFileAsync(destination, new ExtractionOptions { BufferSize = 13 });
 

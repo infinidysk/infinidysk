@@ -61,7 +61,7 @@ public class RarAdversarialStreamTests : ArchiveTests
         int chunkSize
     )
     {
-        var bytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        var bytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var options = ReaderOptions.ForExternalStream with { Password = password };
 
         var baseline = ExtractRarEntryBytes(new MemoryStream(bytes, writable: false), options);
@@ -83,7 +83,7 @@ public class RarAdversarialStreamTests : ArchiveTests
     public void Rar_Encrypted_AlternatingOddReads_MatchBaseline(string archiveName, string password)
     {
         int[] pattern = [1, 7, 15, 16, 17, 8192];
-        var bytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        var bytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var options = ReaderOptions.ForExternalStream with { Password = password };
 
         var baseline = ExtractRarEntryBytes(new MemoryStream(bytes, writable: false), options);
@@ -109,7 +109,7 @@ public class RarAdversarialStreamTests : ArchiveTests
         int chunkSize
     )
     {
-        var bytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        var bytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var options = ReaderOptions.ForExternalStream with { Password = password };
 
         var baseline = await ExtractRarEntryBytesAsync(
@@ -134,7 +134,7 @@ public class RarAdversarialStreamTests : ArchiveTests
         // RarArchive.OpenAsyncArchive still sync-reads headers, so CancelAfterBytesReadStream
         // (sync Read unsupported) cannot wrap the archive source. Cancel after the first entry chunk.
         var archiveBytes = await File.ReadAllBytesAsync(
-            Path.Combine(TEST_ARCHIVES_PATH, "Rar.rar")
+            Path.Join(TEST_ARCHIVES_PATH, "Rar.rar")
         );
         await using var archive = await RarArchive.OpenAsyncArchive(new MemoryStream(archiveBytes));
         using var cts = new CancellationTokenSource();
@@ -160,7 +160,7 @@ public class RarAdversarialStreamTests : ArchiveTests
     [Fact(Timeout = 30_000)]
     public void SevenZip_Truncated_Throws()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         using var fileStream = File.OpenRead(path);
         using var truncated = TruncatedStream.AtPercent(fileStream, 50, leaveOpen: false);
 
@@ -180,7 +180,7 @@ public class RarAdversarialStreamTests : ArchiveTests
     [Fact(Timeout = 30_000)]
     public void Zip_Truncated_Throws()
     {
-        var path = Path.Combine(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
+        var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
         using var fileStream = File.OpenRead(path);
         using var truncated = TruncatedStream.AtPercent(fileStream, 50, leaveOpen: false);
 
@@ -203,7 +203,7 @@ public class RarAdversarialStreamTests : ArchiveTests
     [InlineData("Zip.deflate.zip", null, 1)]
     public void Zip_ChunkyReads_MatchBaseline(string archiveName, string? password, int chunkSize)
     {
-        var bytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        var bytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var options = ReaderOptions.ForExternalStream;
         if (password is not null)
         {
@@ -233,7 +233,7 @@ public class RarAdversarialStreamTests : ArchiveTests
         int chunkSize
     )
     {
-        var bytes = File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, archiveName));
+        var bytes = File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, archiveName));
         var options = ReaderOptions.ForExternalStream;
         if (password is not null)
         {
@@ -368,7 +368,7 @@ public class RarAdversarialStreamTests : ArchiveTests
         var streams = new List<Stream>();
         for (var i = 0; i < MultiVolumeParts.Length; i++)
         {
-            var path = Path.Combine(TEST_ARCHIVES_PATH, MultiVolumeParts[i]);
+            var path = Path.Join(TEST_ARCHIVES_PATH, MultiVolumeParts[i]);
             var bytes = File.ReadAllBytes(path);
             if (i == MultiVolumeParts.Length - 1)
             {

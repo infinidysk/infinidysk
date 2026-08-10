@@ -11,7 +11,7 @@ namespace SharpCompress.Test.SevenZip;
 public class SevenZipHeaderValidationTests : TestBase
 {
     private static byte[] ReadArchiveBytes(string fileName) =>
-        File.ReadAllBytes(Path.Combine(TEST_ARCHIVES_PATH, fileName));
+        File.ReadAllBytes(Path.Join(TEST_ARCHIVES_PATH, fileName));
 
     [Fact]
     public void OpenArchive_Throws_On_Invalid_Signature()

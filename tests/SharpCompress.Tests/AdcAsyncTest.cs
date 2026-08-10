@@ -10,11 +10,11 @@ public class AdcAsyncTest : TestBase
     [Fact]
     public async ValueTask TestAdcStreamAsyncWholeChunk()
     {
-        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        using var decFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
         var decompressed = new byte[decFs.Length];
         decFs.Read(decompressed, 0, decompressed.Length);
 
-        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        using var cmpFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
         using var decStream = new ADCStream(cmpFs);
         var test = new byte[262144];
 
@@ -26,11 +26,11 @@ public class AdcAsyncTest : TestBase
     [Fact]
     public async ValueTask TestAdcStreamAsync()
     {
-        using var decFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
+        using var decFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_decompressed.bin"));
         var decompressed = new byte[decFs.Length];
         decFs.Read(decompressed, 0, decompressed.Length);
 
-        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        using var cmpFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
         using var decStream = new ADCStream(cmpFs);
         using var decMs = new MemoryStream();
         var test = new byte[512];
@@ -48,7 +48,7 @@ public class AdcAsyncTest : TestBase
     [Fact]
     public async ValueTask TestAdcStreamAsyncWithCancellation()
     {
-        using var cmpFs = File.OpenRead(Path.Combine(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
+        using var cmpFs = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, "adc_compressed.bin"));
         using var decStream = new ADCStream(cmpFs);
         var test = new byte[512];
         using var cts = new System.Threading.CancellationTokenSource();

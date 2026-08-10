@@ -12,7 +12,7 @@ namespace NzbWebDAV.Tests.Services;
 public sealed class DavCleanupServiceTests : IAsyncLifetime
 {
     private readonly string _databasePath =
-        Path.Combine(Path.GetTempPath(), $"nzbdav-dav-cleanup-{Guid.NewGuid():N}.sqlite");
+        Path.Join(Path.GetTempPath(), $"nzbdav-dav-cleanup-{Guid.NewGuid():N}.sqlite");
     private DavDatabaseContext _context = null!;
 
     public async Task InitializeAsync()
