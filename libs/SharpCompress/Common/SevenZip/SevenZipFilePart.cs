@@ -104,6 +104,12 @@ internal class SevenZipFilePart : FilePart
             return CompressionType.None;
         }
 
+        // Entries without a stream (e.g. zero-byte files) have no folder or coders.
+        if (!Header.HasStream || Folder is null)
+        {
+            return CompressionType.None;
+        }
+
         // Report the primary non-crypto coder. AES-first chains (encrypted stored/compressed
         // entries) must not throw: AES + Copy resolves to None, AES + LZMA to LZMA, etc.
         var coder = GetPrimaryCoder();
@@ -223,7 +229,8 @@ internal class SevenZipFilePart : FilePart
         {
             _isEncrypted ??=
                 !Header.IsDir
-                && Folder?._coders.FindIndex(c => c._methodId._id == CMethodId.K_AES_ID) != -1;
+                && Folder is not null
+                && Folder._coders.FindIndex(c => c._methodId._id == CMethodId.K_AES_ID) != -1;
             return _isEncrypted.Value;
         }
     }

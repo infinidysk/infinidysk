@@ -271,6 +271,45 @@ public class SevenZipWriterTests : TestBase
     }
 
     [Fact]
+    public void SevenZipArchive_EmptyFileEntry_MetadataDoesNotThrow()
+    {
+        // Streamless entries (zero-byte files) have no folder, hence no coders.
+        // Reading their metadata must not throw, and they are not encrypted.
+        // https://github.com/infinidysk/infinidysk/issues/948
+        using var archiveStream = new MemoryStream();
+        using (var writer = new SevenZipWriter(archiveStream, new SevenZipWriterOptions()))
+        {
+            using (var empty = new MemoryStream())
+            {
+                writer.Write("empty.txt", empty, DateTime.UtcNow);
+            }
+
+            using (var content = new MemoryStream("real content"u8.ToArray()))
+            {
+                writer.Write("real.txt", content, DateTime.UtcNow);
+            }
+        }
+
+        archiveStream.Position = 0;
+        using var archive = (SevenZipArchive)SevenZipArchive.OpenArchive(archiveStream);
+        var emptyEntry = archive.Entries.First(e => e.Key == "empty.txt");
+
+        Assert.Equal(CompressionType.None, emptyEntry.CompressionType);
+        Assert.False(emptyEntry.IsEncrypted);
+
+        using var emptyOutput = new MemoryStream();
+        using (var emptyStream = emptyEntry.OpenEntryStream())
+        {
+            emptyStream.CopyTo(emptyOutput);
+        }
+        Assert.Equal(0, (int)emptyOutput.Length);
+
+        var realEntry = archive.Entries.First(e => e.Key == "real.txt");
+        Assert.NotEqual(CompressionType.None, realEntry.CompressionType);
+        Assert.False(realEntry.IsEncrypted);
+    }
+
+    [Fact]
     public void SevenZipWriter_LZMA2_SingleFile_RoundTrip()
     {
         var content =
