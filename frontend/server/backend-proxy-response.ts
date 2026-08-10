@@ -41,6 +41,14 @@ export function handleBackendProxyResponse(
       return;
     }
 
+    // If the downstream client already disconnected (rclone VFS chunk churn,
+    // a scrub, a tab close), the incomplete upstream body is the client's
+    // doing — not a backend failure. `req.destroyed` is set when the client
+    // closes the connection; a backend abort leaves the client's request
+    // alive, so this check distinguishes the two without racing on `res`
+    // teardown.
+    if (req.destroyed) return;
+
     logger.warn(
       `Backend response for ${req.method ?? "?"} ${req.url ?? "?"} ended before its body was `
       + "complete; aborting the client transfer instead of ending it successfully.",

@@ -1,8 +1,10 @@
 import http from "node:http";
+import { EventEmitter } from "node:events";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { handleBackendProxyResponse } from "./backend-proxy-response";
+import { logger } from "./logger";
 
 vi.mock("./logger", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -110,6 +112,10 @@ describe("handleBackendProxyResponse", () => {
 
   afterEach(async () => {
     await Promise.all(servers.splice(0).map((server) => close(server)));
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   async function startProxy(backendHandler: http.RequestListener): Promise<number> {
@@ -234,4 +240,128 @@ describe("handleBackendProxyResponse", () => {
     expect(result.endedCleanly).toBe(true);
     expect(result.bytes).toBe(400);
   });
+
+  it("does not warn when the client disconnects mid-stream", async () => {
+    const frontendPort = await startProxy((_req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "video/x-matroska",
+        "Content-Length": "100000",
+      });
+      // Stream slowly so the client is mid-transfer when it disconnects.
+      const interval = setInterval(() => {
+        res.write(Buffer.alloc(200, 1));
+      }, 5);
+      res.on("close", () => clearInterval(interval));
+    });
+
+    await new Promise<void>((resolve) => {
+      const req = http.request(
+        {
+          hostname: "127.0.0.1",
+          port: frontendPort,
+          path: "/content/movie.mkv",
+          method: "GET",
+        },
+        (res) => {
+          res.on("data", () => {
+            // Disconnect as soon as the first chunk arrives.
+            req.destroy();
+          });
+          res.on("close", () => resolve());
+          res.on("error", () => resolve());
+        },
+      );
+      req.on("error", () => resolve());
+      req.end();
+    });
+
+    // Give the proxy a moment to process the upstream close after the client
+    // disconnect propagates.
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("warns and destroys when the backend aborts with a live client", () => {
+    const { proxyRes, req, res } = createMockStreams({
+      proxyResComplete: false,
+      reqDestroyed: false,
+      resWritableEnded: false,
+    });
+
+    handleBackendProxyResponse(proxyRes as unknown as import("node:http").IncomingMessage,
+      req as unknown as import("node:http").IncomingMessage,
+      res as unknown as import("node:http").ServerResponse);
+
+    proxyRes.emit("close");
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const [message] = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(message).toContain("ended before its body was complete");
+    expect(res.destroy).toHaveBeenCalled();
+  });
+
+  it("does not warn when the client already disconnected before the backend abort closed", () => {
+    const { proxyRes, req, res } = createMockStreams({
+      proxyResComplete: false,
+      reqDestroyed: true,
+      resWritableEnded: false,
+    });
+
+    handleBackendProxyResponse(proxyRes as unknown as import("node:http").IncomingMessage,
+      req as unknown as import("node:http").IncomingMessage,
+      res as unknown as import("node:http").ServerResponse);
+
+    proxyRes.emit("close");
+
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(res.destroy).not.toHaveBeenCalled();
+  });
 });
+
+function createMockStreams(opts: {
+  proxyResComplete: boolean;
+  reqDestroyed: boolean;
+  resWritableEnded: boolean;
+}) {
+  const proxyRes = new EventEmitter() as EventEmitter & {
+    complete: boolean;
+    statusCode: number;
+    headers: Record<string, string>;
+    pipe: () => void;
+    resume: () => void;
+  };
+  proxyRes.complete = opts.proxyResComplete;
+  proxyRes.statusCode = 200;
+  proxyRes.headers = { "content-type": "video/x-matroska" };
+  proxyRes.pipe = () => {};
+  proxyRes.resume = () => {};
+
+  const req = new EventEmitter() as EventEmitter & {
+    method: string;
+    url: string;
+    destroyed: boolean;
+    headers: Record<string, string>;
+  };
+  req.method = "GET";
+  req.url = "/content/movie.mkv";
+  req.destroyed = opts.reqDestroyed;
+  req.headers = {};
+
+  const res = new EventEmitter() as EventEmitter & {
+    writableEnded: boolean;
+    destroyed: boolean;
+    headersSent: boolean;
+    writeHead: () => void;
+    end: ReturnType<typeof vi.fn>;
+    destroy: ReturnType<typeof vi.fn>;
+  };
+  res.writableEnded = opts.resWritableEnded;
+  res.destroyed = false;
+  res.headersSent = true;
+  res.writeHead = () => {};
+  res.end = vi.fn();
+  res.destroy = vi.fn();
+
+  return { proxyRes, req, res };
+}
