@@ -45,17 +45,23 @@ const syncedStatus = {
     skipped: 1,
 };
 
+function urlOf(input: RequestInfo | URL): string {
+    if (typeof input === "string") return input;
+    if (input instanceof URL) return input.href;
+    return input.url;
+}
+
 function mockRoutes(overrides: Record<string, unknown> = {}) {
-    fetchMock.mockImplementation(async (input) => {
-        const url = typeof input === "string" ? input : input.url;
-        if (url.includes("/settings/exclude-sync")) return jsonResponse({ urls: [] });
+    fetchMock.mockImplementation((input) => {
+        const url = urlOf(input);
+        if (url.includes("/settings/exclude-sync")) return Promise.resolve(jsonResponse({ urls: [] }));
         if (url.includes("/api/test-prowlarr-connection")) {
-            return jsonResponse(overrides.testConnection ?? { status: true, connected: true });
+            return Promise.resolve(jsonResponse(overrides["testConnection"] ?? { status: true, connected: true }));
         }
         if (url.includes("/api/prowlarr-sync")) {
-            return jsonResponse(overrides.sync ?? syncedStatus);
+            return Promise.resolve(jsonResponse(overrides["sync"] ?? syncedStatus));
         }
-        throw new Error(`unexpected fetch: ${url}`);
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
     });
 }
 
@@ -76,7 +82,7 @@ function Harness({ initial, savedConfig, onSyncedConfig, onConfigChange }: Harne
         config,
         setNewConfig,
         savedConfig: savedConfig ?? initial ?? baseConfig,
-        onSyncedConfig,
+        ...(onSyncedConfig ? { onSyncedConfig } : {}),
     });
 }
 
@@ -147,8 +153,8 @@ describe("IndexersSettings Prowlarr pull sync", () => {
         await waitFor(() => {
             expect(card.textContent).toContain("Prowlarr connection test successful.");
         });
-        const testCall = fetchMock.mock.calls.find(([url]) =>
-            (typeof url === "string" ? url : url.url).includes("/api/test-prowlarr-connection"));
+        const testCall = fetchMock.mock.calls.find(([input]) =>
+            urlOf(input).includes("/api/test-prowlarr-connection"));
         expect(testCall).toBeDefined();
         const body = testCall![1]?.body as FormData;
         expect(body.get("url")).toBe("http://prowlarr:9696");
@@ -187,8 +193,8 @@ describe("IndexersSettings Prowlarr pull sync", () => {
                 "profiles.instances": profileJson,
             });
         });
-        const syncCalls = fetchMock.mock.calls.filter(([url, init]) =>
-            (typeof url === "string" ? url : url.url).includes("/api/prowlarr-sync")
+        const syncCalls = fetchMock.mock.calls.filter(([input, init]) =>
+            urlOf(input).includes("/api/prowlarr-sync")
             && init?.method === "POST");
         expect(syncCalls).toHaveLength(1);
     });
@@ -273,7 +279,7 @@ describe("IndexersSettings Prowlarr pull sync", () => {
                 }],
             }),
         };
-        let latestConfig = managedConfig;
+        let latestConfig: Record<string, string> = managedConfig;
         const user = userEvent.setup();
         render(createElement(Harness, {
             initial: managedConfig,
@@ -288,8 +294,10 @@ describe("IndexersSettings Prowlarr pull sync", () => {
         expect(screen.getByText(/Prowlarr manages this indexer's name/)).toBeTruthy();
 
         await user.click(screen.getByRole("button", { name: "Save Indexer" }));
-        const saved = JSON.parse(latestConfig["indexers.instances"]!);
-        expect(saved.Indexers[0].ProwlarrIndexerId).toBe(7);
-        expect(saved.Indexers[0].Name).toBe("Managed One");
+        const saved = JSON.parse(latestConfig["indexers.instances"] ?? "{}") as {
+            Indexers: Array<{ ProwlarrIndexerId?: number; Name?: string }>;
+        };
+        expect(saved.Indexers[0]?.ProwlarrIndexerId).toBe(7);
+        expect(saved.Indexers[0]?.Name).toBe("Managed One");
     });
 });
