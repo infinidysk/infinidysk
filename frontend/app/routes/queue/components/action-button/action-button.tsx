@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Button, Icon } from "~/components/ui";
 
 export type ActionButtonProps = {
-    type: "delete" | "explore" | "menu" | "move-top" | "retry",
+    type: "delete" | "explore" | "menu" | "move-top" | "retry" | "pause" | "resume",
     text?: string,
     disabled?: boolean,
     selected?: boolean,
@@ -15,6 +15,8 @@ export function ActionButton({ type, text, disabled, selected, onClick }: Action
         : type === "explore" ? "folder"
         : type === "move-top" ? "vertical_align_top"
         : type === "retry" ? "refresh"
+        : type === "pause" ? "pause"
+        : type === "resume" ? "play_arrow"
         : "more_horiz";
 
     return (
@@ -23,7 +25,7 @@ export function ActionButton({ type, text, disabled, selected, onClick }: Action
             size="xsmall"
             disabled={disabled}
             aria-pressed={type === "menu" ? selected : undefined}
-            aria-label={!text ? (type === "move-top" ? "Move to top" : type === "retry" ? "Retry" : type) : undefined}
+            aria-label={!text ? (type === "move-top" ? "Move to top" : type === "retry" ? "Retry" : type === "pause" ? "Pause" : type === "resume" ? "Resume" : type) : undefined}
             className={`${type === "menu" ? "w-[30px] px-1" : ""} ${selected ? "bg-base-content/20 text-base-content" : ""}`}
             onClick={onClick}
         >

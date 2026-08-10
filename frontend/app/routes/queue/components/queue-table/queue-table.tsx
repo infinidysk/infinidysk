@@ -8,8 +8,17 @@ import { PageSection } from "../page-section/page-section"
 import { Pagination } from "../pagination/pagination"
 import { EmptyQueue } from "../empty-queue/empty-queue"
 import { SimpleDropdown } from "../simple-dropdown/simple-dropdown"
-import { Tooltip } from "~/components/ui"
+import { Button, Tooltip } from "~/components/ui"
 import { useIsReadOnly } from "~/auth/authorization"
+import {
+    canPauseQueueSlot,
+    canResumeQueueSlot,
+    postClearQueue,
+    postQueueCategory,
+    postQueuePause,
+    postQueuePriority,
+    postQueueResume,
+} from "./queue-bulk-actions"
 
 export type QueueTableProps = {
     queueSlots: PresentationQueueSlot[],
@@ -69,10 +78,23 @@ export function QueueTable({
 }: QueueTableProps) {
     const isReadOnly = useIsReadOnly();
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
+    const [isConfirmingClearAll, setIsConfirmingClearAll] = useState(false);
+    const [isConfirmingClearCategory, setIsConfirmingClearCategory] = useState(false);
+    const [clearCategory, setClearCategory] = useState(categories[0] ?? "");
+    const [bulkSetCategory, setBulkSetCategory] = useState(categories[0] ?? "");
+    const [bulkPriority, setBulkPriority] = useState("0");
     const selectedCount = queueSlots.filter(x => !!x.isSelected).length;
     const headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === queueSlots.length ? 'all' : 'some';
     const selectedMovableIds = useMemo(
         () => queueSlots.filter(x => !!x.isSelected && !x.isUploading).map(x => x.nzo_id),
+        [queueSlots],
+    );
+    const selectedPausableIds = useMemo(
+        () => queueSlots.filter(x => !!x.isSelected && canPauseQueueSlot(x)).map(x => x.nzo_id),
+        [queueSlots],
+    );
+    const selectedResumableIds = useMemo(
+        () => queueSlots.filter(x => !!x.isSelected && canResumeQueueSlot(x)).map(x => x.nzo_id),
         [queueSlots],
     );
 
@@ -136,6 +158,38 @@ export function QueueTable({
         onIsRemovingChanged(queued_nzo_ids, false);
     }, [queueSlots, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
 
+
+    const onPauseSelected = useCallback(async () => {
+        if (selectedPausableIds.length === 0) return;
+        await postQueuePause(selectedPausableIds);
+    }, [selectedPausableIds]);
+
+    const onResumeSelected = useCallback(async () => {
+        if (selectedResumableIds.length === 0) return;
+        await postQueueResume(selectedResumableIds);
+    }, [selectedResumableIds]);
+
+    const onSetPrioritySelected = useCallback(async (priority: string) => {
+        if (selectedMovableIds.length === 0) return;
+        await postQueuePriority(selectedMovableIds, priority);
+    }, [selectedMovableIds]);
+
+    const onSetCategorySelected = useCallback(async () => {
+        if (selectedMovableIds.length === 0 || !bulkSetCategory) return;
+        await postQueueCategory(selectedMovableIds, bulkSetCategory);
+    }, [selectedMovableIds, bulkSetCategory]);
+
+    const onConfirmClearAll = useCallback(async () => {
+        setIsConfirmingClearAll(false);
+        await postClearQueue();
+    }, []);
+
+    const onConfirmClearCategory = useCallback(async () => {
+        setIsConfirmingClearCategory(false);
+        if (!clearCategory) return;
+        await postClearQueue(clearCategory);
+    }, [clearCategory]);
+
     const onMoveSelectedToTop = useCallback(async () => {
         if (selectedMovableIds.length === 0) return;
         const ok = await moveQueueItemsToTop(selectedMovableIds);
@@ -153,19 +207,52 @@ export function QueueTable({
     ), [categories, isReadOnly, manualCategoryRef]);
 
     const sectionTitle = (
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
             <h2
                 className={`${isReadOnly ? "" : "cursor-pointer"} text-xl font-semibold text-base-content`}
                 onClick={isReadOnly ? undefined : onUploadClicked}
             >
                 Queue
             </h2>
+            {!isReadOnly && totalQueueCount > 0 &&
+                <>
+                    <Button variant="secondary" size="xsmall" onClick={() => setIsConfirmingClearAll(true)}>Clear all</Button>
+                    {categories.length > 0 &&
+                        <>
+                            <SimpleDropdown options={categories} value={clearCategory} onChange={setClearCategory} />
+                            <Button variant="secondary" size="xsmall" onClick={() => setIsConfirmingClearCategory(true)}>Clear category</Button>
+                        </>
+                    }
+                </>
+            }
             {!isReadOnly && headerCheckboxState !== 'none' &&
                 <>
+                    {selectedPausableIds.length > 0 &&
+                        <Tooltip content="Pause selected">
+                            <ActionButton type="pause" onClick={onPauseSelected} />
+                        </Tooltip>
+                    }
+                    {selectedResumableIds.length > 0 &&
+                        <Tooltip content="Resume selected">
+                            <ActionButton type="resume" onClick={onResumeSelected} />
+                        </Tooltip>
+                    }
                     {selectedMovableIds.length > 0 &&
                         <Tooltip content="Move selected to top of queue">
                             <ActionButton type="move-top" onClick={onMoveSelectedToTop} />
                         </Tooltip>
+                    }
+                    {selectedMovableIds.length > 0 && categories.length > 0 &&
+                        <>
+                            <SimpleDropdown options={categories} value={bulkSetCategory} onChange={setBulkSetCategory} />
+                            <Button variant="secondary" size="xsmall" onClick={onSetCategorySelected}>Set category</Button>
+                        </>
+                    }
+                    {selectedMovableIds.length > 0 &&
+                        <>
+                            <SimpleDropdown options={["-1", "0", "1", "2"]} value={bulkPriority} onChange={setBulkPriority} />
+                            <Button variant="secondary" size="xsmall" onClick={() => onSetPrioritySelected(bulkPriority)}>Set priority</Button>
+                        </>
                     }
                     <ActionButton type="delete" onClick={onRemove} />
                 </>
@@ -231,6 +318,18 @@ export function QueueTable({
                 message={`${selectedCount} item(s) will be removed`}
                 onConfirm={onConfirmRemoval}
                 onCancel={onCancelRemoval} />
+            <ConfirmModal
+                show={isConfirmingClearAll}
+                title="Clear entire queue?"
+                message="All queued items will be removed. In-progress downloads will be cancelled."
+                onConfirm={onConfirmClearAll}
+                onCancel={() => setIsConfirmingClearAll(false)} />
+            <ConfirmModal
+                show={isConfirmingClearCategory}
+                title="Clear category?"
+                message={`All items in category "${clearCategory}" will be removed.`}
+                onConfirm={onConfirmClearCategory}
+                onCancel={() => setIsConfirmingClearCategory(false)} />
         </PageSection>
     );
 }
