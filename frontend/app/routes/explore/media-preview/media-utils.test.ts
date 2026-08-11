@@ -72,20 +72,20 @@ describe("probeUnsupportedCodecs", () => {
 
 describe("probeSourceReachable", () => {
     it("asks for a single byte and reports an OK response as reachable", async () => {
-        const fetchFn = vi.fn().mockResolvedValue({ ok: true });
+        const fetchFn = vi.fn<typeof fetch>().mockResolvedValue({ ok: true } as Response);
         await expect(probeSourceReachable("/view/a.mp4?downloadKey=k", fetchFn)).resolves.toBe(true);
         const [url, init] = fetchFn.mock.calls[0]!;
         expect(url).toBe("/view/a.mp4?downloadKey=k");
-        expect(init.headers).toEqual({ Range: "bytes=0-0" });
+        expect(init?.headers).toEqual({ Range: "bytes=0-0" });
     });
 
     it("reports HTTP errors as unreachable", async () => {
-        const fetchFn = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+        const fetchFn = vi.fn<typeof fetch>().mockResolvedValue({ ok: false, status: 500 } as Response);
         await expect(probeSourceReachable("/view/a.mp4", fetchFn)).resolves.toBe(false);
     });
 
     it("reports thrown fetches (network down, timeout) as unreachable", async () => {
-        const fetchFn = vi.fn().mockRejectedValue(new TypeError("network down"));
+        const fetchFn = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("network down"));
         await expect(probeSourceReachable("/view/a.mp4", fetchFn)).resolves.toBe(false);
     });
 });
