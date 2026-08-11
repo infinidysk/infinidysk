@@ -72,8 +72,10 @@ public sealed class DatabaseStoreSymlinkCollectionTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DeleteItemAsync_WhenReadonlyWebdavEnabled_ReturnsForbiddenForReleaseDirectory()
+    public async Task DeleteItemAsync_WhenReadonlyWebdavEnabled_ReleaseDirectoryDeleteSucceedsAndPreservesHistory()
     {
+        // *Arr imports move the symlink via copy-and-delete, so deletes under
+        // /completed-symlinks must succeed even when read-only enforcement is on.
         _config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.WebdavEnforceReadonly, ConfigValue = "true" }]);
         var category = NewDir(Guid.NewGuid(), DavItem.ContentFolder, "tv");
         var release = NewDir(Guid.NewGuid(), category, "Show.S01E01");
@@ -83,7 +85,37 @@ public sealed class DatabaseStoreSymlinkCollectionTests : IAsyncLifetime
         await _context.SaveChangesAsync();
         var status = await new DatabaseStoreSymlinkCollection(category, _client, _config, _websocket)
             .DeleteItemAsync(release.Name, CancellationToken.None);
-        Assert.Equal(DavStatusCode.Forbidden, status);
+        Assert.Equal(DavStatusCode.NoContent, status);
+        Assert.NotNull(await _context.HistoryItems.AsNoTracking().FirstOrDefaultAsync(x => x.Id == historyId));
+    }
+
+    [Fact]
+    public async Task DeleteItemAsync_WhenReadonlyWebdavEnabled_FileDeleteReturnsNoContent()
+    {
+        _config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.WebdavEnforceReadonly, ConfigValue = "true" }]);
+        var category = NewDir(Guid.NewGuid(), DavItem.ContentFolder, "tv");
+        var release = NewDir(Guid.NewGuid(), category, "Show.S01E01");
+        var historyId = Guid.NewGuid();
+        _context.Items.AddRange(category, release);
+        _context.HistoryItems.Add(CreateHistory(historyId, "episode.nzb", category.Name, release.Id));
+        await _context.SaveChangesAsync();
+        var status = await new DatabaseStoreSymlinkCollection(release, _client, _config, _websocket)
+            .DeleteItemAsync("episode.mkv", CancellationToken.None);
+        Assert.Equal(DavStatusCode.NoContent, status);
+        Assert.NotNull(await _context.HistoryItems.AsNoTracking().FirstOrDefaultAsync(x => x.Id == historyId));
+    }
+
+    [Fact]
+    public async Task DeleteItemAsync_ReleaseDirectoryWithoutHistory_ReturnsNoContentAndRemovesNothing()
+    {
+        var category = NewDir(Guid.NewGuid(), DavItem.ContentFolder, "movies");
+        var release = NewDir(Guid.NewGuid(), category, "Show.S01E01");
+        _context.Items.AddRange(category, release);
+        await _context.SaveChangesAsync();
+        var status = await new DatabaseStoreSymlinkCollection(category, _client, _config, _websocket)
+            .DeleteItemAsync(release.Name, CancellationToken.None);
+        Assert.Equal(DavStatusCode.NoContent, status);
+        Assert.NotNull(await _context.Items.AsNoTracking().FirstOrDefaultAsync(x => x.Id == release.Id));
     }
 
     private static DavItem NewDir(Guid id, DavItem parent, string name) =>

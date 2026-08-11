@@ -74,7 +74,7 @@ export function WebdavSettings({ config, setNewConfig }: WebdavSettingsProps) {
                     description="Choose how content appears to WebDAV clients and the Dav Explorer."
                 >
                     <ManagedSetting configKey="webdav.enforce-readonly">
-                        <Tooltip placement="bottom" content="Make the WebDAV /content folder read-only so clients cannot delete files there.">
+                        <Tooltip placement="bottom" content="Make the WebDAV /content folder read-only so clients cannot delete files there, and prevent clearing completed history by deleting release folders under /completed-symlinks. Symlink deletes needed for Radarr/Sonarr imports are always allowed.">
                             <Toggle
                                 id="readonly-checkbox"
                                 className="cursor-pointer gap-2 p-0"

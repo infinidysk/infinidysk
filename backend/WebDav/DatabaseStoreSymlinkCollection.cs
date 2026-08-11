@@ -95,21 +95,37 @@ public class DatabaseStoreSymlinkCollection(
 
     protected override async Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)
     {
+        // Cannot delete from symlink root folder
         var isSymlinkFolder = davDirectory.Id == DavItem.SymlinkFolder.Id;
         if (isSymlinkFolder) return await base.DeleteItemAsync(request).ConfigureAwait(false);
-        if (configManager.IsEnforceReadonlyWebdavEnabled()) return DavStatusCode.Forbidden;
-        var child = await dbClient.GetDirectoryChildAsync(TargetId, request.Name, request.CancellationToken).ConfigureAwait(false);
-        if (child is { Type: DavItem.ItemType.Directory } && !child.IsProtected() && davDirectory.ParentId == DavItem.ContentFolder.Id)
+
+        // Clearing a completed release (pruning its history) requires write access, mirroring
+        // the read-only enforcement on real deletes under /content.
+        if (!configManager.IsEnforceReadonlyWebdavEnabled() && davDirectory.ParentId == DavItem.ContentFolder.Id)
         {
-            var historyIds = await dbClient.Ctx.HistoryItems.AsNoTracking()
-                .Where(h => h.DownloadDirId == child.Id && h.DownloadStatus == HistoryItem.DownloadStatusOption.Completed)
-                .Select(h => h.Id).ToListAsync(request.CancellationToken).ConfigureAwait(false);
-            if (historyIds.Count == 0) return DavStatusCode.NotFound;
-            await dbClient.RemoveHistoryItemsAsync(historyIds, deleteFiles: false, request.CancellationToken).ConfigureAwait(false);
-            await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
-            _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", historyIds));
-            return DavStatusCode.NoContent;
+            var child = await dbClient.GetDirectoryChildAsync(TargetId, request.Name, request.CancellationToken).ConfigureAwait(false);
+            if (child is { Type: DavItem.ItemType.Directory } && !child.IsProtected())
+            {
+                var historyIds = await dbClient.Ctx.HistoryItems.AsNoTracking()
+                    .Where(h => h.DownloadDirId == child.Id && h.DownloadStatus == HistoryItem.DownloadStatusOption.Completed)
+                    .Select(h => h.Id).ToListAsync(request.CancellationToken).ConfigureAwait(false);
+                if (historyIds.Count > 0)
+                {
+                    await dbClient.RemoveHistoryItemsAsync(historyIds, deleteFiles: false, request.CancellationToken).ConfigureAwait(false);
+                    await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
+                    _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", historyIds));
+                    return DavStatusCode.NoContent;
+                }
+            }
         }
+
+        // Every other delete under '/completed-symlinks' must succeed, even when read-only
+        // enforcement is on. Radarr/Sonarr import the symlink by moving it to the media library;
+        // since the symlink lives on a separate file-system (rclone-mounted webdav), the OS
+        // performs a copy-and-delete, and a refused delete fails the whole import. Nothing here
+        // actually exists on disk — the symlink is created in memory per request and the
+        // underlying data under '/content' is untouched — so we cache the name for 30 seconds
+        // to mimic a deletion and return 204 No Content.
         DeletedFiles.AddDeletedFile(request.Name, TimeSpan.FromSeconds(30));
         return DavStatusCode.NoContent;
     }
