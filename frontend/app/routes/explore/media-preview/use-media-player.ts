@@ -3,6 +3,7 @@ import {
     backoffMs,
     classifyMediaError,
     MAX_AUTO_ATTEMPTS,
+    probeUnsupportedCodecs,
     STALL_THRESHOLD_MS,
 } from "./media-utils";
 
@@ -45,6 +46,7 @@ export function useMediaPlayer({ src }: { src: string }) {
     const [error, setError] = useState<PlayerError | null>(null);
     const [startupMs, setStartupMs] = useState<number | null>(null);
     const [events, setEvents] = useState<PlayerEvent[]>([]);
+    const [unsupportedCodecs, setUnsupportedCodecs] = useState<string[]>([]);
 
     const attemptsRef = useRef(0);
     const lastGoodTimeRef = useRef(0);
@@ -143,6 +145,7 @@ export function useMediaPlayer({ src }: { src: string }) {
         setError(null);
         setStartupMs(null);
         setEvents([]);
+        setUnsupportedCodecs([]);
     }, [src, clearRecoveryTimer]);
 
     // The source is applied imperatively, not via the JSX src attribute:
@@ -253,13 +256,16 @@ export function useMediaPlayer({ src }: { src: string }) {
             const el = mediaRef.current;
             const mediaError = el?.error ?? null;
             const code = mediaError?.code ?? null;
-            const kind = classifyMediaError(code);
+            const kind = classifyMediaError(code, lastProgressAtRef.current !== null);
             // ABORTED fires for our own close/reload — never a real failure.
             if (kind === "aborted") return;
             const message = mediaError?.message ?? null;
             setError({ code, message });
             log("error", `code ${code ?? "?"}${message ? `: ${message}` : ""}`);
             if (kind === "unsupported") {
+                const missing = el ? probeUnsupportedCodecs(type => el.canPlayType(type)) : [];
+                setUnsupportedCodecs(missing);
+                if (missing.length > 0) log("unsupported", `no decoder for ${missing.join(", ")}`);
                 setStatus("unsupported");
                 return;
             }
@@ -278,6 +284,7 @@ export function useMediaPlayer({ src }: { src: string }) {
         error,
         startupMs,
         events,
+        unsupportedCodecs,
         retry,
         lastGoodTimeRef,
         lastProgressAtRef,

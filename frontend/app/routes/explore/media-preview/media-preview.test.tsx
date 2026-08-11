@@ -13,12 +13,15 @@ type MediaElementProto = {
 let playMock: ReturnType<typeof vi.fn>;
 let loadMock: ReturnType<typeof vi.fn>;
 const savedDialog: Partial<Record<"showModal" | "close", PropertyDescriptor | undefined>> = {};
+let savedCanPlayType: PropertyDescriptor | undefined;
 
 beforeEach(() => {
     playMock = vi.fn<MediaElementProto["play"]>().mockResolvedValue(undefined);
     loadMock = vi.fn<MediaElementProto["load"]>().mockImplementation(() => {});
     Object.defineProperty(HTMLMediaElement.prototype, "play", { configurable: true, value: playMock });
     Object.defineProperty(HTMLMediaElement.prototype, "load", { configurable: true, value: loadMock });
+
+    savedCanPlayType = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "canPlayType");
 
     // jsdom may not implement modal dialog show/close.
     savedDialog.showModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
@@ -36,6 +39,11 @@ beforeEach(() => {
 afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    if (savedCanPlayType) {
+        Object.defineProperty(HTMLMediaElement.prototype, "canPlayType", savedCanPlayType);
+    } else {
+        Reflect.deleteProperty(HTMLMediaElement.prototype, "canPlayType");
+    }
     for (const key of ["showModal", "close"] as const) {
         const descriptor = savedDialog[key];
         if (descriptor) {
@@ -161,6 +169,37 @@ describe("MediaPreview", () => {
         expect(screen.getByRole("alert").textContent).toContain("cannot decode");
         expect(screen.getByRole("alert").textContent).toContain("video/x-matroska");
         expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+    });
+
+    it("names the codecs the browser has no decoder for", () => {
+        Object.defineProperty(HTMLMediaElement.prototype, "canPlayType", {
+            configurable: true,
+            value: (type: string) => (/hvc1|hev1/.test(type) ? "" : "probably"),
+        });
+        const { container } = renderPreview();
+        fireMediaError(container.querySelector("video")!, 4, "no decoder");
+
+        expect(screen.getByRole("alert").textContent).toContain("No decoder available for HEVC / H.265");
+    });
+
+    it("recovers from a decode error once playback has progressed", () => {
+        vi.useFakeTimers();
+        try {
+            const { container } = renderPreview();
+            const video = container.querySelector("video")!;
+            fireEvent(video, new Event("canplay"));
+            fireEvent(video, new Event("play"));
+            Object.defineProperty(video, "currentTime", { configurable: true, value: 12 });
+            fireEvent(video, new Event("timeupdate"));
+
+            // A mid-stream decode failure is corrupt bytes, not a missing decoder.
+            fireMediaError(video, 3, "PIPELINE_ERROR_DECODE");
+            expect(screen.getByRole("status").textContent).toContain("Stream interrupted");
+            act(() => { vi.advanceTimersByTime(1000); });
+            expect(loadMock).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("clears the recovering banner when the stream reloads while paused", () => {

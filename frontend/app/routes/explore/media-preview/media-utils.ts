@@ -14,14 +14,50 @@ export const STALL_THRESHOLD_MS = 30_000;
 
 export type MediaErrorKind = "aborted" | "retry" | "unsupported";
 
-/** MEDIA_ERR_* codes: 1 aborted, 2 network, 3 decode, 4 src-not-supported. */
-export function classifyMediaError(code: number | null): MediaErrorKind {
+/**
+ * MEDIA_ERR_* codes: 1 aborted, 2 network, 3 decode, 4 src-not-supported.
+ *
+ * A decode error after frames have already played means the decoder works and
+ * the bytes went bad (missing or zero-filled segments), so it is worth a
+ * reload; a decode error before any progress means the browser never had a
+ * working pipeline for this file.
+ */
+export function classifyMediaError(code: number | null, hadPlaybackProgress = false): MediaErrorKind {
     switch (code) {
         case 1: return "aborted";
-        case 3:
+        case 3: return hadPlaybackProgress ? "retry" : "unsupported";
         case 4: return "unsupported";
         default: return "retry";
     }
+}
+
+export type CanPlayType = (type: string) => string;
+
+/** Baseline every browser with a working media stack decodes. */
+const BASELINE_TYPE = 'video/mp4; codecs="avc1.42E01E"';
+
+/**
+ * Codecs common in Usenet releases that browsers frequently cannot decode.
+ * A label counts as unsupported only when every equivalent type string is
+ * rejected (HEVC is spelled both hvc1 and hev1 depending on the platform).
+ */
+const CODEC_PROBES: { label: string, types: string[] }[] = [
+    { label: "HEVC / H.265", types: ['video/mp4; codecs="hvc1.1.6.L93.B0"', 'video/mp4; codecs="hev1.1.6.L93.B0"'] },
+    { label: "HEVC 10-bit", types: ['video/mp4; codecs="hvc1.2.4.L120.B0"', 'video/mp4; codecs="hev1.2.4.L120.B0"'] },
+    { label: "AV1", types: ['video/mp4; codecs="av01.0.05M.08"'] },
+    { label: "Dolby Digital Plus (E-AC-3)", types: ['audio/mp4; codecs="ec-3"'] },
+];
+
+/**
+ * Labels of the probed codecs this browser reports no support for. Returns
+ * nothing when even the baseline is rejected — that means canPlayType is
+ * uninformative (non-browser environment), not that every codec is missing.
+ */
+export function probeUnsupportedCodecs(canPlayType: CanPlayType): string[] {
+    if (canPlayType(BASELINE_TYPE) === "") return [];
+    return CODEC_PROBES
+        .filter(probe => probe.types.every(type => canPlayType(type) === ""))
+        .map(probe => probe.label);
 }
 
 /** Append a query parameter, choosing `?` vs `&` from the existing URL. */

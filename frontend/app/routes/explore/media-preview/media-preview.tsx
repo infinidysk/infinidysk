@@ -151,7 +151,14 @@ function StatusBanner({ player, mimeType }: { player: ReturnType<typeof useMedia
             return (
                 <Alert variant="warning" className="alert-soft py-2 text-sm" role="alert">
                     <Icon name="videocam_off" className="!text-[18px]" />
-                    This browser cannot decode {mimeType || "this format"}. Use Open direct or Download and play it in an external player.
+                    <span>
+                        This browser cannot decode {mimeType || "this format"}
+                        {player.error?.message ? ` (${player.error.message})` : ""}.
+                        {player.unsupportedCodecs.length > 0
+                            ? ` No decoder available for ${player.unsupportedCodecs.join(", ")}.`
+                            : ""}
+                        {" "}Use Open direct or Download and play it in an external player.
+                    </span>
                 </Alert>
             );
     }

@@ -8,6 +8,7 @@ import {
     formatClock,
     formatTimeRanges,
     networkStateLabel,
+    probeUnsupportedCodecs,
     readyStateLabel,
     type TimeRangesLike,
 } from "./media-utils";
@@ -34,6 +35,29 @@ describe("classifyMediaError", () => {
     it("does not retry decode or unsupported-source failures", () => {
         expect(classifyMediaError(3)).toBe("unsupported");
         expect(classifyMediaError(4)).toBe("unsupported");
+    });
+
+    it("retries a decode failure that arrives after playback progressed", () => {
+        expect(classifyMediaError(3, true)).toBe("retry");
+        // The demuxer never accepted the source, so progress cannot rescue it.
+        expect(classifyMediaError(4, true)).toBe("unsupported");
+    });
+});
+
+describe("probeUnsupportedCodecs", () => {
+    const supportAll = () => "probably";
+
+    it("reports nothing when the browser supports everything probed", () => {
+        expect(probeUnsupportedCodecs(supportAll)).toEqual([]);
+    });
+
+    it("names codecs the browser rejects", () => {
+        const missing = probeUnsupportedCodecs(type => (type.includes("hvc1") || type.includes("hev1") ? "" : "probably"));
+        expect(missing).toEqual(["HEVC / H.265", "HEVC 10-bit"]);
+    });
+
+    it("stays silent when canPlayType rejects even the baseline", () => {
+        expect(probeUnsupportedCodecs(() => "")).toEqual([]);
     });
 });
 
