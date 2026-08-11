@@ -1,5 +1,6 @@
 ---
-title: InfiniDysk
+title: "The NzbDAV SuperFork — Stream Usenet Media over WebDAV"
+description: "InfiniDysk (The NzbDAV SuperFork) mounts NZB files as a virtual filesystem and streams media directly from Usenet. Drop-in SABnzbd API for Sonarr and Radarr."
 hide:
   - navigation
   - toc
@@ -9,10 +10,9 @@ hide:
 
 ![InfiniDysk overview dashboard](assets/overview.png)
 
-# InfiniDysk
+# InfiniDysk — The NzbDAV SuperFork
 
 <p class="nzbdav-tagline" markdown>
-**The NzbDAV SuperFork**
 
 Mount NZBs as a virtual filesystem and stream directly from Usenet — without downloading full media files first.
 </p>
@@ -27,10 +27,10 @@ Mount NZBs as a virtual filesystem and stream directly from Usenet — without d
 
 <div class="nzbdav-badges" markdown>
 
-[![Latest release](https://img.shields.io/github/v/release/nzbdav/nzbdav)](https://github.com/infinidysk/infinidysk/releases)
-[![Docker](https://img.shields.io/badge/ghcr.io-nzbdav%2Fnzbdav-0d9488?logo=docker&logoColor=white)](https://github.com/infinidysk/infinidysk/pkgs/container/nzbdav)
-[![CI](https://img.shields.io/github/actions/workflow/status/nzbdav/nzbdav/ci.yml?branch=main&label=CI)](https://github.com/infinidysk/infinidysk/actions)
-[![License](https://img.shields.io/github/license/nzbdav/nzbdav)](https://github.com/infinidysk/infinidysk/blob/main/LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/infinidysk/infinidysk)](https://github.com/infinidysk/infinidysk/releases)
+[![Docker](https://img.shields.io/badge/ghcr.io-infinidysk%2Finfinidysk-0d9488?logo=docker&logoColor=white)](https://github.com/infinidysk/infinidysk/pkgs/container/infinidysk)
+[![CI](https://img.shields.io/github/actions/workflow/status/infinidysk/infinidysk/ci.yml?branch=main&label=CI)](https://github.com/infinidysk/infinidysk/actions)
+[![License](https://img.shields.io/github/license/infinidysk/infinidysk)](https://github.com/infinidysk/infinidysk/blob/main/LICENSE)
 
 </div>
 
@@ -38,7 +38,7 @@ Mount NZBs as a virtual filesystem and stream directly from Usenet — without d
 
 !!! info "NzbDAV is becoming InfiniDysk"
 
-    The documentation now lives at **www.infinidysk.com**. The repository and
+    The documentation now lives at www.infinidysk.com. The repository and
     Docker image will move later; no deployment change is needed yet.
     [Read the rename FAQ](community/renaming-to-infinidysk.md).
 
@@ -136,12 +136,12 @@ Choosing between streaming WebDAV tools and classic download clients depends on 
 
 === "DUMB stack"
 
-    InfiniDysk is a **fully supported core module** in [Debrid Unlimited Media Bridge (DUMB)](https://dumbarr.com/). Enable InfiniDysk during DUMB onboarding (or set Arr `core_service` to include `nzbdav`) for guided Usenet WebDAV + download-client wiring.
+    InfiniDysk is a fully supported core module in [Debrid Unlimited Media Bridge (DUMB)](https://dumbarr.com/). Enable InfiniDysk during DUMB onboarding (or set Arr `core_service` to include `nzbdav`) for guided Usenet WebDAV + download-client wiring.
 
     [InfiniDysk on dumbarr.com](https://dumbarr.com/services/core/nzbdav/){ .md-button .md-button--primary }
     [Hosting options](getting-started/index.md#setup-and-hosting-options){ .md-button }
 
-Then open `http://localhost:3000` (self-hosted) or your DUMB service URL, create your admin account if needed, and configure a Usenet provider under **Settings**.
+Then open `http://localhost:3000` (self-hosted) or your DUMB service URL, create your admin account if needed, and configure a Usenet provider under Settings.
 
 !!! warning "Expose carefully"
 
@@ -193,7 +193,7 @@ Then open `http://localhost:3000` (self-hosted) or your DUMB service URL, create
 
 Chat on Discord, track releases on GitHub, and file issues when you need a durable bug report.
 
-Discord community transition started **July 21**. After joining, use the channel and role selector to enable **InfiniDysk - SuperFork** for release notifications and development channels.
+Discord community transition started July 21. After joining, use the channel and role selector to enable InfiniDysk - SuperFork for release notifications and development channels.
 
 [Join Discord](https://discord.gg/DAya7W6QMa){ .md-button .md-button--primary }
 [Repository](https://github.com/infinidysk/infinidysk){ .md-button }
@@ -203,7 +203,7 @@ Discord community transition started **July 21**. After joining, use the channel
 
 ## Ecosystem
 
-InfiniDysk owns the streaming stack end to end. UsenetSharp, RapidYencSharp, and SharpCompress are developed in-tree under [`libs/`](https://github.com/infinidysk/infinidysk/tree/main/libs); the native **rapidyenc** library remains a [standalone submodule](https://github.com/nzbdav/rapidyenc) so connection, decode, and archive fixes land with the product.
+InfiniDysk owns the streaming stack end to end. UsenetSharp, RapidYencSharp, and SharpCompress are developed in-tree under [`libs/`](https://github.com/infinidysk/infinidysk/tree/main/libs); the native rapidyenc library remains a [standalone submodule](https://github.com/nzbdav/rapidyenc) so connection, decode, and archive fixes land with the product.
 
 [About the project](community/about.md){ .md-button }
 

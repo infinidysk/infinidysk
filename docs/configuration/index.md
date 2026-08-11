@@ -1,3 +1,7 @@
+---
+description: "Configure InfiniDysk (NzbDAV SuperFork): Usenet providers, indexers, streaming, WebDAV, queue processing, and Arr integration."
+---
+
 # Configuration
 
 Day-to-day settings live in the admin UI (**Settings**) and persist in SQLite under `/config`. Use this section as a walkthrough of every Settings tab.

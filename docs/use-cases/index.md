@@ -1,3 +1,7 @@
+---
+description: "Build an infinite media library with Sonarr and Radarr, stream-only setups, or multi-provider failover using InfiniDysk."
+---
+
 # Use cases
 
 <div class="grid cards" markdown>

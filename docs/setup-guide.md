@@ -1,3 +1,7 @@
+---
+robots: "noindex, follow"
+---
+
 # Setup guide
 
 !!! info "Moved"

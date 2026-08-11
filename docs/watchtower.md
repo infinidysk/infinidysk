@@ -1,3 +1,7 @@
+---
+robots: "noindex, follow"
+---
+
 # Watchtower
 
 !!! info "Moved"

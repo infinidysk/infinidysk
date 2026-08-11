@@ -1,3 +1,7 @@
+---
+robots: "noindex, follow"
+---
+
 # NNTP pipelining
 
 !!! info "Moved"

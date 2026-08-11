@@ -1,6 +1,7 @@
 [project]
 site_name = "InfiniDysk"
-site_description = "The NzbDAV SuperFork — stream media directly from Usenet"
+site_description = "InfiniDysk — The NzbDAV SuperFork. Mount NZBs as a virtual filesystem and stream media directly from Usenet. Drop-in SABnzbd API for Sonarr and Radarr."
+site_author = "InfiniDysk"
 site_url = "https://www.infinidysk.com/"
 docs_dir = "docs"
 site_dir = "site"

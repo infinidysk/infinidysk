@@ -1,3 +1,7 @@
+---
+robots: "noindex, follow"
+---
+
 # SABnzbd API
 
 !!! info "Moved"

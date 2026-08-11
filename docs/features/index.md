@@ -1,3 +1,7 @@
+---
+description: "InfiniDysk features: WebDAV filesystem, Usenet streaming, archive support, multi-provider failover, and SABnzbd-compatible API for Sonarr and Radarr."
+---
+
 # Features
 
 InfiniDysk combines a virtual filesystem, Usenet streaming stack, and automation APIs.

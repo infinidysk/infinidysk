@@ -1,3 +1,7 @@
+---
+description: "Get started with InfiniDysk, the NzbDAV SuperFork. Install with Docker, complete first-run setup, and connect Sonarr or Radarr in minutes."
+---
+
 # Getting started
 
 !!! note "Docs track latest"

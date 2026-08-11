@@ -1,3 +1,7 @@
+---
+robots: "noindex, follow"
+---
+
 # Release announcement
 
 !!! info "Moved"

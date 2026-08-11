@@ -1,3 +1,7 @@
+---
+description: "Run InfiniDysk in Docker with Docker Compose or docker run. Includes volume mounts, environment variables, and reverse proxy setup."
+---
+
 # Docker
 
 InfiniDysk ships as a single multi-arch image: `ghcr.io/infinidysk/infinidysk`. The container runs the frontend (public port `3000`) and backend (internal `8080`).

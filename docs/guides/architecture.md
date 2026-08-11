@@ -1,3 +1,7 @@
+---
+description: "How InfiniDysk streams media from Usenet providers through a virtual WebDAV filesystem without downloading files to disk."
+---
+
 # Architecture
 
 InfiniDysk sits between download clients / search and Usenet providers, exposing a virtual filesystem and SAB-compatible API.

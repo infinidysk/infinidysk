@@ -1,3 +1,7 @@
+---
+description: "InfiniDysk vs NzbDAV vs AltMount vs SABnzbd/NZBGet — honest feature comparison and migration guidance for Usenet streaming."
+---
+
 # Compare InfiniDysk to alternatives
 
 This is an honest orientation for people choosing how to get Usenet content into a media library or player. Categories evolve quickly — verify current capabilities in each project's docs before you migrate.
