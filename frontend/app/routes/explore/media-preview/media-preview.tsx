@@ -159,6 +159,17 @@ function StatusBanner({ player, mimeType }: { player: ReturnType<typeof useMedia
                     </span>
                 </Alert>
             );
+        case "unavailable":
+            return (
+                <Alert variant="danger" className="alert-soft py-2 text-sm" role="alert">
+                    <Icon name="error" className="!text-[18px]" />
+                    <span>
+                        The server refused to serve this file
+                        {player.unavailableStatus !== null ? ` (HTTP ${player.unavailableStatus})` : ""}.
+                        {" "}Close the preview and try again, or use Download.
+                    </span>
+                </Alert>
+            );
         case "missing-payload":
             return (
                 <Alert variant="danger" className="alert-soft py-2 text-sm" role="alert">

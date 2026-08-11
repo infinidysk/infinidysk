@@ -155,7 +155,8 @@ describe("MediaPreview", () => {
     });
 
     it("recovers when code 4 hides a server-side failure", async () => {
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+            { ok: false, status: 500, headers: new Headers() }));
 
         const { container } = renderPreview();
         fireMediaError(container.querySelector("video")!, 4, "DEMUXER_ERROR_COULD_NOT_OPEN");
@@ -174,6 +175,21 @@ describe("MediaPreview", () => {
         const alert = await screen.findByRole("alert");
         expect(alert.textContent).toContain("could not play");
         expect(alert.textContent).toContain("DEMUXER_ERROR_NO_SUPPORTED_STREAMS");
+    });
+
+    it("fails terminally with the HTTP status when the server refuses the file", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+            { ok: false, status: 403, headers: new Headers() }));
+
+        const { container } = renderPreview();
+        fireMediaError(container.querySelector("video")!, 4, "DEMUXER_ERROR_COULD_NOT_OPEN");
+
+        const alert = await screen.findByRole("alert");
+        expect(alert.textContent).toContain("refused to serve this file");
+        expect(alert.textContent).toContain("HTTP 403");
+        // Terminal state, not a recovery loop.
+        expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+        expect(screen.queryByText(/Stream interrupted/)).toBeNull();
     });
 
     it("names the missing-payload failure when the backend reports it", async () => {

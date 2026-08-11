@@ -14,6 +14,7 @@ export type PlayerStatus =
     | "recovering"
     | "failed"
     | "unsupported"
+    | "unavailable"
     | "missing-payload";
 
 export type PlayerEvent = {
@@ -47,6 +48,7 @@ export function useMediaPlayer({ src }: { src: string }) {
     const [error, setError] = useState<PlayerError | null>(null);
     const [startupMs, setStartupMs] = useState<number | null>(null);
     const [events, setEvents] = useState<PlayerEvent[]>([]);
+    const [unavailableStatus, setUnavailableStatus] = useState<number | null>(null);
 
     const attemptsRef = useRef(0);
     const framesBaselineRef = useRef(0);
@@ -152,6 +154,7 @@ export function useMediaPlayer({ src }: { src: string }) {
         setError(null);
         setStartupMs(null);
         setEvents([]);
+        setUnavailableStatus(null);
     }, [src, clearRecoveryTimer]);
 
     // The source is applied imperatively, not via the JSX src attribute:
@@ -180,7 +183,9 @@ export function useMediaPlayer({ src }: { src: string }) {
         const interval = setInterval(() => {
             const el = mediaRef.current;
             if (!el || el.paused || el.ended || el.seeking) return;
-            if (status === "recovering" || status === "failed" || status === "unsupported") return;
+            if (status === "recovering" || status === "failed"
+                || status === "unsupported" || status === "unavailable"
+                || status === "missing-payload") return;
             const last = lastProgressAtRef.current;
             if (last !== null && Date.now() - last > STALL_THRESHOLD_MS) {
                 beginRecovery(`no playback progress for ${Math.round(STALL_THRESHOLD_MS / 1000)}s`);
@@ -229,7 +234,8 @@ export function useMediaPlayer({ src }: { src: string }) {
                     break;
                 case "denied":
                     log("source-check", `media request refused with HTTP ${outcome.status}`);
-                    setStatus("failed");
+                    setUnavailableStatus(outcome.status);
+                    setStatus("unavailable");
                     break;
                 case "server-error":
                     log("source-check", outcome.status !== null
@@ -337,6 +343,7 @@ export function useMediaPlayer({ src }: { src: string }) {
         error,
         startupMs,
         events,
+        unavailableStatus,
         retry,
         lastGoodTimeRef,
         lastProgressAtRef,

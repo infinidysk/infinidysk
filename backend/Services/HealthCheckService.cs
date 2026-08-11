@@ -214,21 +214,10 @@ public class HealthCheckService : BackgroundService
         CancellationToken ct
     )
     {
-            // Validate local payload metadata before anything else: a missing
-            // payload means zero segments to STAT, which would otherwise read
-            // as a healthy file, and an urgent sentinel would enter Repair
-            // without it — Repair is for bad releases, not local data loss.
-            if (davItem.SubType is DavItem.ItemSubType.NzbFile
-                or DavItem.ItemSubType.RarFile
-                or DavItem.ItemSubType.MultipartFile)
-            {
-                await EnsurePayloadExistsAsync(davItem, dbClient, ct).ConfigureAwait(false);
-            }
-
-            // Urgent sentinel set by ExceptionMiddleware when streaming confirms a permanent failure.
-            // Skip the STAT-only recheck and repair immediately: STAT can pass while BODY returns 430
-            // (see nzbdav-dev#209), and structurally corrupt archives can have every article present.
-            var isUrgentRepair = davItem.NextHealthCheck == DateTimeOffset.UnixEpoch;
+        // Urgent sentinel set by ExceptionMiddleware when streaming confirms a permanent failure.
+        // Skip the STAT-only recheck and repair immediately: STAT can pass while BODY returns 430
+        // (see nzbdav-dev#209), and structurally corrupt archives can have every article present.
+        var isUrgentRepair = davItem.NextHealthCheck == DateTimeOffset.UnixEpoch;
 
         // Attribution for latency histograms — does not change pool admission priority.
         using var maintenanceScope = ct.SetContext(MaintenanceDownloadContext.Instance);
@@ -238,6 +227,11 @@ public class HealthCheckService : BackgroundService
         {
             if (isUrgentRepair)
             {
+                // Validate the local payload before Repair: missing metadata is
+                // local data loss, not a bad release, and must not reach the
+                // Arr remove-and-blocklist path. Routine checks get the same
+                // guarantee from GetAllSegments below.
+                await EnsurePayloadExistsAsync(davItem, dbClient, ct).ConfigureAwait(false);
                 Log.Information("Performing urgent dynamic repair for {FilePath}", davItem.Path);
                 await HandleUrgentRepair(davItem, dbClient, ct).ConfigureAwait(false);
                 return;

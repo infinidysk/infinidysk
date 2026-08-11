@@ -411,6 +411,7 @@ export function buildDiagnosticsSnapshot(
             maxAttempts: player.maxAttempts,
             startupMs: player.startupMs,
             error: player.error,
+            unavailableStatus: player.unavailableStatus,
             events: player.events,
         },
         mediaElement: el ? {
