@@ -52,9 +52,8 @@ internal static class ConfigPathPreflight
 
         if (Directory.Exists(configPath))
         {
-            foreach (var fileName in KnownDatabaseFiles)
+            foreach (var path in KnownDatabaseFiles.Select(fileName => Path.Join(configPath, fileName)))
             {
-                var path = Path.Join(configPath, fileName);
                 ProbeFile(path, failures);
                 ProbeFile(path + "-wal", failures);
                 ProbeFile(path + "-shm", failures);
@@ -62,9 +61,8 @@ internal static class ConfigPathPreflight
 
             ProbeFile(DavDatabaseContext.DatabaseFilePath + ".maintenance.lock", failures);
 
-            foreach (var directory in KnownDirectories)
+            foreach (var path in KnownDirectories.Select(directory => Path.Join(configPath, directory)))
             {
-                var path = Path.Join(configPath, directory);
                 if (Directory.Exists(path) && !CanWriteToDirectory(path))
                     failures.Add($"{path} (directory is not writable)");
             }

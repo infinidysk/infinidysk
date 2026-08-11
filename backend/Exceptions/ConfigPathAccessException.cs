@@ -23,28 +23,31 @@ public sealed class ConfigPathAccessException(string message, Exception? innerEx
         Exception? innerException = null)
     {
         var paths = string.Join('\n', offendingPaths.Select(p => $"  - {p}"));
-        var symlinkNote = OperatingSystem.IsWindows()
-            ? ""
-            : " If the config path is a symlink, apply the fix to its real target" +
+        var remediation = OperatingSystem.IsWindows()
+            ? $"Fix the file permissions so the account running NzbDAV ({Environment.UserName}) " +
+              "can read and write them."
+            : $"Fix ownership/permissions so the configured PUID/PGID (currently {CurrentIdentity()}) " +
+              $"can read and write them (for example: chown -R <puid>:<pgid> '{configPath}')." +
+              " If the config path is a symlink, apply the fix to its real target" +
               " (chown -R does not traverse symlinks; use a trailing slash).";
         return new ConfigPathAccessException(
             $"Cannot read or write configuration path(s) under '{configPath}':\n{paths}\n" +
-            $"Fix ownership/permissions so {CurrentIdentity()} can read and write them " +
-            $"(for example: chown -R <puid>:<pgid> '{configPath}').{symlinkNote}",
+            remediation,
             innerException);
     }
 
     private static string CurrentIdentity()
     {
-        if (OperatingSystem.IsWindows())
-            return $"the account running NzbDAV ({Environment.UserName})";
         try
         {
-            return $"the configured PUID/PGID (currently uid={geteuid()}, gid={getegid()})";
+            return $"uid={geteuid()}, gid={getegid()}";
         }
-        catch (Exception)
+        catch (Exception e) when (e is DllNotFoundException
+            or EntryPointNotFoundException
+            or TypeLoadException)
         {
-            return $"the configured PUID/PGID (currently {Environment.UserName})";
+            // Identity is a best-effort hint for the remediation message only.
+            return $"user '{Environment.UserName}'";
         }
     }
 
