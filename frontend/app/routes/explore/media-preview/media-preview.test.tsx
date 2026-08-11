@@ -39,6 +39,7 @@ beforeEach(() => {
 afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     if (savedCanPlayType) {
         Object.defineProperty(HTMLMediaElement.prototype, "canPlayType", savedCanPlayType);
     } else {
@@ -180,6 +181,36 @@ describe("MediaPreview", () => {
         fireMediaError(container.querySelector("video")!, 4, "no decoder");
 
         expect(screen.getByRole("alert").textContent).toContain("No decoder available for HEVC / H.265");
+    });
+
+    it("recovers when code 4 hides an HTTP failure and all decoders are present", async () => {
+        Object.defineProperty(HTMLMediaElement.prototype, "canPlayType", {
+            configurable: true,
+            value: () => "probably",
+        });
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+
+        const { container } = renderPreview();
+        fireMediaError(container.querySelector("video")!, 4, "DEMUXER_ERROR_COULD_NOT_OPEN");
+
+        // The reachability probe fails → normal bounded recovery, not a dead end.
+        expect(await screen.findByText(/Stream interrupted/)).toBeTruthy();
+        expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("stays unsupported when code 4 occurs but the source serves bytes", async () => {
+        Object.defineProperty(HTMLMediaElement.prototype, "canPlayType", {
+            configurable: true,
+            value: () => "probably",
+        });
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 206 }));
+
+        const { container } = renderPreview();
+        fireMediaError(container.querySelector("video")!, 4, "DEMUXER_ERROR_NO_SUPPORTED_STREAMS");
+
+        const alert = await screen.findByRole("alert");
+        expect(alert.textContent).toContain("cannot decode");
+        expect(alert.textContent).toContain("DEMUXER_ERROR_NO_SUPPORTED_STREAMS");
     });
 
     it("recovers from a decode error once playback has progressed", () => {

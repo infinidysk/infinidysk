@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
     backoffMs,
+    canProbeCodecs,
     classifyMediaError,
     MAX_AUTO_ATTEMPTS,
+    probeSourceReachable,
     probeUnsupportedCodecs,
     STALL_THRESHOLD_MS,
 } from "./media-utils";
@@ -49,6 +51,7 @@ export function useMediaPlayer({ src }: { src: string }) {
     const [unsupportedCodecs, setUnsupportedCodecs] = useState<string[]>([]);
 
     const attemptsRef = useRef(0);
+    const framesBaselineRef = useRef(0);
     const lastGoodTimeRef = useRef(0);
     const lastProgressAtRef = useRef<number | null>(null);
     const loadStartedAtRef = useRef<number>(Date.now());
@@ -129,9 +132,15 @@ export function useMediaPlayer({ src }: { src: string }) {
         };
     }, []);
 
-    // Reset all per-source state when a different file is previewed.
+    // Reset all per-source state when a different file is previewed. Bumping
+    // the generation invalidates async work (recovery timers, source checks)
+    // still in flight for the previous source.
     useEffect(() => {
         clearRecoveryTimer();
+        generationRef.current += 1;
+        // VideoPlaybackQuality counters are cumulative for the element's
+        // lifetime; snapshot them so progress checks only count this source.
+        framesBaselineRef.current = totalVideoFrames(mediaRef.current) ?? 0;
         attemptsRef.current = 0;
         lastGoodTimeRef.current = 0;
         lastProgressAtRef.current = null;
@@ -188,6 +197,42 @@ export function useMediaPlayer({ src }: { src: string }) {
         startupRecordedRef.current = true;
         setStartupMs(Date.now() - loadStartedAtRef.current);
     }, []);
+
+    // Frames decoded for the current source are the strongest evidence the
+    // decoder pipeline worked. Audio elements have no frame counter and fall
+    // back to the progress watchdog timestamp (which a recovery seek can also
+    // set — a weaker signal, but the retry budget bounds the damage).
+    const hasDecodedProgress = (el: HTMLMediaElement | null): boolean => {
+        const frames = totalVideoFrames(el);
+        if (frames !== null) return frames > framesBaselineRef.current;
+        return lastProgressAtRef.current !== null;
+    };
+
+    const handleUnsupported = (el: HTMLMediaElement | null, code: number | null) => {
+        const canPlay = el ? (type: string) => el.canPlayType(type) : null;
+        const missing = canPlay ? probeUnsupportedCodecs(canPlay) : [];
+        setUnsupportedCodecs(missing);
+        if (missing.length > 0) log("unsupported", `no decoder for ${missing.join(", ")}`);
+
+        // Chromium reports a media fetch that failed at the HTTP layer with
+        // the same code 4 as a missing decoder. When every probed decoder is
+        // present, verify the source before blaming the browser: a failing
+        // request goes through normal bounded recovery instead.
+        if (code === 4 && canPlay && canProbeCodecs(canPlay) && missing.length === 0) {
+            const generation = generationRef.current;
+            void probeSourceReachable(src).then(reachable => {
+                if (generationRef.current !== generation) return;
+                if (reachable) {
+                    setStatus("unsupported");
+                } else {
+                    log("source-check", "media request failed at the HTTP layer");
+                    beginRecovery("media request failed");
+                }
+            });
+            return;
+        }
+        setStatus("unsupported");
+    };
 
     const handlers = {
         onLoadStart: () => log("loadstart"),
@@ -256,17 +301,14 @@ export function useMediaPlayer({ src }: { src: string }) {
             const el = mediaRef.current;
             const mediaError = el?.error ?? null;
             const code = mediaError?.code ?? null;
-            const kind = classifyMediaError(code, lastProgressAtRef.current !== null);
+            const kind = classifyMediaError(code, hasDecodedProgress(el));
             // ABORTED fires for our own close/reload — never a real failure.
             if (kind === "aborted") return;
             const message = mediaError?.message ?? null;
             setError({ code, message });
             log("error", `code ${code ?? "?"}${message ? `: ${message}` : ""}`);
             if (kind === "unsupported") {
-                const missing = el ? probeUnsupportedCodecs(type => el.canPlayType(type)) : [];
-                setUnsupportedCodecs(missing);
-                if (missing.length > 0) log("unsupported", `no decoder for ${missing.join(", ")}`);
-                setStatus("unsupported");
+                handleUnsupported(el, code);
                 return;
             }
             beginRecovery("network error");
@@ -293,6 +335,12 @@ export function useMediaPlayer({ src }: { src: string }) {
 
 function formatSeekDetail(time: number): string {
     return `to ${time.toFixed(1)}s`;
+}
+
+/** null when the element cannot report frame counts (audio, older engines). */
+function totalVideoFrames(el: HTMLMediaElement | null): number | null {
+    if (!(el instanceof HTMLVideoElement) || typeof el.getVideoPlaybackQuality !== "function") return null;
+    return el.getVideoPlaybackQuality().totalVideoFrames;
 }
 
 export type MediaPlayer = ReturnType<typeof useMediaPlayer>;

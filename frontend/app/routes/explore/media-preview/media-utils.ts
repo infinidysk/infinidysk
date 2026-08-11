@@ -45,8 +45,18 @@ const CODEC_PROBES: { label: string, types: string[] }[] = [
     { label: "HEVC / H.265", types: ['video/mp4; codecs="hvc1.1.6.L93.B0"', 'video/mp4; codecs="hev1.1.6.L93.B0"'] },
     { label: "HEVC 10-bit", types: ['video/mp4; codecs="hvc1.2.4.L120.B0"', 'video/mp4; codecs="hev1.2.4.L120.B0"'] },
     { label: "AV1", types: ['video/mp4; codecs="av01.0.05M.08"'] },
+    { label: "Dolby Digital (AC-3)", types: ['audio/mp4; codecs="ac-3"'] },
     { label: "Dolby Digital Plus (E-AC-3)", types: ['audio/mp4; codecs="ec-3"'] },
 ];
+
+/**
+ * True when canPlayType gives informative answers: a browser with a working
+ * media stack always accepts baseline H.264, so a rejection there means the
+ * probe environment cannot tell us anything (e.g. jsdom).
+ */
+export function canProbeCodecs(canPlayType: CanPlayType): boolean {
+    return canPlayType(BASELINE_TYPE) !== "";
+}
 
 /**
  * Labels of the probed codecs this browser reports no support for. Returns
@@ -54,10 +64,32 @@ const CODEC_PROBES: { label: string, types: string[] }[] = [
  * uninformative (non-browser environment), not that every codec is missing.
  */
 export function probeUnsupportedCodecs(canPlayType: CanPlayType): string[] {
-    if (canPlayType(BASELINE_TYPE) === "") return [];
+    if (!canProbeCodecs(canPlayType)) return [];
     return CODEC_PROBES
         .filter(probe => probe.types.every(type => canPlayType(type) === ""))
         .map(probe => probe.label);
+}
+
+/**
+ * Chromium reports a media fetch that failed at the HTTP layer with the same
+ * MEDIA_ERR_SRC_NOT_SUPPORTED code as a missing decoder. A one-byte ranged
+ * GET reproduces the media request cheaply and tells the two apart: an OK
+ * response means the server served bytes and the browser rejected them.
+ */
+export async function probeSourceReachable(
+    src: string,
+    fetchFn: typeof fetch = fetch,
+): Promise<boolean> {
+    try {
+        const response = await fetchFn(src, {
+            headers: { Range: "bytes=0-0" },
+            cache: "no-store",
+            signal: AbortSignal.timeout(10_000),
+        });
+        return response.ok;
+    } catch {
+        return false;
+    }
 }
 
 /** Append a query parameter, choosing `?` vs `&` from the existing URL. */

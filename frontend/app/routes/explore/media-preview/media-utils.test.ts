@@ -1,13 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
     appendQueryParam,
     backoffMs,
     bufferedAhead,
     buildMediaSrc,
+    canProbeCodecs,
     classifyMediaError,
     formatClock,
     formatTimeRanges,
     networkStateLabel,
+    probeSourceReachable,
     probeUnsupportedCodecs,
     readyStateLabel,
     type TimeRangesLike,
@@ -56,8 +58,35 @@ describe("probeUnsupportedCodecs", () => {
         expect(missing).toEqual(["HEVC / H.265", "HEVC 10-bit"]);
     });
 
+    it("probes the Dolby Digital variants independently", () => {
+        const missing = probeUnsupportedCodecs(type => (type.includes('"ac-3"') ? "" : "probably"));
+        expect(missing).toEqual(["Dolby Digital (AC-3)"]);
+    });
+
     it("stays silent when canPlayType rejects even the baseline", () => {
         expect(probeUnsupportedCodecs(() => "")).toEqual([]);
+        expect(canProbeCodecs(() => "")).toBe(false);
+        expect(canProbeCodecs(supportAll)).toBe(true);
+    });
+});
+
+describe("probeSourceReachable", () => {
+    it("asks for a single byte and reports an OK response as reachable", async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: true });
+        await expect(probeSourceReachable("/view/a.mp4?downloadKey=k", fetchFn)).resolves.toBe(true);
+        const [url, init] = fetchFn.mock.calls[0]!;
+        expect(url).toBe("/view/a.mp4?downloadKey=k");
+        expect(init.headers).toEqual({ Range: "bytes=0-0" });
+    });
+
+    it("reports HTTP errors as unreachable", async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+        await expect(probeSourceReachable("/view/a.mp4", fetchFn)).resolves.toBe(false);
+    });
+
+    it("reports thrown fetches (network down, timeout) as unreachable", async () => {
+        const fetchFn = vi.fn().mockRejectedValue(new TypeError("network down"));
+        await expect(probeSourceReachable("/view/a.mp4", fetchFn)).resolves.toBe(false);
     });
 });
 
