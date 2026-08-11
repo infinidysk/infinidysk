@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block extrahead %}
-  {% set base = config.site_url.rstrip('/') + '/' %}
+  {# site_url is guaranteed to end with / by Zensical/MkDocs config normalization #}
   {% set page_description = page.meta.description if page and page.meta and page.meta.description else config.site_description %}
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="{{ config.site_name }}">
@@ -19,15 +19,15 @@
   {% endif %}
   <meta property="og:description" content="{{ page_description }}">
   <meta property="og:url" content="{{ page.canonical_url }}">
-  <meta property="og:image" content="{{ base }}assets/social/social-card.png">
+  <meta property="og:image" content="{{ config.site_url }}assets/social/social-card.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:description" content="{{ page_description }}">
-  <meta name="twitter:image" content="{{ base }}assets/social/social-card.png">
-  <link rel="icon" type="image/png" sizes="96x96" href="{{ base }}assets/favicon.png">
-  <link rel="icon" type="image/x-icon" href="{{ base }}favicon.ico">
-  <link rel="apple-touch-icon" sizes="180x180" href="{{ base }}assets/apple-touch-icon.png">
+  <meta name="twitter:image" content="{{ config.site_url }}assets/social/social-card.png">
+  <link rel="icon" type="image/png" sizes="96x96" href="{{ config.site_url }}assets/favicon.png">
+  <link rel="icon" type="image/x-icon" href="{{ config.site_url }}favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ config.site_url }}assets/apple-touch-icon.png">
   {% if page and page.meta and page.meta.robots %}
     <meta name="robots" content="{{ page.meta.robots }}">
   {% endif %}
