@@ -15,13 +15,14 @@
     <meta property="og:title" content="{{ page.title }} - {{ config.site_name }}">
     <meta name="twitter:title" content="{{ page.title }} - {{ config.site_name }}">
   {% endif %}
-  <meta property="og:description" content="{{ page.meta.get('description', config.site_description) }}">
+  {% set page_description = page.meta.description if page and page.meta and page.meta.description else config.site_description %}
+  <meta property="og:description" content="{{ page_description }}">
   <meta property="og:url" content="{{ page.canonical_url }}">
   <meta property="og:image" content="{{ config.site_url }}assets/social/social-card.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:description" content="{{ page.meta.get('description', config.site_description) }}">
+  <meta name="twitter:description" content="{{ page_description }}">
   <meta name="twitter:image" content="{{ config.site_url }}assets/social/social-card.png">
   <link rel="icon" type="image/png" sizes="96x96" href="{{ config.site_url }}assets/favicon.png">
   <link rel="icon" type="image/x-icon" href="{{ config.site_url }}favicon.ico">
