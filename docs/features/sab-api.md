@@ -7,9 +7,9 @@ InfiniDysk implements the SABnzbd-compatible operations used by Sonarr, Radarr, 
 - `version`, `status`, `fullstatus`, `get_config`, and `get_cats`
 - `server_stats` and `warnings` [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 - `addfile` and `addurl`
-- `queue` listing and `queue&name=delete`, `queue&name=pause`, `queue&name=resume`, `queue&name=priority`, and `queue&name=move`
+- `queue` listing and `queue&name=delete`, `queue&name=pause`, `queue&name=resume`, `queue&name=priority`, `queue&name=move`, and `queue&name=change_cat` [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 - `pause` / `resume` (also `queue&name=pause` / `queue&name=resume`) and `speedlimit` [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
-- `change_cat` for per-job category changes on queued items
+- `change_cat` for per-job category changes on queued items [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 - `retry` for failed history re-queue (single or bulk) [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 - `history` listing and `history&name=delete`
 

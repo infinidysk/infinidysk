@@ -10,7 +10,7 @@
 
 Configure in **Settings → Maintenance**.
 
-## Metrics database
+## Metrics database [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 
 InfiniDysk stores streaming and provider metrics in a separate SQLite file (`metrics.sqlite` under `CONFIG_PATH`). Size grows with throughput because each article fetch writes a raw row to `SegmentFetches`.
 
