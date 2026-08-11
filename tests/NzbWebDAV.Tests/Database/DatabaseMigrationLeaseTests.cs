@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
+using NzbWebDAV.Exceptions;
 
 namespace NzbWebDAV.Tests.Database;
 
@@ -91,6 +92,52 @@ public sealed class DatabaseMigrationLeaseTests
         finally
         {
             DeleteDatabaseFiles(path);
+        }
+    }
+
+    [SkippableFact]
+    public async Task AcquireAsync_ThrowsConfigPathAccessForUnreadableLeaseFile()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "Unix file modes are not enforced on Windows.");
+        var path = TempDatabasePath();
+        var leasePath = path + ".maintenance.lock";
+        try
+        {
+            await File.WriteAllTextAsync(leasePath, "left by root-owned install");
+            SetMode(leasePath, UnixFileMode.None);
+            Skip.IfNot(PermissionsEnforced(leasePath), "Test is running as root; file modes are not enforced.");
+
+            var exception = await Assert.ThrowsAsync<ConfigPathAccessException>(
+                () => DatabaseMigrationLease.AcquireAsync(path));
+
+            Assert.Contains(leasePath, exception.Message);
+            Assert.IsType<UnauthorizedAccessException>(exception.InnerException);
+        }
+        finally
+        {
+            if (File.Exists(leasePath))
+                SetMode(leasePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            DeleteDatabaseFiles(path);
+        }
+    }
+
+    // The guard keeps the platform analyzer satisfied; callers skip on Windows anyway.
+    private static void SetMode(string path, UnixFileMode mode)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        File.SetUnixFileMode(path, mode);
+    }
+
+    private static bool PermissionsEnforced(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            return false; // root bypasses mode bits
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
         }
     }
 

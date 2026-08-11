@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using NzbWebDAV.Exceptions;
 using Serilog;
 
 namespace NzbWebDAV.Database;
@@ -57,6 +58,16 @@ internal sealed class DatabaseMigrationLease : IAsyncDisposable
                             Options = FileOptions.Asynchronous,
                         });
                     return new DatabaseMigrationLease(stream, inProcessLock);
+                }
+                catch (UnauthorizedAccessException unauthorized)
+                {
+                    // Not an IOException, so it never reaches the retry loop below.
+                    // Surface it as an actionable config-path error instead of an
+                    // unhandled core-dump crash.
+                    throw ConfigPathAccessException.ForPath(
+                        leasePath,
+                        Path.GetDirectoryName(leasePath) ?? leasePath,
+                        unauthorized);
                 }
                 catch (IOException)
                 {

@@ -15,6 +15,7 @@ using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Middlewares;
@@ -106,6 +107,13 @@ public partial class Program
                 Log.Information(
                     "Stream tracing enabled with a capacity of {Capacity} events (STREAM_TRACE_EVENTS)",
                     streamTraceBuffer.Capacity);
+
+            // Fail fast with one actionable line when CONFIG_PATH or a state file
+            // under it is not accessible, instead of aborting later on an unhandled
+            // UnauthorizedAccessException (which core-dumps and hides the cause).
+            // The yEnc self-test does not touch the config path and skips this.
+            if (!args.Contains("--yenc-self-test"))
+                ConfigPathPreflight.VerifyAccess();
 
             // run database migration / restore, if necessary.
             // Restore must run before opening the live DavDatabaseContext so pending
@@ -372,6 +380,14 @@ public partial class Program
                 app.Services.GetRequiredService<QueueManager>().StartProcessing());
             await app.RunAsync().ConfigureAwait(false);
         }
+        catch (ConfigPathAccessException exception)
+        {
+            // Operator-facing configuration failure — one actionable line, a clean
+            // non-zero exit, and no stack dump / core dump.
+            Log.Fatal("{Message}", exception.Message);
+            Environment.ExitCode = 1;
+            return;
+        }
         catch (Exception exception)
         {
             Log.Fatal(exception, "NzbDav terminated unexpectedly");
@@ -637,7 +653,10 @@ public partial class Program
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             progressFull.Fail(ex.Message);
-            Log.Error(ex, "Database migration failed");
+            // ConfigPathAccessException is already operator-actionable; Main logs the
+            // single fatal line, so skip the stack dump here.
+            if (ex is not ConfigPathAccessException)
+                Log.Error(ex, "Database migration failed");
 
             // Keep the failure visible on the status page briefly before exiting.
             if (statusServerFull is not null)
