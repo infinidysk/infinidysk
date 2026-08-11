@@ -50,7 +50,7 @@ public sealed class DatabaseStoreSymlinkCollectionTests : IAsyncLifetime
         _context.HistoryItems.Add(CreateHistory(historyId, "episode.nzb", category.Name, release.Id));
         await _context.SaveChangesAsync();
         var status = await new DatabaseStoreSymlinkCollection(release, _client, _config, _websocket)
-            .DeleteItemAsync("episode.mkv", CancellationToken.None);
+            .DeleteItemAsync("episode.mkv.rclonelink", CancellationToken.None);
         Assert.Equal(DavStatusCode.NoContent, status);
         Assert.NotNull(await _context.HistoryItems.AsNoTracking().FirstOrDefaultAsync(x => x.Id == historyId));
     }
@@ -100,7 +100,7 @@ public sealed class DatabaseStoreSymlinkCollectionTests : IAsyncLifetime
         _context.HistoryItems.Add(CreateHistory(historyId, "episode.nzb", category.Name, release.Id));
         await _context.SaveChangesAsync();
         var status = await new DatabaseStoreSymlinkCollection(release, _client, _config, _websocket)
-            .DeleteItemAsync("episode.mkv", CancellationToken.None);
+            .DeleteItemAsync("episode.mkv.rclonelink", CancellationToken.None);
         Assert.Equal(DavStatusCode.NoContent, status);
         Assert.NotNull(await _context.HistoryItems.AsNoTracking().FirstOrDefaultAsync(x => x.Id == historyId));
     }
