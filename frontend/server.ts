@@ -5,6 +5,7 @@ import { WebSocketServer } from "ws";
 import { shouldCompressResponse } from "./server/compression-filter.js";
 import { logger, requestLogger } from "./server/logger.js";
 import { securityHeadersMiddleware } from "./server/security-headers.js";
+import { websocketUpgradeGuard } from "./server/websocket-upgrade-guard.js";
 import {
   formatBackendUnavailableReason,
   isExpectedBackendUnavailableError,
@@ -111,6 +112,10 @@ app.use(requestLogger);
 // and therefore still sees the full, basename-prefixed path.
 const router = express.Router();
 router.use(securityHeadersMiddleware);
+// Real upgrade requests bypass Express via the http server's `upgrade` event,
+// so this only ever answers plain-HTTP hits on the socket path (misconfigured
+// reverse proxy, uptime probe) before they reach React Router.
+router.all("/ws", websocketUpgradeGuard);
 
 // Initialize the websocket server as soon as both it and the server-module are ready
 interface ServerBuildModule {
