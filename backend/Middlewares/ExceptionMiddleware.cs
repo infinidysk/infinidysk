@@ -271,6 +271,40 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             AbortStartedResponse(context);
         }
+        catch (MissingFilePayloadException e)
+        {
+            // The local streaming payload is gone (commonly a database-only
+            // restore): a client-visible data problem, not a server fault, and
+            // never a reason to blocklist the release. The typed header lets
+            // the in-app player distinguish this from an unsupported stream.
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 404;
+                context.Response.Headers["X-InfiniDysk-Stream-Error"] = "missing-file-payload";
+                context.Response.ContentType = "text/plain; charset=utf-8";
+                await context.Response.WriteAsync(
+                    "This file's streaming data is missing from the server. " +
+                    "Remove and re-download the release, or restore from a backup that includes blobs.",
+                    context.RequestAborted).ConfigureAwait(false);
+            }
+
+            var dedupeKey = $"{e.FilePath}|{e.DavItemId}";
+            LogWithDedup(RecentReadErrors, dedupeKey, suppressed =>
+            {
+                if (suppressed > 0)
+                    Log.Warning(
+                        "File {FilePath} cannot be served: its streaming payload is missing (DavItem {DavItemId}, payload {PayloadId}, store {StoreKind}; suppressed {SuppressedCount} duplicates in last 60s)",
+                        e.FilePath, e.DavItemId, e.FileBlobId?.ToString() ?? "none", e.StoreKind, suppressed);
+                else
+                    Log.Warning(
+                        "File {FilePath} cannot be served: its streaming payload is missing (DavItem {DavItemId}, payload {PayloadId}, store {StoreKind})",
+                        e.FilePath, e.DavItemId, e.FileBlobId?.ToString() ?? "none", e.StoreKind);
+            });
+            Log.Debug(e, "Missing streaming payload stack for {FilePath}", e.FilePath);
+
+            AbortStartedResponse(context);
+        }
         catch (Exception e) when (IsDavItemRequest(context) && e is not OutOfMemoryException)
         {
             // A volume that is short or unresolvable is missing data, not a server

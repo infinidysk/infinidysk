@@ -207,6 +207,72 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task MissingFilePayloadBeforeResponseStarted_ReturnsTyped404WithoutAborting()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: false, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw CreateMissingPayloadException());
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Equal("missing-file-payload", context.Response.Headers["X-InfiniDysk-Stream-Error"].ToString());
+        Assert.False(lifetimeFeature.Aborted);
+    }
+
+    [Fact]
+    public async Task MissingFilePayload_LogsOneWarningLineWithoutAStackDump()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: false, lifetimeFeature);
+        var payloadId = Guid.NewGuid();
+        var middleware = CreateMiddleware(_ => throw CreateMissingPayloadException(payloadId));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        var logged = Assert.Single(events,
+            e => e.Level == LogEventLevel.Warning
+                 && e.RenderMessage().Contains("streaming payload is missing", StringComparison.Ordinal));
+        Assert.Contains(payloadId.ToString(), logged.RenderMessage(), StringComparison.Ordinal);
+        Assert.Null(logged.Exception);
+        Assert.DoesNotContain(events, e => e.Level >= LogEventLevel.Error);
+    }
+
+    [Fact]
+    public async Task MissingFilePayloadWithDavItem_DoesNotRecordStreamingFailure()
+    {
+        // Missing local metadata is not evidence of a bad release; feeding it to
+        // the failure tracker would eventually trigger Arr remove-and-blocklist.
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw CreateMissingPayloadException(),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+    }
+
+    private static MissingFilePayloadException CreateMissingPayloadException(Guid? payloadId = null)
+    {
+        var id = Guid.NewGuid();
+        return new MissingFilePayloadException(
+            new DavItem
+            {
+                Id = id,
+                IdPrefix = id.ToString("N")[..DavItem.IdPrefixLength],
+                Path = $"/content/movies/missing-payload-{id:N}.mkv",
+                FileBlobId = payloadId,
+            },
+            DavItem.ItemSubType.MultipartFile);
+    }
+
+    [Fact]
     public async Task StreamingReadTimeout_BeforeResponseStarted_Returns503WithRetryAfter()
     {
         var lifetimeFeature = new TestHttpRequestLifetimeFeature();

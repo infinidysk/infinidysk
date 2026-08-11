@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.WebDav.Base;
@@ -32,9 +33,9 @@ public class DatabaseStoreMultipartFile(
         // store the DavItem being accessed in the http context
         Context.Items["DavItem"] = davMultipartFile;
 
-        var id = davMultipartFile.Id;
         var multipartFile = await dbClient.GetDavMultipartFileAsync(davMultipartFile, ct).ConfigureAwait(false);
-        if (multipartFile is null) throw new FileNotFoundException($"Could not find nzb file with id: {id}");
+        if (multipartFile is null)
+            throw new MissingFilePayloadException(davMultipartFile, DavItem.ItemSubType.MultipartFile);
 
         if (multipartFile.Metadata.AesParams != null
             && multipartFile.Metadata.IsLazy
