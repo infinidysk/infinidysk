@@ -17,10 +17,10 @@ export type MediaErrorKind = "aborted" | "retry" | "unsupported";
 /**
  * MEDIA_ERR_* codes: 1 aborted, 2 network, 3 decode, 4 src-not-supported.
  *
- * A decode error after frames have already played means the decoder works and
- * the bytes went bad (missing or zero-filled segments), so it is worth a
- * reload; a decode error before any progress means the browser never had a
- * working pipeline for this file.
+ * A decode error after frames have already played means the decoder pipeline
+ * worked, so the failure came from the bytes — worth a reload-and-resume; a
+ * decode error before any decoded frame means the browser never had a working
+ * pipeline for this file.
  */
 export function classifyMediaError(code: number | null, hadPlaybackProgress = false): MediaErrorKind {
     switch (code) {
@@ -31,64 +31,41 @@ export function classifyMediaError(code: number | null, hadPlaybackProgress = fa
     }
 }
 
-export type CanPlayType = (type: string) => string;
+export type SourceProbeOutcome =
+    | { kind: "served" }
+    | { kind: "missing-payload" }
+    | { kind: "denied"; status: number }
+    | { kind: "server-error"; status: number | null };
 
-/** Baseline every browser with a working media stack decodes. */
-const BASELINE_TYPE = 'video/mp4; codecs="avc1.42E01E"';
-
-/**
- * Codecs common in Usenet releases that browsers frequently cannot decode.
- * A label counts as unsupported only when every equivalent type string is
- * rejected (HEVC is spelled both hvc1 and hev1 depending on the platform).
- */
-const CODEC_PROBES: { label: string; types: string[] }[] = [
-    { label: "HEVC / H.265", types: ['video/mp4; codecs="hvc1.1.6.L93.B0"', 'video/mp4; codecs="hev1.1.6.L93.B0"'] },
-    { label: "HEVC 10-bit", types: ['video/mp4; codecs="hvc1.2.4.L120.B0"', 'video/mp4; codecs="hev1.2.4.L120.B0"'] },
-    { label: "AV1", types: ['video/mp4; codecs="av01.0.05M.08"'] },
-    { label: "Dolby Digital (AC-3)", types: ['audio/mp4; codecs="ac-3"'] },
-    { label: "Dolby Digital Plus (E-AC-3)", types: ['audio/mp4; codecs="ec-3"'] },
-];
-
-/**
- * True when canPlayType gives informative answers: a browser with a working
- * media stack always accepts baseline H.264, so a rejection there means the
- * probe environment cannot tell us anything (e.g. jsdom).
- */
-export function canProbeCodecs(canPlayType: CanPlayType): boolean {
-    return canPlayType(BASELINE_TYPE) !== "";
-}
-
-/**
- * Labels of the probed codecs this browser reports no support for. Returns
- * nothing when even the baseline is rejected — that means canPlayType is
- * uninformative (non-browser environment), not that every codec is missing.
- */
-export function probeUnsupportedCodecs(canPlayType: CanPlayType): string[] {
-    if (!canProbeCodecs(canPlayType)) return [];
-    return CODEC_PROBES
-        .filter(probe => probe.types.every(type => canPlayType(type) === ""))
-        .map(probe => probe.label);
-}
+export const MISSING_PAYLOAD_HEADER = "x-infinidysk-stream-error";
+export const MISSING_PAYLOAD_VALUE = "missing-file-payload";
 
 /**
  * Chromium reports a media fetch that failed at the HTTP layer with the same
- * MEDIA_ERR_SRC_NOT_SUPPORTED code as a missing decoder. A one-byte ranged
- * GET reproduces the media request cheaply and tells the two apart: an OK
- * response means the server served bytes and the browser rejected them.
+ * MEDIA_ERR_SRC_NOT_SUPPORTED code as an unsupported stream. A one-byte ranged
+ * GET reproduces the media request cheaply and preserves the failure's status
+ * so the player can tell a dead source apart from bytes the browser rejected.
  */
-export async function probeSourceReachable(
+export async function probeSource(
     src: string,
     fetchFn: typeof fetch = fetch,
-): Promise<boolean> {
+): Promise<SourceProbeOutcome> {
     try {
         const response = await fetchFn(src, {
             headers: { Range: "bytes=0-0" },
             cache: "no-store",
             signal: AbortSignal.timeout(10_000),
         });
-        return response.ok;
+        if (response.ok) return { kind: "served" };
+        const status = response.status;
+        if (status === 404 && response.headers.get(MISSING_PAYLOAD_HEADER) === MISSING_PAYLOAD_VALUE) {
+            return { kind: "missing-payload" };
+        }
+        return status < 500
+            ? { kind: "denied", status }
+            : { kind: "server-error", status };
     } catch {
-        return false;
+        return { kind: "server-error", status: null };
     }
 }
 

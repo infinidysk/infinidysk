@@ -411,7 +411,6 @@ export function buildDiagnosticsSnapshot(
             maxAttempts: player.maxAttempts,
             startupMs: player.startupMs,
             error: player.error,
-            unsupportedCodecs: player.unsupportedCodecs,
             events: player.events,
         },
         mediaElement: el ? {

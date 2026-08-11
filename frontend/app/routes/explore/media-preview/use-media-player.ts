@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
     backoffMs,
-    canProbeCodecs,
     classifyMediaError,
     MAX_AUTO_ATTEMPTS,
-    probeSourceReachable,
-    probeUnsupportedCodecs,
+    probeSource,
     STALL_THRESHOLD_MS,
 } from "./media-utils";
 
@@ -15,7 +13,8 @@ export type PlayerStatus =
     | "playing"
     | "recovering"
     | "failed"
-    | "unsupported";
+    | "unsupported"
+    | "missing-payload";
 
 export type PlayerEvent = {
     at: number;
@@ -48,7 +47,6 @@ export function useMediaPlayer({ src }: { src: string }) {
     const [error, setError] = useState<PlayerError | null>(null);
     const [startupMs, setStartupMs] = useState<number | null>(null);
     const [events, setEvents] = useState<PlayerEvent[]>([]);
-    const [unsupportedCodecs, setUnsupportedCodecs] = useState<string[]>([]);
 
     const attemptsRef = useRef(0);
     const framesBaselineRef = useRef(0);
@@ -154,7 +152,6 @@ export function useMediaPlayer({ src }: { src: string }) {
         setError(null);
         setStartupMs(null);
         setEvents([]);
-        setUnsupportedCodecs([]);
     }, [src, clearRecoveryTimer]);
 
     // The source is applied imperatively, not via the JSX src attribute:
@@ -208,30 +205,40 @@ export function useMediaPlayer({ src }: { src: string }) {
         return lastProgressAtRef.current !== null;
     };
 
-    const handleUnsupported = (el: HTMLMediaElement | null, code: number | null) => {
-        const canPlay = el ? (type: string) => el.canPlayType(type) : null;
-        const missing = canPlay ? probeUnsupportedCodecs(canPlay) : [];
-        setUnsupportedCodecs(missing);
-        if (missing.length > 0) log("unsupported", `no decoder for ${missing.join(", ")}`);
-
-        // Chromium reports a media fetch that failed at the HTTP layer with
-        // the same code 4 as a missing decoder. When every probed decoder is
-        // present, verify the source before blaming the browser: a failing
-        // request goes through normal bounded recovery instead.
-        if (code === 4 && canPlay && canProbeCodecs(canPlay) && missing.length === 0) {
-            const generation = generationRef.current;
-            void probeSourceReachable(src).then(reachable => {
-                if (generationRef.current !== generation) return;
-                if (reachable) {
-                    setStatus("unsupported");
-                } else {
-                    log("source-check", "media request failed at the HTTP layer");
-                    beginRecovery("media request failed");
-                }
-            });
+    // Chromium reports a media fetch that failed at the HTTP layer with the
+    // same code 4 as an unsupported stream, so verify the source before
+    // deciding which failure this is.
+    const handleUnsupported = (code: number | null) => {
+        if (code !== 4) {
+            setStatus("unsupported");
             return;
         }
-        setStatus("unsupported");
+        const generation = generationRef.current;
+        void probeSource(src).then(outcome => {
+            if (generationRef.current !== generation) return;
+            switch (outcome.kind) {
+                case "served":
+                    // Bytes were served; the browser rejected them.
+                    setStatus("unsupported");
+                    break;
+                case "missing-payload":
+                    // Local file metadata is gone — re-downloading won't help
+                    // it, so surface a terminal state instead of retry loops.
+                    log("source-check", "backend reports the file data is missing");
+                    setStatus("missing-payload");
+                    break;
+                case "denied":
+                    log("source-check", `media request refused with HTTP ${outcome.status}`);
+                    setStatus("failed");
+                    break;
+                case "server-error":
+                    log("source-check", outcome.status !== null
+                        ? `media request failed with HTTP ${outcome.status}`
+                        : "media request failed (network or timeout)");
+                    beginRecovery("media request failed");
+                    break;
+            }
+        });
     };
 
     const handlers = {
@@ -308,7 +315,7 @@ export function useMediaPlayer({ src }: { src: string }) {
             setError({ code, message });
             log("error", `code ${code ?? "?"}${message ? `: ${message}` : ""}`);
             if (kind === "unsupported") {
-                handleUnsupported(el, code);
+                handleUnsupported(code);
                 return;
             }
             // Code 3 lands here only when frames already decoded — name the
@@ -330,7 +337,6 @@ export function useMediaPlayer({ src }: { src: string }) {
         error,
         startupMs,
         events,
-        unsupportedCodecs,
         retry,
         lastGoodTimeRef,
         lastProgressAtRef,

@@ -4,13 +4,11 @@ import {
     backoffMs,
     bufferedAhead,
     buildMediaSrc,
-    canProbeCodecs,
     classifyMediaError,
     formatClock,
     formatTimeRanges,
     networkStateLabel,
-    probeSourceReachable,
-    probeUnsupportedCodecs,
+    probeSource,
     readyStateLabel,
     type TimeRangesLike,
 } from "./media-utils";
@@ -46,47 +44,57 @@ describe("classifyMediaError", () => {
     });
 });
 
-describe("probeUnsupportedCodecs", () => {
-    const supportAll = () => "probably";
+describe("probeSource", () => {
+    const headerMap = (entries: Record<string, string>) =>
+        ({ get: (name: string) => entries[name.toLowerCase()] ?? null }) as Headers;
 
-    it("reports nothing when the browser supports everything probed", () => {
-        expect(probeUnsupportedCodecs(supportAll)).toEqual([]);
-    });
-
-    it("names codecs the browser rejects", () => {
-        const missing = probeUnsupportedCodecs(type => (type.includes("hvc1") || type.includes("hev1") ? "" : "probably"));
-        expect(missing).toEqual(["HEVC / H.265", "HEVC 10-bit"]);
-    });
-
-    it("probes the Dolby Digital variants independently", () => {
-        const missing = probeUnsupportedCodecs(type => (type.includes('"ac-3"') ? "" : "probably"));
-        expect(missing).toEqual(["Dolby Digital (AC-3)"]);
-    });
-
-    it("stays silent when canPlayType rejects even the baseline", () => {
-        expect(probeUnsupportedCodecs(() => "")).toEqual([]);
-        expect(canProbeCodecs(() => "")).toBe(false);
-        expect(canProbeCodecs(supportAll)).toBe(true);
-    });
-});
-
-describe("probeSourceReachable", () => {
-    it("asks for a single byte and reports an OK response as reachable", async () => {
+    it("asks for a single byte and reports an OK response as served", async () => {
         const fetchFn = vi.fn<typeof fetch>().mockResolvedValue({ ok: true } as Response);
-        await expect(probeSourceReachable("/view/a.mp4?downloadKey=k", fetchFn)).resolves.toBe(true);
+        await expect(probeSource("/view/a.mp4?downloadKey=k", fetchFn)).resolves.toEqual({ kind: "served" });
         const [url, init] = fetchFn.mock.calls[0]!;
         expect(url).toBe("/view/a.mp4?downloadKey=k");
         expect(init?.headers).toEqual({ Range: "bytes=0-0" });
     });
 
-    it("reports HTTP errors as unreachable", async () => {
-        const fetchFn = vi.fn<typeof fetch>().mockResolvedValue({ ok: false, status: 500 } as Response);
-        await expect(probeSourceReachable("/view/a.mp4", fetchFn)).resolves.toBe(false);
+    it("recognizes the backend's typed missing-payload 404", async () => {
+        const fetchFn = vi.fn<typeof fetch>().mockResolvedValue({
+            ok: false,
+            status: 404,
+            headers: headerMap({ "x-infinidysk-stream-error": "missing-file-payload" }),
+        } as Response);
+        await expect(probeSource("/view/a.mp4", fetchFn)).resolves.toEqual({ kind: "missing-payload" });
     });
 
-    it("reports thrown fetches (network down, timeout) as unreachable", async () => {
+    it("treats other 4xx as refused, preserving the status", async () => {
+        const fetchFn = vi.fn<typeof fetch>().mockResolvedValue({
+            ok: false,
+            status: 403,
+            headers: headerMap({}),
+        } as Response);
+        await expect(probeSource("/view/a.mp4", fetchFn)).resolves.toEqual({ kind: "denied", status: 403 });
+    });
+
+    it("treats a plain 404 without the marker header as refused", async () => {
+        const fetchFn = vi.fn<typeof fetch>().mockResolvedValue({
+            ok: false,
+            status: 404,
+            headers: headerMap({}),
+        } as Response);
+        await expect(probeSource("/view/a.mp4", fetchFn)).resolves.toEqual({ kind: "denied", status: 404 });
+    });
+
+    it("treats 5xx as a server error worth retrying", async () => {
+        const fetchFn = vi.fn<typeof fetch>().mockResolvedValue({
+            ok: false,
+            status: 500,
+            headers: headerMap({}),
+        } as Response);
+        await expect(probeSource("/view/a.mp4", fetchFn)).resolves.toEqual({ kind: "server-error", status: 500 });
+    });
+
+    it("treats thrown fetches (network down, timeout) as server errors", async () => {
         const fetchFn = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("network down"));
-        await expect(probeSourceReachable("/view/a.mp4", fetchFn)).resolves.toBe(false);
+        await expect(probeSource("/view/a.mp4", fetchFn)).resolves.toEqual({ kind: "server-error", status: null });
     });
 });
 

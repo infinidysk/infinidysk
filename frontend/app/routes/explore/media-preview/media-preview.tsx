@@ -152,12 +152,21 @@ function StatusBanner({ player, mimeType }: { player: ReturnType<typeof useMedia
                 <Alert variant="warning" className="alert-soft py-2 text-sm" role="alert">
                     <Icon name="videocam_off" className="!text-[18px]" />
                     <span>
-                        This browser cannot decode {mimeType || "this format"}
+                        This browser could not play {mimeType || "this file"}
                         {player.error?.message ? ` (${player.error.message})` : ""}.
-                        {player.unsupportedCodecs.length > 0
-                            ? ` No decoder available for ${player.unsupportedCodecs.join(", ")}.`
-                            : ""}
-                        {" "}Use Open direct or Download and play it in an external player.
+                        {" "}The container or one of its streams may be unsupported here —
+                        use Open direct or Download and play it in an external player.
+                    </span>
+                </Alert>
+            );
+        case "missing-payload":
+            return (
+                <Alert variant="danger" className="alert-soft py-2 text-sm" role="alert">
+                    <Icon name="error" className="!text-[18px]" />
+                    <span>
+                        This file cannot be served: its streaming data is missing from the server
+                        (often a database restore without the blobs/ folder).
+                        {" "}Remove and re-download the release, or restore from a backup that includes blobs.
                     </span>
                 </Alert>
             );
