@@ -1,13 +1,15 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
 using NzbWebDAV.Utils;
+using Serilog;
 
 namespace NzbWebDAV.Services;
 
 /// <summary>
 /// Background service that processes the blob cleanup queue.
-/// Continuously monitors BlobCleanupQueueItems table and deletes corresponding blobs.
+/// A payload blob is only deleted once no DavItem still references it.
 /// </summary>
 public class BlobCleanupService : BackgroundService
 {
@@ -19,26 +21,15 @@ public class BlobCleanupService : BackgroundService
             {
                 await using var dbContext = new DavDatabaseContext();
 
-                // Get the first item from the queue
-                var cleanupItem = await dbContext.BlobCleanupItems
-                    .FirstOrDefaultAsync(stoppingToken)
-                    .ConfigureAwait(false);
+                var processed = await ProcessNextCleanupItemAsync(dbContext, stoppingToken).ConfigureAwait(false);
 
                 // If no items in queue, wait 10 seconds before checking again
-                if (cleanupItem == null)
+                if (!processed)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
-                    continue;
                 }
 
-                // Delete the blob
-                BlobStore.Delete(cleanupItem.Id);
-
-                // Remove the queue item from database
-                dbContext.BlobCleanupItems.Remove(cleanupItem);
-                await dbContext.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
-
-                // Continue immediately to next iteration to process more items
+                // Otherwise continue immediately to process more items
             }
             catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
             {
@@ -54,5 +45,62 @@ public class BlobCleanupService : BackgroundService
                 await Task.Delay(retryDelay, stoppingToken).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Processes the next item from the blob cleanup queue, if any.
+    /// Returns <c>false</c> when the queue is empty (nothing to do).
+    /// Extracted as an internal static method so lifecycle behavior is unit-testable
+    /// against a SQLite-backed <see cref="DavDatabaseContext"/> without running the
+    /// background service loop.
+    /// </summary>
+    internal static async Task<bool> ProcessNextCleanupItemAsync(DavDatabaseContext dbContext, CancellationToken ct)
+    {
+        // Get the first item from the queue
+        var cleanupItem = await dbContext.BlobCleanupItems
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        if (cleanupItem == null) return false;
+
+        var blobId = cleanupItem.Id;
+
+        // Use a serializable (BEGIN IMMEDIATE) transaction so the reference
+        // check and the cleanup-item removal are atomic: a concurrent insert
+        // of a new DavItem referencing this blob id must block until commit,
+        // after which its own cleanup trigger can requeue if needed.
+        await using var tx = await dbContext.Database
+            .BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            .ConfigureAwait(false);
+
+        // Only delete the blob if no DavItem still references it. The delete
+        // trigger queues the old FileBlobId on every removal/rekey, so a blob
+        // that was later re-attached to a live item must never be dropped.
+        var referencingItemPath = await dbContext.Items
+            .Where(x => x.FileBlobId == blobId)
+            .Select(x => x.Path)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        if (referencingItemPath == null)
+        {
+            // Delete the blob before SaveChangesAsync so a failure leaves the
+            // cleanup item in the DB for a retry; BlobStore.Delete is
+            // idempotent when the file is already gone.
+            BlobStore.Delete(blobId);
+        }
+        else
+        {
+            Log.Debug(
+                "Skipping blob cleanup for {BlobId}: still referenced by dav item at {Path}",
+                blobId, referencingItemPath);
+        }
+
+        // Remove the cleanup queue item and commit.
+        dbContext.BlobCleanupItems.Remove(cleanupItem);
+        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+
+        return true;
     }
 }
