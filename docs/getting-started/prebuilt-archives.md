@@ -4,6 +4,10 @@ Prebuilt release archives run InfiniDysk directly on Linux without Docker or a
 source build. They include the compiled backend, frontend, production Node.js
 dependencies, and rapidyenc native library.
 
+Archives follow the same [release channels and tags](index.md#release-channels-and-tags)
+as the Docker image: stable builds below, `rc` and `dev` builds under
+[Pre-release testing](#pre-release-testing).
+
 ## Requirements
 
 - Linux x64 or ARM64
@@ -57,6 +61,16 @@ For automation, the rolling `rc` pre-release always exposes stable asset URLs:
 The archive's `version.txt` identifies the exact release candidate. The rolling
 `rc` release remains after a stable release ships (it is not deleted), so check
 its version before assuming it is newer than `latest`.
+
+Work-in-progress `dev` snapshots follow the same pattern on the rolling `dev`
+pre-release:
+
+- [linux-x64](https://github.com/infinidysk/infinidysk/releases/download/dev/infinidysk-dev-linux-x64.tar.gz)
+- [linux-arm64](https://github.com/infinidysk/infinidysk/releases/download/dev/infinidysk-dev-linux-arm64.tar.gz)
+
+`dev` builds are unversioned, refresh whenever the maintainer validates a
+snapshot on non-production, and may be non-functional — see
+[Release channels and tags](index.md#release-channels-and-tags).
 
 ## Upgrade
 

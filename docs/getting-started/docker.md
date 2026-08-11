@@ -2,6 +2,8 @@
 
 InfiniDysk ships as a single multi-arch image: `ghcr.io/infinidysk/infinidysk`. The container runs the frontend (public port `3000`) and backend (internal `8080`).
 
+The examples use `:latest` (current stable). See [Release channels and tags](index.md#release-channels-and-tags) for the `lts`, `rc`, and `dev` channels — and pin an exact version tag (`v1.2.3`) when you want reproducible deploys.
+
 !!! tip "Hosted with DUMB"
 
     Prefer a batteries-included Arr stack? InfiniDysk is a **fully supported core module** in [Debrid Unlimited Media Bridge (DUMB)](https://dumbarr.com/) — see the [InfiniDysk service guide](https://dumbarr.com/services/core/nzbdav/) and [setup options](index.md#setup-and-hosting-options).

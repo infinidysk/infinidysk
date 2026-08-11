@@ -1,5 +1,9 @@
 # Contributing
 
+!!! note "Source builds are a development workflow, not a deployment method"
+
+    Running InfiniDysk from a cloned repository is how the project is developed, but it is **not a supported deployment method** — releases are tested as the published [Docker image](../getting-started/docker.md) and [prebuilt Linux archives](../getting-started/prebuilt-archives.md). You are still welcome to run from source; it is simply not a path releases are tested against. See [Release channels and tags](../getting-started/index.md#release-channels-and-tags) for the supported channels.
+
 ## Shared environment
 
 Frontend and backend must share:
