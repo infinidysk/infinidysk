@@ -41,7 +41,7 @@ const BASELINE_TYPE = 'video/mp4; codecs="avc1.42E01E"';
  * A label counts as unsupported only when every equivalent type string is
  * rejected (HEVC is spelled both hvc1 and hev1 depending on the platform).
  */
-const CODEC_PROBES: { label: string, types: string[] }[] = [
+const CODEC_PROBES: { label: string; types: string[] }[] = [
     { label: "HEVC / H.265", types: ['video/mp4; codecs="hvc1.1.6.L93.B0"', 'video/mp4; codecs="hev1.1.6.L93.B0"'] },
     { label: "HEVC 10-bit", types: ['video/mp4; codecs="hvc1.2.4.L120.B0"', 'video/mp4; codecs="hev1.2.4.L120.B0"'] },
     { label: "AV1", types: ['video/mp4; codecs="av01.0.05M.08"'] },

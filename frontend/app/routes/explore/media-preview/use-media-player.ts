@@ -311,7 +311,11 @@ export function useMediaPlayer({ src }: { src: string }) {
                 handleUnsupported(el, code);
                 return;
             }
-            beginRecovery("network error");
+            // Code 3 lands here only when frames already decoded — name the
+            // real trigger so the event log and diagnostics stay truthful.
+            beginRecovery(code === 3
+                ? `decode error after playback progress${message ? ` (${message})` : ""}`
+                : "network error");
         },
     };
 
