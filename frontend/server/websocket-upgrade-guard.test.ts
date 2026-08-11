@@ -48,7 +48,7 @@ describe("websocketUpgradeGuard", () => {
 
   it("answers 426 with an Upgrade header and a plain-text body", () => {
     const res = mockRes();
-    websocketUpgradeGuard(mockReq() as never, res as never);
+    websocketUpgradeGuard(mockReq() as never, res as never, vi.fn());
 
     expect(res.statusCode).toBe(426);
     expect(res.headers.get("Upgrade")).toBe("websocket");
@@ -56,8 +56,8 @@ describe("websocketUpgradeGuard", () => {
   });
 
   it("warns once per client and throttles repeats within the window", () => {
-    websocketUpgradeGuard(mockReq() as never, mockRes() as never);
-    websocketUpgradeGuard(mockReq() as never, mockRes() as never);
+    websocketUpgradeGuard(mockReq() as never, mockRes() as never, vi.fn());
+    websocketUpgradeGuard(mockReq() as never, mockRes() as never, vi.fn());
 
     expect(logger.warn).toHaveBeenCalledOnce();
     const message = vi.mocked(logger.warn).mock.calls[0]?.[0];
@@ -66,8 +66,8 @@ describe("websocketUpgradeGuard", () => {
   });
 
   it("tracks different clients independently", () => {
-    websocketUpgradeGuard(mockReq() as never, mockRes() as never);
-    websocketUpgradeGuard(mockReq({ ip: "198.51.100.4" }) as never, mockRes() as never);
+    websocketUpgradeGuard(mockReq() as never, mockRes() as never, vi.fn());
+    websocketUpgradeGuard(mockReq({ ip: "198.51.100.4" }) as never, mockRes() as never, vi.fn());
 
     expect(logger.warn).toHaveBeenCalledTimes(2);
   });

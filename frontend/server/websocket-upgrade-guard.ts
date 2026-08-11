@@ -8,7 +8,7 @@ import { clientErrorKey, shouldLogClientError } from "./request-log-throttle.js"
 // breaks live UI updates), an uptime probe, or a browser tab opened on /ws.
 // Answer 426 instead of letting React Router dump a "No route matches /ws"
 // stack; throttle the warning so a retrying client cannot flood the log.
-export const websocketUpgradeGuard: RequestHandler = (req, res) => {
+export const websocketUpgradeGuard: RequestHandler = (req, res, _next) => {
   const client = req.ip ?? req.socket.remoteAddress ?? "unknown";
   const { log, suppressed } = shouldLogClientError(
     clientErrorKey(req.method, 426, "/ws", client),
