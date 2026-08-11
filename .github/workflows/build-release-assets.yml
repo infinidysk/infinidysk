@@ -138,7 +138,10 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          archive_name="infinidysk-v${VERSION}-${RID}"
+          # Only semver versions get the v prefix; channel labels like "dev"
+          # produce stable names (infinidysk-dev-*) directly.
+          prefix=""; [[ "$VERSION" =~ ^[0-9] ]] && prefix="v"
+          archive_name="infinidysk-${prefix}${VERSION}-${RID}"
           mkdir -p "$archive_name/backend" "$archive_name/frontend"
           cp -a backend-publish/. "$archive_name/backend/"
           tar -xzf release-frontend/frontend-package.tar.gz -C "$archive_name/frontend"
@@ -152,7 +155,7 @@ jobs:
           # Legacy nzbdav-* named copy: DUMB's prebuilt installer matches asset
           # names and archive roots as 'nzbdav-*-linux-<arch>'. Temporary compat
           # until DUMB matches infinidysk-* names; remove both copies then.
-          compat_name="nzbdav-v${VERSION}-${RID}"
+          compat_name="nzbdav-${prefix}${VERSION}-${RID}"
           cp -a "$archive_name" "$compat_name"
           tar -czf "${compat_name}.tar.gz" "$compat_name"
 
@@ -165,11 +168,14 @@ jobs:
           ROLLING_TAG: ${{ inputs.rolling_tag }}
         run: |
           set -euo pipefail
-          archive="infinidysk-v${VERSION}-${RID}.tar.gz"
-          compat_archive="nzbdav-v${VERSION}-${RID}.tar.gz"
+          prefix=""; [[ "$VERSION" =~ ^[0-9] ]] && prefix="v"
+          archive="infinidysk-${prefix}${VERSION}-${RID}.tar.gz"
+          compat_archive="nzbdav-${prefix}${VERSION}-${RID}.tar.gz"
           gh release upload "$RELEASE_TAG" "$archive" "$compat_archive" --clobber
 
-          if [[ -n "$ROLLING_TAG" ]]; then
+          # Skip when the rolling tag is the same release (e.g. dev): the
+          # stable-named copy would duplicate the archives uploaded above.
+          if [[ -n "$ROLLING_TAG" && "$ROLLING_TAG" != "$RELEASE_TAG" ]]; then
             rolling_archive="infinidysk-${ROLLING_TAG}-${RID}.tar.gz"
             compat_rolling_archive="nzbdav-${ROLLING_TAG}-${RID}.tar.gz"
             cp "$archive" "$rolling_archive"
