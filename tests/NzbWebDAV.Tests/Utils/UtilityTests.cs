@@ -11,13 +11,43 @@ public class UtilityTests
     [InlineData("movie.r12", true, false, false)]
     [InlineData("movie.7z.003", false, true, false)]
     [InlineData("movie.mkv.001", false, false, true)]
+    [InlineData("movie.MP4.002", false, false, true)]
+    [InlineData("movie.avi.010", false, false, true)]
     [InlineData("movie.mkv", false, false, false)]
+    [InlineData("movie.mkv.", false, false, false)]
+    [InlineData("movie.rar.001", false, false, false)]
+    [InlineData("notes.pdf.001", false, false, false)]
     public void FilenameClassifiers_RecognizeArchiveConventions(
-        string filename, bool rar, bool sevenZip, bool multipartMkv)
+        string filename, bool rar, bool sevenZip, bool splitVideo)
     {
         Assert.Equal(rar, FilenameUtil.IsRarFile(filename));
         Assert.Equal(sevenZip, FilenameUtil.Is7zFile(filename));
-        Assert.Equal(multipartMkv, FilenameUtil.IsMultipartMkv(filename));
+        Assert.Equal(splitVideo, FilenameUtil.IsSplitVideoFile(filename));
+    }
+
+    [Theory]
+    [InlineData("movie.mkv.001", "movie.mkv")]
+    [InlineData("EP01.MKV.002", "EP01.MKV")]
+    [InlineData("clip.mp4.010", "clip.mp4")]
+    [InlineData("movie.mkv", null)]
+    [InlineData("movie.mkv.", null)]
+    [InlineData("movie.rar.001", null)]
+    [InlineData("notes.pdf.001", null)]
+    [InlineData(null, null)]
+    public void GetSplitVideoBaseName_StripsNumericSuffixForVideoFiles(string? filename, string? expected)
+    {
+        Assert.Equal(expected, FilenameUtil.GetSplitVideoBaseName(filename));
+    }
+
+    [Theory]
+    [InlineData("movie.mkv.001", 1)]
+    [InlineData("clip.mp4.010", 10)]
+    [InlineData("movie.mkv", null)]
+    [InlineData("notes.pdf.001", null)]
+    [InlineData(null, null)]
+    public void GetSplitVideoPartNumber_ParsesNumericSuffix(string? filename, int? expected)
+    {
+        Assert.Equal(expected, FilenameUtil.GetSplitVideoPartNumber(filename));
     }
 
     [Theory]

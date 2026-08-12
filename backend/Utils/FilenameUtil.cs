@@ -24,7 +24,7 @@ public static partial class FilenameUtil
         return IsVideoFile(filename)
                || IsRarFile(filename)
                || Is7zFile(filename)
-               || IsMultipartMkv(filename);
+               || IsSplitVideoFile(filename);
     }
 
     public static bool IsVideoFile(string filename)
@@ -60,10 +60,30 @@ public static partial class FilenameUtil
         return Regex.IsMatch(filename, @"\.7z(\.(\d+))?$", RegexOptions.IgnoreCase);
     }
 
-    public static bool IsMultipartMkv(string? filename)
+    public static bool IsSplitVideoFile(string? filename) =>
+        GetSplitVideoBaseName(filename) is not null;
+
+    /// <summary>
+    /// Strips a trailing numeric split suffix (e.g. <c>.001</c>) when the remainder
+    /// is a known video filename. Returns null for non-splits.
+    /// </summary>
+    public static string? GetSplitVideoBaseName(string? filename)
     {
-        if (string.IsNullOrEmpty(filename)) return false;
-        return Regex.IsMatch(filename, @"\.mkv\.(\d+)?$", RegexOptions.IgnoreCase);
+        if (string.IsNullOrEmpty(filename)) return null;
+        var partExt = Path.GetExtension(filename);
+        if (!Regex.IsMatch(partExt, @"^\.\d+$")) return null;
+        var baseName = filename[..^partExt.Length];
+        return IsVideoFile(baseName) ? baseName : null;
+    }
+
+    /// <summary>
+    /// Part ordinal from a split-video filename (<c>.001</c> → 1). Null when the
+    /// name is not a split video file.
+    /// </summary>
+    public static int? GetSplitVideoPartNumber(string? filename)
+    {
+        if (GetSplitVideoBaseName(filename) is null) return null;
+        return int.Parse(Path.GetExtension(filename!)[1..]);
     }
 
     public static string GetJobName(string filename)

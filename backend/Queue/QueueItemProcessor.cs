@@ -452,8 +452,7 @@ public class QueueItemProcessor(
         bool skipRarGroup = false
     )
     {
-        var groups = fileInfos
-            .GroupBy(GetGroupName);
+        var groups = GroupFilesForProcessing(fileInfos);
 
         foreach (var group in groups)
         {
@@ -467,7 +466,7 @@ public class QueueItemProcessor(
                     yield return new RarProcessor(fileInfo, usenetClient, archivePassword, ct);
             }
 
-            else if (group.Key == "multipart-mkv")
+            else if (group.Key.StartsWith("split-video:", StringComparison.Ordinal))
                 yield return new MultipartMkvProcessor(group.ToList(), usenetClient, ct);
 
             else if (group.Key == "other")
@@ -476,11 +475,82 @@ public class QueueItemProcessor(
         }
     }
 
-    private static string GetGroupName(GetFileInfosStep.FileInfo x) =>
+    internal static string GetGroupName(GetFileInfosStep.FileInfo x) =>
         FilenameUtil.Is7zFile(x.FileName) ? "7z"
         : x.IsRar || FilenameUtil.IsRarFile(x.FileName) ? "rar"
-        : FilenameUtil.IsMultipartMkv(x.FileName) ? "multipart-mkv"
+        : FilenameUtil.GetSplitVideoBaseName(x.FileName) is { } baseName
+            ? $"split-video:{baseName.ToLowerInvariant()}"
         : "other";
+
+    internal static List<IGrouping<string, GetFileInfosStep.FileInfo>> GroupFilesForProcessing(
+        IReadOnlyList<GetFileInfosStep.FileInfo> fileInfos)
+    {
+        return MaybeMergeSplitVideoGroups(fileInfos.GroupBy(GetGroupName).ToList());
+    }
+
+    /// <summary>
+    /// When multiple split-video groups have globally disjoint part numbers that
+    /// form one contiguous sequence starting at 1, treat them as one inconsistently
+    /// named set (PAR2 vs subject vs yEnc header disagreement). Season packs always
+    /// collide on part numbers because each splitter restarts at .001.
+    /// </summary>
+    internal static List<IGrouping<string, GetFileInfosStep.FileInfo>> MaybeMergeSplitVideoGroups(
+        List<IGrouping<string, GetFileInfosStep.FileInfo>> groups)
+    {
+        var splitGroups = groups
+            .Where(g => g.Key.StartsWith("split-video:", StringComparison.Ordinal))
+            .ToList();
+        if (splitGroups.Count < 2)
+            return groups;
+
+        var allParts = splitGroups.SelectMany(g => g).ToList();
+        var partNumbers = new List<int>(allParts.Count);
+        foreach (var part in allParts)
+        {
+            var n = FilenameUtil.GetSplitVideoPartNumber(part.FileName);
+            if (n is null)
+                return groups;
+            partNumbers.Add(n.Value);
+        }
+
+        if (partNumbers.Distinct().Count() != partNumbers.Count)
+            return groups;
+
+        var sorted = partNumbers.OrderBy(n => n).ToList();
+        if (sorted[0] != 1)
+            return groups;
+        for (var i = 0; i < sorted.Count; i++)
+        {
+            if (sorted[i] != i + 1)
+                return groups;
+        }
+
+        Log.Information(
+            "Merging {GroupCount} split-video groups with disjoint contiguous part numbers into one set ({FileCount} parts)",
+            splitGroups.Count,
+            allParts.Count);
+
+        var mergedKey = splitGroups[0].Key;
+        var merged = allParts.GroupBy(_ => mergedKey).Single();
+        var result = new List<IGrouping<string, GetFileInfosStep.FileInfo>>(
+            groups.Count - splitGroups.Count + 1);
+        var mergedInserted = false;
+        foreach (var group in groups)
+        {
+            if (group.Key.StartsWith("split-video:", StringComparison.Ordinal))
+            {
+                if (!mergedInserted)
+                {
+                    result.Add(merged);
+                    mergedInserted = true;
+                }
+                continue;
+            }
+            result.Add(group);
+        }
+
+        return result;
+    }
 
     private async Task<DavItem?> GetMountFolder()
     {
