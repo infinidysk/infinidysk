@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  clearMigrationObserved,
   clearReloadAttempts,
   decideMigrationStatusPoll,
   MAX_RELOAD_ATTEMPTS,
+  readMigrationObserved,
   readReloadAttempts,
+  writeMigrationObserved,
   writeReloadAttempts,
 } from "./migration-progress";
 
@@ -86,6 +89,13 @@ describe("decideMigrationStatusPoll", () => {
     });
   });
 
+  it("keeps reloading on 404 after migration has been observed", () => {
+    expect(decideMigrationStatusPoll(404, null, MAX_RELOAD_ATTEMPTS, true)).toEqual({
+      action: "connecting",
+      reloadMs: 1500,
+    });
+  });
+
   it("treats 502/503 as connecting with a longer reload", () => {
     expect(decideMigrationStatusPoll(502, null)).toEqual({
       action: "connecting",
@@ -145,5 +155,15 @@ describe("reload attempt storage", () => {
     writeReloadAttempts(storage, 2, now);
     clearReloadAttempts(storage);
     expect(readReloadAttempts(storage, now)).toBe(0);
+  });
+
+  it("persists migration observed across reloads", () => {
+    const storage = createMemoryStorage();
+
+    expect(readMigrationObserved(storage)).toBe(false);
+    writeMigrationObserved(storage);
+    expect(readMigrationObserved(storage)).toBe(true);
+    clearMigrationObserved(storage);
+    expect(readMigrationObserved(storage)).toBe(false);
   });
 });

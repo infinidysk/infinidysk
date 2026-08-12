@@ -36,6 +36,7 @@ export type MigrationPollDecision =
 export const MAX_RELOAD_ATTEMPTS = 3;
 
 const RELOAD_KEY = "infinidysk.migration-reload-attempts";
+const MIGRATION_OBSERVED_KEY = "infinidysk.migration-observed";
 const RESET_AFTER_MS = 2 * 60 * 1000;
 
 type ReloadAttemptState = {
@@ -72,11 +73,24 @@ export function clearReloadAttempts(storage: Storage): void {
   storage.removeItem(RELOAD_KEY);
 }
 
+export function readMigrationObserved(storage: Storage): boolean {
+  return storage.getItem(MIGRATION_OBSERVED_KEY) === "1";
+}
+
+export function writeMigrationObserved(storage: Storage): void {
+  storage.setItem(MIGRATION_OBSERVED_KEY, "1");
+}
+
+export function clearMigrationObserved(storage: Storage): void {
+  storage.removeItem(MIGRATION_OBSERVED_KEY);
+}
+
 /** Pure decision helper for MigrationBoundary polling (testable without React). */
 export function decideMigrationStatusPoll(
   httpStatus: number,
   body: unknown,
   reloadAttempts = 0,
+  seenMigration = false,
 ): MigrationPollDecision {
   if (httpStatus >= 200 && httpStatus < 300) {
     if (isMigrationStatus(body)) {
@@ -88,6 +102,9 @@ export function decideMigrationStatusPoll(
   }
 
   if (httpStatus === 404) {
+    if (seenMigration) {
+      return { action: "connecting", reloadMs: 1500 };
+    }
     return reloadAttempts >= MAX_RELOAD_ATTEMPTS
       ? { action: "fallback", stopPolling: true }
       : { action: "connecting", reloadMs: 1500 };
@@ -164,16 +181,21 @@ export function MigrationBoundary({ fallback }: { fallback: FallbackProps }) {
         if (cancelled) return;
 
         let reloadAttempts = 0;
+        let migrationObserved = false;
         try {
           reloadAttempts = readReloadAttempts(window.sessionStorage, Date.now());
+          migrationObserved = readMigrationObserved(window.sessionStorage);
         } catch {
           reloadAttempts = 0;
+          migrationObserved = false;
         }
 
-        const decision = decideMigrationStatusPoll(res.status, body, reloadAttempts);
+        const hasSeenMigration = seenMigration.current || migrationObserved;
+        const decision = decideMigrationStatusPoll(res.status, body, reloadAttempts, hasSeenMigration);
         if (decision.action === "migrating") {
           try {
             clearReloadAttempts(window.sessionStorage);
+            writeMigrationObserved(window.sessionStorage);
           } catch {
             // Ignore storage failures in private browsing modes.
           }
@@ -186,7 +208,7 @@ export function MigrationBoundary({ fallback }: { fallback: FallbackProps }) {
 
         if (decision.action === "connecting") {
           setPhase("connecting");
-          if (res.status === 404) {
+          if (res.status === 404 && !hasSeenMigration) {
             try {
               writeReloadAttempts(window.sessionStorage, reloadAttempts + 1, Date.now());
             } catch {
@@ -199,6 +221,7 @@ export function MigrationBoundary({ fallback }: { fallback: FallbackProps }) {
 
         try {
           clearReloadAttempts(window.sessionStorage);
+          clearMigrationObserved(window.sessionStorage);
         } catch {
           // Ignore storage failures in private browsing modes.
         }
