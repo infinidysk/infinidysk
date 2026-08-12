@@ -169,7 +169,7 @@ public sealed class QueueManager : IDisposable
     public IReadOnlyList<InProgressQueueItemSnapshot> GetInProgressQueueItems()
     {
         var items = _inProgress.Values
-            .Select(x => new InProgressQueueItemSnapshot(x.QueueItem, x.ProgressPercentage, x.IsPrimary))
+            .Select(ToSnapshot)
             .ToList();
 
         items.Sort((a, b) =>
@@ -194,7 +194,7 @@ public sealed class QueueManager : IDisposable
     public InProgressQueueItemSnapshot? FindInProgressQueueItem(Guid queueItemId)
     {
         return _inProgress.TryGetValue(queueItemId, out var item)
-            ? new InProgressQueueItemSnapshot(item.QueueItem, item.ProgressPercentage, item.IsPrimary)
+            ? ToSnapshot(item)
             : null;
     }
 
@@ -782,6 +782,8 @@ public sealed class QueueManager : IDisposable
             QueueNzbStream = queueNzbStream,
             CachingUsenetClient = cachingUsenetClient,
             StartedAt = DateTime.UtcNow,
+            LastThroughputSampleTime = DateTime.UtcNow,
+            LastThroughputSampleProgress = 0,
             WatchdogCts = null!, // set below, after the worker task is created
         };
 
@@ -842,6 +844,17 @@ public sealed class QueueManager : IDisposable
                 {
                     if (progress > latestProgress) latestProgress = progress;
                     inProgressQueueItem.ProgressPercentage = latestProgress;
+                    var sample = QueueThroughput.Update(
+                        new QueueThroughput.SampleState(
+                            inProgressQueueItem.BytesPerSecond,
+                            inProgressQueueItem.LastThroughputSampleTime,
+                            inProgressQueueItem.LastThroughputSampleProgress),
+                        latestProgress,
+                        queueItem.TotalSegmentBytes,
+                        DateTime.UtcNow);
+                    inProgressQueueItem.BytesPerSecond = sample.BytesPerSecond;
+                    inProgressQueueItem.LastThroughputSampleTime = sample.LastSampleTime;
+                    inProgressQueueItem.LastThroughputSampleProgress = sample.LastSampleProgress;
                 }
 
                 if (progress is 100 or 200) SendLatestProgress();
@@ -1072,12 +1085,28 @@ public sealed class QueueManager : IDisposable
     public readonly record struct InProgressQueueItemSnapshot(
         QueueItem QueueItem,
         int ProgressPercentage,
-        bool IsPrimary);
+        bool IsPrimary,
+        TimeSpan? Eta = null,
+        double BytesPerSecond = 0);
+
+    private static InProgressQueueItemSnapshot ToSnapshot(InProgressQueueItem item) =>
+        new(
+            item.QueueItem,
+            item.ProgressPercentage,
+            item.IsPrimary,
+            QueueThroughput.ComputeEta(
+                item.BytesPerSecond,
+                item.ProgressPercentage,
+                item.QueueItem.TotalSegmentBytes),
+            item.BytesPerSecond);
 
     private sealed class InProgressQueueItem
     {
         public QueueItem QueueItem { get; init; } = null!;
         public int ProgressPercentage { get; set; }
+        public double BytesPerSecond { get; set; }
+        public DateTime LastThroughputSampleTime { get; set; }
+        public int LastThroughputSampleProgress { get; set; }
 
         /// <summary>
         /// Name of the queue stage currently executing (e.g. par2, lazy-rar,

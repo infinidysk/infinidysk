@@ -12,11 +12,15 @@ public class GetFullStatusController(
     protected override Task<IActionResult> Handle()
     {
         // mimic sabnzbd fullstatus
+        var speedLimitKbps = Config.GetSabSpeedLimitKbps();
         var status = new GetFullStatusResponse()
         {
             Status = new SabStatusObject
             {
                 CompleteDir = SabPathResolver.GetCompletedDir(Config),
+                Paused = Config.IsSabQueuePaused(),
+                SpeedLimit = speedLimitKbps.ToString(),
+                SpeedLimitAbs = speedLimitKbps.ToString(),
             }
         };
 

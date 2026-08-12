@@ -30,6 +30,8 @@ Per-job pause and resume accept UUID(s) via `value` (comma-separated or repeated
 
 `mode=speedlimit` is **accepted and stored** and reflected in queue JSON (`speedlimit` / `speedlimit_abs`). Byte-accurate download throttling is **not** enforced yet — that work is tracked in [#375](https://github.com/infinidysk/infinidysk/issues/375).
 
+Queue JSON reports live throughput for in-progress jobs [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }: per-slot `timeleft` (`H:MM:SS`, or `D:HH:MM:SS` past 24h), plus queue-level `timeleft`, `kbpersec` (KB/s), and `speed` (human units such as `1.3 M`). Queued and paused slots report `0:00:00`. `status` / `fullstatus` include `paused`, `speedlimit`, and `speedlimit_abs`; live speed stays on `mode=queue`.
+
 ## Intentional differences
 
 - Job identifiers are UUIDs rather than `SABnzbd_nzo_*` strings. Treat them as opaque values.

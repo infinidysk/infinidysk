@@ -11,11 +11,15 @@ public class GetStatusController(
 {
     protected override Task<IActionResult> Handle()
     {
+        var speedLimitKbps = Config.GetSabSpeedLimitKbps();
         var response = new GetStatusResponse
         {
             Status = new SabStatusObject
             {
                 CompleteDir = SabPathResolver.GetCompletedDir(Config),
+                Paused = Config.IsSabQueuePaused(),
+                SpeedLimit = speedLimitKbps.ToString(),
+                SpeedLimitAbs = speedLimitKbps.ToString(),
             },
         };
         return Task.FromResult<IActionResult>(Ok(response));

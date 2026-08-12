@@ -72,6 +72,7 @@ public class GetQueueController(
                     : queueItem.Priority == QueueItem.PriorityOption.Paused
                         ? "Paused"
                         : "Queued";
+                var eta = isInProgress ? active.Eta : null;
                 IReadOnlyDictionary<string, long> providerUsage =
                     GetProviderUsageForSlot(isInProgress, queueItem.Id, providerUsageTracker);
                 if (isInProgress && configuredKeys.Count > 0)
@@ -82,12 +83,18 @@ public class GetQueueController(
                     providerUsage = mergedUsage;
                 }
                 return GetQueueResponse.QueueSlot.FromQueueItem(
-                    queueItem, index, percentage, status, providerUsage, displayByMetricsKey);
+                    queueItem, index, percentage, status, eta, providerUsage, displayByMetricsKey);
             })
             .ToList();
 
         // return response
         var speedLimitKbps = Config.GetSabSpeedLimitKbps();
+        var aggregateBytesPerSecond = inProgress.Sum(x => x.BytesPerSecond);
+        var remainingBytes = inProgress.Sum(x =>
+        {
+            var pct = Math.Clamp(x.ProgressPercentage, 0, 100);
+            return (100 - pct) / 100.0 * x.QueueItem.TotalSegmentBytes;
+        });
         return new GetQueueResponse()
         {
             Queue = new GetQueueResponse.QueueObject()
@@ -97,6 +104,10 @@ public class GetQueueController(
                 TotalCount = totalCount,
                 SpeedLimit = speedLimitKbps.ToString(),
                 SpeedLimitAbs = speedLimitKbps.ToString(),
+                Speed = QueueThroughput.FormatSpeed(aggregateBytesPerSecond),
+                KbPerSec = QueueThroughput.FormatKbPerSec(aggregateBytesPerSecond),
+                TimeLeft = QueueThroughput.FromRemaining(aggregateBytesPerSecond, remainingBytes)
+                           ?? TimeSpan.Zero,
             }
         };
     }

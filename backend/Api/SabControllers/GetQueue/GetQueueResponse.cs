@@ -34,6 +34,16 @@ public class GetQueueResponse : SabBaseResponse
         // duration, so this is always "0".
         [JsonPropertyName("pause_int")]
         public string PauseInt { get; init; } = "0";
+
+        [JsonPropertyName("speed")]
+        public string Speed { get; init; } = "0 ";
+
+        [JsonPropertyName("kbpersec")]
+        public string KbPerSec { get; init; } = "0.00";
+
+        [JsonPropertyName("timeleft")]
+        [JsonConverter(typeof(SabnzbdQueueTimeConverter))]
+        public TimeSpan TimeLeft { get; init; }
     }
 
     public class QueueSlot
@@ -84,6 +94,7 @@ public class GetQueueResponse : SabBaseResponse
             int index = 0,
             int progressPercentage = 0,
             string status = "Queued",
+            TimeSpan? eta = null,
             IReadOnlyDictionary<string, long>? providerUsage = null,
             IReadOnlyDictionary<string, (string Host, string? Nickname)>? displayByMetricsKey = null
         )
@@ -99,7 +110,7 @@ public class GetQueueResponse : SabBaseResponse
                 Percentage = sabProgressPercentage.ToString(CultureInfo.InvariantCulture),
                 TruePercentage = progressPercentage.ToString(CultureInfo.InvariantCulture),
                 Status = status,
-                TimeLeft = TimeSpan.Zero,
+                TimeLeft = eta ?? TimeSpan.Zero,
                 SizeInMB = FormatSizeMB(queueItem.TotalSegmentBytes),
                 SizeLeftInMB = FormatSizeMB(
                     (100 - sabProgressPercentage) * queueItem.TotalSegmentBytes / 100),
@@ -141,8 +152,32 @@ public class GetQueueResponse : SabBaseResponse
         public override TimeSpan Read(ref Utf8JsonReader r, Type t, JsonSerializerOptions o) =>
             throw new NotImplementedException();
 
-        public override void Write(Utf8JsonWriter writer, TimeSpan value, JsonSerializerOptions options) =>
-            writer.WriteStringValue(value.ToString(@"d\:h\:m\:s"));
+        public override void Write(Utf8JsonWriter writer, TimeSpan value, JsonSerializerOptions options)
+        {
+            writer.WriteStringValue(Format(value));
+        }
+
+        /// <summary>
+        /// SABnzbd <c>format_time_left</c>: <c>0:00:00</c>, <c>H:MM:SS</c> under 24h,
+        /// <c>D:HH:MM:SS</c> when days &gt; 0.
+        /// </summary>
+        public static string Format(TimeSpan value)
+        {
+            if (value <= TimeSpan.Zero)
+                return "0:00:00";
+
+            var totalSeconds = (int)Math.Round(value.TotalSeconds, MidpointRounding.AwayFromZero);
+            if (totalSeconds <= 0)
+                return "0:00:00";
+
+            var days = totalSeconds / 86400;
+            var hours = totalSeconds % 86400 / 3600;
+            var minutes = totalSeconds % 3600 / 60;
+            var seconds = totalSeconds % 60;
+            if (days > 0)
+                return $"{days}:{hours:D2}:{minutes:D2}:{seconds:D2}";
+            return $"{hours}:{minutes:D2}:{seconds:D2}";
+        }
     }
 
     public class ProviderUsage

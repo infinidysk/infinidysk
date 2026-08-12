@@ -19,9 +19,38 @@ public class SabStatusTests
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(response));
 
         Assert.Equal(JsonValueKind.Object, json.RootElement.GetProperty("status").ValueKind);
+        var status = json.RootElement.GetProperty("status");
         Assert.Equal(
             "/downloads/complete",
-            json.RootElement.GetProperty("status").GetProperty("completedir").GetString());
+            status.GetProperty("completedir").GetString());
+        Assert.False(status.GetProperty("paused").GetBoolean());
+        Assert.Equal("0", status.GetProperty("speedlimit").GetString());
+        Assert.Equal("0", status.GetProperty("speedlimit_abs").GetString());
+        Assert.False(status.TryGetProperty("speed", out _));
+        Assert.False(status.TryGetProperty("kbpersec", out _));
+    }
+
+    [Fact]
+    public void StatusResponse_SerializesPauseAndSpeedLimit()
+    {
+        var response = new GetStatusResponse
+        {
+            Status = new SabStatusObject
+            {
+                CompleteDir = "/downloads/complete",
+                Paused = true,
+                SpeedLimit = "400",
+                SpeedLimitAbs = "400",
+            },
+        };
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(response));
+        var status = json.RootElement.GetProperty("status");
+        Assert.True(status.GetProperty("paused").GetBoolean());
+        Assert.Equal("400", status.GetProperty("speedlimit").GetString());
+        Assert.Equal("400", status.GetProperty("speedlimit_abs").GetString());
+        Assert.False(status.TryGetProperty("speed", out _));
+        Assert.False(status.TryGetProperty("kbpersec", out _));
     }
 
     [Fact]
