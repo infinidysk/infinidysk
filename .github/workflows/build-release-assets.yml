@@ -175,7 +175,8 @@ jobs:
 
           # Skip a rolling tag when it is the same release (e.g. dev): the
           # stable-named copy would duplicate the archives uploaded above.
-          for ROLLING in ${ROLLING_TAG}; do
+          read -ra ROLLING_TAGS <<< "$ROLLING_TAG"
+          for ROLLING in ${ROLLING_TAGS[@]+"${ROLLING_TAGS[@]}"}; do
             [[ -z "$ROLLING" || "$ROLLING" == "$RELEASE_TAG" ]] && continue
             rolling_archive="infinidysk-${ROLLING}-${RID}.tar.gz"
             compat_rolling_archive="nzbdav-${ROLLING}-${RID}.tar.gz"
