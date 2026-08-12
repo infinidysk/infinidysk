@@ -305,6 +305,47 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             AbortStartedResponse(context);
         }
+        catch (IncompleteFileContentException e)
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 404;
+            }
+
+            var filePath = GetRequestFilePath(context);
+            var seekPosition = context.Request.GetRange()?.Start?.ToString() ?? "0";
+            var userAgent = context.Request.Headers.UserAgent.ToString();
+            if (string.IsNullOrWhiteSpace(userAgent))
+                userAgent = "unknown";
+            var dedupeKey = $"{filePath}|{seekPosition}|{e.ExpectedBytes}|{e.DeliveredBytes}";
+            LogWithDedup(RecentReadErrors, dedupeKey, suppressed =>
+            {
+                if (suppressed > 0)
+                    Log.Warning(
+                        "File {FilePath} delivered {DeliveredBytes} of {ExpectedBytes} expected bytes from byte position {SeekPosition} (client {UserAgent}, suppressed {SuppressedCount} duplicates in last 60s)",
+                        filePath,
+                        e.DeliveredBytes,
+                        e.ExpectedBytes,
+                        seekPosition,
+                        userAgent,
+                        suppressed);
+                else
+                    Log.Warning(
+                        "File {FilePath} delivered {DeliveredBytes} of {ExpectedBytes} expected bytes from byte position {SeekPosition} (client {UserAgent})",
+                        filePath,
+                        e.DeliveredBytes,
+                        e.ExpectedBytes,
+                        seekPosition,
+                        userAgent);
+            });
+            Log.Debug(e, "Incomplete file content stack for {FilePath}", filePath);
+
+            if (context.Items["DavItem"] is DavItem davItem)
+                ScheduleRepair(davItem.Id);
+
+            AbortStartedResponse(context);
+        }
         catch (Exception e) when (IsDavItemRequest(context) && e is not OutOfMemoryException)
         {
             // A volume that is short or unresolvable is missing data, not a server

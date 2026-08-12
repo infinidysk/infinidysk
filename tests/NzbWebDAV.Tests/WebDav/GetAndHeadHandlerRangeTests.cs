@@ -1,4 +1,5 @@
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services;
 using NzbWebDAV.WebDav.Base;
 
@@ -99,6 +100,73 @@ public class GetAndHeadHandlerRangeTests
     private static DavItem NewDavItem()
     {
         return new DavItem { Id = Guid.NewGuid() };
+    }
+
+    [Fact]
+    public void ThrowIfCopyEndedEarly_ThrowsWhenRangeEndsBeforePromisedLength()
+    {
+        using var src = new MemoryStream(new byte[1000]);
+        var failure = Assert.Throws<IncompleteFileContentException>(() =>
+            GetAndHeadHandlerPatch.ThrowIfCopyEndedEarly(
+                bytesRemaining: 1024,
+                rangeEnd: 499,
+                rangeStart: 0,
+                bytesDeliveredInRange: 256,
+                filePath: "/content/movies/short.mkv",
+                src));
+
+        Assert.Equal(500, failure.ExpectedBytes);
+        Assert.Equal(256, failure.DeliveredBytes);
+        Assert.Contains("short.mkv", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ThrowIfCopyEndedEarly_ThrowsWhenFullFileEndsBeforeDeclaredLength()
+    {
+        using var src = new MemoryStream(new byte[100]);
+        var failure = Assert.Throws<IncompleteFileContentException>(() =>
+            GetAndHeadHandlerPatch.ThrowIfCopyEndedEarly(
+                bytesRemaining: long.MaxValue,
+                rangeEnd: null,
+                rangeStart: 0,
+                bytesDeliveredInRange: 10,
+                filePath: "/content/movies/short.mkv",
+                src));
+
+        Assert.Equal(100, failure.ExpectedBytes);
+        Assert.Equal(10, failure.DeliveredBytes);
+    }
+
+    [Fact]
+    public void ThrowIfCopyEndedEarly_AllowsNaturalEofOnFullFileGet()
+    {
+        using var src = new MemoryStream(new byte[100]);
+        var ex = Record.Exception(() =>
+            GetAndHeadHandlerPatch.ThrowIfCopyEndedEarly(
+                bytesRemaining: long.MaxValue,
+                rangeEnd: null,
+                rangeStart: 0,
+                bytesDeliveredInRange: 100,
+                filePath: "/content/movies/full.mkv",
+                src));
+
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void ThrowIfCopyEndedEarly_AllowsCompletedRange()
+    {
+        using var src = new MemoryStream(new byte[1000]);
+        var ex = Record.Exception(() =>
+            GetAndHeadHandlerPatch.ThrowIfCopyEndedEarly(
+                bytesRemaining: 0,
+                rangeEnd: 499,
+                rangeStart: 0,
+                bytesDeliveredInRange: 500,
+                filePath: "/content/movies/ok.mkv",
+                src));
+
+        Assert.Null(ex);
     }
 
     [Fact]

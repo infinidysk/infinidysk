@@ -12,12 +12,11 @@ namespace NzbWebDAV.Tests.Streams;
 public class MultiSegmentStreamPrefetchBudgetTests
 {
     [Fact]
-    public async Task ReadBudget_CapsPrefetchBelowArticleBufferSize()
+    public async Task ReadBudget_WithoutExactSizes_DeliversFullConsumerRange()
     {
         const int segmentCount = 20;
         const int segmentSize = 1000;
         const int articleBufferSize = 10;
-        // 2.5 segments of budget → stop once enqueued*size >= budget + size → 4 segments max
         const long readBudget = 2500;
 
         var segments = Enumerable.Range(0, segmentCount)
@@ -37,6 +36,47 @@ public class MultiSegmentStreamPrefetchBudgetTests
             CancellationToken.None,
             fileName: "budget.bin",
             readBudget: readBudget);
+
+        var buffer = new byte[readBudget];
+        var totalRead = 0;
+        while (totalRead < buffer.Length)
+        {
+            var n = await stream.ReadAsync(buffer.AsMemory(totalRead));
+            if (n == 0) break;
+            totalRead += n;
+        }
+
+        Assert.Equal(readBudget, totalRead);
+    }
+
+    [Fact]
+    public async Task ReadBudget_WithExactSizes_CapsPrefetchBelowArticleBufferSize()
+    {
+        const int segmentCount = 20;
+        const int segmentSize = 1000;
+        const int articleBufferSize = 10;
+        // 2.5 segments of budget → stop once enqueued*size >= budget + size → 4 segments max
+        const long readBudget = 2500;
+
+        var segments = Enumerable.Range(0, segmentCount)
+            .ToDictionary(
+                i => $"seg-{i}",
+                i => Enumerable.Repeat((byte)(i % 256), segmentSize).ToArray());
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+        var segmentIds = segments.Keys.ToArray().AsMemory();
+        var exactSizes = Enumerable.Repeat((long)segmentSize, segmentCount).ToArray();
+
+        await using var stream = MultiSegmentStream.Create(
+            segmentIds,
+            client,
+            articleBufferSize,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "budget.bin",
+            readBudget: readBudget,
+            exactSegmentSizes: exactSizes.AsMemory());
 
         var buffer = new byte[readBudget];
         var totalRead = 0;

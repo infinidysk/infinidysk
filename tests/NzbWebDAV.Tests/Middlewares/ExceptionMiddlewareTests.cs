@@ -190,6 +190,69 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task IncompleteFileContentBeforeResponseStarted_ReturnsNotFoundWithoutAborting()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new IncompleteFileContentException("/content/tv/show.mkv", 16_777_216, 14_000_000));
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.False(lifetimeFeature.Aborted);
+    }
+
+    [Fact]
+    public async Task IncompleteFileContentAfterResponseStarted_AbortsConnection()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: true, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new IncompleteFileContentException("/content/tv/show.mkv", 16_777_216, 14_000_000));
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(lifetimeFeature.Aborted);
+    }
+
+    [Fact]
+    public async Task IncompleteFileContentWithDavItem_RecordsStreamingFailure()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new IncompleteFileContentException("/content/tv/show.mkv", 16_777_216, 14_000_000),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
+    }
+
+    [Fact]
+    public async Task IncompleteFileContent_LogsOneWarningLineWithoutAStackDump()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: true, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new IncompleteFileContentException(
+                "/content/tv/show.mkv", 33_554_432, 32_000_000));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        var logged = Assert.Single(
+            events,
+            e => e.Level == LogEventLevel.Warning
+                 && e.RenderMessage().Contains("delivered 32000000", StringComparison.Ordinal)
+                 && e.RenderMessage().Contains("33554432 expected bytes", StringComparison.Ordinal));
+        Assert.Null(logged.Exception);
+    }
+
+    [Fact]
     public async Task IncompleteMultipartPart_LogsOneWarningLineWithoutAStackDump()
     {
         var reason = $"volume ended 3071980 bytes early ({Guid.NewGuid()})";

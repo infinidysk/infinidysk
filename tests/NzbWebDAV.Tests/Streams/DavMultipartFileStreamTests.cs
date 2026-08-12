@@ -147,6 +147,46 @@ public class DavMultipartFileStreamTests
     }
 
     [Fact]
+    public async Task ReadAsync_PendingPartsWithoutResolver_EndsBeforeDeclaredLength_ThrowsIncompleteFileContent()
+    {
+        using var client = new FakeNntpClient(new Dictionary<string, byte[]>
+        {
+            ["segment"] = Enumerable.Range(0, 8).Select(x => (byte)x).ToArray(),
+        }, useCachedYencStreams: true);
+        var multipart = MultipartFile(
+            segmentRange: LongRange.FromStartAndSize(0, 8),
+            fileRange: LongRange.FromStartAndSize(0, 8));
+        multipart.Metadata.PendingParts =
+        [
+            new DavMultipartFile.PendingPart
+            {
+                SegmentIds = ["vol2-seg"],
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, 8),
+                EstimatedDataSize = 8,
+            }
+        ];
+        await using var stream = new DavMultipartFileStream(
+            multipart,
+            client,
+            articleBufferSize: 0,
+            resolver: null,
+            usePipelinedBodyRequests: false,
+            fileName: "movie.mkv");
+
+        var buffer = new byte[16];
+        Assert.Equal(8, await stream.ReadAsync(buffer.AsMemory(0, 8)));
+
+        var failure = await Assert.ThrowsAsync<IncompleteFileContentException>(async () =>
+        {
+            _ = await stream.ReadAsync(buffer.AsMemory(8));
+        });
+
+        Assert.Equal(16, failure.ExpectedBytes);
+        Assert.Equal(8, failure.DeliveredBytes);
+        Assert.Contains("movie.mkv", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReadAsync_UnresolvableTrailingVolume_DoesNotLookLikeEndOfFile()
     {
         using var client = new FakeNntpClient(new Dictionary<string, byte[]>

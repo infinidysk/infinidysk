@@ -333,8 +333,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// <summary>
     /// Stop enqueueing once the bytes already in flight cover the read budget plus one
     /// segment of slack, which absorbs the prefix a seek discards from the first segment.
-    /// Exact segment sizes are used when the import recorded them; otherwise the estimate
-    /// stands in, since over- or under-fetching only costs bandwidth.
+    /// Requires recorded per-segment sizes; without them the estimate can undershoot actual
+    /// segment lengths and truncate a range response, so prefetch is capped only by
+    /// <see cref="WaitForPrefetchCeilingAsync"/>.
     /// </summary>
     private bool ShouldStopPrefetch(int segmentsEnqueued, long enqueuedBytes)
     {
@@ -343,8 +344,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             if (_segmentSizes.TryGetExactSize(0, out var slack))
                 return enqueuedBytes >= _readBudget.Value + slack;
-            if (_estimatedSegmentSize <= 0) return false;
-            return segmentsEnqueued * _estimatedSegmentSize >= _readBudget.Value + _estimatedSegmentSize;
+            return false;
         }
 
         // Full-file / non-range: never permanently stop (consumer needs the whole file).

@@ -106,6 +106,12 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
         _innerStream ??= await GetFileStreamAsync(_position, cancellationToken).ConfigureAwait(false);
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        if (read == 0 && _position < _length)
+        {
+            throw new IncompleteFileContentException(
+                _fileName ?? "unknown", _length, _position);
+        }
+
         _position += read;
         return read;
     }

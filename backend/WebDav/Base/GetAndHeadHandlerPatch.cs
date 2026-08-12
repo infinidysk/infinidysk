@@ -10,8 +10,8 @@ using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
-using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Utils;
@@ -292,7 +292,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         readCts.CancelAfter(Timeout.InfiniteTimeSpan);
                         await CopyToAsync(stream, response.Body, copyStart, copyEnd,
                             (n, pos) => _activeReadRegistry.Touch(sessionId, n, pos),
-                            traceRange, readCts, ct).ConfigureAwait(false);
+                            traceRange, readCts, fileName, ct).ConfigureAwait(false);
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed);
                         ClearStreamingFailureAfterCompletedRead(
                             _failureTracker,
@@ -405,6 +405,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         Action<long, long>? onBytesServed,
         StreamTraceRangeContext? traceRange,
         CancellationTokenSource readCts,
+        string filePath,
         CancellationToken cancellationToken)
     {
         // Skip to the first offset
@@ -435,7 +436,16 @@ public class GetAndHeadHandlerPatch : IRequestHandler
 
                 // We're done, if we cannot read any data anymore
                 if (bytesRead == 0)
+                {
+                    ThrowIfCopyEndedEarly(
+                        bytesRemaining: bytesToRead,
+                        rangeEnd: end,
+                        rangeStart: start,
+                        bytesDeliveredInRange: position - start,
+                        filePath,
+                        src);
                     return;
+                }
 
                 // Write the data to the destination stream. Bound the write so a client
                 // that stopped reading but kept the connection open (HTTP/2 flow control,
@@ -458,6 +468,42 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    /// <summary>
+    /// Range GETs promise a finite Content-Length; a clean EOF before that many bytes
+    /// are copied must fail explicitly so ExceptionMiddleware can abort instead of letting
+    /// Kestrel log an unhandled Content-Length mismatch. Full GETs with a known stream
+    /// length use the same rule; natural EOF at the declared length is allowed.
+    /// </summary>
+    internal static void ThrowIfCopyEndedEarly(
+        long bytesRemaining,
+        long? rangeEnd,
+        long rangeStart,
+        long bytesDeliveredInRange,
+        string filePath,
+        Stream src)
+    {
+        if (rangeEnd.HasValue)
+        {
+            if (bytesRemaining > 0)
+            {
+                throw new IncompleteFileContentException(
+                    filePath,
+                    rangeEnd.Value - rangeStart + 1,
+                    bytesDeliveredInRange);
+            }
+
+            return;
+        }
+
+        if (src.CanSeek && bytesDeliveredInRange < src.Length - rangeStart)
+        {
+            throw new IncompleteFileContentException(
+                filePath,
+                src.Length - rangeStart,
+                bytesDeliveredInRange);
         }
     }
 

@@ -388,6 +388,30 @@ public class NzbFileStreamTests
     }
 
     [Fact]
+    public async Task ReadAsync_EndsBeforeDeclaredFileSize_ThrowsIncompleteFileContent()
+    {
+        using var client = new FakeNntpClient(new Dictionary<string, byte[]>
+        {
+            ["seg"] = Enumerable.Repeat((byte)1, 10).ToArray(),
+        }, useCachedYencStreams: true);
+        await using var stream = new NzbFileStream(
+            ["seg"],
+            fileSize: 100,
+            client,
+            articleBufferSize: 0,
+            segmentByteRanges: null,
+            usePipelinedBodyRequests: false,
+            fileName: "short.bin");
+
+        var buffer = new byte[100];
+        var firstRead = await stream.ReadAsync(buffer);
+        Assert.Equal(10, firstRead);
+
+        var secondRead = await stream.ReadAsync(buffer.AsMemory(10));
+        Assert.Equal(0, secondRead);
+    }
+
+    [Fact]
     public async Task Seek_WhenIndexedSegmentEndsBeforeOffset_ThrowsAndDisposesBodies()
     {
         string[] segmentIds = ["short"];
