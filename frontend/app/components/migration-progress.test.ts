@@ -1,5 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { decideMigrationStatusPoll } from "./migration-progress";
+import {
+  clearReloadAttempts,
+  decideMigrationStatusPoll,
+  MAX_RELOAD_ATTEMPTS,
+  readReloadAttempts,
+  writeReloadAttempts,
+} from "./migration-progress";
+
+function createMemoryStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    clear() {
+      store.clear();
+    },
+    getItem(key: string) {
+      return store.has(key) ? store.get(key)! : null;
+    },
+    key(index: number) {
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+    setItem(key: string, value: string) {
+      store.set(key, value);
+    },
+  };
+}
 
 describe("decideMigrationStatusPoll", () => {
   it("keeps polling while migration JSON is running", () => {
@@ -45,6 +75,17 @@ describe("decideMigrationStatusPoll", () => {
     });
   });
 
+  it("keeps reloading on 404 until the attempt cap is reached", () => {
+    expect(decideMigrationStatusPoll(404, null, MAX_RELOAD_ATTEMPTS - 1)).toEqual({
+      action: "connecting",
+      reloadMs: 1500,
+    });
+    expect(decideMigrationStatusPoll(404, null, MAX_RELOAD_ATTEMPTS)).toEqual({
+      action: "fallback",
+      stopPolling: true,
+    });
+  });
+
   it("treats 502/503 as connecting with a longer reload", () => {
     expect(decideMigrationStatusPoll(502, null)).toEqual({
       action: "connecting",
@@ -65,5 +106,44 @@ describe("decideMigrationStatusPoll", () => {
       action: "fallback",
       stopPolling: true,
     });
+  });
+});
+
+describe("reload attempt storage", () => {
+  it("returns 0 when storage is empty or corrupt", () => {
+    const storage = createMemoryStorage();
+    expect(readReloadAttempts(storage, 1_000)).toBe(0);
+
+    storage.setItem("infinidysk.migration-reload-attempts", "{not-json");
+    expect(readReloadAttempts(storage, 1_000)).toBe(0);
+
+    storage.setItem("infinidysk.migration-reload-attempts", JSON.stringify({ count: "bad", lastAt: 1 }));
+    expect(readReloadAttempts(storage, 1_000)).toBe(0);
+  });
+
+  it("reads and writes reload attempts", () => {
+    const storage = createMemoryStorage();
+    const now = 10_000;
+
+    writeReloadAttempts(storage, 2, now);
+    expect(readReloadAttempts(storage, now)).toBe(2);
+    expect(readReloadAttempts(storage, now + 30_000)).toBe(2);
+  });
+
+  it("expires stale reload attempts after the reset window", () => {
+    const storage = createMemoryStorage();
+    const now = 10_000;
+
+    writeReloadAttempts(storage, 2, now);
+    expect(readReloadAttempts(storage, now + 2 * 60 * 1000 + 1)).toBe(0);
+  });
+
+  it("clears stored reload attempts", () => {
+    const storage = createMemoryStorage();
+    const now = 10_000;
+
+    writeReloadAttempts(storage, 2, now);
+    clearReloadAttempts(storage);
+    expect(readReloadAttempts(storage, now)).toBe(0);
   });
 });
