@@ -50,6 +50,38 @@ public class GetPar2FileDescriptorsStepTests
     }
 
     [Fact]
+    public async Task GetPar2FileDescriptors_ReportsProgressAsZeroToHundredPercentage()
+    {
+        var idA = FileId(0x0A);
+        var idB = FileId(0x0B);
+        var indexA = Par2TestPackets.BuildPar2Bytes(Par2TestPackets.BuildFileDescBody(idA, "Show.S01E01.mkv"));
+        var indexB = Par2TestPackets.BuildPar2Bytes(Par2TestPackets.BuildFileDescBody(idB, "Show.S01E02.mkv"));
+
+        using var client = new Par2ServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["index-a@example.com"] = indexA,
+            ["index-b@example.com"] = indexB,
+        });
+
+        var files = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            Par2File("Release [AAAAAAAA].par2", "index-a@example.com", indexA),
+            Par2File("Release [BBBBBBBB].par2", "index-b@example.com", indexB),
+        };
+
+        // Progress<int>.Report posts to the captured context asynchronously,
+        // so guard the list and give callbacks a beat to drain.
+        var reported = new List<int>();
+        var gate = new object();
+        var progress = new Progress<int>(v => { lock (gate) reported.Add(v); });
+        await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(files, client, progress);
+        await Task.Delay(50);
+
+        // Two index files → 50 then 100, not raw counts 1 then 2.
+        lock (gate) Assert.Equal([50, 100], reported);
+    }
+
+    [Fact]
     public async Task GetPar2FileDescriptors_FallsBackToVolumeWhenNoIndexIdentifiable()
     {
         var idVol = FileId(0x0C);

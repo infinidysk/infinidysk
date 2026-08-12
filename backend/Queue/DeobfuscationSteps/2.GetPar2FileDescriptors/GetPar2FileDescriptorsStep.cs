@@ -43,6 +43,9 @@ public static class GetPar2FileDescriptorsStep
         // return all file descriptors, deduplicated by FileID
         var fileDescriptors = new List<FileDesc>();
         var seenFileIds = new HashSet<string>(StringComparer.Ordinal);
+        // Report a 0-100 percentage of index files processed so callers can
+        // scale it into their band without count/percentage mismatch.
+        var total = Math.Max(1, par2Indexes.Count);
         var completed = 0;
         foreach (var par2Index in par2Indexes)
         {
@@ -59,7 +62,7 @@ public static class GetPar2FileDescriptorsStep
                 if (seenFileIds.Add(Convert.ToHexString(fileDescriptor.FileID)))
                     fileDescriptors.Add(fileDescriptor);
             }
-            progress?.Report(++completed);
+            progress?.Report(++completed * 100 / total);
         }
 
         return fileDescriptors;
