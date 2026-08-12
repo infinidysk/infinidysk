@@ -26,6 +26,7 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
     private DbContextOptions<DavDatabaseContext> _options = null!;
     private ConfigManager _configManager = null!;
     private QueueManager _queueManager = null!;
+    private ProviderUsageTracker _queueManagerUsageTracker = null!;
 
     public async Task InitializeAsync()
     {
@@ -81,11 +82,12 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             new StreamTraceBuffer(100),
             new ActiveReadRegistry());
 
+        _queueManagerUsageTracker = new ProviderUsageTracker();
         _queueManager = new QueueManager(
             usenet,
             _configManager,
             new WebsocketManager(),
-            new ProviderUsageTracker(),
+            _queueManagerUsageTracker,
             new WatchdogLog(),
             new QueueItemSourceTracker(),
             new BenchmarkGate(),
@@ -251,6 +253,141 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task FetchingButSilentItem_IsNotCancelledByWatchdog()
+    {
+        // A long stage (e.g. a large PAR2 descriptor walk) reports no progress
+        // but keeps fetching articles. The watchdog must treat segment fetches
+        // as liveness and leave the worker alone.
+        var stall = new StallStream();
+        var item = CreateQueueItem("fetching.nzb", "movies", "FetchingJob");
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            ctx.QueueItems.Add(item);
+            await ctx.SaveChangesAsync();
+        }
+
+        _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
+        {
+            await using var ctx = new DavDatabaseContext(_options);
+            var client = new DavDatabaseClient(ctx);
+            var (claimed, _) = await client.GetTopQueueItem(exclude, ct);
+            if (claimed is null) return (null, null);
+            ctx.ChangeTracker.Clear();
+            return (claimed, stall);
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var loop = _queueManager.ProcessQueueAsync(cts.Token);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        object? inProgress = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            inProgress = FindInProgressItem(item.Id);
+            if (inProgress is not null) break;
+            await Task.Delay(20);
+        }
+
+        Assert.NotNull(inProgress);
+        stall.BindWorker(GetWorkerCts(inProgress!));
+
+        // Freeze the percentage but keep recording segment fetches for this
+        // queue item, mimicking a silent-but-working stage.
+        using var fetchCts = new CancellationTokenSource();
+        var fetchTask = Task.Run(async () =>
+        {
+            while (!fetchCts.Token.IsCancellationRequested)
+            {
+                RecordSegmentFetch(item.Id);
+                await Task.Delay(60, fetchCts.Token);
+            }
+        }, fetchCts.Token);
+
+        // Well past the 250ms threshold with zero percentage movement.
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        Assert.False(GetWorkerCts(inProgress!).IsCancellationRequested);
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            var pauseUntil = await ctx.QueueItems.AsNoTracking()
+                .Where(q => q.Id == item.Id)
+                .Select(q => q.PauseUntil)
+                .FirstAsync();
+            Assert.Null(pauseUntil);
+        }
+
+        await fetchCts.CancelAsync();
+        try { await fetchTask; }
+        catch (OperationCanceledException) { }
+
+        await cts.CancelAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task SilentAndIdleItem_IsCancelledByWatchdog()
+    {
+        // Neither progress nor segment fetches: a genuinely wedged worker.
+        var stall = new StallStream();
+        var item = CreateQueueItem("idle.nzb", "movies", "IdleJob");
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            ctx.QueueItems.Add(item);
+            await ctx.SaveChangesAsync();
+        }
+
+        _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
+        {
+            await using var ctx = new DavDatabaseContext(_options);
+            var client = new DavDatabaseClient(ctx);
+            var (claimed, _) = await client.GetTopQueueItem(exclude, ct);
+            if (claimed is null) return (null, null);
+            ctx.ChangeTracker.Clear();
+            return (claimed, stall);
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var loop = _queueManager.ProcessQueueAsync(cts.Token);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        object? inProgress = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            inProgress = FindInProgressItem(item.Id);
+            if (inProgress is not null) break;
+            await Task.Delay(20);
+        }
+
+        Assert.NotNull(inProgress);
+        stall.BindWorker(GetWorkerCts(inProgress!));
+
+        // No progress, no fetches — the watchdog should still pause+cancel.
+        // PauseUntil is written before CancelAsync, so poll for cancellation
+        // (the terminal action) rather than asserting both after one observation.
+        deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        var workerCts = GetWorkerCts(inProgress!);
+        while (DateTime.UtcNow < deadline && !workerCts.IsCancellationRequested)
+            await Task.Delay(20);
+
+        Assert.True(workerCts.IsCancellationRequested);
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            var pauseUntil = await ctx.QueueItems.AsNoTracking()
+                .Where(q => q.Id == item.Id)
+                .Select(q => q.PauseUntil)
+                .FirstOrDefaultAsync();
+            Assert.NotNull(pauseUntil);
+        }
+
+        await cts.CancelAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task HealthyItems_DoNotWaitForWatchdogThreshold()
     {
         var item1 = CreateQueueItem("fast1.nzb", "movies", "FastJob1");
@@ -338,6 +475,12 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             "ProgressPercentage",
             BindingFlags.Instance | BindingFlags.Public);
         prop!.SetValue(inProgressItem, value);
+    }
+
+    private void RecordSegmentFetch(Guid queueItemId)
+    {
+        using var scope = _queueManagerUsageTracker.BeginScope(queueItemId);
+        _queueManagerUsageTracker.RecordSuccess("nntp.example");
     }
 
     private static QueueItem CreateQueueItem(string fileName, string category, string jobName)

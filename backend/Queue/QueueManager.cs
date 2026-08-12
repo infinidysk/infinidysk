@@ -769,14 +769,33 @@ public sealed class QueueManager : IDisposable
         var progressHook = new Progress<int>();
         var completionSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        var inProgressQueueItem = new InProgressQueueItem
+        {
+            QueueItem = queueItem,
+            ProcessingTask = null!, // set below, after the processor is created
+            CompletionSignal = completionSignal,
+            ProgressPercentage = 0,
+            CancellationTokenSource = cts,
+            QueueDownloadContext = queueDownloadContext,
+            QueueContextRegistration = queueContextRegistration,
+            DbContext = dbContext,
+            QueueNzbStream = queueNzbStream,
+            CachingUsenetClient = cachingUsenetClient,
+            StartedAt = DateTime.UtcNow,
+            WatchdogCts = null!, // set below, after the worker task is created
+        };
+
         var task = new QueueItemProcessor(
             queueItem, queueNzbStream, dbClient, cachingUsenetClient,
             _configManager, _websocketManager, _providerUsageTracker,
             _watchdogLog, _sourceTracker, progressHook, _retryAttempts,
-            _finalizeLock, cts.Token
+            _finalizeLock, cts.Token,
+            stageReporter: stage => inProgressQueueItem.CurrentStage = stage
         ).ProcessAsync();
+        inProgressQueueItem.ProcessingTask = task;
 
         var watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+        inProgressQueueItem.WatchdogCts = watchdogCts;
 
         _ = task.ContinueWith(
             t =>
@@ -793,21 +812,6 @@ public sealed class QueueManager : IDisposable
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
 
-        var inProgressQueueItem = new InProgressQueueItem
-        {
-            QueueItem = queueItem,
-            ProcessingTask = task,
-            CompletionSignal = completionSignal,
-            ProgressPercentage = 0,
-            CancellationTokenSource = cts,
-            QueueDownloadContext = queueDownloadContext,
-            QueueContextRegistration = queueContextRegistration,
-            DbContext = dbContext,
-            QueueNzbStream = queueNzbStream,
-            CachingUsenetClient = cachingUsenetClient,
-            StartedAt = DateTime.UtcNow,
-            WatchdogCts = watchdogCts,
-        };
         inProgressQueueItem.WatchdogTask =
             WatchForStuckProgressAsync(inProgressQueueItem, watchdogCts.Token);
 
@@ -856,6 +860,7 @@ public sealed class QueueManager : IDisposable
     private async Task WatchForStuckProgressAsync(InProgressQueueItem item, CancellationToken ct)
     {
         var lastProgress = item.ProgressPercentage;
+        var lastFetchCount = GetSuccessfulFetchCount(item.QueueItem.Id);
         var lastChangeTick = Environment.TickCount64;
 
         while (!ct.IsCancellationRequested)
@@ -869,10 +874,16 @@ public sealed class QueueManager : IDisposable
                 return;
             }
 
+            // "Stuck" means no visible progress AND no segment fetches. Long
+            // silent stages (PAR2 descriptor walks, RAR header parses) keep
+            // fetching articles, so they must not trip the watchdog — only a
+            // worker genuinely waiting on a semaphore/pool fetch stops both.
             var currentProgress = item.ProgressPercentage;
-            if (currentProgress != lastProgress)
+            var currentFetchCount = GetSuccessfulFetchCount(item.QueueItem.Id);
+            if (currentProgress != lastProgress || currentFetchCount != lastFetchCount)
             {
                 lastProgress = currentProgress;
+                lastFetchCount = currentFetchCount;
                 lastChangeTick = Environment.TickCount64;
                 continue;
             }
@@ -886,12 +897,19 @@ public sealed class QueueManager : IDisposable
         }
     }
 
+    private long GetSuccessfulFetchCount(Guid queueItemId)
+    {
+        var snapshot = _providerUsageTracker.Snapshot(queueItemId);
+        return snapshot.Values.Aggregate(0L, (sum, count) => sum + count);
+    }
+
     private async Task HandleStuckItemAsync(InProgressQueueItem item, long idleMs)
     {
         var queueItem = item.QueueItem;
         var progress = item.ProgressPercentage;
         var idleMinutes = idleMs / 60000d;
         var phase = DescribeProgressPhase(progress);
+        var stage = item.CurrentStage;
 #pragma warning disable CA5394 // pause jitter is not security-sensitive
         var jitterSeconds = Random.Shared.Next(0, 301);
 #pragma warning restore CA5394
@@ -926,12 +944,13 @@ public sealed class QueueManager : IDisposable
 
         Log.Warning(
             "Queue item stuck with no progress; pausing and cancelling. JobName={JobName} QueueItemId={QueueItemId} " +
-            "IdleMinutes={IdleMinutes:F1} ProgressPhase={ProgressPhase} ProgressPercentage={ProgressPercentage} " +
-            "PauseUntil={PauseUntil}",
+            "IdleMinutes={IdleMinutes:F1} ProgressPhase={ProgressPhase} CurrentStage={CurrentStage} " +
+            "ProgressPercentage={ProgressPercentage} PauseUntil={PauseUntil}",
             queueItem.JobName,
             queueItem.Id,
             idleMinutes,
             phase,
+            stage,
             progress,
             pauseUntil);
 
@@ -1059,7 +1078,13 @@ public sealed class QueueManager : IDisposable
     {
         public QueueItem QueueItem { get; init; } = null!;
         public int ProgressPercentage { get; set; }
-        public Task ProcessingTask { get; init; } = null!;
+
+        /// <summary>
+        /// Name of the queue stage currently executing (e.g. par2, lazy-rar,
+        /// processors). Set by the processor; read by the stuck watchdog.
+        /// </summary>
+        public string CurrentStage { get; set; } = string.Empty;
+        public Task ProcessingTask { get; set; } = null!;
         public TaskCompletionSource CompletionSignal { get; init; } = null!;
         public CancellationTokenSource CancellationTokenSource { get; init; } = null!;
         public QueueDownloadContext QueueDownloadContext { get; init; } = null!;
@@ -1068,7 +1093,7 @@ public sealed class QueueManager : IDisposable
         public Stream? QueueNzbStream { get; init; }
         public ArticleCachingNntpClient CachingUsenetClient { get; init; } = null!;
         public DateTime StartedAt { get; init; }
-        public CancellationTokenSource WatchdogCts { get; init; } = null!;
+        public CancellationTokenSource WatchdogCts { get; set; } = null!;
         public Task WatchdogTask { get; set; } = Task.CompletedTask;
         public bool IsPrimary => QueueDownloadContext.IsPrimary;
 

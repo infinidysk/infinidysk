@@ -40,9 +40,11 @@ public class QueueItemProcessor(
     IProgress<int> progress,
     ConcurrentDictionary<Guid, int> retryAttempts,
     SemaphoreSlim? finalizeLock,
-    CancellationToken ct
+    CancellationToken ct,
+    Action<string>? stageReporter = null
 )
 {
+    private readonly Action<string> _stageReporter = stageReporter ?? (_ => { });
     public QueueItemProcessor(
         QueueItem queueItem,
         Stream? queueNzbStream,
@@ -189,6 +191,7 @@ public class QueueItemProcessor(
 
     private async Task<T> RunStageAsync<T>(string stage, Func<Task<T>> action)
     {
+        _stageReporter(stage);
         using var stageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var stageTimer = Stopwatch.StartNew();
         var monitorTask = MonitorLongRunningStageAsync(stage, stageTimer, stageCts.Token);
@@ -289,10 +292,16 @@ public class QueueItemProcessor(
                 nzbFiles, usenetClient, configManager, ct, part1Progress)).ConfigureAwait(false);
         var msFirstSeg = stepTimer.ElapsedMilliseconds;
         stepTimer.Restart();
+        // step 2 progress is split 50-55 (par2) / 55-60 (lazy-rar) / 60-100
+        // (processors) so the watchdog sees movement before the first file
+        // processor completes.
+        IProgress<int> par2Progress = progress
+            .Offset(50)
+            .Scale(5, 100);
         var par2FileDescriptors = await RunStageAsync(
             "par2",
             () => GetPar2FileDescriptorsStep.GetPar2FileDescriptors(
-                segments, usenetClient, ct)).ConfigureAwait(false);
+                segments, usenetClient, par2Progress, ct)).ConfigureAwait(false);
         var msPar2 = stepTimer.ElapsedMilliseconds;
         stepTimer.Restart();
         var fileInfos = GetFileInfosStep.GetFileInfos(
@@ -337,8 +346,15 @@ public class QueueItemProcessor(
         if (configManager.IsLazyRarParsingEnabled() && rarFiles.Count > 0)
         {
             var lazyProc = new LazyRarProcessor(rarFiles, usenetClient, archivePassword, ct);
-            lazyRarResult = await RunStageAsync("lazy-rar", lazyProc.ProcessAsync)
-                .ConfigureAwait(false) as LazyRarProcessor.Result;
+            IProgress<int> lazyRarProgress = progress
+                .Offset(55)
+                .Scale(5, 100);
+            lazyRarResult = await RunStageAsync("lazy-rar", async () =>
+            {
+                var result = await lazyProc.ProcessAsync().ConfigureAwait(false);
+                lazyRarProgress.Report(100);
+                return result;
+            }).ConfigureAwait(false) as LazyRarProcessor.Result;
             // Nested archives need the full eager pass + NestedRarExpansionStep.
             if (lazyRarResult is not null &&
                 FilenameUtil.IsRarFile(Path.GetFileName(lazyRarResult.PathInArchive)))
@@ -354,8 +370,8 @@ public class QueueItemProcessor(
         var skipRarGroup = lazyRarResult is not null;
         var fileProcessors = GetFileProcessors(fileInfos, archivePassword, skipRarGroup).ToList();
         var part2Progress = progress
-            .Offset(50)
-            .Scale(50, 100)
+            .Offset(60)
+            .Scale(40, 100)
             .ToMultiProgress(fileProcessors.Count);
         var fileProcessingResults = await RunStageAsync("processors", async () =>
         {

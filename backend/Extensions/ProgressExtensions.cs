@@ -44,7 +44,10 @@ public static class ProgressExtensions
                     }
 
                     previous = x;
-                    progress?.Report(current!.Value * 100 / _denominator);
+                    // Integer truncation maps a single completion of >100/percent
+                    // processors to the same displayed value; ceil keeps the
+                    // watchdog/UI moving while staying monotonic.
+                    progress?.Report((current!.Value * 100 + _denominator - 1) / _denominator);
                 });
             }
         }
