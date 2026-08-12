@@ -123,6 +123,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
           RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
         run: |
           set -euo pipefail
           gh release create "$RELEASE_TAG" \
@@ -149,6 +150,24 @@ jobs:
               --prerelease
           fi
 
+          DEV_TITLE="Rolling :dev (dev-${SHORT_SHA})"
+          DEV_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to release candidate [$RELEASE_TAG](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG)."
+          if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release edit dev \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$DEV_TITLE" \
+              --notes "$DEV_NOTES" \
+              --prerelease
+          else
+            gh release create dev \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$DEV_TITLE" \
+              --notes "$DEV_NOTES" \
+              --prerelease
+          fi
+
   assets:
     needs: [resolve, publish-release, tag-rc]
     uses: ./.github/workflows/build-release-assets.yml
@@ -158,10 +177,10 @@ jobs:
       version: ${{ needs.resolve.outputs.version }}-rc.${{ needs.resolve.outputs.rc }}
       checkout_ref: ${{ needs.resolve.outputs.sha }}
       release_tag: ${{ needs.resolve.outputs.tag }}
-      rolling_tag: rc
+      rolling_tag: "rc dev"
 
   tag-rc:
-    needs: [resolve, build, publish-release]
+    needs: [resolve, build, publish-release, tag-dev]
     uses: ./.github/workflows/move-movable-tag.yml
     permissions:
       contents: write

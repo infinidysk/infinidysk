@@ -103,7 +103,9 @@ jobs:
 
   assets:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
-    needs: release-please
+    needs:
+      - release-please
+      - publish-dev-release
     uses: ./.github/workflows/build-release-assets.yml
     permissions:
       contents: write
@@ -111,6 +113,40 @@ jobs:
       version: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
       checkout_ref: ${{ needs.release-please.outputs.sha }}
       release_tag: v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
+      rolling_tag: dev
+
+  publish-dev-release:
+    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
+    needs: release-please
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create or update rolling dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
+          VERSION: v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${RELEASE_SHA:0:7}"
+          ROLLING_TITLE="Rolling :dev (dev-${SHORT_SHA})"
+          ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to [$VERSION](https://github.com/${{ github.repository }}/releases/tag/$VERSION)."
+          if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release edit dev \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$ROLLING_TITLE" \
+              --notes "$ROLLING_NOTES" \
+              --prerelease
+          else
+            gh release create dev \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$ROLLING_TITLE" \
+              --notes "$ROLLING_NOTES" \
+              --prerelease
+          fi
 
   deploy-manual:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
@@ -150,7 +186,9 @@ jobs:
 
   assets-manual:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    needs: resolve-version
+    needs:
+      - resolve-version
+      - publish-dev-release-manual
     uses: ./.github/workflows/build-release-assets.yml
     permissions:
       contents: write
@@ -158,6 +196,40 @@ jobs:
       version: ${{ needs.resolve-version.outputs.version }}
       checkout_ref: ${{ needs.resolve-version.outputs.ref }}
       release_tag: ${{ needs.resolve-version.outputs.ref }}
+      rolling_tag: dev
+
+  publish-dev-release-manual:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create or update rolling dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REF: ${{ needs.resolve-version.outputs.ref }}
+        run: |
+          set -euo pipefail
+          RELEASE_SHA=$(gh api "repos/${{ github.repository }}/commits/${RELEASE_REF}" --jq .sha)
+          SHORT_SHA="${RELEASE_SHA:0:7}"
+          ROLLING_TITLE="Rolling :dev (dev-${SHORT_SHA})"
+          ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to [$RELEASE_REF](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_REF)."
+          if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release edit dev \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$ROLLING_TITLE" \
+              --notes "$ROLLING_NOTES" \
+              --prerelease
+          else
+            gh release create dev \
+              --repo "${{ github.repository }}" \
+              --target "$RELEASE_SHA" \
+              --title "$ROLLING_TITLE" \
+              --notes "$ROLLING_NOTES" \
+              --prerelease
+          fi
 
   tag-dev:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
@@ -176,6 +248,7 @@ jobs:
     needs:
       - release-please
       - deploy
+      - tag-dev
     uses: ./.github/workflows/move-movable-tag.yml
     permissions:
       contents: write
@@ -224,6 +297,7 @@ jobs:
     needs:
       - resolve-version
       - deploy-manual
+      - tag-dev-manual
     uses: ./.github/workflows/move-movable-tag.yml
     permissions:
       contents: write

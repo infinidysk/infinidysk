@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       rolling_tag:
-        description: Optional rolling GitHub release tag to receive stable-named copies
+        description: Optional space-separated rolling GitHub release tags to receive stable-named copies
         required: false
         default: ""
         type: string
@@ -35,7 +35,7 @@ on:
         required: true
         type: string
       rolling_tag:
-        description: Optional rolling GitHub release tag to receive stable-named copies
+        description: Optional space-separated rolling GitHub release tags to receive stable-named copies
         required: false
         default: ""
         type: string
@@ -173,12 +173,13 @@ jobs:
           compat_archive="nzbdav-${prefix}${VERSION}-${RID}.tar.gz"
           gh release upload "$RELEASE_TAG" "$archive" "$compat_archive" --clobber
 
-          # Skip when the rolling tag is the same release (e.g. dev): the
+          # Skip a rolling tag when it is the same release (e.g. dev): the
           # stable-named copy would duplicate the archives uploaded above.
-          if [[ -n "$ROLLING_TAG" && "$ROLLING_TAG" != "$RELEASE_TAG" ]]; then
-            rolling_archive="infinidysk-${ROLLING_TAG}-${RID}.tar.gz"
-            compat_rolling_archive="nzbdav-${ROLLING_TAG}-${RID}.tar.gz"
+          for ROLLING in ${ROLLING_TAG}; do
+            [[ -z "$ROLLING" || "$ROLLING" == "$RELEASE_TAG" ]] && continue
+            rolling_archive="infinidysk-${ROLLING}-${RID}.tar.gz"
+            compat_rolling_archive="nzbdav-${ROLLING}-${RID}.tar.gz"
             cp "$archive" "$rolling_archive"
             cp "$compat_archive" "$compat_rolling_archive"
-            gh release upload "$ROLLING_TAG" "$rolling_archive" "$compat_rolling_archive" --clobber
-          fi
+            gh release upload "$ROLLING" "$rolling_archive" "$compat_rolling_archive" --clobber
+          done
