@@ -292,7 +292,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         readCts.CancelAfter(Timeout.InfiniteTimeSpan);
                         await CopyToAsync(stream, response.Body, copyStart, copyEnd,
                             (n, pos) => _activeReadRegistry.Touch(sessionId, n, pos),
-                            traceRange, readCts, fileName, ct).ConfigureAwait(false);
+                            traceRange, readCts, path, ct).ConfigureAwait(false);
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed);
                         ClearStreamingFailureAfterCompletedRead(
                             _failureTracker,
