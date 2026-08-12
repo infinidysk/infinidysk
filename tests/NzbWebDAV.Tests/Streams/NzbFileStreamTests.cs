@@ -388,7 +388,7 @@ public class NzbFileStreamTests
     }
 
     [Fact]
-    public async Task ReadAsync_EndsBeforeDeclaredFileSize_ThrowsIncompleteFileContent()
+    public async Task ReadAsync_EndsBeforeDeclaredFileSize_ReturnsZeroWithoutThrowing()
     {
         using var client = new FakeNntpClient(new Dictionary<string, byte[]>
         {
