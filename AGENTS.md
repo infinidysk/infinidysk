@@ -145,9 +145,11 @@ InfiniDysk develops these libraries **in this repository** under `libs/` and con
 | Task | Start here |
 |------|------------|
 | SABnzbd API behavior | `backend/Api/SabControllers/` |
+| SAB API obedience audit | `docs/reference/sabnzbd-api.md` (upstream 5.1 snapshot) + `backend/Api/SabControllers/` + `docs/features/sab-api.md` (our subset) |
 | Admin/settings API | `backend/Api/Controllers/` |
 | WebDAV paths, streaming, archives | `backend/WebDav/`, `backend/Queue/`, `backend/Streams/` |
 | Usenet connections / providers | `backend/Clients/Usenet/`, `libs/UsenetSharp/` |
+| NNTP obedience audit | `docs/reference/rfc3977.md` (RFC 3977 snapshot) + `libs/UsenetSharp/` + `backend/Clients/Usenet/` |
 | yEnc native / bindings | `libs/rapidyenc/` (submodule), `libs/RapidYencSharp/`, `scripts/build-rapidyenc.sh` |
 | Archive formats (RAR/7z/zip/…) | `libs/SharpCompress/`, `backend/Queue/`, `backend/Streams/` |
 | Sonarr/Radarr automation | `backend/Clients/RadarrSonarr/`, `backend/Services/ArrMonitoringService.cs` |

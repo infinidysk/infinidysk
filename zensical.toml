@@ -5,6 +5,11 @@ site_author = "InfiniDysk"
 site_url = "https://www.infinidysk.com/"
 docs_dir = "docs"
 site_dir = "site"
+# Agent-only upstream spec dumps. Zensical 0.0.52 ignores this key; CI also
+# removes docs/reference before `zensical build` so the files stay off Pages.
+exclude_docs = """
+reference/
+"""
 repo_url = "https://github.com/infinidysk/infinidysk"
 repo_name = "infinidysk/infinidysk"
 edit_uri = "edit/main/docs/"
