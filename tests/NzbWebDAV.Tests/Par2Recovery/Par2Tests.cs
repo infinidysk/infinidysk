@@ -94,6 +94,68 @@ public class Par2Tests
         Assert.Equal("keep-me.mkv", Assert.Single(descriptions).FileName);
     }
 
+    [Fact]
+    public async Task ReadFileDescriptions_SkipsRecoverySliceBodiesWithoutReadingThem()
+    {
+        var fileId = Enumerable.Repeat((byte)0x33, 16).ToArray();
+        var hugeRecoveryBody = new byte[5 * 1024 * 1024]; // 5 MiB RecvSlic payload
+        Array.Fill(hugeRecoveryBody, (byte)0xAB);
+
+        await using var stream = new ReadTrackingMemoryStream();
+        WritePacket(stream, FileDesc.PacketType, BuildFileDescBody(fileId, "episode.mkv"));
+        WritePacket(stream, RecvSlic.PacketType, hugeRecoveryBody);
+        WritePacket(stream, FileDesc.PacketType, BuildFileDescBody(
+            Enumerable.Repeat((byte)0x44, 16).ToArray(), "trailing.mkv"));
+        stream.Position = 0;
+
+        var descriptions = new List<FileDesc>();
+        await foreach (var description in Par2.ReadFileDescriptions(stream))
+            descriptions.Add(description);
+
+        Assert.Equal(2, descriptions.Count);
+        // The 5 MiB RecvSlic body must be skipped via Seek, not read into memory.
+        Assert.True(stream.TotalBytesRead < hugeRecoveryBody.Length,
+            $"Expected recovery body to be seeked past, but {stream.TotalBytesRead} bytes were read");
+    }
+
+    [Fact]
+    public async Task ReadFileDescriptions_StopAtRecoverySlice_EndsAtFirstRecoverySlice()
+    {
+        var fileId = Enumerable.Repeat((byte)0x55, 16).ToArray();
+
+        await using var stream = new MemoryStream();
+        WritePacket(stream, FileDesc.PacketType, BuildFileDescBody(fileId, "episode.mkv"));
+        WritePacket(stream, RecvSlic.PacketType, new byte[64]);
+        WritePacket(stream, FileDesc.PacketType, BuildFileDescBody(
+            Enumerable.Repeat((byte)0x66, 16).ToArray(), "should-not-be-read.mkv"));
+        stream.Position = 0;
+
+        var descriptions = new List<FileDesc>();
+        await foreach (var description in Par2.ReadFileDescriptions(stream, stopAtRecoverySlice: true))
+            descriptions.Add(description);
+
+        Assert.Equal("episode.mkv", Assert.Single(descriptions).FileName);
+    }
+
+    private sealed class ReadTrackingMemoryStream : MemoryStream
+    {
+        public long TotalBytesRead { get; private set; }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await base.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            TotalBytesRead += read;
+            return read;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = base.Read(buffer, offset, count);
+            TotalBytesRead += read;
+            return read;
+        }
+    }
+
     private static byte[] BuildFileDescBody(byte[] fileId, string fileName)
     {
         var nameBytes = Encoding.UTF8.GetBytes(fileName);

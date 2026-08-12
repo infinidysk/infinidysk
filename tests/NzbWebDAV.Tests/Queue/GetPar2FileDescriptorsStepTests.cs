@@ -73,6 +73,38 @@ public class GetPar2FileDescriptorsStepTests
     }
 
     [Fact]
+    public async Task GetPar2FileDescriptors_ObfuscatedRecoveryVolume_DoesNotDownloadRecoveryData()
+    {
+        // Obfuscated releases use hashed subjects with no ".volNN+MM.par2"
+        // suffix, so recovery volumes are not filtered out by name. The step
+        // must still stop at the first recovery slice instead of streaming
+        // the whole volume through the descriptor walker.
+        var idVol = FileId(0x0C);
+        const int recoveryBodyBytes = 4 * 1024 * 1024; // 4 MiB RecvSlic payload
+        var vol = Par2TestPackets.BuildRecoveryVolumeBytes(
+            [Par2TestPackets.BuildFileDescBody(idVol, "movie.mkv")],
+            recoveryBodyBytes);
+
+        using var client = new Par2ServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["vol@example.com"] = vol,
+        });
+
+        var files = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            VideoFile("Release [AAAAAAAA].mkv", "video-a@example.com"),
+            Par2File("deadbeef0123.par2", "vol@example.com", vol),
+        };
+
+        var descriptors = await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(files, client);
+
+        var descriptor = Assert.Single(descriptors);
+        Assert.Equal("movie.mkv", descriptor.FileName);
+        Assert.True(client.TotalBytesRead < recoveryBodyBytes,
+            $"Expected recovery body to be skipped, but {client.TotalBytesRead} bytes were read");
+    }
+
+    [Fact]
     public async Task GetPar2FileDescriptors_DedupesDescriptorsByFileId()
     {
         var id = FileId(0x0A);
@@ -161,6 +193,7 @@ public class GetPar2FileDescriptorsStepTests
     private sealed class Par2ServingNntpClient(IReadOnlyDictionary<string, byte[]> segments) : NntpClient
     {
         public HashSet<string> RequestedSegmentIds { get; } = new(StringComparer.Ordinal);
+        public long TotalBytesRead => ReadCountingStream.TotalBytesRead;
 
         public override Task ConnectAsync(
             string host, int port, bool useSsl, CancellationToken cancellationToken) =>
@@ -209,8 +242,30 @@ public class GetPar2FileDescriptorsStepTests
                 SegmentId = key,
                 ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
                 ResponseMessage = "222 body",
-                Stream = new CachedYencStream(headers, new MemoryStream(bytes, writable: false)),
+                Stream = new CachedYencStream(headers, new ReadCountingStream(bytes)),
             });
+        }
+
+        private sealed class ReadCountingStream : MemoryStream
+        {
+            public static long TotalBytesRead => _totalBytesRead;
+            private static long _totalBytesRead;
+
+            public ReadCountingStream(byte[] bytes) : base(bytes, writable: false) { }
+
+            public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            {
+                var read = await base.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                Interlocked.Add(ref _totalBytesRead, read);
+                return read;
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                var read = base.Read(buffer, offset, count);
+                Interlocked.Add(ref _totalBytesRead, read);
+                return read;
+            }
         }
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(

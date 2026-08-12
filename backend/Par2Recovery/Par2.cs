@@ -20,6 +20,7 @@ namespace NzbWebDAV.Par2Recovery
         public static async IAsyncEnumerable<FileDesc> ReadFileDescriptions
         (
             Stream stream,
+            bool stopAtRecoverySlice = false,
             [EnumeratorCancellation] CancellationToken ct = default
         )
         {
@@ -50,6 +51,13 @@ namespace NzbWebDAV.Par2Recovery
                         unicodeNamesByFileId[Convert.ToHexString(uniFileN.FileID)] = uniFileN.FileName;
                         break;
                 }
+
+                // Recovery volumes repeat the index packets before the recovery
+                // data, so by the first RecvSlic we already hold every FileDesc
+                // the file contains. Used to recognize obfuscated recovery
+                // volumes whose NZB subjects do not match the vol regex.
+                if (stopAtRecoverySlice && packet is RecvSlic)
+                    break; // volumes duplicate index descriptors before recovery data
             }
 
             foreach (var fileDesc in fileDescs)
@@ -84,6 +92,9 @@ namespace NzbWebDAV.Par2Recovery
                     break;
                 case UniFileN.PacketType:
                     result = new UniFileN(header);
+                    break;
+                case RecvSlic.PacketType:
+                    result = new RecvSlic(header);
                     break;
                 default:
                     result = new Par2Packet(header);

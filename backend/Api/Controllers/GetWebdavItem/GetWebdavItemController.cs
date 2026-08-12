@@ -370,7 +370,7 @@ public class GetWebdavItemController(
     {
         Response.Headers.ContentType = "text/plain";
         await using var stream = await item.GetReadableStreamAsync(ct).ConfigureAwait(false);
-        var fileDescriptors = await Par2.ReadFileDescriptions(stream, ct).GetAllAsync(ct: ct)
+        var fileDescriptors = await Par2.ReadFileDescriptions(stream, ct: ct).GetAllAsync(ct: ct)
             .ConfigureAwait(false);
         return new MemoryStream(Encoding.UTF8.GetBytes(fileDescriptors.ToIndentedJson()));
     }

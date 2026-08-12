@@ -31,6 +31,17 @@ internal static class Par2TestPackets
         return stream.ToArray();
     }
 
+    internal static byte[] BuildRecoveryVolumeBytes(
+        byte[][] fileDescBodies,
+        int recoverySliceBodyLength)
+    {
+        using var stream = new MemoryStream();
+        foreach (var body in fileDescBodies)
+            WritePacket(stream, FileDesc.PacketType, body);
+        WritePacket(stream, RecvSlic.PacketType, new byte[recoverySliceBodyLength]);
+        return stream.ToArray();
+    }
+
     internal static async Task<List<FileDesc>> ReadFileDescsAsync(byte[] par2Bytes)
     {
         var descriptors = new List<FileDesc>();

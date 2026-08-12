@@ -12,6 +12,7 @@ public static class GetPar2FileDescriptorsStep
     (
         List<FetchFirstSegmentsStep.NzbFileWithFirstSegment> files,
         INntpClient usenetClient,
+        IProgress<int>? progress = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -42,6 +43,7 @@ public static class GetPar2FileDescriptorsStep
         // return all file descriptors, deduplicated by FileID
         var fileDescriptors = new List<FileDesc>();
         var seenFileIds = new HashSet<string>(StringComparer.Ordinal);
+        var completed = 0;
         foreach (var par2Index in par2Indexes)
         {
             var segments = par2Index.NzbFile.GetSegmentIds();
@@ -49,11 +51,15 @@ public static class GetPar2FileDescriptorsStep
                 ? par2Index.Header!.PartOffset + par2Index.Header!.PartSize
                 : await usenetClient.GetFileSizeAsync(par2Index.NzbFile, cancellationToken).ConfigureAwait(false);
             await using var stream = usenetClient.GetFileStream(segments, filesize, articleBufferSize: 0);
-            await foreach (var fileDescriptor in Par2.ReadFileDescriptions(stream, cancellationToken).ConfigureAwait(false))
+            // stopAtRecoverySlice: volumes repeat the index packets before the
+            // recovery data, so the first RecvSlic ends descriptor extraction.
+            await foreach (var fileDescriptor in Par2.ReadFileDescriptions(stream, stopAtRecoverySlice: true, cancellationToken)
+                .ConfigureAwait(false))
             {
                 if (seenFileIds.Add(Convert.ToHexString(fileDescriptor.FileID)))
                     fileDescriptors.Add(fileDescriptor);
             }
+            progress?.Report(++completed);
         }
 
         return fileDescriptors;
