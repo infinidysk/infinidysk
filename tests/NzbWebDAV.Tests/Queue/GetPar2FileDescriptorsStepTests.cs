@@ -192,8 +192,11 @@ public class GetPar2FileDescriptorsStepTests
     /// </summary>
     private sealed class Par2ServingNntpClient(IReadOnlyDictionary<string, byte[]> segments) : NntpClient
     {
+        private long _totalBytesRead;
         public HashSet<string> RequestedSegmentIds { get; } = new(StringComparer.Ordinal);
-        public long TotalBytesRead => ReadCountingStream.TotalBytesRead;
+        public long TotalBytesRead => Interlocked.Read(ref _totalBytesRead);
+
+        private long AddBytesRead(int read) => Interlocked.Add(ref _totalBytesRead, read);
 
         public override Task ConnectAsync(
             string host, int port, bool useSsl, CancellationToken cancellationToken) =>
@@ -242,28 +245,23 @@ public class GetPar2FileDescriptorsStepTests
                 SegmentId = key,
                 ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
                 ResponseMessage = "222 body",
-                Stream = new CachedYencStream(headers, new ReadCountingStream(bytes)),
+                Stream = new CachedYencStream(headers, new ReadCountingStream(bytes, AddBytesRead)),
             });
         }
 
-        private sealed class ReadCountingStream : MemoryStream
+        private sealed class ReadCountingStream(byte[] bytes, Func<int, long> onRead) : MemoryStream(bytes, writable: false)
         {
-            public static long TotalBytesRead => _totalBytesRead;
-            private static long _totalBytesRead;
-
-            public ReadCountingStream(byte[] bytes) : base(bytes, writable: false) { }
-
             public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             {
                 var read = await base.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-                Interlocked.Add(ref _totalBytesRead, read);
+                onRead(read);
                 return read;
             }
 
             public override int Read(byte[] buffer, int offset, int count)
             {
                 var read = base.Read(buffer, offset, count);
-                Interlocked.Add(ref _totalBytesRead, read);
+                onRead(read);
                 return read;
             }
         }

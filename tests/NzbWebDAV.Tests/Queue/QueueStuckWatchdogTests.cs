@@ -320,7 +320,7 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
 
         await fetchCts.CancelAsync();
         try { await fetchTask; }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* expected: fetch loop cancelled */ }
 
         await cts.CancelAsync();
         await loop.WaitAsync(TimeSpan.FromSeconds(5));
