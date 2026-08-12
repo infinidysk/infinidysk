@@ -96,6 +96,7 @@ public class DavItem
         Type = ItemType.Directory,
         SubType = ItemSubType.WebdavRoot,
         Path = "/",
+        CreatedAt = DateTime.UnixEpoch,
     };
 
     public static readonly DavItem NzbFolder = new()
@@ -107,6 +108,7 @@ public class DavItem
         Type = ItemType.Directory,
         SubType = ItemSubType.NzbsRoot,
         Path = "/nzbs",
+        CreatedAt = DateTime.UnixEpoch,
     };
 
     public static readonly DavItem ContentFolder = new()
@@ -118,6 +120,7 @@ public class DavItem
         Type = ItemType.Directory,
         SubType = ItemSubType.ContentRoot,
         Path = "/content",
+        CreatedAt = DateTime.UnixEpoch,
     };
 
     public static readonly DavItem SymlinkFolder = new()
@@ -129,6 +132,7 @@ public class DavItem
         Type = ItemType.Directory,
         SubType = ItemSubType.SymlinkRoot,
         Path = "/completed-symlinks",
+        CreatedAt = DateTime.UnixEpoch,
     };
 
     public static readonly DavItem IdsFolder = new()
@@ -140,5 +144,6 @@ public class DavItem
         Type = ItemType.Directory,
         SubType = ItemSubType.IdsRoot,
         Path = "/.ids",
+        CreatedAt = DateTime.UnixEpoch,
     };
 }

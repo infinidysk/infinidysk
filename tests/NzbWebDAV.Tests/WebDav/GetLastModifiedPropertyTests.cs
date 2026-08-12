@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using NWebDav.Server.Props;
 using NWebDav.Server.Stores;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.WebDav.Requests;
 
@@ -40,6 +41,41 @@ public class GetLastModifiedPropertyTests
 
         if (TimeZoneInfo.Local.GetUtcOffset(createdAt) != TimeSpan.Zero)
             Assert.NotEqual(createdAt.ToString("R"), value);
+    }
+
+    [Fact]
+    public async Task Item_GetLastModified_MinValue_UsesUnixEpochFallback()
+    {
+        var item = new StubStoreItem(default);
+
+        var value = (string?)await item.PropertyManager!
+            .GetPropertyAsync(item, DavGetLastModified<IStoreItem>.PropertyName, skipExpensive: true);
+
+        Assert.Equal(DateTime.UnixEpoch.ToString("R"), value);
+        Assert.DoesNotContain("0001", value);
+    }
+
+    [Fact]
+    public async Task Collection_GetLastModified_MinValue_UsesUnixEpochFallback()
+    {
+        var collection = new StubStoreCollection(default);
+
+        var value = (string?)await collection.PropertyManager!
+            .GetPropertyAsync(collection, DavGetLastModified<IStoreItem>.PropertyName, skipExpensive: true);
+
+        Assert.Equal(DateTime.UnixEpoch.ToString("R"), value);
+        Assert.DoesNotContain("0001", value);
+    }
+
+    [Fact]
+    public void StaticDavItems_HaveNonMinValueCreatedAt()
+    {
+        Assert.NotEqual(default, DavItem.Root.CreatedAt);
+        Assert.NotEqual(default, DavItem.NzbFolder.CreatedAt);
+        Assert.NotEqual(default, DavItem.ContentFolder.CreatedAt);
+        Assert.NotEqual(default, DavItem.SymlinkFolder.CreatedAt);
+        Assert.NotEqual(default, DavItem.IdsFolder.CreatedAt);
+        Assert.Equal(DateTime.UnixEpoch, DavItem.Root.CreatedAt);
     }
 
     private sealed class StubStoreItem(DateTime createdAt) : BaseStoreReadonlyItem

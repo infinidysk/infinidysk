@@ -23,7 +23,7 @@ public class BaseStoreItemPropertyManager() : PropertyManager<BaseStoreItem>(Dav
         },
         new DavGetLastModified<BaseStoreItem>
         {
-            Getter = x => x.CreatedAt.ToUniversalTime()
+            Getter = x => WebDavCreatedAtUtil.GetLastModifiedUtc(x.CreatedAt)
         },
         new Win32FileAttributes<BaseStoreItem>
         {

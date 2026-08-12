@@ -38,7 +38,7 @@ public class BaseStoreCollectionPropertyManager() : PropertyManager<BaseStoreCol
         },
         new DavGetLastModified<BaseStoreCollection>
         {
-            Getter = x => x.CreatedAt.ToUniversalTime()
+            Getter = x => WebDavCreatedAtUtil.GetLastModifiedUtc(x.CreatedAt)
         },
         new Win32FileAttributes<BaseStoreCollection>
         {
