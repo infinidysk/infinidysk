@@ -504,15 +504,13 @@ public class QueueItemProcessor(
             return groups;
 
         var allParts = splitGroups.SelectMany(g => g).ToList();
-        var partNumbers = new List<int>(allParts.Count);
-        foreach (var part in allParts)
-        {
-            var n = FilenameUtil.GetSplitVideoPartNumber(part.FileName);
-            if (n is null)
-                return groups;
-            partNumbers.Add(n.Value);
-        }
+        var parsedPartNumbers = allParts
+            .Select(part => FilenameUtil.GetSplitVideoPartNumber(part.FileName))
+            .ToList();
+        if (parsedPartNumbers.Any(n => n is null))
+            return groups;
 
+        var partNumbers = parsedPartNumbers.Select(n => n!.Value).ToList();
         if (partNumbers.Distinct().Count() != partNumbers.Count)
             return groups;
 

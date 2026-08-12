@@ -72,6 +72,7 @@ public static partial class FilenameUtil
         if (string.IsNullOrEmpty(filename)) return null;
         var partExt = Path.GetExtension(filename);
         if (!Regex.IsMatch(partExt, @"^\.\d+$")) return null;
+        if (!int.TryParse(partExt[1..], out _)) return null;
         var baseName = filename[..^partExt.Length];
         return IsVideoFile(baseName) ? baseName : null;
     }
@@ -82,8 +83,11 @@ public static partial class FilenameUtil
     /// </summary>
     public static int? GetSplitVideoPartNumber(string? filename)
     {
+        if (string.IsNullOrEmpty(filename)) return null;
         if (GetSplitVideoBaseName(filename) is null) return null;
-        return int.Parse(Path.GetExtension(filename!)[1..]);
+        return int.TryParse(Path.GetExtension(filename)[1..], out var partNumber)
+            ? partNumber
+            : null;
     }
 
     public static string GetJobName(string filename)

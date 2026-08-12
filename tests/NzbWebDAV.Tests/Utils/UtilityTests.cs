@@ -17,6 +17,7 @@ public class UtilityTests
     [InlineData("movie.mkv.", false, false, false)]
     [InlineData("movie.rar.001", false, false, false)]
     [InlineData("notes.pdf.001", false, false, false)]
+    [InlineData("movie.mkv.999999999999", false, false, false)]
     public void FilenameClassifiers_RecognizeArchiveConventions(
         string filename, bool rar, bool sevenZip, bool splitVideo)
     {
@@ -32,6 +33,7 @@ public class UtilityTests
     [InlineData("movie.mkv", null)]
     [InlineData("movie.mkv.", null)]
     [InlineData("movie.rar.001", null)]
+    [InlineData("movie.mkv.999999999999", null)]
     [InlineData("notes.pdf.001", null)]
     [InlineData(null, null)]
     public void GetSplitVideoBaseName_StripsNumericSuffixForVideoFiles(string? filename, string? expected)
@@ -43,6 +45,7 @@ public class UtilityTests
     [InlineData("movie.mkv.001", 1)]
     [InlineData("clip.mp4.010", 10)]
     [InlineData("movie.mkv", null)]
+    [InlineData("movie.mkv.999999999999", null)]
     [InlineData("notes.pdf.001", null)]
     [InlineData(null, null)]
     public void GetSplitVideoPartNumber_ParsesNumericSuffix(string? filename, int? expected)
