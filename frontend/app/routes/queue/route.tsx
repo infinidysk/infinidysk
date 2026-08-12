@@ -40,8 +40,8 @@ export async function loader({ request }: Route.LoaderArgs) {
         ?.configValue ?? "uncategorized,audio,software,tv,movies";
     const manualCategory = config
         .find(x => x.configName === "api.manual-category")
-        ?.configValue ?? "uncategorized";
-    let categories = categoriesValue.split(',').map(x => x.trim());
+        ?.configValue?.trim() || "uncategorized";
+    let categories = categoriesValue.split(',').map(x => x.trim()).filter(Boolean);
     if (!categories.includes(manualCategory)) {
         categories = [manualCategory, ...categories];
     }

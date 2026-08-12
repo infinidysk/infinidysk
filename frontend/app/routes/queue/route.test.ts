@@ -116,6 +116,35 @@ describe("queue route loader", () => {
     });
   });
 
+  it("falls back to a non-empty manual category and filters empty category segments", async () => {
+    getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getConfigMock.mockResolvedValueOnce([
+      { configName: "api.categories", configValue: ",tv,, movies," },
+      { configName: "api.manual-category", configValue: "" },
+    ]);
+
+    const result = await loader(loaderRequest());
+
+    expect(result.manualCategory).toBe("uncategorized");
+    expect(result.categories).toEqual(["uncategorized", "tv", "movies"]);
+    expect(result.categories).not.toContain("");
+  });
+
+  it("falls back to a non-empty manual category when it is whitespace-only", async () => {
+    getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getConfigMock.mockResolvedValueOnce([
+      { configName: "api.categories", configValue: "tv" },
+      { configName: "api.manual-category", configValue: "   " },
+    ]);
+
+    const result = await loader(loaderRequest());
+
+    expect(result.manualCategory).toBe("uncategorized");
+    expect(result.categories).toEqual(["uncategorized", "tv"]);
+  });
+
   it("surfaces backend failures instead of returning partial queue data", async () => {
     getQueueMock.mockRejectedValueOnce(new Error("queue unavailable"));
     getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });

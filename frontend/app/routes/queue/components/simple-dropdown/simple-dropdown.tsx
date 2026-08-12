@@ -11,7 +11,7 @@ export type SimpleDropdownProps = {
 }
 
 export const SimpleDropdown = memo(({ type, options, value, onChange, valueRef, ariaLabel }: SimpleDropdownProps) => {
-    if (!valueRef && (!value || !onChange)) {
+    if (!valueRef && (value == null || !onChange)) {
         throw new Error("SimpleDropdown requires either the valueRef prop or both the value and onChange props.")
     }
 
