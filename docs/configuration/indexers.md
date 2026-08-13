@@ -14,7 +14,7 @@ Newznab indexers/aggregators, global request defaults, and title exclude pattern
 |---------|------------|---------|--------|
 | HTTP(S) Proxy URL | in `indexers.instances` | empty | Used when indexer has no override |
 | Default Search User-Agent | `api.search-user-agent` | empty → `nzbdav/{ver}` or `NZB_SEARCH_USER_AGENT` | Search/caps queries |
-| Default Retrieve User-Agent | `api.user-agent` | empty → `nzbdav/{ver}` or `NZB_GRAB_USER_AGENT` | Fetching `.nzb` |
+| Default Retrieve User-Agent | `api.user-agent` | empty → `SABnzbd/5.1.0` or `NZB_GRAB_USER_AGENT` | Fetching `.nzb` |
 | Request timeout (seconds) | in instances | `30` | Per-request timeout |
 | Search results per indexer | in instances | `100` | Page size |
 | Exclude result patterns | `search.exclude-patterns` | empty | JS regex per line (case-insensitive) |

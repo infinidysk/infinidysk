@@ -1689,7 +1689,7 @@ public class ConfigManager
 
     public string GetUserAgent()
     {
-        var defaultValue = $"nzbdav/{AppVersion}";
+        var defaultValue = "SABnzbd/5.1.0";
         return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiUserAgent))
                ?? EnvironmentUtil.GetEnvironmentVariable("NZB_GRAB_USER_AGENT")
                ?? defaultValue;

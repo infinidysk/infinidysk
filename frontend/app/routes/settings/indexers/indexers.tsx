@@ -558,14 +558,15 @@ export function IndexersSettings({ config, setNewConfig, savedConfig, onSyncedCo
                             type="text"
                             id="indexers-default-retrieve-user-agent"
                             className="w-full"
-                            placeholder="nzbdav/<version>"
+                            placeholder="SABnzbd/5.1.0"
                             value={defaultRetrieveUserAgent}
                             onChange={e => handleRetrieveUserAgentChange(e.target.value)}
                         />
                         <HelpText>
                             Sent when retrieving .nzb files, including SAB <code>addurl</code> requests
                             matched to an indexer. Per-indexer overrides take precedence. Leave blank to
-                            use the application default.
+                            use <code>SABnzbd/5.1.0</code> so indexers that require a SABnzbd client
+                            accept grabs.
                         </HelpText>
                     </div>
                     </ManagedSetting>

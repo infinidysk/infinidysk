@@ -114,7 +114,7 @@ These apply only when the matching Settings value is empty **and** no
 |----------|-----------------|------------------------|
 | `FRONTEND_BACKEND_API_KEY` | API Key | required |
 | `CATEGORIES` | Categories | `audio,software,tv,movies` |
-| `NZB_GRAB_USER_AGENT` | User Agent / retrieve UA | `nzbdav/{version}` |
+| `NZB_GRAB_USER_AGENT` | User Agent / retrieve UA | `SABnzbd/5.1.0` |
 | `NZB_SEARCH_USER_AGENT` | Search User-Agent | `nzbdav/{version}` |
 | `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | Trusted local hosts | none |
 | `MOUNT_DIR` | Rclone Mount Directory | `/mnt/nzbdav` |
