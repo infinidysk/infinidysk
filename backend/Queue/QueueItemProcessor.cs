@@ -770,31 +770,39 @@ public class QueueItemProcessor(
             await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
         }, finalizeCt).ConfigureAwait(false);
 
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
-        _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot!.ToJson());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
-        _ = RefreshMonitoredDownloads();
-        if (error is null)
+        try
         {
-            Log.Information(
-                "Completed queue item {JobName} ({QueueItemId}) in {ElapsedSeconds} seconds",
-                queueItem.JobName,
-                queueItem.Id,
-                historyItem!.DownloadTimeSeconds);
-        }
-        else
-        {
-            Log.Error(
-                "Failed queue item {JobName} ({QueueItemId}) after {ElapsedSeconds} seconds: {Reason}",
-                queueItem.JobName,
-                queueItem.Id,
-                historyItem!.DownloadTimeSeconds,
-                error);
-        }
+            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
+            _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot!.ToJson());
+            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+            _ = RefreshMonitoredDownloads();
+            if (error is null)
+            {
+                Log.Information(
+                    "Completed queue item {JobName} ({QueueItemId}) in {ElapsedSeconds} seconds",
+                    queueItem.JobName,
+                    queueItem.Id,
+                    historyItem!.DownloadTimeSeconds);
+            }
+            else
+            {
+                Log.Error(
+                    "Failed queue item {JobName} ({QueueItemId}) after {ElapsedSeconds} seconds: {Reason}",
+                    queueItem.JobName,
+                    queueItem.Id,
+                    historyItem!.DownloadTimeSeconds,
+                    error);
+            }
 
-        RecordWatchdogAttemptIfExternal(startTime, error, providerUsage!);
-        retryAttempts.TryRemove(queueItem.Id, out _);
-        OnTerminal?.Invoke();
+            RecordWatchdogAttemptIfExternal(startTime, error, providerUsage!);
+        }
+        finally
+        {
+            // The item is already in history; drop retry/stall counters even if
+            // post-finalize logging or watchdog recording throws.
+            retryAttempts.TryRemove(queueItem.Id, out _);
+            OnTerminal?.Invoke();
+        }
     }
 
     private async Task WithFinalizeLockAsync(Func<Task> action, CancellationToken? cancellationToken = null)

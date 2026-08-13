@@ -992,42 +992,6 @@ public sealed class QueueManager : IDisposable
         var stallCount = _stallAttempts.AddOrUpdate(queueItem.Id, 1, (_, prev) => prev + 1);
         var failToHistory = stallCount >= MaxStuckAttempts;
 
-        DateTime? pauseUntil = null;
-        if (!failToHistory)
-        {
-#pragma warning disable CA5394 // pause jitter is not security-sensitive
-            var jitterSeconds = Random.Shared.Next(0, 301);
-#pragma warning restore CA5394
-            pauseUntil = DateTime.Now + TimeSpan.FromMinutes(15) + TimeSpan.FromSeconds(jitterSeconds);
-
-            try
-            {
-                await using var ctx = CreateDbContext();
-                using var writeCts = new CancellationTokenSource(StuckItemPauseWriteTimeout);
-                await ctx.QueueItems
-                    .Where(q => q.Id == queueItem.Id)
-                    .ExecuteUpdateAsync(s => s.SetProperty(q => q.PauseUntil, pauseUntil.Value), writeCts.Token)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                Log.Warning(
-                    "Timed out persisting PauseUntil for stuck queue item {QueueItemId} ({JobName}); " +
-                    "proceeding with worker cancellation",
-                    queueItem.Id,
-                    queueItem.JobName);
-            }
-#pragma warning disable CA2016
-            catch (Exception e) when (e is not OutOfMemoryException)
-#pragma warning restore CA2016
-            {
-                Log.Warning(e,
-                    "Failed to persist PauseUntil for stuck queue item {QueueItemId} ({JobName})",
-                    queueItem.Id,
-                    queueItem.JobName);
-            }
-        }
-
         if (failToHistory)
         {
             Log.Warning(
@@ -1050,6 +1014,38 @@ public sealed class QueueManager : IDisposable
         }
         else
         {
+#pragma warning disable CA5394 // pause jitter is not security-sensitive
+            var jitterSeconds = Random.Shared.Next(0, 301);
+#pragma warning restore CA5394
+            var pauseUntil = DateTime.Now + TimeSpan.FromMinutes(15) + TimeSpan.FromSeconds(jitterSeconds);
+
+            try
+            {
+                await using var ctx = CreateDbContext();
+                using var writeCts = new CancellationTokenSource(StuckItemPauseWriteTimeout);
+                await ctx.QueueItems
+                    .Where(q => q.Id == queueItem.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(q => q.PauseUntil, pauseUntil), writeCts.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warning(
+                    "Timed out persisting PauseUntil for stuck queue item {QueueItemId} ({JobName}); " +
+                    "proceeding with worker cancellation",
+                    queueItem.Id,
+                    queueItem.JobName);
+            }
+#pragma warning disable CA2016
+            catch (Exception e) when (e is not OutOfMemoryException)
+#pragma warning restore CA2016
+            {
+                Log.Warning(e,
+                    "Failed to persist PauseUntil for stuck queue item {QueueItemId} ({JobName})",
+                    queueItem.Id,
+                    queueItem.JobName);
+            }
+
             Log.Warning(
                 "Queue item stuck with no progress; pausing and cancelling (attempt {StallCount}/{MaxAttempts}). " +
                 "JobName={JobName} QueueItemId={QueueItemId} " +

@@ -14,6 +14,9 @@ using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Websocket;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Queue;
 
@@ -134,9 +137,7 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        // The hung-worker test detaches its manager (sets this to null) because a
-        // never-completing worker makes the coordinator's shutdown await hang.
-        _queueManager?.Dispose();
+        _queueManager.Dispose();
         Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
         try
         {
@@ -591,9 +592,9 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
     [Fact]
     public async Task WorkerIgnoringCancellation_LogsError_AndKeepsSlot()
     {
-        // A worker that never observes cancellation occupies its slot forever.
-        // The watchdog must survive its own cancel (unlinked CTS) and surface an
-        // Error after the grace period instead of silently returning.
+        // A worker that never observes cancellation occupies its slot until the
+        // underlying I/O is released. The ignored-cancel observer must log an
+        // Error after the grace period without abandoning the slot.
         var hung = new HungStream();
         var item = CreateQueueItem("hung.nzb", "movies", "HungJob");
 
@@ -603,12 +604,7 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             await ctx.SaveChangesAsync();
         }
 
-        // The hung worker never completes, so the coordinator's shutdown
-        // Task.WhenAll never finishes. Detach the manager from the fixture so the
-        // test's DisposeAsync skips awaiting it, and don't dispose it ourselves.
-        var manager = _queueManager;
-        _queueManager = null!;
-        manager.GetTopQueueItemOverride = async (exclude, ct) =>
+        _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
         {
             await using var ctx = new DavDatabaseContext(_options);
             var client = new DavDatabaseClient(ctx);
@@ -618,35 +614,54 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             return (claimed, hung);
         };
 
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Error()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var loop = manager.ProcessQueueAsync(cts.Token);
-
-        object? inProgress = await WaitForInProgress(item.Id, TimeSpan.FromSeconds(5), manager);
-        Assert.NotNull(inProgress);
-
-        // Wait for the watchdog to cancel the (uncancellable) worker.
-        var workerCts = GetWorkerCts(inProgress!);
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (DateTime.UtcNow < deadline && !workerCts.IsCancellationRequested)
-            await Task.Delay(20);
-        Assert.True(workerCts.IsCancellationRequested);
-
-        // Wait past the cancel grace period; the worker task still hasn't finished
-        // and the item must remain in progress (slot occupied, not abandoned).
-        await Task.Delay(TimeSpan.FromMilliseconds(1500));
-        Assert.NotNull(FindInProgressItem(item.Id, manager));
-        Assert.False(GetProcessingTask(inProgress!).IsCompleted);
-
-        // Item remains queued (not failed) — the worker never honored the cancel.
-        await using (var ctx = new DavDatabaseContext(_options))
+        var loop = _queueManager.ProcessQueueAsync(cts.Token);
+        try
         {
-            Assert.Equal(1, await ctx.QueueItems.CountAsync());
-            Assert.Equal(0, await ctx.HistoryItems.CountAsync());
-        }
+            object? inProgress = await WaitForInProgress(item.Id, TimeSpan.FromSeconds(5));
+            Assert.NotNull(inProgress);
 
-        // Stop the coordinator; we do not await or dispose the manager (detached
-        // above) because the hung worker's task never completes.
-        await cts.CancelAsync();
+            var workerCts = GetWorkerCts(inProgress!);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (DateTime.UtcNow < deadline && !workerCts.IsCancellationRequested)
+                await Task.Delay(20);
+            Assert.True(workerCts.IsCancellationRequested);
+
+            deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (DateTime.UtcNow < deadline &&
+                   !sink.Events.Any(e => e.Level == LogEventLevel.Error
+                       && e.RenderMessage().Contains("ignored cancellation", StringComparison.OrdinalIgnoreCase)))
+            {
+                await Task.Delay(20);
+            }
+
+            Assert.Contains(sink.Events, e =>
+                e.Level == LogEventLevel.Error
+                && e.RenderMessage().Contains("ignored cancellation", StringComparison.OrdinalIgnoreCase)
+                && e.RenderMessage().Contains("HungJob", StringComparison.Ordinal));
+            Assert.NotNull(FindInProgressItem(item.Id));
+            Assert.False(GetProcessingTask(inProgress!).IsCompleted);
+
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                Assert.Equal(1, await ctx.QueueItems.CountAsync());
+                Assert.Equal(0, await ctx.HistoryItems.CountAsync());
+            }
+        }
+        finally
+        {
+            hung.Release();
+            await cts.CancelAsync();
+            await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            Log.Logger = previous;
+        }
     }
 
     private async Task<object?> WaitForInProgress(Guid queueItemId, TimeSpan timeout, QueueManager? manager = null)
@@ -825,11 +840,17 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Blocks reads forever and ignores every cancellation token, simulating a
-    /// worker whose underlying I/O does not observe the cancellation token.
+    /// Blocks reads until <see cref="Release"/> is called and ignores every
+    /// cancellation token, simulating a worker whose underlying I/O does not
+    /// observe the worker CTS. Releasing lets the test dispose the manager.
     /// </summary>
     private sealed class HungStream : Stream
     {
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Release() => _release.TrySetCanceled();
+
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -843,8 +864,7 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         public override async Task<int> ReadAsync(
             byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            // Never observes cancellationToken or any worker token.
-            await Task.Delay(Timeout.Infinite).ConfigureAwait(false);
+            await _release.Task.ConfigureAwait(false);
             return 0;
         }
 
@@ -855,6 +875,24 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+
+        public IReadOnlyList<LogEvent> Events
+        {
+            get
+            {
+                lock (_events) return _events.ToArray();
+            }
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            lock (_events) _events.Add(logEvent);
+        }
     }
 
     /// <summary>
