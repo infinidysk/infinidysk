@@ -1,5 +1,68 @@
 # Changelog
 
+## [1.1.0](https://github.com/infinidysk/infinidysk/compare/v1.0.1...v1.1.0) (2026-08-13)
+
+
+### Features
+
+* **ci:** add rolling dev release with archives to Refresh :dev workflow ([#945](https://github.com/infinidysk/infinidysk/issues/945)) ([c30aa25](https://github.com/infinidysk/infinidysk/commit/c30aa25cf5669178469d3083f13dae7132368691))
+* **db:** limit metrics database growth on high-throughput hosts ([#932](https://github.com/infinidysk/infinidysk/issues/932)) ([0167bb2](https://github.com/infinidysk/infinidysk/commit/0167bb2d8f3f5a3e1b40563fb4c663783913822c))
+* **indexers:** Prowlarr-managed indexers (pull) ([#944](https://github.com/infinidysk/infinidysk/issues/944)) ([de7fb55](https://github.com/infinidysk/infinidysk/commit/de7fb5561fdd630b0ad06d51ed5423d83aa124f2))
+* **queue:** automatically recover queue items that stop making progress ([#934](https://github.com/infinidysk/infinidysk/issues/934)) ([2989216](https://github.com/infinidysk/infinidysk/commit/2989216fc2f3173f70837fc8cb1882853e21256e))
+* **queue:** bulk pause, retry, category, and clear actions on queue and history ([#939](https://github.com/infinidysk/infinidysk/issues/939)) ([de09c02](https://github.com/infinidysk/infinidysk/commit/de09c02964af62e95abd59add0b17ff1cd0c8530))
+* **queue:** normalize obfuscated video filenames so Radarr/Sonarr can import them ([#937](https://github.com/infinidysk/infinidysk/issues/937)) ([e5e4ee4](https://github.com/infinidysk/infinidysk/commit/e5e4ee437c5d1df65a24f658e8ca2d158af63900))
+* **sab:** show remaining time and speed for Sonarr/Radarr downloads ([#981](https://github.com/infinidysk/infinidysk/issues/981)) ([ff725b1](https://github.com/infinidysk/infinidysk/commit/ff725b18492ede2883c760331e16814e7508a994))
+* **sab:** support server_stats and warnings so mobile SAB clients can connect ([#935](https://github.com/infinidysk/infinidysk/issues/935)) ([63bcf6f](https://github.com/infinidysk/infinidysk/commit/63bcf6ffbd2f5f760e32ff13025a80f6d3c4970b))
+* **ui:** play media in-app from Files with auto-resume and playback diagnostics ([#947](https://github.com/infinidysk/infinidysk/issues/947)) ([c82bcfb](https://github.com/infinidysk/infinidysk/commit/c82bcfbde33b4e3c1bac2043ba5d4bd1177de6aa))
+* **webdav:** allow clearing completed-symlinks via WebDAV delete and a new maintenance task ([#930](https://github.com/infinidysk/infinidysk/issues/930)) ([b6211eb](https://github.com/infinidysk/infinidysk/commit/b6211ebd0f8e51de26874d303e9fbfa48041321f))
+
+
+### Bug Fixes
+
+* **api:** let request-abort cancellation escape play handler and pre-verify ([f63fd03](https://github.com/infinidysk/infinidysk/commit/f63fd032f92d1c82414561dff48cfd9a7efa2609))
+* **api:** resolve CodeQL path-injection and user-controlled-bypass findings ([#917](https://github.com/infinidysk/infinidysk/issues/917)) ([0a469d6](https://github.com/infinidysk/infinidysk/commit/0a469d69a42f6763ddc9fe0e0aacb759880597c0))
+* **arr:** reliably trigger Sonarr/Radarr replacement searches after repairing unplayable files ([#925](https://github.com/infinidysk/infinidysk/issues/925)) ([4631184](https://github.com/infinidysk/infinidysk/commit/463118448267a5a4bc0a58367b76ec068b5e1f3c))
+* **ci:** attach only stable-named archives to the rolling dev release ([#959](https://github.com/infinidysk/infinidysk/issues/959)) ([a24f78b](https://github.com/infinidysk/infinidysk/commit/a24f78b5d9d37d838d53ec319e7ccf45e1f6a900))
+* **db:** all-time bandwidth totals no longer shrink when old metrics are pruned ([#928](https://github.com/infinidysk/infinidysk/issues/928)) ([3b9d271](https://github.com/infinidysk/infinidysk/commit/3b9d2716db307b8feda6a8f8e2460959fd101a72))
+* **db:** corrupt database now gets clear recovery guidance instead of endless stack traces ([#943](https://github.com/infinidysk/infinidysk/issues/943)) ([87cd91b](https://github.com/infinidysk/infinidysk/commit/87cd91b5a2be6ebcc42070ba4e047538379c3857))
+* **db:** log a clear ownership error instead of crash-looping with exit 134 when config files are unreadable ([#958](https://github.com/infinidysk/infinidysk/issues/958)) ([f9f2ca6](https://github.com/infinidysk/infinidysk/commit/f9f2ca6ff6d0e745ec1468dd9608db6db32a8a09))
+* **deps:** Bump daisyui in /frontend in the npm-minor-and-patch group ([#904](https://github.com/infinidysk/infinidysk/issues/904)) ([7d20c7d](https://github.com/infinidysk/infinidysk/commit/7d20c7d61eff3aa869606ebe57ba580a13bf16c2))
+* **deps:** Bump github/codeql-action in the github-actions group ([#962](https://github.com/infinidysk/infinidysk/issues/962)) ([ae4bbea](https://github.com/infinidysk/infinidysk/commit/ae4bbeac1575b99be379c17108e4a6d3c8387bc9))
+* **deps:** Bump the npm-minor-and-patch group ([#960](https://github.com/infinidysk/infinidysk/issues/960)) ([90903c7](https://github.com/infinidysk/infinidysk/commit/90903c7080775f5b114d29ebf99df66defbbfac6))
+* dispose HttpRequestMessage instances in Arr and Rclone clients ([2b9fea5](https://github.com/infinidysk/infinidysk/commit/2b9fea56f87c939afcafe9239fd9df519d10b70a))
+* **explore:** deleting files from Explore now keeps history, caches, and symlinks consistent ([#940](https://github.com/infinidysk/infinidysk/issues/940)) ([afdfc35](https://github.com/infinidysk/infinidysk/commit/afdfc3543953ee1a9669b80f2a04a22f12db72ad))
+* guard nullable dereferences flagged by code quality analysis ([fee498a](https://github.com/infinidysk/infinidysk/commit/fee498a97b9b6011e5a89ef475fbd57cb1b29d11))
+* let shutdown cancellation escape per-item service loops ([855d842](https://github.com/infinidysk/infinidysk/commit/855d84208b882b59dc52fccc501947cd1748b101))
+* **par2:** propagate cancellation instead of returning partial parse ([8e42832](https://github.com/infinidysk/infinidysk/commit/8e42832dae52a7073a2965653efcc3a3d7a5a26c))
+* prevent integer overflow before double conversion in sampling math ([dcb95b2](https://github.com/infinidysk/infinidysk/commit/dcb95b2f39b4caac8784a9f45af05d4494bbd1d6))
+* prevent Path.Combine from silently dropping base directories ([4490098](https://github.com/infinidysk/infinidysk/commit/4490098fee4c9116fa5d973faf8f2a44e2d53869))
+* **queue:** mount every episode from season packs of split video files ([#977](https://github.com/infinidysk/infinidysk/issues/977)) ([7f7f0ad](https://github.com/infinidysk/infinidysk/commit/7f7f0adf9742848b7a97428f5f1c7d3e7ddfe46e))
+* **queue:** queue items no longer stall and cancel at 50% on obfuscated releases ([#974](https://github.com/infinidysk/infinidysk/issues/974)) ([4c2657f](https://github.com/infinidysk/infinidysk/commit/4c2657fb4a80ee87bd3f2b122f218f6f1402d8bd))
+* **queue:** season packs with per-episode par2 files now get correct episode filenames ([#941](https://github.com/infinidysk/infinidysk/issues/941)) ([4c1a605](https://github.com/infinidysk/infinidysk/commit/4c1a6056ec940044c0e6f304a1b26438d1c7069b))
+* **rclone:** mounts no longer show stale files after a temporary rclone outage ([#923](https://github.com/infinidysk/infinidysk/issues/923)) ([ecd06ab](https://github.com/infinidysk/infinidysk/commit/ecd06ab51101136d50b9bef2ed4fbf36afd055c1))
+* resolve code-quality findings — resource leaks, null safety, and cancellation handling ([32ba80e](https://github.com/infinidysk/infinidysk/commit/32ba80eae99cffdd5b7d69e17ede0ee6d3ea743f))
+* **sab:** queue and history no longer return empty when clients send limit=0 ([#924](https://github.com/infinidysk/infinidysk/issues/924)) ([d4b90cc](https://github.com/infinidysk/infinidysk/commit/d4b90cca6fea83f81b7aa57999e3df690cccfd90))
+* **sab:** return 400 for malformed nzo_ids in history requests ([#921](https://github.com/infinidysk/infinidysk/issues/921)) ([21df339](https://github.com/infinidysk/infinidysk/commit/21df339abf14fc2a0a0c2b06b93223f4fc7b6c86))
+* **sharpcompress:** resolve CodeQL findings in zstd unsafe code and buffer pool tests ([#920](https://github.com/infinidysk/infinidysk/issues/920)) ([2ad35b6](https://github.com/infinidysk/infinidysk/commit/2ad35b6645bb00f4e3f20f3b5999fc563e50da35))
+* **sharpcompress:** stop 7z archives with empty files crashing processing ([#952](https://github.com/infinidysk/infinidysk/issues/952)) ([4c4a3d9](https://github.com/infinidysk/infinidysk/commit/4c4a3d92a0e13755f4b80082a5fb3b24df9e16e2)), closes [#948](https://github.com/infinidysk/infinidysk/issues/948)
+* simplify constant conditions and redundant LINQ in queue and Arr clients ([91f4b6f](https://github.com/infinidysk/infinidysk/commit/91f4b6fc7a86a2faedb76d0e0daa43baeceda584))
+* **support:** support pack fields now use consistent camelCase names ([#903](https://github.com/infinidysk/infinidysk/issues/903)) ([4a39e11](https://github.com/infinidysk/infinidysk/commit/4a39e11716df0221a8f6003e6da3dee521c0f193))
+* **ui:** accept empty-string dropdown values and normalize empty categories ([#972](https://github.com/infinidysk/infinidysk/issues/972)) ([9d187ee](https://github.com/infinidysk/infinidysk/commit/9d187ee5b2d0d5ab83c66e5374ed9ca9c8c60a9f)), closes [#970](https://github.com/infinidysk/infinidysk/issues/970)
+* **ui:** plain HTTP requests to /ws now get a clean 426 and a proxy hint instead of a stack trace ([#957](https://github.com/infinidysk/infinidysk/issues/957)) ([cab5f4c](https://github.com/infinidysk/infinidysk/commit/cab5f4c3251c9816542b6be44c8d984bebc7acec))
+* **ui:** player checks the source before reporting a file as unplayable; missing payloads no longer 500 or trigger repair ([#963](https://github.com/infinidysk/infinidysk/issues/963)) ([1102737](https://github.com/infinidysk/infinidysk/commit/11027372492777449acb4a60736cf06c89042b4f))
+* **ui:** player now says which codec your browser is missing instead of blaming the file type ([#955](https://github.com/infinidysk/infinidysk/issues/955)) ([3f7a0f2](https://github.com/infinidysk/infinidysk/commit/3f7a0f23ecbdec4c3a469fcf6560b35b6c922c66))
+* **ui:** show the real error instead of looping "Connecting to InfiniDysk" when a page fails to load ([#975](https://github.com/infinidysk/infinidysk/issues/975)) ([663b6f1](https://github.com/infinidysk/infinidysk/commit/663b6f1ae7f1ee1c1a28b9378d75eee6ba8a072a))
+* **usenet:** providers stop flapping at 60-second cooldowns when health checks run ([#885](https://github.com/infinidysk/infinidysk/issues/885)) ([e779551](https://github.com/infinidysk/infinidysk/commit/e779551bcd96669c463cf116ad8b34122114a09d)), closes [#881](https://github.com/infinidysk/infinidysk/issues/881)
+* **usenet:** stop 502 connection-limit retry loops by learning the provider's real connection cap ([#916](https://github.com/infinidysk/infinidysk/issues/916)) ([e0c8a1b](https://github.com/infinidysk/infinidysk/commit/e0c8a1b777a96c61b3dc882a43f3fe0a95cd3dc0))
+* **usenet:** stop prefetch batch size from flapping during bursty reads ([#933](https://github.com/infinidysk/infinidysk/issues/933)) ([c353999](https://github.com/infinidysk/infinidysk/commit/c3539993eb6a0dd9f4556b71822c0f2170231bb3))
+* **watchtower:** propagate caller cancellation in episode enumeration ([24f2d07](https://github.com/infinidysk/infinidysk/commit/24f2d07bf8ad0e8912b7c1a0526cb810e22f23e6))
+* **webdav:** directory listings no longer appear empty in rclone v1.74+ ([#927](https://github.com/infinidysk/infinidysk/issues/927)) ([e2e744e](https://github.com/infinidysk/infinidysk/commit/e2e744e574123f44a57ea6e82345e3a3b9642671))
+* **webdav:** return valid HTTP-date timestamps for virtual .ids directories ([#967](https://github.com/infinidysk/infinidysk/issues/967)) ([e9014aa](https://github.com/infinidysk/infinidysk/commit/e9014aa6a75891f610ad138259212ade370170ef)), closes [#965](https://github.com/infinidysk/infinidysk/issues/965)
+* **webdav:** Sonarr/Radarr imports no longer fail with "Permission denied" on default settings ([#961](https://github.com/infinidysk/infinidysk/issues/961)) ([f2ab8f0](https://github.com/infinidysk/infinidysk/commit/f2ab8f0f656baff038e4cbfc76e2d222c422580c))
+* **webdav:** stop duplicate missing-article warnings for filenames with accented characters ([#926](https://github.com/infinidysk/infinidysk/issues/926)) ([6c4d998](https://github.com/infinidysk/infinidysk/commit/6c4d99812f45e0f6d63cc25e31dfe374f7816c5d))
+* **webdav:** streams that end early no longer trigger unhandled Kestrel errors ([#968](https://github.com/infinidysk/infinidysk/issues/968)) ([d76189a](https://github.com/infinidysk/infinidysk/commit/d76189adb135e5a7e62f373d9504d89900a23cff))
+* **webdav:** write-stall watchdog timeouts no longer mislabeled as backend read deadlines in logs ([#951](https://github.com/infinidysk/infinidysk/issues/951)) ([49e2a8a](https://github.com/infinidysk/infinidysk/commit/49e2a8a8b2655b06674bd030e8baaa7ffaf6609d))
+
 ## [1.0.1](https://github.com/infinidysk/infinidysk/compare/v1.0.0...v1.0.1) (2026-08-09)
 
 
