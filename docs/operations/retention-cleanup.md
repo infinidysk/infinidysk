@@ -27,11 +27,13 @@ Setting `metrics.fetch-retention-hours` to `0` requests rollup-only retention; t
 
 ## NZB blobs
 
-Blobs under `{CONFIG_PATH}/blobs/` remain while referenced by queue, history, or mounted `/content`. When the last reference drops, background cleanup removes them. History retention alone does not make mounts eligible for orphan deletion.
+Blobs under `{CONFIG_PATH}/blobs/` remain while referenced by queue, history, or mounted `/content`. When the last reference drops, background cleanup removes them.
+
+Scheduled history retention and the **Prune Completed History** task delete SAB history rows only (`deleteFiles: false`). They do not delete WebDAV mounts, but they do clear each mount's history link (`HistoryItemId`). **Remove Orphaned Files** then deletes those mounts only if they also have no library symlink or STRM.
 
 ## Orphaned files
 
-**Remove Orphaned Files** (Maintenance) deletes WebDAV files not linked from the library directory. Supports dry run. Schedule optional daily cleanup — set container `TZ`.
+**Remove Orphaned Files** (Maintenance) deletes WebDAV files that are not linked from the library directory and are no longer tied to a SAB history row. Supports dry run. Schedule optional daily cleanup — set container `TZ`. Direct WebDAV or rclone playback is not a library link.
 
 ## NZB file backups
 

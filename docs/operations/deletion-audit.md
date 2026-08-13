@@ -7,8 +7,8 @@ Mounted content under `/content` can vanish for several independent reasons. “
 | History delete with delete-files | Admin UI, or `del_completed_files=1` | Mounted items for that history row are deleted |
 | Cascading child sweep | Deleted directory | Children removed in background |
 | Health repair | Repairs + missing articles | Orphans/blocklisted files are deleted; linked releases are removed and blocklisted through *Arr |
-| Remove Orphaned Files | Manual/scheduled | Deletes files with **no** library symlink/STRM (safety abort if too few links) |
-| History retention | Retention days > 0 | Prunes history with `deleteFiles: false` — mounts stay, lose history link |
+| Remove Orphaned Files | Manual/scheduled | Deletes files with **no** library symlink/STRM and **no** history link (safety abort if too few links) |
+| History retention / Prune Completed History | Retention days > 0, or Maintenance task | Prunes history with `deleteFiles: false` — mounts stay, lose history link; unlinked mounts can then be removed by Remove Orphaned Files |
 | Manual delete | WebDAV DELETE / admin API | Explicit user action |
 | Blocklist filter | Download file blocklist | Matching files never appear in `/content` |
 | Non-persistent `/config` | Volume missing/wiped | Empty DB on restart — entire library looks gone |
