@@ -19,6 +19,13 @@ public sealed class QueueManager : IDisposable
     private readonly ConcurrentDictionary<Guid, InProgressQueueItem> _inProgress = new();
     private readonly ConcurrentDictionary<Guid, int> _retryAttempts = new();
 
+    // Per-item watchdog stall count. Separate from _retryAttempts (which tracks
+    // provider-connection retries) because a stall is a different failure mode:
+    // the download made no progress at all. Without a cap the pause-and-retry
+    // loop runs forever and the item never reaches SAB history, so Sonarr/Radarr
+    // wait in Activity indefinitely (issue #987).
+    private readonly ConcurrentDictionary<Guid, int> _stallAttempts = new();
+
     private readonly UsenetStreamingClient _usenetClient;
     private readonly CancellationTokenSource? _cancellationTokenSource;
     private readonly SemaphoreSlim _stateLock = new(1, 1);
@@ -51,6 +58,14 @@ public sealed class QueueManager : IDisposable
     internal TimeSpan StuckItemThreshold { get; set; } = DefaultStuckItemThreshold;
     internal TimeSpan StuckItemCheckInterval { get; set; } = TimeSpan.FromSeconds(30);
     internal TimeSpan StuckItemPauseWriteTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    // How long to wait after cancelling a stuck worker before concluding it
+    // ignored the cancellation and logging an Error. Test-overridable.
+    internal TimeSpan StuckCancelGracePeriod { get; set; } = TimeSpan.FromMinutes(2);
+
+    // Number of watchdog stall retries before the item is failed into history
+    // so *Arr clients can blocklist and re-grab. Test-overridable.
+    internal int MaxStuckAttempts { get; set; } = 3;
     internal Func<IReadOnlyCollection<Guid>, CancellationToken, Task<(QueueItem? queueItem, Stream? queueNzbStream)>>?
         GetTopQueueItemOverride
     { get; set; }
@@ -658,6 +673,10 @@ public sealed class QueueManager : IDisposable
             foreach (var item in completed)
             {
                 _inProgress.TryRemove(item.QueueItem.Id, out _);
+                // Do NOT clear _stallAttempts here: a watchdog-cancelled item that
+                // will be retried must keep its stall count so repeated stalls
+                // eventually fail it. The processor clears the counter only when
+                // the item reaches a terminal state (completed or failed).
                 if (_primaryId == item.QueueItem.Id)
                     _primaryId = null;
             }
@@ -787,13 +806,22 @@ public sealed class QueueManager : IDisposable
             WatchdogCts = null!, // set below, after the worker task is created
         };
 
-        var task = new QueueItemProcessor(
+        var processor = new QueueItemProcessor(
             queueItem, queueNzbStream, dbClient, cachingUsenetClient,
             _configManager, _websocketManager, _providerUsageTracker,
             _watchdogLog, _sourceTracker, progressHook, _retryAttempts,
             _finalizeLock, cts.Token,
             stageReporter: stage => inProgressQueueItem.CurrentStage = stage
-        ).ProcessAsync();
+        )
+        {
+            // The stuck watchdog flips this flag on the final stall attempt; the
+            // processor's cancellation catch then fails the item into history.
+            ShouldFailOnCancel = () => inProgressQueueItem.FailOnStuckCancel,
+            // Terminal states (completed/failed) drop the stall counter; a plain
+            // watchdog cancel leaves it so repeated stalls accumulate to the cap.
+            OnTerminal = () => _stallAttempts.TryRemove(queueItem.Id, out _),
+        };
+        var task = processor.ProcessAsync();
         inProgressQueueItem.ProcessingTask = task;
 
         var watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
@@ -872,6 +900,10 @@ public sealed class QueueManager : IDisposable
 
     private async Task WatchForStuckProgressAsync(InProgressQueueItem item, CancellationToken ct)
     {
+        // Per-attempt watchdog: tied to this worker's lifetime via `ct` (the
+        // watchdog CTS is cancelled when the worker completes). Detects a stall,
+        // pauses/cancels (or, on the final attempt, flags fail-to-history), then
+        // returns. A fresh watchdog with a fresh baseline is created per claim.
         var lastProgress = item.ProgressPercentage;
         var lastFetchCount = GetSuccessfulFetchCount(item.QueueItem.Id);
         var lastChangeTick = Environment.TickCount64;
@@ -910,6 +942,36 @@ public sealed class QueueManager : IDisposable
         }
     }
 
+    // Separate from the per-attempt watchdog: observes whether a stuck-cancelled
+    // worker actually stops. If it ignores cancellation past the grace period,
+    // log loudly (the slot stays occupied — we never abandon a live task holding
+    // connections/DB context/finalize lock — but the operator can now see it).
+    private async Task WatchForIgnoredCancelAsync(InProgressQueueItem item)
+    {
+        try
+        {
+            await Task.Delay(StuckCancelGracePeriod).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (item.ProcessingTask.IsCompleted)
+            return;
+
+        Log.Error(
+            "Queue worker ignored cancellation and is still running after {GraceSeconds:0}s. " +
+            "JobName={JobName} QueueItemId={QueueItemId} CurrentStage={CurrentStage} " +
+            "ProgressPercentage={ProgressPercentage}. The worker slot stays occupied until " +
+            "the task completes; restart the container to reclaim it.",
+            StuckCancelGracePeriod.TotalSeconds,
+            item.QueueItem.JobName,
+            item.QueueItem.Id,
+            item.CurrentStage,
+            item.ProgressPercentage);
+    }
+
     private long GetSuccessfulFetchCount(Guid queueItemId)
     {
         var snapshot = _providerUsageTracker.Snapshot(queueItemId);
@@ -923,49 +985,88 @@ public sealed class QueueManager : IDisposable
         var idleMinutes = idleMs / 60000d;
         var phase = DescribeProgressPhase(progress);
         var stage = item.CurrentStage;
-#pragma warning disable CA5394 // pause jitter is not security-sensitive
-        var jitterSeconds = Random.Shared.Next(0, 301);
-#pragma warning restore CA5394
-        var pauseUntil = DateTime.Now + TimeSpan.FromMinutes(15) + TimeSpan.FromSeconds(jitterSeconds);
 
-        try
+        // Count this stall. Once an item stalls MaxStuckAttempts times we stop
+        // pausing-and-retrying and instead fail it into history so Sonarr/Radarr
+        // see a Failed slot and can blocklist + re-grab. Otherwise a persistently
+        // stalling NZB loops "pause → retry → stall" forever and never leaves the
+        // SAB queue (issue #987).
+        var stallCount = _stallAttempts.AddOrUpdate(queueItem.Id, 1, (_, prev) => prev + 1);
+        var failToHistory = stallCount >= MaxStuckAttempts;
+
+        DateTime? pauseUntil = null;
+        if (!failToHistory)
         {
-            await using var ctx = CreateDbContext();
-            using var writeCts = new CancellationTokenSource(StuckItemPauseWriteTimeout);
-            await ctx.QueueItems
-                .Where(q => q.Id == queueItem.Id)
-                .ExecuteUpdateAsync(s => s.SetProperty(q => q.PauseUntil, pauseUntil), writeCts.Token)
-                .ConfigureAwait(false);
+#pragma warning disable CA5394 // pause jitter is not security-sensitive
+            var jitterSeconds = Random.Shared.Next(0, 301);
+#pragma warning restore CA5394
+            pauseUntil = DateTime.Now + TimeSpan.FromMinutes(15) + TimeSpan.FromSeconds(jitterSeconds);
+
+            try
+            {
+                await using var ctx = CreateDbContext();
+                using var writeCts = new CancellationTokenSource(StuckItemPauseWriteTimeout);
+                await ctx.QueueItems
+                    .Where(q => q.Id == queueItem.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(q => q.PauseUntil, pauseUntil.Value), writeCts.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warning(
+                    "Timed out persisting PauseUntil for stuck queue item {QueueItemId} ({JobName}); " +
+                    "proceeding with worker cancellation",
+                    queueItem.Id,
+                    queueItem.JobName);
+            }
+#pragma warning disable CA2016
+            catch (Exception e) when (e is not OutOfMemoryException)
+#pragma warning restore CA2016
+            {
+                Log.Warning(e,
+                    "Failed to persist PauseUntil for stuck queue item {QueueItemId} ({JobName})",
+                    queueItem.Id,
+                    queueItem.JobName);
+            }
         }
-        catch (OperationCanceledException)
+
+        if (failToHistory)
         {
             Log.Warning(
-                "Timed out persisting PauseUntil for stuck queue item {QueueItemId} ({JobName}); " +
-                "proceeding with worker cancellation",
+                "Queue item stuck with no progress on attempt {StallCount}/{MaxAttempts}; " +
+                "failing into history so the client can re-grab. JobName={JobName} QueueItemId={QueueItemId} " +
+                "IdleMinutes={IdleMinutes:F1} ProgressPhase={ProgressPhase} CurrentStage={CurrentStage} " +
+                "ProgressPercentage={ProgressPercentage}",
+                stallCount,
+                MaxStuckAttempts,
+                queueItem.JobName,
                 queueItem.Id,
-                queueItem.JobName);
-        }
-#pragma warning disable CA2016
-        catch (Exception e) when (e is not OutOfMemoryException)
-#pragma warning restore CA2016
-        {
-            Log.Warning(e,
-                "Failed to persist PauseUntil for stuck queue item {QueueItemId} ({JobName})",
-                queueItem.Id,
-                queueItem.JobName);
-        }
+                idleMinutes,
+                phase,
+                stage,
+                progress);
 
-        Log.Warning(
-            "Queue item stuck with no progress; pausing and cancelling. JobName={JobName} QueueItemId={QueueItemId} " +
-            "IdleMinutes={IdleMinutes:F1} ProgressPhase={ProgressPhase} CurrentStage={CurrentStage} " +
-            "ProgressPercentage={ProgressPercentage} PauseUntil={PauseUntil}",
-            queueItem.JobName,
-            queueItem.Id,
-            idleMinutes,
-            phase,
-            stage,
-            progress,
-            pauseUntil);
+            // The processor's cancellation catch checks this flag and fails the
+            // item into history instead of leaving it queued.
+            item.FailOnStuckCancel = true;
+        }
+        else
+        {
+            Log.Warning(
+                "Queue item stuck with no progress; pausing and cancelling (attempt {StallCount}/{MaxAttempts}). " +
+                "JobName={JobName} QueueItemId={QueueItemId} " +
+                "IdleMinutes={IdleMinutes:F1} ProgressPhase={ProgressPhase} CurrentStage={CurrentStage} " +
+                "ProgressPercentage={ProgressPercentage} PauseUntil={PauseUntil}",
+                stallCount,
+                MaxStuckAttempts,
+                queueItem.JobName,
+                queueItem.Id,
+                idleMinutes,
+                phase,
+                stage,
+                progress,
+                pauseUntil);
+        }
 
         try
         {
@@ -975,6 +1076,10 @@ public sealed class QueueManager : IDisposable
         {
             // Worker may have finished and disposed the CTS concurrently.
         }
+
+        // If the worker ignores this cancellation, surface it. Fire-and-forget;
+        // the observer self-terminates once the worker task completes.
+        _ = WatchForIgnoredCancelAsync(item);
     }
 
     private static string DescribeProgressPhase(int progress) =>
@@ -1124,6 +1229,13 @@ public sealed class QueueManager : IDisposable
         public DateTime StartedAt { get; init; }
         public CancellationTokenSource WatchdogCts { get; set; } = null!;
         public Task WatchdogTask { get; set; } = Task.CompletedTask;
+
+        /// <summary>
+        /// Set by the stuck watchdog on the final stall attempt. When the worker's
+        /// cancellation is honored, the processor checks this flag and fails the
+        /// item into SAB history instead of leaving it queued for another retry.
+        /// </summary>
+        public bool FailOnStuckCancel { get; set; }
         public bool IsPrimary => QueueDownloadContext.IsPrimary;
 
         public async ValueTask DisposeAsync()

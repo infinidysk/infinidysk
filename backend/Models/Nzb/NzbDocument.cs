@@ -14,15 +14,18 @@ public class NzbDocument
 
     public List<NzbFile> Files { get; } = [];
 
-    public static async Task<NzbDocument> LoadAsync(Stream stream)
+    public static async Task<NzbDocument> LoadAsync(Stream stream, CancellationToken ct = default)
     {
         try
         {
             var document = new NzbDocument();
             using var reader = XmlReader.Create(stream, XmlSettings);
 
+            // XmlReader.ReadAsync doesn't take a token; check between reads so a
+            // cancelled queue worker stops promptly once the current read returns.
             while (await reader.ReadAsync().ConfigureAwait(false))
             {
+                ct.ThrowIfCancellationRequested();
                 if (reader.NodeType != XmlNodeType.Element) continue;
                 switch (reader.Name)
                 {

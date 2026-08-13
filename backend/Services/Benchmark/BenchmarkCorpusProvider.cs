@@ -97,7 +97,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
             try
             {
                 using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(queued.NzbContents));
-                var doc = await NzbDocument.LoadAsync(stream).ConfigureAwait(false);
+                var doc = await NzbDocument.LoadAsync(stream, ct).ConfigureAwait(false);
                 foreach (var file in doc.Files)
                 {
                     AddIds(pool, seen, file.GetSegmentIds(), maxSegments);

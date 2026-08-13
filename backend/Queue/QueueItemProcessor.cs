@@ -74,6 +74,20 @@ public class QueueItemProcessor(
     private const int MaxProviderRetryAttempts = 20;
     private static readonly TimeSpan StageWarningInterval = TimeSpan.FromMinutes(15);
 
+    /// <summary>
+    /// Set by the queue's stuck watchdog when this worker's cancellation should
+    /// fail the item into history (repeated stalls) rather than leave it queued
+    /// for another retry. Checked in the cancellation catch in <see cref="ProcessAsync"/>.
+    /// </summary>
+    internal Func<bool>? ShouldFailOnCancel { get; set; }
+
+    /// <summary>
+    /// Called once the item reaches a terminal state (completed or failed into
+    /// history) so the manager can drop its per-item watchdog stall counter. Not
+    /// called for a plain cancellation that leaves the item queued for retry.
+    /// </summary>
+    internal Action? OnTerminal { get; set; }
+
     internal static List<string> SelectArticlesForExistenceCheck(
         IEnumerable<IReadOnlyList<string>> segmentsByFile,
         string mode)
@@ -114,8 +128,40 @@ public class QueueItemProcessor(
         // then we need to clear any db changes and finish early.
         catch (Exception e) when (e.GetBaseException().IsCancellationException() && e is not OutOfMemoryException)
         {
-            Log.Information("Processing of queue item {JobName} was cancelled", queueItem.JobName);
-            dbClient.Ctx.ClearChangeTracker();
+            // The stuck watchdog flags a repeatedly-stalled item so it fails into
+            // history (letting Sonarr/Radarr blocklist and re-grab) instead of
+            // pausing and retrying forever. An ordinary cancel — user pause/remove,
+            // shutdown, or a non-final stall — keeps the item queued.
+            if (ShouldFailOnCancel?.Invoke() == true)
+            {
+                Log.Warning(
+                    "Failing queue item {JobName} ({QueueItemId}) into history after repeated stalls",
+                    queueItem.JobName,
+                    queueItem.Id);
+                dbClient.Ctx.ClearChangeTracker();
+                try
+                {
+                    // `ct` is already cancelled here; finalize with a live token so
+                    // the history write can't throw and leave the item queued.
+                    await MarkQueueItemCompleted(
+                            startTime,
+                            error: "Download stalled: no progress across repeated attempts. " +
+                                   "Failing so the download client can blocklist and re-grab.",
+                            cancellationToken: CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
+                {
+                    Log.Error(ex,
+                        "Failed to mark repeatedly-stalled queue item {JobName} as failed",
+                        queueItem.JobName);
+                }
+            }
+            else
+            {
+                Log.Information("Processing of queue item {JobName} was cancelled", queueItem.JobName);
+                dbClient.Ctx.ClearChangeTracker();
+            }
         }
 
         catch (Exception e) when (e.IsRetryableDownloadException() && e is not OutOfMemoryException)
@@ -266,7 +312,7 @@ public class QueueItemProcessor(
         }
 
         // read the nzb document
-        var nzb = await NzbDocument.LoadAsync(queueNzbStream).ConfigureAwait(false);
+        var nzb = await NzbDocument.LoadAsync(queueNzbStream, ct).ConfigureAwait(false);
         var nzbFiles = nzb.Files.Where(x => x.Segments.Count > 0).ToList();
         if (usenetClient is ArticleCachingNntpClient cachingUsenetClient)
             cachingUsenetClient.TrackNzbFiles(nzbFiles);
@@ -684,9 +730,14 @@ public class QueueItemProcessor(
     (
         DateTime startTime,
         string? error = null,
-        Func<Task<DavItem?>>? databaseOperations = null
+        Func<Task<DavItem?>>? databaseOperations = null,
+        CancellationToken? cancellationToken = null
     )
     {
+        // The finalize token defaults to the worker token, but a stuck-watchdog
+        // failure runs after the worker was cancelled, so it must pass a live
+        // token or the history write throws and the item stays queued.
+        var finalizeCt = cancellationToken ?? ct;
         HistoryItem? historyItem = null;
         GetHistoryResponse.HistorySlot? historySlot = null;
         IReadOnlyDictionary<string, long>? providerUsage = null;
@@ -705,8 +756,8 @@ public class QueueItemProcessor(
                 historyItem, mountFolder, configManager, providerUsage, displayByMetricsKey);
             dbClient.Ctx.QueueItems.Remove(queueItem);
             dbClient.Ctx.HistoryItems.Add(historyItem);
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
-        }).ConfigureAwait(false);
+            await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
+        }, finalizeCt).ConfigureAwait(false);
 
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
         _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot!.ToJson());
@@ -732,9 +783,10 @@ public class QueueItemProcessor(
 
         RecordWatchdogAttemptIfExternal(startTime, error, providerUsage!);
         retryAttempts.TryRemove(queueItem.Id, out _);
+        OnTerminal?.Invoke();
     }
 
-    private async Task WithFinalizeLockAsync(Func<Task> action)
+    private async Task WithFinalizeLockAsync(Func<Task> action, CancellationToken? cancellationToken = null)
     {
         if (finalizeLock is null)
         {
@@ -742,7 +794,8 @@ public class QueueItemProcessor(
             return;
         }
 
-        await finalizeLock.WaitAsync(ct).ConfigureAwait(false);
+        var waitCt = cancellationToken ?? ct;
+        await finalizeLock.WaitAsync(waitCt).ConfigureAwait(false);
         try
         {
             await action().ConfigureAwait(false);
