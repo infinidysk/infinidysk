@@ -53,9 +53,11 @@ fetching (large PAR2 walks, archive header scans) are not penalized.
 
 When an item stalls, InfiniDysk pauses it (`PauseUntil` ≈ 15–20 minutes with
 jitter) and cancels the worker so the queue can move on; the item retries after
-the pause expires. After **3** consecutive stalls the item is failed into history
-with a clear error, so Sonarr/Radarr can blocklist the release and grab another
-one instead of waiting forever.
+the pause expires. After a download stalls **3** times in total the item is
+failed into history with a clear error, so Sonarr/Radarr can blocklist the
+release and grab another one instead of waiting forever. The stall count is
+cumulative for that enqueue (not reset by a later successful fetch), so a
+release that wedges after a brief burst of progress still fails over.
 
 Tune the stall budget with `QUEUE_ITEM_STUCK_MINUTES` when long phases legitimately
 hold progress (large archives, full article-existence health checks).

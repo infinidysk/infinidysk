@@ -259,7 +259,11 @@ public sealed class QueueManager : IDisposable
         {
             await dbClient.RemoveQueueItemsAsync(queueItemIds, ct).ConfigureAwait(false);
             await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
-            foreach (var id in queueItemIds) _retryAttempts.TryRemove(id, out _);
+            foreach (var id in queueItemIds)
+            {
+                _retryAttempts.TryRemove(id, out _);
+                _stallAttempts.TryRemove(id, out _);
+            }
         }, ct).ConfigureAwait(false);
     }
 
@@ -948,16 +952,10 @@ public sealed class QueueManager : IDisposable
     // connections/DB context/finalize lock — but the operator can now see it).
     private async Task WatchForIgnoredCancelAsync(InProgressQueueItem item)
     {
-        try
-        {
-            await Task.Delay(StuckCancelGracePeriod).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-
-        if (item.ProcessingTask.IsCompleted)
+        // WhenAny does not observe ProcessingTask exceptions — the reaper does.
+        var completed = await Task.WhenAny(item.ProcessingTask, Task.Delay(StuckCancelGracePeriod))
+            .ConfigureAwait(false);
+        if (completed == item.ProcessingTask || item.ProcessingTask.IsCompleted)
             return;
 
         Log.Error(

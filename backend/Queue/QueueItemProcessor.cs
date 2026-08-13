@@ -141,14 +141,24 @@ public class QueueItemProcessor(
                 dbClient.Ctx.ClearChangeTracker();
                 try
                 {
-                    // `ct` is already cancelled here; finalize with a live token so
-                    // the history write can't throw and leave the item queued.
+                    // `ct` is already cancelled here; finalize with a dedicated
+                    // timeout so a wedged finalize-lock holder cannot pin this
+                    // worker forever (CancellationToken.None would also ignore
+                    // shutdown). On timeout, leave the item queued — the stall
+                    // counter persists, so the next attempt fails it again.
+                    using var failCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
                     await MarkQueueItemCompleted(
                             startTime,
                             error: "Download stalled: no progress across repeated attempts. " +
                                    "Failing so the download client can blocklist and re-grab.",
-                            cancellationToken: CancellationToken.None)
+                            cancellationToken: failCts.Token)
                         .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex.IsCancellationException() && ex is not OutOfMemoryException)
+                {
+                    Log.Error(
+                        "Timed out writing history for repeatedly-stalled queue item {JobName}; leaving it queued",
+                        queueItem.JobName);
                 }
                 catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
                 {
@@ -734,9 +744,10 @@ public class QueueItemProcessor(
         CancellationToken? cancellationToken = null
     )
     {
-        // The finalize token defaults to the worker token, but a stuck-watchdog
-        // failure runs after the worker was cancelled, so it must pass a live
-        // token or the history write throws and the item stays queued.
+        // The finalize token defaults to the worker token. The stuck-watchdog
+        // failure path must pass a timeout-bounded token: the worker CT is
+        // already cancelled, and CancellationToken.None would ignore shutdown
+        // and hang forever on a wedged finalize lock.
         var finalizeCt = cancellationToken ?? ct;
         HistoryItem? historyItem = null;
         GetHistoryResponse.HistorySlot? historySlot = null;
