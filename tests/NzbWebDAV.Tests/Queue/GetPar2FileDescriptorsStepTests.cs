@@ -69,16 +69,14 @@ public class GetPar2FileDescriptorsStepTests
             Par2File("Release [BBBBBBBB].par2", "index-b@example.com", indexB),
         };
 
-        // Progress<int>.Report posts to the captured context asynchronously,
-        // so guard the list and give callbacks a beat to drain.
+        // Progress<int> posts to the captured context asynchronously and can
+        // reorder 50/100 under CI load. Collect synchronously so order is
+        // the step's Report() sequence.
         var reported = new List<int>();
-        var gate = new object();
-        var progress = new Progress<int>(v => { lock (gate) reported.Add(v); });
-        await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(files, client, progress);
-        await Task.Delay(50);
+        await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(files, client, new CollectingProgress(reported));
 
         // Two index files → 50 then 100, not raw counts 1 then 2.
-        lock (gate) Assert.Equal([50, 100], reported);
+        Assert.Equal([50, 100], reported);
     }
 
     [Fact]
@@ -172,6 +170,11 @@ public class GetPar2FileDescriptorsStepTests
         var descriptors = await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(files, client);
 
         Assert.Empty(descriptors);
+    }
+
+    private sealed class CollectingProgress(List<int> reports) : IProgress<int>
+    {
+        public void Report(int value) => reports.Add(value);
     }
 
     private static byte[] FileId(byte fill) => Enumerable.Repeat(fill, 16).ToArray();
