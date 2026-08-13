@@ -24,6 +24,7 @@ describe("matchesBackendPathPrefix", () => {
   it.each([
     "/api",
     "/api/get-config",
+    "/ready",
     "/view",
     "/view/movies",
     "/adapters",
@@ -32,7 +33,13 @@ describe("matchesBackendPathPrefix", () => {
     expect(matchesBackendPathPrefix(path)).toBe(true);
   });
 
-  it.each(["/apifoo", "/viewport.css", "/contents-page", "/adaptersfoo"])(
+  it.each([
+    "/apifoo",
+    "/readyfoo",
+    "/viewport.css",
+    "/contents-page",
+    "/adaptersfoo",
+  ])(
     "rejects bare-prefix false positive %s",
     (path) => {
       expect(matchesBackendPathPrefix(path)).toBe(false);
@@ -65,6 +72,7 @@ describe("shouldProxyToBackend", () => {
   it.each([
     "/api",
     "/api/get-config",
+    "/ready",
     "/view",
     "/view/movies",
     "/.ids/item",

@@ -1,5 +1,6 @@
 const BACKEND_PATH_PREFIXES = [
   "/api",
+  "/ready",
   "/view",
   "/.ids",
   "/nzbs",
