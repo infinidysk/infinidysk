@@ -37,6 +37,26 @@ public class PruneCompletedHistoryTaskTests
     }
 
     [Fact]
+    public async Task DryRun_PublishesProgressOnPruneTopicNotCleanupTopic()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            ctx.HistoryItems.Add(CreateHistory(Guid.NewGuid(), "dry-run.nzb", "movies", DateTime.UtcNow.AddDays(-200)));
+            await ctx.SaveChangesAsync(); ctx.ChangeTracker.Clear();
+            var websocket = new WebsocketManager();
+            Assert.True(await new PruneCompletedHistoryTask(websocket, true, null, 90, () => harness.CreateContext()).Execute());
+            var progress = websocket.PeekLastMessage(WebsocketTopic.PruneCompletedHistoryTaskProgress);
+            Assert.NotNull(progress);
+            Assert.StartsWith("Dry Run - Done.", progress);
+            Assert.Null(websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress));
+        }
+        finally { await BaseTask.ResetRunningTaskForTestsAsync(); }
+    }
+
+    [Fact]
     public async Task DryRun_DoesNotModifyDatabase()
     {
         await BaseTask.ResetRunningTaskForTestsAsync();

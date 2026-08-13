@@ -20,7 +20,7 @@ export function PruneCompletedHistory({ savedConfig }: PruneCompletedHistoryProp
     const progressMessage = progress?.replace("Dry Run - ", "");
     const isFinished = progressMessage?.startsWith("Done") || progressMessage?.startsWith("Failed") || progressMessage?.startsWith("Aborted");
     const isRunning = !isFinished && (isFetching || runStarted);
-    useWebsocketTopic("ctp", "state", setProgress, { onOpen: () => setConnected(true), onClose: () => setProgress(null) });
+    useWebsocketTopic("pchp", "state", setProgress, { onOpen: () => setConnected(true), onClose: () => setProgress(null) });
     useEffect(() => { if (isFinished) setRunStarted(false); }, [isFinished]);
     const buildQueryString = useCallback(() => {
         const params = new URLSearchParams();

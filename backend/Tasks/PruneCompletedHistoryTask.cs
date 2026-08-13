@@ -148,7 +148,7 @@ public class PruneCompletedHistoryTask : BaseTask
     private void StartPhase(string message) => _progressHeartbeat?.StartPhase(message);
     private void UpdatePhase(string message) => _progressHeartbeat?.UpdatePhase(message);
     private void Complete(string message) { if (_progressHeartbeat is not null) _progressHeartbeat.Complete(message); else Report(message); }
-    private void Report(string message) { var progress = $"{(_isDryRun ? "Dry Run - " : string.Empty)}{message}"; _progressObserver?.Invoke(progress); _ = _websocketManager.SendMessage(WebsocketTopic.CleanupTaskProgress, progress); }
+    private void Report(string message) { var progress = $"{(_isDryRun ? "Dry Run - " : string.Empty)}{message}"; _progressObserver?.Invoke(progress); _ = _websocketManager.SendMessage(WebsocketTopic.PruneCompletedHistoryTaskProgress, progress); }
 
     internal sealed class ProgressHeartbeat : IAsyncDisposable
     {
