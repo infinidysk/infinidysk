@@ -33,8 +33,10 @@ internal static class QueueThroughput
         var clamped = Math.Clamp(progress, 0, 100);
         var prevClamped = Math.Clamp(previous.LastSampleProgress, 0, 100);
         var progressDelta = clamped - prevClamped;
+        // Keep LastSampleTime so stall time is included in the next real delta.
+        // Advancing it here would treat a later jump as instant and inflate rate/ETA.
         if (progressDelta <= 0)
-            return previous with { LastSampleTime = now, LastSampleProgress = clamped };
+            return previous;
 
         var seconds = Math.Max(elapsed.TotalSeconds, MinSampleInterval.TotalSeconds);
         var deltaBytes = progressDelta / 100.0 * totalSegmentBytes;
@@ -84,7 +86,7 @@ internal static class QueueThroughput
 
         var val = bytesPerSecond;
         var n = val < 1024 ? 0 : Math.Min(5, (int)Math.Truncate(Math.Log2(val) / 10));
-        val /= Math.Pow(2, 10 * n);
+        val /= Math.Pow(2.0, 10.0 * n);
         var decimals = n > 1 ? 1 : 0;
         ReadOnlySpan<string> units = ["", "K", "M", "G", "T", "P"];
         var number = val.ToString(decimals == 0 ? "0" : "0.0", CultureInfo.InvariantCulture);

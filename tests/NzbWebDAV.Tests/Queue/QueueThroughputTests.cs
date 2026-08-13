@@ -14,7 +14,7 @@ public class QueueThroughputTests
         var eta = QueueThroughput.ComputeEta(1024 * 1024, 50, TenMb);
 
         Assert.NotNull(eta);
-        Assert.Equal(5, eta.Value.TotalSeconds, 3);
+        Assert.Equal(5, eta!.Value.TotalSeconds, 3);
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public class QueueThroughputTests
     {
         var eta = QueueThroughput.ComputeEta(1, 0, 100L * 1024 * 1024 * 1024);
 
-        Assert.Equal(QueueThroughput.MaxEta, eta);
+        Assert.Equal(QueueThroughput.MaxEta, eta!.Value);
     }
 
     [Fact]
@@ -70,6 +70,26 @@ public class QueueThroughputTests
 
         var expected = QueueThroughput.EmaAlpha * (1024 * 1024) + (1 - QueueThroughput.EmaAlpha) * first.BytesPerSecond;
         Assert.Equal(expected, second.BytesPerSecond, 3);
+    }
+
+    [Fact]
+    public void Update_DoesNotAdvanceSampleTimeWhenProgressUnchanged()
+    {
+        var first = QueueThroughput.Update(
+            new QueueThroughput.SampleState(0, T0, 0),
+            10,
+            TenMb,
+            T0.AddSeconds(1));
+        var stalled = QueueThroughput.Update(first, 10, TenMb, T0.AddSeconds(3));
+
+        Assert.Equal(first, stalled);
+
+        var resumed = QueueThroughput.Update(stalled, 20, TenMb, T0.AddSeconds(4));
+        // 10% of 10 MiB over 3s (stall included), not 1s after an advanced timestamp.
+        var instant = TenMb * 0.10 / 3.0;
+        var expected = QueueThroughput.EmaAlpha * instant + (1 - QueueThroughput.EmaAlpha) * first.BytesPerSecond;
+        Assert.Equal(expected, resumed.BytesPerSecond, 3);
+        Assert.Equal(T0.AddSeconds(4), resumed.LastSampleTime);
     }
 
     [Fact]
