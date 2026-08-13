@@ -59,6 +59,17 @@ public sealed class HttpPipelineIntegrationTests(NzbDavWebApplicationFactory fac
     }
 
     [Fact]
+    public async Task ReadyEndpoint_IsAvailableWithoutAuthentication()
+    {
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/ready");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Healthy", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task SabVersionEndpoint_MatchesUnauthenticatedCompatibilityRoute()
     {
         using var client = factory.CreateClient();
