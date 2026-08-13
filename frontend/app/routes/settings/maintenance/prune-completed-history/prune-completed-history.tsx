@@ -43,7 +43,12 @@ export function PruneCompletedHistory({ savedConfig }: PruneCompletedHistoryProp
         <>
             <Alert className="alert-soft mb-4 items-start py-3 text-sm" variant="warning">
                 <Icon name="backup" className="!text-[20px]" />
-                <div><p className="font-semibold">Back up before cleanup</p><p className="mt-0.5 text-xs opacity-80">Pruning SAB history is permanent. WebDAV files are preserved.</p></div>
+                <div>
+                    <p className="font-semibold">Back up before cleanup</p>
+                    <p className="mt-0.5 text-xs opacity-80">
+                        Pruning SAB history is permanent. WebDAV files are preserved, but they lose history protection — files not linked from the organized library will show up in Remove Orphaned Files (including a scheduled run).
+                    </p>
+                </div>
             </Alert>
             <div className="space-y-4">
                 <p className="text-sm text-base-content/70">Remove completed SAB history rows in bulk without deleting mounted WebDAV content.</p>
