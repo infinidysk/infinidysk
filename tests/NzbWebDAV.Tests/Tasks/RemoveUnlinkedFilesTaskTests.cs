@@ -493,6 +493,18 @@ public class RemoveUnlinkedFilesTaskTests
     }
 
     [Fact]
+    public void IsLibraryDirInsideRcloneMount_UsesOsAwareCasing()
+    {
+        var inside = RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+            "/mnt/debrid/NZBDAV/completed-symlinks",
+            "/mnt/debrid/nzbdav",
+            out _,
+            out _);
+
+        Assert.Equal(OperatingSystem.IsWindows(), inside);
+    }
+
+    [Fact]
     public async Task DryRun_Aborts_WhenLibraryDirIsInsideRcloneMount()
     {
         await BaseTask.ResetRunningTaskForTestsAsync();

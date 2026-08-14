@@ -744,11 +744,15 @@ public class RemoveUnlinkedFilesTask : BaseTask
         if (normalizedLibraryDir.Length == 0 || normalizedMountDir.Length == 0)
             return false;
 
-        if (string.Equals(normalizedLibraryDir, normalizedMountDir, StringComparison.Ordinal))
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (string.Equals(normalizedLibraryDir, normalizedMountDir, comparison))
             return true;
 
         var prefix = normalizedMountDir + Path.DirectorySeparatorChar;
-        return normalizedLibraryDir.StartsWith(prefix, StringComparison.Ordinal);
+        return normalizedLibraryDir.StartsWith(prefix, comparison);
     }
 
     private static string NormalizeConfiguredPath(string? path)
