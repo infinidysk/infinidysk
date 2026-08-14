@@ -471,6 +471,134 @@ public class RemoveUnlinkedFilesTaskTests
         }
     }
 
+    [Theory]
+    [InlineData("/mnt/debrid/nzbdav/completed-symlinks", "/mnt/debrid/nzbdav", true)]
+    [InlineData("/mnt/debrid/nzbdav", "/mnt/debrid/nzbdav", true)]
+    [InlineData("/mnt/debrid/nzbdav/", "/mnt/debrid/nzbdav", true)]
+    [InlineData("/mnt/debrid/nzbdav/content", "/mnt/debrid/nzbdav", true)]
+    [InlineData("/mnt/debrid/nzbdav-symlinks", "/mnt/debrid/nzbdav", false)]
+    [InlineData("/mnt/debrid/combined_symlinks", "/mnt/debrid/nzbdav", false)]
+    [InlineData("/mnt/media", "/mnt/debrid/nzbdav", false)]
+    [InlineData("", "/mnt/debrid/nzbdav", false)]
+    [InlineData(null, "/mnt/debrid/nzbdav", false)]
+    public void IsLibraryDirInsideRcloneMount_DetectsVirtualMountPaths(
+        string? libraryDir,
+        string mountDir,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+                libraryDir, mountDir, out _, out _));
+    }
+
+    [Fact]
+    public async Task DryRun_Aborts_WhenLibraryDirIsInsideRcloneMount()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var mountDir = Path.Join(Path.GetTempPath(), $"nzbdav-mount-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(mountDir, "completed-symlinks");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = mountDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.Contains("Aborted:", progress, StringComparison.Ordinal);
+            Assert.Contains("inside the rclone mount", progress, StringComparison.Ordinal);
+            Assert.Contains(libraryDir, progress, StringComparison.Ordinal);
+            Assert.Contains(mountDir, progress, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(mountDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task DryRun_DoesNotAbort_WhenLibraryDirIsOutsideRcloneMount()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var mountDir = Path.Join(Path.GetTempPath(), $"nzbdav-mount-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(mountDir);
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+
+            var linkedIds = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+            foreach (var id in linkedIds)
+            {
+                ctx.Items.Add(DavItem.New(
+                    id,
+                    DavItem.ContentFolder,
+                    $"{id:N}.mkv",
+                    10,
+                    DavItem.ItemType.UsenetFile,
+                    DavItem.ItemSubType.NzbFile,
+                    null,
+                    null,
+                    null,
+                    null));
+                await File.WriteAllTextAsync(
+                    Path.Join(libraryDir, $"{id:N}.strm"),
+                    $"http://localhost/view/.ids/{id}.mkv");
+            }
+
+            await ctx.SaveChangesAsync();
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = mountDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.DoesNotContain("inside the rclone mount", progress, StringComparison.Ordinal);
+            Assert.StartsWith("Dry Run - Done.", progress);
+            Assert.Contains("Identified 0 unlinked files", progress);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(libraryDir, recursive: true); } catch (IOException) { /* best effort */ }
+            try { Directory.Delete(mountDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
     [Fact]
     public async Task InsertLinkedIdBatchAsync_InsertsAllIds()
     {

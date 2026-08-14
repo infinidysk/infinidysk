@@ -108,6 +108,23 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
     private async Task RemoveUnlinkedFiles()
     {
+        if (IsLibraryDirInsideRcloneMount(
+                _configManager.GetLibraryDir(),
+                _configManager.GetRcloneMountDir(),
+                out var libraryDir,
+                out var mountDir))
+        {
+            _allRemovedPaths.Clear();
+            var detail =
+                $"Library Directory '{libraryDir}' is inside the rclone mount '{mountDir}'. " +
+                "That path is InfiniDysk's virtual filesystem (completed-symlinks, content, .ids), " +
+                "not your organized library. Point Library Directory at the folder that contains " +
+                "your Arr root folders — outside the rclone mount — then retry.";
+            Log.Warning("Remove Orphaned Files aborted. Reason: {Reason}", detail);
+            Complete($"Aborted: {detail} Cancelling to prevent a misleading orphan report.");
+            return;
+        }
+
         // get linked file paths
         StartPhase("Scanning all linked files...");
         var startTime = DateTime.Now;
@@ -709,6 +726,49 @@ public class RemoveUnlinkedFilesTask : BaseTask
         return _allRemovedPaths.Count > 0
             ? string.Join("\n", _allRemovedPaths)
             : "This list is Empty.\nYou must first run the task.";
+    }
+
+    /// <summary>
+    /// Virtual mount paths (completed-symlinks, content, .ids) are generated from current
+    /// history rows, so they cannot protect files after history is cleared. Scanning them as
+    /// the organized library produces a circular, misleading orphan report.
+    /// </summary>
+    internal static bool IsLibraryDirInsideRcloneMount(
+        string? libraryDir,
+        string? mountDir,
+        out string normalizedLibraryDir,
+        out string normalizedMountDir)
+    {
+        normalizedLibraryDir = NormalizeConfiguredPath(libraryDir);
+        normalizedMountDir = NormalizeConfiguredPath(mountDir);
+        if (normalizedLibraryDir.Length == 0 || normalizedMountDir.Length == 0)
+            return false;
+
+        if (string.Equals(normalizedLibraryDir, normalizedMountDir, StringComparison.Ordinal))
+            return true;
+
+        var prefix = normalizedMountDir + Path.DirectorySeparatorChar;
+        return normalizedLibraryDir.StartsWith(prefix, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeConfiguredPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        var trimmed = path.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (trimmed.Length == 0)
+            return string.Empty;
+
+        try
+        {
+            return Path.GetFullPath(trimmed)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return trimmed;
+        }
     }
 
     internal static void ClearAuditPathsForTests() => _allRemovedPaths = [];
