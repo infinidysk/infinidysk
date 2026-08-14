@@ -1180,7 +1180,19 @@ public class HealthCheckService : BackgroundService
             RepairStatus = repairStatus,
             Message = message
         }));
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
+        catch (DbUpdateConcurrencyException e)
+        {
+            Log.Warning(
+                "Health check result not recorded because the file was deleted while the check was running. Path: {Path}",
+                davItem.Path);
+            Log.Debug(e, "Health check concurrency stack for {Path}", davItem.Path);
+            foreach (var entry in e.Entries)
+                entry.State = EntityState.Detached;
+        }
     }
 
     private HealthCheckResult SendStatus(HealthCheckResult result)
