@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.1](https://github.com/infinidysk/infinidysk/compare/v1.1.0...v1.1.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* default NZB retrieve User-Agent to SABnzbd/5.1.0 ([#986](https://github.com/infinidysk/infinidysk/issues/986)) ([c932811](https://github.com/infinidysk/infinidysk/commit/c9328112f921e4101b263af80d05bbececd9eb08))
+* **deps:** Bump the npm-minor-and-patch group ([#993](https://github.com/infinidysk/infinidysk/issues/993)) ([22c5d46](https://github.com/infinidysk/infinidysk/commit/22c5d463801015ef0ff9062784a4db841e018487))
+* **deps:** Bump zensical from 0.0.52 to 0.0.53 in the docs-python group ([#992](https://github.com/infinidysk/infinidysk/issues/992)) ([8680e6f](https://github.com/infinidysk/infinidysk/commit/8680e6fad42193def08446ec05561a7e41e8a1ec))
+* **health:** orphan cleanup no longer treats imported files as missing when Library Directory is the mount ([#991](https://github.com/infinidysk/infinidysk/issues/991)) ([49b58e1](https://github.com/infinidysk/infinidysk/commit/49b58e1eae1db7888fc040f1981d21c07b17465c))
+* **queue:** stalled downloads now fail so Sonarr can re-grab them ([#989](https://github.com/infinidysk/infinidysk/issues/989)) ([a10a45f](https://github.com/infinidysk/infinidysk/commit/a10a45fab2dc019e8977810f883dd640a208b2ca))
+* **ui:** maintenance task status no longer bleeds between Remove Orphaned Files and Prune Completed History ([#983](https://github.com/infinidysk/infinidysk/issues/983)) ([e89d6ca](https://github.com/infinidysk/infinidysk/commit/e89d6ca14e21c4bb08c66599f58b2c5a5e1234de))
+* **webdav:** /ready no longer returns 4XX instead of the readiness status ([#982](https://github.com/infinidysk/infinidysk/issues/982)) ([3650c60](https://github.com/infinidysk/infinidysk/commit/3650c6015ffe36017a3b3bfcacc4a3dd6f623a18))
+
 ## [1.1.0](https://github.com/infinidysk/infinidysk/compare/v1.0.1...v1.1.0) (2026-08-13)
 
 
