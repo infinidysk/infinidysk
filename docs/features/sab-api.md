@@ -66,4 +66,6 @@ Queue delete accepts UUID(s), repeated `value` parameters, `value=all`, or `valu
 
 History delete accepts UUIDs, `value=all`, or `value=failed`. The admin UI can delete mounted content for completed jobs with InfiniDysk-specific `del_completed_files=1` — download clients should **not** send this after importing a symlink/STRM, or playback sources disappear. The history UI also offers **Clear failed** and **Clear all** actions that call `history&name=delete` with `value=failed` or `value=all`.
 
+A History row vanishing after a successful Arr import is expected SAB-client cleanup, not a missing mount. Typical triggers: the Arr's **Remove Completed** download-client option, InfiniDysk **Automatic Queue Management** rules (those send `removeFromClient=true`, independent of Remove Completed), or a WebDAV DELETE of a `/completed-symlinks/<category>/<release>` folder. Those paths remove the history row and clear `HistoryItemId`; the WebDAV files stay.
+
 [SABnzbd settings](../configuration/sabnzbd.md)

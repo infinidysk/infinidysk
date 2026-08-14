@@ -79,7 +79,7 @@ Allow Docker DNS or LAN hosts under **Trusted local hosts** — [SABnzbd API](..
 
 ## Why did files disappear?
 
-See [Deletion audit](../operations/deletion-audit.md) — history retention ≠ deleting mounts; orphan cleanup and *Arr actions can remove content.
+See [Deletion audit](../operations/deletion-audit.md) — history retention ≠ deleting mounts; orphan cleanup and *Arr actions can remove content. History rows disappearing after import are usually the Arr or a `/completed-symlinks` folder delete, not InfiniDysk deleting the file. If Remove Orphaned Files lists imported files, check that **Library Directory** is your organized library root, not the rclone mount.
 
 ## Provider / missing articles
 

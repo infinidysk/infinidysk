@@ -20,8 +20,11 @@ export function LibrarySettings({ config, setNewConfig }: LibrarySettingsProps) 
                     value={config["media.library-dir"]}
                     onChange={e => setNewConfig({ ...config, "media.library-dir": e.target.value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="library-dir-help">
-                    The path to your organized media library that contains all your imported symlinks.
-                    Make sure this path is visible to your InfiniDysk container.
+                    The organized library root that contains your imported Arr symlinks or STRMs
+                    (the parent of your Radarr/Sonarr root folders). Must be visible inside the
+                    InfiniDysk container. Do not point this at the rclone mount or at
+                    <code className="text-base-content/70">/completed-symlinks</code> — those are
+                    InfiniDysk&apos;s virtual filesystem, not your library.
                 </p>
             </div>
         </div>

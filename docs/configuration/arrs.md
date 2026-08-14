@@ -22,4 +22,6 @@ Only **Usenet** queue items are acted upon. Typical mappings:
 - **Remove** — already imported
 - **Do Nothing** — ID mismatches and similar manual-import cases
 
+Any action other than **Do Nothing** tells the Arr to delete the queue record with `removeFromClient=true`. The Arr then removes the download from InfiniDysk History even when its own **Remove Completed** checkbox is off. That is independent of mounted files, which stay.
+
 [Connect *Arr](../getting-started/connect-arr.md)

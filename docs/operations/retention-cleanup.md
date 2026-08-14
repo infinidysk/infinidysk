@@ -35,6 +35,10 @@ Scheduled history retention and the **Prune Completed History** task delete SAB 
 
 **Remove Orphaned Files** (Maintenance) deletes WebDAV files that are not linked from the library directory and are no longer tied to a SAB history row. Supports dry run. Schedule optional daily cleanup — set container `TZ`. Direct WebDAV or rclone playback is not a library link.
 
+**Library Directory** must be the organized library root that contains your Arr-imported symlinks or STRMs (the parent of your Radarr/Sonarr root folders). It must be visible inside the InfiniDysk container. Do not point it at the rclone mount (`rclone.mount-dir`) or at `/completed-symlinks` — that folder is InfiniDysk's virtual view of current History rows, so scanning it cannot protect files after history is cleared. Remove Orphaned Files aborts (dry run included) when Library Directory is the mount or a path inside it.
+
+History entries disappearing after an Arr import are client-initiated cleanup, not InfiniDysk deleting the mount: the Arr's **Remove Completed** setting, InfiniDysk **Automatic Queue Management** rules that call the Arr with `removeFromClient=true`, or a WebDAV DELETE of a release folder under `/completed-symlinks`. Mounted files stay streamable; only the History row is removed.
+
 ## NZB file backups
 
 Optional copies of incoming NZBs (SABnzbd settings) prune by `api.nzb-backup-retention-days`.

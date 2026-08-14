@@ -17,7 +17,7 @@ Background health monitoring and replacement of unhealthy library items.
 | Check older releases less thoroughly [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `repair.healthcheck-aging` | off | Aging taper |
 | Repair After Streaming Failures | `repair.auto-remove-after-failures` | `0` | Consecutive streaming failures before urgent repair; `0` = immediate repair |
 | Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items are removed and blocklisted through *Arr instead of force-deleted |
-| Library Directory | `media.library-dir` | empty | Organized media path in container |
+| Library Directory | `media.library-dir` | empty | Organized library root in the container — parent of your Arr root folders. Never the rclone mount or `/completed-symlinks` |
 
 `repair.auto-remove-after-failures` applies only to streaming-triggered failures such as missing
 articles and corrupt archives. With a value greater than `0`, InfiniDysk waits for that many

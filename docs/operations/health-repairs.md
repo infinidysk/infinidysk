@@ -6,7 +6,7 @@
 
 Requires:
 
-- **Library Directory** visible inside the container
+- **Library Directory** visible inside the container — the organized library root (parent of Arr root folders), never the rclone mount or `/completed-symlinks`
 - At least one configured [Radarr/Sonarr instance](../configuration/arrs.md)
 - **Enable Background Repairs**
 

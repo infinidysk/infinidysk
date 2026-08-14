@@ -24,7 +24,7 @@ Database housekeeping, scheduled orphan cleanup, and one-off tools.
 
 | Task | Purpose | Caution |
 |------|---------|---------|
-| Remove Orphaned Files | Drop WebDAV files not linked from library | Permanent; dry run available |
+| Remove Orphaned Files | Drop WebDAV files not linked from library | Permanent; dry run available. Library Directory must be the organized library, not the rclone mount |
 | Prune Completed History | Remove completed SAB history rows | History-only; mounts stay; unlinked mounts become eligible for orphan cleanup |
 | Rename Windows-Invalid Paths | Sanitize existing names | Needs Windows-safe paths; backup + dry run |
 | Convert STRM → Symlinks | Strategy migration | Needs library dir + rclone mount |
