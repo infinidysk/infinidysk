@@ -59,7 +59,9 @@ public class HistoryRetentionService(ConfigManager configManager) : BackgroundSe
 
             if (ids.Count == 0) break;
 
-            await dbClient.RemoveHistoryItemsAsync(ids, deleteFiles: false, ct).ConfigureAwait(false);
+            await dbClient.RemoveHistoryItemsAsync(
+                    ids, deleteFiles: false, source: "history-retention", ct: ct)
+                .ConfigureAwait(false);
             await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
             dbClient.Ctx.ChangeTracker.Clear();
             totalRemoved += ids.Count;

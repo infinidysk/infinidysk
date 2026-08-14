@@ -33,7 +33,10 @@ public class RemoveFromHistoryController(
         if (ids.Count > 0)
         {
             await dbClient.RemoveHistoryItemsAsync(
-                    ids, request.DeleteCompletedFiles, request.CancellationToken)
+                    ids,
+                    request.DeleteCompletedFiles,
+                    source: "sab-history-delete",
+                    ct: request.CancellationToken)
                 .ConfigureAwait(false);
         }
         try

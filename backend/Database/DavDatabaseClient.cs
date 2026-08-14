@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
+using Serilog;
 
 namespace NzbWebDAV.Database;
 
@@ -372,7 +373,11 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .FirstOrDefaultAsync(x => x.Id == Guid.Parse(id)).ConfigureAwait(false);
     }
 
-    public async Task RemoveHistoryItemsAsync(List<Guid> ids, bool deleteFiles, CancellationToken ct = default)
+    public async Task RemoveHistoryItemsAsync(
+        List<Guid> ids,
+        bool deleteFiles,
+        string source = "history-delete",
+        CancellationToken ct = default)
     {
         // Capture group keys before delete so we can cascade-clean orphaned watchdog
         // attempts below. Done up front because the deleteFiles=false path doesn't
@@ -400,7 +405,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 DeletionAuditLog.Record(
                     "history-delete",
                     davItem,
-                    "SAB/history delete with deleteFiles=true (download dir)");
+                    $"{source} with deleteFiles=true (download dir)");
             }
 
             Ctx.Items.RemoveRange(davItems);
@@ -419,6 +424,17 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 .Where(h => ids.Contains(h.Id))
                 .ToListAsync(ct)
                 .ConfigureAwait(false);
+
+            if (existing.Count > 0)
+            {
+                const int sampleSize = 10;
+                Log.Information(
+                    "history-remove source={Source} count={Count} deleteFiles=false sampleIds={SampleIds} sampleNames={SampleNames}",
+                    source,
+                    existing.Count,
+                    string.Join(",", existing.Take(sampleSize).Select(x => x.Id)),
+                    string.Join(", ", existing.Take(sampleSize).Select(x => x.JobName)));
+            }
 
             Ctx.HistoryItems.RemoveRange(existing);
             Ctx.HistoryCleanupItems.AddRange(existing.Select(x => new HistoryCleanupItem
@@ -491,6 +507,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 
     public async Task<List<Guid>> PruneUnreferencedHistoryItemsAsync(
         IReadOnlyCollection<Guid> historyItemIds,
+        string source = "webdav-unreferenced-prune",
         CancellationToken ct = default)
     {
         if (historyItemIds.Count == 0) return [];
@@ -516,7 +533,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         if (orphanedIds.Count == 0) return [];
 
         foreach (var chunk in orphanedIds.Chunk(batchSize))
-            await RemoveHistoryItemsAsync(chunk.ToList(), deleteFiles: false, ct).ConfigureAwait(false);
+            await RemoveHistoryItemsAsync(chunk.ToList(), deleteFiles: false, source, ct).ConfigureAwait(false);
 
         return orphanedIds;
     }

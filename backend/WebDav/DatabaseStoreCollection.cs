@@ -147,7 +147,8 @@ public class DatabaseStoreCollection(
     private async Task PruneEmptyHistoryAsync(Guid? historyItemId, CancellationToken ct)
     {
         if (historyItemId is null) return;
-        var pruned = await dbClient.PruneUnreferencedHistoryItemsAsync([historyItemId.Value], ct)
+        var pruned = await dbClient.PruneUnreferencedHistoryItemsAsync(
+                [historyItemId.Value], source: "webdav-unreferenced-prune", ct: ct)
             .ConfigureAwait(false);
         if (pruned.Count == 0) return;
 

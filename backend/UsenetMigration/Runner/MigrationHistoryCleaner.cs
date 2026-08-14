@@ -62,7 +62,8 @@ public sealed class MigrationHistoryCleaner(UsenetMigrationStore store)
             if (existingIds.Count == 0)
                 continue;
 
-            await davClient.RemoveHistoryItemsAsync(existingIds, deleteFiles: false, ct)
+            await davClient.RemoveHistoryItemsAsync(
+                    existingIds, deleteFiles: false, source: "usenet-migration-cleanup", ct: ct)
                 .ConfigureAwait(false);
             await davContext.SaveChangesAsync(ct).ConfigureAwait(false);
             davContext.ChangeTracker.Clear();

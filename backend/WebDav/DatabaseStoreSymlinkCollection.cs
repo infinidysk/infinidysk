@@ -111,7 +111,12 @@ public class DatabaseStoreSymlinkCollection(
                     .Select(h => h.Id).ToListAsync(request.CancellationToken).ConfigureAwait(false);
                 if (historyIds.Count > 0)
                 {
-                    await dbClient.RemoveHistoryItemsAsync(historyIds, deleteFiles: false, request.CancellationToken).ConfigureAwait(false);
+                    await dbClient.RemoveHistoryItemsAsync(
+                            historyIds,
+                            deleteFiles: false,
+                            source: "completed-symlinks-folder-delete",
+                            ct: request.CancellationToken)
+                        .ConfigureAwait(false);
                     await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
                     _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", historyIds));
                     return DavStatusCode.NoContent;

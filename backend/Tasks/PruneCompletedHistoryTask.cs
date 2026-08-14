@@ -118,7 +118,9 @@ public class PruneCompletedHistoryTask : BaseTask
             var ids = await BuildFilterQuery(dbClient.Ctx, _category, _olderThanDays).OrderBy(h => h.CreatedAt).Select(h => h.Id).Take(BatchSize).ToListAsync(CancellationToken).ConfigureAwait(false);
             if (ids.Count == 0) break;
             var existingCount = await dbClient.Ctx.HistoryItems.CountAsync(h => ids.Contains(h.Id), CancellationToken).ConfigureAwait(false);
-            await dbClient.RemoveHistoryItemsAsync(ids, deleteFiles: false, CancellationToken).ConfigureAwait(false);
+            await dbClient.RemoveHistoryItemsAsync(
+                    ids, deleteFiles: false, source: "prune-completed-history", ct: CancellationToken)
+                .ConfigureAwait(false);
             await dbClient.Ctx.SaveChangesAsync(CancellationToken).ConfigureAwait(false);
             dbClient.Ctx.ChangeTracker.Clear();
             var remainingCount = await dbClient.Ctx.HistoryItems.CountAsync(h => ids.Contains(h.Id), CancellationToken).ConfigureAwait(false);

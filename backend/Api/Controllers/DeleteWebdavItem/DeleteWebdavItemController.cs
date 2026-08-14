@@ -81,7 +81,7 @@ public class DeleteWebdavItemController(
                 .Distinct()
                 .ToList();
             var prunedHistoryIds = await dbClient
-                .PruneUnreferencedHistoryItemsAsync(historyIds, ct)
+                .PruneUnreferencedHistoryItemsAsync(historyIds, source: "explore-delete", ct: ct)
                 .ConfigureAwait(false);
 
             await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
