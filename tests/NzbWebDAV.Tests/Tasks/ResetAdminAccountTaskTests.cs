@@ -51,6 +51,8 @@ public sealed class ResetAdminAccountTaskTests : IAsyncLifetime
     [InlineData("1")]
     [InlineData("yes")]
     [InlineData("YES")]
+    [InlineData("y")]
+    [InlineData(" true ")]
     public async Task RunIfRequestedAsync_DeletesAdminAccount_WhenEnvVarIsTruthy(string envValue)
     {
         Environment.SetEnvironmentVariable(ResetAdminAccountTask.EnvVarName, envValue);

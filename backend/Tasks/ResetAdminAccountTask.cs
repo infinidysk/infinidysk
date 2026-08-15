@@ -20,8 +20,8 @@ public static class ResetAdminAccountTask
 
     public static bool IsRequested()
     {
-        var value = EnvironmentUtil.GetEnvironmentVariable(EnvVarName)?.ToLowerInvariant();
-        return value is "true" or "1" or "yes";
+        var value = EnvironmentUtil.GetEnvironmentVariable(EnvVarName)?.Trim().ToLowerInvariant();
+        return value is "true" or "1" or "yes" or "y";
     }
 
     public static async Task RunIfRequestedAsync(

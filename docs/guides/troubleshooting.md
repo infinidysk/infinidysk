@@ -33,7 +33,7 @@ and the backend logs a matching warning on every startup.
 If you have shell access to `/config` and prefer not to restart:
 
 ```bash
-sqlite3 /path/to/your/config/db.sqlite "DELETE FROM Accounts WHERE Type = 1;"
+sqlite3 "${CONFIG_PATH:-/config}/db.sqlite" "DELETE FROM Accounts WHERE Type = 1;"
 ```
 
 Then visit the UI and complete onboarding. Queue, history, settings, and WebDAV

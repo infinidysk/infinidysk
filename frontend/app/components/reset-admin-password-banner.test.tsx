@@ -13,7 +13,7 @@ describe("ResetAdminPasswordBanner", () => {
     render(<ResetAdminPasswordBanner isResetAdminPasswordSet={true} />);
 
     expect(screen.getByText("Admin password reset is armed")).toBeTruthy();
-    expect(screen.getByText(/RESET_ADMIN_PASSWORD/)).toBeTruthy();
+    expect(screen.getByText(/deletes the admin account on every startup/i)).toBeTruthy();
     expect(screen.queryByRole("button")).toBeNull();
   });
 

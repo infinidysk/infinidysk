@@ -21,9 +21,9 @@ export function ResetAdminPasswordBanner({
       <div className="min-w-0">
         <p className="font-semibold">Admin password reset is armed</p>
         <p className="mt-0.5 text-error-content/80">
-          <code>RESET_ADMIN_PASSWORD</code> is set in your environment. Your admin account
-          will be deleted on the next container restart. Remove this variable from your
-          Compose file or environment now.
+          <code>RESET_ADMIN_PASSWORD</code> is set in your environment. The backend deletes the
+          admin account on every startup while this remains enabled. Remove this variable from
+          your Compose file or environment before the next restart.
         </p>
       </div>
     </Alert>

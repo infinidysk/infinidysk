@@ -28,19 +28,20 @@ import { LegacyImageBanner } from "./components/legacy-image-banner";
 import { ResetAdminPasswordBanner } from "./components/reset-admin-password-banner";
 import { isOidcEnabled } from "../server/oidc.server";
 import { getServiceProvider } from "./utils/service-provider.server";
+import { isResetAdminPasswordSet } from "./utils/reset-admin-password.server";
 import { withUrlBase } from "~/utils/url-base";
 
-function isResetAdminPasswordSet(): boolean {
-  const value = process.env["RESET_ADMIN_PASSWORD"]?.trim().toLowerCase();
-  return value === "true" || value === "1" || value === "yes";
-}
-
 export async function loader({ request }: Route.LoaderArgs) {
+  const resetAdminPasswordSet = isResetAdminPasswordSet();
   // Single-fetch navigation/revalidation uses internal `.data` URLs
   // (e.g. /login.data), so strip that suffix before the layout check.
   let path = new URL(request.url).pathname.replace(/\.data$/, "");
   if (path === "/login" || path === "/onboarding") {
-    return { useLayout: false, serviceProvider: null };
+    return {
+      useLayout: false,
+      serviceProvider: null,
+      isResetAdminPasswordSet: resetAdminPasswordSet,
+    };
   }
 
   const config = await backendClient.getConfig([
@@ -56,7 +57,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     useLayout: true,
     // Baked into images published to the deprecated ghcr.io/nzbdav/nzbdav path.
     isLegacyImage: process.env["NZBDAV_LEGACY_IMAGE"] === "true",
-    isResetAdminPasswordSet: isResetAdminPasswordSet(),
+    isResetAdminPasswordSet: resetAdminPasswordSet,
     version,
     updateAvailable: await checkForUpdate(version),
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
@@ -217,7 +218,18 @@ export default function App({ loaderData }: Route.ComponentProps) {
     );
   }
 
-  return outlet;
+  return (
+    <>
+      {hideShell && (
+        <div className="px-4 pt-4">
+          <ResetAdminPasswordBanner
+            isResetAdminPasswordSet={isResetAdminPasswordSet ?? false}
+          />
+        </div>
+      )}
+      {outlet}
+    </>
+  );
 }
 
 // Root ErrorBoundary catches loader/component throws that aren't handled closer
