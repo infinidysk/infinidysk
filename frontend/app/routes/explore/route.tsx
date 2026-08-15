@@ -44,7 +44,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
     // Single-fetch navigation requests use an internal `.data` URL, so derive
     // the WebDAV path from the matched wildcard rather than request.url.
-    const parsed = parseExploreWebdavPath(params["*"] ?? "");
+    // The splat is already percent-decoded; decoding again would turn a
+    // literal "%2C" in a release name into a comma.
+    const parsed = parseExploreWebdavPath(params["*"] ?? "", { decode: false });
     if (!parsed.ok) {
         return {
             parentDirectories: [],
@@ -721,7 +723,8 @@ function getWebdavPath(pathname: string): string {
 }
 
 function getWebdavPathDecoded(pathname: string): string {
-    const parsed = parseExploreWebdavPath(getWebdavPath(pathname));
+    // location.pathname is already percent-decoded by the browser / router.
+    const parsed = parseExploreWebdavPath(getWebdavPath(pathname), { decode: false });
     return parsed.ok ? parsed.path : "";
 }
 

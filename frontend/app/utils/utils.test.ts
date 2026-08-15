@@ -130,9 +130,30 @@ describe("parseExploreWebdavPath", () => {
     expect(parseExploreWebdavPath("content//")).toEqual({ ok: false });
   });
 
-  it("rejects malformed percent-encoding", () => {
-    expect(parseExploreWebdavPath("content/%E0%A4%A")).toEqual({ ok: false });
-  });
+    it("rejects malformed percent-encoding", () => {
+        expect(parseExploreWebdavPath("content/%E0%A4%A")).toEqual({ ok: false });
+    });
+
+    it("keeps literal percent sequences when the path is already decoded", () => {
+        expect(parseExploreWebdavPath(
+            "content/tv/S02E14.Such.Sweet.Sorrow%2C.Part.2.1080",
+            { decode: false },
+        )).toEqual({
+            ok: true,
+            path: "content/tv/S02E14.Such.Sweet.Sorrow%2C.Part.2.1080",
+        });
+        expect(parseExploreWebdavPath("content/100%", { decode: false })).toEqual({
+            ok: true,
+            path: "content/100%",
+        });
+    });
+
+    it("decodes percent sequences when the input is still encoded", () => {
+        expect(parseExploreWebdavPath("content/Sorrow%2C.Part.2")).toEqual({
+            ok: true,
+            path: "content/Sorrow,.Part.2",
+        });
+    });
 });
 
 describe("secret masking", () => {

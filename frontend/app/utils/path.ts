@@ -38,16 +38,34 @@ export type ParsedExploreWebdavPath =
     | { ok: true; path: string }
     | { ok: false };
 
+export type ParseExploreWebdavPathOptions = {
+    /**
+     * When true (default), percent-decode `raw`. Use for encoded hrefs.
+     * React Router splat params and `location.pathname` are already decoded —
+     * pass false so names that literally contain `%2C` (or a trailing `%`) stay intact.
+     */
+    decode?: boolean;
+};
+
 /**
- * Decodes and validates an explore wildcard / WebDAV path.
- * Rejects malformed percent-encoding and empty path segments (e.g. content//release).
+ * Validates an explore wildcard / WebDAV path.
+ * Rejects empty path segments (e.g. content//release). When `decode` is true,
+ * also rejects malformed percent-encoding.
  */
-export function parseExploreWebdavPath(raw: string): ParsedExploreWebdavPath {
+export function parseExploreWebdavPath(
+    raw: string,
+    options?: ParseExploreWebdavPathOptions,
+): ParsedExploreWebdavPath {
+    const shouldDecode = options?.decode !== false;
     let decoded: string;
-    try {
-        decoded = decodeURIComponent(raw);
-    } catch {
-        return { ok: false };
+    if (shouldDecode) {
+        try {
+            decoded = decodeURIComponent(raw);
+        } catch {
+            return { ok: false };
+        }
+    } else {
+        decoded = raw;
     }
 
     // Drop only a leading empty segment (from a leading /) and a trailing empty

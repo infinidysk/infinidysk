@@ -33,7 +33,8 @@ public class DeleteWebdavItemController(
                    ?? throw new BadHttpRequestException("path is required");
         var ct = HttpContext.RequestAborted;
 
-        var item = await ResolvePathAsync(path, ct).ConfigureAwait(false);
+        var item = await DeleteWebdavItemSupport.ResolvePathAsync(dbClient, path, ct)
+            .ConfigureAwait(false);
         if (item is null) return NotFound(new BaseApiResponse { Status = false, Error = "Item not found." });
 
         var rootError = DeleteWebdavItemSupport.ValidateDeletableRoot(item.Path);
@@ -102,24 +103,5 @@ public class DeleteWebdavItemController(
             await transaction.RollbackAsync(ct).ConfigureAwait(false);
             throw;
         }
-    }
-
-    private async Task<DavItem?> ResolvePathAsync(string path, CancellationToken ct)
-    {
-        var parts = path.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0) return null;
-
-        var absolutePath = "/" + string.Join('/', parts.Select(Uri.UnescapeDataString));
-        var byPath = await dbClient.GetItemByPathAsync(absolutePath, ct).ConfigureAwait(false);
-        if (byPath is not null) return byPath;
-
-        var current = DavItem.Root;
-        foreach (var name in parts.Select(Uri.UnescapeDataString))
-        {
-            var child = await dbClient.GetDirectoryChildAsync(current.Id, name, ct).ConfigureAwait(false);
-            if (child is null) return null;
-            current = child;
-        }
-        return current;
     }
 }

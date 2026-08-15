@@ -178,6 +178,44 @@ public sealed class DeleteWebdavItemControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DeleteAsync_FileNameWithPercentSequence_RemovesRow()
+    {
+        var (_, file, historyId) = await SeedContentReleaseAsync(
+            fileName: "S02E14.Such.Sweet.Sorrow%2C.Part.2.1080.mkv");
+
+        var result = await InvokeDeleteAsync(file.Path);
+        Assert.Equal(200, GetStatusCode(result));
+        Assert.True(ReadResponse<BaseApiResponse>(result).Status);
+
+        Assert.Null(await _context.Items.AsNoTracking().SingleOrDefaultAsync(x => x.Id == file.Id));
+        Assert.Null(await _context.HistoryItems.AsNoTracking().SingleOrDefaultAsync(x => x.Id == historyId));
+    }
+
+    [Fact]
+    public async Task PreviewAsync_FileNameWithPercentSequence_FindsItem()
+    {
+        var (_, file, _) = await SeedContentReleaseAsync(
+            fileName: "S02E14.Such.Sweet.Sorrow%2C.Part.2.1080.mkv");
+
+        var result = await InvokePreviewAsync(file.Path);
+        Assert.Equal(200, GetStatusCode(result));
+        var response = ReadResponse<DeleteWebdavItemPreviewResponse>(result);
+        Assert.True(response.Status);
+        Assert.Equal(1, response.FileCount);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_PercentEncodedSpaceFallback_RemovesRow()
+    {
+        var (_, file, _) = await SeedContentReleaseAsync(fileName: "file name.mkv");
+        var encodedPath = file.Path.Replace("file name.mkv", "file%20name.mkv", StringComparison.Ordinal);
+
+        var result = await InvokeDeleteAsync(encodedPath);
+        Assert.Equal(200, GetStatusCode(result));
+        Assert.Null(await _context.Items.AsNoTracking().SingleOrDefaultAsync(x => x.Id == file.Id));
+    }
+
+    [Fact]
     public async Task DeleteAsync_File_KeepsHistoryWhenSiblingRemains()
     {
         var (jobDir, file, historyId) = await SeedContentReleaseAsync();
