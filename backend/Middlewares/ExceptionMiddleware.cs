@@ -110,7 +110,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             if (context.Items["DavItem"] is DavItem davItem)
             {
                 RecordMissingArticleForFailFast(davItem, notFound.SegmentId);
-                ScheduleRepair(davItem.Id);
+                ScheduleRepair(davItem);
             }
 
             AbortStartedResponse(context);
@@ -268,7 +268,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             });
 
             if (context.Items["DavItem"] is DavItem davItem)
-                ScheduleRepair(davItem.Id);
+                ScheduleRepair(davItem);
 
             AbortStartedResponse(context);
         }
@@ -343,7 +343,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             Log.Debug(e, "Incomplete file content stack for {FilePath}", filePath);
 
             if (context.Items["DavItem"] is DavItem davItem)
-                ScheduleRepair(davItem.Id);
+                ScheduleRepair(davItem);
 
             AbortStartedResponse(context);
         }
@@ -422,7 +422,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             if ((IsTruncatedCiphertextException(e) || isIncompleteData) &&
                 context.Items["DavItem"] is DavItem truncatedItem)
             {
-                ScheduleRepair(truncatedItem.Id);
+                ScheduleRepair(truncatedItem);
             }
 
             AbortStartedResponse(context);
@@ -448,12 +448,13 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             context.Abort();
     }
 
-    private void ScheduleRepair(Guid davItemId)
+    private void ScheduleRepair(DavItem davItem)
     {
+        var davItemId = davItem.Id;
         var repairDisabledReason = configManager.GetRepairDisabledReason();
         if (repairDisabledReason != null)
         {
-            LogStreamingRepairSkipped(davItemId, repairDisabledReason);
+            LogStreamingRepairSkipped(davItem, repairDisabledReason);
             return;
         }
 
@@ -519,21 +520,21 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         return threshold <= 0 || failureCount >= threshold;
     }
 
-    private void LogStreamingRepairSkipped(Guid davItemId, string reason)
+    private void LogStreamingRepairSkipped(DavItem davItem, string reason)
     {
-        var dedupeKey = davItemId.ToString();
+        var dedupeKey = davItem.Id.ToString();
         LogWithDedup(RecentSkippedStreamingRepairs, dedupeKey, suppressed =>
         {
             if (suppressed > 0)
                 Log.Warning(
-                    "Streaming failure for DavItem {DavItemId} will not trigger repair: {Reason}. Configure Settings > Health & Repairs. (suppressed {SuppressedCount} duplicates in last 60s)",
-                    davItemId,
+                    "Streaming failure for {FilePath} will not trigger repair: {Reason}. Configure Settings > Health & Repairs. (suppressed {SuppressedCount} duplicates in last 60s)",
+                    davItem.Path,
                     reason,
                     suppressed);
             else
                 Log.Warning(
-                    "Streaming failure for DavItem {DavItemId} will not trigger repair: {Reason}. Configure Settings > Health & Repairs.",
-                    davItemId,
+                    "Streaming failure for {FilePath} will not trigger repair: {Reason}. Configure Settings > Health & Repairs.",
+                    davItem.Path,
                     reason);
         });
     }
@@ -609,6 +610,11 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         {
             if (kvp.Value.LastLogged < cutoff)
                 RecentStreamingWriteTimeouts.TryRemove(kvp.Key, out _);
+        }
+        foreach (var kvp in RecentSkippedStreamingRepairs)
+        {
+            if (kvp.Value.LastLogged < cutoff)
+                RecentSkippedStreamingRepairs.TryRemove(kvp.Key, out _);
         }
         foreach (var kvp in RecentRepairTriggers)
         {
