@@ -25,9 +25,15 @@ import { MigrationBoundary } from "./components/migration-progress";
 import { ServiceProviderGate } from "./components/service-provider-gate";
 import { StreamTracingBanner } from "./components/stream-tracing-banner";
 import { LegacyImageBanner } from "./components/legacy-image-banner";
+import { ResetAdminPasswordBanner } from "./components/reset-admin-password-banner";
 import { isOidcEnabled } from "../server/oidc.server";
 import { getServiceProvider } from "./utils/service-provider.server";
 import { withUrlBase } from "~/utils/url-base";
+
+function isResetAdminPasswordSet(): boolean {
+  const value = process.env["RESET_ADMIN_PASSWORD"]?.trim().toLowerCase();
+  return value === "true" || value === "1" || value === "yes";
+}
 
 export async function loader({ request }: Route.LoaderArgs) {
   // Single-fetch navigation/revalidation uses internal `.data` URLs
@@ -50,6 +56,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     useLayout: true,
     // Baked into images published to the deprecated ghcr.io/nzbdav/nzbdav path.
     isLegacyImage: process.env["NZBDAV_LEGACY_IMAGE"] === "true",
+    isResetAdminPasswordSet: isResetAdminPasswordSet(),
     version,
     updateAvailable: await checkForUpdate(version),
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
@@ -146,6 +153,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
   const {
     useLayout,
     isLegacyImage,
+    isResetAdminPasswordSet,
     version,
     updateAvailable,
     isFrontendAuthDisabled,
@@ -187,6 +195,9 @@ export default function App({ loaderData }: Route.ComponentProps) {
             {showLoading ? <Loading /> : (
               <>
                 <div className="px-4 pt-4 md:px-8">
+                  <ResetAdminPasswordBanner
+                    isResetAdminPasswordSet={isResetAdminPasswordSet ?? false}
+                  />
                   <LegacyImageBanner isLegacyImage={isLegacyImage ?? false} />
                   <StreamTracingBanner isReadOnly={role === "readonly"} />
                 </div>

@@ -26,6 +26,7 @@ using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.SupportPack;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tasks;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
 using NzbWebDAV.WebDav.Base;
@@ -144,6 +145,10 @@ public partial class Program
             // before any background service trips over it. Non-fatal by design.
             await DatabaseIntegrityCheck
                 .VerifyMainDatabaseAsync(databaseContext, startupCancellationToken)
+                .ConfigureAwait(false);
+
+            await ResetAdminAccountTask
+                .RunIfRequestedAsync(databaseContext, startupCancellationToken)
                 .ConfigureAwait(false);
 
             // initialize the config-manager

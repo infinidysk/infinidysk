@@ -6,6 +6,39 @@
 - Ensure `CONFIG_PATH` (`/config`) is writable by `PUID`/`PGID`.
 - Frontend `/healthz` should pass during long migrations; backend `/health` must eventually succeed.
 
+## Locked out of the web UI
+
+If you forgot the administrator username or password, reset the local admin account
+with the `RESET_ADMIN_PASSWORD` environment variable:
+
+1. Add `RESET_ADMIN_PASSWORD: "true"` to your Compose `environment` (or pass
+   `-e RESET_ADMIN_PASSWORD=true` to `docker run`).
+2. Restart the container.
+3. Visit the UI — you will land on the onboarding page to set new credentials.
+4. **Remove** `RESET_ADMIN_PASSWORD` from your environment.
+5. Restart again. If you skip this step, the next restart deletes the admin
+   account again.
+
+While `RESET_ADMIN_PASSWORD` remains set, the UI shows a persistent warning banner
+and the backend logs a matching warning on every startup.
+
+!!! danger "Security"
+
+    Anyone who can reach the UI while no admin account exists can create the new
+    administrator account. Re-register promptly after the reset and remove the
+    variable before the next restart.
+
+### Manual reset (without restarting)
+
+If you have shell access to `/config` and prefer not to restart:
+
+```bash
+sqlite3 /path/to/your/config/db.sqlite "DELETE FROM Accounts WHERE Type = 1;"
+```
+
+Then visit the UI and complete onboarding. Queue, history, settings, and WebDAV
+credentials are untouched.
+
 ## Streaming readiness (`/ready`) [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
 The backend readiness endpoint reports whether InfiniDysk can make progress on new streams. It returns

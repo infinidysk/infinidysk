@@ -91,6 +91,7 @@ or restrict backend capabilities when enforcement is required.
 | `STREAM_TRACE_EVENTS` | `0` (off) | Opt-in stream trace capacity, always-on with no expiry; the Settings → Support toggle can also set capacity (20k–200k) for timed captures |
 | `TRUSTED_PROXY_CIDRS` | loopback | Comma-separated IPs/CIDRs trusted for forwarded headers |
 | `DISABLE_WEBDAV_AUTH` | unset | Disables WebDAV auth (**dangerous**) |
+| `RESET_ADMIN_PASSWORD` | unset | `true` deletes the admin account on next startup, forcing re-onboarding. **Remove after use.** |
 | `USENET_DISABLE_CRC_VALIDATION` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | unset | `1` skips yEnc CRC checks (emergency) |
 | `THREADPOOL_MIN_THREADS` | `max(2×CPU, 50)` | Override min worker/IOCP threads |
 | `THREADPOOL_MAX_THREADS` | `max(50×CPU, 1000)` | Override max threads |

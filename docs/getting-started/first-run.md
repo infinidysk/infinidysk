@@ -7,8 +7,10 @@ Open `http://your-server:3000` after the container is healthy.
     You can pre-seed Usenet, WebDAV, *Arr, and other **Settings** values with
     [`NZBDAV_CONFIG__...`](../configuration/headless.md) before the first UI visit.
     The **admin username/password** for the web UI is still created here (or via your
-    existing account) — that bootstrap is **not** part of the ENV overlay. Warden
-    sources and database restore actions are also separate domains.
+    existing account) — that bootstrap is **not** part of the ENV overlay. If you lose
+    those credentials later, set `RESET_ADMIN_PASSWORD=true`, restart once, re-onboard,
+    then remove the variable — see [Troubleshooting → Locked out of the web UI](../guides/troubleshooting.md#locked-out-of-the-web-ui).
+    Warden sources and database restore actions are also separate domains.
 
 ## 1. Create the admin account
 
