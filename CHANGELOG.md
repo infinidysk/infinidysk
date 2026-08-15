@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.2](https://github.com/infinidysk/infinidysk/compare/v1.1.1...v1.1.2) (2026-08-15)
+
+
+### Bug Fixes
+
+* **auth:** reset admin password via RESET_ADMIN_PASSWORD environment variable ([#998](https://github.com/infinidysk/infinidysk/issues/998)) ([d39d7e2](https://github.com/infinidysk/infinidysk/commit/d39d7e23a145c466e68ad0a36e6e6e832bee8c7b))
+* **deps:** Bump the npm-minor-and-patch group ([#994](https://github.com/infinidysk/infinidysk/issues/994)) ([589e6bf](https://github.com/infinidysk/infinidysk/commit/589e6bfa28b05edae79a3c8d45fa169fd43b8190))
+* **repair:** streaming failure repair now shows when Background Repairs must be enabled ([#999](https://github.com/infinidysk/infinidysk/issues/999)) ([394d85d](https://github.com/infinidysk/infinidysk/commit/394d85d552391b3f21d10aabd1c13cddf33b1099))
+* **ui:** delete Explore items whose names contain percent sequences ([#995](https://github.com/infinidysk/infinidysk/issues/995)) ([ac7af97](https://github.com/infinidysk/infinidysk/commit/ac7af97901990bd680385e47f8d806d898649138))
+
 ## [1.1.1](https://github.com/infinidysk/infinidysk/compare/v1.1.0...v1.1.1) (2026-08-14)
 
 
