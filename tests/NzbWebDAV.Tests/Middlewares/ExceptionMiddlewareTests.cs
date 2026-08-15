@@ -146,6 +146,30 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task StreamingFailureWithRepairsDisabled_WarnsWithReasonInsteadOfSchedulingRepair()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        // Default ConfigManager: repair.enable is off, so repair must be skipped with a reason.
+        var middleware = CreateMiddleware(
+            _ => throw new UsenetArticleNotFoundException("missing-segment"),
+            new ConfigManager(),
+            failureTracker);
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        var logged = Assert.Single(events, e =>
+            e.RenderMessage().Contains("will not trigger repair", StringComparison.Ordinal));
+        Assert.Equal(LogEventLevel.Warning, logged.Level);
+        Assert.Null(logged.Exception);
+        Assert.Contains(davItem.Path, logged.RenderMessage(), StringComparison.Ordinal);
+        Assert.Contains("Enable Background Repairs is off", logged.RenderMessage(), StringComparison.Ordinal);
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+    }
+
+    [Fact]
     public async Task IncompleteMultipartPartBeforeResponseStarted_ReturnsNotFoundWithoutAborting()
     {
         var lifetimeFeature = new TestHttpRequestLifetimeFeature();
