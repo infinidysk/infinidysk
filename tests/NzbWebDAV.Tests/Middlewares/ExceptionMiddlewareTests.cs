@@ -507,6 +507,33 @@ public class ExceptionMiddlewareTests
         Assert.Equal(expected, ExceptionMiddleware.ShouldScheduleUrgentRepair(threshold, failureCount));
     }
 
+    [Theory]
+    [InlineData(false, true, 1, "Enable Background Repairs is off")]
+    [InlineData(true, false, 1, "Library Directory is not set")]
+    [InlineData(true, true, 0, "no Radarr/Sonarr instances are configured")]
+    public void GetRepairDisabledReason_NamesMissingPrerequisite(
+        bool isRepairEnabled,
+        bool hasLibraryDir,
+        int arrInstanceCount,
+        string expected)
+    {
+        Assert.Equal(expected, ConfigManager.GetRepairDisabledReason(isRepairEnabled, hasLibraryDir, arrInstanceCount));
+    }
+
+    [Fact]
+    public void GetRepairDisabledReason_ReturnsNullWhenFullyEnabled()
+    {
+        Assert.Null(ConfigManager.GetRepairDisabledReason(true, true, 1));
+    }
+
+    [Fact]
+    public void GetRepairDisabledReason_InstanceReflectsConfiguredPrerequisites()
+    {
+        var configManager = CreateRepairEnabledConfig();
+        Assert.Null(configManager.GetRepairDisabledReason());
+        Assert.True(configManager.IsRepairJobEnabled());
+    }
+
     private static ExceptionMiddleware CreateMiddleware(
         RequestDelegate next,
         ConfigManager? configManager = null,

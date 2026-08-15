@@ -19,6 +19,14 @@ Background health monitoring and replacement of unhealthy library items.
 | Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items are removed and blocklisted through *Arr instead of force-deleted |
 | Library Directory | `media.library-dir` | empty | Organized library root in the container — parent of your Arr root folders. Never the rclone mount or `/completed-symlinks` |
 
+!!! note "Streaming failure repair requires Background Repairs"
+
+    **Repair After Streaming Failures** (`repair.auto-remove-after-failures`) only takes effect when
+    **Enable Background Repairs** (`repair.enable`) is on, which itself requires **Library Directory**
+    and at least one configured *Arr instance. If a streaming failure is detected but repairs are not
+    fully enabled, InfiniDysk logs a warning naming the missing prerequisite instead of scheduling
+    urgent repair.
+
 `repair.auto-remove-after-failures` applies only to streaming-triggered failures such as missing
 articles and corrupt archives. With a value greater than `0`, InfiniDysk waits for that many
 consecutive failures before it starts an urgent repair. At the threshold, linked library items are

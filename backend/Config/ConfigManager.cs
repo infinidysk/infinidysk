@@ -1533,12 +1533,36 @@ public class ConfigManager
 
     public bool IsRepairJobEnabled()
     {
-        var defaultValue = false;
+        return GetRepairDisabledReason() == null;
+    }
+
+    /// <summary>
+    /// When repairs are not fully enabled, returns a human-readable reason naming the missing prerequisite.
+    /// </summary>
+    public string? GetRepairDisabledReason()
+    {
         var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
-        var isRepairJobEnabled = (configValue != null ? bool.Parse(configValue) : defaultValue);
-        return isRepairJobEnabled
-               && GetLibraryDir() != null
-               && GetArrConfig().GetInstanceCount() > 0;
+        var isRepairJobEnabled = configValue != null && bool.Parse(configValue);
+        var hasLibraryDir = GetLibraryDir() != null;
+        var arrInstanceCount = GetArrConfig().GetInstanceCount();
+        return GetRepairDisabledReason(isRepairJobEnabled, hasLibraryDir, arrInstanceCount);
+    }
+
+    internal static string? GetRepairDisabledReason(
+        bool isRepairEnabled,
+        bool hasLibraryDir,
+        int arrInstanceCount)
+    {
+        if (!isRepairEnabled)
+            return "Enable Background Repairs is off";
+
+        if (!hasLibraryDir)
+            return "Library Directory is not set";
+
+        if (arrInstanceCount <= 0)
+            return "no Radarr/Sonarr instances are configured";
+
+        return null;
     }
 
     /// <summary>

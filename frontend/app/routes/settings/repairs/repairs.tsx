@@ -24,6 +24,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
     const helpText = canEnableRepairs
         ? "When enabled, usenet items will be continuously monitored for health. Unhealthy items will be removed. If an unhealthy item is part of your Radarr/Sonarr library, a new search will be triggered to find a replacement."
         : "When enabled, usenet items will be continuously monitored for health. Unhealthy items will be removed and replaced. This setting can only be enabled once your Library-Directory and Radarr/Sonarr instances are configured.";
+    const isRepairEnabled = canEnableRepairs && config["repair.enable"] === "true";
     const autoRemoveAfter = config["repair.auto-remove-after-failures"] ?? "0";
     const autoRemoveEnabled = isNonNegativeInteger(autoRemoveAfter) && Number(autoRemoveAfter) > 0;
 
@@ -141,6 +142,11 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 description="Choose when repeated playback failures should trigger repair or removal."
                 contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
             >
+            {!isRepairEnabled && (
+                <p className="text-[11px] leading-relaxed text-base-content/45 lg:col-span-2">
+                    Enable Background Repairs above to activate streaming failure handling.
+                </p>
+            )}
             <ManagedSetting configKey="repair.auto-remove-after-failures">
             <div className="space-y-2">
                 <label className="block text-sm font-medium text-base-content" htmlFor="auto-remove-after-failures-input">Repair After Streaming Failures</label>
@@ -151,6 +157,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     aria-describedby="auto-remove-after-failures-help"
                     placeholder="0"
                     value={autoRemoveAfter}
+                    disabled={!isRepairEnabled}
                     onChange={e => setNewConfig({ ...config, "repair.auto-remove-after-failures": e.target.value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45" id="auto-remove-after-failures-help">
                     Wait for this many consecutive streaming playback failures before urgent repair starts. Linked library
@@ -165,7 +172,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     id="auto-remove-unlinked-only-checkbox"
                     className="cursor-pointer gap-2 p-0"
                     checked={(config["repair.auto-remove-unlinked-only"] ?? "true") === "true"}
-                    disabled={!autoRemoveEnabled}
+                    disabled={!isRepairEnabled || !autoRemoveEnabled}
                     onChange={e => setNewConfig({ ...config, "repair.auto-remove-unlinked-only": "" + e.target.checked })}
                     label={<span className="text-sm text-base-content">Auto-remove unlinked files only</span>}
                 />

@@ -23,6 +23,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentReadErrors = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentStreamingReadTimeouts = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentStreamingWriteTimeouts = new();
+    private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentSkippedStreamingRepairs = new();
     private static readonly ConcurrentDictionary<Guid, DateTime> RecentRepairTriggers = new();
     private static readonly TimeSpan DedupeWindow = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan RepairDedupeWindow = TimeSpan.FromMinutes(5);
@@ -449,8 +450,12 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
     private void ScheduleRepair(Guid davItemId)
     {
-        if (!configManager.IsRepairJobEnabled())
+        var repairDisabledReason = configManager.GetRepairDisabledReason();
+        if (repairDisabledReason != null)
+        {
+            LogStreamingRepairSkipped(davItemId, repairDisabledReason);
             return;
+        }
 
         // Count every distinct streaming failure before applying either threshold or deduplication.
         // Repeated failures must still advance the repair threshold while duplicate DB scheduling
@@ -512,6 +517,25 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     internal static bool ShouldScheduleUrgentRepair(int threshold, int failureCount)
     {
         return threshold <= 0 || failureCount >= threshold;
+    }
+
+    private void LogStreamingRepairSkipped(Guid davItemId, string reason)
+    {
+        var dedupeKey = davItemId.ToString();
+        LogWithDedup(RecentSkippedStreamingRepairs, dedupeKey, suppressed =>
+        {
+            if (suppressed > 0)
+                Log.Warning(
+                    "Streaming failure for DavItem {DavItemId} will not trigger repair: {Reason}. Configure Settings > Health & Repairs. (suppressed {SuppressedCount} duplicates in last 60s)",
+                    davItemId,
+                    reason,
+                    suppressed);
+            else
+                Log.Warning(
+                    "Streaming failure for DavItem {DavItemId} will not trigger repair: {Reason}. Configure Settings > Health & Repairs.",
+                    davItemId,
+                    reason);
+        });
     }
 
     private static void LogWithDedup(
