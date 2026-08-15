@@ -420,7 +420,15 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         }
 
         await cts.CancelAsync();
-        await loop.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await loop.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (OperationCanceledException)
+        {
+            // ProcessQueueAsync may still be inside GetTopQueueItem when the loop token
+            // is cancelled; shutdown cancellation is expected once assertions pass.
+        }
     }
 
     [Fact]
