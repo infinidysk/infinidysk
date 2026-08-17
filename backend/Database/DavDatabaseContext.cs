@@ -479,6 +479,12 @@ public sealed class DavDatabaseContext : DbContext
             e.Property(i => i.Path)
                 .IsRequired();
 
+            e.Property(i => i.NzbFileName)
+                .IsRequired(false);
+
+            e.Property(i => i.JobName)
+                .IsRequired(false);
+
             e.Property(i => i.Result)
                 .HasConversion<int>()
                 .IsRequired();
@@ -498,6 +504,10 @@ public sealed class DavDatabaseContext : DbContext
 
             e.HasIndex(h => h.DavItemId)
                 .HasFilter("\"RepairStatus\" = 3")
+                .IsUnique(false);
+
+            e.HasIndex(i => new { i.RepairStatus, i.CreatedAt })
+                .HasFilter("\"RepairStatus\" IN (1, 2)")
                 .IsUnique(false);
         });
 

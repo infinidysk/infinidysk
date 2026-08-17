@@ -1170,11 +1170,16 @@ public class HealthCheckService : BackgroundService
         CancellationToken ct
     )
     {
+        var identity = repairStatus is HealthCheckResult.RepairAction.Deleted or HealthCheckResult.RepairAction.Repaired
+            ? await GetRepairHistoryIdentityAsync(dbClient.Ctx, davItem, ct).ConfigureAwait(false)
+            : null;
         dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
         {
             Id = Guid.NewGuid(),
             DavItemId = davItem.Id,
             Path = davItem.Path,
+            NzbFileName = identity?.NzbFileName,
+            JobName = identity?.JobName,
             CreatedAt = DateTimeOffset.UtcNow,
             Result = result,
             RepairStatus = repairStatus,
@@ -1194,6 +1199,28 @@ public class HealthCheckService : BackgroundService
                 entry.State = EntityState.Detached;
         }
     }
+
+    internal static async Task<RepairHistoryIdentity?> GetRepairHistoryIdentityAsync
+    (
+        DavDatabaseContext context,
+        DavItem davItem,
+        CancellationToken ct
+    )
+    {
+        if (davItem.NzbBlobId is not Guid nzbBlobId) return null;
+
+        var nzbFileName = await context.NzbNames
+            .AsNoTracking()
+            .Where(x => x.Id == nzbBlobId)
+            .Select(x => x.FileName)
+            .SingleOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        if (nzbFileName is null) return null;
+
+        return new RepairHistoryIdentity(nzbFileName, FilenameUtil.GetJobName(nzbFileName));
+    }
+
+    internal sealed record RepairHistoryIdentity(string NzbFileName, string JobName);
 
     private HealthCheckResult SendStatus(HealthCheckResult result)
     {

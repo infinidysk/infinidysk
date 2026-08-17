@@ -6,6 +6,8 @@ public class HealthCheckResult
     public DateTimeOffset CreatedAt { get; init; }
     public Guid DavItemId { get; init; }
     public string Path { get; init; } = null!;
+    public string? NzbFileName { get; init; }
+    public string? JobName { get; init; }
     public HealthResult Result { get; init; }
     public RepairAction RepairStatus { get; set; }
     public string? Message { get; set; }
