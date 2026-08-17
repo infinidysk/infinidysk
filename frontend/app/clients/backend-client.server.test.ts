@@ -124,7 +124,7 @@ describe("BackendClient", () => {
     expect((init?.body as FormData).get("nzbFile")).toBeInstanceOf(File);
   });
 
-  it("gets health queue and history with optional page sizes", async () => {
+  it("gets health queue and filtered paginated history", async () => {
     const queue = { uncheckedCount: 0, items: [] };
     const history = { stats: [], items: [] };
     fetchMock
@@ -132,10 +132,14 @@ describe("BackendClient", () => {
       .mockResolvedValueOnce(jsonResponse(history));
 
     await expect(backendClient.getHealthCheckQueue(30)).resolves.toEqual(queue);
-    await expect(backendClient.getHealthCheckHistory()).resolves.toEqual(history);
+    await expect(backendClient.getHealthCheckHistory({
+      page: 2,
+      pageSize: 25,
+      repairStatus: "deleted,repaired",
+    })).resolves.toEqual(history);
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "http://backend/api/get-health-check-queue?pageSize=30",
-      "http://backend/api/get-health-check-history",
+      "http://backend/api/get-health-check-history?page=2&pageSize=25&repairStatus=deleted%2Crepaired",
     ]);
   });
 

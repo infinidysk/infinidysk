@@ -2,7 +2,9 @@ import type { Route } from "./+types/route";
 import { backendClient } from "~/clients/backend-client.server";
 import { HealthTable } from "./components/health-table/health-table";
 import { HealthStats } from "./components/health-stats/health-stats";
+import { HealthHistoryTable, type HealthHistoryFilter } from "./components/health-history-table/health-history-table";
 import { useCallback, useEffect, useState } from "react";
+import { useRevalidator, useSearchParams } from "react-router";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
 import { Alert, Icon } from "~/components/ui";
 import type { HealthCheckQueueResponse, HealthResult, RepairAction } from "~/clients/backend-client.server";
@@ -18,11 +20,37 @@ const topicSubscriptions = {
     [topicNames.healthItemProgress]: 'event',
 } as const;
 
-export async function loader() {
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 250] as const;
+const DEFAULT_PAGE_SIZE = 25;
+
+function parsePage(value: string | null): number {
+    const page = parseInt(value ?? "1", 10);
+    return Number.isFinite(page) && page > 0 ? page : 1;
+}
+
+function parsePageSize(value: string | null): number {
+    const size = parseInt(value ?? String(DEFAULT_PAGE_SIZE), 10);
+    return (PAGE_SIZE_OPTIONS as readonly number[]).includes(size) ? size : DEFAULT_PAGE_SIZE;
+}
+
+function parseHistoryFilter(value: string | null): HealthHistoryFilter {
+    return value === "deleted" || value === "repaired" ? value : "all";
+}
+
+export async function loader({ request }: Route.LoaderArgs) {
     const enabledKey = 'repair.enable';
+    const url = new URL(request.url);
+    const historyPage = parsePage(url.searchParams.get("page"));
+    const historyPageSize = parsePageSize(url.searchParams.get("pageSize"));
+    const historyFilter = parseHistoryFilter(url.searchParams.get("status"));
+    const repairStatus = historyFilter === "all" ? "deleted,repaired" : historyFilter;
     const [queueData, historyData, config] = await Promise.all([
         backendClient.getHealthCheckQueue(30),
-        backendClient.getHealthCheckHistory(),
+        backendClient.getHealthCheckHistory({
+            page: historyPage,
+            pageSize: historyPageSize,
+            repairStatus,
+        }),
         backendClient.getConfig([enabledKey])
     ]);
 
@@ -31,6 +59,10 @@ export async function loader() {
         queueItems: queueData.items,
         historyStats: historyData.stats,
         historyItems: historyData.items,
+        historyTotalCount: historyData.totalCount,
+        historyPage,
+        historyPageSize,
+        historyFilter,
         isEnabled: config
             .filter(x => x.configName === enabledKey)
             .filter(x => x.configValue.toLowerCase() === "true")
@@ -41,11 +73,46 @@ export async function loader() {
 export default function Health({ loaderData }: Route.ComponentProps) {
     const { isEnabled } = loaderData;
     const [historyStats, setHistoryStats] = useState(loaderData.historyStats);
+    const [historyItems, setHistoryItems] = useState(loaderData.historyItems);
+    const [historyTotalCount, setHistoryTotalCount] = useState(loaderData.historyTotalCount);
     const [queueState, setQueueState] = useState<HealthQueueState>({
         items: loaderData.queueItems,
         uncheckedCount: loaderData.uncheckedCount,
     });
     const { items: queueItems, uncheckedCount } = queueState;
+    const [, setSearchParams] = useSearchParams();
+    const revalidator = useRevalidator();
+
+    useEffect(() => { setHistoryStats(loaderData.historyStats); }, [loaderData.historyStats]);
+    useEffect(() => { setHistoryItems(loaderData.historyItems); }, [loaderData.historyItems]);
+    useEffect(() => { setHistoryTotalCount(loaderData.historyTotalCount); }, [loaderData.historyTotalCount]);
+    useEffect(() => {
+        setQueueState({
+            items: loaderData.queueItems,
+            uncheckedCount: loaderData.uncheckedCount,
+        });
+    }, [loaderData.queueItems, loaderData.uncheckedCount]);
+
+    const setHistoryParams = useCallback((params: { page?: number; pageSize?: number; status?: HealthHistoryFilter }) => {
+        setSearchParams(previous => {
+            const next = new URLSearchParams(previous);
+            if (params.page !== undefined) next.set("page", String(params.page));
+            if (params.pageSize !== undefined) next.set("pageSize", String(params.pageSize));
+            if (params.status !== undefined) {
+                if (params.status === "all") next.delete("status");
+                else next.set("status", params.status);
+            }
+            return next;
+        }, { preventScrollReset: true });
+    }, [setSearchParams]);
+
+    const onHistoryFilterSelected = useCallback((filter: HealthHistoryFilter) => {
+        setHistoryParams({ status: filter, page: 1 });
+    }, [setHistoryParams]);
+
+    const onHistoryPageSizeSelected = useCallback((pageSize: number) => {
+        setHistoryParams({ pageSize, page: 1 });
+    }, [setHistoryParams]);
 
     // effects
     useEffect(() => {
@@ -146,6 +213,19 @@ export default function Health({ loaderData }: Route.ComponentProps) {
                     </div>
                 </Alert>
             }
+            <HealthHistoryTable
+                items={historyItems}
+                totalCount={historyTotalCount}
+                page={loaderData.historyPage}
+                pageSize={loaderData.historyPageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                filter={loaderData.historyFilter}
+                refreshing={revalidator.state !== "idle"}
+                onFilterSelected={onHistoryFilterSelected}
+                onPageSelected={page => setHistoryParams({ page })}
+                onPageSizeSelected={onHistoryPageSizeSelected}
+                onRefresh={() => void revalidator.revalidate()}
+            />
             <HealthTable isEnabled={isEnabled} healthCheckItems={queueItems.filter((_, index) => index < 10)} />
         </div>
     );

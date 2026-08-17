@@ -270,9 +270,13 @@ class BackendClient {
         return data.deletedRows ?? 0;
     }
 
-    public async getHealthCheckHistory(pageSize?: number): Promise<HealthCheckHistoryResponse> {
-        const query = pageSize !== undefined ? `?pageSize=${pageSize}` : "";
-        return await call<HealthCheckHistoryResponse>(`/api/get-health-check-history${query}`, "Failed to get health check history", {
+    public async getHealthCheckHistory(params: GetHealthCheckHistoryParams = {}): Promise<HealthCheckHistoryResponse> {
+        const qs = new URLSearchParams();
+        if (params.page !== undefined) qs.set("page", String(params.page));
+        if (params.pageSize !== undefined) qs.set("pageSize", String(params.pageSize));
+        if (params.repairStatus) qs.set("repairStatus", params.repairStatus);
+        const query = qs.toString();
+        return await call<HealthCheckHistoryResponse>(`/api/get-health-check-history${query ? `?${query}` : ""}`, "Failed to get health check history", {
             method: "GET",
         });
     }
@@ -585,7 +589,14 @@ export type HealthCheckQueueItem = {
 
 export type HealthCheckHistoryResponse = {
     stats: HealthCheckStats[],
-    items: HealthCheckResult[]
+    items: HealthCheckResult[],
+    totalCount: number,
+}
+
+export type GetHealthCheckHistoryParams = {
+    page?: number,
+    pageSize?: number,
+    repairStatus?: string,
 }
 
 export type HealthCheckStats = {
@@ -599,6 +610,8 @@ export type HealthCheckResult = {
     createdAt: string,
     davItemId: string,
     path: string,
+    nzbFileName: string | null,
+    jobName: string | null,
     result: HealthResult,
     repairStatus: RepairAction,
     message: string | null

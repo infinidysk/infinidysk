@@ -40,6 +40,12 @@ vi.mock("./health-queue-state", () => ({
   completeHealthCheck: vi.fn(),
 }));
 
+function loaderArgs(path = "/health") {
+  return {
+    request: new Request(`http://localhost${path}`),
+  } as Parameters<typeof loader>[0];
+}
+
 describe("health route loader", () => {
   beforeEach(() => {
     getConfigMock.mockReset();
@@ -58,20 +64,29 @@ describe("health route loader", () => {
     getHealthCheckHistoryMock.mockResolvedValueOnce({
       stats: historyStats,
       items: historyItems,
+      totalCount: 1,
     });
     getConfigMock.mockResolvedValueOnce([
       { configName: "repair.enable", configValue: "TRUE" },
     ]);
 
-    await expect(loader()).resolves.toEqual({
+    await expect(loader(loaderArgs())).resolves.toEqual({
       uncheckedCount: 12,
       queueItems,
       historyStats,
       historyItems,
+      historyTotalCount: 1,
+      historyPage: 1,
+      historyPageSize: 25,
+      historyFilter: "all",
       isEnabled: true,
     });
     expect(getHealthCheckQueueMock).toHaveBeenCalledWith(30);
-    expect(getHealthCheckHistoryMock).toHaveBeenCalledOnce();
+    expect(getHealthCheckHistoryMock).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 25,
+      repairStatus: "deleted,repaired",
+    });
     expect(getConfigMock).toHaveBeenCalledWith(["repair.enable"]);
   });
 
@@ -83,6 +98,7 @@ describe("health route loader", () => {
     getHealthCheckHistoryMock.mockResolvedValue({
       stats: [],
       items: [],
+      totalCount: 0,
     });
     getConfigMock
       .mockResolvedValueOnce([])
@@ -90,15 +106,32 @@ describe("health route loader", () => {
         { configName: "repair.enable", configValue: "false" },
       ]);
 
-    await expect(loader()).resolves.toMatchObject({ isEnabled: false });
-    await expect(loader()).resolves.toMatchObject({ isEnabled: false });
+    await expect(loader(loaderArgs())).resolves.toMatchObject({ isEnabled: false });
+    await expect(loader(loaderArgs())).resolves.toMatchObject({ isEnabled: false });
+  });
+
+  it("uses URL-backed paging and repair-status filters", async () => {
+    getHealthCheckQueueMock.mockResolvedValue({ uncheckedCount: 0, items: [] });
+    getHealthCheckHistoryMock.mockResolvedValue({ stats: [], items: [], totalCount: 0 });
+    getConfigMock.mockResolvedValue([]);
+
+    await expect(loader(loaderArgs("/health?page=3&pageSize=50&status=deleted"))).resolves.toMatchObject({
+      historyPage: 3,
+      historyPageSize: 50,
+      historyFilter: "deleted",
+    });
+    expect(getHealthCheckHistoryMock).toHaveBeenCalledWith({
+      page: 3,
+      pageSize: 50,
+      repairStatus: "deleted",
+    });
   });
 
   it("surfaces backend failures instead of returning partial health data", async () => {
     getHealthCheckQueueMock.mockRejectedValueOnce(new Error("queue unavailable"));
-    getHealthCheckHistoryMock.mockResolvedValueOnce({ stats: [], items: [] });
+    getHealthCheckHistoryMock.mockResolvedValueOnce({ stats: [], items: [], totalCount: 0 });
     getConfigMock.mockResolvedValueOnce([]);
 
-    await expect(loader()).rejects.toThrow("queue unavailable");
+    await expect(loader(loaderArgs())).rejects.toThrow("queue unavailable");
   });
 });
