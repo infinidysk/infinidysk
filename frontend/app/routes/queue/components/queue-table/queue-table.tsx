@@ -39,7 +39,6 @@ export type QueueTableProps = {
     onIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void,
     onRemoved: (nzo_ids: Set<string>) => void,
     onMovedToTop: (nzo_ids: Set<string>) => void,
-    onUploadClicked?: () => void;
     listParams: QueueListParams,
     searchDraft: string,
     onSearchDraftChange: (value: string) => void,
@@ -84,7 +83,6 @@ export function QueueTable({
     onIsRemovingChanged,
     onRemoved,
     onMovedToTop,
-    onUploadClicked,
     listParams,
     searchDraft,
     onSearchDraftChange,
@@ -226,8 +224,7 @@ export function QueueTable({
     const sectionTitle = (
         <div className="flex flex-wrap items-center gap-2.5">
             <h2
-                className={`${isReadOnly ? "" : "cursor-pointer"} text-xl font-semibold text-base-content`}
-                onClick={isReadOnly ? undefined : onUploadClicked}
+                className="text-xl font-semibold text-base-content"
             >
                 Queue
             </h2>
@@ -324,7 +321,7 @@ export function QueueTable({
                 onClear={onClearFilters}
             />
             {queueSlots?.length == 0 ? (
-                <EmptyQueue {...(!isReadOnly && onUploadClicked ? { onUploadClicked } : {})} />
+                <EmptyQueue />
             ) : (
                 <PageTable
                     headerCheckboxState={headerCheckboxState}

@@ -1,15 +1,6 @@
-import { useCallback } from "react";
-import { Button, Icon } from "~/components/ui";
+import { Icon } from "~/components/ui";
 
-interface EmptyQueueProps {
-    onUploadClicked?: () => void;
-}
-
-export function EmptyQueue(props: EmptyQueueProps) {
-    const onUploadClicked = useCallback(() => {
-        props.onUploadClicked?.call(null);
-    }, [props.onUploadClicked]);
-
+export function EmptyQueue() {
     return (
         <div className="hero min-h-[300px] -translate-y-5 py-8">
             <div className="hero-content">
@@ -18,13 +9,8 @@ export function EmptyQueue(props: EmptyQueueProps) {
                         <Icon name="celebration" className="!text-[48px] text-base-content/40" />
                         <h2 className="card-title text-lg">Empty Queue!</h2>
                         <p className="text-base-content/60 max-w-sm text-xs leading-relaxed">
-                            Upload an nzb file to get started.
+                            Use the Upload NZB button above to get started.
                         </p>
-                        <div className="card-actions justify-center">
-                            <Button variant="primary" size="small" onClick={onUploadClicked}>
-                                Upload an nzb file
-                            </Button>
-                        </div>
                     </div>
                 </div>
             </div>

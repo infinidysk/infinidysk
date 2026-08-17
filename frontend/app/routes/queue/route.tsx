@@ -8,7 +8,7 @@ import { useHistoryEvents, useQueueEvents } from "./controllers/events-controlle
 import { useQueueHistoryWebsocket } from "./controllers/websocket-controller";
 import { useUploadController } from "./controllers/nzb-upload-controller";
 import { useQueueDropzone } from "./controllers/dropzone-controller";
-import { Alert } from "~/components/ui";
+import { Alert, Button } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import { isDefaultList, parseHistoryListParams, parseQueueListParams } from "./list-params";
 
@@ -197,6 +197,13 @@ export default function Queue(props: Route.ComponentProps) {
 
             {/* queue */}
             <div className="min-h-[413.9px] min-[450px]:min-h-[382.9px]">
+                {!isReadOnly && (
+                    <div className="mb-3 flex justify-end">
+                        <Button variant="primary" size="small" onClick={dropzone.open}>
+                            Upload NZB
+                        </Button>
+                    </div>
+                )}
                 <div className="relative" {...(isReadOnly ? {} : dropzone.getRootProps())}>
                     {dropzone.isDragActive && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border-2 border-dashed border-primary bg-primary/10" />}
                     {!isReadOnly && <input {...dropzone.getInputProps()} />}
@@ -222,7 +229,6 @@ export default function Queue(props: Route.ComponentProps) {
                         onIsRemovingChanged={queueEvents.onRemovingQueueSlots}
                         onRemoved={queueEvents.onRemoveQueueSlots}
                         onMovedToTop={queueEvents.onMoveQueueSlotsToTop}
-                        {...(!isReadOnly ? { onUploadClicked: dropzone.open } : {})}
                     />
                 </div>
             </div>
