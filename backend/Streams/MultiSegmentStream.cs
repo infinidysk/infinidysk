@@ -7,6 +7,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.StreamTrace;
 using Serilog;
 using UsenetSharp.Models;
@@ -195,6 +196,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _streamTasks.Writer.TryComplete();
+        }
+        catch (OutOfMemoryException oom)
+        {
+            OomDiagnostics.LogHeapStateOnOom(oom, "segment download pipeline");
+            throw;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
@@ -475,6 +481,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), cancellationToken)
                     .ConfigureAwait(false);
             }
+            catch (OutOfMemoryException oom)
+            {
+                OomDiagnostics.LogHeapStateOnOom(oom, "segment body retry");
+                throw;
+            }
             catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
             {
                 lease?.Dispose();
@@ -567,6 +578,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     persistent);
             }
         }
+        catch (OutOfMemoryException oom)
+        {
+            OomDiagnostics.LogHeapStateOnOom(oom, "pipelined segment batch");
+            throw;
+        }
         catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
         {
             lease?.Dispose();
@@ -652,6 +668,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch (UsenetArticleNotFoundException)
             {
+                throw;
+            }
+            catch (OutOfMemoryException oom)
+            {
+                OomDiagnostics.LogHeapStateOnOom(oom, "individual segment rescue");
                 throw;
             }
             catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)

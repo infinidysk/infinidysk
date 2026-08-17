@@ -250,6 +250,7 @@ public partial class Program
                 .AddSingleton<ConcurrentReadTracker>()
                 .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())
+                .AddSingleton<GcDiagnosticsStore>()
                 .AddHostedService<RuntimeUsageSampler>()
                 .AddSingleton<ProviderUsageTracker>(sp =>
                     new ProviderUsageTracker(sp.GetRequiredService<ActiveReadRegistry>()))

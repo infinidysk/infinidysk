@@ -30,6 +30,7 @@ public sealed class SupportPackService(
     InFlightArticleBudget inFlightArticleBudget,
     StreamTraceBuffer streamTraceBuffer,
     RuntimeUsageTracker runtimeUsage,
+    GcDiagnosticsStore gcDiagnosticsStore,
     ConcurrentReadTracker? concurrentReadTracker = null)
 {
     private const long MinuteMs = 60_000;
@@ -369,6 +370,7 @@ public sealed class SupportPackService(
             runtimeSampler = BuildRuntimeSamplerDiagnostics(usage),
             cpu,
             gc = BuildGcDiagnostics(usage),
+            gcDiagnostics = gcDiagnosticsStore.LastResult,
             threadPool = new
             {
                 minWorkerThreads,

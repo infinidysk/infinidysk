@@ -3,6 +3,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Utils;
 using Serilog;
@@ -203,6 +204,11 @@ public class NzbFileStream(
                     var end = Math.Min(fileSize, start + avg);
                     return new LongRange(start, end);
                 }
+                catch (OutOfMemoryException oom)
+                {
+                    OomDiagnostics.LogHeapStateOnOom(oom, "seek probe");
+                    throw;
+                }
                 catch (Exception e) when (articleBufferSize > 0 && !ct.IsCancellationRequested && e is not OutOfMemoryException)
                 {
                     e.LogWarningKnownOrStack(
@@ -295,6 +301,11 @@ public class NzbFileStream(
             {
                 response = await usenetClient.DecodedBodyAsync(fileSegmentIds[index], ct).ConfigureAwait(false);
             }
+            catch (OutOfMemoryException oom)
+            {
+                OomDiagnostics.LogHeapStateOnOom(oom, "fast-seek body fetch");
+                throw;
+            }
             catch
             {
                 return null;
@@ -305,6 +316,11 @@ public class NzbFileStream(
             try
             {
                 header = await body.GetYencHeadersAsync(ct).ConfigureAwait(false);
+            }
+            catch (OutOfMemoryException oom)
+            {
+                OomDiagnostics.LogHeapStateOnOom(oom, "fast-seek header read");
+                throw;
             }
             catch
             {
@@ -349,6 +365,11 @@ public class NzbFileStream(
                     // left to return the rented array.
                     bodyDisposeAttempted = true;
                     await body.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (OutOfMemoryException oom)
+                {
+                    OomDiagnostics.LogHeapStateOnOom(oom, "fast-seek body drain");
+                    throw;
                 }
                 catch (Exception e) when (!ct.IsCancellationRequested && e is not OutOfMemoryException)
                 {

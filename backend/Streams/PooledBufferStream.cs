@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace NzbWebDAV.Streams;
 
 /// <summary>
@@ -7,6 +9,8 @@ namespace NzbWebDAV.Streams;
 /// </summary>
 public sealed class PooledBufferStream : Stream
 {
+    private const int RunawayThresholdBytes = 32 * 1024 * 1024;
+
     private readonly ISegmentBufferPool _pool;
     private readonly BufferPoolDiagnostics _diagnostics;
     private byte[]? _buffer;
@@ -26,6 +30,7 @@ public sealed class PooledBufferStream : Stream
 
         if (capacityHint > 0)
         {
+            WarnIfRunawayCapacity(capacityHint, 0);
             _buffer = RentBuffer(capacityHint);
             _diagnostics.RecordRent(capacityHint, _buffer.Length);
         }
@@ -192,6 +197,7 @@ public sealed class PooledBufferStream : Stream
         var current = _buffer!;
         if (required <= current.Length) return;
 
+        WarnIfRunawayCapacity(required, current.Length);
         var next = RentBuffer(required);
         if (_length > 0)
             current.AsSpan(0, _length).CopyTo(next);
@@ -201,6 +207,18 @@ public sealed class PooledBufferStream : Stream
 
         _diagnostics.RecordGrowth(required, current.Length, next.Length);
         _buffer = next;
+    }
+
+    private static void WarnIfRunawayCapacity(int required, int previous)
+    {
+        if (required <= RunawayThresholdBytes || previous > RunawayThresholdBytes) return;
+
+        Log.Warning(
+            "Segment buffer grew past {ThresholdMB} MB. Required={Required:N0} Previous={Previous:N0}. " +
+            "The segment read may not be terminating.",
+            RunawayThresholdBytes / (1024 * 1024),
+            required,
+            previous);
     }
 
     private void ReturnBuffer()

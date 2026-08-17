@@ -612,6 +612,7 @@ public sealed class SupportPackContentsTests : IDisposable
             new InFlightArticleBudget(64 * 1024 * 1024),
             streamTraceBuffer,
             runtimeUsage ?? new RuntimeUsageTracker(),
+            new GcDiagnosticsStore(),
             concurrentReadTracker);
 
         using var memory = new MemoryStream();

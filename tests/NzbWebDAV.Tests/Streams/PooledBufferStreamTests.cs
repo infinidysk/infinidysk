@@ -1,7 +1,12 @@
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Streams;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public class PooledBufferStreamTests
 {
     [Fact]
@@ -133,6 +138,70 @@ public class PooledBufferStreamTests
         Assert.Throws<ObjectDisposedException>(() => stream.ReadByte());
         Assert.Throws<ObjectDisposedException>(() => stream.WriteByte(2));
         Assert.Throws<ObjectDisposedException>(() => _ = stream.Length);
+    }
+
+    [Fact]
+    public void Constructor_CapacityPast32Mb_LogsRunawayWarning()
+    {
+        var events = CaptureLogs(() =>
+        {
+            using var stream = new PooledBufferStream((32 * 1024 * 1024) + 1);
+        });
+
+        Assert.Contains(events, entry =>
+            entry.Level == LogEventLevel.Warning &&
+            entry.MessageTemplate.Text.Contains("Segment buffer grew past", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Constructor_CapacityUnder32Mb_DoesNotLogRunawayWarning()
+    {
+        var events = CaptureLogs(() =>
+        {
+            using var stream = new PooledBufferStream(1024);
+        });
+
+        Assert.DoesNotContain(events, entry =>
+            entry.MessageTemplate.Text.Contains("Segment buffer grew past", StringComparison.Ordinal));
+    }
+
+    private static IReadOnlyList<LogEvent> CaptureLogs(Action action)
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+
+        try
+        {
+            action();
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+
+        return sink.Events;
+    }
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+
+        public IReadOnlyList<LogEvent> Events
+        {
+            get
+            {
+                lock (_events) return _events.ToArray();
+            }
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            lock (_events) _events.Add(logEvent);
+        }
     }
 }
 
