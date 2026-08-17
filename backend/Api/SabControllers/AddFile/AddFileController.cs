@@ -212,13 +212,7 @@ public class AddFileController(
         }
 
         // inform the frontend that a new item was added to the queue
-        var activeIds = queueManager.GetInProgressQueueItems()
-            .Select(item => item.QueueItem.Id)
-            .ToList();
-        var position = await dbClient
-            .GetQueueItemPositionAsync(queueItem.Id, activeIds, request.CancellationToken)
-            .ConfigureAwait(false);
-        var message = GetQueueResponse.QueueSlot.FromQueueItem(queueItem, Math.Max(0, position)).ToJson();
+        var message = GetQueueResponse.QueueSlot.FromQueueItem(queueItem).ToJson();
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemAdded, message);
 
         // awaken the queue if it is sleeping

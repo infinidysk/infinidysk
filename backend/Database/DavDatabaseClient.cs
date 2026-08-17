@@ -262,17 +262,6 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return queueItems.CountAsync(cancellationToken: ct);
     }
 
-    public async Task<int> GetQueueItemPositionAsync(
-        Guid id,
-        IReadOnlyCollection<Guid> activeIds,
-        CancellationToken ct = default)
-    {
-        var items = await GetQueueItems(null, ct: ct).ConfigureAwait(false);
-        var queued = items.Where(item => !activeIds.Contains(item.Id)).ToList();
-        var position = queued.FindIndex(item => item.Id == id);
-        return position < 0 ? -1 : activeIds.Count + position;
-    }
-
     public async Task RemoveQueueItemsAsync(List<Guid> ids, CancellationToken ct = default)
     {
         // Capture group keys before delete so we can cascade-clean orphaned
@@ -371,10 +360,9 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var activeCount = activeIds.Count;
         if (Guid.TryParse(target, out var targetId))
         {
-            if (activeIds.Contains(targetId))
-                targetItem = queued.FirstOrDefault();
-            else
-                targetItem = queued.FirstOrDefault(item => item.Id == targetId);
+            targetItem = activeIds.Contains(targetId)
+                ? queued.FirstOrDefault()
+                : queued.FirstOrDefault(item => item.Id == targetId);
         }
         else if (int.TryParse(target, out var targetPosition) && targetPosition >= 0)
         {

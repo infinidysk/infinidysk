@@ -451,7 +451,7 @@ export const QueueRow = memo(({ slot, previousSlot, nextSlot, onIsSelectedChange
     }, [slot.isUploading, slot.nzo_id, isMoving, onMovedToTop]);
 
     const moveRelative = useCallback(async (target?: PresentationQueueSlot) => {
-        if (!target || slot.isUploading || isMoving || target.status === "Downloading") return;
+        if (!target || slot.isUploading || isMoving || target.isUploading || target.status === "Downloading") return;
         setIsMoving(true);
         try {
             await switchQueueItem(slot.nzo_id, target.nzo_id);
@@ -479,14 +479,14 @@ export const QueueRow = memo(({ slot, previousSlot, nextSlot, onIsSelectedChange
                                 <Tooltip content="Move up">
                                     <ActionButton
                                         type="move-up"
-                                        disabled={!!slot.isRemoving || isMoving || !previousSlot || previousSlot.status === "Downloading"}
+                                        disabled={!!slot.isRemoving || isMoving || !previousSlot || previousSlot.isUploading || previousSlot.status === "Downloading"}
                                         onClick={() => void moveRelative(previousSlot)}
                                     />
                                 </Tooltip>
                                 <Tooltip content="Move down">
                                     <ActionButton
                                         type="move-down"
-                                        disabled={!!slot.isRemoving || isMoving || !nextSlot || nextSlot.status === "Downloading"}
+                                        disabled={!!slot.isRemoving || isMoving || !nextSlot || nextSlot.isUploading || nextSlot.status === "Downloading"}
                                         onClick={() => void moveRelative(nextSlot)}
                                     />
                                 </Tooltip>
