@@ -13,16 +13,29 @@ public class GetHealthCheckHistoryController(DavDatabaseClient dbClient) : BaseA
         var now = DateTime.UtcNow;
         var tomorrow = now.AddDays(1);
         var thirtyDaysAgo = now.AddDays(-30);
-        var statsPromise = dbClient.GetHealthCheckStatsAsync(thirtyDaysAgo, tomorrow);
-        var itemsPromise = dbClient.Ctx.HealthCheckResults
+        var stats = await dbClient.GetHealthCheckStatsAsync(
+            thirtyDaysAgo,
+            tomorrow,
+            request.CancellationToken).ConfigureAwait(false);
+        var itemsQuery = dbClient.Ctx.HealthCheckResults
+            .AsNoTracking();
+        if (request.RepairStatuses is not null)
+            itemsQuery = itemsQuery.Where(x => request.RepairStatuses.Contains(x.RepairStatus));
+
+        var totalCount = await itemsQuery.CountAsync(request.CancellationToken).ConfigureAwait(false);
+        var items = await itemsQuery
             .OrderByDescending(x => x.CreatedAt)
+            .ThenByDescending(x => x.Id)
+            .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
-            .ToListAsync();
+            .ToListAsync(request.CancellationToken)
+            .ConfigureAwait(false);
 
         return new GetHealthCheckHistoryResponse()
         {
-            Stats = await statsPromise.ConfigureAwait(false),
-            Items = await itemsPromise.ConfigureAwait(false)
+            Stats = stats,
+            Items = items,
+            TotalCount = totalCount,
         };
     }
 
