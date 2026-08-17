@@ -12,10 +12,10 @@ namespace NzbWebDAV.Tests.Queue;
 public class FileProcessorMissingArticlesTests
 {
     [Fact]
-    public void IsSkipNonVideoOnMissingArticlesEnabled_DefaultsTrue()
+    public void IsSkipNonMediaOnMissingArticlesEnabled_DefaultsTrue()
     {
         var config = new ConfigManager();
-        Assert.True(config.IsSkipNonVideoOnMissingArticlesEnabled());
+        Assert.True(config.IsSkipNonMediaOnMissingArticlesEnabled());
     }
 
     [Fact]

@@ -504,7 +504,7 @@ public class QueueItemProcessor(
             new BlocklistedFilePostProcessor(configManager, dbClient).RemoveFilteredFiles();
 
             // validate media files found
-            if (configManager.IsEnsureImportableVideoEnabled())
+            if (configManager.IsEnsureImportableMediaEnabled())
                 new EnsureImportableMediaValidator(dbClient).ThrowIfValidationFails();
 
             // create strm files, if necessary

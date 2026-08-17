@@ -42,7 +42,7 @@ public class FileProcessor(
         // sniffed extension applied later at mount time.
         catch (UsenetArticleNotFoundException) when (
             !FilenameUtil.IsMediaFile(fileInfo.FileName)
-            && configManager.IsSkipNonVideoOnMissingArticlesEnabled())
+            && configManager.IsSkipNonMediaOnMissingArticlesEnabled())
         {
             Log.Warning(
                 "File {FileName} has missing articles; skipping it because it is not a media file",

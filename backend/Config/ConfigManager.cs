@@ -616,7 +616,7 @@ public class ConfigManager
     /// When true (default), NZBs must contain at least one video or audio file
     /// to be accepted; otherwise the download fails so an alternate can be grabbed.
     /// </summary>
-    public bool IsEnsureImportableVideoEnabled()
+    public bool IsEnsureImportableMediaEnabled()
     {
         var defaultValue = true;
         var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiEnsureImportableVideo));
@@ -627,7 +627,7 @@ public class ConfigManager
     /// When true (default), non-media files with missing articles are skipped
     /// instead of failing the job. Media files (video and audio) always fail.
     /// </summary>
-    public bool IsSkipNonVideoOnMissingArticlesEnabled()
+    public bool IsSkipNonMediaOnMissingArticlesEnabled()
     {
         var defaultValue = true;
         var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiSkipNonVideoOnMissingArticles));

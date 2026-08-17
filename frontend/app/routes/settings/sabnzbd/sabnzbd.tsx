@@ -275,7 +275,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                 description="Decide which import problems fail a download and trigger an alternate grab."
             >
                 <ManagedSetting configKey="api.ensure-importable-video">
-                    <Tooltip content="Mark downloads as failed when no video or audio file is found, so Radarr or Sonarr can grab another NZB.">
+                    <Tooltip content="Mark downloads as failed when no video or audio file is found, so your *Arr app can grab another NZB.">
                         <Toggle
                             id="ensure-importable-video-checkbox"
                             className="cursor-pointer gap-2 p-0"
