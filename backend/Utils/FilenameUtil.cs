@@ -21,8 +21,22 @@ public static partial class FilenameUtil
 
     private static readonly HashSet<string> AudioExtensions =
     [
-        ".flac", ".mp3", ".m4a", ".ogg", ".opus", ".ape", ".wv", ".wav", ".aac", ".alac",
-        ".dsf", ".dff", ".wma", ".aiff", ".aif", ".m4b", ".mka"
+        ".mp3", ".flac", ".aac", ".ogg", ".opus", ".wav", ".wma", ".m4a", ".alac", ".ape", ".wv",
+        ".dsd", ".dsf", ".dff", ".mka", ".m4b", ".ac3", ".eac3", ".dts", ".aiff", ".aif"
+    ];
+
+    /// <summary>
+    /// Known non-media extensions that should never enter the health-check queue.
+    /// Used by the backfill cleanup and available for any future SQL-side exclusion.
+    /// Subtitle extensions overlap with <see cref="SubtitlePreference.SubtitleExtensions"/> —
+    /// that is intentional; this is a standalone exclusion list.
+    /// </summary>
+    internal static readonly string[] NonHealthCheckExtensions =
+    [
+        ".nfo", ".txt", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp",
+        ".srt", ".sub", ".ass", ".ssa", ".idx", ".vtt",
+        ".sfv", ".par2", ".nzb", ".srr", ".xml", ".log", ".cue",
+        ".md5", ".sha1", ".sha256", ".ffprobe", ".m3u8", ".pdf", ".doc", ".docx"
     ];
 
     public static bool IsImportantFileType(string filename)
@@ -46,6 +60,18 @@ public static partial class FilenameUtil
     public static bool IsMediaFile(string filename)
     {
         return IsVideoFile(filename) || IsAudioFile(filename);
+    }
+
+    /// <summary>
+    /// True when a file is a candidate for background health checks: video, audio, or archive
+    /// (RAR/7z) files that carry playable media. Excludes subtitles, images, NFOs, and other
+    /// metadata that should not consume NNTP STAT connections or appear in the Health UI.
+    /// Currently equivalent to <see cref="IsImportantFileType"/> now that audio is importable;
+    /// the named method remains to document health-check intent at call sites.
+    /// </summary>
+    public static bool IsHealthCheckCandidate(string filename)
+    {
+        return IsImportantFileType(filename);
     }
 
     public static bool IsRarFile(string? filename)

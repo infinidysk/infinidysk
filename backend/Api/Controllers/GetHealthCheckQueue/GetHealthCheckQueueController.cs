@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Services;
+using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Api.Controllers.GetHealthCheckQueue;
 
@@ -11,9 +12,20 @@ public class GetHealthCheckQueueController(DavDatabaseClient dbClient) : BaseApi
 {
     private async Task<GetHealthCheckQueueResponse> GetHealthCheckQueue(GetHealthCheckQueueRequest request)
     {
-        var davItems = await HealthCheckService.GetHealthCheckQueueItems(dbClient)
-            .Take(request.PageSize)
-            .ToListAsync().ConfigureAwait(false);
+        // Stream the ordered queue and filter non-media files so the Health UI focuses on
+        // playable media. Urgent repairs (UnixEpoch sentinel) are always included.
+        var davItems = new List<Database.Models.DavItem>();
+        await foreach (var item in HealthCheckService.GetHealthCheckQueueItems(dbClient)
+            .AsAsyncEnumerable()
+            .ConfigureAwait(false))
+        {
+            if (davItems.Count >= request.PageSize) break;
+            if (item.NextHealthCheck == DateTimeOffset.UnixEpoch ||
+                FilenameUtil.IsHealthCheckCandidate(item.Name))
+            {
+                davItems.Add(item);
+            }
+        }
 
         var uncheckedCount = await HealthCheckService.GetHealthCheckQueueItemsQuery(dbClient)
             .Where(x => x.NextHealthCheck == null)
