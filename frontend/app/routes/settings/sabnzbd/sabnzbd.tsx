@@ -275,7 +275,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                 description="Decide which import problems fail a download and trigger an alternate grab."
             >
                 <ManagedSetting configKey="api.ensure-importable-video">
-                    <Tooltip content="Mark downloads as failed when no video file is found, so Radarr or Sonarr can grab another NZB.">
+                    <Tooltip content="Mark downloads as failed when no video or audio file is found, so Radarr or Sonarr can grab another NZB.">
                         <Toggle
                             id="ensure-importable-video-checkbox"
                             className="cursor-pointer gap-2 p-0"
@@ -284,13 +284,13 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                                 ...config,
                                 "api.ensure-importable-video": String(e.target.checked),
                             })}
-                            label={<span className="text-sm text-base-content">Fail downloads for NZBs without video content</span>}
+                            label={<span className="text-sm text-base-content">Fail downloads for NZBs without video or audio content</span>}
                         />
                     </Tooltip>
                 </ManagedSetting>
 
                 <ManagedSetting configKey="api.skip-non-video-on-missing-articles">
-                    <Tooltip content="By default, missing articles in PAR2, NFO, or subtitle files are skipped. Enable this to fail the download so an alternate can be grabbed.">
+                    <Tooltip content="By default, missing articles in PAR2, NFO, or subtitle files are skipped. Audio and video files always fail. Enable this to also fail the download for other missing files.">
                         <Toggle
                             id="fail-missing-non-video-checkbox"
                             className="cursor-pointer gap-2 p-0"
@@ -299,7 +299,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                                 ...config,
                                 "api.skip-non-video-on-missing-articles": String(!e.target.checked),
                             })}
-                            label={<span className="text-sm text-base-content">Fail downloads when non-video files have missing articles</span>}
+                            label={<span className="text-sm text-base-content">Fail downloads when non-media files have missing articles</span>}
                         />
                     </Tooltip>
                 </ManagedSetting>

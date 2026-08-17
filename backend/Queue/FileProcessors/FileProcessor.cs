@@ -36,16 +36,16 @@ public class FileProcessor(
             };
         }
 
-        // Ignore missing articles if it's not a video file (default).
+        // Ignore missing articles if it's not a media file (default).
         // In that case, simply skip the file altogether.
         // Accepted limitation: this check uses the original filename, not a
         // sniffed extension applied later at mount time.
         catch (UsenetArticleNotFoundException) when (
-            !FilenameUtil.IsVideoFile(fileInfo.FileName)
+            !FilenameUtil.IsMediaFile(fileInfo.FileName)
             && configManager.IsSkipNonVideoOnMissingArticlesEnabled())
         {
             Log.Warning(
-                "File {FileName} has missing articles; skipping it because it is not a video",
+                "File {FileName} has missing articles; skipping it because it is not a media file",
                 fileInfo.FileName);
             return null;
         }

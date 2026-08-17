@@ -612,6 +612,10 @@ public class ConfigManager
         return null;
     }
 
+    /// <summary>
+    /// When true (default), NZBs must contain at least one video or audio file
+    /// to be accepted; otherwise the download fails so an alternate can be grabbed.
+    /// </summary>
     public bool IsEnsureImportableVideoEnabled()
     {
         var defaultValue = true;
@@ -620,8 +624,8 @@ public class ConfigManager
     }
 
     /// <summary>
-    /// When true (default), non-video files with missing articles are skipped
-    /// instead of failing the job.
+    /// When true (default), non-media files with missing articles are skipped
+    /// instead of failing the job. Media files (video and audio) always fail.
     /// </summary>
     public bool IsSkipNonVideoOnMissingArticlesEnabled()
     {

@@ -71,6 +71,13 @@ public class FileFilterUtilTests
     }
 
     [Fact]
+    public void IsSampleFile_AudioFile_IsNotFiltered()
+    {
+        Assert.False(FileFilterUtil.IsSampleFile("sample.flac", SampleSize, FeatureSize));
+        Assert.False(FileFilterUtil.IsSampleFile("sample.mp3", SampleSize, FeatureSize));
+    }
+
+    [Fact]
     public void IsSampleFile_WithoutAKnownSize_IsNotFiltered()
     {
         Assert.False(FileFilterUtil.IsSampleFile("sample.mkv", null, FeatureSize));

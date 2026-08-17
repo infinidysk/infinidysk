@@ -503,9 +503,9 @@ public class QueueItemProcessor(
             new RenameDuplicatesPostProcessor(dbClient).RenameDuplicates();
             new BlocklistedFilePostProcessor(configManager, dbClient).RemoveFilteredFiles();
 
-            // validate video files found
+            // validate media files found
             if (configManager.IsEnsureImportableVideoEnabled())
-                new EnsureImportableVideoValidator(dbClient).ThrowIfValidationFails();
+                new EnsureImportableMediaValidator(dbClient).ThrowIfValidationFails();
 
             // create strm files, if necessary
             if (configManager.GetImportStrategy() == "strm")

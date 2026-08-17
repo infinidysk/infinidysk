@@ -19,9 +19,15 @@ public static partial class FilenameUtil
         ".img", ".iso", ".vob", ".mkv", ".mk3d", ".ts", ".wtv", ".m2ts"
     ];
 
+    private static readonly HashSet<string> AudioExtensions =
+    [
+        ".flac", ".mp3", ".m4a", ".ogg", ".opus", ".ape", ".wv", ".wav", ".aac", ".alac",
+        ".dsf", ".dff", ".wma", ".aiff", ".aif", ".m4b", ".mka"
+    ];
+
     public static bool IsImportantFileType(string filename)
     {
-        return IsVideoFile(filename)
+        return IsMediaFile(filename)
                || IsRarFile(filename)
                || Is7zFile(filename)
                || IsSplitVideoFile(filename);
@@ -30,6 +36,16 @@ public static partial class FilenameUtil
     public static bool IsVideoFile(string filename)
     {
         return VideoExtensions.Contains(Path.GetExtension(filename).ToLowerInvariant());
+    }
+
+    public static bool IsAudioFile(string filename)
+    {
+        return AudioExtensions.Contains(Path.GetExtension(filename).ToLowerInvariant());
+    }
+
+    public static bool IsMediaFile(string filename)
+    {
+        return IsVideoFile(filename) || IsAudioFile(filename);
     }
 
     public static bool IsRarFile(string? filename)

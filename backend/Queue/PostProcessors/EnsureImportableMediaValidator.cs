@@ -6,13 +6,13 @@ using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Queue.PostProcessors;
 
-public class EnsureImportableVideoValidator(DavDatabaseClient dbClient)
+public class EnsureImportableMediaValidator(DavDatabaseClient dbClient)
 {
     public void ThrowIfValidationFails()
     {
         if (!IsValid())
         {
-            throw new NoVideoFilesFoundException("No importable videos found.");
+            throw new NoMediaFilesFoundException("No importable media files found.");
         }
     }
 
@@ -22,6 +22,6 @@ public class EnsureImportableVideoValidator(DavDatabaseClient dbClient)
             .Where(x => x.State == EntityState.Added)
             .Select(x => x.Entity)
             .Where(x => x.Type != DavItem.ItemType.Directory)
-            .Any(x => FilenameUtil.IsVideoFile(x.Name));
+            .Any(x => FilenameUtil.IsMediaFile(x.Name));
     }
 }

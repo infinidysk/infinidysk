@@ -10,7 +10,18 @@ public static class ContentTypeUtil
     {
         // ReSharper disable once UseObjectOrCollectionInitializer
         var provider = new FileExtensionContentTypeProvider();
+        // audio
         provider.Mappings[".flac"] = "audio/flac";
+        provider.Mappings[".opus"] = "audio/opus";
+        provider.Mappings[".ape"] = "audio/x-ape";
+        provider.Mappings[".wv"] = "audio/x-wavpack";
+        provider.Mappings[".dsf"] = "audio/x-dsf";
+        provider.Mappings[".dff"] = "audio/x-dff";
+        provider.Mappings[".m4b"] = "audio/mp4";
+        provider.Mappings[".mka"] = "audio/x-matroska";
+        provider.Mappings[".aiff"] = "audio/aiff";
+        provider.Mappings[".aif"] = "audio/aiff";
+        // video
         provider.Mappings[".mkv"] = "video/x-matroska";
         provider.Mappings[".mk3d"] = "video/x-matroska";
         provider.Mappings[".m4v"] = "video/x-m4v";

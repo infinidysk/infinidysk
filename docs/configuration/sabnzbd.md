@@ -21,8 +21,8 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | Filter sample videos [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `api.sample-filter-enabled` | on | Discard videos with whole-word `sample`/`samples` under 20% of the largest video in the NZB |
 | Behavior for Duplicate NZBs | `api.duplicate-nzb-behavior` | `increment` | increment / mark-failed |
 | Trusted local hosts [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `api.addurl-trusted-hosts` | env `TRUSTED_INTERNAL_HOSTS` | SSRF allowlist for private addurl |
-| Fail downloads without video | `api.ensure-importable-video` | on | Reject non-video NZBs |
-| Fail when non-video missing articles | inverse of `api.skip-non-video-on-missing-articles` | skip non-video by default | |
+| Fail downloads without video or audio | `api.ensure-importable-video` | on | Reject NZBs with no media files |
+| Fail when non-media missing articles | inverse of `api.skip-non-video-on-missing-articles` | skip non-media by default | |
 | Article health check categories | `api.ensure-article-existence-categories` | empty (off) | Per-category; may be slow |
 | Article health check mode | `api.article-existence-check-mode` | `full` | Full or per-file sampled verification |
 | Always send full History | `api.ignore-history-limit` | on | Ignore client history limit |
