@@ -168,6 +168,7 @@ export default function Queue(props: Route.ComponentProps) {
     const historyEvents = useHistoryEvents(setHistorySlots, historyPageSize);
 
     // websocket
+    const revalidate = useCallback(() => revalidator.revalidate(), [revalidator.revalidate]);
     useQueueHistoryWebsocket(
         queueEvents,
         historyEvents,
@@ -175,7 +176,7 @@ export default function Queue(props: Route.ComponentProps) {
         isHistoryLive,
         setTotalQueueCount,
         setTotalHistoryCount,
-        () => revalidator.revalidate(),
+        revalidate,
     );
 
     // uploads

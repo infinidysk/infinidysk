@@ -120,9 +120,9 @@ public class GetHistoryRequest
             _ => (null, true),
         };
 
-    private static string? NormalizeSort(string? value) => value?.Trim().ToLowerInvariant() switch
+    private static string? NormalizeSort(string? value)
     {
-        "name" or "category" or "status" or "size" or "completed" => value.Trim().ToLowerInvariant(),
-        _ => null,
-    };
+        var normalized = value?.Trim().ToLowerInvariant();
+        return normalized is "name" or "category" or "status" or "size" or "completed" ? normalized : null;
+    }
 }

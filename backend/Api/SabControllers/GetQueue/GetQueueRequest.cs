@@ -51,9 +51,9 @@ public class GetQueueRequest
         _ => "Unsupported",
     };
 
-    private static string? NormalizeSort(string? value) => value?.Trim().ToLowerInvariant() switch
+    private static string? NormalizeSort(string? value)
     {
-        "name" or "category" or "status" or "size" => value.Trim().ToLowerInvariant(),
-        _ => null,
-    };
+        var normalized = value?.Trim().ToLowerInvariant();
+        return normalized is "name" or "category" or "status" or "size" ? normalized : null;
+    }
 }

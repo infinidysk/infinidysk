@@ -49,9 +49,8 @@ export function useQueueHistoryWebsocket(
 
     const onWebsocketMessage = useCallback((topic: string, message: string) => {
         if (topic == topicNames.queueItemAdded) {
-            // Totals always; slot window only on live page 1.
-            // Count updates live here (not in UI handlers) so optimistic UI remove + qr
-            // do not double-decrement.
+            // The immediate page-1 view updates its count and slot window locally.
+            // Other views refresh from the server so their filtered count stays correct.
             if (isQueueLive) setTotalQueueCount(count => adjustTotalCount(count, 1));
             // 'qa' websocket payload carries a JSON-serialized QueueSlot (backend contract)
             if (isQueueLive) queueEvents.onAddQueueSlot(JSON.parse(message) as QueueSlot);
