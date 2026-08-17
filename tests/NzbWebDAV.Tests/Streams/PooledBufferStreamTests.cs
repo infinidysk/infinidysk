@@ -150,7 +150,7 @@ public class PooledBufferStreamTests
 
         Assert.Contains(events, entry =>
             entry.Level == LogEventLevel.Warning &&
-            entry.MessageTemplate.Text.Contains("Segment buffer grew past", StringComparison.Ordinal));
+            entry.MessageTemplate.Text.Contains("Segment buffer allocation or growth exceeded", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -162,7 +162,7 @@ public class PooledBufferStreamTests
         });
 
         Assert.DoesNotContain(events, entry =>
-            entry.MessageTemplate.Text.Contains("Segment buffer grew past", StringComparison.Ordinal));
+            entry.MessageTemplate.Text.Contains("Segment buffer allocation or growth exceeded", StringComparison.Ordinal));
     }
 
     private static IReadOnlyList<LogEvent> CaptureLogs(Action action)

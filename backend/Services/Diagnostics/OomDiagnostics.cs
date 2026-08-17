@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using NzbWebDAV.Streams;
 using Serilog;
 
@@ -5,6 +6,10 @@ namespace NzbWebDAV.Services.Diagnostics;
 
 internal static class OomDiagnostics
 {
+    [SuppressMessage(
+        "Design",
+        "CA1031:Do not catch general exception types",
+        Justification = "Diagnostic logging must not replace the original OutOfMemoryException.")]
     public static void LogHeapStateOnOom(Exception exception, string context)
     {
         if (exception is not OutOfMemoryException) return;

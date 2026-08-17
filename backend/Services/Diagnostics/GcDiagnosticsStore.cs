@@ -6,7 +6,10 @@ public sealed class GcDiagnosticsStore : IDisposable
     private readonly SemaphoreSlim _runGate = new(1, 1);
 
     public GcDiagnosticsResult? LastResult => Volatile.Read(ref _lastResult);
-    public SemaphoreSlim RunGate => _runGate;
+
+    public bool TryBegin() => _runGate.Wait(0);
+
+    public void End() => _runGate.Release();
 
     public void Store(GcDiagnosticsResult result)
     {

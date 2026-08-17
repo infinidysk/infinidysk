@@ -214,7 +214,7 @@ public sealed class PooledBufferStream : Stream
         if (required <= RunawayThresholdBytes || previous > RunawayThresholdBytes) return;
 
         Log.Warning(
-            "Segment buffer grew past {ThresholdMB} MB. Required={Required:N0} Previous={Previous:N0}. " +
+            "Segment buffer allocation or growth exceeded {ThresholdMB} MB. Required={Required:N0} Previous={Previous:N0}. " +
             "The segment read may not be terminating.",
             RunawayThresholdBytes / (1024 * 1024),
             required,

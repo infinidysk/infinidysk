@@ -600,6 +600,7 @@ public sealed class SupportPackContentsTests : IDisposable
             streamTraceBuffer,
             new ActiveReadRegistry());
 
+        using var gcDiagnosticsStore = new GcDiagnosticsStore();
         var service = new SupportPackService(
             logBuffer,
             warningBuffer,
@@ -612,7 +613,7 @@ public sealed class SupportPackContentsTests : IDisposable
             new InFlightArticleBudget(64 * 1024 * 1024),
             streamTraceBuffer,
             runtimeUsage ?? new RuntimeUsageTracker(),
-            new GcDiagnosticsStore(),
+            gcDiagnosticsStore,
             concurrentReadTracker);
 
         using var memory = new MemoryStream();

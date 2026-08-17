@@ -21,7 +21,7 @@ public sealed class GcDiagnosticsController(
                     new BaseApiResponse { Status = false, Error = "POST required" }));
         }
 
-        if (!store.RunGate.Wait(0))
+        if (!store.TryBegin())
         {
             return Task.FromResult<IActionResult>(
                 StatusCode(StatusCodes.Status429TooManyRequests,
@@ -64,7 +64,7 @@ public sealed class GcDiagnosticsController(
         }
         finally
         {
-            store.RunGate.Release();
+            store.End();
         }
     }
 }
