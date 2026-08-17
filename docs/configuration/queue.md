@@ -44,6 +44,18 @@ The resume threshold adds hysteresis after the maximum is reached. Set it to
 submissions that replace an existing queue item remain allowed because they do
 not increase queue depth.
 
+## Reordering [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
+
+Use the Queue page's up, down, or top controls to change waiting-job order.
+Controls work across page boundaries and preserve the selected job while the
+list refreshes. Queue priority remains the primary ordering rule: placing a job
+beside a different priority adopts that priority. Moving a paused job into a
+non-paused priority resumes it.
+
+Active downloads remain pinned and are never interrupted by reordering. A job
+can be promoted to the first waiting position, but cannot displace an active
+worker.
+
 ## Stuck-item watchdog [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 
 Each active queue worker runs a progress watchdog. A worker is treated as stuck

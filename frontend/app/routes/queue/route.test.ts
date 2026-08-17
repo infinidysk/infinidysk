@@ -62,9 +62,10 @@ describe("queue route loader", () => {
   });
 
   it("loads the requested queue and history pages with configured categories", async () => {
-    const queueSlots = [{ nzo_id: "queue-1" }];
+    const queueSlots = [{ nzo_id: "queue-1" }, { nzo_id: "queue-2" }];
+    const fetchedQueueSlots = [{ nzo_id: "queue-before" }, ...queueSlots, { nzo_id: "queue-after" }];
     const historySlots = [{ nzo_id: "history-1" }];
-    getQueueMock.mockResolvedValueOnce({ slots: queueSlots, noofslots: 30 });
+    getQueueMock.mockResolvedValueOnce({ slots: fetchedQueueSlots, noofslots: 30 });
     getHistoryMock.mockResolvedValueOnce({ slots: historySlots, noofslots: 700 });
     getConfigMock.mockResolvedValueOnce([
       { configName: "api.categories", configValue: "tv, movies" },
@@ -73,7 +74,7 @@ describe("queue route loader", () => {
 
     const result = await loader(loaderRequest("?qp=2&hp=3&qps=25&hps=250"));
 
-    expect(getQueueMock).toHaveBeenCalledWith(25, 25, {
+    expect(getQueueMock).toHaveBeenCalledWith(27, 24, {
       search: "", category: "", status: "", sort: undefined, direction: undefined,
     });
     expect(getHistoryMock).toHaveBeenCalledWith(250, 500, {
@@ -84,7 +85,9 @@ describe("queue route loader", () => {
       "api.manual-category",
     ]);
     expect(result).toEqual({
-      queueSlots,
+      queueSlots: fetchedQueueSlots.slice(1),
+      previousQueueSlot: fetchedQueueSlots[0],
+      nextQueueSlot: undefined,
       historySlots,
       totalQueueCount: 30,
       totalHistoryCount: 700,
@@ -106,7 +109,7 @@ describe("queue route loader", () => {
 
     const result = await loader(loaderRequest("?qp=0&hp=invalid&qps=10&hps=999"));
 
-    expect(getQueueMock).toHaveBeenCalledWith(100, 0, {
+    expect(getQueueMock).toHaveBeenCalledWith(101, 0, {
       search: "", category: "", status: "", sort: undefined, direction: undefined,
     });
     expect(getHistoryMock).toHaveBeenCalledWith(100, 0, {

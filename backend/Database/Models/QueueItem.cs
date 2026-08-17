@@ -2,8 +2,12 @@
 
 public class QueueItem
 {
+    public const long SortOrderStride = 1024;
+
     public Guid Id { get; set; }
     public DateTime CreatedAt { get; set; }
+    /// <summary>Persistent position within a priority band.</summary>
+    public long SortOrder { get; set; }
     public string FileName { get; set; } = null!;
     public string JobName { get; set; } = null!;
     public long NzbFileSize { get; set; }

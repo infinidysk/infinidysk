@@ -117,7 +117,7 @@ public class GetQueueController(
                     providerUsage = mergedUsage;
                 }
                 return GetQueueResponse.QueueSlot.FromQueueItem(
-                    queueItem, index, percentage, status, eta, providerUsage, displayByMetricsKey);
+                    queueItem, request.Start + index, percentage, status, eta, providerUsage, displayByMetricsKey);
             })
             .ToList();
 

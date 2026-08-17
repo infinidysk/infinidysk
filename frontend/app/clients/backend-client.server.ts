@@ -400,6 +400,7 @@ export type QueueResponse = {
 }
 
 export type QueueSlot = {
+    index?: number,
     nzo_id: string,
     priority: string,
     filename: string,

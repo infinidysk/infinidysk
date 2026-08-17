@@ -185,7 +185,9 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var nowTime = DateTime.Now;
         var query = Ctx.QueueItems
             .OrderByDescending(q => q.Priority)
+            .ThenBy(q => q.SortOrder)
             .ThenBy(q => q.CreatedAt)
+            .ThenBy(q => q.Id)
             .Where(q => q.PauseUntil == null || nowTime >= q.PauseUntil)
             .Where(q => q.Priority != QueueItem.PriorityOption.Paused);
 
@@ -244,7 +246,9 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return queueItems
             .AsNoTracking()
             .OrderByDescending(q => q.Priority)
+            .ThenBy(q => q.SortOrder)
             .ThenBy(q => q.CreatedAt)
+            .ThenBy(q => q.Id)
             .Skip(start)
             .Take(limit)
             .ToArrayAsync(cancellationToken: ct);
@@ -256,6 +260,17 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             ? Ctx.QueueItems.Where(q => q.Category == category)
             : Ctx.QueueItems;
         return queueItems.CountAsync(cancellationToken: ct);
+    }
+
+    public async Task<int> GetQueueItemPositionAsync(
+        Guid id,
+        IReadOnlyCollection<Guid> activeIds,
+        CancellationToken ct = default)
+    {
+        var items = await GetQueueItems(null, ct: ct).ConfigureAwait(false);
+        var queued = items.Where(item => !activeIds.Contains(item.Id)).ToList();
+        var position = queued.FindIndex(item => item.Id == id);
+        return position < 0 ? -1 : activeIds.Count + position;
     }
 
     public async Task RemoveQueueItemsAsync(List<Guid> ids, CancellationToken ct = default)
@@ -278,19 +293,22 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     /// <summary>
     /// Moves the given queue items to the front of the queue by setting
     /// <see cref="QueueItem.PriorityOption.Force"/> and assigning earlier
-    /// <see cref="QueueItem.CreatedAt"/> values. Preserves the relative order
+    /// persistent sort-order values. Preserves the relative order
     /// of <paramref name="ids"/> (first id becomes the absolute top among
     /// moved items). Does not preempt an already in-progress download.
     /// </summary>
     /// <returns>The ids that were actually updated (unknown ids are skipped).</returns>
-    public async Task<List<Guid>> MoveQueueItemsToTopAsync(List<Guid> ids, CancellationToken ct = default)
+    public async Task<List<Guid>> MoveQueueItemsToTopAsync(
+        List<Guid> ids,
+        IReadOnlyCollection<Guid>? excludedIds = null,
+        CancellationToken ct = default)
     {
         if (ids.Count == 0)
             return [];
 
         var idSet = ids.ToHashSet();
         var items = await Ctx.QueueItems
-            .Where(q => idSet.Contains(q.Id))
+            .Where(q => idSet.Contains(q.Id) && (excludedIds == null || !excludedIds.Contains(q.Id)))
             .ToListAsync(ct)
             .ConfigureAwait(false);
         if (items.Count == 0)
@@ -300,20 +318,98 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         var ordered = ids.Where(byId.ContainsKey).Distinct().ToList();
 
         var earliest = await Ctx.QueueItems
-            .MinAsync(q => q.CreatedAt, ct)
-            .ConfigureAwait(false);
+            .Where(q => q.Priority == QueueItem.PriorityOption.Force)
+            .Select(q => (long?)q.SortOrder)
+            .MinAsync(ct)
+            .ConfigureAwait(false) ?? 0;
         // Place moved items strictly before every other queue item.
-        var baseTime = earliest.AddTicks(-ordered.Count);
+        var baseOrder = earliest - QueueItem.SortOrderStride * ordered.Count;
 
         for (var i = 0; i < ordered.Count; i++)
         {
             var item = byId[ordered[i]];
             item.Priority = QueueItem.PriorityOption.Force;
-            item.CreatedAt = baseTime.AddTicks(i);
+            item.SortOrder = baseOrder + QueueItem.SortOrderStride * i;
+            item.PauseUntil = null;
         }
 
         await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         return ordered;
+    }
+
+    public sealed record QueueSwitchResult(int Position, int Priority)
+    {
+        public static readonly QueueSwitchResult NotMoved = new(-1, 0);
+    }
+
+    /// <summary>
+    /// Moves one non-active queue item to a peer's original position, or an
+    /// absolute visible position. The caller serializes this with queue claims.
+    /// </summary>
+    public async Task<QueueSwitchResult> SwitchQueueItemAsync(
+        Guid sourceId,
+        string target,
+        IReadOnlyList<Guid> activeIds,
+        CancellationToken ct = default)
+    {
+        if (activeIds.Contains(sourceId) || string.IsNullOrWhiteSpace(target))
+            return QueueSwitchResult.NotMoved;
+
+        var items = await Ctx.QueueItems
+            .OrderByDescending(q => q.Priority)
+            .ThenBy(q => q.SortOrder)
+            .ThenBy(q => q.CreatedAt)
+            .ThenBy(q => q.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var queued = items.Where(item => !activeIds.Contains(item.Id)).ToList();
+        var sourceIndex = queued.FindIndex(item => item.Id == sourceId);
+        if (sourceIndex < 0)
+            return QueueSwitchResult.NotMoved;
+
+        QueueItem? targetItem;
+        var activeCount = activeIds.Count;
+        if (Guid.TryParse(target, out var targetId))
+        {
+            if (activeIds.Contains(targetId))
+                targetItem = queued.FirstOrDefault();
+            else
+                targetItem = queued.FirstOrDefault(item => item.Id == targetId);
+        }
+        else if (int.TryParse(target, out var targetPosition) && targetPosition >= 0)
+        {
+            var queuedPosition = Math.Max(0, targetPosition - activeCount);
+            targetItem = queuedPosition < queued.Count ? queued[queuedPosition] : null;
+        }
+        else
+        {
+            return QueueSwitchResult.NotMoved;
+        }
+
+        if (targetItem is null || targetItem.Id == sourceId)
+            return QueueSwitchResult.NotMoved;
+
+        // SAB's switch inserts the source at the target's original index. The
+        // list removal naturally gives "before" when promoting and "after"
+        // when demoting.
+        var targetIndex = queued.FindIndex(item => item.Id == targetItem.Id);
+        queued.RemoveAt(sourceIndex);
+        var source = items.Single(item => item.Id == sourceId);
+        source.Priority = targetItem.Priority;
+        if (source.Priority != QueueItem.PriorityOption.Paused)
+            source.PauseUntil = null;
+        queued.Insert(targetIndex, source);
+
+        // Dense reassignment is deliberately limited to the destination band.
+        // SortOrder has a generous stride, and this makes repeated moves
+        // deterministic even when adjacent gaps have been exhausted.
+        var band = queued.Where(item => item.Priority == source.Priority).ToList();
+        for (var index = 0; index < band.Count; index++)
+            band[index].SortOrder = QueueItem.SortOrderStride * (index + 1);
+
+        await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        var position = activeCount + queued.FindIndex(item => item.Id == sourceId);
+        return new QueueSwitchResult(position, (int)source.Priority);
     }
 
     // Delete watchdog attempts that were tied to the deleted queue/history items.

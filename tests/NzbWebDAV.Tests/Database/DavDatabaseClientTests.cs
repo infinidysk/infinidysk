@@ -120,6 +120,36 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SwitchQueueItemAsync_MovesSourceToPeerOriginalPosition()
+    {
+        var first = CreateQueueItem("first.nzb", DateTime.UtcNow.AddMinutes(-3), QueueItem.PriorityOption.Normal);
+        var second = CreateQueueItem("second.nzb", DateTime.UtcNow.AddMinutes(-2), QueueItem.PriorityOption.Normal);
+        var third = CreateQueueItem("third.nzb", DateTime.UtcNow.AddMinutes(-1), QueueItem.PriorityOption.Normal);
+        _context.QueueItems.AddRange(first, second, third);
+        await _context.SaveChangesAsync();
+
+        var result = await _client.SwitchQueueItemAsync(third.Id, first.Id.ToString(), []);
+        _context.ChangeTracker.Clear();
+
+        Assert.Equal(0, result.Position);
+        Assert.Equal(0, result.Priority);
+        var ordered = await _client.GetQueueItems(null);
+        Assert.Equal([third.Id, first.Id, second.Id], ordered.Select(item => item.Id));
+    }
+
+    [Fact]
+    public async Task SwitchQueueItemAsync_ReturnsSentinelForInvalidTarget()
+    {
+        var item = CreateQueueItem("item.nzb", DateTime.UtcNow, QueueItem.PriorityOption.Normal);
+        _context.QueueItems.Add(item);
+        await _context.SaveChangesAsync();
+
+        var result = await _client.SwitchQueueItemAsync(item.Id, "-1", []);
+
+        Assert.Equal(DavDatabaseClient.QueueSwitchResult.NotMoved, result);
+    }
+
+    [Fact]
     public async Task CompletedSymlinkCategoryChildren_AreDistinctAndOrdered()
     {
         var zetaDirectory = DavItem.New(

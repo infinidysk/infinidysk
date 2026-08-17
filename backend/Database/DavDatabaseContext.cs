@@ -309,6 +309,10 @@ public sealed class DavDatabaseContext : DbContext
                 .ValueGeneratedNever()
                 .IsRequired();
 
+            e.Property(i => i.SortOrder)
+                .ValueGeneratedNever()
+                .IsRequired();
+
             e.Property(i => i.FileName)
                 .IsRequired();
 
@@ -353,10 +357,10 @@ public sealed class DavDatabaseContext : DbContext
             e.HasIndex(i => new { i.Category })
                 .IsUnique(false);
 
-            e.HasIndex(i => new { i.Priority, i.CreatedAt })
+            e.HasIndex(i => new { i.Priority, i.SortOrder })
                 .IsUnique(false);
 
-            e.HasIndex(i => new { i.Category, i.Priority, i.CreatedAt })
+            e.HasIndex(i => new { i.Category, i.Priority, i.SortOrder })
                 .IsUnique(false);
 
             e.HasIndex(i => i.ContentGroupKey)

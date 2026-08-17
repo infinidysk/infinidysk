@@ -26,6 +26,7 @@ public class WebsocketTopic
     public static readonly WebsocketTopic QueueItemAdded = new("qa", TopicType.Event);
     public static readonly WebsocketTopic QueueItemRemoved = new("qr", TopicType.Event);
     public static readonly WebsocketTopic QueueItemMoved = new("qm", TopicType.Event);
+    public static readonly WebsocketTopic QueueOrderChanged = new("qo", TopicType.Event);
     public static readonly WebsocketTopic HistoryItemAdded = new("ha", TopicType.Event);
     public static readonly WebsocketTopic HistoryItemRemoved = new("hr", TopicType.Event);
     public static readonly WebsocketTopic LogEntryAdded = new("log", TopicType.Event);

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Api.SabControllers.MoveInQueue;
@@ -10,6 +11,7 @@ public class MoveInQueueController(
     HttpContext httpContext,
     DavDatabaseClient dbClient,
     ConfigManager configManager,
+    QueueManager queueManager,
     WebsocketManager websocketManager
 ) : SabApiController.BaseController(httpContext, configManager)
 {
@@ -21,8 +23,8 @@ public class MoveInQueueController(
         if (!request.MoveToTop)
             throw new BadHttpRequestException("Only move-to-top is supported.");
 
-        var movedIds = await dbClient
-            .MoveQueueItemsToTopAsync(request.NzoIds, request.CancellationToken)
+        var movedIds = await queueManager
+            .MoveQueueItemsToTopAsync(request.NzoIds, dbClient, request.CancellationToken)
             .ConfigureAwait(false);
 
         if (movedIds.Count > 0)

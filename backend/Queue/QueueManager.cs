@@ -345,6 +345,57 @@ public sealed class QueueManager : IDisposable
         AwakenQueue();
     }
 
+    /// <summary>
+    /// Serializes a queue reorder with worker admission. Reordering never
+    /// cancels or changes an in-progress worker.
+    /// </summary>
+    public async Task<DavDatabaseClient.QueueSwitchResult> SwitchQueueItemAsync(
+        Guid sourceId,
+        string target,
+        DavDatabaseClient dbClient,
+        CancellationToken ct = default)
+    {
+        DavDatabaseClient.QueueSwitchResult result = DavDatabaseClient.QueueSwitchResult.NotMoved;
+        await LockAsync(async () =>
+        {
+            await using var transaction = await dbClient.Ctx.Database
+                .BeginTransactionAsync(ct)
+                .ConfigureAwait(false);
+            result = await dbClient.SwitchQueueItemAsync(
+                    sourceId, target, _inProgress.Keys.ToList(), ct)
+                .ConfigureAwait(false);
+            if (result.Position >= 0)
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+
+        if (result.Position >= 0)
+            AwakenQueue();
+        return result;
+    }
+
+    public async Task<List<Guid>> MoveQueueItemsToTopAsync(
+        List<Guid> queueItemIds,
+        DavDatabaseClient dbClient,
+        CancellationToken ct = default)
+    {
+        List<Guid> moved = [];
+        await LockAsync(async () =>
+        {
+            await using var transaction = await dbClient.Ctx.Database
+                .BeginTransactionAsync(ct)
+                .ConfigureAwait(false);
+            moved = await dbClient.MoveQueueItemsToTopAsync(
+                    queueItemIds, _inProgress.Keys.ToList(), ct)
+                .ConfigureAwait(false);
+            if (moved.Count > 0)
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+
+        if (moved.Count > 0)
+            AwakenQueue();
+        return moved;
+    }
+
     public async Task<List<Guid>> SetQueueItemsCategoryAsync(
         List<Guid> queueItemIds,
         string category,

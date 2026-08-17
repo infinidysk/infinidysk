@@ -11,6 +11,7 @@ const topicNames = {
     queueItemAdded: 'qa',
     queueItemRemoved: 'qr',
     queueItemMoved: 'qm',
+    queueOrderChanged: 'qo',
     historyItemAdded: 'ha',
     historyItemRemoved: 'hr',
 };
@@ -22,6 +23,7 @@ const topicSubscriptions = {
     [topicNames.queueItemAdded]: 'event',
     [topicNames.queueItemRemoved]: 'event',
     [topicNames.queueItemMoved]: 'event',
+    [topicNames.queueOrderChanged]: 'event',
     [topicNames.historyItemAdded]: 'event',
     [topicNames.historyItemRemoved]: 'event',
 } as const;
@@ -54,22 +56,24 @@ export function useQueueHistoryWebsocket(
             if (isQueueLive) setTotalQueueCount(count => adjustTotalCount(count, 1));
             // 'qa' websocket payload carries a JSON-serialized QueueSlot (backend contract)
             if (isQueueLive) queueEvents.onAddQueueSlot(JSON.parse(message) as QueueSlot);
-            else scheduleRefresh();
+            scheduleRefresh();
         }
         else if (topic == topicNames.queueItemRemoved) {
             const ids = message.split(',').filter(Boolean);
             if (isQueueLive) setTotalQueueCount(count => adjustTotalCount(count, -ids.length));
             if (isQueueLive) queueEvents.onRemoveQueueSlots(new Set<string>(ids));
-            else scheduleRefresh();
+            scheduleRefresh();
         }
         else if (topic == topicNames.queueItemMoved) {
             queueEvents.onMoveQueueSlotsToTop(new Set<string>(message.split(',').filter(Boolean)));
-            if (!isQueueLive) scheduleRefresh();
+            scheduleRefresh();
         }
         else if (topic == topicNames.queueItemStatus) {
             queueEvents.onChangeQueueSlotStatus(message);
-            if (!isQueueLive) scheduleRefresh();
+            scheduleRefresh();
         }
+        else if (topic == topicNames.queueOrderChanged)
+            scheduleRefresh();
         else if (topic == topicNames.queueItemPercentage)
             queueEvents.onChangeQueueSlotPercentage(message);
         else if (topic == topicNames.queueItemProviders)
@@ -96,5 +100,5 @@ export function useQueueHistoryWebsocket(
         scheduleRefresh,
     ]);
 
-    useWebsocketTopics(topicSubscriptions, onWebsocketMessage);
+    useWebsocketTopics(topicSubscriptions, onWebsocketMessage, { onOpen: scheduleRefresh });
 }

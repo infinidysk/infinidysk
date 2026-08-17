@@ -20,6 +20,7 @@ using NzbWebDAV.Api.SabControllers.SetQueueCategory;
 using NzbWebDAV.Api.SabControllers.SetQueuePriority;
 using NzbWebDAV.Api.SabControllers.RetryHistory;
 using NzbWebDAV.Api.SabControllers.SpeedLimit;
+using NzbWebDAV.Api.SabControllers.SwitchQueue;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -121,7 +122,7 @@ public class SabApiController(
                     HttpContext, dbClient, queueManager, configManager, websocketManager);
             case "queue" when HttpContext.GetRequestParam("name") == "move":
                 return new MoveInQueueController(
-                    HttpContext, dbClient, configManager, websocketManager);
+                    HttpContext, dbClient, configManager, queueManager, websocketManager);
             case "queue" when HttpContext.GetRequestParam("name") == "priority":
                 return new SetQueuePriorityController(
                     HttpContext, dbClient, configManager, queueManager, websocketManager);
@@ -132,6 +133,10 @@ public class SabApiController(
             case "queue":
                 return new GetQueueController(
                     HttpContext, dbClient, queueManager, configManager, providerUsageTracker);
+
+            case "switch":
+                return new SwitchQueueController(
+                    HttpContext, dbClient, configManager, queueManager, websocketManager);
 
             case "history" when HttpContext.GetRequestParam("name") == "delete":
                 return new RemoveFromHistoryController(

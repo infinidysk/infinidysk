@@ -39,6 +39,8 @@ export type QueueTableProps = {
     onIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void,
     onRemoved: (nzo_ids: Set<string>) => void,
     onMovedToTop: (nzo_ids: Set<string>) => void,
+    previousQueueSlot?: PresentationQueueSlot | undefined,
+    nextQueueSlot?: PresentationQueueSlot | undefined,
     listParams: QueueListParams,
     searchDraft: string,
     onSearchDraftChange: (value: string) => void,
@@ -67,6 +69,20 @@ async function moveQueueItemsToTop(nzoIds: string[]): Promise<boolean> {
     }
 }
 
+async function switchQueueItem(sourceId: string, targetId: string): Promise<boolean> {
+    try {
+        const response = await fetch(
+            `/api?mode=switch&value=${encodeURIComponent(sourceId)}&value2=${encodeURIComponent(targetId)}`,
+            { method: "POST" },
+        );
+        if (!response.ok) return false;
+        const data = await response.json() as { result?: { position?: number } };
+        return (data.result?.position ?? -1) >= 0;
+    } catch {
+        return false;
+    }
+}
+
 export function QueueTable({
     queueSlots,
     totalQueueCount,
@@ -83,6 +99,8 @@ export function QueueTable({
     onIsRemovingChanged,
     onRemoved,
     onMovedToTop,
+    previousQueueSlot,
+    nextQueueSlot,
     listParams,
     searchDraft,
     onSearchDraftChange,
@@ -332,10 +350,12 @@ export function QueueTable({
                     direction={listParams.direction}
                     onSort={onSort}
                 >
-                    {queueSlots.map(slot =>
+                    {queueSlots.map((slot, index) =>
                         <QueueRow
                             key={slot.nzo_id}
                             slot={slot}
+                            previousSlot={index > 0 ? queueSlots[index - 1] : previousQueueSlot}
+                            nextSlot={index < queueSlots.length - 1 ? queueSlots[index + 1] : nextQueueSlot}
                             onIsSelectedChanged={onRowIsSelectedChanged}
                             onIsRemovingChanged={onRowIsRemovingChanged}
                             onRemoved={onRowRemoved}
@@ -373,9 +393,11 @@ type QueueRowProps = {
     onIsRemovingChanged: (nzo_id: string, isRemoving: boolean) => void,
     onRemoved: (nzo_id: string) => void,
     onMovedToTop: (nzo_id: string) => void,
+    previousSlot?: PresentationQueueSlot | undefined,
+    nextSlot?: PresentationQueueSlot | undefined,
 }
 
-export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, onRemoved, onMovedToTop }: QueueRowProps) => {
+export const QueueRow = memo(({ slot, previousSlot, nextSlot, onIsSelectedChanged, onIsRemovingChanged, onRemoved, onMovedToTop }: QueueRowProps) => {
     const isReadOnly = useIsReadOnly();
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
@@ -428,6 +450,16 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
         }
     }, [slot.isUploading, slot.nzo_id, isMoving, onMovedToTop]);
 
+    const moveRelative = useCallback(async (target?: PresentationQueueSlot) => {
+        if (!target || slot.isUploading || isMoving || target.status === "Downloading") return;
+        setIsMoving(true);
+        try {
+            await switchQueueItem(slot.nzo_id, target.nzo_id);
+        } finally {
+            setIsMoving(false);
+        }
+    }, [slot.isUploading, slot.nzo_id, isMoving]);
+
     // view
     return (
         <>
@@ -442,6 +474,24 @@ export const QueueRow = memo(({ slot, onIsSelectedChanged, onIsRemovingChanged, 
                 fileSizeBytes={Number(slot.mb) * 1024 * 1024}
                 actions={isReadOnly ? null : (
                     <div className="flex items-center justify-center gap-1">
+                        {!slot.isUploading &&
+                            <>
+                                <Tooltip content="Move up">
+                                    <ActionButton
+                                        type="move-up"
+                                        disabled={!!slot.isRemoving || isMoving || !previousSlot || previousSlot.status === "Downloading"}
+                                        onClick={() => void moveRelative(previousSlot)}
+                                    />
+                                </Tooltip>
+                                <Tooltip content="Move down">
+                                    <ActionButton
+                                        type="move-down"
+                                        disabled={!!slot.isRemoving || isMoving || !nextSlot || nextSlot.status === "Downloading"}
+                                        onClick={() => void moveRelative(nextSlot)}
+                                    />
+                                </Tooltip>
+                            </>
+                        }
                         {!slot.isUploading &&
                             <Tooltip content="Move to top">
                                 <ActionButton

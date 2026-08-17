@@ -138,11 +138,25 @@ public class AddFileController(
                     exception);
             }
 
+            // Keep enqueues after any manually moved item in their priority band.
+            // CreatedAt remains the immutable enqueue timestamp; SortOrder owns
+            // user-directed positioning.
+            var createdAt = DateTime.Now;
+            var bandMax = await dbClient.Ctx.QueueItems
+                .Where(item => item.Priority == request.Priority)
+                .Select(item => (long?)item.SortOrder)
+                .MaxAsync(request.CancellationToken)
+                .ConfigureAwait(false) ?? 0;
+            var sortOrder = Math.Max(
+                createdAt.Ticks,
+                checked(bandMax + QueueItem.SortOrderStride));
+
             // create the queue item record
             queueItem = new QueueItem
             {
                 Id = id,
-                CreatedAt = DateTime.Now,
+                CreatedAt = createdAt,
+                SortOrder = sortOrder,
                 FileName = request.FileName,
                 JobName = FilenameUtil.GetJobName(request.FileName),
                 NzbFileSize = nzbFileStream.Length,
@@ -198,7 +212,13 @@ public class AddFileController(
         }
 
         // inform the frontend that a new item was added to the queue
-        var message = GetQueueResponse.QueueSlot.FromQueueItem(queueItem).ToJson();
+        var activeIds = queueManager.GetInProgressQueueItems()
+            .Select(item => item.QueueItem.Id)
+            .ToList();
+        var position = await dbClient
+            .GetQueueItemPositionAsync(queueItem.Id, activeIds, request.CancellationToken)
+            .ConfigureAwait(false);
+        var message = GetQueueResponse.QueueSlot.FromQueueItem(queueItem, Math.Max(0, position)).ToJson();
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemAdded, message);
 
         // awaken the queue if it is sleeping

@@ -8,6 +8,7 @@ InfiniDysk implements the SABnzbd-compatible operations used by Sonarr, Radarr, 
 - `server_stats` and `warnings` [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 - `addfile` and `addurl`
 - `queue` listing and `queue&name=delete`, `queue&name=pause`, `queue&name=resume`, `queue&name=priority`, `queue&name=move`, and `queue&name=change_cat` [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
+- `switch` for placing one queued job at another job's position or an absolute queue index [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
 - `pause` / `resume` (also `queue&name=pause` / `queue&name=resume`) and `speedlimit` [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 - `change_cat` for per-job category changes on queued items [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 - `retry` for failed history re-queue (single or bulk) [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
@@ -39,6 +40,13 @@ Per-job pause and resume accept UUID(s) via `value` (comma-separated or repeated
 
 `mode=queue&name=priority` sets priority for one or more jobs. Pass the SAB priority code as `value2` (or `priority`): `-2` Paused, `-1` Low, `0` Normal, `1` High, `2` Force. Paused uses the same per-job pause path as `queue&name=pause`.
 
+`mode=switch&value=<nzo_id>&value2=<nzo_id-or-index>` moves one queued job to the
+target's original position and returns `{"result":{"position":N,"priority":P}}`.
+Moving across priority bands adopts the target priority. Moving a paused job into
+a non-paused band resumes it by clearing its scheduled retry delay. The
+InfiniDysk-specific `queue&name=move&value2=0|top` bulk action remains the
+shortcut for move-to-top.
+
 `mode=change_cat` sets category for queued jobs (not actively downloading). Pass `cat` / `category` plus job id(s) in `value` or `nzo_ids`. Categories must match configured API categories.
 
 `mode=retry` re-queues failed history items. Accepts a single `value` id or multiple ids (comma-separated / repeated `value`, or `nzo_ids` JSON). Bulk retry returns `nzo_ids` for successes and a `failed` array with per-item errors when some items cannot be retried. History bulk actions in the admin UI do not change category on retry (category is copied from the history row).
@@ -55,6 +63,9 @@ Queue JSON reports live throughput for in-progress jobs [since 1.1.0](https://gi
 - History has no separate archive tier. `history&name=delete` permanently removes matching history rows.
 - **Ignore SAB history limit** can ignore a client's `limit`; InfiniDysk still enforces a server-side maximum page size.
 - Authentication failures use HTTP error status codes instead of always returning HTTP 200 with an error body.
+- Active queue workers stay pinned at the front and are never preempted. A switch
+  targeting that pinned prefix lands at the first waiting job; active sources
+  cannot be moved. Negative queue indexes are rejected.
 - `server_stats` aggregates provider bandwidth from retained `ProviderHourly` rollups (plus folded lifetime totals for all-time bytes). The per-server `daily` map and article counters are bounded by the hourly retention window — pruned buckets are not reconstructed.
 - `warnings` returns recent Warning-and-above log entries from the in-memory buffer. `name=clear` is accepted for SAB client compatibility but does not clear the buffer (support packs rely on it). Use Settings → Support to collect the full warning log.
 

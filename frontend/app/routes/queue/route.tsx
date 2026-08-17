@@ -33,8 +33,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     const historyPageSize = parsePageSize(url.searchParams.get("hps"));
     const queueParams = parseQueueListParams(url.searchParams);
     const historyParams = parseHistoryListParams(url.searchParams);
+    const queueStart = (queuePage - 1) * queuePageSize;
+    const queueFetchStart = Math.max(0, queueStart - 1);
+    const queueFetchLimit = queuePageSize + (queuePage > 1 ? 2 : 1);
     const [queue, history, config] = await Promise.all([
-        backendClient.getQueue(queuePageSize, (queuePage - 1) * queuePageSize, {
+        backendClient.getQueue(queueFetchLimit, queueFetchStart, {
             search: queueParams.query, category: queueParams.category, status: queueParams.status,
             sort: queueParams.sort ?? undefined, direction: queueParams.direction ?? undefined,
         }),
@@ -56,7 +59,12 @@ export async function loader({ request }: Route.LoaderArgs) {
     }
 
     return {
-        queueSlots: queue?.slots || [],
+        queueSlots: (queue?.slots || []).slice(
+            queuePage > 1 ? 1 : 0,
+            (queuePage > 1 ? 1 : 0) + queuePageSize,
+        ),
+        previousQueueSlot: queuePage > 1 ? queue?.slots?.[0] : undefined,
+        nextQueueSlot: queue?.slots?.[(queuePage > 1 ? 1 : 0) + queuePageSize],
         historySlots: history?.slots || [],
         totalQueueCount: queue?.noofslots || 0,
         totalHistoryCount: history?.noofslots || 0,
@@ -229,6 +237,8 @@ export default function Queue(props: Route.ComponentProps) {
                         onIsRemovingChanged={queueEvents.onRemovingQueueSlots}
                         onRemoved={queueEvents.onRemoveQueueSlots}
                         onMovedToTop={queueEvents.onMoveQueueSlotsToTop}
+                        previousQueueSlot={props.loaderData.previousQueueSlot}
+                        nextQueueSlot={props.loaderData.nextQueueSlot}
                     />
                 </div>
             </div>
