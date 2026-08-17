@@ -147,16 +147,23 @@ public class HealthCheckService : BackgroundService
                 await using var dbContext = new DavDatabaseContext();
                 var dbClient = new DavDatabaseClient(dbContext);
                 var currentDateTime = DateTimeOffset.UtcNow;
-                var candidates = await GetHealthCheckQueueItems(dbClient)
-                    .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
-                    .Take(5)
-                    .ToListAsync(cts.Token).ConfigureAwait(false);
 
-                // skip non-media files (images, subtitles, NFOs) so health checks focus
-                // on playable media. Urgent repairs (UnixEpoch sentinel) always run.
-                var davItem = candidates.FirstOrDefault(x =>
-                    x.NextHealthCheck == DateTimeOffset.UnixEpoch ||
-                    FilenameUtil.IsHealthCheckCandidate(x.Name));
+                // Stream the ordered queue and take the first media candidate.
+                // Urgent repairs (UnixEpoch sentinel) always run regardless of file type.
+                DavItem? davItem = null;
+                await foreach (var item in GetHealthCheckQueueItems(dbClient)
+                    .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
+                    .AsAsyncEnumerable()
+                    .WithCancellation(cts.Token)
+                    .ConfigureAwait(false))
+                {
+                    if (item.NextHealthCheck == DateTimeOffset.UnixEpoch ||
+                        FilenameUtil.IsHealthCheckCandidate(item.Name))
+                    {
+                        davItem = item;
+                        break;
+                    }
+                }
 
                 // if there is no item to health-check, don't do anything
                 if (davItem == null)
@@ -226,24 +233,35 @@ public class HealthCheckService : BackgroundService
         {
             await using var dbContext = new DavDatabaseContext();
             var urgent = DateTimeOffset.UnixEpoch;
-            var items = await dbContext.Items
-                .Where(x => x.Type == DavItem.ItemType.UsenetFile)
-                .Where(x => x.NextHealthCheck != urgent)
-                .Where(x => x.NextHealthCheck != null || x.LastHealthCheck != null)
-                .ToListAsync(ct).ConfigureAwait(false);
-
+            const int batchSize = 1000;
             var cleared = 0;
-            foreach (var item in items)
+
+            while (true)
             {
-                if (FilenameUtil.IsHealthCheckCandidate(item.Name)) continue;
-                item.NextHealthCheck = null;
-                item.LastHealthCheck = null;
-                cleared++;
+                ct.ThrowIfCancellationRequested();
+                var batch = await dbContext.Items
+                    .Where(x => x.Type == DavItem.ItemType.UsenetFile)
+                    .Where(x => x.NextHealthCheck != urgent)
+                    .Where(x => x.NextHealthCheck != null || x.LastHealthCheck != null)
+                    .OrderBy(x => x.Id)
+                    .Take(batchSize)
+                    .ToListAsync(ct).ConfigureAwait(false);
+
+                if (batch.Count == 0) break;
+
+                foreach (var item in batch.Where(x => !FilenameUtil.IsHealthCheckCandidate(x.Name)))
+                {
+                    item.NextHealthCheck = null;
+                    item.LastHealthCheck = null;
+                    cleared++;
+                }
+
+                await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+                dbContext.ChangeTracker.Clear();
             }
 
             if (cleared > 0)
             {
-                await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
                 Log.Information(
                     "Cleared health-check schedule for {Count} non-media file(s) " +
                     "(images, subtitles, NFOs, and other non-playable files are no longer health-checked)",

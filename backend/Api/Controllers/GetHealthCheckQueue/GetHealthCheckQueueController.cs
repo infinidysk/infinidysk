@@ -12,15 +12,20 @@ public class GetHealthCheckQueueController(DavDatabaseClient dbClient) : BaseApi
 {
     private async Task<GetHealthCheckQueueResponse> GetHealthCheckQueue(GetHealthCheckQueueRequest request)
     {
-        var candidates = await HealthCheckService.GetHealthCheckQueueItems(dbClient)
-            .Take(request.PageSize * 3)
-            .ToListAsync().ConfigureAwait(false);
-
-        // Skip non-media files so the Health UI focuses on playable media.
-        var davItems = candidates
-            .Where(x => FilenameUtil.IsHealthCheckCandidate(x.Name))
-            .Take(request.PageSize)
-            .ToList();
+        // Stream the ordered queue and filter non-media files so the Health UI focuses on
+        // playable media. Urgent repairs (UnixEpoch sentinel) are always included.
+        var davItems = new List<Database.Models.DavItem>();
+        await foreach (var item in HealthCheckService.GetHealthCheckQueueItems(dbClient)
+            .AsAsyncEnumerable()
+            .ConfigureAwait(false))
+        {
+            if (davItems.Count >= request.PageSize) break;
+            if (item.NextHealthCheck == DateTimeOffset.UnixEpoch ||
+                FilenameUtil.IsHealthCheckCandidate(item.Name))
+            {
+                davItems.Add(item);
+            }
+        }
 
         var uncheckedCount = await HealthCheckService.GetHealthCheckQueueItemsQuery(dbClient)
             .Where(x => x.NextHealthCheck == null)

@@ -83,14 +83,19 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
         _context.ChangeTracker.Clear();
 
         var currentDateTime = DateTimeOffset.UtcNow;
-        var candidates = await HealthCheckService.GetHealthCheckQueueItems(_dbClient)
-            .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
-            .Take(20)
-            .ToListAsync();
 
-        var filtered = candidates.Where(x =>
-            x.NextHealthCheck == DateTimeOffset.UnixEpoch ||
-            FilenameUtil.IsHealthCheckCandidate(x.Name)).ToList();
+        // Mirror the streaming filter used in HealthCheckService.ExecuteAsync
+        var filtered = new List<DavItem>();
+        await foreach (var item in HealthCheckService.GetHealthCheckQueueItems(_dbClient)
+            .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
+            .AsAsyncEnumerable())
+        {
+            if (item.NextHealthCheck == DateTimeOffset.UnixEpoch ||
+                FilenameUtil.IsHealthCheckCandidate(item.Name))
+            {
+                filtered.Add(item);
+            }
+        }
 
         Assert.Contains(videoFile.Id, filtered.Select(x => x.Id));
         Assert.Contains(audioFile.Id, filtered.Select(x => x.Id));

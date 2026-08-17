@@ -109,15 +109,12 @@ public class FilenameUtilHealthCheckTests
     [Fact]
     public void NonHealthCheckExtensions_IsDisjointFromVideoAndAudio()
     {
-        var videoExtensions = typeof(FilenameUtil)
+        var videoExtensions = (HashSet<string>)typeof(FilenameUtil)
             .GetField("VideoExtensions", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
-            .GetValue(null) as HashSet<string>;
-        var audioExtensions = typeof(FilenameUtil)
+            .GetValue(null)!;
+        var audioExtensions = (HashSet<string>)typeof(FilenameUtil)
             .GetField("AudioExtensions", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
-            .GetValue(null) as HashSet<string>;
-
-        Assert.NotNull(videoExtensions);
-        Assert.NotNull(audioExtensions);
+            .GetValue(null)!;
 
         foreach (var ext in FilenameUtil.NonHealthCheckExtensions)
         {
