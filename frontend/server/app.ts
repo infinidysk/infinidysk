@@ -118,6 +118,7 @@ const credentialRateLimiter = rateLimit({
     return !(
       (method === "POST" && credentialPostPaths.has(decodedPath))
       || (method === "GET" && oidcGetPaths.has(decodedPath))
+      || (method === "GET" && decodedPath === "/metrics")
     );
   },
   handler: (req, res, _next, options) => {
@@ -127,6 +128,9 @@ const credentialRateLimiter = rateLimit({
     res.status(options.statusCode).send(options.message);
   },
 });
+
+// Limit credential attempts and protected metrics scrapes before the early backend proxy.
+app.use(credentialRateLimiter);
 
 app.use(async (req, res, next) => {
   if (shouldProxyToBackend(req.method, req.path)) {
@@ -158,9 +162,6 @@ app.use(async (req, res, next) => {
   }
   next();
 });
-
-// Limit credential attempts without throttling WebDAV, API, or regular UI traffic.
-app.use(credentialRateLimiter);
 
 // OIDC endpoints must remain public so the provider can complete the callback.
 app.use(oidcRouter);
