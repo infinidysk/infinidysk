@@ -59,6 +59,23 @@ public sealed class GetHealthCheckHistoryControllerTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData("?repairStatus=")]
+    [InlineData("?repairStatus=,")]
+    public async Task GetAsync_EmptyRepairStatusTreatedAsNoFilter(string query)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var deleted = NewResult(now.AddSeconds(-1), HealthCheckResult.RepairAction.Deleted);
+        var healthy = NewResult(now.AddSeconds(-2), HealthCheckResult.RepairAction.None);
+        _context.HealthCheckResults.AddRange(deleted, healthy);
+        await _context.SaveChangesAsync();
+
+        var response = await InvokeAsync(query);
+
+        Assert.Equal(2, response.TotalCount);
+        Assert.Equal(2, response.Items.Count);
+    }
+
+    [Theory]
     [InlineData("?repairStatus=unknown")]
     [InlineData("?page=0")]
     [InlineData("?pageSize=0")]

@@ -47,7 +47,9 @@ public class GetHealthCheckHistoryRequest
                         "Invalid repairStatus parameter (use none, repaired, deleted, or action-needed)")
                 });
             }
-            RepairStatuses = repairStatuses;
+            // An empty or comma-only repairStatus value (e.g. "?repairStatus=") means "no filter"
+            // rather than filtering out every row.
+            RepairStatuses = repairStatuses.Count > 0 ? repairStatuses : null;
         }
     }
 }
