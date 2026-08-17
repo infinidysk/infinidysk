@@ -1,9 +1,11 @@
-﻿using NzbWebDAV.Clients.Usenet;
+﻿using System.Diagnostics;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.Diagnostics;
+using NzbWebDAV.Services.Observability;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Utils;
 using Serilog;
@@ -35,6 +37,8 @@ public class NzbFileStream(
     // stream — otherwise rapid scrubbing overlaps generations and pins the article
     // budget (#840 scrub wedge).
     private Task? _pendingInnerDispose;
+    private Stopwatch? _pendingSeekStopwatch;
+    private string? _pendingSeekKind;
     private readonly LongRange[]? _segmentByteRanges =
         AreSegmentByteRangesValid(segmentByteRanges, fileSegmentIds.Length, fileSize)
             ? segmentByteRanges
@@ -114,6 +118,13 @@ public class NzbFileStream(
             }
         }
 
+        if (_pendingSeekStopwatch is { } seekStopwatch && _pendingSeekKind is { } seekKind)
+        {
+            PrometheusMetrics.Current?.RecordSeek(seekKind, seekStopwatch.Elapsed);
+            _pendingSeekStopwatch = null;
+            _pendingSeekKind = null;
+        }
+
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         _position += read;
         return read;
@@ -140,11 +151,16 @@ public class NzbFileStream(
         if (absoluteOffset < 0 || absoluteOffset > fileSize)
             throw new ArgumentOutOfRangeException(nameof(offset), offset, "Seek position is outside stream bounds.");
 
-        if (_position == absoluteOffset) return _position;
+        if (_position == absoluteOffset)
+        {
+            PrometheusMetrics.Current?.RecordSeek("noop", TimeSpan.Zero);
+            return _position;
+        }
         if (_innerStream is not null &&
             absoluteOffset > _position &&
             absoluteOffset - _position <= MaximumForwardDrainBytes)
         {
+            BeginSeekMeasurement("warm");
             _pendingForwardDrain += absoluteOffset - _position;
             _position = absoluteOffset;
             if (MultiProviderNntpClient.CurrentReadSessionId is { } drainSession)
@@ -153,6 +169,7 @@ public class NzbFileStream(
         }
 
         _position = absoluteOffset;
+        BeginSeekMeasurement(_innerStream is null ? "fresh" : "cold");
         if (_innerStream is { } replaced)
         {
             // Start the inner stream's async teardown without blocking (Seek is sync),
@@ -164,6 +181,12 @@ public class NzbFileStream(
         if (MultiProviderNntpClient.CurrentReadSessionId is { } seekSession)
             StreamTrace.TrySeek(seekSession, _position);
         return _position;
+    }
+
+    private void BeginSeekMeasurement(string kind)
+    {
+        _pendingSeekStopwatch = Stopwatch.StartNew();
+        _pendingSeekKind = kind;
     }
 
     private async Task<InterpolationSearch.Result> SeekSegment(long byteOffset, CancellationToken ct)

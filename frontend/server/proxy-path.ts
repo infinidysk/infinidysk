@@ -1,6 +1,7 @@
 const BACKEND_PATH_PREFIXES = [
   "/api",
   "/ready",
+  "/metrics",
   "/view",
   "/.ids",
   "/nzbs",
@@ -31,6 +32,12 @@ export function isBackendApiPath(pathname: string): boolean {
   const decodedPath = safeDecodePath(pathname);
   if (decodedPath === null) return false;
   return decodedPath === "/api" || decodedPath.startsWith("/api/");
+}
+
+/** True when the path is the Prometheus metrics endpoint. */
+export function isBackendMetricsPath(pathname: string): boolean {
+  const decodedPath = safeDecodePath(pathname);
+  return decodedPath === "/metrics";
 }
 
 export function shouldProxyToBackend(method: string, pathname: string): boolean {

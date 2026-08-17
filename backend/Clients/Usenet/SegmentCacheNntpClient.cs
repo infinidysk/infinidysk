@@ -7,6 +7,7 @@ using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Services.Observability;
 using NzbWebDAV.Streams;
 using Serilog;
 using UsenetSharp.Models;
@@ -176,6 +177,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     private void RecordCacheHit()
     {
         _usageTracker?.RecordSuccess(CacheProviderName);
+        PrometheusMetrics.Current?.RecordSegmentFetch(CacheProviderName, "ok", TimeSpan.Zero);
         _metricsWriter?.RecordFetch(new SegmentFetch
         {
             At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),

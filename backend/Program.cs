@@ -23,6 +23,7 @@ using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Services.Observability;
 using NzbWebDAV.Services.SupportPack;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
@@ -31,6 +32,7 @@ using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
 using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.Websocket;
+using Prometheus;
 using Serilog;
 using Serilog.Events;
 using Serilog.Templates;
@@ -221,6 +223,19 @@ public partial class Program
             builder.Services
                 .AddWebdavBasicAuthentication(configManager)
                 .AddSingleton(configManager)
+                .AddSingleton(_ =>
+                {
+                    var registry = new CollectorRegistry();
+                    DotNetStats.Register(registry);
+                    return registry;
+                })
+                .AddSingleton<PrometheusMetrics>(sp =>
+                {
+                    var metrics = new PrometheusMetrics(sp.GetRequiredService<CollectorRegistry>());
+                    PrometheusMetrics.Current = metrics;
+                    return metrics;
+                })
+                .AddHostedService<PrometheusMetricsCollector>()
                 .AddSingleton(websocketManager)
                 .AddSingleton(logBufferSink)
                 .AddSingleton(warningLogBuffer)
@@ -354,6 +369,7 @@ public partial class Program
             // Must run before anything that reads Scheme/Host/RemoteIpAddress.
             app.UseForwardedHeaders();
             app.UseMiddleware<ExceptionMiddleware>();
+            app.UseMiddleware<MetricsAuthenticationMiddleware>();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
             app.MapHealthChecks("/health", new HealthCheckOptions
             {
@@ -365,6 +381,7 @@ public partial class Program
             });
             app.Map("/ws", websocketManager.HandleRoute);
             app.MapControllers();
+            app.MapMetrics("/metrics", app.Services.GetRequiredService<CollectorRegistry>());
             app.UseWebdavBasicAuthentication();
             app.UseNWebDav();
             // TestServer hosts share a process, so stopping one must not trip the

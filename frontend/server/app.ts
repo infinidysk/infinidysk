@@ -8,7 +8,7 @@ import { websocketServer } from "./websocket.server";
 import { safeDecodePath, shouldProxyToBackend } from "./proxy-path";
 import { logger } from "./logger";
 import { authMiddleware } from "~/auth/auth-middleware.server";
-import { getSessionUser } from "~/auth/authentication.server";
+import { getSessionUser, isAuthenticated } from "~/auth/authentication.server";
 import { setApiKeyForAuthenticatedRequests } from "./inject-api-key.server";
 import {
   BACKEND_FAILURE_LOG_THROTTLE_MS,
@@ -130,9 +130,14 @@ const credentialRateLimiter = rateLimit({
 
 app.use(async (req, res, next) => {
   if (shouldProxyToBackend(req.method, req.path)) {
+    const decodedPath = safeDecodePath(req.path);
+    if (decodedPath === "/metrics" && !await isAuthenticated(req)) {
+      res.status(401).type("text/plain").send("Metrics authentication required.");
+      return;
+    }
+
     await setApiKeyForAuthenticatedRequests(req);
 
-    const decodedPath = safeDecodePath(req.path);
     if (
       decodedPath !== null
       && req.method.toUpperCase() === "POST"

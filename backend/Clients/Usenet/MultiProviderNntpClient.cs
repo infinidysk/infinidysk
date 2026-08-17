@@ -11,6 +11,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Services.Observability;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
 using Serilog;
@@ -1029,6 +1030,10 @@ public class MultiProviderNntpClient(
             Status = status,
             Retries = retries,
         };
+        PrometheusMetrics.Current?.RecordSegmentFetch(
+            metricsKey,
+            status.ToString().ToLowerInvariant(),
+            TimeSpan.FromMilliseconds(durationMs));
         if (enqueue)
             metricsWriter?.RecordFetch(fetch);
         return fetch;

@@ -11,6 +11,7 @@ public static class NWebDavOptionsExtensions
                           !context.Request.Path.StartsWithSegments("/view", StringComparison.Ordinal) &&
                           !context.Request.Path.StartsWithSegments("/health", StringComparison.Ordinal) &&
                           !context.Request.Path.StartsWithSegments("/ready", StringComparison.Ordinal) &&
+                          !context.Request.Path.StartsWithSegments("/metrics", StringComparison.Ordinal) &&
                           !context.Request.Path.StartsWithSegments("/ws", StringComparison.Ordinal) &&
                           !context.Request.Path.StartsWithSegments("/p", StringComparison.Ordinal) &&
                           !context.Request.Path.StartsWithSegments("/adapters", StringComparison.Ordinal);

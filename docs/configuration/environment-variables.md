@@ -17,6 +17,7 @@ Advanced reference for **process / container** wiring and **legacy Settings fall
 | `TZ` | unset | Schedules and log timestamps |
 | `BACKEND_URL` | `http://localhost:8080` | Frontend → backend (set by entrypoint if empty) |
 | `FRONTEND_BACKEND_API_KEY` | random if unset | Shared API key; also seeds `api.key` when empty |
+| `METRICS_REQUIRE_API_KEY` | `false` | Require `x-api-key` for direct backend `/metrics` scrapes |
 | `MAX_BACKEND_HEALTH_RETRIES` | `30` | Entrypoint health wait |
 | `MAX_BACKEND_HEALTH_RETRY_DELAY` | `1` | Seconds between health probes |
 
