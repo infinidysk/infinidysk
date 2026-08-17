@@ -46,44 +46,6 @@ public sealed class FixEmptyCategoriesMigrationTests
 
         ctx.Items.AddRange(uncategorizedFolder, emptyFolder, mount, collisionMount, existingMount);
 
-        ctx.QueueItems.AddRange(
-            new QueueItem
-            {
-                Id = emptyQueueId,
-                CreatedAt = DateTime.UtcNow,
-                FileName = "empty.nzb",
-                JobName = "empty",
-                NzbFileSize = 10,
-                TotalSegmentBytes = 20,
-                Category = "",
-                Priority = QueueItem.PriorityOption.Normal,
-                PostProcessing = QueueItem.PostProcessingOption.None,
-            },
-            new QueueItem
-            {
-                Id = collidingQueueId,
-                CreatedAt = DateTime.UtcNow,
-                FileName = "shared.nzb",
-                JobName = "shared-empty",
-                NzbFileSize = 10,
-                TotalSegmentBytes = 20,
-                Category = "",
-                Priority = QueueItem.PriorityOption.Normal,
-                PostProcessing = QueueItem.PostProcessingOption.None,
-            },
-            new QueueItem
-            {
-                Id = existingQueueId,
-                CreatedAt = DateTime.UtcNow,
-                FileName = "shared.nzb",
-                JobName = "shared-existing",
-                NzbFileSize = 10,
-                TotalSegmentBytes = 20,
-                Category = "uncategorized",
-                Priority = QueueItem.PriorityOption.Normal,
-                PostProcessing = QueueItem.PostProcessingOption.None,
-            });
-
         ctx.HistoryItems.AddRange(
             new HistoryItem
             {
@@ -109,6 +71,14 @@ public sealed class FixEmptyCategoriesMigrationTests
             });
 
         await ctx.SaveChangesAsync();
+        var createdAt = DateTime.UtcNow;
+        await ctx.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO QueueItems (Id, CreatedAt, FileName, JobName, NzbFileSize, TotalSegmentBytes, Category, Priority, PostProcessing)
+            VALUES
+              ({emptyQueueId}, {createdAt}, {"empty.nzb"}, {"empty"}, 10, 20, {""}, 0, 0),
+              ({collidingQueueId}, {createdAt}, {"shared.nzb"}, {"shared-empty"}, 10, 20, {""}, 0, 0),
+              ({existingQueueId}, {createdAt}, {"shared.nzb"}, {"shared-existing"}, 10, 20, {"uncategorized"}, 0, 0);
+            """);
         ctx.ChangeTracker.Clear();
 
         await ctx.Database.MigrateAsync();
