@@ -5,6 +5,7 @@ using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Tests.Services;
 
@@ -62,6 +63,42 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
         Assert.Contains(historyLinkedUrgent.Id, ids);
         Assert.Contains(unlinkedUrgent.Id, ids);
         Assert.Contains(unlinkedScheduled.Id, ids);
+    }
+
+    [Fact]
+    public async Task CallerSideFilter_SkipsNonMediaFiles_ButKeepsUrgent()
+    {
+        var scheduledAt = DateTimeOffset.UtcNow.AddHours(-1);
+
+        var videoFile = NewUsenetFile("movie.mkv", null, scheduledAt);
+        var audioFile = NewUsenetFile("track.flac", null, scheduledAt);
+        var archiveFile = NewUsenetFile("archive.rar", null, scheduledAt);
+        var imageFile = NewUsenetFile("cover.jpg", null, scheduledAt);
+        var subtitleFile = NewUsenetFile("subs.srt", null, scheduledAt);
+        var nfoFile = NewUsenetFile("info.nfo", null, scheduledAt);
+        var urgentImage = NewUsenetFile("urgent-screenshot.jpg", null, DateTimeOffset.UnixEpoch);
+
+        _context.Items.AddRange(videoFile, audioFile, archiveFile, imageFile, subtitleFile, nfoFile, urgentImage);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var currentDateTime = DateTimeOffset.UtcNow;
+        var candidates = await HealthCheckService.GetHealthCheckQueueItems(_dbClient)
+            .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
+            .Take(20)
+            .ToListAsync();
+
+        var filtered = candidates.Where(x =>
+            x.NextHealthCheck == DateTimeOffset.UnixEpoch ||
+            FilenameUtil.IsHealthCheckCandidate(x.Name)).ToList();
+
+        Assert.Contains(videoFile.Id, filtered.Select(x => x.Id));
+        Assert.Contains(audioFile.Id, filtered.Select(x => x.Id));
+        Assert.Contains(archiveFile.Id, filtered.Select(x => x.Id));
+        Assert.DoesNotContain(imageFile.Id, filtered.Select(x => x.Id));
+        Assert.DoesNotContain(subtitleFile.Id, filtered.Select(x => x.Id));
+        Assert.DoesNotContain(nfoFile.Id, filtered.Select(x => x.Id));
+        Assert.Contains(urgentImage.Id, filtered.Select(x => x.Id));
     }
 
     [Fact]
