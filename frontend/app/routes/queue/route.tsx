@@ -1,4 +1,4 @@
-import { useSearchParams } from "react-router";
+import { useRevalidator, useSearchParams } from "react-router";
 import type { Route } from "./+types/route";
 import { backendClient, type HistorySlot, type QueueSlot } from "~/clients/backend-client.server";
 import { HistoryTable } from "./components/history-table/history-table";
@@ -10,6 +10,7 @@ import { useUploadController } from "./controllers/nzb-upload-controller";
 import { useQueueDropzone } from "./controllers/dropzone-controller";
 import { Alert } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
+import { isDefaultList, parseHistoryListParams, parseQueueListParams } from "./list-params";
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 250] as const;
 const DEFAULT_PAGE_SIZE = 100;
@@ -30,9 +31,17 @@ export async function loader({ request }: Route.LoaderArgs) {
     const historyPage = parsePage(url.searchParams.get("hp"));
     const queuePageSize = parsePageSize(url.searchParams.get("qps"));
     const historyPageSize = parsePageSize(url.searchParams.get("hps"));
+    const queueParams = parseQueueListParams(url.searchParams);
+    const historyParams = parseHistoryListParams(url.searchParams);
     const [queue, history, config] = await Promise.all([
-        backendClient.getQueue(queuePageSize, (queuePage - 1) * queuePageSize),
-        backendClient.getHistory(historyPageSize, (historyPage - 1) * historyPageSize),
+        backendClient.getQueue(queuePageSize, (queuePage - 1) * queuePageSize, {
+            search: queueParams.query, category: queueParams.category, status: queueParams.status,
+            sort: queueParams.sort ?? undefined, direction: queueParams.direction ?? undefined,
+        }),
+        backendClient.getHistory(historyPageSize, (historyPage - 1) * historyPageSize, {
+            search: historyParams.query, category: historyParams.category, status: historyParams.status,
+            sort: historyParams.sort ?? undefined, direction: historyParams.direction ?? undefined,
+        }),
         backendClient.getConfig(["api.categories", "api.manual-category"]),
     ]);
     const categoriesValue = config
@@ -57,12 +66,14 @@ export async function loader({ request }: Route.LoaderArgs) {
         historyPage: historyPage,
         queuePageSize,
         historyPageSize,
+        queueParams,
+        historyParams,
     };
 }
 
 export default function Queue(props: Route.ComponentProps) {
     const isReadOnly = useIsReadOnly();
-    const { queuePageSize, historyPageSize, queuePage, historyPage } = props.loaderData;
+    const { queuePageSize, historyPageSize, queuePage, historyPage, queueParams, historyParams } = props.loaderData;
     const [queueSlots, setQueueSlots] = useState<PresentationQueueSlot[]>(props.loaderData.queueSlots);
     const [historySlots, setHistorySlots] = useState<PresentationHistorySlot[]>(props.loaderData.historySlots);
     const [totalQueueCount, setTotalQueueCount] = useState(props.loaderData.totalQueueCount);
@@ -72,16 +83,49 @@ export default function Queue(props: Route.ComponentProps) {
     const manualCategoryRef = useRef<string>(props.loaderData.manualCategory);
     const isUploadingRef = useRef(false);
     const [, setSearchParams] = useSearchParams();
+    const revalidator = useRevalidator();
+    const [queueQueryDraft, setQueueQueryDraft] = useState(queueParams.query);
+    const [historyQueryDraft, setHistoryQueryDraft] = useState(historyParams.query);
 
-    useEffect(() => { setQueueSlots(props.loaderData.queueSlots); }, [props.loaderData.queueSlots]);
-    useEffect(() => { setHistorySlots(props.loaderData.historySlots); }, [props.loaderData.historySlots]);
+    useEffect(() => { setQueueSlots(previous => mergePresentationSlots(props.loaderData.queueSlots, previous)); }, [props.loaderData.queueSlots]);
+    useEffect(() => { setHistorySlots(previous => mergePresentationSlots(props.loaderData.historySlots, previous)); }, [props.loaderData.historySlots]);
     useEffect(() => { setTotalQueueCount(props.loaderData.totalQueueCount); }, [props.loaderData.totalQueueCount]);
     useEffect(() => { setTotalHistoryCount(props.loaderData.totalHistoryCount); }, [props.loaderData.totalHistoryCount]);
 
     const queueTotalPages = Math.max(1, Math.ceil(totalQueueCount / queuePageSize));
     const historyTotalPages = Math.max(1, Math.ceil(totalHistoryCount / historyPageSize));
-    const isQueueLive = queuePage === 1;
-    const isHistoryLive = historyPage === 1;
+    useEffect(() => { setQueueQueryDraft(queueParams.query); }, [queueParams.query]);
+    useEffect(() => { setHistoryQueryDraft(historyParams.query); }, [historyParams.query]);
+    const isQueueLive = queuePage === 1 && isDefaultList(queueParams);
+    const isHistoryLive = historyPage === 1 && isDefaultList(historyParams);
+
+    const updateListParams = useCallback((kind: "queue" | "history", mutator: (params: URLSearchParams) => void) => {
+        const pageKey = kind === "queue" ? "qp" : "hp";
+        setSearchParams(previous => {
+            const next = new URLSearchParams(previous);
+            mutator(next);
+            next.set(pageKey, "1");
+            return next;
+        }, { preventScrollReset: true });
+    }, [setSearchParams]);
+
+    const setQueueParam = useCallback((key: string, value: string) => updateListParams("queue", params => {
+        if (value) params.set(key, value); else params.delete(key);
+    }), [updateListParams]);
+    const setHistoryParam = useCallback((key: string, value: string) => updateListParams("history", params => {
+        if (value) params.set(key, value); else params.delete(key);
+    }), [updateListParams]);
+
+    useEffect(() => {
+        if (queueQueryDraft.trim() === queueParams.query) return;
+        const timer = window.setTimeout(() => setQueueParam("qq", queueQueryDraft.trim()), 300);
+        return () => window.clearTimeout(timer);
+    }, [queueQueryDraft, queueParams.query, setQueueParam]);
+    useEffect(() => {
+        if (historyQueryDraft.trim() === historyParams.query) return;
+        const timer = window.setTimeout(() => setHistoryParam("hq", historyQueryDraft.trim()), 300);
+        return () => window.clearTimeout(timer);
+    }, [historyQueryDraft, historyParams.query, setHistoryParam]);
 
     const setPageParam = useCallback((key: string, page: number) => {
         setSearchParams(prev => {
@@ -92,6 +136,13 @@ export default function Queue(props: Route.ComponentProps) {
     }, [setSearchParams]);
     const onQueuePageSelected = useCallback((page: number) => setPageParam("qp", page), [setPageParam]);
     const onHistoryPageSelected = useCallback((page: number) => setPageParam("hp", page), [setPageParam]);
+
+    useEffect(() => {
+        if (queuePage > queueTotalPages) onQueuePageSelected(queueTotalPages);
+    }, [queuePage, queueTotalPages, onQueuePageSelected]);
+    useEffect(() => {
+        if (historyPage > historyTotalPages) onHistoryPageSelected(historyTotalPages);
+    }, [historyPage, historyTotalPages, onHistoryPageSelected]);
 
     const setPageSizeParam = useCallback((sizeKey: string, pageKey: string, size: number) => {
         setSearchParams(prev => {
@@ -110,9 +161,7 @@ export default function Queue(props: Route.ComponentProps) {
         [setPageSizeParam],
     );
 
-    const combinedQueueSlots = isQueueLive
-        ? [...uploadingFiles.map(file => file.queueSlot), ...queueSlots]
-        : queueSlots;
+    const combinedQueueSlots = [...uploadingFiles.map(file => file.queueSlot), ...queueSlots];
 
     // queue/history events
     const queueEvents = useQueueEvents(setUploadingFiles, setQueueSlots, uploadQueueRef, queuePageSize, isQueueLive);
@@ -126,6 +175,7 @@ export default function Queue(props: Route.ComponentProps) {
         isHistoryLive,
         setTotalQueueCount,
         setTotalHistoryCount,
+        () => revalidator.revalidate(),
     );
 
     // uploads
@@ -155,6 +205,12 @@ export default function Queue(props: Route.ComponentProps) {
                         pageSizeOptions={PAGE_SIZE_OPTIONS}
                         totalPages={queueTotalPages}
                         isLive={isQueueLive}
+                        listParams={queueParams}
+                        searchDraft={queueQueryDraft}
+                        onSearchDraftChange={setQueueQueryDraft}
+                        onFilterChange={(key, value) => setQueueParam(key, value)}
+                        onClearFilters={() => updateListParams("queue", params => ["qq", "qcat", "qstatus", "qsort"].forEach(key => params.delete(key)))}
+                        onSort={(field) => setQueueParam("qsort", nextSortValue(queueParams, field))}
                         onPageSelected={onQueuePageSelected}
                         onPageSizeSelected={onQueuePageSizeSelected}
                         categories={props.loaderData.categories}
@@ -169,7 +225,7 @@ export default function Queue(props: Route.ComponentProps) {
             </div>
 
             {/* history */}
-            {(totalHistoryCount > 0 || historySlots.length > 0) &&
+            {(totalHistoryCount > 0 || historySlots.length > 0 || !isDefaultList(historyParams)) &&
                 <HistoryTable
                     historySlots={historySlots}
                     totalHistoryCount={totalHistoryCount}
@@ -178,6 +234,13 @@ export default function Queue(props: Route.ComponentProps) {
                     pageSizeOptions={PAGE_SIZE_OPTIONS}
                     totalPages={historyTotalPages}
                     isLive={isHistoryLive}
+                    categories={props.loaderData.categories}
+                    listParams={historyParams}
+                    searchDraft={historyQueryDraft}
+                    onSearchDraftChange={setHistoryQueryDraft}
+                    onFilterChange={(key, value) => setHistoryParam(key, value)}
+                    onClearFilters={() => updateListParams("history", params => ["hq", "hcat", "hstatus", "hsort"].forEach(key => params.delete(key)))}
+                    onSort={(field) => setHistoryParam("hsort", nextSortValue(historyParams, field))}
                     onPageSelected={onHistoryPageSelected}
                     onPageSizeSelected={onHistoryPageSizeSelected}
                     onIsSelectedChanged={historyEvents.onSelectHistorySlots}
@@ -187,6 +250,22 @@ export default function Queue(props: Route.ComponentProps) {
             }
         </div >
     );
+}
+
+function nextSortValue(params: { sort: string | null, direction: "asc" | "desc" | null }, field: string): string {
+    if (params.sort !== field) return `${field}:asc`;
+    return params.direction === "asc" ? `${field}:desc` : "";
+}
+
+function mergePresentationSlots<T extends { nzo_id: string, isSelected?: boolean, isRemoving?: boolean }>(
+    loaded: T[],
+    previous: T[],
+): T[] {
+    const flags = new Map(previous.map(row => [row.nzo_id, {
+        isSelected: row.isSelected,
+        isRemoving: row.isRemoving,
+    }]));
+    return loaded.map(row => ({ ...row, ...flags.get(row.nzo_id) }));
 }
 
 export type PresentationHistorySlot = HistorySlot & {

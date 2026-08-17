@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.Api.SabControllers.GetHistory;
@@ -10,6 +11,12 @@ public class GetHistoryRequest
     public int Limit { get; init; } = int.MaxValue;
     public string? Category { get; init; }
     public List<Guid> NzoIds { get; init; } = [];
+    public string? Search { get; init; }
+    public HistoryItem.DownloadStatusOption? Status { get; init; }
+    public bool HasUnsupportedStatus { get; init; }
+    public bool FailedOnly { get; init; }
+    public string? Sort { get; init; }
+    public string? Direction { get; init; }
     public CancellationToken CancellationToken { get; set; }
 
 
@@ -20,6 +27,14 @@ public class GetHistoryRequest
         var pageSizeParam = context.GetRequestParam("pageSize");
         var nzoIdsParam = context.GetRequestParam("nzo_ids");
         Category = SabCategoryResolver.GetCategory(context, configManager);
+        Search = SabListQuery.NormalizeSearch(context.GetRequestParam("search"));
+        FailedOnly = IsEnabled(context.GetRequestParam("failed_only"));
+        var (parsedStatus, hasUnsupportedStatus) = ParseStatus(context.GetRequestParam("status"));
+        Status = parsedStatus;
+        HasUnsupportedStatus = !FailedOnly && hasUnsupportedStatus;
+        if (FailedOnly) Status = HistoryItem.DownloadStatusOption.Failed;
+        Sort = NormalizeSort(context.GetRequestParam("sort"));
+        Direction = SabListQuery.NormalizeDirection(context.GetRequestParam("dir"));
         CancellationToken = context.RequestAborted;
 
         if (startParam is not null)
@@ -92,4 +107,22 @@ public class GetHistoryRequest
             NzoIds = nzoIds;
         }
     }
+
+    private static bool IsEnabled(string? value) =>
+        value is "1" or "true" or "True";
+
+    private static (HistoryItem.DownloadStatusOption? status, bool unsupported) ParseStatus(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            null or "" => (null, false),
+            "completed" => (HistoryItem.DownloadStatusOption.Completed, false),
+            "failed" => (HistoryItem.DownloadStatusOption.Failed, false),
+            _ => (null, true),
+        };
+
+    private static string? NormalizeSort(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "name" or "category" or "status" or "size" or "completed" => value.Trim().ToLowerInvariant(),
+        _ => null,
+    };
 }

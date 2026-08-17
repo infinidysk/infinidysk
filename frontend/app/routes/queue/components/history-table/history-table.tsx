@@ -13,6 +13,9 @@ import { ExportNzb, Remove } from "~/routes/explore/item-menu/item-menu"
 import { canRetryHistorySlot, retryHistoryItem, retryHistoryItems, shouldAcceptRetryClick } from "./history-retry"
 import { useIsReadOnly } from "~/auth/authorization"
 import { Button, Tooltip } from "~/components/ui"
+import type { HistoryListParams } from "../../list-params"
+import { sortValue } from "../../list-params"
+import { ListToolbar } from "../list-toolbar/list-toolbar"
 
 export type HistoryTableProps = {
     historySlots: PresentationHistorySlot[],
@@ -27,6 +30,13 @@ export type HistoryTableProps = {
     onIsSelectedChanged: (nzo_ids: Set<string>, isSelected: boolean) => void,
     onIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void,
     onRemoved: (nzo_ids: Set<string>) => void,
+    categories: string[],
+    listParams: HistoryListParams,
+    searchDraft: string,
+    onSearchDraftChange: (value: string) => void,
+    onFilterChange: (key: string, value: string) => void,
+    onClearFilters: () => void,
+    onSort: (field: string) => void,
 }
 
 export function HistoryTable({
@@ -42,6 +52,13 @@ export function HistoryTable({
     onIsSelectedChanged,
     onIsRemovingChanged,
     onRemoved,
+    categories,
+    listParams,
+    searchDraft,
+    onSearchDraftChange,
+    onFilterChange,
+    onClearFilters,
+    onSort,
 }: HistoryTableProps) {
     const isReadOnly = useIsReadOnly();
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
@@ -161,12 +178,31 @@ export function HistoryTable({
             title={sectionTitle}
             {...(totalHistoryCount > 0 ? { badgeText: String(totalHistoryCount) } : {})}
         >
+            <ListToolbar
+                label="History"
+                query={searchDraft}
+                category={listParams.category}
+                status={listParams.status}
+                sort={sortValue(listParams)}
+                categories={categories}
+                statuses={[{ value: "Completed", label: "Completed" }, { value: "Failed", label: "Failed" }]}
+                sorts={[{ value: "completed:desc", label: "Newest first" }, { value: "completed:asc", label: "Oldest first" }, { value: "name:asc", label: "Name A–Z" }, { value: "name:desc", label: "Name Z–A" }, { value: "size:desc", label: "Size largest" }, { value: "size:asc", label: "Size smallest" }, { value: "status:asc", label: "Status" }, { value: "category:asc", label: "Category" }]}
+                isFiltered={!!(listParams.query || listParams.category || listParams.status || listParams.sort)}
+                onQueryChange={onSearchDraftChange}
+                onCategoryChange={value => onFilterChange("hcat", value)}
+                onStatusChange={value => onFilterChange("hstatus", value)}
+                onSortChange={value => onFilterChange("hsort", value)}
+                onClear={onClearFilters}
+            />
             <PageTable
                 headerCheckboxState={headerCheckboxState}
                 onHeaderCheckboxChange={onSelectAll}
                 footer={footer}
                 showCompleted
                 selectable={!isReadOnly}
+                sort={listParams.sort ?? undefined}
+                direction={listParams.direction}
+                onSort={onSort}
             >
                 {historySlots.map(slot =>
                     <HistoryRow

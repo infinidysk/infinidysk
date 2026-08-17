@@ -204,6 +204,19 @@ public class GetHistoryRequestTests
         Assert.Equal(100_000, clamped.GetHistoryMaxPageSize());
     }
 
+    [Fact]
+    public void FailedOnlyOverridesHistoryStatusAndParsesSort()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?status=Completed&failed_only=1&sort=completed&dir=asc");
+
+        var request = new GetHistoryRequest(context, CreateConfig(ignoreLimit: true));
+
+        Assert.Equal(HistoryItem.DownloadStatusOption.Failed, request.Status);
+        Assert.Equal("completed", request.Sort);
+        Assert.Equal("asc", request.Direction);
+    }
+
     private static ConfigManager CreateConfig(bool ignoreLimit, string? maxPageSize = null)
     {
         var items = new List<ConfigItem>

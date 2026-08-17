@@ -15,6 +15,21 @@ InfiniDysk implements the SABnzbd-compatible operations used by Sonarr, Radarr, 
 
 Queue and history filters accept both `cat` and `category`. The default category sentinel returned by `get_cats` is `*`.
 
+## Queue and history search [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
+
+Queue and history listing accept a literal, case-insensitive `search` term over
+both the job name and NZB filename. Search is not regular-expression syntax.
+They also accept one `cat`/`category` and one `status`; comma-separated filter
+lists are not supported. Queue statuses are `Downloading`, `Queued`, and
+`Paused`; history statuses are `Completed` and `Failed`. History additionally
+accepts `failed_only=1` as shorthand for `status=Failed`.
+
+The admin UI uses InfiniDysk-specific `sort` and `dir=asc|desc` parameters for
+display-only ordering. Queue supports `name`, `category`, `status`, and `size`;
+history also supports `completed`. Text sorting is case-insensitive. Unknown
+sort values retain the endpoint's normal order. Queue display sorting never
+changes download priority or physical queue order.
+
 ## Pause, resume, and speed limit [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 `mode=pause` / `mode=resume` stop and restart **new** queue dequeues. Workers already downloading finish naturally unless a per-job pause cancels them. WebDAV mounts keep serving — pause does not interrupt playback. Queue JSON reports `paused` accurately. Items added with SAB priority `-2` (Paused) are skipped until their priority changes; queue slots report `status: Paused` for those jobs.

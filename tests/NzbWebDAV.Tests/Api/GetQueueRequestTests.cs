@@ -53,4 +53,18 @@ public class GetQueueRequestTests
         var ex = Assert.Throws<BadHttpRequestException>(() => new GetQueueRequest(context, new ConfigManager()));
         Assert.Equal("Invalid limit parameter", ex.Message);
     }
+
+    [Fact]
+    public void ParsesListFiltersAndDisplaySort()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?search=The%20Show&status=paused&sort=name&dir=asc");
+
+        var request = new GetQueueRequest(context, new ConfigManager());
+
+        Assert.Equal("The Show", request.Search);
+        Assert.Equal("Paused", request.Status);
+        Assert.Equal("name", request.Sort);
+        Assert.Equal("asc", request.Direction);
+    }
 }

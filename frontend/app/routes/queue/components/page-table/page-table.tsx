@@ -6,6 +6,7 @@ import { StatusBadge } from "../status-badge/status-badge";
 import { formatFileSize } from "~/utils/file-size";
 import type { ProviderUsage } from "~/clients/backend-client.server";
 import { Badge } from "~/components/ui";
+import { Icon } from "~/components/ui";
 
 const desktopHeaderClass = "hidden min-[900px]:table-cell w-[120px] text-center text-xs font-semibold uppercase tracking-wide";
 const desktopCellClass = "hidden min-[900px]:table-cell max-w-[200px] min-w-0 overflow-hidden whitespace-nowrap px-1 py-3 text-center align-middle";
@@ -19,9 +20,19 @@ export type PageTableProps = {
     footer?: ReactNode,
     showCompleted?: boolean,
     selectable?: boolean,
+    sort?: string | undefined,
+    direction?: "asc" | "desc" | null | undefined,
+    onSort?: (field: string) => void,
 }
 
-export function PageTable({ children, headerCheckboxState, onHeaderCheckboxChange, footer, showCompleted, selectable = true }: PageTableProps) {
+export function PageTable({ children, headerCheckboxState, onHeaderCheckboxChange, footer, showCompleted, selectable = true, sort, direction, onSort }: PageTableProps) {
+    const sortableHeader = (label: string, field: string, className = desktopHeaderClass) => (
+        <th className={className} aria-sort={sort === field ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+            {onSort ? <button type="button" className="inline-flex items-center gap-1 hover:text-primary" onClick={() => onSort(field)}>
+                {label}<Icon name={sort === field && direction === "asc" ? "arrow_upward" : "arrow_downward"} className={`!text-[14px] ${sort === field ? "" : "opacity-30"}`} />
+            </button> : label}
+        </th>
+    );
     return (
         <div className="-mx-4 overflow-x-auto sm:-mx-6">
             <table className="table table-zebra table-sm mb-0 w-full min-w-0 text-base-content min-[900px]:min-w-[880px]">
@@ -29,15 +40,19 @@ export function PageTable({ children, headerCheckboxState, onHeaderCheckboxChang
                     <tr className="border-base-content/10 [&_th]:bg-base-200 [&_th]:text-base-content/70">
                         <th className="min-[900px]:w-1/2 w-auto py-4 pl-0 text-left text-xs font-semibold uppercase tracking-wide">
                             {selectable
-                                ? <TriCheckbox state={headerCheckboxState} onChange={onHeaderCheckboxChange}>Name</TriCheckbox>
-                                : "Name"}
+                                ? <TriCheckbox state={headerCheckboxState} onChange={onHeaderCheckboxChange}>
+                                    {onSort ? <button type="button" className="inline-flex items-center gap-1 hover:text-primary" onClick={event => { event.stopPropagation(); onSort("name"); }}>
+                                        Name<Icon name={sort === "name" && direction === "asc" ? "arrow_upward" : "arrow_downward"} className={`!text-[14px] ${sort === "name" ? "" : "opacity-30"}`} />
+                                    </button> : "Name"}
+                                </TriCheckbox>
+                                : sortableHeader("Name", "name", "min-[900px]:w-1/2 w-auto py-4 pl-0 text-left text-xs font-semibold uppercase tracking-wide")}
                         </th>
-                        <th className={desktopHeaderClass}>Category</th>
+                        {sortableHeader("Category", "category")}
                         <th className={desktopHeaderClass}>Indexer</th>
                         <th className={desktopHeaderClass}>Provider</th>
-                        <th className={desktopHeaderClass}>Status</th>
-                        <th className={desktopHeaderClass}>Size</th>
-                        {showCompleted && <th className={desktopHeaderClass}>Completed</th>}
+                        {sortableHeader("Status", "status")}
+                        {sortableHeader("Size", "size")}
+                        {showCompleted && sortableHeader("Completed", "completed")}
                         <th className="w-[100px] py-4 text-center text-xs font-semibold">Actions</th>
                     </tr>
                 </thead>

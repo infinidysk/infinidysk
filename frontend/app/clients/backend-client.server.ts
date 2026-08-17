@@ -5,6 +5,30 @@ import {
 
 export type { StreamTracingStatus };
 
+export type ListOptions = {
+    search?: string | undefined;
+    category?: string | undefined;
+    status?: string | undefined;
+    sort?: string | undefined;
+    direction?: "asc" | "desc" | undefined;
+};
+
+function listParams(
+    mode: "queue" | "history",
+    limit: number,
+    start: number,
+    options: ListOptions,
+    limitKey: "limit" | "pageSize",
+): string {
+    const params = new URLSearchParams({ mode, start: String(start), [limitKey]: String(limit) });
+    if (options.search) params.set("search", options.search);
+    if (options.category) params.set("cat", options.category);
+    if (options.status) params.set("status", options.status);
+    if (options.sort) params.set("sort", options.sort);
+    if (options.direction) params.set("dir", options.direction);
+    return params.toString();
+}
+
 export class WebdavDirectoryNotFoundError extends Error {
     public constructor(public readonly directory: string) {
         super("The WebDAV directory does not exist.");
@@ -130,13 +154,15 @@ class BackendClient {
         return data.authenticated;
     }
 
-    public async getQueue(limit: number, start: number = 0): Promise<QueueResponse> {
-        const data = await call<{ queue: QueueResponse }>(`/api?mode=queue&start=${start}&limit=${limit}`, "Failed to get queue");
+    public async getQueue(limit: number, start: number = 0, options: ListOptions = {}): Promise<QueueResponse> {
+        const params = listParams("queue", limit, start, options, "limit");
+        const data = await call<{ queue: QueueResponse }>(`/api?${params}`, "Failed to get queue");
         return data.queue;
     }
 
-    public async getHistory(limit: number, start: number = 0): Promise<HistoryResponse> {
-        const data = await call<{ history: HistoryResponse }>(`/api?mode=history&start=${start}&pageSize=${limit}`, "Failed to get history");
+    public async getHistory(limit: number, start: number = 0, options: ListOptions = {}): Promise<HistoryResponse> {
+        const params = listParams("history", limit, start, options, "pageSize");
+        const data = await call<{ history: HistoryResponse }>(`/api?${params}`, "Failed to get history");
         return data.history;
     }
 

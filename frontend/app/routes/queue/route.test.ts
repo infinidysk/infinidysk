@@ -73,8 +73,12 @@ describe("queue route loader", () => {
 
     const result = await loader(loaderRequest("?qp=2&hp=3&qps=25&hps=250"));
 
-    expect(getQueueMock).toHaveBeenCalledWith(25, 25);
-    expect(getHistoryMock).toHaveBeenCalledWith(250, 500);
+    expect(getQueueMock).toHaveBeenCalledWith(25, 25, {
+      search: "", category: "", status: "", sort: undefined, direction: undefined,
+    });
+    expect(getHistoryMock).toHaveBeenCalledWith(250, 500, {
+      search: "", category: "", status: "", sort: undefined, direction: undefined,
+    });
     expect(getConfigMock).toHaveBeenCalledWith([
       "api.categories",
       "api.manual-category",
@@ -90,6 +94,8 @@ describe("queue route loader", () => {
       historyPage: 3,
       queuePageSize: 25,
       historyPageSize: 250,
+      queueParams: { query: "", category: "", status: "", sort: null, direction: null },
+      historyParams: { query: "", category: "", status: "", sort: null, direction: null },
     });
   });
 
@@ -100,8 +106,12 @@ describe("queue route loader", () => {
 
     const result = await loader(loaderRequest("?qp=0&hp=invalid&qps=10&hps=999"));
 
-    expect(getQueueMock).toHaveBeenCalledWith(100, 0);
-    expect(getHistoryMock).toHaveBeenCalledWith(100, 0);
+    expect(getQueueMock).toHaveBeenCalledWith(100, 0, {
+      search: "", category: "", status: "", sort: undefined, direction: undefined,
+    });
+    expect(getHistoryMock).toHaveBeenCalledWith(100, 0, {
+      search: "", category: "", status: "", sort: undefined, direction: undefined,
+    });
     expect(result).toMatchObject({
       queueSlots: [],
       historySlots: [],
@@ -113,6 +123,21 @@ describe("queue route loader", () => {
       historyPage: 1,
       queuePageSize: 100,
       historyPageSize: 100,
+    });
+  });
+
+  it("passes independent queue and history filters to the server", async () => {
+    getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getConfigMock.mockResolvedValueOnce([]);
+
+    await loader(loaderRequest("?qq=show&qcat=tv&qstatus=Paused&qsort=size:desc&hq=film&hcat=movies&hstatus=Failed&hsort=completed:asc"));
+
+    expect(getQueueMock).toHaveBeenCalledWith(100, 0, {
+      search: "show", category: "tv", status: "Paused", sort: "size", direction: "desc",
+    });
+    expect(getHistoryMock).toHaveBeenCalledWith(100, 0, {
+      search: "film", category: "movies", status: "Failed", sort: "completed", direction: "asc",
     });
   });
 

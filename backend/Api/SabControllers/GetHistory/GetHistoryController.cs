@@ -24,14 +24,18 @@ public class GetHistoryController(
             query = query.Where(q => request.NzoIds.Contains(q.Id));
         if (request.Category != null)
             query = query.Where(q => q.Category == request.Category);
+        query = SabListQuery.ApplySearch(query, request.Search);
+        if (request.HasUnsupportedStatus)
+            query = query.Where(_ => false);
+        else if (request.Status is { } status)
+            query = query.Where(q => q.DownloadStatus == status);
 
         // get total count
         var totalCountPromise = query
             .CountAsync(request.CancellationToken);
 
         // get history items
-        var historyItemsPromise = query
-            .OrderByDescending(q => q.CreatedAt)
+        var historyItemsPromise = SabListQuery.ApplyHistorySort(query, request.Sort, request.Direction)
             .Skip(request.Start)
             .Take(request.Limit)
             .ToArrayAsync(request.CancellationToken);

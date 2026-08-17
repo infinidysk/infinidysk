@@ -74,6 +74,20 @@ describe("BackendClient", () => {
     ]);
   });
 
+  it("encodes queue and history list filters", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ queue: { slots: [], noofslots: 0 } }))
+      .mockResolvedValueOnce(jsonResponse({ history: { slots: [], noofslots: 0 } }));
+
+    await backendClient.getQueue(25, 50, { search: "A & B", category: "tv", status: "Paused", sort: "name", direction: "asc" });
+    await backendClient.getHistory(10, 20, { search: "movie", status: "Failed", sort: "completed", direction: "desc" });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://backend/api?mode=queue&start=50&limit=25&search=A+%26+B&cat=tv&status=Paused&sort=name&dir=asc",
+      "http://backend/api?mode=history&start=20&pageSize=10&search=movie&status=Failed&sort=completed&dir=desc",
+    ]);
+  });
+
   it("gets, updates, and defaults config items", async () => {
     const configItems = [
       {

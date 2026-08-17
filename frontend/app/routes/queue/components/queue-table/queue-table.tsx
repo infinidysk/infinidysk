@@ -10,6 +10,9 @@ import { EmptyQueue } from "../empty-queue/empty-queue"
 import { SimpleDropdown } from "../simple-dropdown/simple-dropdown"
 import { Button, Tooltip } from "~/components/ui"
 import { useIsReadOnly } from "~/auth/authorization"
+import type { QueueListParams } from "../../list-params"
+import { sortValue } from "../../list-params"
+import { ListToolbar } from "../list-toolbar/list-toolbar"
 import {
     canPauseQueueSlot,
     canResumeQueueSlot,
@@ -37,6 +40,12 @@ export type QueueTableProps = {
     onRemoved: (nzo_ids: Set<string>) => void,
     onMovedToTop: (nzo_ids: Set<string>) => void,
     onUploadClicked?: () => void;
+    listParams: QueueListParams,
+    searchDraft: string,
+    onSearchDraftChange: (value: string) => void,
+    onFilterChange: (key: string, value: string) => void,
+    onClearFilters: () => void,
+    onSort: (field: string) => void,
 }
 
 async function moveQueueItemsToTop(nzoIds: string[]): Promise<boolean> {
@@ -76,6 +85,12 @@ export function QueueTable({
     onRemoved,
     onMovedToTop,
     onUploadClicked,
+    listParams,
+    searchDraft,
+    onSearchDraftChange,
+    onFilterChange,
+    onClearFilters,
+    onSort,
 }: QueueTableProps) {
     const isReadOnly = useIsReadOnly();
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
@@ -292,6 +307,22 @@ export function QueueTable({
             subTitle={sectionSubTitle}
             {...(totalQueueCount > 0 ? { badgeText: String(totalQueueCount) } : {})}
         >
+            <ListToolbar
+                label="Queue"
+                query={searchDraft}
+                category={listParams.category}
+                status={listParams.status}
+                sort={sortValue(listParams)}
+                categories={categories}
+                statuses={[{ value: "Downloading", label: "Downloading" }, { value: "Queued", label: "Queued" }, { value: "Paused", label: "Paused" }]}
+                sorts={[{ value: "name:asc", label: "Name A–Z" }, { value: "name:desc", label: "Name Z–A" }, { value: "size:desc", label: "Size largest" }, { value: "size:asc", label: "Size smallest" }, { value: "status:asc", label: "Status" }, { value: "category:asc", label: "Category" }]}
+                isFiltered={!!(listParams.query || listParams.category || listParams.status || listParams.sort)}
+                onQueryChange={onSearchDraftChange}
+                onCategoryChange={value => onFilterChange("qcat", value)}
+                onStatusChange={value => onFilterChange("qstatus", value)}
+                onSortChange={value => onFilterChange("qsort", value)}
+                onClear={onClearFilters}
+            />
             {queueSlots?.length == 0 ? (
                 <EmptyQueue {...(!isReadOnly && onUploadClicked ? { onUploadClicked } : {})} />
             ) : (
@@ -300,6 +331,9 @@ export function QueueTable({
                     onHeaderCheckboxChange={onSelectAll}
                     footer={footer}
                     selectable={!isReadOnly}
+                    sort={listParams.sort ?? undefined}
+                    direction={listParams.direction}
+                    onSort={onSort}
                 >
                     {queueSlots.map(slot =>
                         <QueueRow
