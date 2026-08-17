@@ -5,7 +5,7 @@ import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { websocketServer } from "./websocket.server";
-import { safeDecodePath, shouldProxyToBackend } from "./proxy-path";
+import { isBackendApiDocsPath, safeDecodePath, shouldProxyToBackend } from "./proxy-path";
 import { logger } from "./logger";
 import { authMiddleware } from "~/auth/auth-middleware.server";
 import { getSessionUser, isAuthenticated } from "~/auth/authentication.server";
@@ -168,6 +168,15 @@ app.use(oidcRouter);
 
 // Require authentication for all React Router routes
 app.use(authMiddleware);
+
+// API documentation is opt-in on the backend, and is protected by the frontend
+// session when accessed through the public UI port. Do not move this beside the
+// early backend proxy above: that middleware intentionally runs before auth for
+// WebDAV and API clients.
+app.use((req, res, next) => {
+  if (isBackendApiDocsPath(req.path)) return forwardToBackend(req, res, next);
+  next();
+});
 
 // Let frontend handle all other requests
 app.use(

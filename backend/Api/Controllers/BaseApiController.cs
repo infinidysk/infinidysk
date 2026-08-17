@@ -7,6 +7,7 @@ using Serilog;
 
 namespace NzbWebDAV.Api.Controllers;
 
+[ApiExplorerSettings(GroupName = "admin")]
 public abstract class BaseApiController : ControllerBase
 {
     protected virtual bool RequiresAuthentication => true;

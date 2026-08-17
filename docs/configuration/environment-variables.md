@@ -90,6 +90,7 @@ or restrict backend capabilities when enforcement is required.
 | `LOG_LEVEL` | Information | Serilog minimum level |
 | `LOG_BUFFER_SIZE` | `2000` | In-memory log buffer for UI (100–50000) |
 | `STREAM_TRACE_EVENTS` | `0` (off) | Opt-in stream trace capacity, always-on with no expiry; the Settings → Support toggle can also set capacity (20k–200k) for timed captures |
+| `ENABLE_API_DOCS` [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `false` | Enables the contributor-facing Scalar reference at `/scalar/` and its admin-only OpenAPI document at `/openapi/admin.json`; never enabled by default in Docker |
 | `TRUSTED_PROXY_CIDRS` | loopback | Comma-separated IPs/CIDRs trusted for forwarded headers |
 | `DISABLE_WEBDAV_AUTH` | unset | Disables WebDAV auth (**dangerous**) |
 | `RESET_ADMIN_PASSWORD` | unset | `true` deletes the admin account on next startup, forcing re-onboarding. **Remove after use.** |

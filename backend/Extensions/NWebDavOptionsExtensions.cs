@@ -14,6 +14,8 @@ public static class NWebDavOptionsExtensions
                           !context.Request.Path.StartsWithSegments("/metrics", StringComparison.Ordinal) &&
                           !context.Request.Path.StartsWithSegments("/ws", StringComparison.Ordinal) &&
                           !context.Request.Path.StartsWithSegments("/p", StringComparison.Ordinal) &&
+                          !context.Request.Path.StartsWithSegments("/openapi", StringComparison.Ordinal) &&
+                          !context.Request.Path.StartsWithSegments("/scalar", StringComparison.Ordinal) &&
                           !context.Request.Path.StartsWithSegments("/adapters", StringComparison.Ordinal);
     }
 }

@@ -40,6 +40,15 @@ export function isBackendMetricsPath(pathname: string): boolean {
   return decodedPath === "/metrics";
 }
 
+/** True when the path is an opt-in backend API documentation endpoint. */
+export function isBackendApiDocsPath(pathname: string): boolean {
+  const decodedPath = safeDecodePath(pathname);
+  return decodedPath === "/openapi"
+    || decodedPath?.startsWith("/openapi/") === true
+    || decodedPath === "/scalar"
+    || decodedPath?.startsWith("/scalar/") === true;
+}
+
 export function shouldProxyToBackend(method: string, pathname: string): boolean {
   const normalizedMethod = method.toUpperCase();
   if (normalizedMethod === "PROPFIND" || normalizedMethod === "OPTIONS") {
@@ -56,5 +65,5 @@ export function shouldProxyToBackend(method: string, pathname: string): boolean 
 export function shouldSkipCompression(pathname: string): boolean {
   const decodedPath = safeDecodePath(pathname);
   if (decodedPath === null) return false;
-  return matchesBackendPathPrefix(decodedPath);
+  return matchesBackendPathPrefix(decodedPath) || isBackendApiDocsPath(decodedPath);
 }

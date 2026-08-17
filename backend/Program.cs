@@ -9,6 +9,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
+using Scalar.AspNetCore;
+using NzbWebDAV.Api.OpenApi;
 using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Clients.Rclone;
@@ -199,10 +201,13 @@ public partial class Program
 
             // initialize webapp
             var builder = WebApplication.CreateBuilder(args);
+            var apiDocsEnabled = AdminOpenApiExtensions.IsEnabled(builder.Environment);
             var maxRequestBodySize = EnvironmentUtil.GetLongVariable("MAX_REQUEST_BODY_SIZE") ?? 100 * 1024 * 1024;
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
             builder.Services.AddControllers();
+            if (apiDocsEnabled)
+                builder.Services.AddOpenApi(AdminOpenApiExtensions.DocumentName, AdminOpenApiExtensions.Configure);
             builder.Services.AddHealthChecks()
                 .AddCheck<StreamingReadinessCheck>(
                     "streaming_readiness",
@@ -381,6 +386,16 @@ public partial class Program
             });
             app.Map("/ws", websocketManager.HandleRoute);
             app.MapControllers();
+            if (apiDocsEnabled)
+            {
+                app.MapOpenApi();
+                app.MapScalarApiReference(options => options
+                    .WithTitle("InfiniDysk Admin API")
+                    .AddDocument(AdminOpenApiExtensions.DocumentName, "Admin REST API")
+                    .AddPreferredSecuritySchemes("ApiKey")
+                    .DisableAgent()
+                    .DisableDefaultFonts());
+            }
             app.MapMetrics("/metrics", app.Services.GetRequiredService<CollectorRegistry>());
             app.UseWebdavBasicAuthentication();
             app.UseNWebDav();

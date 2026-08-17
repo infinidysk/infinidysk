@@ -18,6 +18,7 @@ namespace NzbWebDAV.Api.Controllers.UsenetMigration;
 /// API-key check and error shape.
 /// </summary>
 [ApiController]
+[ApiExplorerSettings(GroupName = "admin")]
 public abstract class UsenetMigrationBaseController : ControllerBase
 {
     protected async Task<IActionResult> GuardedAsync(Func<Task<IActionResult>> handler)

@@ -21,6 +21,8 @@ public class NWebDavOptionsFilterTests
     [InlineData("/ready")]
     [InlineData("/ws")]
     [InlineData("/p")]
+    [InlineData("/openapi/admin.json")]
+    [InlineData("/scalar/")]
     [InlineData("/adapters")]
     [InlineData("/adapters/addon/token/manifest.json")]
     public void LeavesApplicationRoutesAlone(string path)

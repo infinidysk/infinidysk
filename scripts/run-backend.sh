@@ -74,6 +74,10 @@ export ASPNETCORE_URLS="${ASPNETCORE_URLS:-$BACKEND_URL}"
 # Local-dev defaults only (Docker/entrypoint leave LOG_LEVEL unset → Information).
 export LOG_LEVEL="${LOG_LEVEL:-Debug}"
 export LOG_BUFFER_SIZE="${LOG_BUFFER_SIZE:-2000}"
+# The interactive admin API reference is contributor tooling. Docker keeps it
+# disabled unless explicitly enabled, while the preferred local workflow makes
+# it available at /scalar without extra setup.
+export ENABLE_API_DOCS="${ENABLE_API_DOCS:-true}"
 # STREAM_TRACE_EVENTS is deliberately not defaulted: tracing is togglable from
 # Settings -> Support, and forcing it on here hid that path during local testing.
 
