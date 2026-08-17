@@ -136,7 +136,7 @@ describe("queue route loader", () => {
 
     await loader(loaderRequest("?qq=show&qcat=tv&qstatus=Paused&qsort=size:desc&hq=film&hcat=movies&hstatus=Failed&hsort=completed:asc"));
 
-    expect(getQueueMock).toHaveBeenCalledWith(100, 0, {
+    expect(getQueueMock).toHaveBeenCalledWith(101, 0, {
       search: "show", category: "tv", status: "Paused", sort: "size", direction: "desc",
     });
     expect(getHistoryMock).toHaveBeenCalledWith(100, 0, {
