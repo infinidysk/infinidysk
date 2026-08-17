@@ -21,6 +21,16 @@ when InfiniDysk restarts.
 
 Health result rows prune by age (**Maintenance** retention or `DATABASE_HEALTHCHECK_RETENTION_DAYS`). Reset counters from Maintenance when needed.
 
+## Repair history [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
+
+The **Health** page lists items that Background Repairs automatically deleted or repaired, with the
+time and reason for the action. New rows retain the original NZB filename and release name so you
+can locate a replacement; rows created before this feature show the affected WebDAV path instead.
+
+The list follows Health-check retention and is cleared with the Health-check statistics reset in
+**Settings → Maintenance**. It records automatic health actions only — deleting items manually or
+through the API does not add a repair-history row.
+
 ## Manual checks
 
 Use the Health UI / repairs flows in the app to inspect failures. Known transport issues should appear as clear warnings in logs rather than opaque crashes — see [Logs](logs-crash-dumps.md).
