@@ -126,7 +126,7 @@ describe("BackendClient", () => {
 
   it("gets health queue and filtered paginated history", async () => {
     const queue = { uncheckedCount: 0, items: [] };
-    const history = { stats: [], items: [] };
+    const history = { stats: [], items: [], totalCount: 0 };
     fetchMock
       .mockResolvedValueOnce(jsonResponse(queue))
       .mockResolvedValueOnce(jsonResponse(history));

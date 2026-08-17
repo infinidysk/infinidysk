@@ -23,6 +23,8 @@ const desktopHeaderClass =
     "hidden min-[900px]:table-cell px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide";
 const desktopCellClass =
     "hidden min-[900px]:table-cell max-w-[240px] px-3 py-3 align-top text-xs text-base-content/70";
+// Numeric value mirrors the backend RepairAction enum declared in
+// ~/clients/backend-client.server (a .server module, so its enums cannot be value-imported here).
 const RepairActionDeleted: HealthCheckResult["repairStatus"] = 2;
 
 export function HealthHistoryTable({
