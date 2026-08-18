@@ -747,62 +747,161 @@ public partial class Program
         var argIndex = args.ToList().IndexOf("--db-migration");
         var targetMigration = args.Length > argIndex + 1 ? args[argIndex + 1] : null;
 
-        await using var databaseContext = new PostgresDavDatabaseContext();
-        await using var metricsContext = new MetricsDbContext();
-
-        var pending = (await databaseContext.Database
-                .GetPendingMigrationsAsync(ct)
-                .ConfigureAwait(false))
-            .ToList();
-        var pendingMetrics = (await metricsContext.Database
-                .GetPendingMigrationsAsync(ct)
-                .ConfigureAwait(false))
-            .ToList();
+        // Restore staging is provider-independent: on PostgreSQL only the local
+        // SQLite stores (metrics.sqlite, warden.db) are swapped; a staged db.sqlite
+        // is rejected by DatabaseRestoreRunner.
+        var backupStore = new DatabaseBackupStore();
+        backupStore.EnsureInitialized();
+        var pendingRestore = backupStore.ReadPendingRestore();
+        var hasPendingRestore = pendingRestore is not null
+            && pendingRestore.StagedFiles.Count > 0
+            && pendingRestore.StagedFiles.All(name =>
+                File.Exists(Path.Join(backupStore.RestoreStagingRoot, name)));
+        if (pendingRestore is not null && !hasPendingRestore)
+        {
+            Log.Warning(
+                "Discarding incomplete pending restore for backup {BackupId}",
+                pendingRestore.BackupId);
+            backupStore.ClearPendingRestore();
+            backupStore.ClearRestoreStaging();
+            pendingRestore = null;
+        }
 
         if (targetMigration is not null)
         {
+            if (hasPendingRestore)
+            {
+                var progress = new MigrationProgress();
+                progress.Initialize(DatabaseRestoreRunner.GetRestoreSteps(pendingRestore!));
+                await using var statusServer = await MigrationStatusServer.StartAsync(progress, ct).ConfigureAwait(false);
+                await DatabaseRestoreRunner.ApplyPendingRestoreAsync(progress, ct).ConfigureAwait(false);
+                if (statusServer is not null)
+                    await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+            }
+
             Log.Information("Applying PostgreSQL migrations through {Target}", targetMigration);
+            await using var databaseContext = new PostgresDavDatabaseContext();
             await databaseContext.Database.MigrateAsync(targetMigration, ct).ConfigureAwait(false);
+            await using var metricsContext = new MetricsDbContext();
+            await DatabaseStartupGuards
+                .ClearAbandonedMigrationLockAsync(metricsContext, ct)
+                .ConfigureAwait(false);
             await metricsContext.Database.MigrateAsync(ct).ConfigureAwait(false);
             return;
         }
 
-        if (pending.Count == 0 && pendingMetrics.Count == 0)
+        // When a restore is pending we always show the status page, even if there
+        // are no pending EF migrations after the swap.
+        if (!hasPendingRestore)
         {
-            Log.Information("No pending PostgreSQL or metrics migrations");
-            return;
+            await using var probeContext = new PostgresDavDatabaseContext();
+            var pendingProbe = (await probeContext.Database
+                    .GetPendingMigrationsAsync(ct)
+                    .ConfigureAwait(false))
+                .ToList();
+            await using var metricsProbeContext = new MetricsDbContext();
+            var pendingMetricsProbe = (await metricsProbeContext.Database
+                    .GetPendingMigrationsAsync(ct)
+                    .ConfigureAwait(false))
+                .ToList();
+
+            if (pendingProbe.Count == 0 && pendingMetricsProbe.Count == 0)
+            {
+                Log.Information("No pending PostgreSQL or metrics migrations");
+                await DatabaseStartupGuards
+                    .ClearAbandonedMigrationLockAsync(metricsProbeContext, ct)
+                    .ConfigureAwait(false);
+                await metricsProbeContext.Database.MigrateAsync(ct).ConfigureAwait(false);
+                return;
+            }
         }
 
-        var steps = pending
-            .Select(id => new MigrationProgress.MigrationStep(
-                id, MigrationProgress.FriendlyName(id), MigrationProgress.IsSlow(id)))
-            .ToList();
-        steps.Add(new MigrationProgress.MigrationStep(
-            MigrationProgress.MetricsStepId, "Metrics database", false));
+        var steps = new List<MigrationProgress.MigrationStep>();
+        if (hasPendingRestore)
+            steps.AddRange(DatabaseRestoreRunner.GetRestoreSteps(pendingRestore!));
 
-        var progress = new MigrationProgress();
-        progress.Initialize(steps);
-        await using var statusServer = await MigrationStatusServer.StartAsync(progress, ct).ConfigureAwait(false);
+        var progressFull = new MigrationProgress();
+        progressFull.Initialize(steps);
+        await using var statusServerFull = await MigrationStatusServer.StartAsync(progressFull, ct).ConfigureAwait(false);
+
         try
         {
-            foreach (var step in steps)
+            if (hasPendingRestore)
             {
-                progress.BeginStep(step.Id);
-                if (step.Id == MigrationProgress.MetricsStepId)
-                    await metricsContext.Database.MigrateAsync(ct).ConfigureAwait(false);
-                else
-                    await databaseContext.Database.MigrateAsync(step.Id, ct).ConfigureAwait(false);
-                progress.CompleteStep(step.Id);
+                Log.Information("Applying staged database restore for backup {BackupId}", pendingRestore!.BackupId);
+                await DatabaseRestoreRunner.ApplyPendingRestoreAsync(progressFull, ct).ConfigureAwait(false);
             }
 
-            progress.Complete();
+            // Pending migrations are computed after the restore so the metrics step
+            // reflects the restored metrics database.
+            await using var databaseContext = new PostgresDavDatabaseContext();
+            var pending = (await databaseContext.Database
+                    .GetPendingMigrationsAsync(ct)
+                    .ConfigureAwait(false))
+                .ToList();
+
+            var remainingSteps = pending
+                .Select(id => new MigrationProgress.MigrationStep(
+                    id, MigrationProgress.FriendlyName(id), MigrationProgress.IsSlow(id)))
+                .ToList();
+            remainingSteps.Add(new MigrationProgress.MigrationStep(
+                MigrationProgress.MetricsStepId, "Metrics database", false));
+
+            var allSteps = new List<MigrationProgress.MigrationStep>();
+            if (hasPendingRestore)
+                allSteps.AddRange(DatabaseRestoreRunner.GetRestoreSteps(pendingRestore!));
+            allSteps.AddRange(remainingSteps);
+            progressFull.Initialize(allSteps);
+            if (hasPendingRestore)
+            {
+                foreach (var step in DatabaseRestoreRunner.GetRestoreSteps(pendingRestore!))
+                {
+                    progressFull.BeginStep(step.Id);
+                    progressFull.CompleteStep(step.Id);
+                }
+            }
+
+            if (pending.Count == 0)
+                Log.Information("No pending PostgreSQL migrations");
+
+            for (var i = 0; i < remainingSteps.Count; i++)
+            {
+                var step = remainingSteps[i];
+                Log.Information(
+                    "Database maintenance step {Index}/{Total}: {Name}",
+                    i + 1, remainingSteps.Count, step.Name);
+                progressFull.BeginStep(step.Id);
+
+                if (step.Id == MigrationProgress.MetricsStepId)
+                {
+                    await using var metricsContext = new MetricsDbContext();
+                    await DatabaseStartupGuards
+                        .ClearAbandonedMigrationLockAsync(metricsContext, ct)
+                        .ConfigureAwait(false);
+                    await metricsContext.Database.MigrateAsync(ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await databaseContext.Database.MigrateAsync(step.Id, ct).ConfigureAwait(false);
+                }
+
+                progressFull.CompleteStep(step.Id);
+            }
+
+            progressFull.Complete();
             Log.Information("PostgreSQL database migrations completed");
-            if (statusServer is not null)
+            if (statusServerFull is not null)
                 await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            progress.Fail(ex.Message);
+            progressFull.Fail(ex.Message);
+            if (statusServerFull is not null)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(3), CancellationToken.None).ConfigureAwait(false); }
+                catch (OperationCanceledException) { /* shutting down */ }
+            }
+
             throw;
         }
     }
