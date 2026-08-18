@@ -96,20 +96,9 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 return true;
             }
 
-            // SQLITE_BUSY, SQLITE_LOCKED, SQLITE_READONLY, SQLITE_FULL
-            if (current is SqliteException { SqliteErrorCode: 5 or 6 or 8 or 13 })
-            {
-                reason = current.Message;
-                return true;
-            }
-
-            // PostgreSQL transient failures: serialization failure, deadlock, lock timeout
-            if (current is PostgresException
-                {
-                    SqlState: PostgresErrorCodes.SerializationFailure
-                or PostgresErrorCodes.DeadlockDetected
-                or PostgresErrorCodes.LockNotAvailable
-                })
+            // SQLITE_BUSY/LOCKED/READONLY/FULL or PostgreSQL serialization failure /
+            // deadlock / lock timeout — transient contention the next run retries.
+            if (current.IsTransientDatabaseException())
             {
                 reason = current.Message;
                 return true;
@@ -249,9 +238,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
         // Guard uses distinct dav-item ids, not raw symlink/strm count (many links can
         // point at the same item and otherwise sail past the < 5 safety check).
         // The alias stays quoted: EF wraps SqlQuery in a subselect and references
-        // s."Value" case-sensitively on PostgreSQL.
+        // s."Value" case-sensitively on PostgreSQL. COUNT is cast to int because
+        // PostgreSQL returns bigint, which Npgsql will not read as int.
         return await dbContext.Database
-            .SqlQueryRaw<int>("SELECT COUNT(*) AS \"Value\" FROM TMP_LINKED_FILES")
+            .SqlQueryRaw<int>("SELECT CAST(COUNT(*) AS INT) AS \"Value\" FROM TMP_LINKED_FILES")
             .FirstAsync()
             .ConfigureAwait(false);
     }
@@ -389,10 +379,12 @@ public class RemoveUnlinkedFilesTask : BaseTask
         await using var dbContext = CreateContext();
         var usenetFileType = (int)DavItem.ItemType.UsenetFile;
 
+        // COUNT is cast to int because PostgreSQL returns bigint, which Npgsql
+        // will not read as int.
         return await dbContext.Database
             .SqlQuery<int>(
                 $"""
-                 SELECT COUNT(i."Id") AS "Value" FROM "DavItems" i
+                 SELECT CAST(COUNT(i."Id") AS INT) AS "Value" FROM "DavItems" i
                  WHERE i."Type" = {usenetFileType}
                    AND i."HistoryItemId" IS NULL
                    AND i."CreatedAt" < {createdBefore}
@@ -411,10 +403,12 @@ public class RemoveUnlinkedFilesTask : BaseTask
         // the link join so the safety ratio compares the same population.
         // Join as t.Id = i.Id so SQLite inherits NOCASE from TMP_LINKED_FILES (left operand)
         // and can seek the PK; i.Id = t.Id would use BINARY and miss both index and casing.
+        // COUNT is cast to int because PostgreSQL returns bigint, which Npgsql
+        // will not read as int.
         var count = await dbContext.Database
             .SqlQuery<int>(
                 $"""
-                 SELECT COUNT(i."Id") AS "Value" FROM "DavItems" i
+                 SELECT CAST(COUNT(i."Id") AS INT) AS "Value" FROM "DavItems" i
                  LEFT JOIN TMP_LINKED_FILES t ON t.Id = i."Id"
                  WHERE i."Type" = {usenetFileType}
                    AND i."HistoryItemId" IS NULL
