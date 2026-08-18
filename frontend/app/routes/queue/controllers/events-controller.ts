@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import type { HistorySlot, QueueSlot } from "~/clients/backend-client.server";
+import type { HistorySlot, ProviderUsage, QueueSlot } from "~/clients/backend-client.server";
 import type { PresentationHistorySlot, PresentationQueueSlot, UploadingFile } from "../route";
 
 export type QueueEvents = {
@@ -23,6 +23,42 @@ export type HistoryEvents = {
 /** Apply a delta to a live total, never going below zero. */
 export function adjustTotalCount(current: number, delta: number): number {
     return Math.max(0, current + delta);
+}
+
+/** Parse the compact `qpv` websocket payload (`host=segments,...`). */
+export function parseQueueProvidersPayload(payload: string): ProviderUsage[] {
+    if (!payload) return [];
+    return payload
+        .split(',')
+        .map(part => {
+            const eq = part.indexOf('=');
+            const host = eq < 0 ? part : part.slice(0, eq);
+            const segments = eq < 0 ? 0 : Number(part.slice(eq + 1));
+            return { host, segments: Number.isFinite(segments) ? segments : 0 };
+        })
+        .sort((a, b) => b.segments - a.segments);
+}
+
+/** Apply a `qpv` message to a slot, preserving nicknames from the previous provider list. */
+export function applyQueueProvidersMessage(
+    message: string,
+    previousProviders?: ProviderUsage[] | null | undefined,
+): { nzo_id: string, providers: ProviderUsage[] } | null {
+    const sep = message.indexOf('|');
+    if (sep < 0) return null;
+    const nzo_id = message.slice(0, sep);
+    const payload = message.slice(sep + 1);
+    const nicknamesByHost = new Map<string, string>();
+    for (const provider of previousProviders ?? []) {
+        const nickname = provider.nickname?.trim();
+        if (!nickname) continue;
+        nicknamesByHost.set(provider.host.toLowerCase(), nickname);
+    }
+    const providers = parseQueueProvidersPayload(payload).map(provider => {
+        const nickname = nicknamesByHost.get(provider.host.toLowerCase());
+        return nickname ? { ...provider, nickname } : provider;
+    });
+    return { nzo_id, providers };
 }
 
 export function useQueueEvents(
@@ -93,19 +129,11 @@ export function useQueueEvents(
     }, [setQueueSlots]);
 
     const onChangeQueueSlotProviders = useCallback((message: string) => {
-        const sep = message.indexOf('|');
-        if (sep < 0) return;
-        const nzo_id = message.slice(0, sep);
-        const payload = message.slice(sep + 1);
-        const providers = payload
-            ? payload.split(',').map(part => {
-                const eq = part.indexOf('=');
-                const host = eq < 0 ? part : part.slice(0, eq);
-                const segments = eq < 0 ? 0 : Number(part.slice(eq + 1));
-                return { host, segments: Number.isFinite(segments) ? segments : 0 };
-            }).sort((a, b) => b.segments - a.segments)
-            : [];
-        setQueueSlots(slots => slots.map(x => x.nzo_id === nzo_id ? { ...x, providers } : x));
+        setQueueSlots(slots => slots.map(slot => {
+            const update = applyQueueProvidersMessage(message, slot.providers);
+            if (!update || slot.nzo_id !== update.nzo_id) return slot;
+            return { ...slot, providers: update.providers };
+        }));
     }, [setQueueSlots]);
 
     return useStableEventHandlers({

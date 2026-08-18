@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adjustTotalCount } from "./events-controller";
+import { adjustTotalCount, applyQueueProvidersMessage, parseQueueProvidersPayload } from "./events-controller";
 
 describe("adjustTotalCount", () => {
     it("increments on add", () => {
@@ -35,5 +35,56 @@ describe("adjustTotalCount", () => {
         expect(total).toBe(0);
         total = adjustTotalCount(total, -1);
         expect(total).toBe(0);
+    });
+});
+
+describe("parseQueueProvidersPayload", () => {
+    it("parses host=segments pairs and sorts by segments descending", () => {
+        expect(parseQueueProvidersPayload("news.example.com=3,news.other.com=12")).toEqual([
+            { host: "news.other.com", segments: 12 },
+            { host: "news.example.com", segments: 3 },
+        ]);
+    });
+
+    it("returns an empty list for an empty payload", () => {
+        expect(parseQueueProvidersPayload("")).toEqual([]);
+    });
+});
+
+describe("applyQueueProvidersMessage", () => {
+    it("preserves nicknames from the previous provider list", () => {
+        const result = applyQueueProvidersMessage(
+            "slot-1|news.newsgroup.ninja=12",
+            [{ host: "news.newsgroup.ninja", nickname: "Newsgroup Ninja", segments: 5 }],
+        );
+        expect(result).toEqual({
+            nzo_id: "slot-1",
+            providers: [{ host: "news.newsgroup.ninja", nickname: "Newsgroup Ninja", segments: 12 }],
+        });
+    });
+
+    it("matches hosts case-insensitively when preserving nicknames", () => {
+        const result = applyQueueProvidersMessage(
+            "slot-1|NEWS.NEWSGROUP.NINJA=4",
+            [{ host: "news.newsgroup.ninja", nickname: "Newsgroup Ninja", segments: 0 }],
+        );
+        expect(result?.providers[0]?.nickname).toBe("Newsgroup Ninja");
+    });
+
+    it("leaves nicknames unset when the previous list had none", () => {
+        const result = applyQueueProvidersMessage(
+            "slot-1|news.newsgroup.ninja=12",
+            [{ host: "news.newsgroup.ninja", segments: 5 }],
+        );
+        expect(result?.providers).toEqual([{ host: "news.newsgroup.ninja", segments: 12 }]);
+    });
+
+    it("clears providers when the payload is empty", () => {
+        const result = applyQueueProvidersMessage("slot-1|", [{ host: "news.example.com", nickname: "Main", segments: 1 }]);
+        expect(result).toEqual({ nzo_id: "slot-1", providers: [] });
+    });
+
+    it("returns null for malformed messages", () => {
+        expect(applyQueueProvidersMessage("no-separator")).toBeNull();
     });
 });
