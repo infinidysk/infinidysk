@@ -134,8 +134,10 @@ public class NzbResolutionCache(Func<DavDatabaseContext> contextFactory)
         }
 
         await using var ctx = contextFactory();
+        // Identifiers stay quoted: PostgreSQL folds unquoted names to lowercase, but
+        // EF Core creates the table as "NzbResolutionGroups" (case-sensitive).
         await ctx.Database.ExecuteSqlRawAsync(
-            "DELETE FROM NzbResolutionGroups WHERE CreatedAtUnix < {0}",
+            "DELETE FROM \"NzbResolutionGroups\" WHERE \"CreatedAtUnix\" < {0}",
             cutoffUnixMs)
             .ConfigureAwait(false);
     }

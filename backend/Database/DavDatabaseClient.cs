@@ -545,19 +545,21 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         Guid rootId,
         CancellationToken ct = default)
     {
+        // Identifiers stay double-quoted: PostgreSQL folds unquoted names to lowercase,
+        // but EF Core creates the table and columns with case-sensitive quoted names.
         const string sql = """
-            WITH RECURSIVE Subtree AS (
-                SELECT Id, Path, HistoryItemId, Type
-                FROM DavItems
-                WHERE Id = @rootId
+            WITH RECURSIVE "Subtree" AS (
+                SELECT "Id", "Path", "HistoryItemId", "Type"
+                FROM "DavItems"
+                WHERE "Id" = @rootId
 
                 UNION ALL
 
-                SELECT d.Id, d.Path, d.HistoryItemId, d.Type
-                FROM DavItems d
-                INNER JOIN Subtree s ON d.ParentId = s.Id
+                SELECT d."Id", d."Path", d."HistoryItemId", d."Type"
+                FROM "DavItems" d
+                INNER JOIN "Subtree" s ON d."ParentId" = s."Id"
             )
-            SELECT Id, Path, HistoryItemId, Type FROM Subtree;
+            SELECT "Id", "Path", "HistoryItemId", "Type" FROM "Subtree";
             """;
 
         var connection = Ctx.Database.GetDbConnection();

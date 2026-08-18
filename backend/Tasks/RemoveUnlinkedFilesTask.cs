@@ -248,8 +248,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
         // Guard uses distinct dav-item ids, not raw symlink/strm count (many links can
         // point at the same item and otherwise sail past the < 5 safety check).
+        // The alias stays quoted: EF wraps SqlQuery in a subselect and references
+        // s."Value" case-sensitively on PostgreSQL.
         return await dbContext.Database
-            .SqlQueryRaw<int>("SELECT COUNT(*) AS Value FROM TMP_LINKED_FILES")
+            .SqlQueryRaw<int>("SELECT COUNT(*) AS \"Value\" FROM TMP_LINKED_FILES")
             .FirstAsync()
             .ConfigureAwait(false);
     }
