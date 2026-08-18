@@ -24,6 +24,7 @@ public sealed class CorrelatedTripDetector
 
     private readonly object _lock = new();
     private readonly Dictionary<string, string> _providers = new(StringComparer.Ordinal); // key -> host
+    private readonly Dictionary<string, Action> _onCorrelatedTrip = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _openSinceMs = new(StringComparer.Ordinal);
     private readonly TimeSpan _window;
     private readonly TimeSpan _throttle;
@@ -43,10 +44,16 @@ public sealed class CorrelatedTripDetector
     /// Tracks a provider that can carry traffic. Disabled providers never trip, so
     /// registering them would wedge the "all providers tripped" condition forever.
     /// </summary>
-    public void Register(string providerKey, string host)
+    public void Register(string providerKey, string host, Action? onCorrelatedTrip = null)
     {
         lock (_lock)
+        {
             _providers[providerKey] = host;
+            if (onCorrelatedTrip is not null)
+                _onCorrelatedTrip[providerKey] = onCorrelatedTrip;
+            else
+                _onCorrelatedTrip.Remove(providerKey);
+        }
     }
 
     public void Unregister(string providerKey)
@@ -54,12 +61,17 @@ public sealed class CorrelatedTripDetector
         lock (_lock)
         {
             _providers.Remove(providerKey);
+            _onCorrelatedTrip.Remove(providerKey);
             _openSinceMs.Remove(providerKey);
         }
     }
 
     public void OnTransition(string providerKey, ProviderCircuitTransition transition)
     {
+        List<Action>? callbacks = null;
+        string? providers = null;
+        var providerCount = 0;
+        var shouldWarn = false;
         lock (_lock)
         {
             if (transition.State == ProviderCircuitTransitionState.Open)
@@ -75,17 +87,38 @@ public sealed class CorrelatedTripDetector
             var opens = _providers.Keys.Select(p => _openSinceMs[p]).ToList();
             if (opens.Max() - opens.Min() > (long)_window.TotalMilliseconds) return;
 
+            callbacks = _onCorrelatedTrip.Values.ToList();
+            providers = string.Join(", ", _providers.Values);
+            providerCount = _providers.Count;
             var now = Clock();
-            if (_lastWarningAtMs is { } lastWarning
-                && now - lastWarning < (long)_throttle.TotalMilliseconds) return;
-            _lastWarningAtMs = now;
+            if (_lastWarningAtMs is not { } lastWarning
+                || now - lastWarning >= (long)_throttle.TotalMilliseconds)
+            {
+                _lastWarningAtMs = now;
+                shouldWarn = true;
+            }
+        }
 
+        if (shouldWarn)
+        {
             Log.Warning(
                 "All {Count} NNTP providers tripped their circuit breakers within {WindowSeconds}s of each other ({Providers}). " +
-                "Simultaneous independent provider outages are unlikely — check local network, DNS, or TLS interception.",
-                _providers.Count,
+                "The shared network path may be degraded; shortening cooldowns so recovery probes can resume traffic.",
+                providerCount,
                 _window.TotalSeconds,
-                string.Join(", ", _providers.Values));
+                providers);
+        }
+
+        foreach (var callback in callbacks!)
+        {
+            try
+            {
+                callback();
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                Log.Warning(exception, "Correlated NNTP provider trip callback failed");
+            }
         }
     }
 }

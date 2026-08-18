@@ -53,6 +53,37 @@ public class ProviderCircuitBreakerBurstTests
         Assert.InRange(clock.Now, 4_000, 6_000);
     }
 
+    [Fact]
+    public void CapCooldown_ShortensOpenCooldownWithoutResettingTheLadder()
+    {
+        var clock = new TestClock();
+        var breaker = CreateBreaker(clock);
+        breaker.RecordFailure();
+        clock.Advance(milliseconds: 2_000);
+        breaker.RecordFailure();
+        clock.Advance(milliseconds: 2_000);
+        breaker.RecordFailure();
+        Assert.Equal(TimeSpan.FromSeconds(120), breaker.CurrentCooldown);
+
+        breaker.CapCooldown(TimeSpan.FromSeconds(10));
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(ProviderCircuitState.Open, snapshot.State);
+        Assert.InRange(snapshot.CooldownRemainingSeconds ?? 0, 9, 10);
+        Assert.Equal(TimeSpan.FromSeconds(120), breaker.CurrentCooldown);
+    }
+
+    [Fact]
+    public void CapCooldown_DoesNotExtendOrOpenTheCircuit()
+    {
+        var clock = new TestClock();
+        var breaker = CreateBreaker(clock);
+
+        breaker.CapCooldown(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(ProviderCircuitState.Closed, breaker.GetSnapshot().State);
+    }
+
     private static ProviderCircuitBreaker CreateBreaker(TestClock clock) =>
         new("burst-test", coalesceFailureBursts: true) { Clock = () => clock.Now };
 

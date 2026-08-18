@@ -269,10 +269,6 @@ public class UsenetStreamingClient : WrappingNntpClient
         if (connectionDetails.ProviderId == Guid.Empty)
             connectionDetails.ProviderId = Guid.NewGuid();
         var metricsKey = UsenetProviderIdentity.MetricsKey(connectionDetails);
-        // Only providers that can carry traffic participate in correlation; a Disabled
-        // provider never trips and would wedge the "all tripped" condition forever.
-        if (connectionDetails.Type != ProviderType.Disabled)
-            tripDetector?.Register(metricsKey, connectionDetails.Host);
         var circuitBreaker = new ProviderCircuitBreaker(
             connectionDetails.Host,
             transition =>
@@ -290,7 +286,17 @@ public class UsenetStreamingClient : WrappingNntpClient
                         : null,
                 });
                 tripDetector?.OnTransition(metricsKey, transition);
-            });
+            },
+            coalesceFailureBursts: true);
+        // Only providers that can carry traffic participate in correlation; a Disabled
+        // provider never trips and would wedge the "all tripped" condition forever.
+        if (connectionDetails.Type != ProviderType.Disabled)
+        {
+            tripDetector?.Register(
+                metricsKey,
+                connectionDetails.Host,
+                () => circuitBreaker.CapCooldown(TimeSpan.FromSeconds(10)));
+        }
         return new MultiConnectionNntpClient(
             connectionPool,
             connectionDetails.Type,

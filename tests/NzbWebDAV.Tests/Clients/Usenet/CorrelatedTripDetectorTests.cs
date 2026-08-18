@@ -38,6 +38,44 @@ public class CorrelatedTripDetectorTests
     }
 
     [Fact]
+    public void AllProvidersTrippingWithinTheWindow_InvokesEachRegisteredCallback()
+    {
+        var callbacks = new List<string>();
+        var detector = new CorrelatedTripDetector(window: Window, throttle: Throttle)
+        {
+            Clock = () => 2_000,
+        };
+        detector.Register("a", "a.example.com", () => callbacks.Add("a"));
+        detector.Register("b", "b.example.com", () => callbacks.Add("b"));
+
+        detector.OnTransition("a", Open(atMs: 1_000));
+        detector.OnTransition("b", Open(atMs: 2_000));
+
+        Assert.Equal(["a", "b"], callbacks);
+    }
+
+    [Fact]
+    public void CorrelationsWithinTheWarningThrottle_StillInvokeCallbacks()
+    {
+        var callbacks = 0;
+        var detector = new CorrelatedTripDetector(window: Window, throttle: Throttle)
+        {
+            Clock = () => 2_000,
+        };
+        detector.Register("a", "a.example.com", () => callbacks++);
+        detector.Register("b", "b.example.com", () => callbacks++);
+
+        detector.OnTransition("a", Open(atMs: 1_000));
+        detector.OnTransition("b", Open(atMs: 2_000));
+        detector.OnTransition("a", Closed(atMs: 3_000));
+        detector.OnTransition("b", Closed(atMs: 3_000));
+        detector.OnTransition("a", Open(atMs: 4_000));
+        detector.OnTransition("b", Open(atMs: 5_000));
+
+        Assert.Equal(4, callbacks);
+    }
+
+    [Fact]
     public void TripsOutsideTheWindow_DoNotWarn()
     {
         var events = Capture((d, _) =>

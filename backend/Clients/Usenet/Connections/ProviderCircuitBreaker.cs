@@ -103,6 +103,24 @@ public class ProviderCircuitBreaker
         }
     }
 
+    /// <summary>
+    /// Limits the remaining open cooldown without resetting the escalation ladder.
+    /// Used when all providers fail together and no provider remains to serve traffic.
+    /// </summary>
+    internal void CapCooldown(TimeSpan maximumRemaining)
+    {
+        lock (_lock)
+        {
+            var now = Clock();
+            if (_trippedUntilMs <= now)
+                return;
+
+            var cappedUntil = now + (long)maximumRemaining.TotalMilliseconds;
+            if (_trippedUntilMs > cappedUntil)
+                _trippedUntilMs = cappedUntil;
+        }
+    }
+
     /// <summary>Force the open cooldown into the past so half-open tests can proceed.</summary>
     internal void ExpireCooldownForTests()
     {
