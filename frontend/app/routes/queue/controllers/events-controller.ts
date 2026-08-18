@@ -47,7 +47,7 @@ export function parseQueueProvidersMessage(message: string): { nzo_id: string, p
 
 export function preserveProviderNicknames(
     providers: ProviderUsage[],
-    previousProviders?: ProviderUsage[] | null | undefined,
+    previousProviders?: ProviderUsage[] | null,
 ): ProviderUsage[] {
     const nicknamesByHost = new Map<string, string>();
     for (const provider of previousProviders ?? []) {
@@ -64,7 +64,7 @@ export function preserveProviderNicknames(
 /** Apply a `qpv` message to a slot, preserving nicknames from the previous provider list. */
 export function applyQueueProvidersMessage(
     message: string,
-    previousProviders?: ProviderUsage[] | null | undefined,
+    previousProviders?: ProviderUsage[] | null,
 ): { nzo_id: string, providers: ProviderUsage[] } | null {
     const parsed = parseQueueProvidersMessage(message);
     if (!parsed) return null;
