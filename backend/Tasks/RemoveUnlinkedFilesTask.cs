@@ -104,9 +104,12 @@ public class RemoveUnlinkedFilesTask : BaseTask
             }
 
             // PostgreSQL transient failures: serialization failure, deadlock, lock timeout
-            if (current is PostgresException { SqlState: PostgresErrorCodes.SerializationFailure
+            if (current is PostgresException
+                {
+                    SqlState: PostgresErrorCodes.SerializationFailure
                 or PostgresErrorCodes.DeadlockDetected
-                or PostgresErrorCodes.LockNotAvailable })
+                or PostgresErrorCodes.LockNotAvailable
+                })
             {
                 reason = current.Message;
                 return true;
