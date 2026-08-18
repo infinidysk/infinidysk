@@ -29,14 +29,17 @@ public class ProviderCircuitBreaker
 
     private static readonly TimeSpan InitialCooldown = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MaxCooldown = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan FailureBurstCoalesceWindow = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan DefaultProbeAbandonTimeout = TimeSpan.FromSeconds(60);
 
     private readonly string _providerName;
     private readonly Action<ProviderCircuitTransition>? _onTransition;
+    private readonly bool _coalesceFailureBursts;
     private readonly object _lock = new();
     private readonly Queue<(long AtMs, bool Failed)> _window = new();
 
     private long _trippedUntilMs;
+    private long _failureBurstStartedAtMs = long.MinValue;
     private TimeSpan _currentCooldown = InitialCooldown;
     private int _halfOpenProbeInFlight; // 0/1
     private long _probeStartedMs;
@@ -47,14 +50,19 @@ public class ProviderCircuitBreaker
 
     public ProviderCircuitBreaker(
         string providerName,
-        Action<ProviderCircuitTransition>? onTransition = null)
+        Action<ProviderCircuitTransition>? onTransition = null,
+        bool coalesceFailureBursts = false)
     {
         _providerName = providerName;
         _onTransition = onTransition;
+        _coalesceFailureBursts = coalesceFailureBursts;
     }
 
     /// <summary>How long an unanswered half-open probe may hold the slot. For tests.</summary>
     internal TimeSpan ProbeAbandonTimeout { get; set; } = DefaultProbeAbandonTimeout;
+
+    /// <summary>Monotonic clock, injectable for tests.</summary>
+    internal Func<long> Clock { get; set; } = () => Environment.TickCount64;
 
     public bool IsTripped
     {
@@ -62,13 +70,13 @@ public class ProviderCircuitBreaker
         {
             var trippedUntil = Volatile.Read(ref _trippedUntilMs);
             if (trippedUntil == 0) return false;
-            if (Environment.TickCount64 < trippedUntil) return true;
+            if (Clock() < trippedUntil) return true;
 
             // Cooldown expired → half-open: exactly one caller wins the probe slot.
             TryReclaimAbandonedProbe();
             if (Interlocked.CompareExchange(ref _halfOpenProbeInFlight, 1, 0) == 0)
             {
-                Volatile.Write(ref _probeStartedMs, Environment.TickCount64);
+                Volatile.Write(ref _probeStartedMs, Clock());
                 return false; // this caller is the probe
             }
 
@@ -101,7 +109,7 @@ public class ProviderCircuitBreaker
         lock (_lock)
         {
             if (_trippedUntilMs > 0)
-                _trippedUntilMs = Environment.TickCount64 - 1;
+                _trippedUntilMs = Clock() - 1;
         }
     }
 
@@ -123,7 +131,7 @@ public class ProviderCircuitBreaker
             // Commands that started before a trip can still complete while the
             // provider is cooling down. They are not half-open probes and must
             // not return the provider to normal rotation early.
-            if (_trippedUntilMs > Environment.TickCount64)
+            if (_trippedUntilMs > Clock())
                 return;
 
             // Only a circuit that opened can recover. Failures that cleared without tripping
@@ -134,6 +142,7 @@ public class ProviderCircuitBreaker
                 Log.Information("Provider {Provider} recovered — circuit breaker reset.", _providerName);
 
             _window.Clear();
+            _failureBurstStartedAtMs = long.MinValue;
             _trippedUntilMs = 0;
             if (resetsCooldownLadder)
                 _currentCooldown = InitialCooldown;
@@ -167,6 +176,7 @@ public class ProviderCircuitBreaker
                 return;
 
             _window.Clear();
+            _failureBurstStartedAtMs = long.MinValue;
         }
     }
 
@@ -175,7 +185,7 @@ public class ProviderCircuitBreaker
     {
         lock (_lock)
         {
-            var now = Environment.TickCount64;
+            var now = Clock();
             var trippedUntil = _trippedUntilMs;
             var probeInFlight = Volatile.Read(ref _halfOpenProbeInFlight) == 1;
 
@@ -214,7 +224,7 @@ public class ProviderCircuitBreaker
     {
         lock (_lock)
         {
-            var now = Environment.TickCount64;
+            var now = Clock();
 
             // Ignore failures already in flight when the provider first tripped.
             if (_trippedUntilMs > 0 && now < _trippedUntilMs)
@@ -239,7 +249,7 @@ public class ProviderCircuitBreaker
     {
         lock (_lock)
         {
-            var now = Environment.TickCount64;
+            var now = Clock();
 
             // Already latched open: ignore in-flight failures from the same burst
             // so they cannot extend the window, double the cooldown, or spam logs.
@@ -261,9 +271,20 @@ public class ProviderCircuitBreaker
                 return;
             }
 
-            EvictOldEntries(now);
-            _window.Enqueue((now, true));
             Interlocked.Increment(ref _failureCount);
+
+            EvictOldEntries(now);
+            if (!_coalesceFailureBursts
+                || _failureBurstStartedAtMs == long.MinValue
+                || now - _failureBurstStartedAtMs >= (long)FailureBurstCoalesceWindow.TotalMilliseconds)
+            {
+                _failureBurstStartedAtMs = now;
+                _window.Enqueue((now, true));
+            }
+            else
+            {
+                return;
+            }
 
             var failures = 0;
             foreach (var entry in _window.Where(entry => entry.Failed))
@@ -292,6 +313,7 @@ public class ProviderCircuitBreaker
         NotifyTransition(ProviderCircuitTransitionState.Open, appliedCooldown);
 
         _window.Clear();
+        _failureBurstStartedAtMs = long.MinValue;
         _currentCooldown = TimeSpan.FromMilliseconds(
             Math.Min(_currentCooldown.TotalMilliseconds * 2, MaxCooldown.TotalMilliseconds));
     }
@@ -331,7 +353,7 @@ public class ProviderCircuitBreaker
         if (Volatile.Read(ref _halfOpenProbeInFlight) != 1) return;
         var started = Volatile.Read(ref _probeStartedMs);
         if (started == 0) return;
-        if (Environment.TickCount64 - started < (long)ProbeAbandonTimeout.TotalMilliseconds) return;
+        if (Clock() - started < (long)ProbeAbandonTimeout.TotalMilliseconds) return;
 
         // Abandoned probe (cancelled request, etc.): free the slot so another
         // caller can retry. CompareExchange so we don't clear a just-resolved probe.
