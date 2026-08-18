@@ -28,12 +28,12 @@ Background health monitoring and replacement of unhealthy library items.
     urgent repair.
 
 `repair.auto-remove-after-failures` applies only to streaming-triggered failures such as missing
-articles and corrupt archives. With a value greater than `0`, InfiniDysk waits for that many
-consecutive failures before it starts an urgent repair. At the threshold, linked library items are
-removed and their original downloads are marked failed in *Arr when **Auto-remove unlinked files
-only** is enabled. *Arr blocklists those releases and applies its configured failed-download
-redownload policy. Unlinked files are removed. Disable that option to force-delete linked items at
-the threshold.
+articles, corrupt archives, and seeks that find missing or truncated article data. With a value
+greater than `0`, InfiniDysk waits for that many consecutive failures before it starts an urgent
+repair. At the threshold, linked library items are removed and their original downloads are marked
+failed in *Arr when **Auto-remove unlinked files only** is enabled. *Arr blocklists those releases
+and applies its configured failed-download redownload policy. Unlinked files are removed. Disable
+that option to force-delete linked items at the threshold.
 
 Successful full-file playback and a successful background health check reset the in-memory failure
 count. The count resets when InfiniDysk restarts, so it is intentionally not a durable replacement for
