@@ -9,7 +9,10 @@ using NzbWebDAV.Streams;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
-BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
+if (args.SequenceEqual(["--streaming-report"], StringComparer.Ordinal))
+    await NzbWebDAV.Benchmarks.RepeatableStreamingReport.RunAsync();
+else
+    BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
 
 
 namespace NzbWebDAV.Benchmarks
@@ -243,8 +246,17 @@ namespace NzbWebDAV.Benchmarks
     }
 
     internal sealed class BenchmarkNntpClient(
-        IReadOnlyDictionary<string, byte[]> segments) : NntpClient
+        IReadOnlyDictionary<string, byte[]> segments,
+        bool useCachedYencStreams = false,
+        IReadOnlyDictionary<string, LongRange>? segmentRanges = null) : NntpClient
     {
+        private int _bodyRequestCount;
+        private long _bodyBytesRequested;
+
+        public int BodyRequestCount => Volatile.Read(ref _bodyRequestCount);
+        public long BodyBytesRequested => Interlocked.Read(ref _bodyBytesRequested);
+        public HashSet<string> RequestedSegmentIds { get; } = new(StringComparer.Ordinal);
+
         public override Task ConnectAsync(
             string host, int port, bool useSsl, CancellationToken cancellationToken) =>
             Task.CompletedTask;
@@ -271,6 +283,8 @@ namespace NzbWebDAV.Benchmarks
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _bodyRequestCount);
+            RequestedSegmentIds.Add(segmentId.ToString());
             try
             {
                 var response = CreateResponse(segmentId);
@@ -344,14 +358,32 @@ namespace NzbWebDAV.Benchmarks
             var key = segmentId.ToString();
             if (!segments.TryGetValue(key, out var bytes))
                 throw new UsenetArticleNotFoundException(key, "430 No such article");
+            Interlocked.Add(ref _bodyBytesRequested, bytes.Length);
+
+            YencStream stream = useCachedYencStreams
+                ? new CachedYencStream(
+                    new UsenetYencHeader
+                    {
+                        FileName = "repeatable-streaming-benchmark.bin",
+                        FileSize = segmentRanges is { Count: > 0 }
+                            ? segmentRanges.Values.Max(range => range.EndExclusive)
+                            : bytes.Length,
+                        LineLength = 128,
+                        PartNumber = 1,
+                        TotalParts = segments.Count,
+                        PartOffset = segmentRanges?[key].StartInclusive ?? 0,
+                        PartSize = segmentRanges?[key].Count ?? bytes.Length,
+                    },
+                    new MemoryStream(bytes, writable: false))
+                : new YencStream(new MemoryStream(
+                    YencDecodeBenchmarks.EncodeYenc(bytes), writable: false));
 
             return new UsenetDecodedBodyResponse
             {
                 SegmentId = key,
                 ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
                 ResponseMessage = "222 benchmark body",
-                Stream = new YencStream(new MemoryStream(
-                    YencDecodeBenchmarks.EncodeYenc(bytes), writable: false))
+                Stream = stream,
             };
         }
     }
