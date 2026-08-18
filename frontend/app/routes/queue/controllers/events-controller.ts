@@ -39,26 +39,42 @@ export function parseQueueProvidersPayload(payload: string): ProviderUsage[] {
         .sort((a, b) => b.segments - a.segments);
 }
 
-/** Apply a `qpv` message to a slot, preserving nicknames from the previous provider list. */
-export function applyQueueProvidersMessage(
-    message: string,
-    previousProviders?: ProviderUsage[] | null | undefined,
-): { nzo_id: string, providers: ProviderUsage[] } | null {
+export function parseQueueProvidersMessage(message: string): { nzo_id: string, payload: string } | null {
     const sep = message.indexOf('|');
     if (sep < 0) return null;
-    const nzo_id = message.slice(0, sep);
-    const payload = message.slice(sep + 1);
+    return { nzo_id: message.slice(0, sep), payload: message.slice(sep + 1) };
+}
+
+export function preserveProviderNicknames(
+    providers: ProviderUsage[],
+    previousProviders?: ProviderUsage[] | null | undefined,
+): ProviderUsage[] {
     const nicknamesByHost = new Map<string, string>();
     for (const provider of previousProviders ?? []) {
         const nickname = provider.nickname?.trim();
         if (!nickname) continue;
         nicknamesByHost.set(provider.host.toLowerCase(), nickname);
     }
-    const providers = parseQueueProvidersPayload(payload).map(provider => {
+    return providers.map(provider => {
         const nickname = nicknamesByHost.get(provider.host.toLowerCase());
         return nickname ? { ...provider, nickname } : provider;
     });
-    return { nzo_id, providers };
+}
+
+/** Apply a `qpv` message to a slot, preserving nicknames from the previous provider list. */
+export function applyQueueProvidersMessage(
+    message: string,
+    previousProviders?: ProviderUsage[] | null | undefined,
+): { nzo_id: string, providers: ProviderUsage[] } | null {
+    const parsed = parseQueueProvidersMessage(message);
+    if (!parsed) return null;
+    return {
+        nzo_id: parsed.nzo_id,
+        providers: preserveProviderNicknames(
+            parseQueueProvidersPayload(parsed.payload),
+            previousProviders,
+        ),
+    };
 }
 
 export function useQueueEvents(
@@ -129,10 +145,15 @@ export function useQueueEvents(
     }, [setQueueSlots]);
 
     const onChangeQueueSlotProviders = useCallback((message: string) => {
+        const parsed = parseQueueProvidersMessage(message);
+        if (!parsed) return;
+        const providers = parseQueueProvidersPayload(parsed.payload);
         setQueueSlots(slots => slots.map(slot => {
-            const update = applyQueueProvidersMessage(message, slot.providers);
-            if (!update || slot.nzo_id !== update.nzo_id) return slot;
-            return { ...slot, providers: update.providers };
+            if (slot.nzo_id !== parsed.nzo_id) return slot;
+            return {
+                ...slot,
+                providers: preserveProviderNicknames(providers, slot.providers),
+            };
         }));
     }, [setQueueSlots]);
 
