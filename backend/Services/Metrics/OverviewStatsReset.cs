@@ -108,19 +108,15 @@ public static class OverviewStatsReset
         int batch;
         do
         {
-            batch = db.Database.IsNpgsql()
-                ? await db.Database.ExecuteSqlRawAsync(
-                    """
-                    DELETE FROM "SegmentFetches" WHERE "Id" IN
-                        (SELECT "Id" FROM "SegmentFetches" WHERE "Provider" = {0} LIMIT {1})
-                    """,
-                    new object[] { providerKey, batchSize }, ct).ConfigureAwait(false)
-                : await db.Database.ExecuteSqlRawAsync(
-                    """
-                    DELETE FROM SegmentFetches WHERE rowid IN
-                        (SELECT rowid FROM SegmentFetches WHERE Provider = {0} LIMIT {1})
-                    """,
-                    new object[] { providerKey, batchSize }, ct).ConfigureAwait(false);
+            // MetricsDbContext is always SQLite; rowid batching keeps each write
+            // transaction short so concurrent MetricsWriter flushes never exhaust
+            // their busy_timeout behind us.
+            batch = await db.Database.ExecuteSqlRawAsync(
+                """
+                DELETE FROM SegmentFetches WHERE rowid IN
+                    (SELECT rowid FROM SegmentFetches WHERE Provider = {0} LIMIT {1})
+                """,
+                new object[] { providerKey, batchSize }, ct).ConfigureAwait(false);
             deleted += batch;
         } while (batch > 0);
 
