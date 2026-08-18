@@ -37,6 +37,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly ContextualCancellationTokenSource _cts;
     private readonly long? _readBudget;
     private readonly long _prefetchByteCeiling;
+    private readonly int _taskWindowSize;
     private readonly InFlightArticleBudget? _budget;
     private long _inFlightPrefetchBytes;
     private TaskCompletionSource _prefetchSpace =
@@ -123,7 +124,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         return articleBufferSize == 0
             ? new UnbufferedMultiSegmentStream(
                 segmentIds, usenetClient, estimatedSegmentSize, fileName, segmentFallbacks,
-                exactSegmentSizes, useContainerAwareFill, firstSegmentFileOffset)
+                exactSegmentSizes, useContainerAwareFill, firstSegmentFileOffset,
+                failFastOnFirstSegment)
             : new MultiSegmentStream(
                 segmentIds,
                 usenetClient,
@@ -139,6 +141,75 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 useContainerAwareFill,
                 firstSegmentFileOffset,
                 cancellationToken);
+    }
+
+    /// <summary>
+    /// Starts the first segment directly from its decoded BODY, then lazily creates the
+    /// normal buffered pipeline at the segment boundary. This lets a player receive its
+    /// first bytes without waiting for a whole decoded segment to drain, while retaining
+    /// the established prefetch, retry, fill, and lifecycle behavior for sustained reads.
+    /// </summary>
+    public static Stream CreateFirstSegmentHybrid(
+        Memory<string> segmentIds,
+        INntpClient usenetClient,
+        int articleBufferSize,
+        long estimatedSegmentSize,
+        bool failFastOnFirstSegment,
+        bool usePipelinedBodyRequests,
+        CancellationToken cancellationToken,
+        string? fileName = null,
+        long? readBudget = null,
+        string[][]? segmentFallbacks = null,
+        ReadOnlyMemory<long> exactSegmentSizes = default,
+        InFlightArticleBudget? inFlightArticleBudget = null,
+        bool useContainerAwareFill = false,
+        long? firstSegmentFileOffset = null)
+    {
+        if (articleBufferSize == 0 || segmentIds.Length <= 1)
+        {
+            return Create(
+                segmentIds, usenetClient, articleBufferSize, estimatedSegmentSize,
+                failFastOnFirstSegment, usePipelinedBodyRequests, cancellationToken, fileName,
+                readBudget, segmentFallbacks, exactSegmentSizes, inFlightArticleBudget,
+                useContainerAwareFill, firstSegmentFileOffset);
+        }
+
+        var effectiveReadBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        var firstExactSizes = exactSegmentSizes.Length == segmentIds.Length
+            ? exactSegmentSizes[..1]
+            : default;
+        var remainingExactSizes = exactSegmentSizes.Length == segmentIds.Length
+            ? exactSegmentSizes[1..]
+            : default;
+        var firstFallbacks = segmentFallbacks is { Length: > 0 } ? segmentFallbacks[..1] : null;
+        var remainingFallbacks = segmentFallbacks is { Length: > 1 } ? segmentFallbacks[1..] : null;
+        var remainingOffset = firstSegmentFileOffset;
+        if (remainingOffset is not null && firstExactSizes.Length == 1)
+        {
+            try { remainingOffset = checked(remainingOffset.Value + firstExactSizes.Span[0]); }
+            catch (OverflowException) { remainingOffset = null; }
+        }
+
+        var remainingBudget = effectiveReadBudget;
+        if (remainingBudget is not null && firstExactSizes.Length == 1)
+            remainingBudget = Math.Max(0, remainingBudget.Value - firstExactSizes.Span[0]);
+
+        return new CombinedStream(CreateFirstSegmentThenBufferedRest());
+
+        IEnumerable<Task<Stream>> CreateFirstSegmentThenBufferedRest()
+        {
+#pragma warning disable CA2000 // ownership transfers to CombinedStream when the yielded task becomes current
+            yield return Task.FromResult<Stream>(new UnbufferedMultiSegmentStream(
+                segmentIds[..1], usenetClient, estimatedSegmentSize, fileName, firstFallbacks,
+                firstExactSizes, useContainerAwareFill, firstSegmentFileOffset,
+                failFastOnFirstSegment));
+#pragma warning restore CA2000
+            yield return Task.FromResult(Create(
+                segmentIds[1..], usenetClient, articleBufferSize, estimatedSegmentSize,
+                failFastOnFirstSegment: false, usePipelinedBodyRequests, cancellationToken,
+                fileName, remainingBudget, remainingFallbacks, remainingExactSizes,
+                inFlightArticleBudget, useContainerAwareFill, remainingOffset));
+        }
     }
 
     private MultiSegmentStream
@@ -170,16 +241,36 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
         _readBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
         _budget = inFlightArticleBudget ?? InFlightArticleBudget.Current;
-        _prefetchByteCeiling = articleBufferSize > 0 && estimatedSegmentSize > 0
-            ? (long)articleBufferSize * estimatedSegmentSize
+        _taskWindowSize = CalculateTaskWindowSize(articleBufferSize, usePipelinedBodyRequests);
+        _prefetchByteCeiling = _taskWindowSize > 0 && estimatedSegmentSize > 0
+            ? (long)_taskWindowSize * estimatedSegmentSize
             : 0;
         _bodyPipelineBatchSize = Math.Min(BodyPipelineBatchSize, articleBufferSize);
         _batchSizer = usePipelinedBodyRequests
             ? new AdaptiveBodyBatchSizer(_bodyPipelineBatchSize)
             : null;
-        _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(articleBufferSize);
+        _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(_taskWindowSize);
         _cts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _downloadTask = DownloadSegments(usePipelinedBodyRequests, _cts.Token);
+    }
+
+    /// <summary>
+    /// Computes the number of ordered segment tasks that may wait ahead of the consumer.
+    /// Pipelined BODY requests retain one connection per batch, not per segment, so a
+    /// segment-only window of <paramref name="articleBufferSize"/> could use only a quarter
+    /// of the per-stream connection budget at the normal four-article batch width. Expand
+    /// the task window by that width; the connection semaphore remains the concurrency
+    /// authority and <see cref="InFlightArticleBudget"/> remains the decoded-byte authority.
+    /// </summary>
+    internal static int CalculateTaskWindowSize(int articleBufferSize, bool usePipelinedBodyRequests)
+    {
+        if (articleBufferSize <= 0) return 0;
+        if (!usePipelinedBodyRequests) return articleBufferSize;
+
+        var initialBatchWidth = Math.Min(BodyPipelineBatchSize, articleBufferSize);
+        return articleBufferSize > int.MaxValue / initialBatchWidth
+            ? int.MaxValue
+            : articleBufferSize * initialBatchWidth;
     }
 
     private async Task DownloadSegments(
@@ -360,8 +451,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
     /// <summary>
     /// When <see cref="_readBudget"/> is null, pause the producer once in-flight planned
-    /// bytes reach article-buffer-size × estimated segment size so full-file GETs cannot
-    /// retain unbounded decoded bytes ahead of the consumer.
+    /// bytes reach task-window-size × estimated segment size so full-file GETs cannot retain
+    /// unbounded decoded bytes ahead of the consumer. For pipelined BODY requests the task
+    /// window accounts for every segment needed to keep the connection budget occupied.
     /// </summary>
     private async Task WaitForPrefetchCeilingAsync(CancellationToken cancellationToken)
     {

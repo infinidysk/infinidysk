@@ -209,15 +209,12 @@ public partial class UsenetClient
         DecodedBodyReadStream decodedStream,
         bool releaseCommandLock = true,
         CoalescedReadTimeout? sharedReadTimeout = null,
-        BatchDecodeBuffer? sharedEncodedBuffer = null,
         CancellationToken callerCancellationToken = default)
     {
         Exception? failure = null;
         var connectionReusable = true;
-        byte[]? encodedBuffer = null;
         byte[]? ybeginBuffer = null;
         CoalescedReadTimeout? ownedReadTimeout = null;
-        var ownsEncodedBuffer = sharedEncodedBuffer == null;
         try
         {
             if (_reader == null)
@@ -226,16 +223,7 @@ public partial class UsenetClient
                     "The NNTP connection closed before the article body was read.");
             }
 
-            if (sharedEncodedBuffer != null)
-            {
-                encodedBuffer = sharedEncodedBuffer.Buffer;
-            }
-            else
-            {
-                encodedBuffer = ArrayPool<byte>.Shared.Rent(DecodedBodyChunkSize + 2);
-            }
-
-            var encodedLength = 0;
+            var unflushedDecodedBytes = 0;
             var shouldWrite = true;
             var dataEnded = false;
             var headersRead = false;
@@ -288,18 +276,10 @@ public partial class UsenetClient
                             YencStream.ParseYencHeaders(ybeginBuffer.AsSpan(0, ybeginLength)));
                     }
 
-                    if (shouldWrite && encodedLength > 0)
+                    if (shouldWrite && unflushedDecodedBytes > 0)
                     {
-                        var flush = await DecodeAndFlushAsync(
-                            writer,
-                            encodedBuffer.AsMemory(0, encodedLength),
-                            decoderState,
-                            decodedCrc32,
-                            _options.CrcValidation != YencCrcValidationMode.Off,
-                            decodedStream,
-                            cancellationToken).ConfigureAwait(false);
-                        decoderState = flush.DecoderState;
-                        decodedCrc32 = flush.Crc32;
+                        var result = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                        shouldWrite = !result.IsCompleted && !result.IsCanceled;
                     }
 
                     if (_options.CrcValidation == YencCrcValidationMode.Require && !dataEnded)
@@ -376,20 +356,10 @@ public partial class UsenetClient
                 if (YencStream.StartsWithYEnd(lineBytes.Span))
                 {
                     dataEnded = true;
-                    if (encodedLength > 0)
+                    if (shouldWrite && unflushedDecodedBytes > 0)
                     {
-                        var flush = await DecodeAndFlushAsync(
-                            writer,
-                            encodedBuffer.AsMemory(0, encodedLength),
-                            decoderState,
-                            decodedCrc32,
-                            _options.CrcValidation != YencCrcValidationMode.Off,
-                            decodedStream,
-                            cancellationToken).ConfigureAwait(false);
-                        encodedLength = 0;
-                        decoderState = flush.DecoderState;
-                        decodedCrc32 = flush.Crc32;
-                        shouldWrite = !flush.Result.IsCompleted && !flush.Result.IsCanceled;
+                        var result = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                        shouldWrite = !result.IsCompleted && !result.IsCanceled;
                     }
 
                     if (_options.CrcValidation != YencCrcValidationMode.Off && shouldWrite)
@@ -401,57 +371,33 @@ public partial class UsenetClient
                     continue;
                 }
 
-                var requiredLength = lineBytes.Length + 2;
-                if (encodedLength > 0 &&
-                    encodedLength + requiredLength > encodedBuffer.Length)
+                var encodedLine = lineBytes.Span;
+                if (encodedLine.Length >= 2 &&
+                    encodedLine[0] == (byte)'.' &&
+                    encodedLine[1] == (byte)'.')
                 {
-                    var flush = await DecodeAndFlushAsync(
-                        writer,
-                        encodedBuffer.AsMemory(0, encodedLength),
-                        decoderState,
-                        decodedCrc32,
-                        _options.CrcValidation != YencCrcValidationMode.Off,
-                        decodedStream,
-                        cancellationToken).ConfigureAwait(false);
-                    encodedLength = 0;
-                    decoderState = flush.DecoderState;
-                    decodedCrc32 = flush.Crc32;
-                    shouldWrite = !flush.Result.IsCompleted && !flush.Result.IsCanceled;
-                    if (!shouldWrite)
-                    {
-                        continue;
-                    }
+                    encodedLine = encodedLine[1..];
                 }
 
-                if (requiredLength > encodedBuffer.Length)
+                // NntpLineReader already obtains 64 KiB raw chunks and returns line views into
+                // that buffer. Decode those views directly into the pipe instead of copying every
+                // line into a second encoded staging buffer solely to reconstruct CRLF framing.
+                var destination = writer.GetSpan(encodedLine.Length);
+                var decodedLength = YencDecoder.DecodeEx(
+                    encodedLine, destination, ref decoderState, isRaw: false);
+                if (_options.CrcValidation != YencCrcValidationMode.Off)
                 {
-                    ArrayPool<byte>.Shared.Return(encodedBuffer);
-                    encodedBuffer = ArrayPool<byte>.Shared.Rent(requiredLength);
-                    if (sharedEncodedBuffer != null)
-                    {
-                        sharedEncodedBuffer.Buffer = encodedBuffer;
-                    }
+                    decodedCrc32 = Crc32.Compute(destination[..decodedLength], decodedCrc32);
                 }
+                decodedStream.AddBufferedBytes(decodedLength);
+                writer.Advance(decodedLength);
+                unflushedDecodedBytes += decodedLength;
 
-                lineBytes.Span.CopyTo(encodedBuffer.AsSpan(encodedLength));
-                encodedLength += lineBytes.Length;
-                encodedBuffer[encodedLength++] = (byte)'\r';
-                encodedBuffer[encodedLength++] = (byte)'\n';
-
-                if (encodedLength >= DecodedBodyChunkSize)
+                if (unflushedDecodedBytes >= DecodedBodyChunkSize)
                 {
-                    var flush = await DecodeAndFlushAsync(
-                        writer,
-                        encodedBuffer.AsMemory(0, encodedLength),
-                        decoderState,
-                        decodedCrc32,
-                        _options.CrcValidation != YencCrcValidationMode.Off,
-                        decodedStream,
-                        cancellationToken).ConfigureAwait(false);
-                    encodedLength = 0;
-                    decoderState = flush.DecoderState;
-                    decodedCrc32 = flush.Crc32;
-                    shouldWrite = !flush.Result.IsCompleted && !flush.Result.IsCanceled;
+                    var result = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    unflushedDecodedBytes = 0;
+                    shouldWrite = !result.IsCompleted && !result.IsCanceled;
                 }
             }
         }
@@ -481,11 +427,6 @@ public partial class UsenetClient
         }
         finally
         {
-            if (ownsEncodedBuffer && encodedBuffer != null)
-            {
-                ArrayPool<byte>.Shared.Return(encodedBuffer);
-            }
-
             if (ybeginBuffer != null)
             {
                 ArrayPool<byte>.Shared.Return(ybeginBuffer);
@@ -530,40 +471,9 @@ public partial class UsenetClient
         return new DecodedBodyReadResult(failure, connectionReusable);
     }
 
-    private sealed class BatchDecodeBuffer
-    {
-        public required byte[] Buffer;
-    }
-
     private readonly record struct DecodedBodyReadResult(
         Exception? Failure,
         bool ConnectionReusable);
-
-    private static async ValueTask<(
-        FlushResult Result,
-        RapidYencDecoderState? DecoderState,
-        uint Crc32)> DecodeAndFlushAsync(
-        PipeWriter writer,
-        ReadOnlyMemory<byte> encoded,
-        RapidYencDecoderState? decoderState,
-        uint crc32,
-        bool computeCrc32,
-        DecodedBodyReadStream decodedStream,
-        CancellationToken cancellationToken)
-    {
-        var destination = writer.GetSpan(encoded.Length);
-        var decodedLength = YencDecoder.DecodeEx(
-            encoded.Span, destination, ref decoderState, isRaw: true);
-        if (computeCrc32)
-        {
-            crc32 = Crc32.Compute(destination[..decodedLength], crc32);
-        }
-
-        decodedStream.AddBufferedBytes(decodedLength);
-        writer.Advance(decodedLength);
-        var result = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-        return (result, decoderState, crc32);
-    }
 
     private void AdjustBufferedDecodedBodyBytes(long delta)
     {

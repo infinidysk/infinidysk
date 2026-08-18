@@ -17,6 +17,7 @@ internal sealed class FakeNntpClient(
 {
     public int BatchRequestCount { get; private set; }
     public int BodyRequestCount { get; private set; }
+    public Dictionary<string, int> BodyRequestCounts { get; } = new(StringComparer.Ordinal);
     public HashSet<string> RequestedSegmentIds { get; } = new(StringComparer.Ordinal);
 
     public override Task ConnectAsync(
@@ -60,7 +61,9 @@ internal sealed class FakeNntpClient(
     {
         cancellationToken.ThrowIfCancellationRequested();
         BodyRequestCount++;
-        RequestedSegmentIds.Add(segmentId.ToString());
+        var segmentKey = segmentId.ToString();
+        RequestedSegmentIds.Add(segmentKey);
+        BodyRequestCounts[segmentKey] = BodyRequestCounts.GetValueOrDefault(segmentKey) + 1;
         try
         {
             var response = CreateBodyResponse(segmentId);

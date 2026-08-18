@@ -53,6 +53,59 @@ public class NzbFileStreamTests
         if (articleBufferSize > 0) Assert.True(client.BatchRequestCount > 0);
     }
 
+    [Fact]
+    public async Task PlaybackStart_DeliversFirstSegmentBeforeStartingBufferedPrefetch()
+    {
+        var client = new FakeNntpClient(
+            SegmentIds.Zip(SegmentBytes).ToDictionary(pair => pair.First, pair => pair.Second),
+            useCachedYencStreams: true,
+            segmentRanges: SegmentIds.Zip(SegmentRanges).ToDictionary(pair => pair.First, pair => pair.Second));
+        await using var stream = new NzbFileStream(
+            SegmentIds, 15, client, articleBufferSize: 4, segmentByteRanges: SegmentRanges);
+
+        var firstByte = new byte[1];
+        Assert.Equal(1, await stream.ReadAsync(firstByte));
+
+        Assert.Equal("a", Encoding.ASCII.GetString(firstByte));
+        Assert.Equal(0, client.BatchRequestCount);
+
+        var restOfFirstSegment = new byte[4];
+        Assert.Equal(4, await stream.ReadAsync(restOfFirstSegment));
+        Assert.Equal("bcde", Encoding.ASCII.GetString(restOfFirstSegment));
+        Assert.Equal(0, client.BatchRequestCount);
+
+        Assert.Equal(1, await stream.ReadAsync(firstByte));
+        Assert.True(client.BatchRequestCount > 0);
+        Assert.Equal("f", Encoding.ASCII.GetString(firstByte));
+    }
+
+    [Fact]
+    public async Task SmallClosedRange_StreamsTargetSegmentWithoutDrainingItFirst()
+    {
+        var client = new FakeNntpClient(
+            SegmentIds.Zip(SegmentBytes).ToDictionary(pair => pair.First, pair => pair.Second),
+            useCachedYencStreams: true,
+            segmentRanges: SegmentIds.Zip(SegmentRanges).ToDictionary(pair => pair.First, pair => pair.Second));
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(2);
+        try
+        {
+            await using var stream = new NzbFileStream(
+                SegmentIds, 15, client, articleBufferSize: 4, segmentByteRanges: SegmentRanges);
+            stream.Seek(6, SeekOrigin.Begin);
+            var buffer = new byte[2];
+
+            Assert.Equal(2, await stream.ReadAsync(buffer));
+            Assert.Equal("gh", Encoding.ASCII.GetString(buffer));
+            Assert.Equal(0, client.BatchRequestCount);
+            Assert.Equal(1, client.BodyRequestCounts["two"]);
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -630,7 +683,10 @@ public class NzbFileStreamTests
             fileName: "seek-dispose.bin",
             inFlightArticleBudget: budget);
 
-        var buffer = new byte[segmentSize / 2];
+        var buffer = new byte[segmentSize];
+        _ = await stream.ReadAsync(buffer);
+        // The first segment uses the direct first-byte path; reading into the next
+        // segment creates the buffered prefetch stream that owns byte-budget leases.
         _ = await stream.ReadAsync(buffer);
         Assert.True(budget.LeasedBytes > 0);
 

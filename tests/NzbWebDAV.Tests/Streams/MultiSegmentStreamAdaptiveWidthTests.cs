@@ -13,11 +13,28 @@ public class MultiSegmentStreamAdaptiveWidthTests
 {
     private const int BodyPipelineBatchSize = 4;
 
+    [Theory]
+    [InlineData(0, false, 0)]
+    [InlineData(1, false, 1)]
+    [InlineData(40, false, 40)]
+    [InlineData(1, true, 1)]
+    [InlineData(2, true, 4)]
+    [InlineData(40, true, 160)]
+    public void TaskWindowSize_ExpandsPipelinedSegmentsWithoutChangingIndividualMode(
+        int articleBufferSize,
+        bool pipelined,
+        int expected)
+    {
+        Assert.Equal(
+            expected,
+            MultiSegmentStream.CalculateTaskWindowSize(articleBufferSize, pipelined));
+    }
+
     [Fact]
-    public async Task DiscriminatingBaseline_Buffer32FixedBatch4_AllowsEightOutstandingBatches()
+    public async Task TaskWindow_Buffer32FixedBatch4_AllowsThirtyTwoOutstandingBatches()
     {
         const int articleBufferSize = 32;
-        const int segmentCount = 64;
+        const int segmentCount = 128;
         const int segmentSize = 16;
 
         var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
@@ -26,19 +43,21 @@ public class MultiSegmentStreamAdaptiveWidthTests
 
         // Leave all responses gated so permits stay held while the producer fills.
         await client.WaitUntilAsync(
-            () => client.MaxActiveBatches >= articleBufferSize / BodyPipelineBatchSize,
+            () => client.MaxActiveBatches >= articleBufferSize,
             TimeSpan.FromSeconds(5));
 
-        Assert.Equal(8, client.MaxActiveBatches);
+        Assert.Equal(articleBufferSize, client.MaxActiveBatches);
         Assert.Contains(4, client.ObservedBatchSizes);
-        Assert.All(client.ObservedBatchSizes.Take(8), size => Assert.Equal(4, size));
+        Assert.All(client.ObservedBatchSizes.Take(articleBufferSize), size => Assert.Equal(4, size));
     }
 
     [Fact]
     public async Task Starvation_EventuallyNarrowsBatchSizesToFourTwoAndOne()
     {
         const int articleBufferSize = 32;
-        const int segmentCount = 96;
+        // The expanded task window holds 128 segment tasks at width four. Go beyond
+        // it so starvation can affect subsequently issued batches.
+        const int segmentCount = 192;
         const int segmentSize = 8;
 
         var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
@@ -176,7 +195,9 @@ public class MultiSegmentStreamAdaptiveWidthTests
     public async Task FifoFidelity_SurvivesWidthTransitionsInBothDirections()
     {
         const int articleBufferSize = 32;
-        const int segmentCount = 120;
+        // As above, exceed the expanded task window so width changes affect issued
+        // batches rather than only the already-enqueued initial window.
+        const int segmentCount = 256;
         const int segmentSize = 4;
 
         var client = new ControlledBatchNntpClient(segmentCount, segmentSize, uniqueBytes: true);

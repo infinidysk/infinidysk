@@ -18,6 +18,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly string _fileName;
     private readonly bool _useContainerAwareFill;
     private readonly long? _firstSegmentFileOffset;
+    private readonly bool _failFastOnFirstSegment;
     private Stream? _stream;
     private int _currentIndex;
     private int _openSegmentIndex = -1;
@@ -35,7 +36,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         string[][]? segmentFallbacks = null,
         ReadOnlyMemory<long> exactSegmentSizes = default,
         bool useContainerAwareFill = false,
-        long? firstSegmentFileOffset = null)
+        long? firstSegmentFileOffset = null,
+        bool failFastOnFirstSegment = false)
     {
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
@@ -44,6 +46,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
         _useContainerAwareFill = useContainerAwareFill;
         _firstSegmentFileOffset = firstSegmentFileOffset;
+        _failFastOnFirstSegment = failFastOnFirstSegment;
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
@@ -95,6 +98,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                     }
                     else
                     {
+                        if (_failFastOnFirstSegment && segmentIndex == 0)
+                            throw;
                         // Only an exactly-known length may stand in for missing data:
                         // anything else shifts every following byte of the file.
                         if (!_segmentSizes.TryGetFillLength(segmentIndex, out var fill, out _))

@@ -28,6 +28,9 @@ public class NzbFileStream(
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
+    // A range in this size class is commonly an initial probe or a scrub preview.
+    // Avoid draining its target segment into a pooled buffer before returning bytes.
+    private const long MaximumDirectRangeBytes = 1024 * 1024;
     private long _position;
     private long _pendingForwardDrain;
     private bool _disposed;
@@ -286,8 +289,11 @@ public class NzbFileStream(
     private async Task<Stream> GetFileStream(long rangeStart, CancellationToken cancellationToken)
     {
         if (rangeStart == 0) return GetMultiSegmentStream(0, failFastOnFirstSegment: true, cancellationToken);
-        var fast = await TryGetSeekStreamFast(rangeStart, cancellationToken).ConfigureAwait(false);
-        if (fast != null) return fast;
+        if (!ShouldUseDirectRangePath())
+        {
+            var fast = await TryGetSeekStreamFast(rangeStart, cancellationToken).ConfigureAwait(false);
+            if (fast != null) return fast;
+        }
 
         var foundSegment = await SeekSegment(rangeStart, cancellationToken).ConfigureAwait(false);
         var stream = GetMultiSegmentStream(foundSegment.FoundIndex, failFastOnFirstSegment: false, cancellationToken);
@@ -316,6 +322,12 @@ public class NzbFileStream(
         }
 
         return stream;
+    }
+
+    private static bool ShouldUseDirectRangePath()
+    {
+        var budget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        return budget is > 0 and <= MaximumDirectRangeBytes;
     }
 
     private const int MaxSeekGuessCorrection = 3;
@@ -477,7 +489,7 @@ public class NzbFileStream(
             : default;
         var firstSegmentFileOffset = _segmentByteRanges?[firstSegmentIndex].StartInclusive;
 
-        return MultiSegmentStream.Create(
+        return MultiSegmentStream.CreateFirstSegmentHybrid(
             segmentIds,
             usenetClient,
             articleBufferSize,
