@@ -24,7 +24,8 @@ public class GetHistoryController(
             query = query.Where(q => request.NzoIds.Contains(q.Id));
         if (request.Category != null)
             query = query.Where(q => q.Category == request.Category);
-        query = SabListQuery.ApplySearch(query, request.Search);
+        query = SabListQuery.ApplySearch(
+            query, request.Search, dbClient.Ctx.Database.IsNpgsql());
         if (request.HasUnsupportedStatus)
             query = query.Where(_ => false);
         else if (request.Status is { } status)

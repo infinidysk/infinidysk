@@ -19,22 +19,34 @@ internal static class SabListQuery
             .Replace("%", "\\%", StringComparison.Ordinal)
             .Replace("_", "\\_", StringComparison.Ordinal);
 
-    internal static IQueryable<QueueItem> ApplySearch(IQueryable<QueueItem> query, string? search)
+    // SQLite LIKE is ASCII case-insensitive by default; PostgreSQL LIKE is
+    // case-sensitive, so the Postgres path uses ILIKE to preserve behavior.
+    internal static IQueryable<QueueItem> ApplySearch(
+        IQueryable<QueueItem> query, string? search, bool isPostgres = false)
     {
         if (search is null) return query;
         var pattern = $"%{EscapeLikePattern(search)}%";
-        return query.Where(x =>
-            EF.Functions.Like(x.JobName, pattern, "\\") ||
-            EF.Functions.Like(x.FileName, pattern, "\\"));
+        return isPostgres
+            ? query.Where(x =>
+                EF.Functions.ILike(x.JobName, pattern, "\\") ||
+                EF.Functions.ILike(x.FileName, pattern, "\\"))
+            : query.Where(x =>
+                EF.Functions.Like(x.JobName, pattern, "\\") ||
+                EF.Functions.Like(x.FileName, pattern, "\\"));
     }
 
-    internal static IQueryable<HistoryItem> ApplySearch(IQueryable<HistoryItem> query, string? search)
+    internal static IQueryable<HistoryItem> ApplySearch(
+        IQueryable<HistoryItem> query, string? search, bool isPostgres = false)
     {
         if (search is null) return query;
         var pattern = $"%{EscapeLikePattern(search)}%";
-        return query.Where(x =>
-            EF.Functions.Like(x.JobName, pattern, "\\") ||
-            EF.Functions.Like(x.FileName, pattern, "\\"));
+        return isPostgres
+            ? query.Where(x =>
+                EF.Functions.ILike(x.JobName, pattern, "\\") ||
+                EF.Functions.ILike(x.FileName, pattern, "\\"))
+            : query.Where(x =>
+                EF.Functions.Like(x.JobName, pattern, "\\") ||
+                EF.Functions.Like(x.FileName, pattern, "\\"));
     }
 
     internal static IQueryable<QueueItem> ApplyQueueSort(
