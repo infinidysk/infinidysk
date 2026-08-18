@@ -58,7 +58,30 @@ public sealed class ResetHealthCheckQueueControllerTests : IAsyncLifetime
         Assert.NotNull(updated[directory.Id].NextHealthCheck);
     }
 
+    [Fact]
+    public async Task ResetAsync_GetRequestReturnsMethodNotAllowedWithoutUpdatingItems()
+    {
+        var scheduled = NewItem("scheduled.mkv", DavItem.ItemType.UsenetFile, DateTimeOffset.UtcNow.AddDays(1));
+        _context.Items.Add(scheduled);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var result = await InvokeActionAsync(HttpMethods.Get);
+
+        var response = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status405MethodNotAllowed, response.StatusCode);
+        var updated = await _context.Items.SingleAsync(x => x.Id == scheduled.Id);
+        Assert.NotNull(updated.NextHealthCheck);
+    }
+
     private async Task<ResetHealthCheckQueueResponse> InvokeAsync()
+    {
+        var result = await InvokeActionAsync(HttpMethods.Post);
+        return Assert.IsType<OkObjectResult>(result).Value as ResetHealthCheckQueueResponse
+            ?? throw new Xunit.Sdk.XunitException("Expected reset health check queue response.");
+    }
+
+    private Task<IActionResult> InvokeActionAsync(string method)
     {
         var controller = new TestController(_dbClient)
         {
@@ -67,10 +90,9 @@ public sealed class ResetHealthCheckQueueControllerTests : IAsyncLifetime
                 HttpContext = new DefaultHttpContext()
             }
         };
+        controller.HttpContext.Request.Method = method;
 
-        var result = await controller.InvokeAsync();
-        return Assert.IsType<OkObjectResult>(result).Value as ResetHealthCheckQueueResponse
-            ?? throw new Xunit.Sdk.XunitException("Expected reset health check queue response.");
+        return controller.InvokeAsync();
     }
 
     private static DavItem NewItem(string name, DavItem.ItemType type, DateTimeOffset? nextHealthCheck)
