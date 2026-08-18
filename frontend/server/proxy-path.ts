@@ -65,5 +65,5 @@ export function shouldProxyToBackend(method: string, pathname: string): boolean 
 export function shouldSkipCompression(pathname: string): boolean {
   const decodedPath = safeDecodePath(pathname);
   if (decodedPath === null) return false;
-  return matchesBackendPathPrefix(decodedPath) || isBackendApiDocsPath(decodedPath);
+  return matchesBackendPathPrefix(decodedPath) || isBackendApiDocsPath(pathname);
 }

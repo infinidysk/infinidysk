@@ -144,4 +144,8 @@ describe("shouldSkipCompression", () => {
     expect(shouldSkipCompression("/viewport.css")).toBe(false);
     expect(shouldSkipCompression("/%zz")).toBe(false);
   });
+
+  it("does not double-decode API documentation paths", () => {
+    expect(shouldSkipCompression("/scalar/%25")).toBe(true);
+  });
 });

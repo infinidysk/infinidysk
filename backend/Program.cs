@@ -381,7 +381,8 @@ public partial class Program
             app.Use(async (context, next) =>
             {
                 if (apiDocsEnabled
-                    && context.Request.Path.StartsWithSegments("/openapi", StringComparison.Ordinal))
+                    && (context.Request.Path.StartsWithSegments("/openapi", StringComparison.Ordinal)
+                        || context.Request.Path.StartsWithSegments("/scalar", StringComparison.Ordinal)))
                 {
                     try
                     {

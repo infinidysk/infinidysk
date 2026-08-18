@@ -65,7 +65,12 @@ public sealed class AdminOpenApiIntegrationTests(NzbDavWebApplicationFactory fac
             Assert.Equal("x-api-key", apiKey.GetProperty("name").GetString());
             Assert.Equal("header", apiKey.GetProperty("in").GetString());
 
-            using var scalar = await client.GetAsync("/scalar/");
+            using var scalarRejected = await client.GetAsync("/scalar/");
+            Assert.Equal(HttpStatusCode.Unauthorized, scalarRejected.StatusCode);
+
+            using var scalarRequest = new HttpRequestMessage(HttpMethod.Get, "/scalar/");
+            scalarRequest.Headers.Add("x-api-key", NzbDavWebApplicationFactory.ApiKey);
+            using var scalar = await client.SendAsync(scalarRequest);
             Assert.Equal(HttpStatusCode.OK, scalar.StatusCode);
         }
         finally
