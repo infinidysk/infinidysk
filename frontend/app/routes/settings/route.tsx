@@ -66,7 +66,7 @@ const defaultConfig = {
     "usenet.in-flight-article-budget-mb": "",
     "usenet.idle-connection-timeout-seconds": "60",
     "usenet.pipelined-body-requests": "true",
-    "usenet.segment-cache.enabled": "false",
+    "usenet.segment-cache.enabled": "true",
     "usenet.segment-cache.path": "/config/segment-cache",
     "usenet.segment-cache.max-gb": "10",
     "usenet.pipelining.enabled": "false",

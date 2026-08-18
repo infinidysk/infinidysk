@@ -287,6 +287,7 @@ public class ConfigManager
                 case ConfigKeys.UsenetArticleBufferSize:
                 case ConfigKeys.UsenetInFlightArticleBudgetMb:
                 case ConfigKeys.UsenetIdleConnectionTimeoutSeconds:
+                case ConfigKeys.UsenetWarmConnectionsFloor:
                 case ConfigKeys.UsenetArticleMissCacheTtlSeconds:
                 case ConfigKeys.UsenetArticleMissCacheMaxEntries:
                 case ConfigKeys.UsenetSegmentCacheMaxGb:
@@ -365,6 +366,7 @@ public class ConfigManager
                 case ConfigKeys.UsenetPipeliningEnabled:
                 case ConfigKeys.UsenetCascadeEnabled:
                 case ConfigKeys.UsenetCascadeRetryPrimaryOnMiss:
+                case ConfigKeys.UsenetWarmConnectionsEnabled:
                 case ConfigKeys.UsenetContainerAwareFill:
                 case ConfigKeys.UsenetPipelinedBodyRequests:
                 case ConfigKeys.UsenetSegmentCacheEnabled:
@@ -863,6 +865,29 @@ public class ConfigManager
     }
 
     /// <summary>
+    /// Whether each NNTP provider keeps a small pool of pre-connected sockets ready
+    /// after idle periods. Enabled by default to keep playback off the TLS ramp.
+    /// </summary>
+    public bool IsWarmConnectionsEnabled()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetWarmConnectionsEnabled));
+        return configured is null || bool.Parse(configured);
+    }
+
+    /// <summary>
+    /// Idle NNTP sockets to keep ready per provider. An unset value derives a small
+    /// floor from the provider width; explicit values are clamped to that width.
+    /// </summary>
+    public int GetWarmConnectionsFloor(int maxConnections)
+    {
+        maxConnections = Math.Max(1, maxConnections);
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetWarmConnectionsFloor));
+        if (configured is null || !int.TryParse(configured, out var value))
+            return Math.Clamp(maxConnections / 6, 1, 8);
+        return Math.Clamp(value, 1, maxConnections);
+    }
+
+    /// <summary>
     /// How long a definitive per-provider (or per-storage-group) article miss stays
     /// cached before it is re-probed. Default 300s; clamped to [30, 86400].
     /// </summary>
@@ -903,7 +928,7 @@ public class ConfigManager
     public bool IsSegmentCacheEnabled()
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetSegmentCacheEnabled));
-        return v != null && bool.Parse(v);
+        return v == null || bool.Parse(v);
     }
 
     public string GetSegmentCachePath()

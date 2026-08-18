@@ -24,7 +24,7 @@ const validConfig = {
     "usenet.idle-connection-timeout-seconds": "60",
     "usenet.pipelined-body-requests": "true",
     "usenet.container-aware-fill": "true",
-    "usenet.segment-cache.enabled": "false",
+    "usenet.segment-cache.enabled": "true",
     "usenet.segment-cache.path": "/config/segment-cache",
     "usenet.segment-cache.max-gb": "10",
 };
@@ -73,9 +73,12 @@ describe("Streaming settings", () => {
         const user = userEvent.setup();
         render(createElement(StreamingHarness));
 
-        await user.click(screen.getByRole("checkbox", {
-            name: "Enable Segment Cache",
-        }));
+        expect(screen.getByText(/Segment Cache is enabled by default/i)).toBeTruthy();
+        expect(screen.getByText(/cannot automatically determine/i)).toBeTruthy();
+        const segmentCache = screen.getByRole<HTMLInputElement>("checkbox", {
+            name: "Enable Segment Cache (fast storage)",
+        });
+        expect(segmentCache.checked).toBe(true);
         const cachePath = screen.getByRole<HTMLInputElement>("textbox", {
             name: "Cache path",
         });
@@ -89,6 +92,9 @@ describe("Streaming settings", () => {
         await user.clear(cacheSize);
         await user.type(cacheSize, "25");
         expect(cacheSize.value).toBe("25");
+
+        await user.click(segmentCache);
+        expect(segmentCache.checked).toBe(false);
 
         const numericUpdates: Array<[string, string]> = [
             ["Streaming Segment Timeout", "10"],

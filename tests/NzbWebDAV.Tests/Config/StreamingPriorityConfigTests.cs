@@ -74,6 +74,25 @@ public class StreamingPriorityConfigTests
     }
 
     [Fact]
+    public void IsSegmentCacheEnabled_DefaultsOnUntilExplicitlyDisabled()
+    {
+        var config = new ConfigManager();
+
+        Assert.True(config.IsSegmentCacheEnabled());
+
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetSegmentCacheEnabled,
+                ConfigValue = "false",
+            },
+        ]);
+
+        Assert.False(config.IsSegmentCacheEnabled());
+    }
+
+    [Fact]
     public void ValidateConfigItems_RejectsNonNumericStreamingPriority()
     {
         var ex = Assert.Throws<ArgumentException>(() =>

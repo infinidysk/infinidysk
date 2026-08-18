@@ -1,5 +1,6 @@
 import { type Dispatch, type SetStateAction } from "react";
 import {
+    Alert,
     Badge,
     Input,
     ManagedSetting,
@@ -144,7 +145,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                     "usenet.segment-cache.max-gb",
                 ]}>
                     <div className="space-y-2">
-                        <Tooltip placement="bottom" content="Cache decoded segments on disk so repeat reads and seeks avoid provider traffic. Takes effect after restart.">
+                        <Tooltip placement="bottom" content="Cache decoded segments on disk so repeat reads and seeks avoid provider traffic. Takes effect after restart. Enable it only when the cache path is on storage that can handle the extra writes.">
                             <Toggle
                                 id="segment-cache-enabled-checkbox"
                                 className="cursor-pointer gap-2 p-0"
@@ -153,9 +154,14 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                                     ...config,
                                     "usenet.segment-cache.enabled": String(e.target.checked),
                                 })}
-                                label={<span className="text-sm text-base-content">Enable Segment Cache</span>}
+                                label={<span className="text-sm text-base-content">Enable Segment Cache (fast storage)</span>}
                             />
                         </Tooltip>
+                        <Alert className="alert-soft items-start text-xs" variant="warning">
+                            InfiniDysk cannot automatically determine whether the configured path is slow storage or
+                            flash with limited write endurance. Segment Cache is enabled by default; disable it or set
+                            Cache path to local SSD/NVMe or other storage where the additional writes are acceptable.
+                        </Alert>
                         {config["usenet.segment-cache.enabled"] === "true" && (
                             <div className="grid gap-4 border-l border-base-content/10 pl-4 sm:grid-cols-2">
                                 <label className="space-y-2 text-sm text-base-content/80">

@@ -11,6 +11,7 @@ using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Websocket;
 using Serilog;
+using UsenetSharp.Models;
 
 namespace NzbWebDAV.Clients.Usenet;
 
@@ -183,6 +184,9 @@ public class UsenetStreamingClient : WrappingNntpClient
                 provider,
                 connectionPoolStats.GetOnConnectionPoolChanged(index),
                 idleTimeoutSeconds,
+                configManager.IsWarmConnectionsEnabled()
+                    ? configManager.GetWarmConnectionsFloor(provider.MaxConnections)
+                    : 0,
                 metricsWriter,
                 streamingPriority,
                 latencyTracker,
@@ -205,6 +209,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         UsenetProviderConfig.ConnectionDetails connectionDetails,
         EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs> onConnectionPoolChanged,
         int idleTimeoutSeconds,
+        int warmConnectionFloor,
         MetricsWriter metricsWriter,
         SemaphorePriorityOdds? streamingPriority = null,
         ProviderLatencyTracker? latencyTracker = null,
@@ -250,6 +255,7 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionFactory: ct => CreateNewConnection(connectionDetails, ct),
             onConnectionPoolChanged,
             idleTimeoutSeconds,
+            warmConnectionFloor,
             streamingPriority,
             connectionLimitDetector: ex =>
                 UsenetConnectionLimitDetector.TryLearn(ex, out var learned) ? learned : null,
@@ -312,6 +318,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         Func<CancellationToken, ValueTask<INntpClient>> connectionFactory,
         EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs> onConnectionPoolChanged,
         int idleTimeoutSeconds,
+        int warmConnectionFloor,
         SemaphorePriorityOdds? streamingPriority = null,
         Func<Exception, int?>? connectionLimitDetector = null,
         Action<int, int>? onConnectionLimitLearned = null
@@ -319,15 +326,26 @@ public class UsenetStreamingClient : WrappingNntpClient
     {
         var idleTimeout = TimeSpan.FromSeconds(idleTimeoutSeconds);
         Log.Information(
-            "Creating NNTP connection pool max={Max} idleTimeout={IdleTimeoutSeconds}s streamingPriority={StreamingPriority}",
-            maxConnections, idleTimeoutSeconds, streamingPriority?.HighPriorityOdds);
+            "Creating NNTP connection pool max={Max} idleTimeout={IdleTimeoutSeconds}s warmFloor={WarmFloor} streamingPriority={StreamingPriority}",
+            maxConnections, idleTimeoutSeconds, warmConnectionFloor, streamingPriority?.HighPriorityOdds);
         var connectionPool = new ConnectionPool<INntpClient>(
             maxConnections, connectionFactory, idleTimeout, streamingPriority,
-            connectionLimitDetector, onConnectionLimitLearned);
+            connectionLimitDetector, onConnectionLimitLearned, warmConnectionFloor,
+            KeepAliveAsync);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         onConnectionPoolChanged(connectionPool, args);
         return connectionPool;
+    }
+
+    private static async Task KeepAliveAsync(INntpClient connection, CancellationToken cancellationToken)
+    {
+        var response = await connection.DateAsync(cancellationToken).ConfigureAwait(false);
+        if (response.ResponseType != UsenetResponseType.DateAndTime)
+        {
+            throw new RetryableDownloadException(
+                $"Unexpected NNTP response to idle DATE keepalive: {response.ResponseMessage}");
+        }
     }
 
     // Hard ceiling for TCP/TLS connect + AUTHINFO. Long enough for slow providers,

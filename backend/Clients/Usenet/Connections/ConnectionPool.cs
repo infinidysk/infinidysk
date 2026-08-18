@@ -47,6 +47,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     public TimeSpan IdleTimeout { get; }
     public int MaxConnections => _maxConnections;
+    public int WarmConnectionFloor => _warmConnectionFloor;
     public int EffectiveMaxConnections => Volatile.Read(ref _effectiveMaxConnections);
     public int? LearnedConnectionLimit => _learnedConnectionLimit;
     public int LiveConnections => _live;
@@ -59,6 +60,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     private readonly Func<CancellationToken, ValueTask<T>> _factory;
     private readonly int _maxConnections;
+    private readonly int _warmConnectionFloor;
+    private readonly Func<T, CancellationToken, Task>? _keepAlive;
     private readonly Func<Exception, int?>? _connectionLimitDetector;
     private readonly Action<int, int>? _onConnectionLimitLearned;
 
@@ -104,7 +107,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         TimeSpan? idleTimeout = null,
         SemaphorePriorityOdds? priorityOdds = null,
         Func<Exception, int?>? connectionLimitDetector = null,
-        Action<int, int>? onConnectionLimitLearned = null)
+        Action<int, int>? onConnectionLimitLearned = null,
+        int warmConnectionFloor = 0,
+        Func<T, CancellationToken, Task>? keepAlive = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
 
@@ -117,6 +122,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(idleTimeout));
 
         _maxConnections = maxConnections;
+        _warmConnectionFloor = Math.Clamp(warmConnectionFloor, 0, maxConnections);
+        _keepAlive = _warmConnectionFloor > 0 ? keepAlive : null;
         _effectiveMaxConnections = maxConnections;
         _connectionLimitDetector = connectionLimitDetector;
         _onConnectionLimitLearned = onConnectionLimitLearned;
@@ -137,10 +144,17 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     /// Waits until at least (`reservedCount` + 1) slots are free before acquiring one,
     /// ensuring that after acquisition at least `reservedCount` remain available.
     /// </summary>
-    public async Task<ConnectionLock<T>> GetConnectionLockAsync
+    public Task<ConnectionLock<T>> GetConnectionLockAsync
     (
         SemaphorePriority priority,
         CancellationToken cancellationToken = default
+    ) => GetConnectionLockCoreAsync(priority, preferIdle: true, cancellationToken);
+
+    private async Task<ConnectionLock<T>> GetConnectionLockCoreAsync
+    (
+        SemaphorePriority priority,
+        bool preferIdle,
+        CancellationToken cancellationToken
     )
     {
         // Make caller cancellation also cancel the wait on the gate.
@@ -160,9 +174,12 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             if (_disposed == 1)
                 ThrowDisposed();
 
-            reusedConnection = TryTakeIdleConnection(out reused!);
-            if (reusedConnection)
-                Interlocked.Increment(ref _connectionsReused);
+            if (preferIdle)
+            {
+                reusedConnection = TryTakeIdleConnection(out reused!);
+                if (reusedConnection)
+                    Interlocked.Increment(ref _connectionsReused);
+            }
         }
         if (reusedConnection)
         {
@@ -194,9 +211,12 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 if (_disposed == 1)
                     ThrowDisposed();
 
-                reusedConnection = TryTakeIdleConnection(out reused!);
-                if (reusedConnection)
-                    Interlocked.Increment(ref _connectionsReused);
+                if (preferIdle)
+                {
+                    reusedConnection = TryTakeIdleConnection(out reused!);
+                    if (reusedConnection)
+                        Interlocked.Increment(ref _connectionsReused);
+                }
             }
             if (reusedConnection)
             {
@@ -397,9 +417,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     {
         try
         {
+            await EnsureWarmFloorAsync(_sweepCts.Token).ConfigureAwait(false);
             using var timer = new PeriodicTimer(IdleTimeout / 2);
             while (await timer.WaitForNextTickAsync(_sweepCts.Token).ConfigureAwait(false))
-                SweepOnce();
+                await SweepOnceAsync(cancellationToken: _sweepCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -407,23 +428,63 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         }
     }
 
-    private void SweepOnce()
+    internal Task SweepOnceForTestsAsync(
+        long? nowMillis = null,
+        CancellationToken cancellationToken = default) =>
+        SweepOnceAsync(nowMillis, cancellationToken);
+
+    private async Task SweepOnceAsync(long? nowMillis = null, CancellationToken cancellationToken = default)
     {
-        var now = Environment.TickCount64;
+        var now = nowMillis ?? Environment.TickCount64;
         var survivors = new List<Pooled>();
         var isAnyConnectionFreed = false;
+        var effectiveWarmFloor = Math.Min(_warmConnectionFloor, EffectiveMaxConnections);
 
         while (_idleConnections.TryPop(out var item))
         {
-            if (item.IsExpired(IdleTimeout, now))
+            if (item.IsExpired(IdleTimeout, now) && Volatile.Read(ref _live) > effectiveWarmFloor)
             {
                 DisposeConnection(item.Connection);
                 Interlocked.Decrement(ref _live);
+                Interlocked.Increment(ref _connectionsDestroyed);
                 isAnyConnectionFreed = true;
             }
             else
             {
                 survivors.Add(item);
+            }
+        }
+
+        // Ping idle warm connections before they reach their provider's own idle timeout.
+        // These connections are popped from the stack while the ping is in flight, so no
+        // borrower can receive a connection with a command already on the wire.
+        if (_keepAlive is not null)
+        {
+            var warmCount = Math.Min(effectiveWarmFloor, survivors.Count);
+            for (var i = 0; i < warmCount;)
+            {
+                var item = survivors[i];
+                try
+                {
+                    await _keepAlive(item.Connection, cancellationToken).ConfigureAwait(false);
+                    survivors[i] = item with { LastTouchedMillis = Environment.TickCount64 };
+                    i++;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // An idle DATE failure only proves this socket is stale. Dispose it
+                    // and let the floor refill; it is deliberately not provider traffic.
+                    DisposeConnection(item.Connection);
+                    Interlocked.Decrement(ref _live);
+                    Interlocked.Increment(ref _connectionsDestroyed);
+                    survivors.RemoveAt(i);
+                    warmCount--;
+                    isAnyConnectionFreed = true;
+                }
             }
         }
 
@@ -433,6 +494,36 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
         if (isAnyConnectionFreed)
             TriggerConnectionPoolChangedEvent();
+
+        await EnsureWarmFloorAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task EnsureWarmFloorAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested &&
+               Volatile.Read(ref _live) < Math.Min(_warmConnectionFloor, EffectiveMaxConnections))
+        {
+            try
+            {
+                // A warm connection is borrowed only while it is being opened, then
+                // returned immediately. Cached warm connections never retain a gate permit.
+                using (await GetConnectionLockCoreAsync(
+                           SemaphorePriority.Low, preferIdle: false, cancellationToken: cancellationToken).ConfigureAwait(false))
+                {
+                    // Returning the lock to the pool establishes one idle warm connection.
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch
+            {
+                // Do not spin on a provider that is unavailable at startup. The next
+                // sweep retries the floor; connection-limit learning still applies.
+                return;
+            }
+        }
     }
 
     /* ------------------------- dispose helpers ------------------------------------ */

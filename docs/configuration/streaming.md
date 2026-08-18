@@ -33,7 +33,7 @@ is saturated.
 
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
-| Enable Segment Cache | `usenet.segment-cache.enabled` | off | Cache decoded segments on disk; restart required |
+| Enable Segment Cache | `usenet.segment-cache.enabled` | on | Cache decoded segments on disk; restart required |
 | Cache path | `usenet.segment-cache.path` | `/config/segment-cache` | Segment-cache directory |
 | Maximum size (GB) | `usenet.segment-cache.max-gb` | `10` | Segment-cache size limit |
 | Streaming Segment Timeout | `usenet.streaming-segment-timeout-seconds` | `8` | Per-segment deadline, 2–40 seconds |
@@ -45,6 +45,15 @@ is saturated.
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | Close unused connections after 15–300 seconds |
 | Pipelined article downloads | `usenet.pipelined-body-requests` | on | Fetch WebDAV BODY requests in small batches |
 | Container-aware gap fill [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | on | Experimental MPEG-TS null-packet fill for confirmed gaps |
+
+### Segment-cache storage
+
+Segment Cache is **enabled by default**. It can improve repeated reads and seeks, but
+also writes decoded segments to the cache path. InfiniDysk does not automatically
+classify that storage, so verify that `/config/segment-cache` (or your configured
+path) is local SSD/NVMe or other storage that can safely absorb the extra writes.
+Disable the cache for slow disks, network mounts, or flash storage with limited
+write endurance; alternatively, point **Cache path** at suitable local storage.
 
 ## Article buffer and adaptive prefetch
 
