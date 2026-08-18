@@ -11,6 +11,9 @@ namespace NzbWebDAV.Database.PostgresMigrations
     /// <inheritdoc />
     public partial class InitializePostgresDatabase : Migration
     {
+        private static readonly DateTime SeedEpoch =
+            DateTime.SpecifyKind(DateTime.UnixEpoch, DateTimeKind.Unspecified);
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
@@ -569,11 +572,14 @@ namespace NzbWebDAV.Database.PostgresMigrations
                 columns: new[] { "Id", "IdPrefix", "CreatedAt", "ParentId", "Name", "Type", "SubType", "Path" },
                 values: new object[,]
                 {
-                    { Guid.Parse("00000000-0000-0000-0000-000000000000"), "00000", DateTime.UnixEpoch, null, "/", 1, 102, "/" },
-                    { Guid.Parse("00000000-0000-0000-0000-000000000001"), "00000", DateTime.UnixEpoch, Guid.Parse("00000000-0000-0000-0000-000000000000"), "nzbs", 1, 103, "/nzbs" },
-                    { Guid.Parse("00000000-0000-0000-0000-000000000002"), "00000", DateTime.UnixEpoch, Guid.Parse("00000000-0000-0000-0000-000000000000"), "content", 1, 104, "/content" },
-                    { Guid.Parse("00000000-0000-0000-0000-000000000003"), "00000", DateTime.UnixEpoch, Guid.Parse("00000000-0000-0000-0000-000000000000"), "completed-symlinks", 1, 105, "/completed-symlinks" },
-                    { Guid.Parse("00000000-0000-0000-0000-000000000004"), "00000", DateTime.UnixEpoch, Guid.Parse("00000000-0000-0000-0000-000000000000"), ".ids", 1, 106, "/.ids" },
+                    // CreatedAt columns are timestamp without time zone; Npgsql cannot
+                    // render a UTC-kind DateTime literal for them, so seed with the
+                    // unspecified-kind wall-clock epoch.
+                    { Guid.Parse("00000000-0000-0000-0000-000000000000"), "00000", SeedEpoch, null, "/", 1, 102, "/" },
+                    { Guid.Parse("00000000-0000-0000-0000-000000000001"), "00000", SeedEpoch, Guid.Parse("00000000-0000-0000-0000-000000000000"), "nzbs", 1, 103, "/nzbs" },
+                    { Guid.Parse("00000000-0000-0000-0000-000000000002"), "00000", SeedEpoch, Guid.Parse("00000000-0000-0000-0000-000000000000"), "content", 1, 104, "/content" },
+                    { Guid.Parse("00000000-0000-0000-0000-000000000003"), "00000", SeedEpoch, Guid.Parse("00000000-0000-0000-0000-000000000000"), "completed-symlinks", 1, 105, "/completed-symlinks" },
+                    { Guid.Parse("00000000-0000-0000-0000-000000000004"), "00000", SeedEpoch, Guid.Parse("00000000-0000-0000-0000-000000000000"), ".ids", 1, 106, "/.ids" },
                 });
             migrationBuilder.InsertData(
                 table: "ConfigItems",

@@ -25,8 +25,10 @@ internal static class DatabaseStartupGuards
     {
         if (databaseContext.Database.IsNpgsql())
         {
+            // quote_ident double-quotes the (case-sensitive) table name so to_regclass
+            // resolves EF Core's quoted identifiers instead of folding to lowercase.
             var exists = await databaseContext.Database
-                .SqlQuery<bool>($"SELECT to_regclass(format('\"%s\"', {tableName})) IS NOT NULL AS Value")
+                .SqlQuery<bool>($"SELECT to_regclass(quote_ident({tableName})) IS NOT NULL AS Value")
                 .FirstAsync(cancellationToken)
                 .ConfigureAwait(false);
             return exists;

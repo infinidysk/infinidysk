@@ -273,7 +273,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 : new SqliteParameter(name, batch[i].ToString().ToUpperInvariant());
         }
 
-        // Parameter names are generated locally (@p0..@pN); values are bound via SqliteParameter.
+        // Parameter names are generated locally (@p0..@pN); values are bound via
+        // provider-specific parameters (NpgsqlParameter or SqliteParameter).
 #pragma warning disable EF1002
         await dbContext.Database.ExecuteSqlRawAsync(
             $"INSERT INTO TMP_LINKED_FILES (Id) VALUES {string.Join(",", valueSql)}",
@@ -303,7 +304,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 : new SqliteParameter(name, items[i].Id);
         }
 
-        // Placeholder names are generated locally (@p0..@pN); values are bound via SqliteParameter.
+        // Placeholder names are generated locally (@p0..@pN); values are bound via
+        // provider-specific parameters (NpgsqlParameter or SqliteParameter).
 #pragma warning disable EF1002
         return await dbContext.Database.ExecuteSqlRawAsync(
             dbContext.Database.IsNpgsql()
@@ -334,7 +336,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 : new SqliteParameter(name, items[i].Id);
         }
 
-        // Placeholder names are generated locally (@p0..@pN); values are bound via SqliteParameter.
+        // Placeholder names are generated locally (@p0..@pN); values are bound via
+        // provider-specific parameters (NpgsqlParameter or SqliteParameter).
 #pragma warning disable EF1002
         return await dbContext.Database.ExecuteSqlRawAsync(
             $"""
