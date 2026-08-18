@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -142,7 +141,9 @@ public class PruneCompletedHistoryTask : BaseTask
         for (var current = exception; current != null; current = current.InnerException)
         {
             if (current.IsCancellationException(CancellationToken)) { reason = "nzbdav is shutting down"; return true; }
-            if (current is SqliteException { SqliteErrorCode: 5 or 6 or 8 or 13 }) { reason = current.Message; return true; }
+            // SQLITE_BUSY/LOCKED/READONLY/FULL or PostgreSQL serialization failure /
+            // deadlock / lock timeout — transient contention the next sweep retries.
+            if (current.IsTransientDatabaseException()) { reason = current.Message; return true; }
         }
         reason = string.Empty; return false;
     }
