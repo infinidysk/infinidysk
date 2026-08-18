@@ -294,7 +294,12 @@ public partial class Program
                 .AddSingleton<NzbFetchCoalescer>()
                 .AddSingleton<PlayResolutionCoalescer>()
                 .AddSingleton<CandidateNegativeCache>()
-                .AddSingleton<ArticleMissNegativeCache>()
+                // The cache owns its short-lived DbContexts directly so the singleton
+                // NNTP client never depends on scoped database services.
+                .AddSingleton(sp => new ArticleMissNegativeCache(
+                    sp.GetRequiredService<ConfigManager>(),
+                    () => new DavDatabaseContext()))
+                .AddHostedService(sp => sp.GetRequiredService<ArticleMissNegativeCache>())
                 .AddSingleton<WardenStore>()
                 .AddSingleton<WardenRemoteSourceService>()
                 .AddHostedService(sp => sp.GetRequiredService<WardenRemoteSourceService>())

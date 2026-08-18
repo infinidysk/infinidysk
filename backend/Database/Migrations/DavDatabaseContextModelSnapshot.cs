@@ -424,6 +424,21 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("NzbNames", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.ArticleMissCacheEntry", b =>
+                {
+                    b.Property<string>("CacheKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ConfirmedAtUnix")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("CacheKey");
+
+                    b.HasIndex("ConfirmedAtUnix");
+
+                    b.ToTable("ArticleMissCacheEntries", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.NzbResolutionGroup", b =>
                 {
                     b.Property<Guid>("Id")

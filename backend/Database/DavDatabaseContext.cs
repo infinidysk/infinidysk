@@ -87,6 +87,7 @@ public class DavDatabaseContext : DbContext
     public DbSet<ListSource> ListSources => Set<ListSource>();
     public DbSet<WantedItem> WantedItems => Set<WantedItem>();
     public DbSet<NzbResolutionGroup> NzbResolutionGroups => Set<NzbResolutionGroup>();
+    public DbSet<ArticleMissCacheEntry> ArticleMissCacheEntries => Set<ArticleMissCacheEntry>();
 
     // Pending blob writes for the current unit of work (flushed in SaveChangesAsync).
     private readonly List<DavNzbFile> _blobNzbFiles = [];
@@ -760,6 +761,16 @@ public class DavDatabaseContext : DbContext
             e.Property(i => i.CreatedAtUnix).IsRequired();
 
             e.HasIndex(i => i.CreatedAtUnix);
+        });
+
+        // ArticleMissCacheEntry
+        b.Entity<ArticleMissCacheEntry>(e =>
+        {
+            e.ToTable("ArticleMissCacheEntries");
+            e.HasKey(i => i.CacheKey);
+            e.Property(i => i.CacheKey).IsRequired();
+            e.Property(i => i.ConfirmedAtUnix).IsRequired();
+            e.HasIndex(i => i.ConfirmedAtUnix);
         });
 
         if (DatabaseProviderConfig.IsPostgres)

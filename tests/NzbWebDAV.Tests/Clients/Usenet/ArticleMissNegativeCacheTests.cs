@@ -1,5 +1,8 @@
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
@@ -130,6 +133,74 @@ public class ArticleMissNegativeCacheTests
         Assert.True(cache.Entries <= 100);
         Assert.False(cache.IsMissing(ArticleMissNegativeCache.BuildKey("art-0", "p", null)));
         Assert.True(cache.IsMissing(ArticleMissNegativeCache.BuildKey("art-149", "p", null)));
+    }
+
+    [Fact]
+    public async Task PersistentCache_HydratesFreshMisses_AndPurgesExpiredRows()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using (var context = new DavDatabaseContext(options))
+            await context.Database.EnsureCreatedAsync();
+
+        var config = CreateConfig(ttlSeconds: 30, maxEntries: 100);
+        var key = ArticleMissNegativeCache.BuildKey("segment", "a.example", null);
+        using (var first = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options)))
+            await first.MarkMissingAndPersistForTestsAsync(key);
+
+        using var restarted = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options));
+        await restarted.StartAsync(CancellationToken.None);
+        Assert.True(restarted.IsMissing(key));
+
+        await using (var context = new DavDatabaseContext(options))
+        {
+            var persisted = await context.ArticleMissCacheEntries.SingleAsync();
+            persisted.ConfirmedAtUnix = DateTimeOffset.UtcNow.AddSeconds(-31).ToUnixTimeMilliseconds();
+            await context.SaveChangesAsync();
+        }
+
+        using var afterExpiry = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options));
+        await afterExpiry.StartAsync(CancellationToken.None);
+        Assert.False(afterExpiry.IsMissing(key));
+        await using var verify = new DavDatabaseContext(options);
+        Assert.Empty(await verify.ArticleMissCacheEntries.ToListAsync());
+    }
+
+    [Fact]
+    public async Task PersistentCache_Hydration_EvictsOldestRowsBeyondCap()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using (var context = new DavDatabaseContext(options))
+        {
+            await context.Database.EnsureCreatedAsync();
+            var now = DateTimeOffset.UtcNow;
+            for (var i = 0; i < 101; i++)
+            {
+                context.ArticleMissCacheEntries.Add(new ArticleMissCacheEntry
+                {
+                    CacheKey = $"segment-{i}\u0001p:provider",
+                    ConfirmedAtUnix = now.AddMilliseconds(i).ToUnixTimeMilliseconds(),
+                });
+            }
+            await context.SaveChangesAsync();
+        }
+
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        using var cache = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options));
+        await cache.StartAsync(CancellationToken.None);
+
+        Assert.Equal(100, cache.Entries);
+        Assert.False(cache.IsMissing("segment-0\u0001p:provider"));
+        Assert.True(cache.IsMissing("segment-100\u0001p:provider"));
+        await using var verify = new DavDatabaseContext(options);
+        Assert.Equal(100, await verify.ArticleMissCacheEntries.CountAsync());
     }
 
     private static ConfigManager CreateConfig(int ttlSeconds, int maxEntries)
