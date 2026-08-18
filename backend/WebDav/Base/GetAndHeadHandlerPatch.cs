@@ -182,6 +182,24 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                 ContentHeaderUtil.GetContentDisposition(friendlyIdFile.FriendlyName, shouldDownload: false);
         }
 
+        // Every in-tree file exposes its persisted size as metadata. HEAD must
+        // not create a streaming read just to retrieve that already-known value.
+        // Other IStoreItem implementations retain the stream-based fallback below
+        // because their length may only be available from the opened stream.
+        if (isHeadRequest && entry is BaseStoreItem file)
+        {
+            response.SetStatus(DavStatusCode.Ok);
+            response.ContentLength = file.FileSize;
+
+            if (etag != null && request.Headers.IfNoneMatch == etag)
+            {
+                response.ContentLength = 0;
+                response.SetStatus(DavStatusCode.NotModified);
+            }
+
+            return true;
+        }
+
         // Stream the actual entry
         var stream = await entry.GetReadableStreamAsync(ct).ConfigureAwait(false);
         await using (stream.ConfigureAwait(false))

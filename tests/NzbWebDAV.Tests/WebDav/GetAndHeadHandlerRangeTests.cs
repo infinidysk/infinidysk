@@ -1,6 +1,11 @@
+using Microsoft.AspNetCore.Http;
+using NWebDav.Server.Stores;
+using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services;
+using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.WebDav.Base;
 
 namespace NzbWebDAV.Tests.WebDav;
@@ -44,6 +49,33 @@ public class GetAndHeadHandlerRangeTests
     public void TryResolveRange_IgnoresRangeOnHead(string header)
     {
         Assert.Null(GetAndHeadHandlerPatch.TryResolveRange(isHeadRequest: true, header));
+    }
+
+    [Fact]
+    public async Task Head_KnownSizeFile_UsesMetadataWithoutOpeningStream()
+    {
+        var item = new CountingStoreItem(fileSize: 1234);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Head;
+        context.Request.Scheme = "http";
+        context.Request.Host = new HostString("localhost");
+        context.Request.Path = "/movie.mkv";
+
+        var handler = new GetAndHeadHandlerPatch(
+            new SingleItemStore(item),
+            new ConfigManager(),
+            new ProviderUsageTracker(),
+            new ActiveReadRegistry(),
+            new ConcurrentReadTracker(),
+            new StreamTraceBuffer(100, enabled: false),
+            new StreamingFailureTracker());
+
+        var handled = await handler.HandleRequestAsync(context);
+
+        Assert.True(handled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(1234, context.Response.ContentLength);
+        Assert.Equal(0, item.OpenCount);
     }
 
     [Fact]
@@ -100,6 +132,33 @@ public class GetAndHeadHandlerRangeTests
     private static DavItem NewDavItem()
     {
         return new DavItem { Id = Guid.NewGuid() };
+    }
+
+    private sealed class CountingStoreItem(long fileSize) : BaseStoreReadonlyItem
+    {
+        public int OpenCount { get; private set; }
+        public override string Name => "movie.mkv";
+        public override string UniqueKey => "movie";
+        public override long FileSize => fileSize;
+        public override DateTime CreatedAt => DateTime.UnixEpoch;
+
+        public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
+        {
+            OpenCount++;
+            return Task.FromResult<Stream>(new MemoryStream());
+        }
+    }
+
+    private sealed class SingleItemStore(IStoreItem item) : IStore
+    {
+        public Task<IStoreItem?> GetItemAsync(string path, CancellationToken cancellationToken)
+            => Task.FromResult<IStoreItem?>(item);
+
+        public Task<IStoreItem?> GetItemAsync(Uri uri, CancellationToken cancellationToken)
+            => Task.FromResult<IStoreItem?>(item);
+
+        public Task<IStoreCollection?> GetCollectionAsync(Uri uri, CancellationToken cancellationToken)
+            => Task.FromResult<IStoreCollection?>(null);
     }
 
     [Fact]
