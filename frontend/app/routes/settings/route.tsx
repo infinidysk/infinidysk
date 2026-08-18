@@ -237,6 +237,10 @@ function Body(props: BodyProps) {
     const [isSaving, setIsSaving] = useState(false);
     const [isSaved, setIsSaved] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
+    const [showProviderChangeNotice, setShowProviderChangeNotice] = useState(false);
+    const [isResettingHealthQueue, setIsResettingHealthQueue] = useState(false);
+    const [healthQueueResetCount, setHealthQueueResetCount] = useState<number | null>(null);
+    const [healthQueueResetError, setHealthQueueResetError] = useState<string | null>(null);
     const managedCount = useMemo(() => Object.keys(managedEnv).length, [managedEnv]);
 
     const iseUsenetUpdated = isUsenetSettingsUpdated(config, newConfig);
@@ -327,6 +331,11 @@ function Body(props: BodyProps) {
             await postConfigUpdate(changedConfig);
             setConfig(newConfig);
             setIsSaved(true);
+            if ("usenet.providers" in changedConfig) {
+                setShowProviderChangeNotice(true);
+                setHealthQueueResetCount(null);
+                setHealthQueueResetError(null);
+            }
         } catch {
             setSaveError("Could not save settings. Check the server logs and try again.");
         } finally {
@@ -353,6 +362,11 @@ function Body(props: BodyProps) {
 
         if (Object.keys(changedConfig).length > 0) {
             await postConfigUpdate(changedConfig);
+            if ("usenet.providers" in changedConfig) {
+                setShowProviderChangeNotice(true);
+                setHealthQueueResetCount(null);
+                setHealthQueueResetError(null);
+            }
         }
 
         const nextSaved = { ...config };
@@ -367,6 +381,23 @@ function Body(props: BodyProps) {
         );
         setIsSaved(Object.keys(remaining).length === 0);
     }, [config, newConfig, managedEnv, postConfigUpdate]);
+
+    const resetHealthCheckQueue = useCallback(async () => {
+        setIsResettingHealthQueue(true);
+        setHealthQueueResetError(null);
+        try {
+            const response = await fetch(withUrlBase("/api/reset-health-check-queue"), { method: "POST" });
+            if (!response.ok) {
+                throw new Error(`Health check queue reset failed with status ${response.status}`);
+            }
+            const result = await response.json() as { resetCount?: number };
+            setHealthQueueResetCount(result.resetCount ?? 0);
+        } catch {
+            setHealthQueueResetError("Could not queue library health checks. Check the server logs and try again.");
+        } finally {
+            setIsResettingHealthQueue(false);
+        }
+    }, []);
 
     const applySyncedConfig = useCallback((patch: Record<string, string>) => {
         const nextSaved = { ...config, ...patch };
@@ -436,6 +467,42 @@ function Body(props: BodyProps) {
             {saveError && (
                 <Alert variant="danger" className="sticky bottom-20 z-10 text-sm">
                     {saveError}
+                </Alert>
+            )}
+            {showProviderChangeNotice && (
+                <Alert variant="warning" className="sticky bottom-20 z-10 items-center justify-between gap-3 text-sm">
+                    <div className="flex min-w-0 items-start gap-2">
+                        <Icon name="warning" className="mt-0.5 shrink-0 !text-[20px]" />
+                        <span>
+                            Your Usenet provider changes can affect which library files are healthy.{" "}
+                            <a className="link font-medium" href={withUrlBase("/health")}>View Health</a>
+                            {healthQueueResetCount !== null && ` ${healthQueueResetCount.toLocaleString()} files queued for re-check.`}
+                            {healthQueueResetError && ` ${healthQueueResetError}`}
+                            {newConfig["repair.enable"] !== "true" && " Enable Background Repairs to re-check library health."}
+                        </span>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                        {!isReadOnly && newConfig["repair.enable"] === "true" && healthQueueResetCount === null && (
+                            <Button
+                                variant="ghost"
+                                size="small"
+                                className="text-warning-content hover:bg-warning-content/10"
+                                disabled={isResettingHealthQueue}
+                                onClick={() => void resetHealthCheckQueue()}
+                            >
+                                {isResettingHealthQueue ? "Queueing..." : healthQueueResetError ? "Try again" : "Re-check library health"}
+                            </Button>
+                        )}
+                        <Button
+                            variant="ghost"
+                            size="rounded"
+                            className="text-warning-content hover:bg-warning-content/10"
+                            aria-label="Dismiss provider health notice"
+                            onClick={() => setShowProviderChangeNotice(false)}
+                        >
+                            <Icon name="close" className="!text-[18px]" />
+                        </Button>
+                    </div>
                 </Alert>
             )}
             {!isReadOnly && ((activeTab !== "support" && activeTab !== "migration") || isUpdated) && <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-base-content/10 bg-base-300/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
