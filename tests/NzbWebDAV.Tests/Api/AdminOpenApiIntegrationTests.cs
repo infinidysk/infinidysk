@@ -28,7 +28,12 @@ public sealed class AdminOpenApiIntegrationTests(NzbDavWebApplicationFactory fac
         {
             using var docsFactory = factory.WithWebHostBuilder(_ => { });
             using var client = docsFactory.CreateClient();
-            using var response = await client.GetAsync("/openapi/admin.json");
+            using var rejected = await client.GetAsync("/openapi/admin.json");
+            Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/openapi/admin.json");
+            request.Headers.Add("x-api-key", NzbDavWebApplicationFactory.ApiKey);
+            using var response = await client.SendAsync(request);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());

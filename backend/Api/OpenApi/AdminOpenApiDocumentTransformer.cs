@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.OpenApi;
+using Microsoft.AspNetCore.Http;
 using Microsoft.OpenApi;
 using NzbWebDAV.Config;
 
@@ -6,6 +7,13 @@ namespace NzbWebDAV.Api.OpenApi;
 
 internal sealed class AdminOpenApiDocumentTransformer : IOpenApiDocumentTransformer
 {
+    private readonly IHttpContextAccessor _httpContextAccessor;
+
+    public AdminOpenApiDocumentTransformer(IHttpContextAccessor httpContextAccessor)
+    {
+        _httpContextAccessor = httpContextAccessor;
+    }
+
     public Task TransformAsync(
         OpenApiDocument document,
         OpenApiDocumentTransformerContext context,
@@ -36,7 +44,18 @@ internal sealed class AdminOpenApiDocumentTransformer : IOpenApiDocumentTransfor
         // The document is served through a frontend proxy that can be mounted at
         // NZBDAV_URL_BASE. An empty server URL makes Scalar target the origin and
         // path from which the reference was loaded instead of an internal backend URL.
-        document.Servers = [new OpenApiServer { Url = "" }];
+        var forwardedPrefix = _httpContextAccessor.HttpContext?
+            .Request.Headers["X-Forwarded-Prefix"]
+            .FirstOrDefault();
+        document.Servers =
+        [
+            new OpenApiServer
+            {
+                Url = string.IsNullOrWhiteSpace(forwardedPrefix)
+                    ? ""
+                    : forwardedPrefix.TrimEnd('/') + "/",
+            },
+        ];
         return Task.CompletedTask;
     }
 }

@@ -71,7 +71,10 @@ const forwardToBackend = createProxyMiddleware({
   ...backendProxyTimeoutOptions,
   on: {
     proxyReq: (proxyReq, req) => {
-      applyCanonicalForwardedHeaders(proxyReq, req as express.Request, { trustProxy });
+      applyCanonicalForwardedHeaders(proxyReq, req as express.Request, {
+        trustProxy,
+        pathBase: URL_BASE,
+      });
     },
     error: (error, req, res) => {
       logProxyFailure(
@@ -173,8 +176,11 @@ app.use(authMiddleware);
 // session when accessed through the public UI port. Do not move this beside the
 // early backend proxy above: that middleware intentionally runs before auth for
 // WebDAV and API clients.
-app.use((req, res, next) => {
-  if (isBackendApiDocsPath(req.path)) return forwardToBackend(req, res, next);
+app.use(async (req, res, next) => {
+  if (isBackendApiDocsPath(req.path)) {
+    await setApiKeyForAuthenticatedRequests(req);
+    return forwardToBackend(req, res, next);
+  }
   next();
 });
 

@@ -28,7 +28,10 @@ internal static class AdminOpenApiExtensions
 
     internal static bool IsEnabled(IHostEnvironment environment)
     {
-        return environment.IsDevelopment() || Utils.EnvironmentUtil.IsVariableTrue("ENABLE_API_DOCS");
+        var configured = Utils.EnvironmentUtil.GetEnvironmentVariable("ENABLE_API_DOCS");
+        return configured is null
+            ? environment.IsDevelopment()
+            : Utils.EnvironmentUtil.IsVariableTrue("ENABLE_API_DOCS");
     }
 
     internal static void Configure(OpenApiOptions options)

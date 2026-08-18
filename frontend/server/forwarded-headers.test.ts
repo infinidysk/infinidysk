@@ -58,4 +58,23 @@ describe("applyCanonicalForwardedHeaders", () => {
 
     expect(set["X-Forwarded-For"]).toBe("203.0.113.10");
   });
+
+  it("forwards the configured URL base for backend-generated links", () => {
+    const set: Record<string, string> = {};
+    const proxyReq = {
+      removeHeader: () => {},
+      setHeader: (name: string, value: string) => {
+        set[name] = value;
+      },
+    };
+    const req = {
+      protocol: "https",
+      get: () => "nzbdav.example",
+      socket: { remoteAddress: "10.0.0.2" },
+    } as unknown as express.Request;
+
+    applyCanonicalForwardedHeaders(proxyReq, req, { pathBase: "/nzbdav" });
+
+    expect(set["X-Forwarded-Prefix"]).toBe("/nzbdav");
+  });
 });

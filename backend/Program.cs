@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -206,6 +207,7 @@ public partial class Program
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
             builder.Services.AddControllers();
+            builder.Services.AddHttpContextAccessor();
             if (apiDocsEnabled)
                 builder.Services.AddOpenApi(AdminOpenApiExtensions.DocumentName, AdminOpenApiExtensions.Configure);
             builder.Services.AddHealthChecks()
@@ -376,6 +378,29 @@ public partial class Program
             app.UseMiddleware<ExceptionMiddleware>();
             app.UseMiddleware<MetricsAuthenticationMiddleware>();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
+            app.Use(async (context, next) =>
+            {
+                if (apiDocsEnabled
+                    && context.Request.Path.StartsWithSegments("/openapi", StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        ApiKeyValidator.Validate(context, configManager);
+                    }
+                    catch (UnauthorizedAccessException exception)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        await context.Response.WriteAsJsonAsync(new
+                        {
+                            status = false,
+                            error = exception.Message,
+                        }).ConfigureAwait(false);
+                        return;
+                    }
+                }
+
+                await next().ConfigureAwait(false);
+            });
             app.MapHealthChecks("/health", new HealthCheckOptions
             {
                 Predicate = check => !check.Tags.Contains("ready"),

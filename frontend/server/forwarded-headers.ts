@@ -7,13 +7,14 @@ import type express from "express";
 export function applyCanonicalForwardedHeaders(
   proxyReq: { removeHeader: (name: string) => void; setHeader: (name: string, value: string) => void },
   req: express.Request,
-  options?: { trustProxy?: boolean },
+  options?: { trustProxy?: boolean; pathBase?: string },
 ): void {
   for (const header of [
     "x-forwarded-for",
     "x-forwarded-host",
     "x-forwarded-proto",
     "x-forwarded-port",
+    "x-forwarded-prefix",
     "forwarded",
   ]) {
     proxyReq.removeHeader(header);
@@ -26,4 +27,5 @@ export function applyCanonicalForwardedHeaders(
   const trustProxy = options?.trustProxy ?? false;
   const clientIp = trustProxy ? req.ip : req.socket.remoteAddress;
   if (clientIp) proxyReq.setHeader("X-Forwarded-For", clientIp);
+  if (options?.pathBase) proxyReq.setHeader("X-Forwarded-Prefix", options.pathBase);
 }

@@ -1,6 +1,6 @@
 import type express from "express";
 import { isAuthenticated } from "~/auth/authentication.server";
-import { isBackendApiPath, isBackendMetricsPath } from "./proxy-path";
+import { isBackendApiDocsPath, isBackendApiPath, isBackendMetricsPath } from "./proxy-path";
 
 /**
  * Inject the frontend→backend API key for authenticated UI sessions that proxy
@@ -10,7 +10,9 @@ export async function setApiKeyForAuthenticatedRequests(
   req: express.Request,
 ): Promise<void> {
   // if the path is not a protected backend endpoint, do nothing
-  if (!isBackendApiPath(req.path) && !isBackendMetricsPath(req.path)) return;
+  if (!isBackendApiPath(req.path)
+    && !isBackendMetricsPath(req.path)
+    && !isBackendApiDocsPath(req.path)) return;
 
   const apikey = req.query["apikey"] || req.query["apiKey"] || req.headers["x-api-key"];
   const hasApiKey = apikey && typeof apikey === "string";

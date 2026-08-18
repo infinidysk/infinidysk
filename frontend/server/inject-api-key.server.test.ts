@@ -72,6 +72,13 @@ describe("setApiKeyForAuthenticatedRequests", () => {
     expect(req.headers["x-api-key"]).toBe("injected-key");
   });
 
+  it("injects FRONTEND_BACKEND_API_KEY for authenticated API docs requests", async () => {
+    isAuthenticatedMock.mockResolvedValueOnce(true);
+    const req = mockReq({ path: "/openapi/admin.json" });
+    await setApiKeyForAuthenticatedRequests(req);
+    expect(req.headers["x-api-key"]).toBe("injected-key");
+  });
+
   it("treats query apikey as already present", async () => {
     const req = mockReq({
       path: "/api",
