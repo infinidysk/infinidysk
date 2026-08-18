@@ -444,8 +444,43 @@ public class NzbFileStreamTests
 
         Assert.Contains("Byte position 4", exception.Message, StringComparison.Ordinal);
         Assert.Contains("segment 1", exception.Message, StringComparison.Ordinal);
+        Assert.IsType<EndOfStreamException>(exception.InnerException);
         Assert.NotEmpty(openedBodies);
         Assert.All(openedBodies, body => Assert.True(body.Disposed));
+    }
+
+    [Fact]
+    public async Task Seek_WhenHeaderProbeMissCausesSearchFailure_PreservesMissingArticle()
+    {
+        string[] segmentIds = ["zero", "one", "missing"];
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["zero"] = new byte[20],
+                ["one"] = new byte[20],
+            },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange>
+            {
+                ["zero"] = new(0, 20),
+                ["one"] = new(0, 20),
+            });
+        await using var stream = new NzbFileStream(
+            segmentIds,
+            fileSize: 100,
+            client,
+            articleBufferSize: 0,
+            segmentByteRanges: null,
+            usePipelinedBodyRequests: false,
+            fileName: "missing-probe.bin");
+        stream.Seek(50, SeekOrigin.Begin);
+
+        var exception = await Assert.ThrowsAsync<SeekPositionNotFoundException>(
+            async () => await stream.ReadAtLeastAsync(
+                new byte[1], 1, throwOnEndOfStream: false));
+
+        var missing = Assert.IsType<UsenetArticleNotFoundException>(exception.InnerException);
+        Assert.Equal("missing", missing.SegmentId);
     }
 
     [Fact]

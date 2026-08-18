@@ -202,47 +202,56 @@ public class NzbFileStream(
         }
 
         var avg = EstimatedSegmentSize;
-        return await InterpolationSearch.Find(
-            byteOffset,
-            new LongRange(0, fileSegmentIds.Length),
-            new LongRange(0, fileSize),
-            async (guess) =>
-            {
-                try
+        UsenetArticleNotFoundException? missingProbeArticle = null;
+        try
+        {
+            return await InterpolationSearch.Find(
+                byteOffset,
+                new LongRange(0, fileSegmentIds.Length),
+                new LongRange(0, fileSize),
+                async (guess) =>
                 {
-                    var header = await usenetClient.GetYencHeadersAsync(fileSegmentIds[guess], ct).ConfigureAwait(false);
-                    return new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
-                }
-                catch (UsenetArticleNotFoundException e)
-                {
-                    // The probe segment itself is missing — fall back to a
-                    // synthetic uniform-size range so interpolation can still
-                    // converge. The actual body read of this segment (if it
-                    // turns out to be the seek target) gets a same-length gap from
-                    // MultiSegmentStream.
-                    Log.Warning(
-                        "Seek probe hit missing article {SegmentId} (segment index {Index}) while reading {FileName}. Using estimated range.",
-                        e.SegmentId, guess, string.IsNullOrEmpty(fileName) ? "unknown" : fileName);
-                    var start = guess * avg;
-                    var end = Math.Min(fileSize, start + avg);
-                    return new LongRange(start, end);
-                }
-                catch (OutOfMemoryException oom)
-                {
-                    OomDiagnostics.LogHeapStateOnOom(oom, "seek probe");
-                    throw;
-                }
-                catch (Exception e) when (articleBufferSize > 0 && !ct.IsCancellationRequested && e is not OutOfMemoryException)
-                {
-                    e.LogWarningKnownOrStack(
-                        "Seek probe transient failure on segment index {Index}. Using estimated range.", guess);
-                    var start = guess * avg;
-                    var end = Math.Min(fileSize, start + avg);
-                    return new LongRange(start, end);
-                }
-            },
-            ct
-        ).ConfigureAwait(false);
+                    try
+                    {
+                        var header = await usenetClient.GetYencHeadersAsync(fileSegmentIds[guess], ct).ConfigureAwait(false);
+                        return new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
+                    }
+                    catch (UsenetArticleNotFoundException e)
+                    {
+                        // The probe segment itself is missing — fall back to a
+                        // synthetic uniform-size range so interpolation can still
+                        // converge. The actual body read of this segment (if it
+                        // turns out to be the seek target) gets a same-length gap from
+                        // MultiSegmentStream.
+                        missingProbeArticle = e;
+                        Log.Warning(
+                            "Seek probe hit missing article {SegmentId} (segment index {Index}) while reading {FileName}. Using estimated range.",
+                            e.SegmentId, guess, string.IsNullOrEmpty(fileName) ? "unknown" : fileName);
+                        var start = guess * avg;
+                        var end = Math.Min(fileSize, start + avg);
+                        return new LongRange(start, end);
+                    }
+                    catch (OutOfMemoryException oom)
+                    {
+                        OomDiagnostics.LogHeapStateOnOom(oom, "seek probe");
+                        throw;
+                    }
+                    catch (Exception e) when (articleBufferSize > 0 && !ct.IsCancellationRequested && e is not OutOfMemoryException)
+                    {
+                        e.LogWarningKnownOrStack(
+                            "Seek probe transient failure on segment index {Index}. Using estimated range.", guess);
+                        var start = guess * avg;
+                        var end = Math.Min(fileSize, start + avg);
+                        return new LongRange(start, end);
+                    }
+                },
+                ct
+            ).ConfigureAwait(false);
+        }
+        catch (SeekPositionNotFoundException e) when (missingProbeArticle is not null)
+        {
+            throw new SeekPositionNotFoundException(e.Message, missingProbeArticle);
+        }
     }
 
     private static bool AreSegmentByteRangesValid(LongRange[]? ranges, int segmentCount, long expectedFileSize)
@@ -295,7 +304,8 @@ public class NzbFileStream(
             await stream.DisposeAsync().ConfigureAwait(false);
             throw new SeekPositionNotFoundException(
                 $"Byte position {rangeStart} of \"{fileName ?? "unknown"}\" is past the data " +
-                $"available in segment {foundSegment.FoundIndex + 1}. {e.Message}");
+                $"available in segment {foundSegment.FoundIndex + 1}. {e.Message}",
+                e);
         }
         catch
         {

@@ -101,6 +101,83 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task SeekFailureWithMissingArticleCause_RecordsFailureAndSeedsFailFastCache()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new SeekPositionNotFoundException(
+                "Corrupt file. Cannot find byte position 50.",
+                new UsenetArticleNotFoundException(segmentId)),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
+        Assert.Throws<UsenetArticleNotFoundException>(
+            () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
+    }
+
+    [Fact]
+    public async Task SeekFailureWithShortSegment_RecordsStreamingFailure()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new SeekPositionNotFoundException(
+                "Byte position 50 is past the data available in segment 1.",
+                new EndOfStreamException("Segment ended early.")),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.False(lifetimeFeature.Aborted);
+        Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
+    }
+
+    [Fact]
+    public async Task SeekFailureWithShortSegmentAfterResponseStarted_AbortsConnection()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: true, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new SeekPositionNotFoundException(
+                "Byte position 50 is past the data available in segment 1.",
+                new EndOfStreamException("Segment ended early.")));
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(lifetimeFeature.Aborted);
+    }
+
+    [Fact]
+    public async Task BareSeekFailure_DoesNotRecordStreamingFailure()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new SeekPositionNotFoundException(
+                "Corrupt file. Invalid multipart ranges while reading movie.mkv."),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+    }
+
+    [Fact]
     public async Task CorruptRarAfterResponseStarted_AbortsConnection()
     {
         var lifetimeFeature = new TestHttpRequestLifetimeFeature();

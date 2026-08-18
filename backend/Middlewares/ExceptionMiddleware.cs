@@ -115,7 +115,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             AbortStartedResponse(context);
         }
-        catch (SeekPositionNotFoundException)
+        catch (SeekPositionNotFoundException e)
         {
             if (!context.Response.HasStarted)
             {
@@ -140,6 +140,15 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                         filePath,
                         seekPosition);
             });
+
+            // Only a short segment proves the release cannot serve this range. Other seek
+            // failures can be transient header-probe errors or corrupt local metadata and
+            // must not trigger Arr removal or blocklisting.
+            if (e.InnerException is EndOfStreamException &&
+                context.Items["DavItem"] is DavItem davItem)
+            {
+                ScheduleRepair(davItem);
+            }
 
             AbortStartedResponse(context);
         }
