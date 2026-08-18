@@ -80,6 +80,10 @@ public class CreateAccountController(DavDatabaseClient dbClient) : BaseApiContro
             if (!e.IsUniqueConstraintException()) continue;
 
             var message = e.Message;
+            // PostgreSQL reports the primary-key constraint name only:
+            // duplicate key value violates unique constraint "PK_Accounts"
+            if (message.Contains("PK_Accounts", StringComparison.OrdinalIgnoreCase))
+                return true;
             if (message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
                 && message.Contains("Accounts.Type", StringComparison.OrdinalIgnoreCase)
                 && message.Contains("Accounts.Username", StringComparison.OrdinalIgnoreCase))
