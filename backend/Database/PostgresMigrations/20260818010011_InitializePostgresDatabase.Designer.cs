@@ -499,7 +499,7 @@ namespace NzbWebDAV.Database.PostgresMigrations
                         .HasColumnType("bigint");
 
                     b.Property<DateTime?>("PauseUntil")
-                        .HasColumnType("timestamp with time zone");
+                        .HasColumnType("timestamp without time zone");
 
                     b.Property<int>("PostProcessing")
                         .HasColumnType("integer");

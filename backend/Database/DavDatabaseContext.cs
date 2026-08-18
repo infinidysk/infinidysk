@@ -769,6 +769,7 @@ public class DavDatabaseContext : DbContext
             // that behavior and accepts the local DateTime values created by the app.
             b.Entity<DavItem>().Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
             b.Entity<QueueItem>().Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
+            b.Entity<QueueItem>().Property(x => x.PauseUntil).HasColumnType("timestamp without time zone");
             b.Entity<HistoryItem>().Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
         }
     }

@@ -246,7 +246,7 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     Category = table.Column<string>(type: "text", nullable: false),
                     Priority = table.Column<int>(type: "integer", nullable: false),
                     PostProcessing = table.Column<int>(type: "integer", nullable: false),
-                    PauseUntil = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    PauseUntil = table.Column<DateTime>(type: "timestamp without time zone", nullable: true),
                     IndexerName = table.Column<string>(type: "text", nullable: true),
                     ContentGroupKey = table.Column<string>(type: "text", nullable: true)
                 },
