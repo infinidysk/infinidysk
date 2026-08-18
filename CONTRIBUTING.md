@@ -28,6 +28,17 @@ export DATABASE_CONNECTION_STRING='Host=localhost;Port=5432;Database=infinidysk;
 This applies only to a fresh main database; metrics and the other auxiliary
 stores remain under `CONFIG_PATH`.
 
+PostgreSQL migrations live in `backend/Database/PostgresMigrations/` and target
+`PostgresDavDatabaseContext`. Generating a new one requires both environment
+variables to be set (the design-time factory validates them):
+
+```bash
+cd backend
+DATABASE_PROVIDER=postgres \
+DATABASE_CONNECTION_STRING='Host=localhost;Port=5432;Database=infinidysk;Username=infinidysk;Password=infinidysk' \
+dotnet ef migrations add Descriptive-Name --context PostgresDavDatabaseContext
+```
+
 The backend thread-pool limits can optionally be overridden with
 `THREADPOOL_MIN_THREADS` and `THREADPOOL_MAX_THREADS`. When unset, they retain
 the production defaults of `max(2 × processor count, 50)` minimum threads and
