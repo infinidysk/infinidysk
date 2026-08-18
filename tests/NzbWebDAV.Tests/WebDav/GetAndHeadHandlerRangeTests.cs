@@ -145,7 +145,7 @@ public class GetAndHeadHandlerRangeTests
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
         {
             OpenCount++;
-            return Task.FromResult<Stream>(new MemoryStream());
+            return Task.FromResult(Stream.Null);
         }
     }
 

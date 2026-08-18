@@ -356,7 +356,7 @@ public partial class UsenetClient
                 if (YencStream.StartsWithYEnd(lineBytes.Span))
                 {
                     dataEnded = true;
-                    if (shouldWrite && unflushedDecodedBytes > 0)
+                    if (unflushedDecodedBytes > 0)
                     {
                         var result = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
                         shouldWrite = !result.IsCompleted && !result.IsCanceled;

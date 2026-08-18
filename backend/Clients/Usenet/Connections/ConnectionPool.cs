@@ -474,7 +474,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 {
                     throw;
                 }
-                catch
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
                     // An idle DATE failure only proves this socket is stale. Dispose it
                     // and let the floor refill; it is deliberately not provider traffic.
@@ -517,7 +517,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 return;
             }
-            catch
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
                 // Do not spin on a provider that is unavailable at startup. The next
                 // sweep retries the floor; connection-limit learning still applies.
