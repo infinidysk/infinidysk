@@ -8,6 +8,7 @@ using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Api.SabControllers.RemoveFromQueue;
 
+#pragma warning disable CA1311, CA1862 // PostgreSQL translates ToLower to SQL LOWER.
 public class RemoveFromQueueController(
     HttpContext httpContext,
     DavDatabaseClient dbClient,
@@ -19,12 +20,7 @@ public class RemoveFromQueueController(
     public async Task<RemoveFromQueueResponse> RemoveFromQueue(RemoveFromQueueRequest request)
     {
         var ids = request.DeleteAll
-            ? await dbClient.Ctx.QueueItems.AsNoTracking()
-                .Where(item => request.Category == null ||
-                              EF.Functions.Collate(item.Category, "NOCASE") == request.Category)
-                .Select(item => item.Id)
-                .ToListAsync(request.CancellationToken)
-                .ConfigureAwait(false)
+            ? await GetQueueItemIdsToRemoveAsync(request).ConfigureAwait(false)
             : request.NzoIds;
         if (ids.Count > 0)
         {
@@ -34,6 +30,22 @@ public class RemoveFromQueueController(
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", ids));
         _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
         return new RemoveFromQueueResponse() { Status = true };
+    }
+
+    private async Task<List<Guid>> GetQueueItemIdsToRemoveAsync(RemoveFromQueueRequest request)
+    {
+        var query = dbClient.Ctx.QueueItems.AsNoTracking();
+        if (request.Category is not null)
+        {
+            query = dbClient.Ctx.Database.IsNpgsql()
+                ? query.Where(item => item.Category.ToLower() == request.Category.ToLower())
+                : query.Where(item => EF.Functions.Collate(item.Category, "NOCASE") == request.Category);
+        }
+
+        return await query
+            .Select(item => item.Id)
+            .ToListAsync(request.CancellationToken)
+            .ConfigureAwait(false);
     }
 
     protected override async Task<IActionResult> Handle()

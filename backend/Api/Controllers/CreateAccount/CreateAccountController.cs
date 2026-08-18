@@ -1,9 +1,9 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Api.Controllers.CreateAccount;
@@ -59,10 +59,9 @@ public class CreateAccountController(DavDatabaseClient dbClient) : BaseApiContro
     {
         for (Exception? e = ex; e is not null; e = e.InnerException)
         {
-            if (e is not SqliteException sqlite) continue;
-            if (sqlite.SqliteErrorCode is not 19) continue; // SQLITE_CONSTRAINT
+            if (!e.IsUniqueConstraintException()) continue;
 
-            var message = sqlite.Message;
+            var message = e.Message;
             if (message.Contains("IX_Accounts_SingleAdmin", StringComparison.OrdinalIgnoreCase))
                 return true;
             if (message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
@@ -78,10 +77,9 @@ public class CreateAccountController(DavDatabaseClient dbClient) : BaseApiContro
     {
         for (Exception? e = ex; e is not null; e = e.InnerException)
         {
-            if (e is not SqliteException sqlite) continue;
-            if (sqlite.SqliteErrorCode is not 19) continue; // SQLITE_CONSTRAINT
+            if (!e.IsUniqueConstraintException()) continue;
 
-            var message = sqlite.Message;
+            var message = e.Message;
             if (message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
                 && message.Contains("Accounts.Type", StringComparison.OrdinalIgnoreCase)
                 && message.Contains("Accounts.Username", StringComparison.OrdinalIgnoreCase))

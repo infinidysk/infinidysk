@@ -203,6 +203,55 @@ jobs:
           path: coverage/coverage.cobertura.xml
           if-no-files-found: ignore
 
+  postgres-migrations:
+    name: PostgreSQL migration tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: nzbdav
+          POSTGRES_PASSWORD: nzbdav
+          POSTGRES_USER: nzbdav
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nzbdav -d nzbdav"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore PostgreSQL migration tests
+        run: dotnet restore tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj
+
+      - name: Test PostgreSQL migrations
+        env:
+          DATABASE_PROVIDER: postgres
+          DATABASE_CONNECTION_STRING: Host=localhost;Port=5432;Database=nzbdav;Username=nzbdav;Password=nzbdav
+        run: >
+          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore
+          --filter "FullyQualifiedName~PostgresMigrationTests"
+
   macos-yenc:
     name: macOS yEnc / library tests
     runs-on: macos-latest

@@ -280,7 +280,7 @@ public sealed class SupportPackContentsTests : IDisposable
             buffer);
 
         using var enabledManifest = JsonDocument.Parse(enabled["manifest.json"]);
-        Assert.Equal(4, enabledManifest.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(5, enabledManifest.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(
             "included",
             enabledManifest.RootElement.GetProperty("sections").GetProperty("streamTraces").GetString());
@@ -319,7 +319,7 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.Contains("INCOMPLETE", pack["stream-traces/OVERFLOW.txt"]);
 
         using var manifest = JsonDocument.Parse(pack["manifest.json"]);
-        Assert.Equal(4, manifest.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(5, manifest.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(
             "included-truncated",
             manifest.RootElement.GetProperty("sections").GetProperty("streamTraces").GetString());

@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
@@ -8,6 +9,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
+using Npgsql;
 using Serilog;
 
 namespace NzbWebDAV.Tasks;
@@ -187,18 +189,23 @@ public class RemoveUnlinkedFilesTask : BaseTask
     private async Task<int> WriteLinkedIdsToTable()
     {
         await using var dbContext = CreateContext();
+        var isPostgres = dbContext.Database.IsNpgsql();
 
         // Create a new table "TMP_LINKED_FILES", dropping old one if it already exists.
         // No index initially for fast writes.
         // TMP_LINKED_FILES_UNIQUE is dropped too: the indexing step below commits each
         // statement separately, so a failure between its CREATE and RENAME strands the
         // unique table and every later run would fail on "table already exists".
+#pragma warning disable EF1003 // Provider-specific DDL is a fixed local string.
         await dbContext.Database.ExecuteSqlRawAsync(
             """
             DROP TABLE IF EXISTS TMP_LINKED_FILES;
             DROP TABLE IF EXISTS TMP_LINKED_FILES_UNIQUE;
-            CREATE TABLE TMP_LINKED_FILES (Id TEXT NOT NULL);
-            """).ConfigureAwait(false);
+            """ + (isPostgres
+                ? "CREATE TABLE TMP_LINKED_FILES (Id UUID NOT NULL);"
+                : "CREATE TABLE TMP_LINKED_FILES (Id TEXT NOT NULL);"))
+            .ConfigureAwait(false);
+#pragma warning restore EF1003
 
         var scannedCount = 0;
         var batches = GetLinkedIds().ToBatches(100);
@@ -209,16 +216,23 @@ public class RemoveUnlinkedFilesTask : BaseTask
         }
 
         // Remove duplicates and add primary key index.
-        // COLLATE NOCASE on the column (not predicates) so the PK remains seekable while
-        // matching uppercase TMP_LINKED_FILES ids to lowercase migration-seeded DavItems.Id.
+        // SQLite needs NOCASE to match migration-seeded lowercase ids. PostgreSQL stores
+        // native UUIDs, so equality is casing-independent without a collation.
         StartPhase($"Indexing {scannedCount} linked files...");
         await dbContext.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE TMP_LINKED_FILES_UNIQUE (Id TEXT NOT NULL COLLATE NOCASE PRIMARY KEY);
-            INSERT OR IGNORE INTO TMP_LINKED_FILES_UNIQUE (Id) SELECT Id FROM TMP_LINKED_FILES;
-            DROP TABLE TMP_LINKED_FILES;
-            ALTER TABLE TMP_LINKED_FILES_UNIQUE RENAME TO TMP_LINKED_FILES;
-            """).ConfigureAwait(false);
+            isPostgres
+                ? """
+                  CREATE TABLE TMP_LINKED_FILES_UNIQUE (Id UUID NOT NULL PRIMARY KEY);
+                  INSERT INTO TMP_LINKED_FILES_UNIQUE (Id) SELECT Id FROM TMP_LINKED_FILES ON CONFLICT DO NOTHING;
+                  DROP TABLE TMP_LINKED_FILES;
+                  ALTER TABLE TMP_LINKED_FILES_UNIQUE RENAME TO TMP_LINKED_FILES;
+                  """
+                : """
+                  CREATE TABLE TMP_LINKED_FILES_UNIQUE (Id TEXT NOT NULL COLLATE NOCASE PRIMARY KEY);
+                  INSERT OR IGNORE INTO TMP_LINKED_FILES_UNIQUE (Id) SELECT Id FROM TMP_LINKED_FILES;
+                  DROP TABLE TMP_LINKED_FILES;
+                  ALTER TABLE TMP_LINKED_FILES_UNIQUE RENAME TO TMP_LINKED_FILES;
+                  """).ConfigureAwait(false);
 
         // Guard uses distinct dav-item ids, not raw symlink/strm count (many links can
         // point at the same item and otherwise sail past the < 5 safety check).
@@ -239,13 +253,15 @@ public class RemoveUnlinkedFilesTask : BaseTask
         if (batch.Count == 0)
             return;
 
-        var parameters = new SqliteParameter[batch.Count];
+        var parameters = new DbParameter[batch.Count];
         var valueSql = new string[batch.Count];
         for (var i = 0; i < batch.Count; i++)
         {
             var name = $"@p{i}";
             valueSql[i] = $"({name})";
-            parameters[i] = new SqliteParameter(name, batch[i].ToString().ToUpperInvariant());
+            parameters[i] = dbContext.Database.IsNpgsql()
+                ? new NpgsqlParameter(name, batch[i])
+                : new SqliteParameter(name, batch[i].ToString().ToUpperInvariant());
         }
 
         // Parameter names are generated locally (@p0..@pN); values are bound via SqliteParameter.
@@ -267,19 +283,23 @@ public class RemoveUnlinkedFilesTask : BaseTask
         List<UnlinkedItemInfo> items,
         CancellationToken cancellationToken = default)
     {
-        var parameters = new SqliteParameter[items.Count];
+        var parameters = new DbParameter[items.Count];
         var placeholders = new string[items.Count];
         for (var i = 0; i < items.Count; i++)
         {
             var name = $"@p{i}";
             placeholders[i] = name;
-            parameters[i] = new SqliteParameter(name, items[i].Id);
+            parameters[i] = dbContext.Database.IsNpgsql()
+                ? new NpgsqlParameter(name, items[i].Id)
+                : new SqliteParameter(name, items[i].Id);
         }
 
         // Placeholder names are generated locally (@p0..@pN); values are bound via SqliteParameter.
 #pragma warning disable EF1002
         return await dbContext.Database.ExecuteSqlRawAsync(
-            $"DELETE FROM DavItems WHERE Id IN ({string.Join(",", placeholders)})",
+            dbContext.Database.IsNpgsql()
+                ? $"DELETE FROM \"DavItems\" WHERE CAST(\"Id\" AS TEXT) IN ({string.Join(",", placeholders)})"
+                : $"DELETE FROM DavItems WHERE Id IN ({string.Join(",", placeholders)})",
             parameters.AsEnumerable(),
             cancellationToken).ConfigureAwait(false);
 #pragma warning restore EF1002
@@ -294,23 +314,25 @@ public class RemoveUnlinkedFilesTask : BaseTask
         IReadOnlyList<UnlinkedItemInfo> items,
         CancellationToken cancellationToken = default)
     {
-        var parameters = new SqliteParameter[items.Count];
+        var parameters = new DbParameter[items.Count];
         var placeholders = new string[items.Count];
         for (var i = 0; i < items.Count; i++)
         {
             var name = $"@p{i}";
             placeholders[i] = name;
-            parameters[i] = new SqliteParameter(name, items[i].Id);
+            parameters[i] = dbContext.Database.IsNpgsql()
+                ? new NpgsqlParameter(name, items[i].Id)
+                : new SqliteParameter(name, items[i].Id);
         }
 
         // Placeholder names are generated locally (@p0..@pN); values are bound via SqliteParameter.
 #pragma warning disable EF1002
         return await dbContext.Database.ExecuteSqlRawAsync(
             $"""
-             DELETE FROM DavItems
-             WHERE Id IN ({string.Join(",", placeholders)})
+             DELETE FROM "DavItems"
+             WHERE {(dbContext.Database.IsNpgsql() ? "CAST(\"Id\" AS TEXT)" : "Id")} IN ({string.Join(",", placeholders)})
                AND NOT EXISTS (
-                   SELECT 1 FROM DavItems c WHERE c.ParentId = DavItems.Id
+                   SELECT 1 FROM "DavItems" c WHERE c."ParentId" = "DavItems"."Id"
                )
              """,
             parameters.AsEnumerable(),
@@ -353,10 +375,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
         return await dbContext.Database
             .SqlQuery<int>(
                 $"""
-                 SELECT COUNT(i.Id) AS Value FROM DavItems i
-                 WHERE i.Type = {usenetFileType}
-                   AND i.HistoryItemId IS NULL
-                   AND i.CreatedAt < {createdBefore}
+                 SELECT COUNT(i."Id") AS "Value" FROM "DavItems" i
+                 WHERE i."Type" = {usenetFileType}
+                   AND i."HistoryItemId" IS NULL
+                   AND i."CreatedAt" < {createdBefore}
                  """)
             .FirstAsync()
             .ConfigureAwait(false);
@@ -375,11 +397,11 @@ public class RemoveUnlinkedFilesTask : BaseTask
         var count = await dbContext.Database
             .SqlQuery<int>(
                 $"""
-                 SELECT COUNT(i.Id) AS Value FROM DavItems i
-                 LEFT JOIN TMP_LINKED_FILES t ON t.Id = i.Id
-                 WHERE i.Type = {usenetFileType}
-                   AND i.HistoryItemId IS NULL
-                   AND i.CreatedAt < {createdBefore}
+                 SELECT COUNT(i."Id") AS "Value" FROM "DavItems" i
+                 LEFT JOIN TMP_LINKED_FILES t ON t.Id = i."Id"
+                 WHERE i."Type" = {usenetFileType}
+                   AND i."HistoryItemId" IS NULL
+                   AND i."CreatedAt" < {createdBefore}
                    AND t.Id IS NULL
                  """)
             .FirstAsync()
@@ -403,13 +425,13 @@ public class RemoveUnlinkedFilesTask : BaseTask
             var itemsToDelete = await dbContext.Database
                 .SqlQuery<UnlinkedItemInfo>(
                     $"""
-                     SELECT Id, Type, Path FROM DavItems
-                     WHERE Type = {usenetFileType}
-                       AND HistoryItemId IS NULL
-                       AND CreatedAt < {createdBefore}
+                     SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path" FROM "DavItems"
+                     WHERE "Type" = {usenetFileType}
+                       AND "HistoryItemId" IS NULL
+                       AND "CreatedAt" < {createdBefore}
                        AND NOT EXISTS (
                            SELECT 1 FROM TMP_LINKED_FILES t
-                           WHERE t.Id = DavItems.Id
+                           WHERE t.Id = "DavItems"."Id"
                        )
                      LIMIT 100
                      """)
@@ -487,8 +509,9 @@ public class RemoveUnlinkedFilesTask : BaseTask
     {
         var removed = 0;
         var directorySubType = (int)DavItem.ItemSubType.Directory;
-        var contentFolderId = DavItem.ContentFolder.Id.ToString();
-        var nzbFolderId = DavItem.NzbFolder.Id.ToString();
+        var isPostgres = dbContext.Database.IsNpgsql();
+        object contentFolderId = isPostgres ? DavItem.ContentFolder.Id : DavItem.ContentFolder.Id.ToString();
+        object nzbFolderId = isPostgres ? DavItem.NzbFolder.Id : DavItem.NzbFolder.Id.ToString();
         // When a selected batch deletes fewer rows than selected (child appeared mid-flight),
         // retry. Only abort if the same batch ids keep making no progress.
         string? lastStuckBatchKey = null;
@@ -500,13 +523,13 @@ public class RemoveUnlinkedFilesTask : BaseTask
             var emptyDirs = await dbContext.Database
                 .SqlQuery<UnlinkedItemInfo>(
                     $"""
-                     SELECT d.Id AS Id, d.Type AS Type, d.Path AS Path FROM DavItems d
-                     WHERE d.SubType = {directorySubType}
-                       AND d.HistoryItemId IS NULL
-                       AND d.CreatedAt < {createdBefore}
-                       AND d.ParentId NOT IN ({contentFolderId}, {nzbFolderId})
+                     SELECT CAST(d."Id" AS TEXT) AS "Id", d."Type" AS "Type", d."Path" AS "Path" FROM "DavItems" d
+                     WHERE d."SubType" = {directorySubType}
+                       AND d."HistoryItemId" IS NULL
+                       AND d."CreatedAt" < {createdBefore}
+                       AND d."ParentId" NOT IN ({contentFolderId}, {nzbFolderId})
                        AND NOT EXISTS (
-                           SELECT 1 FROM DavItems c WHERE c.ParentId = d.Id
+                           SELECT 1 FROM "DavItems" c WHERE c."ParentId" = d."Id"
                        )
                      LIMIT 100
                      """)
@@ -582,16 +605,16 @@ public class RemoveUnlinkedFilesTask : BaseTask
             var batch = await dbContext.Database
                 .SqlQuery<UnlinkedItemInfo>(
                     $"""
-                     SELECT Id, Type, Path FROM DavItems
-                     WHERE Type = {usenetFileType}
-                       AND HistoryItemId IS NULL
-                       AND CreatedAt < {createdBefore}
-                       AND Id > {lastId}
+                     SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path" FROM "DavItems"
+                     WHERE "Type" = {usenetFileType}
+                       AND "HistoryItemId" IS NULL
+                       AND "CreatedAt" < {createdBefore}
+                       AND CAST("Id" AS TEXT) > {lastId}
                        AND NOT EXISTS (
                            SELECT 1 FROM TMP_LINKED_FILES t
-                           WHERE t.Id = DavItems.Id
+                           WHERE t.Id = "DavItems"."Id"
                        )
-                     ORDER BY Id
+                     ORDER BY CAST("Id" AS TEXT)
                      LIMIT 100
                      """)
                 .ToListAsync()

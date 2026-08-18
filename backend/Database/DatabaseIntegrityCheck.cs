@@ -26,6 +26,16 @@ internal static class DatabaseIntegrityCheck
         DavDatabaseContext databaseContext,
         CancellationToken cancellationToken = default)
     {
+        if (databaseContext.Database.IsNpgsql())
+        {
+            // PostgreSQL owns physical integrity checks and does not expose a
+            // PRAGMA-equivalent query. A successful connection is the applicable
+            // startup health signal for an externally managed server.
+            return await databaseContext.Database
+                .CanConnectAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         try
         {
             // Table-valued pragma form so EF can materialize the scalar result.

@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Database;
 using NzbWebDAV.Database.Backup;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tasks;
@@ -20,6 +21,8 @@ public class DbBackupListController(DatabaseBackupStore store) : BaseApiControll
             TaskRunning = BaseTask.IsRunning,
             PendingRestore = store.HasPendingRestore(),
             LastRestoreReport = store.ReadLastRestoreReport(),
+            MainDatabaseProvider = DatabaseProviderConfig.Provider.ToString().ToLowerInvariant(),
+            MainDatabaseBackupSupported = !DatabaseProviderConfig.IsPostgres,
         };
         return Task.FromResult<IActionResult>(Ok(response));
     }
@@ -38,4 +41,10 @@ public class DbBackupListResponse : BaseApiResponse
 
     [JsonPropertyName("lastRestoreReport")]
     public LastRestoreReport? LastRestoreReport { get; init; }
+
+    [JsonPropertyName("mainDatabaseProvider")]
+    public required string MainDatabaseProvider { get; init; }
+
+    [JsonPropertyName("mainDatabaseBackupSupported")]
+    public bool MainDatabaseBackupSupported { get; init; }
 }

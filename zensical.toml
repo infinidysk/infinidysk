@@ -86,6 +86,7 @@ nav = [
     { "Logs and crash dumps" = "operations/logs-crash-dumps.md" },
     { "Deletion audit" = "operations/deletion-audit.md" },
     { "Database corruption" = "operations/database-corruption.md" },
+    { "PostgreSQL" = "operations/postgresql.md" },
   ]},
   { "Community" = [
     { "Rename FAQ" = "community/renaming-to-infinidysk.md" },

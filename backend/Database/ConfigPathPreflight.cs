@@ -52,14 +52,19 @@ internal static class ConfigPathPreflight
 
         if (Directory.Exists(configPath))
         {
-            foreach (var path in KnownDatabaseFiles.Select(fileName => Path.Join(configPath, fileName)))
+            var databaseFiles = DatabaseProviderConfig.IsPostgres
+                ? KnownDatabaseFiles.Where(fileName => fileName != "db.sqlite")
+                : KnownDatabaseFiles.AsEnumerable();
+
+            foreach (var path in databaseFiles.Select(fileName => Path.Join(configPath, fileName)))
             {
                 ProbeFile(path, failures);
                 ProbeFile(path + "-wal", failures);
                 ProbeFile(path + "-shm", failures);
             }
 
-            ProbeFile(DavDatabaseContext.DatabaseFilePath + ".maintenance.lock", failures);
+            if (!DatabaseProviderConfig.IsPostgres)
+                ProbeFile(DavDatabaseContext.DatabaseFilePath + ".maintenance.lock", failures);
 
             foreach (var path in KnownDirectories.Select(directory => Path.Join(configPath, directory)))
             {

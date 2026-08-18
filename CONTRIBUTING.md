@@ -15,6 +15,19 @@ export FRONTEND_BACKEND_API_KEY=$(head -c 32 /dev/urandom | hexdump -ve '1/1 "%.
 export BACKEND_URL=http://localhost:5000
 ```
 
+### PostgreSQL main database
+
+SQLite is the default. To develop against an external PostgreSQL main database,
+start PostgreSQL separately and add:
+
+```bash
+export DATABASE_PROVIDER=postgres
+export DATABASE_CONNECTION_STRING='Host=localhost;Port=5432;Database=infinidysk;Username=infinidysk;Password=infinidysk'
+```
+
+This applies only to a fresh main database; metrics and the other auxiliary
+stores remain under `CONFIG_PATH`.
+
 The backend thread-pool limits can optionally be overridden with
 `THREADPOOL_MIN_THREADS` and `THREADPOOL_MAX_THREADS`. When unset, they retain
 the production defaults of `max(2 × processor count, 50)` minimum threads and

@@ -43,10 +43,17 @@ public class DatabaseBackupTask(
             var backupId = store.GetStagingBackupId(stagingPath);
             Report($"Creating backup {backupId}");
 
-            await DumpIfExistsAsync(
-                DavDatabaseContext.DatabaseFilePath,
-                Path.Join(stagingPath, DatabaseBackupStore.DbSqlName),
-                "main database").ConfigureAwait(false);
+            if (DatabaseProviderConfig.IsPostgres)
+            {
+                Report("Skipping main database (PostgreSQL is externally managed and is not included in local backups)");
+            }
+            else
+            {
+                await DumpIfExistsAsync(
+                    DavDatabaseContext.DatabaseFilePath,
+                    Path.Join(stagingPath, DatabaseBackupStore.DbSqlName),
+                    "main database").ConfigureAwait(false);
+            }
 
             await DumpIfExistsAsync(
                 MetricsDbContext.DatabaseFilePath,
@@ -105,6 +112,21 @@ public class DatabaseBackupTask(
 
     private static async Task<string?> ReadLastMainMigrationAsync()
     {
+        if (DatabaseProviderConfig.IsPostgres)
+        {
+            try
+            {
+                await using var postgresContext = new DavDatabaseContext();
+                return (await postgresContext.Database.GetAppliedMigrationsAsync().ConfigureAwait(false))
+                    .LastOrDefault();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                Log.Warning(ex, "Could not read last applied PostgreSQL main-database migration for backup manifest");
+                return null;
+            }
+        }
+
         if (!File.Exists(DavDatabaseContext.DatabaseFilePath))
             return null;
 

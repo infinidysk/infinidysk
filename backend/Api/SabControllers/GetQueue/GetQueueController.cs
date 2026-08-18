@@ -73,7 +73,11 @@ public class GetQueueController(
         var queuedStart = Math.Max(0, request.Start - activeItems.Count);
         var queuedItemsTask = remainingLimit == 0
             ? Task.FromResult(Array.Empty<QueueItem>())
-            : SabListQuery.ApplyQueueSort(queuedQuery, request.Sort, request.Direction)
+            : SabListQuery.ApplyQueueSort(
+                    queuedQuery,
+                    request.Sort,
+                    request.Direction,
+                    dbClient.Ctx.Database.IsNpgsql())
                 .Skip(queuedStart)
                 .Take(remainingLimit)
                 .ToArrayAsync(ct);

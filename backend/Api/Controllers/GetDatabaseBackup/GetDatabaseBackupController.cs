@@ -10,6 +10,12 @@ public class GetDatabaseBackupController() : BaseApiController
 {
     private IActionResult GetDatabaseBackup()
     {
+        if (DatabaseProviderConfig.IsPostgres)
+        {
+            return BadRequest(
+                "The main database uses externally managed PostgreSQL and has no local SQLite file to download. Use PostgreSQL backup tooling.");
+        }
+
         // This endpoint allows downloading a backup of the database.
         // It is disabled by default and can only be enabled by the env variable below.
         if (!EnvironmentUtil.IsVariableTrue("DANGEROUS_ENABLE_DATABASE_DOWNLOAD_ENDPOINT"))

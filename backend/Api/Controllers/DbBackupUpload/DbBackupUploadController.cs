@@ -2,6 +2,7 @@ using System.IO.Compression;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database;
 using NzbWebDAV.Database.Backup;
 using NzbWebDAV.Services;
 
@@ -38,6 +39,13 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
         try
         {
             var fileName = file.FileName ?? "upload.zip";
+            if (DatabaseProviderConfig.IsPostgres && fileName.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new BadHttpRequestException(
+                    "Standalone SQLite SQL dumps cannot be uploaded while PostgreSQL is the main database. " +
+                    "Use PostgreSQL tooling for the main database, or upload an archive containing only local metrics/warden dumps.");
+            }
+
             if (fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             {
                 await ExtractZipAsync(file, stagingPath, HttpContext.RequestAborted).ConfigureAwait(false);
@@ -57,7 +65,7 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
                 throw new BadHttpRequestException("Upload must be a .zip backup or a .sql dump.");
             }
 
-            ValidateSqlFiles(stagingPath);
+            ValidateSqlFiles(stagingPath, allowMainDatabase: !DatabaseProviderConfig.IsPostgres);
 
             var notes = HttpContext.Request.Form["notes"].ToString();
             var manifest = store.CommitStaging(
@@ -140,7 +148,7 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
         return copied;
     }
 
-    private static void ValidateSqlFiles(string stagingPath)
+    private static void ValidateSqlFiles(string stagingPath, bool allowMainDatabase)
     {
         var sqlFiles = new[]
         {
@@ -155,6 +163,11 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
             var path = Path.Join(stagingPath, name);
             if (!System.IO.File.Exists(path))
                 continue;
+            if (!allowMainDatabase && name == DatabaseBackupStore.DbSqlName)
+            {
+                throw new BadHttpRequestException(
+                    "This archive contains a SQLite main-database dump. PostgreSQL main databases are externally managed and cannot be restored here.");
+            }
             found = true;
             using var reader = new StreamReader(path);
             var sampleBuffer = new char[HeaderSampleCharacters];

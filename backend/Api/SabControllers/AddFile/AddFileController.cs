@@ -1,7 +1,6 @@
 ﻿using System.Xml;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Config;
@@ -287,10 +286,9 @@ public class AddFileController(
     {
         for (Exception? e = ex; e is not null; e = e.InnerException)
         {
-            if (e is not SqliteException sqlite) continue;
-            if (sqlite.SqliteErrorCode is not 19) continue; // SQLITE_CONSTRAINT
+            if (!e.IsUniqueConstraintException()) continue;
 
-            var message = sqlite.Message;
+            var message = e.Message;
             if (message.Contains("IX_QueueItems_Category_FileName", StringComparison.OrdinalIgnoreCase))
                 return true;
             if (message.Contains("QueueItems.Category", StringComparison.OrdinalIgnoreCase)

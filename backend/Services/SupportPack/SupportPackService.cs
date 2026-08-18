@@ -325,6 +325,11 @@ public sealed class SupportPackService(
             generatedAtUtc = generatedAt,
             appVersion = ConfigManager.AppVersion,
             commit = Environment.GetEnvironmentVariable("NZBDAV_COMMIT_SHA"),
+            database = new
+            {
+                mainProvider = DatabaseProviderConfig.Provider.ToString().ToLowerInvariant(),
+                mainDatabaseIsExternallyManaged = DatabaseProviderConfig.IsPostgres,
+            },
             uptimeSeconds = (long)uptime.TotalSeconds,
             processStartedAtUtc = generatedAt - uptime,
             runtime = new
@@ -386,7 +391,9 @@ public sealed class SupportPackService(
             storage = new
             {
                 configPath,
-                configDatabaseBytes = FileSize(DavDatabaseContext.DatabaseFilePath),
+                configDatabaseBytes = DatabaseProviderConfig.IsPostgres
+                    ? null
+                    : FileSize(DavDatabaseContext.DatabaseFilePath),
                 metricsDatabaseBytes = FileSize(MetricsDbContext.DatabaseFilePath),
                 availableFreeSpaceBytes = drive.IsReady ? drive.AvailableFreeSpace : (long?)null,
             },
@@ -834,10 +841,15 @@ public sealed class SupportPackService(
         var (mainMigration, metricsMigration) = await ReadMigrationsAsync(cancellationToken).ConfigureAwait(false);
         return new
         {
-            schemaVersion = 4,
+            schemaVersion = 5,
             generatedAtUtc = generatedAt,
             appVersion = ConfigManager.AppVersion,
             commit = Environment.GetEnvironmentVariable("NZBDAV_COMMIT_SHA"),
+            database = new
+            {
+                mainProvider = DatabaseProviderConfig.Provider.ToString().ToLowerInvariant(),
+                mainDatabaseIsExternallyManaged = DatabaseProviderConfig.IsPostgres,
+            },
             migrations = new { main = mainMigration, metrics = metricsMigration },
             logs = new { count = logs.Entries.Count, logs.OldestSequence, logs.NewestSequence, capacity = logBuffer.Capacity },
             warnings = new

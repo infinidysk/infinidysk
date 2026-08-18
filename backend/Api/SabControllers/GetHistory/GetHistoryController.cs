@@ -35,7 +35,11 @@ public class GetHistoryController(
             .CountAsync(request.CancellationToken);
 
         // get history items
-        var historyItemsPromise = SabListQuery.ApplyHistorySort(query, request.Sort, request.Direction)
+        var historyItemsPromise = SabListQuery.ApplyHistorySort(
+                query,
+                request.Sort,
+                request.Direction,
+                dbClient.Ctx.Database.IsNpgsql())
             .Skip(request.Start)
             .Take(request.Limit)
             .ToArrayAsync(request.CancellationToken);

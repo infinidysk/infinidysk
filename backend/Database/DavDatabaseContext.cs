@@ -15,13 +15,17 @@ using Serilog;
 
 namespace NzbWebDAV.Database;
 
-public sealed class DavDatabaseContext : DbContext
+public class DavDatabaseContext : DbContext
 {
     public DavDatabaseContext() : base(Options.Value)
     {
     }
 
     public DavDatabaseContext(DbContextOptions<DavDatabaseContext> options) : base(options)
+    {
+    }
+
+    protected DavDatabaseContext(DbContextOptions options) : base(options)
     {
     }
 
@@ -35,8 +39,15 @@ public sealed class DavDatabaseContext : DbContext
         Options = CreateOptions();
     }
 
-    private static Lazy<DbContextOptions<DavDatabaseContext>> CreateOptions() => new(() =>
-        new DbContextOptionsBuilder<DavDatabaseContext>()
+    internal static void ConfigureOptions(DbContextOptionsBuilder options)
+    {
+        if (DatabaseProviderConfig.IsPostgres)
+        {
+            options.UseNpgsql(DatabaseProviderConfig.PostgresConnectionString);
+            return;
+        }
+
+        options
             .UseSqlite(new SqliteConnectionStringBuilder
             {
                 DataSource = DatabaseFilePath,
@@ -44,9 +55,15 @@ public sealed class DavDatabaseContext : DbContext
                 Pooling = true
             }.ToString())
             .AddInterceptors(new SqliteMainDbPragmas())
-            .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
-            .Options
-    );
+            .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>();
+    }
+
+    private static Lazy<DbContextOptions<DavDatabaseContext>> CreateOptions() => new(() =>
+    {
+        var builder = new DbContextOptionsBuilder<DavDatabaseContext>();
+        ConfigureOptions(builder);
+        return builder.Options;
+    });
 
     // database sets
     public DbSet<Account> Accounts => Set<Account>();
@@ -744,6 +761,16 @@ public sealed class DavDatabaseContext : DbContext
 
             e.HasIndex(i => i.CreatedAtUnix);
         });
+
+        if (DatabaseProviderConfig.IsPostgres)
+        {
+            // Existing installs store these values as SQLite date/time text with
+            // wall-clock semantics. Mapping to timestamp without time zone preserves
+            // that behavior and accepts the local DateTime values created by the app.
+            b.Entity<DavItem>().Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
+            b.Entity<QueueItem>().Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
+            b.Entity<HistoryItem>().Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
+        }
     }
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())

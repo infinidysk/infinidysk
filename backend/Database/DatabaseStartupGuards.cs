@@ -23,6 +23,15 @@ internal static class DatabaseStartupGuards
         string tableName,
         CancellationToken cancellationToken = default)
     {
+        if (databaseContext.Database.IsNpgsql())
+        {
+            var exists = await databaseContext.Database
+                .SqlQuery<bool>($"SELECT to_regclass(format('\"%s\"', {tableName})) IS NOT NULL AS Value")
+                .FirstAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return exists;
+        }
+
         var count = await databaseContext.Database
             .SqlQuery<int>(
                 $"""

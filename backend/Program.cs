@@ -140,7 +140,9 @@ public partial class Program
             // read them. The stock entrypoint already does this through --db-migration;
             // direct backend launches use the same progress UI here.
             var startupCancellationToken = SigtermUtil.GetCancellationToken();
-            await using var databaseContext = new DavDatabaseContext();
+            await using DavDatabaseContext databaseContext = DatabaseProviderConfig.IsPostgres
+                ? new PostgresDavDatabaseContext()
+                : new DavDatabaseContext();
             await using var metricsBootstrap = new MetricsDbContext();
             await StartupDatabaseMigrator
                 .RunAsync(databaseContext, metricsBootstrap, startupCancellationToken)
@@ -527,6 +529,12 @@ public partial class Program
 
     private static async Task RunDatabaseMigrationsAsync(string[] args)
     {
+        if (DatabaseProviderConfig.IsPostgres)
+        {
+            await RunPostgresDatabaseMigrationsAsync(args).ConfigureAwait(false);
+            return;
+        }
+
         var ct = SigtermUtil.GetCancellationToken();
         await using var maintenanceLease = await DatabaseMigrationLease
             .AcquireAsync(DavDatabaseContext.DatabaseFilePath, ct)
@@ -729,6 +737,72 @@ public partial class Program
                 catch (OperationCanceledException) { /* shutting down */ }
             }
 
+            throw;
+        }
+    }
+
+    private static async Task RunPostgresDatabaseMigrationsAsync(string[] args)
+    {
+        var ct = SigtermUtil.GetCancellationToken();
+        var argIndex = args.ToList().IndexOf("--db-migration");
+        var targetMigration = args.Length > argIndex + 1 ? args[argIndex + 1] : null;
+
+        await using var databaseContext = new PostgresDavDatabaseContext();
+        await using var metricsContext = new MetricsDbContext();
+
+        var pending = (await databaseContext.Database
+                .GetPendingMigrationsAsync(ct)
+                .ConfigureAwait(false))
+            .ToList();
+        var pendingMetrics = (await metricsContext.Database
+                .GetPendingMigrationsAsync(ct)
+                .ConfigureAwait(false))
+            .ToList();
+
+        if (targetMigration is not null)
+        {
+            Log.Information("Applying PostgreSQL migrations through {Target}", targetMigration);
+            await databaseContext.Database.MigrateAsync(targetMigration, ct).ConfigureAwait(false);
+            await metricsContext.Database.MigrateAsync(ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (pending.Count == 0 && pendingMetrics.Count == 0)
+        {
+            Log.Information("No pending PostgreSQL or metrics migrations");
+            return;
+        }
+
+        var steps = pending
+            .Select(id => new MigrationProgress.MigrationStep(
+                id, MigrationProgress.FriendlyName(id), MigrationProgress.IsSlow(id)))
+            .ToList();
+        steps.Add(new MigrationProgress.MigrationStep(
+            MigrationProgress.MetricsStepId, "Metrics database", false));
+
+        var progress = new MigrationProgress();
+        progress.Initialize(steps);
+        await using var statusServer = await MigrationStatusServer.StartAsync(progress, ct).ConfigureAwait(false);
+        try
+        {
+            foreach (var step in steps)
+            {
+                progress.BeginStep(step.Id);
+                if (step.Id == MigrationProgress.MetricsStepId)
+                    await metricsContext.Database.MigrateAsync(ct).ConfigureAwait(false);
+                else
+                    await databaseContext.Database.MigrateAsync(step.Id, ct).ConfigureAwait(false);
+                progress.CompleteStep(step.Id);
+            }
+
+            progress.Complete();
+            Log.Information("PostgreSQL database migrations completed");
+            if (statusServer is not null)
+                await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            progress.Fail(ex.Message);
             throw;
         }
     }

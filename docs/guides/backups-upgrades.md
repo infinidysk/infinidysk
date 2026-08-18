@@ -14,6 +14,12 @@
 
 See [Backup settings](../configuration/backup.md).
 
+## PostgreSQL main database
+
+When `DATABASE_PROVIDER=postgres`, the in-app backup includes only the SQLite
+auxiliary stores (`metrics.sqlite` and `warden.db`). Back up the main database
+with `pg_dump`; see [PostgreSQL](../operations/postgresql.md).
+
 ## Config volume
 
 Also back up:

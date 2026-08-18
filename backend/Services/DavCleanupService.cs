@@ -46,6 +46,45 @@ public class DavCleanupService : BackgroundService
         DavDatabaseContext dbContext,
         CancellationToken cancellationToken = default)
     {
+        if (dbContext.Database.IsNpgsql())
+        {
+            var cleanupItemIdPg = await dbContext.DavCleanupItems
+                .AsNoTracking()
+                .Select(x => (Guid?)x.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (cleanupItemIdPg is null)
+                return false;
+
+            var deletedItemsPg = await dbContext.Items
+                .Where(x => x.ParentId == cleanupItemIdPg)
+                .AsNoTracking()
+                .Select(x => new DavItem { Id = x.Id, Type = x.Type, Path = x.Path })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (deletedItemsPg.Count > 0)
+            {
+                DeletionAuditLog.RecordBatch(
+                    "dav-cleanup",
+                    deletedItemsPg,
+                    "cascading child sweep after parent directory delete",
+                    cleanupItemIdPg);
+            }
+
+            await dbContext.Items
+                .Where(x => x.ParentId == cleanupItemIdPg)
+                .ExecuteDeleteAsync(cancellationToken)
+                .ConfigureAwait(false);
+            _ = DavDatabaseContext.RcloneVfsForget(deletedItemsPg);
+
+            await dbContext.DavCleanupItems
+                .Where(x => x.Id == cleanupItemIdPg)
+                .ExecuteDeleteAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+
         // Preserve the stored text casing: materializing as Guid would normalize it to
         // uppercase when bound again and miss lowercase rows in SQLite.
         var cleanupItemId = await dbContext.Database

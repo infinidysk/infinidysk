@@ -37,10 +37,25 @@ public class DatabaseRestoreStageTask(
                 ?? throw new FileNotFoundException($"Backup not found: {backupId}");
             var backupDir = store.GetBackupDirectory(backupId);
             var dbSql = Path.Join(backupDir, DatabaseBackupStore.DbSqlName);
-            if (!File.Exists(dbSql))
+            if (!DatabaseProviderConfig.IsPostgres && !File.Exists(dbSql))
                 throw new InvalidOperationException("Backup is missing db.sql and cannot be restored.");
 
-            await ValidateMigrationCompatibilityAsync(manifest).ConfigureAwait(false);
+            if (DatabaseProviderConfig.IsPostgres && File.Exists(dbSql))
+            {
+                throw new InvalidOperationException(
+                    "This backup contains a SQLite main-database dump. PostgreSQL main databases are externally managed and cannot be restored here.");
+            }
+
+            if (DatabaseProviderConfig.IsPostgres
+                && !File.Exists(Path.Join(backupDir, DatabaseBackupStore.MetricsSqlName))
+                && !File.Exists(Path.Join(backupDir, DatabaseBackupStore.WardenSqlName)))
+            {
+                throw new InvalidOperationException(
+                    "Backup has no local metrics or warden SQLite dumps to restore. Restore the PostgreSQL main database with PostgreSQL tooling.");
+            }
+
+            if (!DatabaseProviderConfig.IsPostgres)
+                await ValidateMigrationCompatibilityAsync(manifest).ConfigureAwait(false);
 
             Report($"Creating pre-restore safety backup before restoring {backupId}");
             var safetyTask = new DatabaseBackupTask(
@@ -56,12 +71,19 @@ public class DatabaseRestoreStageTask(
             store.PrepareRestoreStaging();
             var stagedFiles = new List<string>();
 
-            await ImportOptionalAsync(
-                Path.Join(backupDir, DatabaseBackupStore.DbSqlName),
-                Path.Join(store.RestoreStagingRoot, "db.sqlite"),
-                requireMigrationsHistory: true,
-                "main database",
-                stagedFiles).ConfigureAwait(false);
+            if (!DatabaseProviderConfig.IsPostgres)
+            {
+                await ImportOptionalAsync(
+                    Path.Join(backupDir, DatabaseBackupStore.DbSqlName),
+                    Path.Join(store.RestoreStagingRoot, "db.sqlite"),
+                    requireMigrationsHistory: true,
+                    "main database",
+                    stagedFiles).ConfigureAwait(false);
+            }
+            else
+            {
+                Report("Skipping main database restore (PostgreSQL is externally managed)");
+            }
 
             await ImportOptionalAsync(
                 Path.Join(backupDir, DatabaseBackupStore.MetricsSqlName),

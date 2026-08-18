@@ -23,17 +23,23 @@ internal static class StartupDatabaseMigrator
         Func<MigrationProgress, CancellationToken, Task<IAsyncDisposable?>> startStatusServer,
         CancellationToken cancellationToken)
     {
-        var databasePath = databaseContext.Database.GetDbConnection().DataSource;
-        await using var lease = await DatabaseMigrationLease
-            .AcquireAsync(databasePath, cancellationToken)
-            .ConfigureAwait(false);
+        IAsyncDisposable? lease = null;
+        if (!databaseContext.Database.IsNpgsql())
+        {
+            var databasePath = databaseContext.Database.GetDbConnection().DataSource;
+            lease = await DatabaseMigrationLease
+                .AcquireAsync(databasePath, cancellationToken)
+                .ConfigureAwait(false);
 
-        await databaseContext.Database
-            .ExecuteSqlRawAsync("PRAGMA journal_mode = WAL;", cancellationToken)
-            .ConfigureAwait(false);
-        await DatabaseStartupGuards
-            .ClearAbandonedMigrationLockAsync(databaseContext, cancellationToken)
-            .ConfigureAwait(false);
+            await databaseContext.Database
+                .ExecuteSqlRawAsync("PRAGMA journal_mode = WAL;", cancellationToken)
+                .ConfigureAwait(false);
+            await DatabaseStartupGuards
+                .ClearAbandonedMigrationLockAsync(databaseContext, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        await using var migrationLease = lease;
         await DatabaseStartupGuards
             .ClearAbandonedMigrationLockAsync(metricsContext, cancellationToken)
             .ConfigureAwait(false);

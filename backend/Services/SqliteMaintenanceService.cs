@@ -66,12 +66,15 @@ public class SqliteMaintenanceService : BackgroundService
         MetricsDbContext metrics,
         CancellationToken cancellationToken = default)
     {
-        await db.Database.ExecuteSqlRawAsync("PRAGMA analysis_limit = 400;", cancellationToken)
-            .ConfigureAwait(false);
-        await db.Database.ExecuteSqlRawAsync("PRAGMA optimize;", cancellationToken)
-            .ConfigureAwait(false);
-        await db.Database.ExecuteSqlRawAsync("PRAGMA wal_checkpoint(TRUNCATE);", cancellationToken)
-            .ConfigureAwait(false);
+        if (!db.Database.IsNpgsql())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA analysis_limit = 400;", cancellationToken)
+                .ConfigureAwait(false);
+            await db.Database.ExecuteSqlRawAsync("PRAGMA optimize;", cancellationToken)
+                .ConfigureAwait(false);
+            await db.Database.ExecuteSqlRawAsync("PRAGMA wal_checkpoint(TRUNCATE);", cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         await metrics.Database.ExecuteSqlRawAsync("PRAGMA analysis_limit = 400;", cancellationToken)
             .ConfigureAwait(false);

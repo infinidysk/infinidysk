@@ -25,12 +25,14 @@ public static class DatabaseRestoreRunner
 
     public static List<MigrationProgress.MigrationStep> GetRestoreSteps(PendingRestoreIntent intent)
     {
-        return
-        [
+        var steps = new List<MigrationProgress.MigrationStep>
+        {
             new MigrationProgress.MigrationStep(RollbackStepId, "Preparing current databases for rollback", true),
             new MigrationProgress.MigrationStep(SwapStepId, $"Restoring backup {intent.BackupId}", true),
-            new MigrationProgress.MigrationStep(BlobScanStepId, "Scanning for missing blob files", false),
-        ];
+        };
+        if (!DatabaseProviderConfig.IsPostgres)
+            steps.Add(new MigrationProgress.MigrationStep(BlobScanStepId, "Scanning for missing blob files", false));
+        return steps;
     }
 
     public static async Task ApplyPendingRestoreAsync(
@@ -51,6 +53,12 @@ public static class DatabaseRestoreRunner
             store.ClearPendingRestore();
             store.ClearRestoreStaging();
             return;
+        }
+
+        if (DatabaseProviderConfig.IsPostgres && intent.StagedFiles.Contains("db.sqlite", StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A SQLite main-database restore was staged while PostgreSQL is configured. Clear the restore staging area and restore PostgreSQL with PostgreSQL tooling.");
         }
 
         var movedAway = new List<(string originalPath, string rollbackPath)>();
@@ -120,23 +128,26 @@ public static class DatabaseRestoreRunner
             store.ClearPendingRestore();
             store.ClearRestoreStaging();
 
-            progress.BeginStep(BlobScanStepId);
-            var report = await ScanMissingBlobsAsync(intent.BackupId, cancellationToken).ConfigureAwait(false);
-            store.WriteLastRestoreReport(report);
-            if (report.MissingBlobRefs > 0)
+            if (!DatabaseProviderConfig.IsPostgres)
             {
-                Log.Warning(
-                    "Restore {BackupId}: {Missing}/{Checked} blob references point to missing files under blobs/",
-                    report.BackupId, report.MissingBlobRefs, report.CheckedRefs);
-            }
-            else
-            {
-                Log.Information(
-                    "Restore {BackupId}: all {Checked} blob references resolved on disk",
-                    report.BackupId, report.CheckedRefs);
-            }
+                progress.BeginStep(BlobScanStepId);
+                var report = await ScanMissingBlobsAsync(intent.BackupId, cancellationToken).ConfigureAwait(false);
+                store.WriteLastRestoreReport(report);
+                if (report.MissingBlobRefs > 0)
+                {
+                    Log.Warning(
+                        "Restore {BackupId}: {Missing}/{Checked} blob references point to missing files under blobs/",
+                        report.BackupId, report.MissingBlobRefs, report.CheckedRefs);
+                }
+                else
+                {
+                    Log.Information(
+                        "Restore {BackupId}: all {Checked} blob references resolved on disk",
+                        report.BackupId, report.CheckedRefs);
+                }
 
-            progress.CompleteStep(BlobScanStepId);
+                progress.CompleteStep(BlobScanStepId);
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -162,7 +173,9 @@ public static class DatabaseRestoreRunner
 
     private static string ResolveLivePath(string stagedFileName) => stagedFileName switch
     {
-        "db.sqlite" => DavDatabaseContext.DatabaseFilePath,
+        "db.sqlite" when !DatabaseProviderConfig.IsPostgres => DavDatabaseContext.DatabaseFilePath,
+        "db.sqlite" => throw new InvalidOperationException(
+            "PostgreSQL is configured; the main database cannot be restored from a SQLite file."),
         "metrics.sqlite" => MetricsDbContext.DatabaseFilePath,
         "warden.db" => Path.Join(DavDatabaseContext.ConfigPath, "warden.db"),
         _ => throw new InvalidOperationException($"Unknown staged database file: {stagedFileName}"),

@@ -108,12 +108,19 @@ public static class OverviewStatsReset
         int batch;
         do
         {
-            batch = await db.Database.ExecuteSqlRawAsync(
-                """
-                DELETE FROM SegmentFetches WHERE rowid IN
-                    (SELECT rowid FROM SegmentFetches WHERE Provider = {0} LIMIT {1})
-                """,
-                new object[] { providerKey, batchSize }, ct).ConfigureAwait(false);
+            batch = db.Database.IsNpgsql()
+                ? await db.Database.ExecuteSqlRawAsync(
+                    """
+                    DELETE FROM "SegmentFetches" WHERE "Id" IN
+                        (SELECT "Id" FROM "SegmentFetches" WHERE "Provider" = {0} LIMIT {1})
+                    """,
+                    new object[] { providerKey, batchSize }, ct).ConfigureAwait(false)
+                : await db.Database.ExecuteSqlRawAsync(
+                    """
+                    DELETE FROM SegmentFetches WHERE rowid IN
+                        (SELECT rowid FROM SegmentFetches WHERE Provider = {0} LIMIT {1})
+                    """,
+                    new object[] { providerKey, batchSize }, ct).ConfigureAwait(false);
             deleted += batch;
         } while (batch > 0);
 

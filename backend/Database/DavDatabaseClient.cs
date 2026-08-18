@@ -87,21 +87,21 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             return await Ctx.Items.SumAsync(x => x.FileSize, ct).ConfigureAwait(false) ?? 0;
         }
 
-        const string sql = @"
-            WITH RECURSIVE RecursiveChildren AS (
-                SELECT Id, FileSize
-                FROM DavItems
-                WHERE ParentId = @parentId
+        const string sql = """
+            WITH RECURSIVE "RecursiveChildren" AS (
+                SELECT "Id", "FileSize"
+                FROM "DavItems"
+                WHERE "ParentId" = @parentId
 
                 UNION ALL
 
-                SELECT d.Id, d.FileSize
-                FROM DavItems d
-                INNER JOIN RecursiveChildren rc ON d.ParentId = rc.Id
+                SELECT d."Id", d."FileSize"
+                FROM "DavItems" d
+                INNER JOIN "RecursiveChildren" rc ON d."ParentId" = rc."Id"
             )
-            SELECT IFNULL(SUM(FileSize), 0)
-            FROM RecursiveChildren;
-        ";
+            SELECT COALESCE(SUM("FileSize"), 0)
+            FROM "RecursiveChildren";
+        """;
         var connection = Ctx.Database.GetDbConnection();
         if (connection.State != System.Data.ConnectionState.Open) await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();

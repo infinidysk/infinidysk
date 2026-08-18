@@ -20,6 +20,7 @@
         <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       </PackageReference>
       <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
+      <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
       <PackageReference Include="prometheus-net.AspNetCore" Version="8.2.1" />
       <PackageReference Include="Scalar.AspNetCore" Version="2.16.20" />
       <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />

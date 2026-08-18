@@ -45,6 +45,8 @@ type BackupListResponse = {
     taskRunning?: boolean;
     pendingRestore?: boolean;
     lastRestoreReport?: LastRestoreReport | null;
+    mainDatabaseProvider?: string;
+    mainDatabaseBackupSupported?: boolean;
     error?: string;
 };
 
@@ -55,6 +57,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
     const [backups, setBackups] = useState<BackupManifest[]>([]);
     const [taskRunning, setTaskRunning] = useState(false);
     const [lastRestoreReport, setLastRestoreReport] = useState<LastRestoreReport | null>(null);
+    const [mainDatabaseProvider, setMainDatabaseProvider] = useState<string | null>(null);
     const [reportDismissed, setReportDismissed] = useState(false);
     const [listError, setListError] = useState<string | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
@@ -82,6 +85,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
             setBackups(data?.backups ?? []);
             setTaskRunning(!!data?.taskRunning);
             setLastRestoreReport(data?.lastRestoreReport ?? null);
+            setMainDatabaseProvider(data?.mainDatabaseProvider ?? null);
             setListError(null);
         } catch {
             setListError("Failed to load backups.");
@@ -333,6 +337,20 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                 Create logical SQL dumps of your databases, schedule automatic backups, and restore from a previous
                 snapshot when needed.
             </SettingsIntro>
+
+            {mainDatabaseProvider === "postgres" && (
+                <Alert className="alert-soft items-start py-3 text-sm" variant="warning">
+                    <Icon name="info" className="!text-[20px]" />
+                    <div>
+                        <p className="font-semibold">PostgreSQL main database is externally managed</p>
+                        <p className="mt-0.5 text-xs opacity-80">
+                            This page backs up and restores only the local SQLite metrics and warden databases. The
+                            main PostgreSQL database is not included; use your PostgreSQL provider&apos;s backup and
+                            restore tooling for it.
+                        </p>
+                    </div>
+                </Alert>
+            )}
 
             {!reportDismissed && lastRestoreReport && lastRestoreReport.missingBlobRefs > 0 && (
                 <Alert className="alert-soft items-start py-3 text-sm" variant="warning">
@@ -723,9 +741,13 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                 <div className="flex items-start gap-2 rounded-lg bg-base-200/30 px-3 py-2.5 text-xs leading-relaxed text-base-content/55">
                     <Icon name="info" className="mt-0.5 !text-[17px] shrink-0 text-base-content/45" />
                     <p>
-                        Backups include <code className="font-mono text-base-content/70">db.sqlite</code>,{" "}
-                        <code className="font-mono text-base-content/70">metrics.sqlite</code>, and{" "}
-                        <code className="font-mono text-base-content/70">warden.db</code> as logical SQL dumps. The{" "}
+                        {mainDatabaseProvider === "postgres"
+                            ? <>Backups include only the local <code className="font-mono text-base-content/70">metrics.sqlite</code> and{" "}
+                                <code className="font-mono text-base-content/70">warden.db</code> databases as logical SQL dumps. The
+                                PostgreSQL main database is externally managed and is not included. </>
+                            : <>Backups include <code className="font-mono text-base-content/70">db.sqlite</code>,{" "}
+                                <code className="font-mono text-base-content/70">metrics.sqlite</code>, and{" "}
+                                <code className="font-mono text-base-content/70">warden.db</code> as logical SQL dumps. </>}
                         <code className="font-mono text-base-content/70">blobs/</code> folder is not included — restoring
                         an older dump may leave some items with missing blob files.
                     </p>
@@ -748,13 +770,21 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                 show={confirmRestoreId !== null}
                 title="Restore database backup"
                 message={
-                    <>
-                        Restoring <span className="font-mono">{confirmRestoreId}</span> replaces all settings, queue,
-                        history, and the WebDAV file tree. A pre-restore safety backup is created automatically. The
-                        server will restart into maintenance mode to apply the swap.
-                    </>
+                    mainDatabaseProvider === "postgres"
+                        ? <>
+                            Restoring <span className="font-mono">{confirmRestoreId}</span> replaces only the local
+                            metrics and warden SQLite databases. The externally managed PostgreSQL main database is not
+                            changed. A pre-restore safety backup is created automatically.
+                        </>
+                        : <>
+                            Restoring <span className="font-mono">{confirmRestoreId}</span> replaces all settings, queue,
+                            history, and the WebDAV file tree. A pre-restore safety backup is created automatically. The
+                            server will restart into maintenance mode to apply the swap.
+                        </>
                 }
-                checkboxMessage="I understand this will replace the current databases"
+                checkboxMessage={mainDatabaseProvider === "postgres"
+                    ? "I understand this will replace the local SQLite databases"
+                    : "I understand this will replace the current databases"}
                 cancelText="Cancel"
                 confirmText="Restore"
                 onCancel={() => setConfirmRestoreId(null)}

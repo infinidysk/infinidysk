@@ -1,6 +1,7 @@
 ﻿using System.Net.Sockets;
 using Microsoft.Data.Sqlite;
 using NzbWebDAV.Exceptions;
+using Npgsql;
 using Serilog;
 
 namespace NzbWebDAV.Extensions;
@@ -37,6 +38,41 @@ public static class ExceptionExtensions
             // SQLITE_CORRUPT_SEQUENCE (523) share primary code 11 in their low byte.
             if (current is SqliteException sqlite
                 && (sqlite.SqliteErrorCode == 11 || (sqlite.SqliteExtendedErrorCode & 0xFF) == 11))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>True for a provider-level unique constraint violation.</summary>
+    public static bool IsUniqueConstraintException(this Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is SqliteException { SqliteErrorCode: 19 }
+                or PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True for write contention that can be retried by the caller's next sweep.
+    /// PostgreSQL reports concurrent serialization/deadlock failures by SQLSTATE.
+    /// </summary>
+    public static bool IsTransientDatabaseException(this Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is SqliteException sqlite
+                && sqlite.SqliteErrorCode is 5 or 6 or 8 or 13)
+                return true;
+
+            if (current is PostgresException postgres
+                && postgres.SqlState is PostgresErrorCodes.SerializationFailure
+                    or PostgresErrorCodes.DeadlockDetected
+                    or PostgresErrorCodes.LockNotAvailable)
                 return true;
         }
 
