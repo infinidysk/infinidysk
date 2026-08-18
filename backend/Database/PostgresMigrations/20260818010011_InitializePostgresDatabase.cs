@@ -654,21 +654,6 @@ namespace NzbWebDAV.Database.PostgresMigrations
                 AFTER DELETE ON "DavItems" FOR EACH ROW
                 EXECUTE FUNCTION "fn_DavItems_Delete_Cleanup"();
 
-                CREATE FUNCTION "fn_HistoryItems_Delete_AddHistoryCleanup"() RETURNS trigger
-                LANGUAGE plpgsql AS $$
-                BEGIN
-                    IF OLD."Id" IS NOT NULL THEN
-                        INSERT INTO "HistoryCleanupItems" ("Id", "DeleteMountedFiles")
-                        VALUES (OLD."Id", false)
-                        ON CONFLICT ("Id") DO UPDATE
-                        SET "DeleteMountedFiles" = EXCLUDED."DeleteMountedFiles";
-                    END IF;
-                    RETURN OLD;
-                END $$;
-                CREATE TRIGGER "TR_HistoryItems_Delete_AddHistoryCleanup"
-                AFTER DELETE ON "HistoryItems" FOR EACH ROW
-                EXECUTE FUNCTION "fn_HistoryItems_Delete_AddHistoryCleanup"();
-
                 CREATE FUNCTION "fn_HealthCheckResults_Stats"() RETURNS trigger
                 LANGUAGE plpgsql AS $$
                 DECLARE
@@ -720,7 +705,6 @@ namespace NzbWebDAV.Database.PostgresMigrations
                 DROP FUNCTION IF EXISTS "fn_HistoryItems_Delete_AddNzbBlobCleanup"() CASCADE;
                 DROP FUNCTION IF EXISTS "fn_DavItems_BlobCleanup"() CASCADE;
                 DROP FUNCTION IF EXISTS "fn_DavItems_Delete_Cleanup"() CASCADE;
-                DROP FUNCTION IF EXISTS "fn_HistoryItems_Delete_AddHistoryCleanup"() CASCADE;
                 DROP FUNCTION IF EXISTS "fn_HealthCheckResults_Stats"() CASCADE;
                 """);
 
