@@ -774,7 +774,8 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                         ? <>
                             Restoring <span className="font-mono">{confirmRestoreId}</span> replaces only the local
                             metrics and warden SQLite databases. The externally managed PostgreSQL main database is not
-                            changed. A pre-restore safety backup is created automatically.
+                            changed. A pre-restore safety backup is created automatically. The server will restart into
+                            maintenance mode to apply the swap.
                         </>
                         : <>
                             Restoring <span className="font-mono">{confirmRestoreId}</span> replaces all settings, queue,
