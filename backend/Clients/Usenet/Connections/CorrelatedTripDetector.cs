@@ -103,7 +103,7 @@ public sealed class CorrelatedTripDetector
         {
             Log.Warning(
                 "All {Count} NNTP providers tripped their circuit breakers within {WindowSeconds}s of each other ({Providers}). " +
-                "The shared network path may be degraded; shortening cooldowns so recovery probes can resume traffic.",
+                "The shared network path may be degraded; providers will probe recovery after their configured cooldown.",
                 providerCount,
                 _window.TotalSeconds,
                 providers);

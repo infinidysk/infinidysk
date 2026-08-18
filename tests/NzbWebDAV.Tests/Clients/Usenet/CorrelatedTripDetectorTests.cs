@@ -51,7 +51,7 @@ public class CorrelatedTripDetectorTests
         detector.OnTransition("a", Open(atMs: 1_000));
         detector.OnTransition("b", Open(atMs: 2_000));
 
-        Assert.Equal(["a", "b"], callbacks);
+        Assert.Equal(["a", "b"], callbacks.Order());
     }
 
     [Fact]
