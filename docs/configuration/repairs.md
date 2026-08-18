@@ -19,6 +19,12 @@ Background health monitoring and replacement of unhealthy library items.
 | Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items are removed and blocklisted through *Arr instead of force-deleted |
 | Library Directory | `media.library-dir` | empty | Organized library root in the container — parent of your Arr root folders. Never the rclone mount or `/completed-symlinks` |
 
+## Re-check after provider changes [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
+
+Changing Usenet providers can affect which library files are available. After saving provider changes,
+InfiniDysk offers to queue your library for a health re-check. This requires Background Repairs to be
+enabled; urgent repairs already queued from streaming failures keep their priority.
+
 !!! note "Streaming failure repair requires Background Repairs"
 
     **Repair After Streaming Failures** (`repair.auto-remove-after-failures`) only takes effect when
