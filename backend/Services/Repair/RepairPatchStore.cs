@@ -86,8 +86,9 @@ public sealed class RepairPatchStore
             };
             return true;
         }
-        catch
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
+            Log.Debug(e, "Repair patch store: dropping unreadable patch for {SegmentId}", segmentId);
             Drop(hash);
             return false;
         }
@@ -111,8 +112,9 @@ public sealed class RepairPatchStore
                 File.ReadAllText(blobPath + ".h"), HeaderJsonOptions);
             return header != null && header.PartSize == expectedSize;
         }
-        catch
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
+            Log.Debug(e, "Repair patch store: dropping unreadable patch for {SegmentId}", segmentId);
             Drop(hash);
             return false;
         }
@@ -245,9 +247,9 @@ public sealed class RepairPatchStore
         {
             if (File.Exists(path)) File.Delete(path);
         }
-        catch
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // ignore
+            Log.Debug(e, "Repair patch store: could not delete {Path}", path);
         }
     }
 

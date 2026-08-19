@@ -31,12 +31,15 @@ public sealed class Par2RepairService : BackgroundService
     private readonly UsenetStreamingClient _usenetClient;
     private readonly RepairPatchStore _patchStore;
     private readonly Channel<RepairWorkItem> _queue;
+    private readonly Channel<ZeroFillEvent> _zeroFillQueue;
     private readonly ConcurrentDictionary<Guid, byte> _queuedOrRunning = new();
+    private readonly ConcurrentDictionary<string, byte> _pendingZeroFillPaths = new(StringComparer.Ordinal);
     private long _totalSucceeded;
     private long _totalFailed;
     private long _totalInfeasible;
     private long _totalBytesRead;
-    private long _totalSegmentsReconstructed;
+    private long _totalSlicesReconstructed;
+    private long _totalSegmentsCommitted;
 
     public Par2RepairService(
         ConfigManager configManager,
@@ -46,29 +49,37 @@ public sealed class Par2RepairService : BackgroundService
         _configManager = configManager;
         _usenetClient = usenetClient;
         _patchStore = patchStore;
+        // Wait mode makes non-blocking TryWrite report full queues as false so
+        // callers can undo bookkeeping; DropWrite would return true and silently
+        // discard the item, leaking _queuedOrRunning/_pendingZeroFillPaths entries.
         _queue = Channel.CreateBounded<RepairWorkItem>(new BoundedChannelOptions(MaxQueueLength)
         {
-            FullMode = BoundedChannelFullMode.DropWrite,
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = false,
+        });
+        _zeroFillQueue = Channel.CreateBounded<ZeroFillEvent>(new BoundedChannelOptions(MaxQueueLength)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = false,
         });
     }
 
-    public async Task EnqueueZeroFillAsync(
-        string path,
-        string segmentId,
-        int segmentIndex,
-        long fillBytes,
-        CancellationToken ct = default)
+    internal int PendingZeroFillCount => _pendingZeroFillPaths.Count;
+
+    /// <summary>
+    /// Synchronous, allocation-light entry point for streaming zero-fill events.
+    /// Runs on the playback hot path's failure branch: gate on config, dedup by
+    /// path, and hand off to the single background consumer. All DB work happens
+    /// in the consumer.
+    /// </summary>
+    public void ReportZeroFill(string path, string segmentId)
     {
         if (!_configManager.IsPar2RepairEnabled()) return;
-
-        await using var dbContext = new DavDatabaseContext();
-        var dbClient = new DavDatabaseClient(dbContext);
-        var davItem = await dbClient.GetItemByPathAsync(path, ct).ConfigureAwait(false);
-        if (davItem == null) return;
-
-        await EnqueueAsync(davItem, [segmentId], ct).ConfigureAwait(false);
+        if (!_pendingZeroFillPaths.TryAdd(path, 0)) return;
+        if (!_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId)))
+            _pendingZeroFillPaths.TryRemove(path, out _);
     }
 
     public async Task EnqueueAsync(
@@ -111,6 +122,13 @@ public sealed class Par2RepairService : BackgroundService
     {
         await _patchStore.CatalogLoadTask.ConfigureAwait(false);
 
+        await Task.WhenAll(
+            ProcessRepairQueueAsync(stoppingToken),
+            ProcessZeroFillQueueAsync(stoppingToken)).ConfigureAwait(false);
+    }
+
+    private async Task ProcessRepairQueueAsync(CancellationToken stoppingToken)
+    {
         await foreach (var item in _queue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
         {
             try
@@ -127,6 +145,38 @@ public sealed class Par2RepairService : BackgroundService
                 e.LogWarningKnownOrStack("PAR2 background repair worker failed for {Path}", item.Path);
             }
         }
+    }
+
+    private async Task ProcessZeroFillQueueAsync(CancellationToken stoppingToken)
+    {
+        await foreach (var evt in _zeroFillQueue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
+        {
+            try
+            {
+                await ProcessZeroFillEventAsync(evt, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                Log.Debug(e, "PAR2 zero-fill trigger failed for {Path}", evt.Path);
+            }
+            finally
+            {
+                _pendingZeroFillPaths.TryRemove(evt.Path, out _);
+            }
+        }
+    }
+
+    private async Task ProcessZeroFillEventAsync(ZeroFillEvent evt, CancellationToken ct)
+    {
+        await using var dbContext = new DavDatabaseContext();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var davItem = await dbClient.GetItemByPathAsync(evt.Path, ct).ConfigureAwait(false);
+        if (davItem != null)
+            await EnqueueAsync(davItem, [evt.SegmentId], ct).ConfigureAwait(false);
     }
 
     private async Task ProcessQueueItemAsync(RepairWorkItem item, CancellationToken ct)
@@ -194,10 +244,13 @@ public sealed class Par2RepairService : BackgroundService
                 PrometheusMetrics.Current?.SetPar2PatchStoreBytes(_patchStore.CurrentBytes);
                 Interlocked.Increment(ref _totalSucceeded);
                 Interlocked.Add(ref _totalBytesRead, result.BytesRead);
-                Interlocked.Add(ref _totalSegmentsReconstructed, result.SlicesReconstructed);
+                Interlocked.Add(ref _totalSlicesReconstructed, result.SlicesReconstructed);
+                Interlocked.Add(ref _totalSegmentsCommitted, result.SegmentsCommitted);
                 Log.Information(
-                    "PAR2 repair succeeded for {Path}: {Slices} slice(s), {Bytes} bytes read in {Elapsed}",
-                    davItem.Path, result.SlicesReconstructed, result.BytesRead, stopwatch.Elapsed);
+                    "PAR2 repair succeeded for {Path}: {Slices} slice(s) reconstructed, "
+                    + "{Segments} segment(s) committed, {Bytes} bytes read in {Elapsed}",
+                    davItem.Path, result.SlicesReconstructed, result.SegmentsCommitted,
+                    result.BytesRead, stopwatch.Elapsed);
                 return true;
             }
 
@@ -380,9 +433,10 @@ public sealed class Par2RepairService : BackgroundService
             _patchStore.CommitPatch(patch.SegmentId, patch.Bytes, patch.Header);
 
         PrometheusMetrics.Current?.AddPar2RepairBytesRead(bytesRead);
-        PrometheusMetrics.Current?.AddPar2SegmentsReconstructed(commits.Count);
+        PrometheusMetrics.Current?.AddPar2SlicesReconstructed(reconstruction.ReconstructedSlices.Count);
+        PrometheusMetrics.Current?.AddPar2SegmentsCommitted(commits.Count);
         job.MissingSegmentIds = patchTargets.Select(x => x.SegmentId).ToArray();
-        return RepairExecutionResult.Succeeded(bytesRead, reconstruction.ReconstructedSlices.Count);
+        return RepairExecutionResult.Succeeded(bytesRead, reconstruction.ReconstructedSlices.Count, commits.Count);
     }
 
     private static List<SegmentPatch> ExtractSegmentPatches(
@@ -509,14 +563,10 @@ public sealed class Par2RepairService : BackgroundService
             .Select((id, index) => (id, index))
             .ToDictionary(x => x.id, x => x.index, StringComparer.Ordinal);
 
-        var result = new List<MissingSegment>();
-        foreach (var id in requestedIds)
-        {
-            if (indexById.TryGetValue(id, out var index))
-                result.Add(new MissingSegment(id, index));
-        }
-
-        return result;
+        return requestedIds
+            .Where(indexById.ContainsKey)
+            .Select(id => new MissingSegment(id, indexById[id]))
+            .ToList();
     }
 
     private async Task<List<Par2Reconstructor.RecoverySlice>> CollectRecoverySlicesAsync(
@@ -556,9 +606,10 @@ public sealed class Par2RepairService : BackgroundService
                     }
 
                     if (packet is RecvSlic recvSlic && recvSlic.Payload.Length == (int)sliceSize
-                        && byExponent.TryAdd(recvSlic.Exponent, recvSlic.Payload))
+                        && byExponent.TryAdd(recvSlic.Exponent, recvSlic.Payload)
+                        && byExponent.Count >= needed)
                     {
-                        if (byExponent.Count >= needed) break;
+                        break;
                     }
                 }
             }
@@ -686,7 +737,7 @@ public sealed class Par2RepairService : BackgroundService
             }
         }
 
-        done:
+    done:
         if (main == null || fileDescs.Count == 0 || ifscs.Count == 0)
             return null;
 
@@ -730,15 +781,9 @@ public sealed class Par2RepairService : BackgroundService
         MainPacket main,
         Dictionary<string, FileDesc> fileDescs)
     {
-        long total = 0;
-        foreach (var fileId in main.FileIds)
-        {
-            var key = Convert.ToHexString(fileId);
-            if (fileDescs.TryGetValue(key, out var desc))
-                total += (long)desc.FileLength;
-        }
-
-        return total;
+        return main.FileIds
+            .Select(fileId => Convert.ToHexString(fileId))
+            .Sum(key => fileDescs.TryGetValue(key, out var desc) ? (long)desc.FileLength : 0L);
     }
 
     private async Task<bool> ShouldEnqueueAsync(Guid davItemId, CancellationToken ct)
@@ -855,7 +900,8 @@ public sealed class Par2RepairService : BackgroundService
             TotalFailed = Interlocked.Read(ref _totalFailed),
             TotalInfeasible = Interlocked.Read(ref _totalInfeasible),
             TotalBytesRead = Interlocked.Read(ref _totalBytesRead),
-            TotalSegmentsReconstructed = Interlocked.Read(ref _totalSegmentsReconstructed),
+            TotalSlicesReconstructed = Interlocked.Read(ref _totalSlicesReconstructed),
+            TotalSegmentsCommitted = Interlocked.Read(ref _totalSegmentsCommitted),
             RecentJobs = recentJobs,
         };
     }
@@ -884,8 +930,9 @@ public sealed class Par2RepairService : BackgroundService
                 })
                 .ToList();
         }
-        catch
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
+            Log.Debug(e, "Could not load recent PAR2 repair jobs for diagnostics");
             return [];
         }
     }
@@ -900,11 +947,14 @@ public sealed class Par2RepairService : BackgroundService
         public long TotalFailed { get; init; }
         public long TotalInfeasible { get; init; }
         public long TotalBytesRead { get; init; }
-        public long TotalSegmentsReconstructed { get; init; }
+        public long TotalSlicesReconstructed { get; init; }
+        public long TotalSegmentsCommitted { get; init; }
         public List<object> RecentJobs { get; init; } = [];
     }
 
     private sealed record RepairWorkItem(Guid DavItemId, string Path, string[] MissingSegmentIds);
+
+    private sealed record ZeroFillEvent(string Path, string SegmentId);
 
     private sealed record MissingSegment(string SegmentId, int Index);
 
@@ -922,16 +972,17 @@ public sealed class Par2RepairService : BackgroundService
         bool IsInfeasible,
         string? FailureReason,
         long BytesRead,
-        int SlicesReconstructed)
+        int SlicesReconstructed,
+        int SegmentsCommitted)
     {
-        public static RepairExecutionResult Succeeded(long bytesRead, int slices)
-            => new(true, false, null, bytesRead, slices);
+        public static RepairExecutionResult Succeeded(long bytesRead, int slices, int segmentsCommitted)
+            => new(true, false, null, bytesRead, slices, segmentsCommitted);
 
         public static RepairExecutionResult NotFeasible(string reason)
-            => new(false, true, reason, 0, 0);
+            => new(false, true, reason, 0, 0, 0);
 
         public static RepairExecutionResult Failed(string reason)
-            => new(false, false, reason, 0, 0);
+            => new(false, false, reason, 0, 0, 0);
     }
 
     private sealed class SliceSegmentAccessor

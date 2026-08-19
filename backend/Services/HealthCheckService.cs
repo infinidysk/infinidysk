@@ -684,20 +684,13 @@ public class HealthCheckService : BackgroundService
             .Select((id, index) => (id, index))
             .ToDictionary(x => x.id, x => x.index, StringComparer.Ordinal);
         var ranges = nzbFile.SegmentByteRanges;
-        var unrepaired = new List<string>(sampledSegmentIds.Count);
 
-        foreach (var segmentId in sampledSegmentIds)
-        {
-            if (!indexById.TryGetValue(segmentId, out var index)
-                || ranges == null
-                || index >= ranges.Length
-                || !patchStore.IsRepaired(segmentId, ranges[index].Count))
-            {
-                unrepaired.Add(segmentId);
-            }
-        }
-
-        return unrepaired;
+        return sampledSegmentIds
+            .Where(segmentId => !indexById.TryGetValue(segmentId, out var index)
+                                || ranges == null
+                                || index >= ranges.Length
+                                || !patchStore.IsRepaired(segmentId, ranges[index].Count))
+            .ToList();
     }
 
     private async Task UpdateReleaseDate(DavItem davItem, List<string> segments, CancellationToken ct)

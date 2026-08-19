@@ -662,7 +662,8 @@ public sealed class SupportPackService(
                     totalFailed = snapshot.TotalFailed,
                     totalInfeasible = snapshot.TotalInfeasible,
                     totalBytesRead = snapshot.TotalBytesRead,
-                    totalSegmentsReconstructed = snapshot.TotalSegmentsReconstructed,
+                    totalSlicesReconstructed = snapshot.TotalSlicesReconstructed,
+                    totalSegmentsCommitted = snapshot.TotalSegmentsCommitted,
                 },
                 recentJobs = snapshot.RecentJobs,
             };

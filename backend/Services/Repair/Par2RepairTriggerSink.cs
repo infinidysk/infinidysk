@@ -1,10 +1,10 @@
-using Serilog;
-
 namespace NzbWebDAV.Services.Repair;
 
 /// <summary>
-/// Fire-and-forget entry point for streaming zero-fill events. Resolves the DavItem by path
-/// and enqueues background PAR2 repair without blocking readers.
+/// Entry point for streaming zero-fill events. Forwards synchronously to the
+/// repair service, which gates cheaply (config + in-memory path dedup) and
+/// hands the event to its single background consumer. No per-event tasks or
+/// DB work happen on the caller's (playback) thread.
 /// </summary>
 public sealed class Par2RepairTriggerSink
 {
@@ -19,17 +19,6 @@ public sealed class Par2RepairTriggerSink
 
     public void ReportZeroFill(string path, string segmentId, int segmentIndex, long fillBytes)
     {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await _service.EnqueueZeroFillAsync(path, segmentId, segmentIndex, fillBytes)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception e) when (e is not OutOfMemoryException)
-            {
-                Log.Debug(e, "PAR2 zero-fill trigger failed for {Path}", path);
-            }
-        });
+        _service.ReportZeroFill(path, segmentId);
     }
 }

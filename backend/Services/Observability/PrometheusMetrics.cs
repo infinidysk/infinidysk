@@ -37,7 +37,8 @@ public sealed class PrometheusMetrics
     private readonly Histogram _seekLatency;
     private readonly Histogram _par2RepairDuration;
     private readonly Counter _par2RepairBytesRead;
-    private readonly Counter _par2SegmentsReconstructed;
+    private readonly Counter _par2SlicesReconstructed;
+    private readonly Counter _par2SegmentsCommitted;
     private readonly Counter _par2ValidationFailures;
     private readonly Gauge _par2PatchStoreBytes;
     private readonly Counter _par2PatchHits;
@@ -83,9 +84,12 @@ public sealed class PrometheusMetrics
         _par2RepairBytesRead = metrics.CreateCounter(
             "nzbdav_par2_repair_bytes_read_total",
             "NNTP bytes read during PAR2 repairs.");
-        _par2SegmentsReconstructed = metrics.CreateCounter(
-            "nzbdav_par2_repair_segments_reconstructed_total",
-            "Segments reconstructed and committed by PAR2 repair.");
+        _par2SlicesReconstructed = metrics.CreateCounter(
+            "nzbdav_par2_repair_slices_reconstructed_total",
+            "PAR2 slices reconstructed from recovery data.");
+        _par2SegmentsCommitted = metrics.CreateCounter(
+            "nzbdav_par2_repair_segments_committed_total",
+            "Segments committed to the repair patch store by PAR2 repair.");
         _par2ValidationFailures = metrics.CreateCounter(
             "nzbdav_par2_validation_failures_total",
             "PAR2 validation gate failures.",
@@ -122,7 +126,9 @@ public sealed class PrometheusMetrics
 
     public void AddPar2RepairBytesRead(long bytes) => _par2RepairBytesRead.Inc(bytes);
 
-    public void AddPar2SegmentsReconstructed(int count) => _par2SegmentsReconstructed.Inc(count);
+    public void AddPar2SlicesReconstructed(int count) => _par2SlicesReconstructed.Inc(count);
+
+    public void AddPar2SegmentsCommitted(int count) => _par2SegmentsCommitted.Inc(count);
 
     public void RecordPar2ValidationFailure(string gate) => _par2ValidationFailures.WithLabels(gate).Inc();
 
