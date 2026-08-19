@@ -1,3 +1,4 @@
+using MemoryPack;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -5,12 +6,14 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using Serilog;
+using ZstdSharp;
 
 namespace NzbWebDAV.Queue.SiblingDonors;
 
 /// <summary>
 /// Precomputes cross-NZB donor MessageIds into per-segment fallback lists at import
-/// time so playback can recover holes through the existing fallback arrays.
+/// (forward) and completion (bidirectional backfill) so playback can recover holes
+/// through the existing fallback arrays.
 /// </summary>
 internal static class SiblingDonorAttacher
 {
@@ -71,6 +74,119 @@ internal static class SiblingDonorAttacher
         {
             e.LogWarningKnownOrStack(
                 "Sibling segment-donor attach skipped for {JobName}.", queueItem.JobName);
+        }
+    }
+
+    public static async Task BackfillCompletedSiblingsAsync(
+        DavDatabaseClient dbClient,
+        QueueItem queueItem,
+        NzbDocument nzb,
+        ConfigManager configManager,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (!configManager.IsVariantsSegmentDonorsEnabled()) return;
+            if (string.IsNullOrEmpty(queueItem.ContentGroupKey)) return;
+
+            var maxSiblings = configManager.GetVariantsSegmentDonorsMaxSiblings();
+            if (maxSiblings <= 0) return;
+            var maxPerSegment = configManager.GetVariantsSegmentDonorsMaxPerSegment();
+
+            var siblings = await LoadCompletedSiblingsAsync(
+                    dbClient.Ctx, queueItem.ContentGroupKey, maxSiblings, ct)
+                .ConfigureAwait(false);
+            if (siblings.Count == 0) return;
+
+            var newFiles = nzb.Files.Where(file => file.Segments.Count > 0).ToList();
+            var newFilesByKey = IndexBySegmentIds(newFiles);
+            // Snapshot before staging sibling clones so those pending writes are not
+            // mistaken for this import's FileAggregator blobs.
+            var pendingNewBlobs = dbClient.Ctx.BlobNzbFiles.ToArray();
+
+            foreach (var sibling in siblings)
+            {
+                ct.ThrowIfCancellationRequested();
+                var document = await LoadSiblingDocumentAsync(sibling.NzbBlobId!.Value, ct)
+                    .ConfigureAwait(false);
+                if (document is null) continue;
+
+                var siblingFilesByKey = IndexBySegmentIds(document.Files);
+                await BackfillSiblingBlobsAsync(
+                        dbClient.Ctx,
+                        sibling.Id,
+                        siblingFilesByKey,
+                        newFiles,
+                        maxPerSegment,
+                        ct)
+                    .ConfigureAwait(false);
+
+                foreach (var pending in pendingNewBlobs)
+                    MergeSiblingIntoPendingBlob(pending, newFilesByKey, document.Files, maxPerSegment);
+            }
+        }
+#pragma warning disable CA2016 // classify cancellation regardless of the ambient token
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+#pragma warning restore CA2016
+        {
+            e.LogWarningKnownOrStack(
+                "Sibling segment-donor backfill skipped for {JobName}.", queueItem.JobName);
+        }
+    }
+
+    private static async Task BackfillSiblingBlobsAsync(
+        DavDatabaseContext ctx,
+        Guid siblingHistoryId,
+        Dictionary<string, NzbFile> siblingFilesByKey,
+        List<NzbFile> newFiles,
+        int maxPerSegment,
+        CancellationToken ct)
+    {
+        var davItems = await ctx.Items
+            .Where(d => d.HistoryItemId == siblingHistoryId
+                        && d.SubType == DavItem.ItemSubType.NzbFile
+                        && d.FileBlobId != null)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        foreach (var davItem in davItems)
+        {
+            ct.ThrowIfCancellationRequested();
+            var copy = await DeserializeDavNzbFileCopyAsync(davItem.FileBlobId!.Value, ct)
+                .ConfigureAwait(false);
+            if (copy is null || copy.SegmentIds.Length == 0) continue;
+            if (!siblingFilesByKey.TryGetValue(SegmentKey(copy.SegmentIds), out var siblingFile))
+                continue;
+
+            var newFile = FindMatchingFile(newFiles, siblingFile);
+            if (newFile is null) continue;
+
+            var donorPrimaries = newFile.GetSegmentIds();
+            if (donorPrimaries.Length != copy.SegmentIds.Length) continue;
+            if (!MergePrimaryIdsIntoDavNzbFile(copy, donorPrimaries, maxPerSegment))
+                continue;
+
+            var newBlobId = Guid.NewGuid();
+            copy.Id = newBlobId;
+            ctx.AddBlob(copy);
+            davItem.FileBlobId = newBlobId;
+        }
+    }
+
+    private static void MergeSiblingIntoPendingBlob(
+        DavNzbFile pending,
+        Dictionary<string, NzbFile> newFilesByKey,
+        IReadOnlyList<NzbFile> siblingFiles,
+        int maxPerSegment)
+    {
+        if (pending.SegmentIds.Length == 0) return;
+        if (!newFilesByKey.TryGetValue(SegmentKey(pending.SegmentIds), out var newFile))
+            return;
+
+        foreach (var siblingFile in siblingFiles)
+        {
+            if (!IsDonorMatch(newFile, siblingFile)) continue;
+            MergeDonorIdsIntoDavNzbFile(pending, siblingFile, maxPerSegment);
         }
     }
 
@@ -196,5 +312,114 @@ internal static class SiblingDonorAttacher
         updated = extra.ToArray();
         existing = updated;
         return true;
+    }
+
+    internal static Dictionary<string, NzbFile> IndexBySegmentIds(IEnumerable<NzbFile> files)
+    {
+        var map = new Dictionary<string, NzbFile>(StringComparer.Ordinal);
+        foreach (var file in files)
+        {
+            if (file.Segments.Count == 0) continue;
+            map.TryAdd(SegmentKey(file.GetSegmentIds()), file);
+        }
+
+        return map;
+    }
+
+    internal static NzbFile? FindMatchingFile(IEnumerable<NzbFile> files, NzbFile target)
+    {
+        foreach (var file in files)
+        {
+            if (IsDonorMatch(file, target)) return file;
+        }
+
+        return null;
+    }
+
+    internal static bool MergePrimaryIdsIntoDavNzbFile(
+        DavNzbFile target,
+        string[] donorPrimaries,
+        int maxPerSegment)
+    {
+        EnsureFallbackSlots(target);
+        var added = false;
+        var count = Math.Min(target.SegmentIds.Length, donorPrimaries.Length);
+        for (var i = 0; i < count; i++)
+        {
+            var existing = target.SegmentFallbackIds![i];
+            if (!AppendIds(ref existing, target.SegmentIds[i], [donorPrimaries[i]], maxPerSegment, out var updated))
+                continue;
+            target.SegmentFallbackIds[i] = updated;
+            added = true;
+        }
+
+        return added;
+    }
+
+    internal static bool MergeDonorIdsIntoDavNzbFile(
+        DavNzbFile target,
+        NzbFile donor,
+        int maxPerSegment)
+    {
+        EnsureFallbackSlots(target);
+        var added = false;
+        var count = Math.Min(target.SegmentIds.Length, donor.Segments.Count);
+        for (var i = 0; i < count; i++)
+        {
+            var existing = target.SegmentFallbackIds![i];
+            if (!AppendIds(
+                    ref existing,
+                    target.SegmentIds[i],
+                    DonorIds(donor.Segments[i]),
+                    maxPerSegment,
+                    out var updated))
+                continue;
+            target.SegmentFallbackIds[i] = updated;
+            added = true;
+        }
+
+        return added;
+    }
+
+    internal static void EnsureFallbackSlots(DavNzbFile file)
+    {
+        var n = file.SegmentIds.Length;
+        if (file.SegmentFallbackIds is { Length: var len } && len == n)
+        {
+            for (var i = 0; i < n; i++)
+                file.SegmentFallbackIds[i] ??= [];
+            return;
+        }
+
+        var aligned = new string[n][];
+        for (var i = 0; i < n; i++)
+        {
+            aligned[i] = file.SegmentFallbackIds is { Length: var l } && i < l
+                ? file.SegmentFallbackIds[i] ?? []
+                : [];
+        }
+
+        file.SegmentFallbackIds = aligned;
+    }
+
+    internal static async Task<DavNzbFile?> DeserializeDavNzbFileCopyAsync(Guid blobId, CancellationToken ct)
+    {
+        await using var stream = BlobStore.ReadBlob(blobId);
+        if (stream is null) return null;
+
+        try
+        {
+            await using var decompression = new DecompressionStream(stream);
+            return await MemoryPackSerializer
+                .DeserializeAsync<DavNzbFile>(decompression, cancellationToken: ct)
+                .ConfigureAwait(false);
+        }
+#pragma warning disable CA2016 // classify cancellation regardless of the ambient token
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+#pragma warning restore CA2016
+        {
+            Log.Debug(e, "Sibling DavNzbFile blob {BlobId} is unreadable; skipping donor backfill.", blobId);
+            return null;
+        }
     }
 }

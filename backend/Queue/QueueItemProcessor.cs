@@ -518,6 +518,9 @@ public class QueueItemProcessor(
                     .CreateStrmFilesAsync()
                     .ConfigureAwait(false);
 
+            await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
+                dbClient, queueItem, nzb, configManager, ct).ConfigureAwait(false);
+
             return mountFolder;
         }).ConfigureAwait(false);
     }

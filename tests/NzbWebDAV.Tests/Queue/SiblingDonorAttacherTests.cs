@@ -6,6 +6,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.SiblingDonors;
 using NzbWebDAV.Tests.Database;
@@ -236,6 +237,134 @@ public sealed class SiblingDonorAttacherTests : IAsyncLifetime
         Assert.DoesNotContain("failed@example", primary.Segments[0].FallbackMessageIds);
     }
 
+    [Fact]
+    public async Task Backfill_SwapsBlobIdAndMergesPrimariesOnly()
+    {
+        var sibling = await SeedSiblingWithDavFileAsync(
+            "sibling.nzb",
+            FileXml("movie.mkv", Seg(100, 1, "s1@example"), Seg(200, 2, "s2@example")),
+            ["s1@example", "s2@example"],
+            extra =>
+            {
+                extra.SegmentByteRanges =
+                [
+                    LongRange.FromStartAndSize(0, 80),
+                    LongRange.FromStartAndSize(80, 160),
+                ];
+                extra.MissingSegmentIndices = [1];
+                extra.ContainerClass = 2;
+                extra.CriticalHeadEndExclusive = 42;
+            });
+
+        var incoming = MovieFile(
+            ("n1@example", 100, ["contaminated@example"]),
+            ("n2@example", 200, []));
+        var document = NewDocument(incoming);
+
+        await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
+            _dbClient, NewQueueItem(), document, _config, CancellationToken.None);
+        await _context.SaveChangesAsync();
+
+        var reloaded = await _context.Items.AsNoTracking().SingleAsync(d => d.Id == sibling.DavItemId);
+        Assert.NotNull(reloaded.FileBlobId);
+        Assert.NotEqual(sibling.FileBlobId, reloaded.FileBlobId);
+        Assert.Contains(await _context.BlobCleanupItems.AsNoTracking().ToListAsync(),
+            x => x.Id == sibling.FileBlobId);
+
+        var updated = await BlobStore.ReadBlob<DavNzbFile>(reloaded.FileBlobId!.Value);
+        Assert.NotNull(updated);
+        Assert.Equal(reloaded.FileBlobId, updated.Id);
+        Assert.Equal(["s1@example", "s2@example"], updated.SegmentIds);
+        Assert.Equal(["n1@example"], updated.SegmentFallbackIds![0]);
+        Assert.Equal(["n2@example"], updated.SegmentFallbackIds[1]);
+        Assert.DoesNotContain("contaminated@example", updated.SegmentFallbackIds.SelectMany(x => x));
+        Assert.Equal(sibling.Original.SegmentByteRanges, updated.SegmentByteRanges);
+        Assert.Equal(sibling.Original.MissingSegmentIndices, updated.MissingSegmentIndices);
+        Assert.Equal(sibling.Original.ContainerClass, updated.ContainerClass);
+        Assert.Equal(sibling.Original.CriticalHeadEndExclusive, updated.CriticalHeadEndExclusive);
+    }
+
+    [Fact]
+    public async Task Backfill_DoesNotMutateCachedInstance()
+    {
+        var sibling = await SeedSiblingWithDavFileAsync(
+            "sibling.nzb",
+            FileXml("movie.mkv", Seg(100, 1, "s1@example")),
+            ["s1@example"]);
+
+        var cached = await BlobStore.ReadBlob<DavNzbFile>(sibling.FileBlobId);
+        Assert.NotNull(cached);
+        var cachedFallbacks = cached.SegmentFallbackIds;
+
+        var incoming = MovieFile(("n1@example", 100, []));
+        await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
+            _dbClient, NewQueueItem(), NewDocument(incoming), _config, CancellationToken.None);
+        await _context.SaveChangesAsync();
+
+        Assert.Same(cachedFallbacks, cached.SegmentFallbackIds);
+        Assert.True(cached.SegmentFallbackIds is null or { Length: 0 }
+                    || cached.SegmentFallbackIds.All(x => x is null || x.Length == 0));
+    }
+
+    [Fact]
+    public async Task Backfill_SkipsBlobSwap_WhenNoNewIds()
+    {
+        var sibling = await SeedSiblingWithDavFileAsync(
+            "sibling.nzb",
+            FileXml("movie.mkv", Seg(100, 1, "s1@example")),
+            ["s1@example"]);
+
+        var incoming = MovieFile(("s1@example", 100, []));
+        await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
+            _dbClient, NewQueueItem(), NewDocument(incoming), _config, CancellationToken.None);
+        await _context.SaveChangesAsync();
+
+        var reloaded = await _context.Items.AsNoTracking().SingleAsync(d => d.Id == sibling.DavItemId);
+        Assert.Equal(sibling.FileBlobId, reloaded.FileBlobId);
+        Assert.Empty(await _context.BlobCleanupItems.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Backfill_LeavesSiblingUntouched_WhenGatesFail()
+    {
+        var sibling = await SeedSiblingWithDavFileAsync(
+            "sibling.nzb",
+            FileXml("other.mkv", Seg(100, 1, "s1@example")),
+            ["s1@example"]);
+
+        var incoming = MovieFile(("n1@example", 100, []));
+        await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
+            _dbClient, NewQueueItem(), NewDocument(incoming), _config, CancellationToken.None);
+        await _context.SaveChangesAsync();
+
+        var reloaded = await _context.Items.AsNoTracking().SingleAsync(d => d.Id == sibling.DavItemId);
+        Assert.Equal(sibling.FileBlobId, reloaded.FileBlobId);
+    }
+
+    [Fact]
+    public async Task Backfill_MergesSiblingIdsIntoPendingNewBlobs()
+    {
+        await SeedSiblingWithDavFileAsync(
+            "sibling.nzb",
+            FileXml("movie.mkv", Seg(100, 1, "s1@example", "s1-alt@example")),
+            ["s1@example"]);
+
+        var incoming = MovieFile(("n1@example", 100, []));
+        var pending = new DavNzbFile
+        {
+            Id = Guid.NewGuid(),
+            SegmentIds = incoming.GetSegmentIds(),
+            SegmentFallbackIds = [[]],
+        };
+        _context.AddBlob(pending);
+
+        await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
+            _dbClient, NewQueueItem(), NewDocument(incoming), _config, CancellationToken.None);
+
+        Assert.Equal(["s1@example", "s1-alt@example"], pending.SegmentFallbackIds![0]);
+        Assert.Contains(_context.BlobNzbFiles, blob => blob.Id == pending.Id);
+    }
+
     private Task AttachAsync(NzbFile primary) =>
         SiblingDonorAttacher.AttachToNewImportAsync(
             _dbClient, NewQueueItem(), [primary], _config, CancellationToken.None);
@@ -267,10 +396,52 @@ public sealed class SiblingDonorAttacherTests : IAsyncLifetime
         return file;
     }
 
+    private static NzbDocument NewDocument(NzbFile file)
+    {
+        var document = new NzbDocument();
+        document.Files.Add(file);
+        return document;
+    }
+
     private Task SeedCompletedSiblingAsync(string fileName, DateTime createdAt, string nzbXml) =>
         SeedHistoryAsync(fileName, createdAt, HistoryItem.DownloadStatusOption.Completed, nzbXml);
 
-    private async Task SeedHistoryAsync(
+    private async Task<(Guid HistoryId, Guid DavItemId, Guid FileBlobId, DavNzbFile Original)> SeedSiblingWithDavFileAsync(
+        string fileName,
+        string nzbXml,
+        string[] segmentIds,
+        Action<DavNzbFile>? configure = null)
+    {
+        var historyId = await SeedHistoryAsync(
+            fileName, DateTime.UtcNow.AddHours(-1), HistoryItem.DownloadStatusOption.Completed, nzbXml);
+
+        var fileBlobId = Guid.NewGuid();
+        var davNzbFile = new DavNzbFile
+        {
+            Id = fileBlobId,
+            SegmentIds = segmentIds,
+        };
+        configure?.Invoke(davNzbFile);
+        await BlobStore.WriteBlob(fileBlobId, davNzbFile);
+
+        var davItem = DavItem.New(
+            Guid.NewGuid(),
+            DavItem.ContentFolder,
+            fileName,
+            fileSize: 100,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.NzbFile,
+            releaseDate: DateTimeOffset.UtcNow.AddDays(-1),
+            lastHealthCheck: null,
+            historyItemId: historyId,
+            fileBlobId: fileBlobId);
+        _context.Items.Add(davItem);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+        return (historyId, davItem.Id, fileBlobId, davNzbFile);
+    }
+
+    private async Task<Guid> SeedHistoryAsync(
         string fileName,
         DateTime createdAt,
         HistoryItem.DownloadStatusOption status,
@@ -298,6 +469,7 @@ public sealed class SiblingDonorAttacherTests : IAsyncLifetime
         });
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
+        return id;
     }
 
     private static string FileXml(string fileName, params string[] segments) =>
