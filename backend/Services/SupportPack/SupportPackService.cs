@@ -320,6 +320,7 @@ public sealed class SupportPackService(
         var usage = runtimeUsage.Snapshot();
         var concurrentReads = concurrentReadTracker?.Snapshot() ?? default;
         var bufferPool = BufferPoolDiagnostics.Shared.Snapshot();
+        var segmentPool = (PooledBufferStream.DefaultPool as SegmentBufferPool)?.Snapshot();
         var cpu = await BuildCpuDiagnosticsAsync(usage, uptime, cancellationToken).ConfigureAwait(false);
 
         return new
@@ -373,6 +374,23 @@ public sealed class SupportPackService(
                 segmentBufferRentedBytes = bufferPool.RentedBytes,
                 segmentBufferBucketWasteBytes = bufferPool.BucketWasteBytes,
                 timeZone = TimeZoneInfo.Local.Id,
+            },
+            segmentBufferPool = segmentPool is null ? null : new
+            {
+                idleBytes = segmentPool.Value.IdleBytes,
+                trimmedBytes = segmentPool.Value.TrimmedBytes,
+                checkedOutBytes = segmentPool.Value.CheckedOutBytes,
+                rentCount = segmentPool.Value.RentCount,
+                returnCount = segmentPool.Value.ReturnCount,
+                rejectedReturnCount = segmentPool.Value.RejectedReturnCount,
+                reuseCount = segmentPool.Value.ReuseCount,
+                allocationCount = segmentPool.Value.AllocationCount,
+                sizeClasses = segmentPool.Value.SizeClasses.Select(c => new
+                {
+                    bufferSize = c.BufferSize,
+                    bufferCount = c.BufferCount,
+                    idleBytes = c.IdleBytes,
+                }),
             },
             runtimeSampler = BuildRuntimeSamplerDiagnostics(usage),
             cpu,

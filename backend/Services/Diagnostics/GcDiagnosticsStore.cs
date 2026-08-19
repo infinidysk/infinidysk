@@ -1,3 +1,5 @@
+using NzbWebDAV.Streams;
+
 namespace NzbWebDAV.Services.Diagnostics;
 
 public sealed class GcDiagnosticsStore : IDisposable
@@ -28,7 +30,8 @@ public sealed record GcDiagnosticsResult(
     GcSnapshot Before,
     GcSnapshot After,
     long PauseMs,
-    GcBufferRetention Retention);
+    GcBufferRetention Retention,
+    SegmentBufferPoolSnapshot? SegmentBufferPool);
 
 public sealed record GcSnapshot(
     IReadOnlyList<GcGenerationInfo> Generations,

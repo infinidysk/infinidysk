@@ -11,6 +11,14 @@ public sealed class PooledBufferStream : Stream
 {
     private const int RunawayThresholdBytes = 32 * 1024 * 1024;
 
+    /// <summary>
+    /// Pool used when no explicit pool is passed. Set once by the composition root
+    /// before the server handles traffic and never mutated afterwards; each stream
+    /// captures the reference at construction, so buffers always return to the pool
+    /// that rented them (per-request pool mutation was rejected in PR #776 review).
+    /// </summary>
+    internal static ISegmentBufferPool DefaultPool { get; set; } = SharedArrayPoolAdapter.Instance;
+
     private readonly ISegmentBufferPool _pool;
     private readonly BufferPoolDiagnostics _diagnostics;
     private byte[]? _buffer;
@@ -25,7 +33,7 @@ public sealed class PooledBufferStream : Stream
     {
         ArgumentOutOfRangeException.ThrowIfNegative(capacityHint);
 
-        _pool = pool ?? SharedArrayPoolAdapter.Instance;
+        _pool = pool ?? DefaultPool;
         _diagnostics = diagnostics ?? BufferPoolDiagnostics.Shared;
 
         if (capacityHint > 0)

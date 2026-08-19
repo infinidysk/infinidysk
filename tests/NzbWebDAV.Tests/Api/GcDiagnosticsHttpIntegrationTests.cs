@@ -47,6 +47,10 @@ public sealed class GcDiagnosticsHttpIntegrationTests(NzbDavWebApplicationFactor
         Assert.Equal(JsonValueKind.Object, root.GetProperty("after").ValueKind);
         Assert.Equal(JsonValueKind.Object, root.GetProperty("retention").ValueKind);
         Assert.Equal(JsonValueKind.Array, root.GetProperty("after").GetProperty("generations").ValueKind);
+        Assert.True(root.TryGetProperty("segmentBufferPool", out var segmentPool));
+        Assert.True(
+            segmentPool.ValueKind is JsonValueKind.Object or JsonValueKind.Null,
+            $"segmentBufferPool should be an object or null, was {segmentPool.ValueKind}");
 
         var store = factory.Services.GetRequiredService<GcDiagnosticsStore>();
         Assert.NotNull(store.LastResult);

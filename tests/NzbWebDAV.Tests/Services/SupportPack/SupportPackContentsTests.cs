@@ -176,6 +176,65 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_ReportsSegmentBufferPoolSnapshotWhenCustomPoolIsDefault()
+    {
+        var previous = PooledBufferStream.DefaultPool;
+        var pool = new SegmentBufferPool(maxIdleBytes: 4 * 1024 * 1024);
+        var buffer = pool.Rent(750_000);
+        pool.Return(buffer);
+        PooledBufferStream.DefaultPool = pool;
+        try
+        {
+            var entries = await ReadPackEntriesAsync(
+                new LogBufferSink(10),
+                new WarningLogBuffer(new LogBufferSink(50)));
+
+            using var environment = JsonDocument.Parse(entries["environment.json"]);
+            var snapshot = environment.RootElement.GetProperty("segmentBufferPool");
+            Assert.Equal(JsonValueKind.Object, snapshot.ValueKind);
+            Assert.Equal(buffer.Length, snapshot.GetProperty("idleBytes").GetInt64());
+            Assert.Equal(0, snapshot.GetProperty("checkedOutBytes").GetInt64());
+            Assert.Equal(1, snapshot.GetProperty("rentCount").GetInt64());
+            Assert.Equal(1, snapshot.GetProperty("returnCount").GetInt64());
+            Assert.True(snapshot.TryGetProperty("trimmedBytes", out _));
+            Assert.True(snapshot.TryGetProperty("rejectedReturnCount", out _));
+            Assert.True(snapshot.TryGetProperty("reuseCount", out _));
+            Assert.True(snapshot.TryGetProperty("allocationCount", out _));
+
+            var sizeClass = Assert.Single(snapshot.GetProperty("sizeClasses").EnumerateArray());
+            Assert.Equal(buffer.Length, sizeClass.GetProperty("bufferSize").GetInt32());
+            Assert.Equal(1, sizeClass.GetProperty("bufferCount").GetInt32());
+            Assert.Equal(buffer.Length, sizeClass.GetProperty("idleBytes").GetInt64());
+        }
+        finally
+        {
+            PooledBufferStream.DefaultPool = previous;
+        }
+    }
+
+    [Fact]
+    public async Task Pack_ReportsNullSegmentBufferPoolWhenOverrideUsesSharedPool()
+    {
+        var previous = PooledBufferStream.DefaultPool;
+        PooledBufferStream.DefaultPool = SharedArrayPoolAdapter.Instance;
+        try
+        {
+            var entries = await ReadPackEntriesAsync(
+                new LogBufferSink(10),
+                new WarningLogBuffer(new LogBufferSink(50)));
+
+            using var environment = JsonDocument.Parse(entries["environment.json"]);
+            Assert.Equal(
+                JsonValueKind.Null,
+                environment.RootElement.GetProperty("segmentBufferPool").ValueKind);
+        }
+        finally
+        {
+            PooledBufferStream.DefaultPool = previous;
+        }
+    }
+
+    [Fact]
     public async Task Pack_ReportsPeakCpuAttributedToPlaybackRatherThanOnlyAnIdleSnapshot()
     {
         // Packs are collected after the symptom has passed, so an instantaneous sample

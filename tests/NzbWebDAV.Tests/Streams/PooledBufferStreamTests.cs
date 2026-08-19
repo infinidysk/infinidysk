@@ -63,6 +63,24 @@ public class PooledBufferStreamTests
     }
 
     [Fact]
+    public void Constructor_WithoutPool_UsesDefaultPool()
+    {
+        var previous = PooledBufferStream.DefaultPool;
+        var probe = new CountingSharedPoolProbe();
+        PooledBufferStream.DefaultPool = probe;
+        try
+        {
+            using var stream = new PooledBufferStream(64);
+            stream.WriteByte(1);
+            Assert.True(probe.RentCount > 0);
+        }
+        finally
+        {
+            PooledBufferStream.DefaultPool = previous;
+        }
+    }
+
+    [Fact]
     public void SetLength_Growth_ExposesZerosIncludingTruncateThenGrow()
     {
         using var stream = new PooledBufferStream(16);
@@ -239,6 +257,20 @@ public class PooledBufferStreamTests
         public void Return(byte[] buffer)
         {
         }
+    }
+
+    private sealed class CountingSharedPoolProbe : ISegmentBufferPool
+    {
+        private int _rentCount;
+        public int RentCount => _rentCount;
+
+        public byte[] Rent(int minimumLength)
+        {
+            Interlocked.Increment(ref _rentCount);
+            return SharedArrayPoolAdapter.Instance.Rent(minimumLength);
+        }
+
+        public void Return(byte[] buffer) => SharedArrayPoolAdapter.Instance.Return(buffer);
     }
 }
 

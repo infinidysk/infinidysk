@@ -149,6 +149,75 @@ public class SegmentBufferPoolTests
     }
 
     [Fact]
+    public void MixedClassBurst_HonorsByteCapViaCrossClassEviction()
+    {
+        var pool = new SegmentBufferPool(maxIdleBytes: 1024 * 1024);
+        var rented = new[]
+        {
+            pool.Rent(256 * 1024),
+            pool.Rent(512 * 1024),
+            pool.Rent(768 * 1024),
+            pool.Rent(256 * 1024),
+            pool.Rent(512 * 1024),
+        };
+
+        foreach (var buffer in rented)
+            pool.Return(buffer);
+
+        var snapshot = pool.Snapshot();
+        Assert.True(snapshot.IdleBytes <= 1024 * 1024);
+        Assert.True(snapshot.TrimmedBytes > 0);
+        Assert.Equal(0, snapshot.CheckedOutBytes);
+        Assert.Equal(snapshot.RentCount, snapshot.ReturnCount);
+        Assert.Equal(snapshot.IdleBytes, snapshot.SizeClasses.Sum(c => c.IdleBytes));
+    }
+
+    [Fact]
+    public void RepeatedSameSizeRentReturn_ReusesBuffers()
+    {
+        var pool = new SegmentBufferPool(maxIdleBytes: 4 * 1024 * 1024);
+        byte[]? last = null;
+        for (var i = 0; i < 50; i++)
+        {
+            var buffer = pool.Rent(750_000);
+            if (last is not null)
+                Assert.Same(last, buffer);
+            last = buffer;
+            pool.Return(buffer);
+        }
+
+        var snapshot = pool.Snapshot();
+        Assert.Equal(50, snapshot.RentCount);
+        Assert.Equal(50, snapshot.ReturnCount);
+        Assert.Equal(49, snapshot.ReuseCount);
+        Assert.Equal(1, snapshot.AllocationCount);
+        Assert.Equal(0, snapshot.CheckedOutBytes);
+        Assert.True(snapshot.ReuseCount / (double)snapshot.RentCount >= 0.9);
+    }
+
+    [Fact]
+    public void Snapshot_PerClassAccountingUnderConcurrency_QuiescesWithBalancedRents()
+    {
+        var pool = new SegmentBufferPool(maxIdleBytes: 16 * 1024 * 1024);
+        var sizes = new[] { 256 * 1024, 512 * 1024, 768 * 1024 };
+        Parallel.For(0, 120, i =>
+        {
+            var buffer = pool.Rent(sizes[i % sizes.Length]);
+            pool.Return(buffer);
+        });
+
+        var snapshot = pool.Snapshot();
+        Assert.Equal(0, snapshot.CheckedOutBytes);
+        Assert.Equal(snapshot.RentCount, snapshot.ReturnCount);
+        Assert.Equal(snapshot.IdleBytes, snapshot.SizeClasses.Sum(c => c.IdleBytes));
+        foreach (var sizeClass in snapshot.SizeClasses)
+        {
+            Assert.Equal((long)sizeClass.BufferSize * sizeClass.BufferCount, sizeClass.IdleBytes);
+            Assert.True(sizeClass.BufferCount > 0);
+        }
+    }
+
+    [Fact]
     public void TypicalSegment_UsesLessCapacityThanSharedArrayPoolBucket()
     {
         const int requested = 750_000;

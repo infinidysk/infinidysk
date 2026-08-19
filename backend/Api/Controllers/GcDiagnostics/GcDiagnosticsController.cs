@@ -42,6 +42,7 @@ public sealed class GcDiagnosticsController(
             stopwatch.Stop();
 
             var bufferPool = BufferPoolDiagnostics.Shared.Snapshot();
+            var segmentPool = (PooledBufferStream.DefaultPool as SegmentBufferPool)?.Snapshot();
             var result = new GcDiagnosticsResult(
                 DateTimeOffset.UtcNow,
                 before,
@@ -57,7 +58,8 @@ public sealed class GcDiagnosticsController(
                     bufferPool.CheckedOutBytes,
                     bufferPool.RequestedBytes,
                     bufferPool.RentedBytes,
-                    bufferPool.BucketWasteBytes));
+                    bufferPool.BucketWasteBytes),
+                segmentPool);
             store.Store(result);
 
             return Task.FromResult<IActionResult>(Ok(GcDiagnosticsResponse.FromResult(result)));
