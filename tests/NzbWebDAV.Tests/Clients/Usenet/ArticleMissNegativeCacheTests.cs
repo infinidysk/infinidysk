@@ -149,7 +149,10 @@ public class ArticleMissNegativeCacheTests
         var config = CreateConfig(ttlSeconds: 30, maxEntries: 100);
         var key = ArticleMissNegativeCache.BuildKey("segment", "a.example", null);
         using (var first = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options)))
+        {
+            await first.StartAsync(CancellationToken.None);
             await first.MarkMissingAndPersistForTestsAsync(key);
+        }
 
         using var restarted = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options));
         await restarted.StartAsync(CancellationToken.None);
@@ -201,6 +204,88 @@ public class ArticleMissNegativeCacheTests
         Assert.True(cache.IsMissing("segment-100\u0001p:provider"));
         await using var verify = new DavDatabaseContext(options);
         Assert.Equal(100, await verify.ArticleMissCacheEntries.CountAsync());
+    }
+
+    [Fact]
+    public async Task MarkMissing_PersistsAsynchronously_AndStopAsyncDrainsQueue()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using (var context = new DavDatabaseContext(options))
+            await context.Database.EnsureCreatedAsync();
+
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        var key = ArticleMissNegativeCache.BuildKey("segment", "a.example", null);
+        using (var cache = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options)))
+        {
+            await cache.StartAsync(CancellationToken.None);
+            cache.MarkMissing(key);
+            await cache.StopAsync(CancellationToken.None);
+        }
+
+        await using var verify = new DavDatabaseContext(options);
+        Assert.Equal(key, (await verify.ArticleMissCacheEntries.SingleAsync()).CacheKey);
+    }
+
+    [Fact]
+    public async Task ProviderConfigChange_ClearsPersistedEntries()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using (var context = new DavDatabaseContext(options))
+            await context.Database.EnsureCreatedAsync();
+
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        using var cache = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options));
+        await cache.StartAsync(CancellationToken.None);
+        await cache.MarkMissingAndPersistForTestsAsync(
+            ArticleMissNegativeCache.BuildKey("segment", "a.example", null));
+
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetProviders,
+                ConfigValue = """{"Providers":[]}""",
+            },
+        ]);
+        await cache.FlushPersistenceForTestsAsync();
+
+        Assert.Equal(0, cache.Entries);
+        await using var verify = new DavDatabaseContext(options);
+        Assert.Empty(await verify.ArticleMissCacheEntries.ToListAsync());
+    }
+
+    [Fact]
+    public async Task PersistedTrim_EnforcesMaxEntries()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using (var context = new DavDatabaseContext(options))
+            await context.Database.EnsureCreatedAsync();
+
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        using var cache = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options));
+        await cache.StartAsync(CancellationToken.None);
+        for (var i = 0; i < 150; i++)
+            cache.MarkMissing(ArticleMissNegativeCache.BuildKey($"art-{i}", "p", null));
+        await cache.FlushPersistenceForTestsAsync();
+
+        await using var verify = new DavDatabaseContext(options);
+        Assert.Equal(100, await verify.ArticleMissCacheEntries.CountAsync());
+        Assert.Null(await verify.ArticleMissCacheEntries
+            .FindAsync(ArticleMissNegativeCache.BuildKey("art-0", "p", null)));
+        Assert.NotNull(await verify.ArticleMissCacheEntries
+            .FindAsync(ArticleMissNegativeCache.BuildKey("art-149", "p", null)));
     }
 
     private static ConfigManager CreateConfig(int ttlSeconds, int maxEntries)
