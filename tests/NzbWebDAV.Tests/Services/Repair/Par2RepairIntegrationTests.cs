@@ -11,11 +11,16 @@ using NzbWebDAV.Par2Recovery.ReedSolomon;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Services.Repair;
 
+// Mutates CONFIG_PATH and database context options; the collection disables all
+// parallelization so background repair services cannot race other tests' state
+// or pollute global-logger captures with transient SQLite errors.
+[Collection(nameof(ConfigPathCollection))]
 public sealed class Par2RepairIntegrationTests
 {
     [Fact]
