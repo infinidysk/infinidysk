@@ -236,50 +236,62 @@ public class HealthCheckService : BackgroundService
     /// (images, subtitles, NFOs, etc.) that were queued before the media-type filter was added.
     /// Urgent repairs (<c>UnixEpoch</c> sentinel) are never cleared.
     /// </summary>
-    private static async Task ClearNonMediaHealthCheckEntries(CancellationToken ct)
+    internal static async Task ClearNonMediaHealthCheckEntries(CancellationToken ct)
     {
         try
         {
             await using var dbContext = new DavDatabaseContext();
-            var urgent = DateTimeOffset.UnixEpoch;
-            const int batchSize = 1000;
-            var cleared = 0;
-
-            while (true)
-            {
-                ct.ThrowIfCancellationRequested();
-                var batch = await dbContext.Items
-                    .Where(x => x.Type == DavItem.ItemType.UsenetFile)
-                    .Where(x => x.NextHealthCheck != urgent)
-                    .Where(x => x.NextHealthCheck != null || x.LastHealthCheck != null)
-                    .OrderBy(x => x.Id)
-                    .Take(batchSize)
-                    .ToListAsync(ct).ConfigureAwait(false);
-
-                if (batch.Count == 0) break;
-
-                foreach (var item in batch.Where(x => !FilenameUtil.IsHealthCheckCandidate(x.Name)))
-                {
-                    item.NextHealthCheck = null;
-                    item.LastHealthCheck = null;
-                    cleared++;
-                }
-
-                await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
-                dbContext.ChangeTracker.Clear();
-            }
-
-            if (cleared > 0)
-            {
-                Log.Information(
-                    "Cleared health-check schedule for {Count} non-media file(s) " +
-                    "(images, subtitles, NFOs, and other non-playable files are no longer health-checked)",
-                    cleared);
-            }
+            await ClearNonMediaHealthCheckEntries(dbContext, ct).ConfigureAwait(false);
         }
         catch (Exception e) when (e is not OperationCanceledException and not OutOfMemoryException)
         {
             Log.Warning(e, "Could not clear non-media health-check entries: {Message}", e.Message);
+        }
+    }
+
+    internal static async Task ClearNonMediaHealthCheckEntries(
+        DavDatabaseContext dbContext,
+        CancellationToken ct)
+    {
+        var urgent = DateTimeOffset.UnixEpoch;
+        const int batchSize = 1000;
+        var cleared = 0;
+        var lastId = Guid.Empty;
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var query = dbContext.Items
+                .Where(x => x.Type == DavItem.ItemType.UsenetFile)
+                .Where(x => x.NextHealthCheck != urgent)
+                .Where(x => x.NextHealthCheck != null || x.LastHealthCheck != null);
+            if (lastId != Guid.Empty) query = query.Where(x => x.Id > lastId);
+
+            var batch = await query
+                .OrderBy(x => x.Id)
+                .Take(batchSize)
+                .ToListAsync(ct).ConfigureAwait(false);
+
+            if (batch.Count == 0) break;
+            lastId = batch[^1].Id;
+
+            foreach (var item in batch.Where(x => !FilenameUtil.IsHealthCheckCandidate(x.Name)))
+            {
+                item.NextHealthCheck = null;
+                item.LastHealthCheck = null;
+                cleared++;
+            }
+
+            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+            dbContext.ChangeTracker.Clear();
+        }
+
+        if (cleared > 0)
+        {
+            Log.Information(
+                "Cleared health-check schedule for {Count} non-media file(s) " +
+                "(images, subtitles, NFOs, and other non-playable files are no longer health-checked)",
+                cleared);
         }
     }
 
