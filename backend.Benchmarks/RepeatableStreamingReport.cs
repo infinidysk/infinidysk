@@ -10,11 +10,23 @@ internal static class RepeatableStreamingReport
     private const int SegmentSize = 256 * 1024;
     private const int SegmentCount = 12;
     private const int ProbeSize = 64 * 1024;
+    private const string ReportName = "streaming";
 
-    public static async Task RunAsync()
+    public static async Task RunAsync(string? jsonPath = null)
+    {
+        // Discarded warm-up: JIT/tiering must not pollute cold-sequential CPU/timing.
+        await RunOnceAsync(print: false).ConfigureAwait(false);
+
+        var scenarios = await RunOnceAsync(print: true).ConfigureAwait(false);
+        if (jsonPath is not null)
+            PerformanceReportJson.Write(jsonPath, ReportName, scenarios);
+    }
+
+    private static async Task<Dictionary<string, ScenarioSnapshot>> RunOnceAsync(bool print)
     {
         var fixture = CreateFixture();
         var cacheDir = Path.Join(Path.GetTempPath(), "nzbdav-repeatable-streaming-" + Guid.NewGuid().ToString("N"));
+        var scenarios = new Dictionary<string, ScenarioSnapshot>(StringComparer.Ordinal);
 
         try
         {
@@ -25,55 +37,155 @@ internal static class RepeatableStreamingReport
                 maxBytes: fixture.Source.Length * 2L);
             await WaitForCatalogAsync(cached).ConfigureAwait(false);
 
-            var cold = await ReadAllAsync(transport, fixture).ConfigureAwait(false);
-            Print("cold-sequential", cold, fixture.Source.Length, transport.BodyRequestCount,
-                transport.BodyBytesRequested);
+            await RecordAsync(
+                scenarios, print, transport, "cold-sequential",
+                async () =>
+                {
+                    var metrics = await ReadAllAsync(transport, fixture).ConfigureAwait(false);
+                    return (metrics, fixture.Source.Length);
+                }).ConfigureAwait(false);
 
-            var requestsBeforePrime = transport.BodyRequestCount;
-            var bytesBeforePrime = transport.BodyBytesRequested;
-            var cachePrime = await PrimeCacheAsync(cached, fixture).ConfigureAwait(false);
-            Print("cache-prime", cachePrime, fixture.Source.Length,
-                transport.BodyRequestCount - requestsBeforePrime,
-                transport.BodyBytesRequested - bytesBeforePrime);
+            await RecordAsync(
+                scenarios, print, transport, "cache-prime",
+                async () =>
+                {
+                    var metrics = await PrimeCacheAsync(cached, fixture).ConfigureAwait(false);
+                    return (metrics, fixture.Source.Length);
+                }).ConfigureAwait(false);
 
-            var requestsBeforeWarmRead = transport.BodyRequestCount;
-            var bytesBeforeWarmRead = transport.BodyBytesRequested;
-            var warm = await ReadAllAsync(cached, fixture).ConfigureAwait(false);
-            Print("warm-reread", warm, fixture.Source.Length,
-                transport.BodyRequestCount - requestsBeforeWarmRead,
-                transport.BodyBytesRequested - bytesBeforeWarmRead);
+            await RecordAsync(
+                scenarios, print, transport, "warm-reread",
+                async () =>
+                {
+                    var metrics = await ReadAllAsync(cached, fixture).ConfigureAwait(false);
+                    return (metrics, fixture.Source.Length);
+                }).ConfigureAwait(false);
 
-            var requestsBeforeRangeProbe = transport.BodyRequestCount;
-            var bytesBeforeRangeProbe = transport.BodyBytesRequested;
-            var range = await ProbeAsync(cached, fixture, SegmentSize * 4L + 137, ProbeSize).ConfigureAwait(false);
-            Print("range-probe", range, ProbeSize,
-                transport.BodyRequestCount - requestsBeforeRangeProbe,
-                transport.BodyBytesRequested - bytesBeforeRangeProbe);
+            await RecordAsync(
+                scenarios, print, transport, "range-probe",
+                async () =>
+                {
+                    var metrics = await ProbeAsync(cached, fixture, SegmentSize * 4L + 137, ProbeSize)
+                        .ConfigureAwait(false);
+                    return (metrics, ProbeSize);
+                }).ConfigureAwait(false);
 
-            var requestsBeforeTailProbe = transport.BodyRequestCount;
-            var bytesBeforeTailProbe = transport.BodyBytesRequested;
-            var tail = await ProbeAsync(cached, fixture, fixture.Source.Length - ProbeSize, ProbeSize).ConfigureAwait(false);
-            Print("tail-probe", tail, ProbeSize,
-                transport.BodyRequestCount - requestsBeforeTailProbe,
-                transport.BodyBytesRequested - bytesBeforeTailProbe);
+            await RecordAsync(
+                scenarios, print, transport, "tail-probe",
+                async () =>
+                {
+                    var metrics = await ProbeAsync(
+                            cached, fixture, fixture.Source.Length - ProbeSize, ProbeSize)
+                        .ConfigureAwait(false);
+                    return (metrics, ProbeSize);
+                }).ConfigureAwait(false);
 
-            var requestsBeforeSeeks = transport.BodyRequestCount;
-            var bytesBeforeSeeks = transport.BodyBytesRequested;
-            var seeks = await SeekAsync(cached, fixture).ConfigureAwait(false);
-            Print("seeks", seeks, seeks.BytesRead,
-                transport.BodyRequestCount - requestsBeforeSeeks,
-                transport.BodyBytesRequested - bytesBeforeSeeks,
-                extra: $"seek_count={seeks.OperationCount}");
+            await RecordAsync(
+                scenarios, print, transport, "seeks",
+                async () =>
+                {
+                    var metrics = await SeekAsync(cached, fixture).ConfigureAwait(false);
+                    return (metrics, metrics.BytesRead);
+                }, extra: static _ => "seek_count=4").ConfigureAwait(false);
 
-            var dead = await DeadArticleAsync(fixture).ConfigureAwait(false);
-            Print("dead-article", dead.Metrics, dead.ZeroFilledBytes, dead.TransportRequests,
-                dead.TransportBytes, $"zero_filled_bytes={dead.ZeroFilledBytes}");
+            var dead = await MeasureDeadArticleAsync(fixture).ConfigureAwait(false);
+            scenarios["dead-article"] = dead.Snapshot;
+            if (print)
+            {
+                Print(
+                    "dead-article",
+                    dead.Snapshot,
+                    extra: $"zero_filled_bytes={dead.Snapshot.Deterministic["bytes"]}");
+            }
         }
         finally
         {
             if (Directory.Exists(cacheDir))
                 Directory.Delete(cacheDir, recursive: true);
         }
+
+        return scenarios;
+    }
+
+    private static async Task RecordAsync(
+        Dictionary<string, ScenarioSnapshot> scenarios,
+        bool print,
+        BenchmarkNntpClient transport,
+        string name,
+        Func<Task<(StreamingMetrics Metrics, long Bytes)>> action,
+        Func<ScenarioSnapshot, string>? extra = null)
+    {
+        var requestsBefore = transport.BodyRequestCount;
+        var bytesBefore = transport.BodyBytesRequested;
+        var process = Process.GetCurrentProcess();
+        process.Refresh();
+        var cpuBefore = process.TotalProcessorTime;
+        var (metrics, bytes) = await action().ConfigureAwait(false);
+        process.Refresh();
+        var cpuSeconds = (process.TotalProcessorTime - cpuBefore).TotalSeconds;
+        var snapshot = ToSnapshot(
+            metrics,
+            bytes,
+            transport.BodyRequestCount - requestsBefore,
+            transport.BodyBytesRequested - bytesBefore,
+            cpuSeconds);
+        scenarios[name] = snapshot;
+        if (print)
+            Print(name, snapshot, extra: extra?.Invoke(snapshot));
+    }
+
+    private static async Task<DeadArticleCapture> MeasureDeadArticleAsync(Fixture fixture)
+    {
+        var missingSegment = fixture.SegmentIds[5];
+        using var transport = new BenchmarkNntpClient(
+            fixture.Segments.Where(pair => pair.Key != missingSegment).ToDictionary(),
+            useCachedYencStreams: true,
+            fixture.RangesById);
+        var process = Process.GetCurrentProcess();
+        process.Refresh();
+        var cpuBefore = process.TotalProcessorTime;
+        await using var stream = fixture.CreateStream(transport);
+        stream.Seek(SegmentSize * 5L, SeekOrigin.Begin);
+        var buffer = new byte[SegmentSize];
+        var stopwatch = Stopwatch.StartNew();
+        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true).ConfigureAwait(false);
+        stopwatch.Stop();
+        process.Refresh();
+        var cpuSeconds = (process.TotalProcessorTime - cpuBefore).TotalSeconds;
+
+        if (buffer.AsSpan(0, read).IndexOfAnyExcept((byte)0) >= 0)
+            throw new InvalidOperationException("Dead-article probe did not return an all-zero gap.");
+
+        var metrics = new StreamingMetrics(stopwatch.Elapsed, stopwatch.Elapsed, read, OperationCount: 1);
+        return new DeadArticleCapture(ToSnapshot(
+            metrics,
+            read,
+            transport.BodyRequestCount,
+            transport.BodyBytesRequested,
+            cpuSeconds));
+    }
+
+    private static ScenarioSnapshot ToSnapshot(
+        StreamingMetrics metrics,
+        long bytes,
+        int transportRequests,
+        long transportBytes,
+        double cpuSeconds)
+    {
+        var seconds = Math.Max(metrics.Elapsed.TotalSeconds, double.Epsilon);
+        var throughput = bytes / 1024d / 1024d / seconds;
+        return new ScenarioSnapshot(
+            new Dictionary<string, long>(StringComparer.Ordinal)
+            {
+                ["bytes"] = bytes,
+                ["transportRequests"] = transportRequests,
+                ["transportBytes"] = transportBytes,
+            },
+            PerformanceReportJson.StreamingTiming(
+                metrics.FirstByte.TotalMilliseconds,
+                metrics.Elapsed.TotalMilliseconds,
+                throughput,
+                cpuSeconds));
     }
 
     private static async Task<StreamingMetrics> ReadAllAsync(INntpClient client, Fixture fixture)
@@ -150,30 +262,6 @@ internal static class RepeatableStreamingReport
         return new StreamingMetrics(stopwatch.Elapsed, firstByte, bytesRead, offsets.Length);
     }
 
-    private static async Task<DeadArticleResult> DeadArticleAsync(Fixture fixture)
-    {
-        var missingSegment = fixture.SegmentIds[5];
-        using var transport = new BenchmarkNntpClient(
-            fixture.Segments.Where(pair => pair.Key != missingSegment).ToDictionary(),
-            useCachedYencStreams: true,
-            fixture.RangesById);
-        await using var stream = fixture.CreateStream(transport);
-        stream.Seek(SegmentSize * 5L, SeekOrigin.Begin);
-        var buffer = new byte[SegmentSize];
-        var stopwatch = Stopwatch.StartNew();
-        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true).ConfigureAwait(false);
-        stopwatch.Stop();
-
-        if (buffer.AsSpan(0, read).IndexOfAnyExcept((byte)0) >= 0)
-            throw new InvalidOperationException("Dead-article probe did not return an all-zero gap.");
-
-        return new DeadArticleResult(
-            new StreamingMetrics(stopwatch.Elapsed, stopwatch.Elapsed, read, OperationCount: 1),
-            read,
-            transport.BodyRequestCount,
-            transport.BodyBytesRequested);
-    }
-
     private static async Task WaitForCatalogAsync(SegmentCacheNntpClient client)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -184,20 +272,14 @@ internal static class RepeatableStreamingReport
             throw new TimeoutException("Segment cache catalog did not become ready.");
     }
 
-    private static void Print(
-        string scenario,
-        StreamingMetrics metrics,
-        long bytes,
-        int transportRequests,
-        long transportBytes,
-        string? extra = null)
+    private static void Print(string scenario, ScenarioSnapshot snapshot, string? extra = null)
     {
-        var seconds = Math.Max(metrics.Elapsed.TotalSeconds, double.Epsilon);
-        var throughput = bytes / 1024d / 1024d / seconds;
+        var deterministic = snapshot.Deterministic;
+        var timing = snapshot.Timing;
         Console.WriteLine(
-            $"{scenario} bytes={bytes} transport_requests={transportRequests} " +
-            $"transport_bytes={transportBytes} first_byte_ms={metrics.FirstByte.TotalMilliseconds:F3} " +
-            $"elapsed_ms={metrics.Elapsed.TotalMilliseconds:F3} throughput_mib_s={throughput:F3}" +
+            $"{scenario} bytes={deterministic["bytes"]} transport_requests={deterministic["transportRequests"]} " +
+            $"transport_bytes={deterministic["transportBytes"]} first_byte_ms={timing["firstByteMs"]:F3} " +
+            $"elapsed_ms={timing["elapsedMs"]:F3} throughput_mib_s={timing["throughputMiBs"]:F3}" +
             (extra is null ? string.Empty : $" {extra}"));
     }
 
@@ -248,9 +330,5 @@ internal static class RepeatableStreamingReport
         long BytesRead,
         int OperationCount);
 
-    private readonly record struct DeadArticleResult(
-        StreamingMetrics Metrics,
-        long ZeroFilledBytes,
-        int TransportRequests,
-        long TransportBytes);
+    private readonly record struct DeadArticleCapture(ScenarioSnapshot Snapshot);
 }

@@ -9,9 +9,7 @@ using NzbWebDAV.Streams;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
-if (args.SequenceEqual(["--streaming-report"], StringComparer.Ordinal))
-    await NzbWebDAV.Benchmarks.RepeatableStreamingReport.RunAsync();
-else
+if (!await NzbWebDAV.Benchmarks.PerformanceReportCli.TryHandleAsync(args))
     BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
 
 
