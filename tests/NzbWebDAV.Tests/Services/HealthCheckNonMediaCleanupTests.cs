@@ -122,6 +122,6 @@ public sealed class HealthCheckNonMediaCleanupTests : IAsyncLifetime
     private static void AssertScheduled(DateTimeOffset? actual, DateTimeOffset expected)
     {
         Assert.NotNull(actual);
-        Assert.Equal(expected.ToUnixTimeSeconds(), actual.Value.ToUnixTimeSeconds());
+        Assert.Equal(expected.ToUnixTimeSeconds(), actual.GetValueOrDefault().ToUnixTimeSeconds());
     }
 }
