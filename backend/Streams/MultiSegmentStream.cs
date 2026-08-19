@@ -885,6 +885,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                         .DecodedBodyAsync(fallbackId, cancellationToken)
                         .ConfigureAwait(false);
                     await ThrowOnSegmentIdMismatchAsync(fallbackId, bodyResponse).ConfigureAwait(false);
+                    if (!await IsFallbackPartSizeCompatibleAsync(
+                            bodyResponse.Stream!, segmentIndex, cancellationToken)
+                        .ConfigureAwait(false))
+                    {
+                        Log.Debug(
+                            "Fallback MessageId {FallbackId} for segment {PrimaryIndex} of {FileName} has a mismatched yEnc part size; skipping.",
+                            fallbackId, segmentIndex, _fileName);
+                        await bodyResponse.Stream!.DisposeAsync().ConfigureAwait(false);
+                        continue;
+                    }
                     Log.Debug(
                         "Segment {PrimaryIndex} recovered via fallback MessageId {FallbackId} while reading {FileName}.",
                         segmentIndex, fallbackId, _fileName);
@@ -915,6 +925,28 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
 
         return null;
+    }
+
+    private async ValueTask<bool> IsFallbackPartSizeCompatibleAsync(
+        Stream bodyStream, int segmentIndex, CancellationToken ct)
+    {
+        if (!_segmentSizes.TryGetExactSize(segmentIndex, out var exact)) return true;
+        if (bodyStream is not YencStream yenc) return true;
+        UsenetYencHeader? header;
+        try
+        {
+            header = await yenc.GetYencHeadersAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception e) when (e is InvalidDataException or IOException)
+        {
+            return true;
+        }
+
+        return header is null || header.PartSize <= 0 || header.PartSize == exact;
     }
 
     private string[] GetFallbacks(int segmentIndex)
