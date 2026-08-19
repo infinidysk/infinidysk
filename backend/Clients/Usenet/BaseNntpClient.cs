@@ -2,6 +2,7 @@
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using UsenetSharp.Clients;
 using UsenetSharp.Models;
@@ -39,6 +40,8 @@ public class BaseNntpClient : NntpClient
             ? YencCrcValidationMode.Off
             : YencCrcValidationMode.WhenPresent,
         SkipTlsVerification = skipTlsVerification,
+        DecodedBodyBufferedBytesObserver = static delta =>
+            InFlightArticleBudget.Current?.AccountBufferedPipeBytes(delta),
     }))
     {
     }

@@ -57,6 +57,15 @@ public sealed record UsenetClientOptions
     public long DecodedBodyResumeWriterThreshold { get; init; } = 512 * 1024;
 
     /// <summary>
+    /// Observer invoked with every decoded-body buffered-byte delta: positive as bytes
+    /// enter a body pipe, negative as the consumer drains them. Deltas sum to zero over
+    /// each body's lifetime, including cancellation and dispose. Invoked on the decode
+    /// hot path under a per-body lock: implementations must be allocation-free,
+    /// non-blocking, and must not throw.
+    /// </summary>
+    public Action<long>? DecodedBodyBufferedBytesObserver { get; init; }
+
+    /// <summary>
     /// Gets how cancelled body transfers release the connection.
     /// </summary>
     /// <remarks>

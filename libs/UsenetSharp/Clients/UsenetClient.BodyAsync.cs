@@ -478,6 +478,17 @@ public partial class UsenetClient
     private void AdjustBufferedDecodedBodyBytes(long delta)
     {
         Interlocked.Add(ref _bufferedDecodedBodyBytes, delta);
+        var observer = _options.DecodedBodyBufferedBytesObserver;
+        if (observer is null) return;
+        try
+        {
+            observer(delta);
+        }
+        catch
+        {
+            // Observer exceptions must never fault the transport or consumer paths
+            // (completion callbacks must fire exactly once regardless).
+        }
     }
 
     private static void ValidateDecodedBodyCrc32(

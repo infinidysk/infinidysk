@@ -511,6 +511,51 @@ public class MultiSegmentStreamPrefetchBudgetTests
         Assert.Equal(0, budget.LeasedBytes);
     }
 
+    [Fact]
+    public async Task PipeAccounting_TinyBudget_CompletesFullReadIncludingRetry()
+    {
+        // FakeNntpClient cannot emit real UsenetSharp pipe deltas. Wrap each body in a
+        // stream that charges/releases the budget the same way DecodedBodyReadStream does,
+        // so a tiny cap plus a retry cannot deadlock a waiter that holds no pipe.
+        const int segmentCount = 6;
+        const int segmentSize = 2_000;
+        var budget = new InFlightArticleBudget(segmentSize + 500);
+        var keys = Enumerable.Range(0, segmentCount).Select(i => $"seg-{i}").ToArray();
+        var segments = keys.ToDictionary(
+            key => key,
+            key => Enumerable.Repeat((byte)(key[^1] - '0'), segmentSize).ToArray());
+        var retryAttempts = new int[1];
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            decodedStreamFactory: (key, bytes) =>
+            {
+                var failOnce = key == "seg-2" && Interlocked.Increment(ref retryAttempts[0]) == 1;
+                return new PipeDeltaReportingStream(bytes, budget, failOnce);
+            });
+
+        await using var stream = MultiSegmentStream.Create(
+            keys.AsMemory(),
+            client,
+            articleBufferSize: 4,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "pipe-budget.bin",
+            readBudget: null,
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, segmentCount).ToArray(),
+            inFlightArticleBudget: budget);
+
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output).WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(keys.SelectMany(key => segments[key]).ToArray(), output.ToArray());
+        Assert.Equal(0, budget.LeasedBytes);
+        Assert.True(retryAttempts[0] >= 2);
+        Assert.True(client.BodyRequestCounts.GetValueOrDefault("seg-2") >= 2);
+    }
+
     private sealed class ThrowingCorruptStream(string segmentId) : Stream
     {
         public override bool CanRead => true;
@@ -573,5 +618,98 @@ public class MultiSegmentStreamPrefetchBudgetTests
         {
             lock (_events) _events.Add(logEvent);
         }
+    }
+
+    /// <summary>
+    /// Simulates UsenetSharp pipe occupancy: charge the full body on production, release
+    /// as the consumer reads or on dispose so deltas zero-balance.
+    /// </summary>
+    private sealed class PipeDeltaReportingStream : Stream
+    {
+        private readonly MemoryStream _inner;
+        private readonly InFlightArticleBudget _budget;
+        private readonly bool _failOnce;
+        private long _remaining;
+        private int _failed;
+        private int _completed;
+
+        public PipeDeltaReportingStream(byte[] bytes, InFlightArticleBudget budget, bool failOnce = false)
+        {
+            _inner = new MemoryStream(bytes, writable: false);
+            _budget = budget;
+            _failOnce = failOnce;
+            _remaining = bytes.Length;
+            if (_remaining > 0)
+                _budget.AccountBufferedPipeBytes(_remaining);
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => _inner.Length;
+
+        public override long Position
+        {
+            get => _inner.Position;
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            ThrowIfFailOnce();
+            var read = _inner.Read(buffer, offset, count);
+            Consume(read);
+            return read;
+        }
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfFailOnce();
+            var read = _inner.Read(buffer.Span);
+            Consume(read);
+            return ValueTask.FromResult(read);
+        }
+
+        private void ThrowIfFailOnce()
+        {
+            if (_failOnce && Interlocked.Exchange(ref _failed, 1) == 0)
+                throw new IOException("simulated transient body failure");
+        }
+
+        private void Consume(int count)
+        {
+            if (count <= 0) return;
+            var release = Math.Min(_remaining, count);
+            if (release <= 0) return;
+            _remaining -= release;
+            _budget.AccountBufferedPipeBytes(-release);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && Interlocked.Exchange(ref _completed, 1) == 0 && _remaining > 0)
+            {
+                _budget.AccountBufferedPipeBytes(-_remaining);
+                _remaining = 0;
+            }
+
+            if (disposing)
+                _inner.Dispose();
+            base.Dispose(disposing);
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
     }
 }

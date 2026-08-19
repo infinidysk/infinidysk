@@ -6,7 +6,9 @@ using Serilog;
 namespace NzbWebDAV.Streams;
 
 /// <summary>
-/// Process-wide cap on decoded article bytes retained in RAM (WebDAV segment drains).
+/// Process-wide cap on decoded article bytes retained in RAM, including pipe copies
+/// from all workloads (streaming, queue, health, benchmark, and seek). Streaming
+/// leases gate admission; queue/health/seek pipe bytes are accounted but not gated.
 /// Connection semaphores bound concurrency; this bounds retained bytes so concurrent
 /// streams cannot OOM the host.
 /// </summary>
@@ -163,6 +165,18 @@ public sealed class InFlightArticleBudget
     {
         if (bytes <= 0) return;
         Interlocked.Add(ref _leased, bytes);
+    }
+
+    /// <summary>
+    /// Accounts decoded bytes buffered in UsenetSharp body pipes — the second resident
+    /// copy of each in-flight segment. Positive deltas never block or wake waiters;
+    /// negative deltas release and wake the FIFO head. Deltas sum to zero per body,
+    /// so the counter self-balances across success, cancellation, and dispose.
+    /// </summary>
+    public void AccountBufferedPipeBytes(long delta)
+    {
+        if (delta > 0) AccountExtra(delta);
+        else if (delta < 0) Release(-delta);
     }
 
     /// <summary>

@@ -1059,6 +1059,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 ?? (expected is > 0 and <= int.MaxValue ? expected : _estimatedSegmentSize);
             if (estimate < 0) estimate = 0;
 
+            // Never lease while holding an open body pipe: a waiter in LeaseAsync must
+            // not hold pipe bytes. All production call sites lease before issuing the
+            // BODY request; this branch is defensive and currently unreachable. Future
+            // callers must also lease before BODY, not here after the pipe exists.
             if (lease is null)
                 lease = await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
 

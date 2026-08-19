@@ -1003,6 +1003,257 @@ public class UsenetClientDeterministicTests
     }
 
     [Test]
+    public async Task DecodedBodyBufferedBytesObserver_SuccessDeltasSumToZero()
+    {
+        var expected = Enumerable.Range(0, 128).Select(static value => (byte)value).ToArray();
+        var observer = new RecordingBufferedBytesObserver();
+        await using var server = new ScriptedNntpServer(async (command, writer, _) =>
+        {
+            if (command == "BODY <article@example.com>")
+            {
+                await WriteSimpleYencArticleAsync(writer, expected, $"size={expected.Length}");
+                return;
+            }
+
+            Assert.That(command, Is.EqualTo("DATE"));
+            await writer.WriteLineAsync("111 20260709213000");
+        });
+        await using var client = new UsenetClient(new UsenetClientOptions
+        {
+            DecodedBodyPauseWriterThreshold = 32,
+            DecodedBodyResumeWriterThreshold = 16,
+            DecodedBodyBufferedBytesObserver = observer.OnDelta,
+        });
+        observer.Attach(client);
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+
+        var response = await client.DecodedBodyAsync(
+            "article@example.com", CancellationToken.None);
+        var stream = response.Stream!;
+        try
+        {
+            await WaitForConditionAsync(
+                () => client.BufferedDecodedBodyBytes == expected.Length);
+            Assert.That(observer.Sum, Is.EqualTo(expected.Length));
+
+            var consumed = new byte[120];
+            await stream.ReadExactlyAsync(consumed);
+            Assert.That(observer.Sum, Is.EqualTo(expected.Length - consumed.Length));
+            Assert.That(client.BufferedDecodedBodyBytes, Is.EqualTo(observer.Sum));
+        }
+        finally
+        {
+            await stream.DisposeAsync();
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.BufferedDecodedBodyBytes, Is.Zero);
+            Assert.That(observer.Sum, Is.Zero);
+            Assert.That(observer.Mismatch, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task DecodedBodyBufferedBytesObserver_CancellationDeltasSumToZero()
+    {
+        var firstLineSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var continueBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observer = new RecordingBufferedBytesObserver();
+        await using var server = new ScriptedNntpServer(async (command, writer, _) =>
+        {
+            if (command.StartsWith("BODY", StringComparison.Ordinal))
+            {
+                await writer.WriteAsync(
+                    "222 body follows\r\n" +
+                    "=ybegin line=128 size=2 name=cancel.bin\r\n" +
+                    "k\r\n");
+                firstLineSent.SetResult();
+                await continueBody.Task;
+                await writer.WriteAsync("l\r\n=yend size=2\r\n.\r\n");
+            }
+            else if (command == "DATE")
+            {
+                await writer.WriteLineAsync("111 20260709213000");
+            }
+        });
+        await using var client = new UsenetClient(new UsenetClientOptions
+        {
+            ReadTimeout = TimeSpan.FromSeconds(1),
+            AbandonedBodyDrainLimit = 1024,
+            DecodedBodyBufferedBytesObserver = observer.OnDelta,
+        });
+        observer.Attach(client);
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        using var cts = new CancellationTokenSource();
+        var completion = new TaskCompletionSource<ArticleBodyResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var response = await client.DecodedBodyAsync(
+            "article@example.com", (result, _) => completion.SetResult(result), cts.Token);
+        var copyTask = response.Stream!.CopyToAsync(Stream.Null);
+        await firstLineSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cts.Cancel();
+        continueBody.SetResult();
+
+        Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
+            Is.EqualTo(ArticleBodyResult.Cancelled));
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.BufferedDecodedBodyBytes, Is.Zero);
+            Assert.That(observer.Sum, Is.Zero);
+            Assert.That(observer.Mismatch, Is.Null);
+        });
+        var date = await client.DateAsync(CancellationToken.None);
+        Assert.That(date.ResponseCode, Is.EqualTo((int)UsenetResponseType.DateAndTime));
+    }
+
+    [Test]
+    public async Task DecodedBodyBufferedBytesObserver_DisposeWithoutReadDeltasSumToZero()
+    {
+        var expected = Enumerable.Range(0, 128).Select(static value => (byte)value).ToArray();
+        var observer = new RecordingBufferedBytesObserver();
+        await using var server = new ScriptedNntpServer(async (command, writer, _) =>
+        {
+            if (command == "BODY <article@example.com>")
+            {
+                await WriteSimpleYencArticleAsync(writer, expected, $"size={expected.Length}");
+                return;
+            }
+
+            Assert.That(command, Is.EqualTo("DATE"));
+            await writer.WriteLineAsync("111 20260709213000");
+        });
+        await using var client = new UsenetClient(new UsenetClientOptions
+        {
+            DecodedBodyPauseWriterThreshold = 32,
+            DecodedBodyResumeWriterThreshold = 16,
+            DecodedBodyBufferedBytesObserver = observer.OnDelta,
+        });
+        observer.Attach(client);
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+
+        var response = await client.DecodedBodyAsync(
+            "article@example.com", CancellationToken.None);
+        await WaitForConditionAsync(
+            () => client.BufferedDecodedBodyBytes == expected.Length);
+        await response.Stream!.DisposeAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.BufferedDecodedBodyBytes, Is.Zero);
+            Assert.That(observer.Sum, Is.Zero);
+            Assert.That(observer.Mismatch, Is.Null);
+        });
+        var date = await client.DateAsync(CancellationToken.None);
+        Assert.That(date.ResponseCode, Is.EqualTo((int)UsenetResponseType.DateAndTime));
+    }
+
+    [Test]
+    public async Task DecodedBodyBufferedBytesObserver_AbandonedBodyDeltasSumToZero()
+    {
+        var firstBody = Enumerable.Range(0, 128)
+            .Select(static value => (byte)value)
+            .ToArray();
+        var observer = new RecordingBufferedBytesObserver();
+        await using var server = ScriptedNntpServer.StartConnectionScript(
+            async (reader, writer, cancellationToken) =>
+            {
+                _ = await reader.ReadLineAsync(cancellationToken);
+                _ = await reader.ReadLineAsync(cancellationToken);
+                await WriteSimpleYencArticleAsync(
+                    writer, firstBody, $"size={firstBody.Length}", "first.bin");
+                await WriteSimpleYencArticleAsync(
+                    writer, [1], "size=1", "second.bin");
+
+                Assert.That(
+                    await reader.ReadLineAsync(cancellationToken),
+                    Is.EqualTo("DATE"));
+                await writer.WriteLineAsync("111 20260709213000");
+            });
+        await using var client = new UsenetClient(new UsenetClientOptions
+        {
+            DecodedBodyBufferedBytesObserver = observer.OnDelta,
+        });
+        observer.Attach(client);
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        var completion = new TaskCompletionSource<ArticleBodyResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await foreach (var _ in client.EnumerateDecodedBodiesAsync(
+                           new SegmentId[] { "first@example.com", "second@example.com" },
+                           (result, _) => completion.SetResult(result),
+                           CancellationToken.None))
+        {
+            await WaitForConditionAsync(
+                () => client.BufferedDecodedBodyBytes == firstBody.Length);
+            break;
+        }
+
+        Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
+            Is.EqualTo(ArticleBodyResult.Cancelled));
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.BufferedDecodedBodyBytes, Is.Zero);
+            Assert.That(observer.Sum, Is.Zero);
+            Assert.That(observer.Mismatch, Is.Null);
+        });
+        var date = await client.DateAsync(CancellationToken.None);
+        Assert.That(date.ResponseCode, Is.EqualTo((int)UsenetResponseType.DateAndTime));
+        Assert.That(client.IsHealthy, Is.True);
+    }
+
+    [Test]
+    public async Task DecodedBodyBufferedBytesObserver_ThrowingObserverIsContained()
+    {
+        var expected = Enumerable.Range(0, 32).Select(static value => (byte)value).ToArray();
+        var callbackCount = 0;
+        await using var server = new ScriptedNntpServer(async (command, writer, _) =>
+        {
+            if (command == "BODY <article@example.com>")
+            {
+                await WriteSimpleYencArticleAsync(writer, expected, $"size={expected.Length}");
+                return;
+            }
+
+            Assert.That(command, Is.EqualTo("DATE"));
+            await writer.WriteLineAsync("111 20260709213000");
+        });
+        await using var client = new UsenetClient(new UsenetClientOptions
+        {
+            DecodedBodyBufferedBytesObserver = static _ =>
+                throw new InvalidOperationException("observer must not fault transport"),
+        });
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        var completion = new TaskCompletionSource<ArticleBodyResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var response = await client.DecodedBodyAsync(
+            "article@example.com",
+            (result, _) =>
+            {
+                Interlocked.Increment(ref callbackCount);
+                completion.TrySetResult(result);
+            },
+            CancellationToken.None);
+        using var decoded = new MemoryStream();
+        await response.Stream!.CopyToAsync(decoded);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(decoded.ToArray(), Is.EqualTo(expected));
+            Assert.That(client.BufferedDecodedBodyBytes, Is.Zero);
+            Assert.That(callbackCount, Is.EqualTo(1));
+        });
+        Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
+            Is.EqualTo(ArticleBodyResult.Retrieved));
+        var date = await client.DateAsync(CancellationToken.None);
+        Assert.That(date.ResponseCode, Is.EqualTo((int)UsenetResponseType.DateAndTime));
+        Assert.That(client.IsHealthy, Is.True);
+    }
+
+    [Test]
     public async Task DecodedBodiesAsync_MissingBodyContinuesInProtocolOrder()
     {
         var expected = Array.Empty<byte>();
@@ -3126,6 +3377,36 @@ public class UsenetClientDeterministicTests
         while (!condition())
         {
             await Task.Delay(TimeSpan.FromMilliseconds(10), timeout.Token);
+        }
+    }
+
+    private sealed class RecordingBufferedBytesObserver
+    {
+        private readonly object _gate = new();
+        private readonly List<long> _deltas = [];
+        private long _sum;
+        private UsenetClient? _client;
+
+        public long Sum
+        {
+            get { lock (_gate) return _sum; }
+        }
+
+        public string? Mismatch { get; private set; }
+
+        public void Attach(UsenetClient client) => _client = client;
+
+        public void OnDelta(long delta)
+        {
+            lock (_gate)
+            {
+                _deltas.Add(delta);
+                _sum += delta;
+                if (_client is null) return;
+                var buffered = _client.BufferedDecodedBodyBytes;
+                if (buffered != _sum && Mismatch is null)
+                    Mismatch = $"observer sum {_sum} != BufferedDecodedBodyBytes {buffered}";
+            }
         }
     }
 }
