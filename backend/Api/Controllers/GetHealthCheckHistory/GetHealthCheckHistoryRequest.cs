@@ -39,15 +39,27 @@ public class GetHealthCheckHistoryRequest
             var repairStatuses = new HashSet<HealthCheckResult.RepairAction>();
             foreach (var status in repairStatusParam.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                repairStatuses.Add(status.ToLowerInvariant() switch
+                switch (status.ToLowerInvariant())
                 {
-                    "none" => HealthCheckResult.RepairAction.None,
-                    "repaired" => HealthCheckResult.RepairAction.Repaired,
-                    "deleted" => HealthCheckResult.RepairAction.Deleted,
-                    "action-needed" => HealthCheckResult.RepairAction.ActionNeeded,
-                    _ => throw new BadHttpRequestException(
-                        "Invalid repairStatus parameter (use none, repaired, deleted, or action-needed)")
-                });
+                    case "none":
+                        repairStatuses.Add(HealthCheckResult.RepairAction.None);
+                        break;
+                    case "repaired":
+                        // "repaired" covers both repair paths so PAR2 fixes show up in
+                        // the Repaired filter and the default deleted,repaired view.
+                        repairStatuses.Add(HealthCheckResult.RepairAction.Repaired);
+                        repairStatuses.Add(HealthCheckResult.RepairAction.RepairedViaPar2);
+                        break;
+                    case "deleted":
+                        repairStatuses.Add(HealthCheckResult.RepairAction.Deleted);
+                        break;
+                    case "action-needed":
+                        repairStatuses.Add(HealthCheckResult.RepairAction.ActionNeeded);
+                        break;
+                    default:
+                        throw new BadHttpRequestException(
+                            "Invalid repairStatus parameter (use none, repaired, deleted, or action-needed)");
+                }
             }
             // An empty or comma-only repairStatus value (e.g. "?repairStatus=") means "no filter"
             // rather than filtering out every row.

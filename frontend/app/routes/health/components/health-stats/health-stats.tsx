@@ -11,6 +11,7 @@ const HealthResultHealthy: HealthResult = 0;
 const HealthResultDegraded: HealthResult = 2;
 const RepairActionRepaired: RepairAction = 1;
 const RepairActionDeleted: RepairAction = 2;
+const RepairActionRepairedViaPar2: RepairAction = 4;
 
 export function HealthStats({ stats }: HealthStatsProps) {
     const totalChecked = stats
@@ -19,7 +20,8 @@ export function HealthStats({ stats }: HealthStatsProps) {
         .filter(stat => stat.result === HealthResultHealthy)
         .reduce((sum, stat) => sum + stat.count, 0);
     const repaired = stats
-        .filter(stat => stat.repairStatus === RepairActionRepaired)
+        .filter(stat => stat.repairStatus === RepairActionRepaired
+            || stat.repairStatus === RepairActionRepairedViaPar2)
         .reduce((sum, stat) => sum + stat.count, 0);
     const deleted = stats
         .filter(stat => stat.repairStatus === RepairActionDeleted)
