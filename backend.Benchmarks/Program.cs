@@ -115,9 +115,8 @@ namespace NzbWebDAV.Benchmarks
             var pool = new SegmentBufferPool(MaxIdleBytes);
             var diagnostics = new BufferPoolDiagnostics();
             long bytesRead = 0;
-            foreach (var index in _mixedSchedule)
+            foreach (var payload in _mixedSchedule.Select(index => _mixedPayloads[index]))
             {
-                var payload = _mixedPayloads[index];
                 using var buffer = new PooledBufferStream(payload.Length, pool, diagnostics);
                 buffer.Write(payload);
                 buffer.Position = 0;
