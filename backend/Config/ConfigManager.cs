@@ -159,6 +159,8 @@ public class ConfigManager
 
     /// <summary>
     /// Resolves a key with a legacy alias: env(new) → env(legacy) → DB(new) → DB(legacy).
+    /// Empty persisted values count as unset (matching every other config reader), so
+    /// a cleared new-key row still falls back to the legacy one.
     /// </summary>
     private string? GetAliasedConfigValue(string configName)
     {
@@ -171,9 +173,11 @@ public class ConfigManager
                 return envNew;
             if (_environmentOverlay.TryGetValue(legacyConfigName, out var envLegacy))
                 return envLegacy;
-            if (_config.TryGetValue(configName, out var dbNew))
+            if (_config.TryGetValue(configName, out var dbNewRaw)
+                && StringUtil.EmptyToNull(dbNewRaw) is { } dbNew)
                 return dbNew;
-            if (_config.TryGetValue(legacyConfigName, out var dbLegacy))
+            if (_config.TryGetValue(legacyConfigName, out var dbLegacyRaw)
+                && StringUtil.EmptyToNull(dbLegacyRaw) is { } dbLegacy)
                 return dbLegacy;
             return null;
         }

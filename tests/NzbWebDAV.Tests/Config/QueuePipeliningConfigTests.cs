@@ -47,6 +47,24 @@ public class QueuePipeliningConfigTests
     }
 
     [Fact]
+    public void EmptyNewDbValue_FallsBackToLegacyDb()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.UsenetQueuePipeliningEnabled, ConfigValue = "" },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetPipeliningEnabled, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetQueuePipeliningDepth, ConfigValue = "  " },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetPipeliningDepth, ConfigValue = "12" },
+        ]);
+
+        Assert.True(config.IsQueuePipeliningEnabled());
+        Assert.Equal(12, config.GetQueuePipeliningDepth());
+        Assert.Equal("true", config.GetEffectiveConfigValue(ConfigKeys.UsenetQueuePipeliningEnabled));
+        Assert.Equal("12", config.GetEffectiveConfigValue(ConfigKeys.UsenetQueuePipeliningDepth));
+    }
+
+    [Fact]
     public void LegacyEnvWinsOverConflictingDbNewAndLegacyRows()
     {
         var previous = Environment.GetEnvironmentVariable("NZBDAV_CONFIG__USENET__PIPELINING__ENABLED");
