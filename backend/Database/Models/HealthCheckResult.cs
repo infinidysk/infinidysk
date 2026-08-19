@@ -24,5 +24,6 @@ public class HealthCheckResult
         Repaired = 1,
         Deleted = 2,
         ActionNeeded = 3,
+        RepairedViaPar2 = 4,
     }
 }

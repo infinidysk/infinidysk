@@ -12,6 +12,7 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.PostProcessors;
+using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -64,6 +65,8 @@ public class HealthCheckService : BackgroundService
     private readonly BenchmarkGate _benchmarkGate;
     private readonly StreamingFailureTracker _failureTracker;
     private readonly QueueManager _queueManager;
+    private readonly Par2RepairService _par2RepairService;
+    private readonly RepairPatchStore _repairPatchStore;
 
     private static readonly HashSet<string> _missingSegmentIds = [];
     private static readonly Queue<string> _missingSegmentOrder = [];
@@ -77,7 +80,9 @@ public class HealthCheckService : BackgroundService
         WebsocketManager websocketManager,
         BenchmarkGate benchmarkGate,
         StreamingFailureTracker failureTracker,
-        QueueManager queueManager
+        QueueManager queueManager,
+        Par2RepairService par2RepairService,
+        RepairPatchStore repairPatchStore
     )
     {
         _configManager = configManager;
@@ -86,6 +91,8 @@ public class HealthCheckService : BackgroundService
         _benchmarkGate = benchmarkGate;
         _failureTracker = failureTracker;
         _queueManager = queueManager;
+        _par2RepairService = par2RepairService;
+        _repairPatchStore = repairPatchStore;
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
@@ -315,6 +322,12 @@ public class HealthCheckService : BackgroundService
                 ? DateTimeOffset.UtcNow - posted
                 : (TimeSpan?)null;
             var sampled = SampleSegments(segments, _configManager.GetHealthCheckDepth(), age);
+            var nzbFile = davItem.SubType == DavItem.ItemSubType.NzbFile
+                ? await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false)
+                : null;
+            var statSegments = nzbFile != null
+                ? FilterSegmentsForStat(sampled, segments, nzbFile, _repairPatchStore)
+                : sampled;
 
             // setup progress tracking
             var progressHook = new Progress<int>();
@@ -336,9 +349,9 @@ public class HealthCheckService : BackgroundService
             using (statCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(ct))
             {
                 statCts.CancelAfter(HealthCheckProgressTimeout);
-                var progress = progressHook.ToPercentage(sampled.Count);
+                var progress = progressHook.ToPercentage(statSegments.Count);
                 await ArticleExistenceChecker.CheckAsync(
-                    _usenetClient, sampled, concurrency, progress, statCts.Token).ConfigureAwait(false);
+                    _usenetClient, statSegments, concurrency, progress, statCts.Token).ConfigureAwait(false);
             }
             CompleteHealthProgress(davItem.Id);
 
@@ -351,9 +364,14 @@ public class HealthCheckService : BackgroundService
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
             _failureTracker.ClearFailure(davItem.Id);
             _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
-            var healthyMessage = sampled.Count < totalSegments
-                ? $"File is healthy (sampled {sampled.Count}/{totalSegments} segments)."
-                : "File is healthy.";
+            var repairedCount = nzbFile != null
+                ? Par2RepairService.CountRepairedSegments(nzbFile, _repairPatchStore)
+                : 0;
+            var healthyMessage = repairedCount > 0
+                ? $"File is healthy ({repairedCount} segment{(repairedCount == 1 ? "" : "s")} repaired from PAR2 parity)."
+                : sampled.Count < totalSegments
+                    ? $"File is healthy (sampled {sampled.Count}/{totalSegments} segments)."
+                    : "File is healthy.";
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
@@ -414,7 +432,23 @@ public class HealthCheckService : BackgroundService
                 }
             }
 
-            // when usenet article is missing, perform repairs
+            // when usenet article is missing, try PAR2 repair before Arr remove/re-grab
+            if (_configManager.IsPar2RepairEnabled() && _configManager.IsPar2PreferredOverArr()
+                && await _par2RepairService.TryPar2RepairAsync(davItem, [e.SegmentId], ct).ConfigureAwait(false))
+            {
+                var utcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = utcNow;
+                davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
+                _failureTracker.ClearFailure(davItem.Id);
+                _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Healthy,
+                    HealthCheckResult.RepairAction.RepairedViaPar2,
+                    "Missing segment repaired from PAR2 parity.", ct).ConfigureAwait(false);
+                return;
+            }
+
             await Repair(davItem, dbClient, ct).ConfigureAwait(false);
         }
         catch (UsenetUnexpectedResponseException e)
@@ -636,6 +670,34 @@ public class HealthCheckService : BackgroundService
         }
 
         return result.OrderBy(i => i).Select(i => segments[i]).ToList();
+    }
+
+    internal static List<string> FilterSegmentsForStat(
+        List<string> sampledSegmentIds,
+        List<string> allSegmentIds,
+        DavNzbFile nzbFile,
+        RepairPatchStore patchStore)
+    {
+        if (!patchStore.IsCatalogReady) return sampledSegmentIds;
+
+        var indexById = allSegmentIds
+            .Select((id, index) => (id, index))
+            .ToDictionary(x => x.id, x => x.index, StringComparer.Ordinal);
+        var ranges = nzbFile.SegmentByteRanges;
+        var unrepaired = new List<string>(sampledSegmentIds.Count);
+
+        foreach (var segmentId in sampledSegmentIds)
+        {
+            if (!indexById.TryGetValue(segmentId, out var index)
+                || ranges == null
+                || index >= ranges.Length
+                || !patchStore.IsRepaired(segmentId, ranges[index].Count))
+            {
+                unrepaired.Add(segmentId);
+            }
+        }
+
+        return unrepaired;
     }
 
     private async Task UpdateReleaseDate(DavItem davItem, List<string> segments, CancellationToken ct)
@@ -948,6 +1010,23 @@ public class HealthCheckService : BackgroundService
                     $"Streaming failure count: {failureCount}/{threshold}.",
                     "Repair and replacement deferred until the failure threshold is reached."
                 ]), ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (_configManager.IsPar2RepairEnabled() && _configManager.IsPar2PreferredOverArr()
+            && await _par2RepairService.TryPar2RepairAsync(davItem, null, ct).ConfigureAwait(false))
+        {
+            var utcNow = DateTimeOffset.UtcNow;
+            davItem.LastHealthCheck = utcNow;
+            davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
+            _failureTracker.ClearFailure(davItem.Id);
+            _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
+            await RecordHealthResult(
+                dbClient, davItem,
+                HealthCheckResult.HealthResult.Healthy,
+                HealthCheckResult.RepairAction.RepairedViaPar2,
+                "Missing segment(s) repaired from PAR2 parity after streaming failure.", ct)
+                .ConfigureAwait(false);
             return;
         }
 
