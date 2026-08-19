@@ -1,8 +1,11 @@
-﻿using System.Buffers;
-using UsenetSharp.Streams;
+﻿using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
+/// <summary>
+/// Async-only token boundary: every read is issued with the construction token
+/// (or a link of construction + caller tokens). Synchronous reads are not supported.
+/// </summary>
 public class CancellableStream(Stream innerStream, CancellationToken token) : FastReadOnlyStream
 {
     private readonly Stream _innerStream = innerStream ?? throw new ArgumentNullException(nameof(innerStream));
@@ -29,35 +32,15 @@ public class CancellableStream(Stream innerStream, CancellationToken token) : Fa
         return _innerStream.FlushAsync(cancellationToken);
     }
 
-    public override int Read(byte[] buffer, int offset, int count)
-    {
-        CheckDisposed();
-        // SharpCompress exposes synchronous RAR/7z header readers. Those readers run
-        // inside Task.Run in RarUtil/SevenZipUtil, and this bridge preserves the
-        // operation token until the library offers an async header-enumeration path.
-        return ReadAsync(buffer, offset, count, token)
-            .GetAwaiter()
-            .GetResult();
-    }
+    // Must override: deleting this would fall back to FastReadOnlyStream's
+    // CancellationToken.None bridge, which is uncancellable.
+    public override int Read(byte[] buffer, int offset, int count) =>
+        throw new NotSupportedException("CancellableStream supports asynchronous reads only.");
 
-    public override int Read(Span<byte> buffer)
-    {
-        CheckDisposed();
-        // Keep the construction token here too; FastReadOnlyStream's fallback uses
-        // CancellationToken.None and would make synchronous archive scans uncancellable.
-        var array = ArrayPool<byte>.Shared.Rent(buffer.Length);
-        try
-        {
-            var buffer1 = new Memory<byte>(array, 0, buffer.Length);
-            var result = this.ReadAsync(buffer1, token).AsTask().GetAwaiter().GetResult();
-            buffer1.Span[..result].CopyTo(buffer);
-            return result;
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(array);
-        }
-    }
+    // Must override: deleting this would fall back to FastReadOnlyStream's
+    // CancellationToken.None bridge, which is uncancellable.
+    public override int Read(Span<byte> buffer) =>
+        throw new NotSupportedException("CancellableStream supports asynchronous reads only.");
 
     public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {

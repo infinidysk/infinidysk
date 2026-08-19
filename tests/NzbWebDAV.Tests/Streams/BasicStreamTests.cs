@@ -221,14 +221,74 @@ public class BasicStreamTests
     }
 
     [Fact]
-    public void CancellableStream_SynchronousArchiveReadHonorsConstructionToken()
+    public void CancellableStream_SynchronousReadsAreNotSupported()
     {
-        using var cts = new CancellationTokenSource();
         using var stream = new CancellableStream(
-            new MemoryStream(new byte[] { 1, 2, 3 }), cts.Token);
-        cts.Cancel();
+            new MemoryStream(new byte[] { 1, 2, 3 }), CancellationToken.None);
 
-        Assert.ThrowsAny<OperationCanceledException>(
+        var arrayEx = Assert.Throws<NotSupportedException>(
             () => stream.Read(new byte[1], 0, 1));
+        Assert.Equal("CancellableStream supports asynchronous reads only.", arrayEx.Message);
+
+        var spanEx = Assert.Throws<NotSupportedException>(
+            () => stream.Read((Span<byte>)new byte[1]));
+        Assert.Equal("CancellableStream supports asynchronous reads only.", spanEx.Message);
+    }
+
+    [Fact]
+    public async Task CancellableStream_ReadAsyncHonorsConstructionTokenWhenCallerTokenIsLinked()
+    {
+        using var constructionCts = new CancellationTokenSource();
+        using var callerCts = new CancellationTokenSource();
+        var hang = new HangUntilCancelledStream();
+        await using var stream = new CancellableStream(hang, constructionCts.Token);
+
+        var readTask = stream.ReadAsync(new byte[1], callerCts.Token).AsTask();
+        Assert.True(hang.Started.Wait(TimeSpan.FromSeconds(5)));
+        await constructionCts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => readTask);
+    }
+
+    private sealed class HangUntilCancelledStream : Stream
+    {
+        public ManualResetEventSlim Started { get; } = new();
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => 0;
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() { }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Started.Set();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return 0;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) Started.Dispose();
+            base.Dispose(disposing);
+        }
     }
 }

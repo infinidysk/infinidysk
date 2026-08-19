@@ -8,9 +8,9 @@ using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
-// Nested RAR expansion still passes this stream to SharpCompress's synchronous
-// header reader. FastReadOnlyStream centralizes that compatibility fallback while
-// WebDAV GET/range handlers use the Memory<byte> async path below.
+// FastReadOnlyStream retains a synchronous Read fallback for out-of-repo
+// compatibility only. In-repo nested-RAR expansion and WebDAV GET/range handlers
+// use the Memory<byte> async path below.
 public class DavMultipartFileStream : FastReadOnlyStream
 {
     private readonly DavMultipartFile _mpf;
