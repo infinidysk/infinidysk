@@ -15,6 +15,7 @@ import { ExpandingTextInput } from "~/components/expanding-text-input/expanding-
 import { MultiCheckboxInput } from "~/components/multi-checkbox-input/multi-checkbox-input";
 import { TagInput } from "~/components/tag-input/tag-input";
 import { Icon } from "~/components/ui/icon";
+import { generateUuid } from "~/utils/uuid";
 
 type SabnzbdSettingsProps = {
     config: Record<string, string>
@@ -524,7 +525,7 @@ export function isSabnzbdSettingsValid(config: Record<string, string>): boolean 
 }
 
 export function generateNewApiKey(): string {
-    return crypto.randomUUID().replaceAll("-", "");
+    return generateUuid().replaceAll("-", "");
 }
 
 function isValidCategories(categories: string): boolean {

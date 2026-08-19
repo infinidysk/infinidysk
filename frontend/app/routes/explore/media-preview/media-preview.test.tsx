@@ -82,6 +82,23 @@ describe("MediaPreview", () => {
         expect(video!.hasAttribute("playsinline")).toBe(true);
     });
 
+    it("renders on plain HTTP when crypto.randomUUID is unavailable", () => {
+        vi.stubGlobal("crypto", {
+            randomUUID: undefined,
+            getRandomValues: (bytes: Uint8Array) => {
+                bytes.fill(0);
+                return bytes;
+            },
+        });
+
+        const { container } = renderPreview();
+        const video = container.querySelector("video");
+        expect(video).not.toBeNull();
+        expect(video!.getAttribute("src")).toContain(
+            "playerSession=00000000-0000-4000-8000-000000000000",
+        );
+    });
+
     it("renders an audio element for audio files", () => {
         const { container } = renderPreview({
             fileName: "song.flac",
