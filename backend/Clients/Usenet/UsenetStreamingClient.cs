@@ -8,6 +8,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -18,6 +19,7 @@ namespace NzbWebDAV.Clients.Usenet;
 public class UsenetStreamingClient : WrappingNntpClient
 {
     private readonly Lock _configChangeLock = new();
+    private readonly RepairPatchStore? _repairPatchStore;
 
     public UsenetStreamingClient(
         ConfigManager configManager,
@@ -29,13 +31,16 @@ public class UsenetStreamingClient : WrappingNntpClient
         ActiveReadRegistry activeReadRegistry,
         ArticleMissNegativeCache? articleMissCache = null,
         ProviderLatencyTracker? latencyTracker = null,
-        ConcurrentReadTracker? concurrentReadTracker = null)
+        ConcurrentReadTracker? concurrentReadTracker = null,
+        RepairPatchStore? repairPatchStore = null)
 #pragma warning disable CA2000 // the client chain transfers to the base class and is disposed with this instance
         : base(CreateDownloadingNntpClient(
 #pragma warning restore CA2000
             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
-            streamTrace, activeReadRegistry, articleMissCache, latencyTracker, concurrentReadTracker))
+            streamTrace, activeReadRegistry, articleMissCache, latencyTracker, concurrentReadTracker,
+            repairPatchStore))
     {
+        _repairPatchStore = repairPatchStore;
         // when config changes, create a new MultiProviderClient to use instead.
         configManager.OnConfigChanged += (_, configEventArgs) =>
         {
@@ -58,7 +63,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                         var newUsenetClient = CreateDownloadingNntpClient(
                             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
                             streamTrace, activeReadRegistry, articleMissCache, latencyTracker,
-                            concurrentReadTracker);
+                            concurrentReadTracker, _repairPatchStore);
                         ReplaceUnderlyingClient(newUsenetClient);
                         return;
                     }
@@ -88,7 +93,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         ActiveReadRegistry activeReadRegistry,
         ArticleMissNegativeCache? articleMissCache,
         ProviderLatencyTracker? latencyTracker,
-        ConcurrentReadTracker? concurrentReadTracker
+        ConcurrentReadTracker? concurrentReadTracker,
+        RepairPatchStore? repairPatchStore
     )
     {
 #pragma warning disable CA2000 // wrapped by DownloadingNntpClient below; the returned client chain is disposed with this instance
@@ -119,6 +125,13 @@ public class UsenetStreamingClient : WrappingNntpClient
                 Log.Warning(e, "Segment cache disabled: failed to initialise at {Path}.",
                     configManager.GetSegmentCachePath());
             }
+        }
+
+        if (repairPatchStore != null)
+        {
+#pragma warning disable CA2000 // ownership transfers to the wrapping/returned client chain, disposed with this instance
+            inner = new RepairedSegmentNntpClient(inner, repairPatchStore);
+#pragma warning restore CA2000
         }
 
         // Always wrap with header caching so seek probes reuse immutable yEnc headers
