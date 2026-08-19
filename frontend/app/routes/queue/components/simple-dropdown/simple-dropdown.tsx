@@ -15,7 +15,9 @@ export const SimpleDropdown = memo(({ type, options, value, onChange, valueRef, 
         throw new Error("SimpleDropdown requires either the valueRef prop or both the value and onChange props.")
     }
 
-    const [internalValue, setInternalValue] = useState(options.length > 0 ? options[0] : "");
+    const [internalValue, setInternalValue] = useState(
+        () => valueRef?.current ?? (options.length > 0 ? options[0] : ""),
+    );
     const renderedValue = value ?? internalValue;
 
     const handleNativeChange = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
