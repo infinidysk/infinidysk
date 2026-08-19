@@ -345,7 +345,7 @@ public sealed class Par2RepairIntegrationTests
     {
         var repoRoot = FindRepoRoot();
         var source = File.ReadAllText(
-            Path.Combine(repoRoot, "backend", "Streams", "UnbufferedMultiSegmentStream.cs"));
+            Path.Join(repoRoot, "backend", "Streams", "UnbufferedMultiSegmentStream.cs"));
         Assert.Contains("Par2RepairTriggerSink.Current?.ReportZeroFill", source);
     }
 
@@ -354,7 +354,7 @@ public sealed class Par2RepairIntegrationTests
     {
         var repoRoot = FindRepoRoot();
         var source = File.ReadAllText(
-            Path.Combine(repoRoot, "backend", "Streams", "MultiSegmentStream.cs"));
+            Path.Join(repoRoot, "backend", "Streams", "MultiSegmentStream.cs"));
         Assert.Contains("Par2RepairTriggerSink.Current?.ReportZeroFill", source);
     }
 
@@ -363,7 +363,7 @@ public sealed class Par2RepairIntegrationTests
         var dir = AppContext.BaseDirectory;
         while (dir != null)
         {
-            if (Directory.Exists(Path.Combine(dir, ".git")) || File.Exists(Path.Combine(dir, ".git")))
+            if (Directory.Exists(Path.Join(dir, ".git")) || File.Exists(Path.Join(dir, ".git")))
                 return dir;
             dir = Path.GetDirectoryName(dir);
         }
