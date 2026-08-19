@@ -140,6 +140,14 @@ internal partial class MarkHeader
             }
             throw;
         }
+        catch (OperationCanceledException)
+        {
+            if (!leaveStreamOpen)
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+            }
+            throw;
+        }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             if (!leaveStreamOpen)

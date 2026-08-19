@@ -232,6 +232,30 @@ public class AsyncParityAndCancellationTests : TestBase
     [Theory]
     [InlineData("Rar.none.rar")]
     [InlineData("Rar5.none.rar")]
+    public async Task RarHeaderFactory_ReadHeadersAsync_ShouldRespectCancellationDuringSignature(
+        string archiveName
+    )
+    {
+        var archiveBytes = await File.ReadAllBytesAsync(
+            Path.Join(TEST_ARCHIVES_PATH, archiveName)
+        );
+        using var cts = new CancellationTokenSource();
+        await using var stream = new CancelAfterBytesReadStream(
+            new MemoryStream(archiveBytes),
+            cts,
+            cancelAfterBytes: 0
+        );
+        var factory = CreateRarHeaderFactory();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in factory.ReadHeadersAsync(stream, cts.Token)) { }
+        });
+    }
+
+    [Theory]
+    [InlineData("Rar.none.rar")]
+    [InlineData("Rar5.none.rar")]
     [InlineData("Rar.comment.rar")]
     [InlineData("Rar5.comment.rar")]
     public async Task RarHeaderFactory_ReadHeadersAsync_StopAfterFirstFile_SkipsNoPackedData(
@@ -263,11 +287,11 @@ public class AsyncParityAndCancellationTests : TestBase
             break;
         }
 
-        Assert.NotNull(firstFile);
-        Assert.Equal(firstFile.DataStartPosition, stream.Position);
+        var yieldedFile = Assert.IsAssignableFrom<IRarFileHeader>(firstFile);
+        Assert.Equal(yieldedFile.DataStartPosition, stream.Position);
         Assert.Equal(seeksAtYield, stream.SeekCount);
         Assert.DoesNotContain(
-            firstFile.DataStartPosition + firstFile.CompressedSize,
+            yieldedFile.DataStartPosition + yieldedFile.CompressedSize,
             stream.SeekTargets
         );
     }
