@@ -35,6 +35,7 @@ public sealed class SabApiResponseShapeTests : IAsyncLifetime
     private readonly string _configRoot =
         Path.Join(Path.GetTempPath(), $"nzbdav-sab-shape-cfg-{Guid.NewGuid():N}");
     private string? _previousConfigPath;
+    private bool _configPathOverridden;
     private CountingDbCommandInterceptor _interceptor = null!;
     private DavDatabaseContext _context = null!;
     private DavDatabaseClient _dbClient = null!;
@@ -44,67 +45,109 @@ public sealed class SabApiResponseShapeTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _previousConfigPath = Environment.GetEnvironmentVariable("CONFIG_PATH");
-        Directory.CreateDirectory(_configRoot);
-        Environment.SetEnvironmentVariable("CONFIG_PATH", _configRoot);
+        try
+        {
+            Directory.CreateDirectory(_configRoot);
+            Environment.SetEnvironmentVariable("CONFIG_PATH", _configRoot);
+            _configPathOverridden = true;
 
-        _interceptor = new CountingDbCommandInterceptor();
-        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
-            .UseSqlite($"Data Source={DavDatabaseContext.DatabaseFilePath}")
-            .AddInterceptors(new SqliteForeignKeyEnabler(), _interceptor)
-            .ReplaceService<
-                IMigrationsSqlGenerator,
-                SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
-            .Options;
-        _context = new DavDatabaseContext(options);
-        await _context.Database.MigrateAsync();
-        _dbClient = new DavDatabaseClient(_context);
+            _interceptor = new CountingDbCommandInterceptor();
+            var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+                .UseSqlite($"Data Source={DavDatabaseContext.DatabaseFilePath}")
+                .AddInterceptors(new SqliteForeignKeyEnabler(), _interceptor)
+                .ReplaceService<
+                    IMigrationsSqlGenerator,
+                    SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
+                .Options;
+            _context = new DavDatabaseContext(options);
+            await _context.Database.MigrateAsync();
+            _dbClient = new DavDatabaseClient(_context);
 
-        _configManager = new ConfigManager();
-        _configManager.UpdateValues(
-        [
-            new ConfigItem
+            _configManager = new ConfigManager();
+            _configManager.UpdateValues(
+            [
+                new ConfigItem
+                {
+                    ConfigName = ConfigKeys.UsenetProviders,
+                    ConfigValue = JsonSerializer.Serialize(new UsenetProviderConfig()),
+                },
+                new ConfigItem
+                {
+                    ConfigName = ConfigKeys.ApiIgnoreHistoryLimit,
+                    ConfigValue = "false",
+                },
+            ]);
+
+            var websocketManager = new WebsocketManager();
+            var usenet = new UsenetStreamingClient(
+                _configManager,
+                websocketManager,
+                new ProviderUsageTracker(),
+                new MetricsWriter(),
+                new ProviderBytesTracker(),
+                new StreamTraceBuffer(100),
+                new ActiveReadRegistry());
+            _queueManager = new QueueManager(
+                usenet,
+                _configManager,
+                websocketManager,
+                new ProviderUsageTracker(),
+                new WatchdogLog(),
+                new QueueItemSourceTracker(),
+                new BenchmarkGate(),
+                startLoop: false);
+
+            SeedCorpus(HistoryCount, QueueCount);
+            await _context.SaveChangesAsync();
+            _context.ChangeTracker.Clear();
+            _interceptor.Reset();
+        }
+        catch
+        {
+            try
             {
-                ConfigName = ConfigKeys.UsenetProviders,
-                ConfigValue = JsonSerializer.Serialize(new UsenetProviderConfig()),
-            },
-            new ConfigItem
+                await DisposeAsync();
+            }
+            catch
             {
-                ConfigName = ConfigKeys.ApiIgnoreHistoryLimit,
-                ConfigValue = "false",
-            },
-        ]);
+                // best-effort teardown after a failed InitializeAsync
+            }
 
-        var websocketManager = new WebsocketManager();
-        var usenet = new UsenetStreamingClient(
-            _configManager,
-            websocketManager,
-            new ProviderUsageTracker(),
-            new MetricsWriter(),
-            new ProviderBytesTracker(),
-            new StreamTraceBuffer(100),
-            new ActiveReadRegistry());
-        _queueManager = new QueueManager(
-            usenet,
-            _configManager,
-            websocketManager,
-            new ProviderUsageTracker(),
-            new WatchdogLog(),
-            new QueueItemSourceTracker(),
-            new BenchmarkGate(),
-            startLoop: false);
-
-        SeedCorpus(HistoryCount, QueueCount);
-        await _context.SaveChangesAsync();
-        _context.ChangeTracker.Clear();
-        _interceptor.Reset();
+            throw;
+        }
     }
 
     public async Task DisposeAsync()
     {
-        _queueManager.Dispose();
-        await _context.DisposeAsync();
-        Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
-        try { Directory.Delete(_configRoot, recursive: true); } catch (IOException) { /* best effort */ }
+        try
+        {
+            var queueManager = _queueManager;
+            _queueManager = null!;
+            queueManager?.Dispose();
+
+            var context = _context;
+            _context = null!;
+            if (!ReferenceEquals(context, null))
+                await context.DisposeAsync();
+        }
+        finally
+        {
+            if (_configPathOverridden)
+            {
+                Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
+                _configPathOverridden = false;
+            }
+
+            try
+            {
+                if (Directory.Exists(_configRoot))
+                    Directory.Delete(_configRoot, recursive: true);
+            }
+            catch (IOException)
+            {
+                // best effort
+            }
+        }
     }
 
     [Fact]
