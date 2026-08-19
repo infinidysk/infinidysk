@@ -18,6 +18,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
     private readonly int _articleBufferSize;
     private readonly LazyRarResolver? _resolver;
     private readonly bool _usePipelinedBodyRequests;
+    private readonly int _streamingBodyBatchWidth;
     private readonly string? _fileName;
     private readonly InFlightArticleBudget? _inFlightArticleBudget;
     private readonly long _length;
@@ -37,7 +38,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
         LazyRarResolver? resolver,
         bool usePipelinedBodyRequests,
         string? fileName = null,
-        InFlightArticleBudget? inFlightArticleBudget = null)
+        InFlightArticleBudget? inFlightArticleBudget = null,
+        int streamingBodyBatchWidth = 4)
     {
         _mpf = mpf;
         _usenetClient = usenetClient;
@@ -46,6 +48,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         _usePipelinedBodyRequests = usePipelinedBodyRequests;
         _fileName = fileName;
         _inFlightArticleBudget = inFlightArticleBudget;
+        _streamingBodyBatchWidth = streamingBodyBatchWidth;
         _length = ComputeLength(mpf.Metadata);
 
         if (_resolver != null
@@ -291,7 +294,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
             _usePipelinedBodyRequests,
             _fileName,
             part.SegmentFallbackIds,
-            _inFlightArticleBudget);
+            _inFlightArticleBudget,
+            streamingBodyBatchWidth: _streamingBodyBatchWidth);
         stream.Seek(part.FilePartByteRange.StartInclusive + extraOffset, SeekOrigin.Begin);
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var partId = part.SegmentIds.FirstOrDefault()

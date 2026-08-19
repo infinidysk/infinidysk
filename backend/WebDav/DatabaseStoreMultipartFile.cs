@@ -56,7 +56,8 @@ public class DatabaseStoreMultipartFile(
             lazyRarResolver,
             Config.IsPipelinedBodyRequestsEnabled(),
             davMultipartFile.Path,
-            inFlightArticleBudget
+            inFlightArticleBudget,
+            streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth()
         );
 
         return multipartFile.Metadata.AesParams != null

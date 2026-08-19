@@ -75,7 +75,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         string[][]? segmentFallbacks = null,
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
-        long? firstSegmentFileOffset = null)
+        long? firstSegmentFileOffset = null,
+        int bodyPipelineBatchWidth = BodyPipelineBatchSize)
     {
         return Create(
             segmentIds,
@@ -90,7 +91,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             segmentFallbacks,
             inFlightArticleBudget: inFlightArticleBudget,
             useContainerAwareFill: useContainerAwareFill,
-            firstSegmentFileOffset: firstSegmentFileOffset);
+            firstSegmentFileOffset: firstSegmentFileOffset,
+            bodyPipelineBatchWidth: bodyPipelineBatchWidth);
     }
 
     /// <param name="estimatedSegmentSize">
@@ -118,7 +120,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         ReadOnlyMemory<long> exactSegmentSizes = default,
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
-        long? firstSegmentFileOffset = null
+        long? firstSegmentFileOffset = null,
+        int bodyPipelineBatchWidth = BodyPipelineBatchSize
     )
     {
         return articleBufferSize == 0
@@ -140,6 +143,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 inFlightArticleBudget,
                 useContainerAwareFill,
                 firstSegmentFileOffset,
+                bodyPipelineBatchWidth,
                 cancellationToken);
     }
 
@@ -163,7 +167,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         ReadOnlyMemory<long> exactSegmentSizes = default,
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
-        long? firstSegmentFileOffset = null)
+        long? firstSegmentFileOffset = null,
+        int bodyPipelineBatchWidth = BodyPipelineBatchSize)
     {
         if (articleBufferSize == 0 || segmentIds.Length <= 1)
         {
@@ -171,7 +176,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 segmentIds, usenetClient, articleBufferSize, estimatedSegmentSize,
                 failFastOnFirstSegment, usePipelinedBodyRequests, cancellationToken, fileName,
                 readBudget, segmentFallbacks, exactSegmentSizes, inFlightArticleBudget,
-                useContainerAwareFill, firstSegmentFileOffset);
+                useContainerAwareFill, firstSegmentFileOffset, bodyPipelineBatchWidth);
         }
 
         var effectiveReadBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
@@ -208,7 +213,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 segmentIds[1..], usenetClient, articleBufferSize, estimatedSegmentSize,
                 failFastOnFirstSegment: false, usePipelinedBodyRequests, cancellationToken,
                 fileName, remainingBudget, remainingFallbacks, remainingExactSizes,
-                inFlightArticleBudget, useContainerAwareFill, remainingOffset));
+                inFlightArticleBudget, useContainerAwareFill, remainingOffset,
+                bodyPipelineBatchWidth));
         }
     }
 
@@ -227,6 +233,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         InFlightArticleBudget? inFlightArticleBudget,
         bool useContainerAwareFill,
         long? firstSegmentFileOffset,
+        int bodyPipelineBatchWidth,
         CancellationToken cancellationToken
     )
     {
@@ -241,14 +248,23 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
         _readBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
         _budget = inFlightArticleBudget ?? InFlightArticleBudget.Current;
-        _taskWindowSize = CalculateTaskWindowSize(articleBufferSize, usePipelinedBodyRequests);
+        _bodyPipelineBatchSize = Math.Min(Math.Max(1, bodyPipelineBatchWidth), articleBufferSize);
+        _taskWindowSize = CalculateTaskWindowSize(
+            articleBufferSize, usePipelinedBodyRequests, _bodyPipelineBatchSize);
         _prefetchByteCeiling = _taskWindowSize > 0 && estimatedSegmentSize > 0
             ? (long)_taskWindowSize * estimatedSegmentSize
             : 0;
-        _bodyPipelineBatchSize = Math.Min(BodyPipelineBatchSize, articleBufferSize);
         _batchSizer = usePipelinedBodyRequests
             ? new AdaptiveBodyBatchSizer(_bodyPipelineBatchSize)
             : null;
+        if (_batchSizer is not null && _bodyPipelineBatchSize != BodyPipelineBatchSize)
+        {
+            Log.Debug(
+                "Streaming BODY batch width for {FileName} configured at {BatchWidth} (stock {StockWidth}).",
+                _fileName,
+                _bodyPipelineBatchSize,
+                BodyPipelineBatchSize);
+        }
         _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(_taskWindowSize);
         _cts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _downloadTask = DownloadSegments(usePipelinedBodyRequests, _cts.Token);
@@ -262,12 +278,15 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// the task window by that width; the connection semaphore remains the concurrency
     /// authority and <see cref="InFlightArticleBudget"/> remains the decoded-byte authority.
     /// </summary>
-    internal static int CalculateTaskWindowSize(int articleBufferSize, bool usePipelinedBodyRequests)
+    internal static int CalculateTaskWindowSize(
+        int articleBufferSize,
+        bool usePipelinedBodyRequests,
+        int bodyPipelineBatchWidth = BodyPipelineBatchSize)
     {
         if (articleBufferSize <= 0) return 0;
         if (!usePipelinedBodyRequests) return articleBufferSize;
 
-        var initialBatchWidth = Math.Min(BodyPipelineBatchSize, articleBufferSize);
+        var initialBatchWidth = Math.Min(bodyPipelineBatchWidth, articleBufferSize);
         return articleBufferSize > int.MaxValue / initialBatchWidth
             ? int.MaxValue
             : articleBufferSize * initialBatchWidth;

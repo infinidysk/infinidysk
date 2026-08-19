@@ -24,7 +24,8 @@ public class NzbFileStream(
     string? fileName = null,
     string[][]? segmentFallbacks = null,
     InFlightArticleBudget? inFlightArticleBudget = null,
-    bool useContainerAwareFill = false
+    bool useContainerAwareFill = false,
+    int streamingBodyBatchWidth = 4
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
@@ -502,7 +503,8 @@ public class NzbFileStream(
             exactSegmentSizes: exactSizes,
             inFlightArticleBudget: inFlightArticleBudget,
             useContainerAwareFill: useContainerAwareFill,
-            firstSegmentFileOffset: firstSegmentFileOffset);
+            firstSegmentFileOffset: firstSegmentFileOffset,
+            bodyPipelineBatchWidth: streamingBodyBatchWidth);
     }
 
     protected override void Dispose(bool disposing)

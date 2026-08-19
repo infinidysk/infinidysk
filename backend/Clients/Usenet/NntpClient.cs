@@ -141,7 +141,8 @@ public abstract class NntpClient : INntpClient
         bool usePipelinedBodyRequests = true,
         string? fileName = null,
         InFlightArticleBudget? inFlightArticleBudget = null,
-        bool useContainerAwareFill = false)
+        bool useContainerAwareFill = false,
+        int streamingBodyBatchWidth = 4)
     {
         var segmentIds = nzbFile.GetSegmentIds();
         var fileSize = await GetFileSizeAsync(nzbFile, ct).ConfigureAwait(false);
@@ -155,7 +156,8 @@ public abstract class NntpClient : INntpClient
             ResolveFileName(fileName, nzbFile),
             nzbFile.GetSegmentFallbackIds(),
             inFlightArticleBudget,
-            useContainerAwareFill);
+            useContainerAwareFill,
+            streamingBodyBatchWidth);
     }
 
     public virtual NzbFileStream GetFileStream(
@@ -165,7 +167,8 @@ public abstract class NntpClient : INntpClient
         bool usePipelinedBodyRequests = true,
         string? fileName = null,
         InFlightArticleBudget? inFlightArticleBudget = null,
-        bool useContainerAwareFill = false)
+        bool useContainerAwareFill = false,
+        int streamingBodyBatchWidth = 4)
     {
         return new NzbFileStream(
             nzbFile.GetSegmentIds(),
@@ -177,7 +180,8 @@ public abstract class NntpClient : INntpClient
             ResolveFileName(fileName, nzbFile),
             nzbFile.GetSegmentFallbackIds(),
             inFlightArticleBudget,
-            useContainerAwareFill
+            useContainerAwareFill,
+            streamingBodyBatchWidth
         );
     }
 
@@ -190,7 +194,8 @@ public abstract class NntpClient : INntpClient
         string? fileName = null,
         string[][]? segmentFallbacks = null,
         InFlightArticleBudget? inFlightArticleBudget = null,
-        bool useContainerAwareFill = false)
+        bool useContainerAwareFill = false,
+        int streamingBodyBatchWidth = 4)
     {
         return new NzbFileStream(
             segmentIds,
@@ -202,7 +207,8 @@ public abstract class NntpClient : INntpClient
             fileName,
             segmentFallbacks,
             inFlightArticleBudget,
-            useContainerAwareFill);
+            useContainerAwareFill,
+            streamingBodyBatchWidth);
     }
 
     private static string? ResolveFileName(string? fileName, NzbFile nzbFile)

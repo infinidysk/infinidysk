@@ -81,7 +81,8 @@ public interface INntpClient : IDisposable
         bool usePipelinedBodyRequests = true,
         string? fileName = null,
         InFlightArticleBudget? inFlightArticleBudget = null,
-        bool useContainerAwareFill = false);
+        bool useContainerAwareFill = false,
+        int streamingBodyBatchWidth = 4);
 
     NzbFileStream GetFileStream(
         NzbFile nzbFile,
@@ -90,7 +91,8 @@ public interface INntpClient : IDisposable
         bool usePipelinedBodyRequests = true,
         string? fileName = null,
         InFlightArticleBudget? inFlightArticleBudget = null,
-        bool useContainerAwareFill = false);
+        bool useContainerAwareFill = false,
+        int streamingBodyBatchWidth = 4);
 
     NzbFileStream GetFileStream(
         string[] segmentIds,
@@ -101,7 +103,8 @@ public interface INntpClient : IDisposable
         string? fileName = null,
         string[][]? segmentFallbacks = null,
         InFlightArticleBudget? inFlightArticleBudget = null,
-        bool useContainerAwareFill = false);
+        bool useContainerAwareFill = false,
+        int streamingBodyBatchWidth = 4);
 
     Task CheckAllSegmentsAsync(
         IEnumerable<string> segmentIds, int concurrency, IProgress<int>? progress, CancellationToken cancellationToken);

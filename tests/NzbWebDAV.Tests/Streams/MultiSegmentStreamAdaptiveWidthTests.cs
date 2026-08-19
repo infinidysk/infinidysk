@@ -14,20 +14,119 @@ public class MultiSegmentStreamAdaptiveWidthTests
     private const int BodyPipelineBatchSize = 4;
 
     [Theory]
-    [InlineData(0, false, 0)]
-    [InlineData(1, false, 1)]
-    [InlineData(40, false, 40)]
-    [InlineData(1, true, 1)]
-    [InlineData(2, true, 4)]
-    [InlineData(40, true, 160)]
+    [InlineData(0, false, 0, 4)]
+    [InlineData(1, false, 1, 4)]
+    [InlineData(40, false, 40, 4)]
+    [InlineData(1, true, 1, 4)]
+    [InlineData(2, true, 4, 4)]
+    [InlineData(40, true, 160, 4)]
+    [InlineData(40, true, 320, 8)]
+    [InlineData(40, true, 40, 1)]
     public void TaskWindowSize_ExpandsPipelinedSegmentsWithoutChangingIndividualMode(
         int articleBufferSize,
         bool pipelined,
-        int expected)
+        int expected,
+        int batchWidth)
     {
         Assert.Equal(
             expected,
-            MultiSegmentStream.CalculateTaskWindowSize(articleBufferSize, pipelined));
+            MultiSegmentStream.CalculateTaskWindowSize(articleBufferSize, pipelined, batchWidth));
+    }
+
+    [Fact]
+    public async Task ConfiguredWidthEight_UsesEightWideInitialBatches()
+    {
+        const int articleBufferSize = 32;
+        const int segmentCount = 64;
+        const int segmentSize = 16;
+        const int configuredWidth = 8;
+
+        var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
+        await using var stream = CreatePipelinedStream(
+            client, segmentCount, articleBufferSize, segmentSize, batchWidth: configuredWidth);
+
+        await client.WaitUntilAsync(
+            () => client.MaxActiveBatches >= articleBufferSize / configuredWidth,
+            TimeSpan.FromSeconds(5));
+
+        Assert.Contains(configuredWidth, client.ObservedBatchSizes);
+        Assert.All(
+            client.ObservedBatchSizes.Take(articleBufferSize / configuredWidth),
+            size => Assert.Equal(configuredWidth, size));
+    }
+
+    [Fact]
+    public async Task ConfiguredWidthOne_EmitsOnlySingleArticleBatches()
+    {
+        const int articleBufferSize = 16;
+        const int segmentCount = 32;
+        const int segmentSize = 8;
+
+        var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
+        client.ReleaseAllUpTo(segmentCount - 1);
+        await using var stream = CreatePipelinedStream(
+            client, segmentCount, articleBufferSize, segmentSize, batchWidth: 1);
+
+        var buffer = new byte[segmentSize];
+        while (await stream.ReadAsync(buffer) > 0)
+        {
+            // Drain to completion.
+        }
+
+        Assert.All(client.ObservedBatchSizes, size => Assert.Equal(1, size));
+        Assert.Equal(1, stream.PrefetchBatchWidth);
+    }
+
+    [Fact]
+    public async Task ConfiguredWidthAboveArticleBuffer_IsClampedToBuffer()
+    {
+        const int articleBufferSize = 3;
+        const int segmentCount = 12;
+        const int segmentSize = 4;
+
+        var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
+        client.ReleaseAllUpTo(segmentCount - 1);
+        await using var stream = CreatePipelinedStream(
+            client, segmentCount, articleBufferSize, segmentSize, batchWidth: 8);
+
+        var buffer = new byte[segmentSize];
+        while (await stream.ReadAsync(buffer) > 0)
+        {
+            // Drain to completion.
+        }
+
+        Assert.All(client.ObservedBatchSizes, size => Assert.Equal(articleBufferSize, size));
+        Assert.Equal(articleBufferSize, stream.PrefetchBatchWidth);
+    }
+
+    [Fact]
+    public async Task CreateFirstSegmentHybrid_ForwardsConfiguredBatchWidth()
+    {
+        const int articleBufferSize = 16;
+        const int segmentCount = 32;
+        const int segmentSize = 8;
+        const int configuredWidth = 8;
+
+        var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
+        client.ReleaseAllUpTo(segmentCount - 1);
+        await using var combined = (CombinedStream)MultiSegmentStream.CreateFirstSegmentHybrid(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "hybrid.bin",
+            bodyPipelineBatchWidth: configuredWidth);
+
+        var buffer = new byte[segmentSize];
+        while (await combined.ReadAsync(buffer) > 0)
+        {
+            // Drain through unbuffered first segment and buffered remainder.
+        }
+
+        Assert.Contains(configuredWidth, client.ObservedBatchSizes);
     }
 
     [Fact]
@@ -304,7 +403,8 @@ public class MultiSegmentStreamAdaptiveWidthTests
         int segmentCount,
         int articleBufferSize,
         int segmentSize,
-        InFlightArticleBudget? budget = null)
+        InFlightArticleBudget? budget = null,
+        int batchWidth = BodyPipelineBatchSize)
     {
         var exactSizes = Enumerable.Repeat((long)segmentSize, segmentCount).ToArray();
         return (MultiSegmentStream)MultiSegmentStream.Create(
@@ -317,7 +417,8 @@ public class MultiSegmentStreamAdaptiveWidthTests
             CancellationToken.None,
             fileName: "adaptive.bin",
             exactSegmentSizes: exactSizes,
-            inFlightArticleBudget: budget);
+            inFlightArticleBudget: budget,
+            bodyPipelineBatchWidth: batchWidth);
     }
 
     /// <summary>

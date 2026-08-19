@@ -150,6 +150,32 @@ public class AdaptiveBodyBatchSizerTests
     }
 
     [Fact]
+    public void MaxOne_NeverWidensBeyondOne()
+    {
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(1, clock);
+        ObservePattern(sizer, new string('R', 32));
+        Assert.Equal(1, sizer.Current);
+    }
+
+    [Fact]
+    public void MaxEight_RecoversOnlyToConfiguredCeiling()
+    {
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(8, clock);
+        ObservePattern(sizer, "SRRRSRRR"); // 8→4
+        Assert.Equal(4, sizer.Current);
+
+        AdvancePastHold(clock);
+        ObservePattern(sizer, new string('R', 16)); // 4→8
+        Assert.Equal(8, sizer.Current);
+
+        AdvancePastHold(clock);
+        ObservePattern(sizer, new string('R', 16));
+        Assert.Equal(8, sizer.Current);
+    }
+
+    [Fact]
     public void SuppressedWiden_KeepsStarvationWindowArmed()
     {
         var clock = new ManualTimeProvider();

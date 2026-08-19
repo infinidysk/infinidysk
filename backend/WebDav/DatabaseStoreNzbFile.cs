@@ -47,7 +47,7 @@ public class DatabaseStoreNzbFile(
             davNzbFile.Path,
             nzbFile.SegmentFallbackIds,
             inFlightArticleBudget,
-            useContainerAwareFill: Config.IsContainerAwareFillEnabled()
-        );
+            useContainerAwareFill: Config.IsContainerAwareFillEnabled(),
+            streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth());
     }
 }

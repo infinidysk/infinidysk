@@ -55,7 +55,8 @@ public class DatabaseStoreRarFile(
             resolver: null,
             usePipelinedBodyRequests: Config.IsPipelinedBodyRequestsEnabled(),
             fileName: davRarFile.Path,
-            inFlightArticleBudget: inFlightArticleBudget
+            inFlightArticleBudget: inFlightArticleBudget,
+            streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth()
         );
     }
 }
