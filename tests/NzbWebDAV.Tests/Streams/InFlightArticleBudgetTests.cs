@@ -88,4 +88,64 @@ public class InFlightArticleBudgetTests
         budget.AccountBufferedPipeBytes(-200);
         Assert.Equal(0, budget.LeasedBytes);
     }
+
+    [Fact]
+    public void AccountBufferedPipeBytes_OverReleaseLargerThanLeased_ClampsAtZero()
+    {
+        var budget = new InFlightArticleBudget(10_000);
+        budget.AccountBufferedPipeBytes(100);
+
+        budget.AccountBufferedPipeBytes(-500);
+
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public void AccountBufferedPipeBytes_FullyClampedNoOp_LeavesZeroLeased()
+    {
+        var budget = new InFlightArticleBudget(1_000);
+
+        budget.AccountBufferedPipeBytes(-100);
+
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task AccountBufferedPipeBytes_AfterOverReleaseClamp_LeasingStillWorks()
+    {
+        var budget = new InFlightArticleBudget(1_000);
+        budget.AccountBufferedPipeBytes(200);
+        budget.AccountBufferedPipeBytes(-1_000);
+        Assert.Equal(0, budget.LeasedBytes);
+
+        using var lease = await budget.LeaseAsync(400, CancellationToken.None);
+        Assert.Equal(400, budget.LeasedBytes);
+
+        lease.Dispose();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task AccountBufferedPipeBytes_OverReleaseWhileSaturated_WakesWaiter()
+    {
+        const long cap = 1_000;
+        var budget = new InFlightArticleBudget(cap);
+        budget.AccountBufferedPipeBytes(cap);
+        Assert.Equal(cap, budget.LeasedBytes);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var waiter = budget.LeaseAsync(100, cts.Token).AsTask();
+        for (var i = 0; i < 50 && budget.ThrottleEvents == 0; i++)
+            await Task.Delay(10);
+
+        Assert.True(budget.ThrottleEvents > 0);
+        Assert.False(waiter.IsCompleted);
+
+        budget.AccountBufferedPipeBytes(-(cap + 5_000));
+        using var lease = await waiter.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(100, budget.LeasedBytes);
+
+        lease.Dispose();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
 }
