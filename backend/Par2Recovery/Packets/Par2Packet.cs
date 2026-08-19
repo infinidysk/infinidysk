@@ -79,5 +79,7 @@ namespace NzbWebDAV.Par2Recovery.Packets
         {
             // intentionally left blank
         }
+
+        internal void ParseBodyBytes(byte[] body) => ParseBody(body);
     }
 }
