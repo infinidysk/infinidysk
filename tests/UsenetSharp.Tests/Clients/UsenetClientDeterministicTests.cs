@@ -1099,6 +1099,7 @@ public class UsenetClientDeterministicTests
         Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.Cancelled));
+        await response.Stream!.DisposeAsync();
         Assert.Multiple(() =>
         {
             Assert.That(client.BufferedDecodedBodyBytes, Is.Zero);

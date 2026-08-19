@@ -266,7 +266,9 @@ public class BufferPoolDiagnosticsTests
         Assert.Equal(2, grown.Rents);
         Assert.Equal(1, grown.Returns);
         Assert.Equal(1, grown.Growths);
-        Assert.Equal(1024 * 1024, grown.CheckedOutBytes);
+        var expectedGrownCapacity = SegmentBufferPool.RoundToSizeClass(
+            (int)Math.Max(900_000L, 768 * 1024 + (768 * 1024) / 2));
+        Assert.Equal(expectedGrownCapacity, grown.CheckedOutBytes);
 
         stream.Dispose();
         var disposed = diagnostics.Snapshot();
