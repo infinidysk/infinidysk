@@ -145,6 +145,9 @@ public static class ConfigKeys
     public const string VariantsMaxPerGroup = "variants.max-per-group";
     public const string VariantsMode = "variants.mode";
     public const string VariantsReplayStrategy = "variants.replay-strategy";
+    public const string VariantsSegmentDonorsEnabled = "variants.segment-donors-enabled";
+    public const string VariantsSegmentDonorsMaxPerSegment = "variants.segment-donors-max-per-segment";
+    public const string VariantsSegmentDonorsMaxSiblings = "variants.segment-donors-max-siblings";
     public const string VariantsTolerancePct = "variants.tolerance-pct";
 
     // preflight

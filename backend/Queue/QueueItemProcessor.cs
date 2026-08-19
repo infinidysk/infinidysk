@@ -19,6 +19,7 @@ using NzbWebDAV.Queue.FileAggregators;
 using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Queue.NestedRarExpansion;
 using NzbWebDAV.Queue.PostProcessors;
+using NzbWebDAV.Queue.SiblingDonors;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Utils;
@@ -336,6 +337,10 @@ public class QueueItemProcessor(
         // https://github.com/infinidysk/infinidysk/issues/101
         var articlesToPrecheck = nzbFiles.SelectMany(x => x.Segments).Select(x => x.MessageId);
         HealthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck);
+
+        await RunStageAsync("sibling-donors",
+            () => SiblingDonorAttacher.AttachToNewImportAsync(
+                dbClient, queueItem, nzbFiles, configManager, ct)).ConfigureAwait(false);
 
         // step 1 -- get name and size of each nzb file
         var stepTimer = Stopwatch.StartNew();

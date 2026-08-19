@@ -364,6 +364,8 @@ public class ConfigManager
                 case ConfigKeys.VariantsTolerancePct:
                 case ConfigKeys.VariantsMaxPerGroup:
                 case ConfigKeys.VariantsEvictionActiveGraceSeconds:
+                case ConfigKeys.VariantsSegmentDonorsMaxSiblings:
+                case ConfigKeys.VariantsSegmentDonorsMaxPerSegment:
                 case ConfigKeys.PreflightMaxAttempts:
                 case ConfigKeys.PreflightTtlSeconds:
                 case ConfigKeys.PreflightIndexerMaxWaitSeconds:
@@ -432,6 +434,7 @@ public class ConfigManager
                 case ConfigKeys.PlayPreferSubtitles:
                 case ConfigKeys.GrabStallFailoverEnabled:
                 case ConfigKeys.VariantsFallbackOnFailure:
+                case ConfigKeys.VariantsSegmentDonorsEnabled:
                 case ConfigKeys.WatchtowerEnabled:
                 case ConfigKeys.WatchtowerAutoThroughput:
                 case ConfigKeys.WatchtowerVerboseLogging:
@@ -1431,6 +1434,26 @@ public class ConfigManager
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.VariantsFallbackOnFailure));
         return v == null || bool.Parse(v);
+    }
+
+    public bool IsVariantsSegmentDonorsEnabled()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.VariantsSegmentDonorsEnabled));
+        return v == null || bool.Parse(v);
+    }
+
+    public int GetVariantsSegmentDonorsMaxSiblings()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.VariantsSegmentDonorsMaxSiblings));
+        if (v == null) return 3;
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 0, 10) : 3;
+    }
+
+    public int GetVariantsSegmentDonorsMaxPerSegment()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.VariantsSegmentDonorsMaxPerSegment));
+        if (v == null) return 6;
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 1, 32) : 6;
     }
 
     public string GetVariantsEvictionStrategy()
