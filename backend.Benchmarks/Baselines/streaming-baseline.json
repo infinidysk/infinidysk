@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "report": "streaming",
+  "meta": {
+    "commit": "unknown",
+    "generatedAt": "2026-08-19T21:00:49.908358+00:00",
+    "runner": "local"
+  },
+  "scenarios": {
+    "cold-sequential": {
+      "deterministic": {
+        "bytes": 3145728,
+        "transportRequests": 12,
+        "transportBytes": 3145728
+      },
+      "timing": {
+        "firstByteMs": {
+          "baseline": 0.027,
+          "envelope": 15.027,
+          "policy": "fail"
+        },
+        "elapsedMs": {
+          "baseline": 0.115,
+          "envelope": 15.115,
+          "policy": "fail"
+        },
+        "throughputMiBs": {
+          "baseline": 26691.822,
+          "floor": 8897.274,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        }
+      }
+    },
+    "cache-prime": {
+      "deterministic": {
+        "bytes": 3145728,
+        "transportRequests": 12,
+        "transportBytes": 3145728
+      },
+      "timing": {
+        "firstByteMs": {
+          "baseline": 0.198,
+          "envelope": 15.198,
+          "policy": "fail"
+        },
+        "elapsedMs": {
+          "baseline": 3.613,
+          "envelope": 18.613,
+          "policy": "fail"
+        },
+        "throughputMiBs": {
+          "baseline": 830.719,
+          "floor": 276.907,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.004,
+          "envelope": 0.254,
+          "policy": "warn"
+        }
+      }
+    },
+    "warm-reread": {
+      "deterministic": {
+        "bytes": 3145728,
+        "transportRequests": 0,
+        "transportBytes": 0
+      },
+      "timing": {
+        "firstByteMs": {
+          "baseline": 0.194,
+          "envelope": 15.194,
+          "policy": "fail"
+        },
+        "elapsedMs": {
+          "baseline": 1.047,
+          "envelope": 16.047,
+          "policy": "fail"
+        },
+        "throughputMiBs": {
+          "baseline": 2875.46,
+          "floor": 958.487,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.002,
+          "envelope": 0.252,
+          "policy": "warn"
+        }
+      }
+    },
+    "range-probe": {
+      "deterministic": {
+        "bytes": 65536,
+        "transportRequests": 0,
+        "transportBytes": 0
+      },
+      "timing": {
+        "firstByteMs": {
+          "baseline": 0.103,
+          "envelope": 15.103,
+          "policy": "fail"
+        },
+        "elapsedMs": {
+          "baseline": 0.103,
+          "envelope": 15.103,
+          "policy": "fail"
+        },
+        "throughputMiBs": {
+          "baseline": 615.096,
+          "floor": 205.032,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        }
+      }
+    },
+    "tail-probe": {
+      "deterministic": {
+        "bytes": 65536,
+        "transportRequests": 0,
+        "transportBytes": 0
+      },
+      "timing": {
+        "firstByteMs": {
+          "baseline": 0.092,
+          "envelope": 15.092,
+          "policy": "fail"
+        },
+        "elapsedMs": {
+          "baseline": 0.092,
+          "envelope": 15.092,
+          "policy": "fail"
+        },
+        "throughputMiBs": {
+          "baseline": 687.026,
+          "floor": 229.009,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        }
+      }
+    },
+    "seeks": {
+      "deterministic": {
+        "bytes": 262144,
+        "transportRequests": 0,
+        "transportBytes": 0
+      },
+      "timing": {
+        "firstByteMs": {
+          "baseline": 0.087,
+          "envelope": 15.087,
+          "policy": "fail"
+        },
+        "elapsedMs": {
+          "baseline": 0.46,
+          "envelope": 15.46,
+          "policy": "fail"
+        },
+        "throughputMiBs": {
+          "baseline": 543.865,
+          "floor": 181.288,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.001,
+          "envelope": 0.251,
+          "policy": "warn"
+        }
+      }
+    },
+    "dead-article": {
+      "deterministic": {
+        "bytes": 262144,
+        "transportRequests": 2,
+        "transportBytes": 0
+      },
+      "timing": {
+        "firstByteMs": {
+          "baseline": 0.088,
+          "envelope": 15.088,
+          "policy": "fail"
+        },
+        "elapsedMs": {
+          "baseline": 0.088,
+          "envelope": 15.088,
+          "policy": "fail"
+        },
+        "throughputMiBs": {
+          "baseline": 2850.559,
+          "floor": 950.186,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        }
+      }
+    }
+  }
+}

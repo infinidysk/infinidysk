@@ -146,13 +146,36 @@ jobs:
           dotnet restore tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj
           dotnet restore backend.Benchmarks/NzbWebDAV.Benchmarks.csproj
 
-      # Benchmarks are first-party code under the warnings-as-errors gate but
-      # are not exercised by any test project; build them explicitly.
+      # Benchmarks are first-party code under the warnings-as-errors gate.
+      # Deterministic streaming/SAB reports are compared in this job; timing
+      # comparisons stay off the PR path (see performance.yml).
       - name: Build benchmarks (warning gate)
         run: dotnet build backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-restore
 
+      - name: Performance deterministic gate
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/nzbdav-perf
+          dotnet run --project backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-build -- \
+            --streaming-report --json /tmp/nzbdav-perf/streaming.json
+          dotnet run --project backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-build -- \
+            --sab-api-report --json /tmp/nzbdav-perf/sab-api.json
+          python3 scripts/check-performance-baseline.py \
+            --baseline backend.Benchmarks/Baselines/streaming-baseline.json \
+            --candidates /tmp/nzbdav-perf/streaming.json \
+            --deterministic-only \
+            --summary "${GITHUB_STEP_SUMMARY}"
+          python3 scripts/check-performance-baseline.py \
+            --baseline backend.Benchmarks/Baselines/sab-api-baseline.json \
+            --candidates /tmp/nzbdav-perf/sab-api.json \
+            --deterministic-only \
+            --summary "${GITHUB_STEP_SUMMARY}"
+
       - name: Verify NuGet vulnerability gate fixtures
         run: bash scripts/test-nuget-vulnerability-gate.sh
+
+      - name: Verify performance baseline gate fixtures
+        run: bash scripts/test-performance-baseline-gate.sh
 
       - name: Audit NuGet production dependencies
         run: |

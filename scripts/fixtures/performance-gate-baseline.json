@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "report": "streaming",
+  "meta": {
+    "commit": "test",
+    "generatedAt": "2026-01-01T00:00:00+00:00",
+    "runner": "test"
+  },
+  "scenarios": {
+    "cold-sequential": {
+      "deterministic": {
+        "bytes": 100,
+        "transportRequests": 2,
+        "transportBytes": 100
+      },
+      "timing": {
+        "firstByteMs": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
+        "elapsedMs": { "baseline": 20.0, "envelope": 60.0, "policy": "fail" },
+        "throughputMiBs": { "baseline": 90.0, "floor": 30.0, "policy": "fail" },
+        "cpuSeconds": { "baseline": 0.1, "envelope": 0.35, "policy": "warn" }
+      }
+    }
+  }
+}

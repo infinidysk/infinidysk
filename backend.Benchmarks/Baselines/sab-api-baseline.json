@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "report": "sab-api",
+  "meta": {
+    "commit": "unknown",
+    "generatedAt": "2026-08-19T21:00:49.945346+00:00",
+    "runner": "local"
+  },
+  "scenarios": {
+    "queue-limit10": {
+      "deterministic": {
+        "rowsReturned": 10,
+        "totalCount": 50,
+        "dbCommands": 2
+      },
+      "timing": {
+        "elapsedMs": {
+          "baseline": 98.356,
+          "envelope": 295.068,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.097,
+          "envelope": 0.347,
+          "policy": "warn"
+        }
+      }
+    },
+    "queue-limit50": {
+      "deterministic": {
+        "rowsReturned": 50,
+        "totalCount": 50,
+        "dbCommands": 2
+      },
+      "timing": {
+        "elapsedMs": {
+          "baseline": 1.32,
+          "envelope": 16.32,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.001,
+          "envelope": 0.251,
+          "policy": "warn"
+        }
+      }
+    },
+    "queue-limit0": {
+      "deterministic": {
+        "rowsReturned": 50,
+        "totalCount": 50,
+        "dbCommands": 2
+      },
+      "timing": {
+        "elapsedMs": {
+          "baseline": 0.292,
+          "envelope": 15.292,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        }
+      }
+    },
+    "history-limit10-start0": {
+      "deterministic": {
+        "rowsReturned": 10,
+        "totalCount": 500,
+        "dbCommands": 2
+      },
+      "timing": {
+        "elapsedMs": {
+          "baseline": 14.119,
+          "envelope": 42.357,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.014,
+          "envelope": 0.264,
+          "policy": "warn"
+        }
+      }
+    },
+    "history-limit10-start490": {
+      "deterministic": {
+        "rowsReturned": 10,
+        "totalCount": 500,
+        "dbCommands": 2
+      },
+      "timing": {
+        "elapsedMs": {
+          "baseline": 0.562,
+          "envelope": 15.562,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.001,
+          "envelope": 0.251,
+          "policy": "warn"
+        }
+      }
+    },
+    "history-limit0": {
+      "deterministic": {
+        "rowsReturned": 500,
+        "totalCount": 500,
+        "dbCommands": 2
+      },
+      "timing": {
+        "elapsedMs": {
+          "baseline": 2.455,
+          "envelope": 17.455,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.002,
+          "envelope": 0.252,
+          "policy": "warn"
+        }
+      }
+    },
+    "history-category-filter": {
+      "deterministic": {
+        "rowsReturned": 10,
+        "totalCount": 50,
+        "dbCommands": 2
+      },
+      "timing": {
+        "elapsedMs": {
+          "baseline": 8.448,
+          "envelope": 25.344,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.008,
+          "envelope": 0.258,
+          "policy": "warn"
+        }
+      }
+    }
+  }
+}
