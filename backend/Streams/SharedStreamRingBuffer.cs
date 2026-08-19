@@ -164,19 +164,24 @@ internal sealed class SharedStreamRingBuffer
     {
         lock (_lock)
         {
+            if (_failure is not null)
+            {
+                if (_readers.TryGetValue(readerId, out var failedSlot))
+                {
+                    if (failedSlot.FailureDelivered)
+                        return RingReadResult.Detached();
+                    failedSlot.FailureDelivered = true;
+                    return RingReadResult.Failed(_failure);
+                }
+
+                return RingReadResult.Failed(_failure);
+            }
+
             if (_released)
                 return RingReadResult.Released();
 
             if (!_readers.TryGetValue(readerId, out var slot))
                 return RingReadResult.Detached();
-
-            if (_failure is not null)
-            {
-                if (slot.FailureDelivered)
-                    return RingReadResult.Detached();
-                slot.FailureDelivered = true;
-                return RingReadResult.Failed(_failure);
-            }
 
             if (cursor < _tailStart)
                 return RingReadResult.Evicted();
