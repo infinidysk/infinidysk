@@ -41,6 +41,28 @@ public class PooledBufferStreamTests
     }
 
     [Fact]
+    public void EnsureCapacity_GrowsGeometrically_NotOneSizeClassAtATime()
+    {
+        const int hint = 64 * 1024;
+        const int payloadBytes = 8 * 1024 * 1024;
+        const int chunk = 64 * 1024;
+        var pool = new ExactSizeCountingPool();
+        using var stream = new PooledBufferStream(hint, pool);
+
+        var chunkBytes = new byte[chunk];
+        for (var written = 0; written < payloadBytes; written += chunk)
+            stream.Write(chunkBytes);
+
+        Assert.Equal(payloadBytes, stream.Length);
+        Assert.True(
+            pool.RentCount <= 15,
+            $"Expected log-bounded growth (≤15 rents for 64 KiB → 8 MiB), got {pool.RentCount}");
+        Assert.True(
+            pool.RentCount < 32,
+            $"Geometric growth must not walk 256 KiB classes linearly (~32 rents), got {pool.RentCount}");
+    }
+
+    [Fact]
     public void SetLength_Growth_ExposesZerosIncludingTruncateThenGrow()
     {
         using var stream = new PooledBufferStream(16);
@@ -201,6 +223,21 @@ public class PooledBufferStreamTests
         public void Emit(LogEvent logEvent)
         {
             lock (_events) _events.Add(logEvent);
+        }
+    }
+
+    private sealed class ExactSizeCountingPool : ISegmentBufferPool
+    {
+        public int RentCount { get; private set; }
+
+        public byte[] Rent(int minimumLength)
+        {
+            RentCount++;
+            return new byte[minimumLength];
+        }
+
+        public void Return(byte[] buffer)
+        {
         }
     }
 }

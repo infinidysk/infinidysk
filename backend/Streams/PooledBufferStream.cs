@@ -198,7 +198,10 @@ public sealed class PooledBufferStream : Stream
         if (required <= current.Length) return;
 
         WarnIfRunawayCapacity(required, current.Length);
-        var next = RentBuffer(required);
+        var target = (int)Math.Min(
+            Math.Max((long)required, current.Length + (long)current.Length / 2),
+            Array.MaxLength);
+        var next = RentBuffer(target);
         if (_length > 0)
             current.AsSpan(0, _length).CopyTo(next);
 
