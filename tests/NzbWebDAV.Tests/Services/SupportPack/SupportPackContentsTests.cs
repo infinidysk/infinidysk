@@ -13,6 +13,7 @@ using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Services.SupportPack;
+using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Websocket;
@@ -601,6 +602,10 @@ public sealed class SupportPackContentsTests : IDisposable
             new ActiveReadRegistry());
 
         using var gcDiagnosticsStore = new GcDiagnosticsStore();
+        var repairDir = Path.Join(Path.GetTempPath(), "nzbdav-support-test-" + Guid.NewGuid().ToString("N"));
+        var repairPatchStore = new RepairPatchStore(repairDir, 1024 * 1024);
+        await repairPatchStore.CatalogLoadTask;
+        var par2RepairService = new Par2RepairService(configManager, usenet, repairPatchStore);
         var service = new SupportPackService(
             logBuffer,
             warningBuffer,
@@ -614,6 +619,8 @@ public sealed class SupportPackContentsTests : IDisposable
             streamTraceBuffer,
             runtimeUsage ?? new RuntimeUsageTracker(),
             gcDiagnosticsStore,
+            par2RepairService,
+            repairPatchStore,
             concurrentReadTracker);
 
         using var memory = new MemoryStream();

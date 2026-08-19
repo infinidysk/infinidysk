@@ -1018,7 +1018,7 @@ public class ConfigManager
         var repairValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
         if (repairValue == null || !bool.Parse(repairValue)) return false;
         var par2Value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2Enabled));
-        return par2Value != null && bool.Parse(par2Value);
+        return par2Value == null || bool.Parse(par2Value);
     }
 
     public bool IsPar2PreferredOverArr()

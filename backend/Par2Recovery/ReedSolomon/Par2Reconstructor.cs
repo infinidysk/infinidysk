@@ -51,10 +51,7 @@ public sealed class Par2Reconstructor
             matrix[row] = new ushort[k];
             var exp = selected[row].Exponent;
             for (var col = 0; col < k; col++)
-            {
-                var (fileIndex, _) = MapGlobalSlice(missingSliceIndices[col], main, ifscsByFileId);
-                matrix[row][col] = _field.RecoveryCoefficient(exp, fileIndex);
-            }
+                matrix[row][col] = _field.RecoveryCoefficient(exp, missingSliceIndices[col]);
         }
 
         if (!TryInvert(matrix, k))
@@ -69,7 +66,7 @@ public sealed class Par2Reconstructor
         }).ToArray();
 
         var sliceBuffer = ArrayPool<byte>.Shared.Rent(sliceSize);
-        var pendingFileHashes = new List<(FileDesc desc, IncrementalHash hasher, long bytesHashed)>();
+        var pendingFileHashes = new List<(FileDesc desc, IncrementalHash hasher, long bytesHashed, bool hashContiguous)>();
         try
         {
             var globalSlice = 0;
@@ -87,6 +84,7 @@ public sealed class Par2Reconstructor
                 var fileMd5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
 #pragma warning restore CA2000
                 long bytesHashed = 0;
+                bool hashContiguous = true;
 
                 for (var local = 0; local < ifsc.Slices.Count; local++)
                 {
@@ -101,6 +99,7 @@ public sealed class Par2Reconstructor
                         if (!isMissing)
                             return Fail($"Unexpected missing slice {sliceIndex} during reduction.");
                         Array.Clear(sliceBuffer, 0, sliceSize);
+                        hashContiguous = false;
                     }
                     else
                     {
@@ -111,22 +110,33 @@ public sealed class Par2Reconstructor
                         if (!VerifySliceChecksum(sliceBuffer, checksum))
                         {
                             if (isMissing)
+                            {
                                 Array.Clear(sliceBuffer, 0, sliceSize);
+                                hashContiguous = false;
+                            }
                             else
                                 return Fail($"Present slice {sliceIndex} failed IFSC verification.");
                         }
                     }
 
-                    if (!isMissing)
+                    if (!isMissing && hashContiguous)
                     {
                         var validLen = (int)Math.Min(sliceSize, (long)desc.FileLength - bytesHashed);
                         if (validLen > 0)
                             fileMd5.AppendData(sliceBuffer.AsSpan(0, validLen));
                         bytesHashed += validLen;
+                    }
+                    else if (!isMissing)
+                    {
+                        var advance = (int)Math.Min(sliceSize, (long)desc.FileLength - bytesHashed);
+                        bytesHashed += advance;
+                    }
 
+                    if (!isMissing)
+                    {
                         for (var r = 0; r < k; r++)
                         {
-                            var coeff = _field.RecoveryCoefficient(selected[r].Exponent, fileIndex);
+                            var coeff = _field.RecoveryCoefficient(selected[r].Exponent, sliceIndex);
                             if (coeff == 0) continue;
                             var acc = accumulators[r];
                             for (var w = 0; w < sliceSize / 2; w++)
@@ -138,7 +148,7 @@ public sealed class Par2Reconstructor
                     }
                 }
 
-                pendingFileHashes.Add((desc, fileMd5, bytesHashed));
+                pendingFileHashes.Add((desc, fileMd5, bytesHashed, hashContiguous));
                 globalSlice += ifsc.Slices.Count;
             }
 
@@ -164,17 +174,22 @@ public sealed class Par2Reconstructor
                 reconstructed[missingIndex] = outSlice;
 
                 var pending = pendingFileHashes[fileIdx];
-                var remaining = (long)pending.desc.FileLength - pending.bytesHashed;
-                if (remaining > 0)
+                if (pending.hashContiguous)
                 {
-                    var validLen = (int)Math.Min(sliceSize, remaining);
-                    pending.hasher.AppendData(outSlice.AsSpan(0, validLen));
-                    pendingFileHashes[fileIdx] = (pending.desc, pending.hasher, pending.bytesHashed + validLen);
+                    var remaining = (long)pending.desc.FileLength - pending.bytesHashed;
+                    if (remaining > 0)
+                    {
+                        var validLen = (int)Math.Min(sliceSize, remaining);
+                        pending.hasher.AppendData(outSlice.AsSpan(0, validLen));
+                        pendingFileHashes[fileIdx] = (pending.desc, pending.hasher, pending.bytesHashed + validLen, true);
+                    }
                 }
             }
 
-            foreach (var (desc, hasher, bytesHashed) in pendingFileHashes)
+            foreach (var (desc, hasher, bytesHashed, hashContiguous) in pendingFileHashes)
             {
+                if (!hashContiguous)
+                    continue;
                 if (bytesHashed != (long)desc.FileLength)
                     return Fail($"Incomplete whole-file MD5 coverage for {desc.FileName}.");
                 var computed = hasher.GetHashAndReset();
@@ -186,7 +201,7 @@ public sealed class Par2Reconstructor
         }
         finally
         {
-            foreach (var (_, hasher, _) in pendingFileHashes)
+            foreach (var (_, hasher, _, _) in pendingFileHashes)
                 hasher.Dispose();
             ArrayPool<byte>.Shared.Return(sliceBuffer);
         }

@@ -73,9 +73,10 @@ public static class Par2TestEncoder
         var size = (int)sliceSize;
         var payload = new byte[size];
         var words = new ushort[size / 2];
-        var coeff = Field.RecoveryCoefficient(exponent, 0);
-        foreach (var slice in fileSlices)
+        for (var sliceIndex = 0; sliceIndex < fileSlices.Length; sliceIndex++)
         {
+            var coeff = Field.RecoveryCoefficient(exponent, sliceIndex);
+            var slice = fileSlices[sliceIndex];
             for (var w = 0; w < words.Length; w++)
             {
                 var word = BitConverter.ToUInt16(slice, w * 2);

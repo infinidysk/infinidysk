@@ -31,6 +31,8 @@ public sealed class SupportPackService(
     StreamTraceBuffer streamTraceBuffer,
     RuntimeUsageTracker runtimeUsage,
     GcDiagnosticsStore gcDiagnosticsStore,
+    Repair.Par2RepairService par2RepairService,
+    Repair.RepairPatchStore repairPatchStore,
     ConcurrentReadTracker? concurrentReadTracker = null)
 {
     private const long MinuteMs = 60_000;
@@ -397,6 +399,7 @@ public sealed class SupportPackService(
                 metricsDatabaseBytes = FileSize(MetricsDbContext.DatabaseFilePath),
                 availableFreeSpaceBytes = drive.IsReady ? drive.AvailableFreeSpace : (long?)null,
             },
+            par2Repair = BuildPar2RepairDiagnostics(),
             streamTracing = new
             {
                 enabled = streamTracing.Enabled,
@@ -626,6 +629,48 @@ public sealed class SupportPackService(
         {
             Log.Debug(e, "Support pack: could not read the process thread count");
             return null;
+        }
+    }
+
+    private object BuildPar2RepairDiagnostics()
+    {
+        try
+        {
+            var snapshot = par2RepairService.GetDiagnosticSnapshot();
+            return new
+            {
+                enabled = configManager.IsPar2RepairEnabled(),
+                preferredOverArr = configManager.IsPar2PreferredOverArr(),
+                maxMissingSlices = configManager.GetPar2MaxMissingSlices(),
+                maxReleaseGb = configManager.GetPar2MaxReleaseGb(),
+                maxMemoryMb = configManager.GetPar2MaxMemoryMb(),
+                fetchConcurrency = configManager.GetPar2FetchConcurrency(),
+                failureCooldownHours = configManager.GetPar2FailureCooldownHours(),
+                patchStore = new
+                {
+                    entries = snapshot.PatchStoreEntries,
+                    currentBytes = repairPatchStore.CurrentBytes,
+                    maxBytes = configManager.GetPar2MaxPatchBytes(),
+                    hitCount = snapshot.PatchHitCount,
+                    evictionCount = snapshot.PatchEvictionCount,
+                    catalogReady = repairPatchStore.IsCatalogReady,
+                },
+                jobs = new
+                {
+                    queuedOrRunning = snapshot.QueuedOrRunningCount,
+                    totalSucceeded = snapshot.TotalSucceeded,
+                    totalFailed = snapshot.TotalFailed,
+                    totalInfeasible = snapshot.TotalInfeasible,
+                    totalBytesRead = snapshot.TotalBytesRead,
+                    totalSegmentsReconstructed = snapshot.TotalSegmentsReconstructed,
+                },
+                recentJobs = snapshot.RecentJobs,
+            };
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Log.Debug(e, "Support pack: could not read PAR2 repair diagnostics");
+            return new { enabled = false, error = e.Message };
         }
     }
 

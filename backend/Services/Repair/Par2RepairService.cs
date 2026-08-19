@@ -32,6 +32,11 @@ public sealed class Par2RepairService : BackgroundService
     private readonly RepairPatchStore _patchStore;
     private readonly Channel<RepairWorkItem> _queue;
     private readonly ConcurrentDictionary<Guid, byte> _queuedOrRunning = new();
+    private long _totalSucceeded;
+    private long _totalFailed;
+    private long _totalInfeasible;
+    private long _totalBytesRead;
+    private long _totalSegmentsReconstructed;
 
     public Par2RepairService(
         ConfigManager configManager,
@@ -187,6 +192,9 @@ public sealed class Par2RepairService : BackgroundService
                 PrometheusMetrics.Current?.RecordPar2RepairJob("succeeded");
                 PrometheusMetrics.Current?.ObservePar2RepairDuration(stopwatch.Elapsed);
                 PrometheusMetrics.Current?.SetPar2PatchStoreBytes(_patchStore.CurrentBytes);
+                Interlocked.Increment(ref _totalSucceeded);
+                Interlocked.Add(ref _totalBytesRead, result.BytesRead);
+                Interlocked.Add(ref _totalSegmentsReconstructed, result.SlicesReconstructed);
                 Log.Information(
                     "PAR2 repair succeeded for {Path}: {Slices} slice(s), {Bytes} bytes read in {Elapsed}",
                     davItem.Path, result.SlicesReconstructed, result.BytesRead, stopwatch.Elapsed);
@@ -203,6 +211,8 @@ public sealed class Par2RepairService : BackgroundService
             await PersistJobAsync(job, ct).ConfigureAwait(false);
             PrometheusMetrics.Current?.RecordPar2RepairJob(result.IsInfeasible ? "infeasible" : "failed");
             PrometheusMetrics.Current?.ObservePar2RepairDuration(stopwatch.Elapsed);
+            if (result.IsInfeasible) Interlocked.Increment(ref _totalInfeasible);
+            else Interlocked.Increment(ref _totalFailed);
             Log.Warning(
                 "PAR2 repair {Outcome} for {Path}. Reason: {Reason}",
                 result.IsInfeasible ? "infeasible" : "failed", davItem.Path, result.FailureReason);
@@ -830,6 +840,68 @@ public sealed class Par2RepairService : BackgroundService
         }
 
         return count;
+    }
+
+    public Par2RepairDiagnosticSnapshot GetDiagnosticSnapshot()
+    {
+        var recentJobs = GetRecentJobsForDiagnostics();
+        return new Par2RepairDiagnosticSnapshot
+        {
+            PatchStoreEntries = _patchStore.EntryCount,
+            PatchHitCount = _patchStore.HitCount,
+            PatchEvictionCount = _patchStore.EvictionCount,
+            QueuedOrRunningCount = _queuedOrRunning.Count,
+            TotalSucceeded = Interlocked.Read(ref _totalSucceeded),
+            TotalFailed = Interlocked.Read(ref _totalFailed),
+            TotalInfeasible = Interlocked.Read(ref _totalInfeasible),
+            TotalBytesRead = Interlocked.Read(ref _totalBytesRead),
+            TotalSegmentsReconstructed = Interlocked.Read(ref _totalSegmentsReconstructed),
+            RecentJobs = recentJobs,
+        };
+    }
+
+    private List<object> GetRecentJobsForDiagnostics()
+    {
+        try
+        {
+            using var dbContext = new DavDatabaseContext();
+            return dbContext.Par2RepairJobs
+                .OrderByDescending(j => j.CreatedAt)
+                .Take(10)
+                .AsEnumerable()
+                .Select(j => (object)new
+                {
+                    id = j.Id,
+                    path = j.Path,
+                    state = j.State.ToString(),
+                    createdAt = j.CreatedAt,
+                    startedAt = j.StartedAt,
+                    completedAt = j.CompletedAt,
+                    attempts = j.Attempts,
+                    bytesRead = j.BytesRead,
+                    slicesReconstructed = j.SlicesReconstructed,
+                    failureReason = j.FailureReason,
+                })
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    public sealed class Par2RepairDiagnosticSnapshot
+    {
+        public int PatchStoreEntries { get; init; }
+        public long PatchHitCount { get; init; }
+        public long PatchEvictionCount { get; init; }
+        public int QueuedOrRunningCount { get; init; }
+        public long TotalSucceeded { get; init; }
+        public long TotalFailed { get; init; }
+        public long TotalInfeasible { get; init; }
+        public long TotalBytesRead { get; init; }
+        public long TotalSegmentsReconstructed { get; init; }
+        public List<object> RecentJobs { get; init; } = [];
     }
 
     private sealed record RepairWorkItem(Guid DavItemId, string Path, string[] MissingSegmentIds);

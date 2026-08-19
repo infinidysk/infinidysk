@@ -192,11 +192,11 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 </p>
             )}
             <ManagedSetting configKey="repair.par2-enabled">
-            <Tooltip content="When enabled, missing segments discovered during streaming or health checks are reconstructed from PAR2 recovery data when feasible. Defaults to off because repairs read the full recovery set once.">
+            <Tooltip content="Reconstructs missing segments from PAR2 parity data in the background. Enabled by default. Disable on CPU-constrained hosts or to limit provider bandwidth (repairs read the full recovery set once, up to the release-size cap).">
                 <Toggle
                     id="par2-repair-enabled-checkbox"
                     className="cursor-pointer gap-2 p-0"
-                    checked={isRepairEnabled && config["repair.par2-enabled"] === "true"}
+                    checked={isRepairEnabled && (config["repair.par2-enabled"] ?? "true") === "true"}
                     disabled={!isRepairEnabled}
                     onChange={e => setNewConfig({ ...config, "repair.par2-enabled": "" + e.target.checked })}
                     label={<span className="text-sm text-base-content">Enable PAR2 background repair</span>}
@@ -209,7 +209,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     id="par2-preferred-over-arr-checkbox"
                     className="cursor-pointer gap-2 p-0"
                     checked={(config["repair.par2-preferred-over-arr"] ?? "true") === "true"}
-                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    disabled={!isRepairEnabled || (config["repair.par2-enabled"] ?? "true") !== "true"}
                     onChange={e => setNewConfig({ ...config, "repair.par2-preferred-over-arr": "" + e.target.checked })}
                     label={<span className="text-sm text-base-content">Prefer PAR2 over Arr replacement</span>}
                 />
@@ -233,7 +233,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     type="text"
                     id="par2-max-missing-slices-input"
                     placeholder="8"
-                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    disabled={!isRepairEnabled || (config["repair.par2-enabled"] ?? "true") !== "true"}
                     value={config["repair.par2-max-missing-slices"] ?? ""}
                     onChange={e => setNewConfig({ ...config, "repair.par2-max-missing-slices": e.target.value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45">
@@ -247,7 +247,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     type="text"
                     id="par2-max-release-gb-input"
                     placeholder="16"
-                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    disabled={!isRepairEnabled || (config["repair.par2-enabled"] ?? "true") !== "true"}
                     value={config["repair.par2-max-release-gb"] ?? ""}
                     onChange={e => setNewConfig({ ...config, "repair.par2-max-release-gb": e.target.value })} />
                 <p className="text-[11px] leading-relaxed text-base-content/45">
@@ -261,7 +261,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     type="text"
                     id="par2-max-memory-mb-input"
                     placeholder="256"
-                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    disabled={!isRepairEnabled || (config["repair.par2-enabled"] ?? "true") !== "true"}
                     value={config["repair.par2-max-memory-mb"] ?? ""}
                     onChange={e => setNewConfig({ ...config, "repair.par2-max-memory-mb": e.target.value })} />
             </div>
@@ -272,7 +272,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     type="text"
                     id="par2-max-patch-gb-input"
                     placeholder="4"
-                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    disabled={!isRepairEnabled || (config["repair.par2-enabled"] ?? "true") !== "true"}
                     value={config["repair.par2-max-patch-gb"] ?? ""}
                     onChange={e => setNewConfig({ ...config, "repair.par2-max-patch-gb": e.target.value })} />
             </div>
@@ -283,7 +283,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     type="text"
                     id="par2-fetch-concurrency-input"
                     placeholder="2"
-                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    disabled={!isRepairEnabled || (config["repair.par2-enabled"] ?? "true") !== "true"}
                     value={config["repair.par2-fetch-concurrency"] ?? ""}
                     onChange={e => setNewConfig({ ...config, "repair.par2-fetch-concurrency": e.target.value })} />
             </div>
@@ -294,7 +294,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     type="text"
                     id="par2-failure-cooldown-hours-input"
                     placeholder="6"
-                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    disabled={!isRepairEnabled || (config["repair.par2-enabled"] ?? "true") !== "true"}
                     value={config["repair.par2-failure-cooldown-hours"] ?? ""}
                     onChange={e => setNewConfig({ ...config, "repair.par2-failure-cooldown-hours": e.target.value })} />
             </div>

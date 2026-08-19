@@ -20,6 +20,8 @@ public sealed class RepairPatchStore
     private readonly Func<IEnumerable<string>> _enumerateCacheFiles;
     private long _currentBytes;
     private int _catalogReady;
+    private long _hitCount;
+    private long _evictionCount;
 
     private static readonly JsonSerializerOptions HeaderJsonOptions = new() { IncludeFields = true };
 
@@ -45,6 +47,9 @@ public sealed class RepairPatchStore
     public bool IsCatalogReady => Volatile.Read(ref _catalogReady) != 0;
     internal Task CatalogLoadTask { get; }
     internal long CurrentBytes => Interlocked.Read(ref _currentBytes);
+    internal int EntryCount => _index.Count;
+    internal long HitCount => Interlocked.Read(ref _hitCount);
+    internal long EvictionCount => Interlocked.Read(ref _evictionCount);
 
     public bool Contains(string segmentId)
         => IsCatalogReady && _index.ContainsKey(Hash(segmentId));
@@ -71,6 +76,7 @@ public sealed class RepairPatchStore
             var fileStream = new FileStream(blobPath, FileMode.Open, FileAccess.Read,
                 FileShare.Read | FileShare.Delete, bufferSize: 81920, useAsync: true);
             entry.LastAccessTicks = DateTime.UtcNow.Ticks;
+            Interlocked.Increment(ref _hitCount);
             response = new UsenetDecodedBodyResponse
             {
                 SegmentId = segmentId,
@@ -170,6 +176,7 @@ public sealed class RepairPatchStore
                 if (_currentBytes <= _maxBytes) break;
                 if (!_index.TryRemove(kv.Key, out var entry)) continue;
                 _currentBytes -= entry.Size;
+                Interlocked.Increment(ref _evictionCount);
                 SafeDelete(BlobPath(kv.Key));
                 SafeDelete(BlobPath(kv.Key) + ".h");
                 PrometheusMetrics.Current?.RecordPar2PatchEviction();
