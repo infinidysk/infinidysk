@@ -7,6 +7,8 @@ using System.Threading.Tasks;
 using SharpCompress.Archives;
 using SharpCompress.Archives.Tar;
 using SharpCompress.Common;
+using SharpCompress.Common.Rar.Headers;
+using SharpCompress.IO;
 using SharpCompress.Readers;
 using SharpCompress.Test.Mocks;
 using SharpCompress.Writers;
@@ -190,6 +192,101 @@ public class AsyncParityAndCancellationTests : TestBase
         }
     }
 
+    [Theory]
+    [InlineData("Rar.none.rar")]
+    [InlineData("Rar5.none.rar")]
+    public async Task RarHeaderFactory_ReadHeadersAsync_ShouldMatchSyncHeaders(string archiveName)
+    {
+        var syncHeaders = ReadRarHeaders(archiveName);
+        var asyncHeaders = await ReadRarHeadersAsync(archiveName);
+
+        Assert.Equal(syncHeaders, asyncHeaders);
+    }
+
+    [Theory]
+    [InlineData("Rar.none.rar")]
+    [InlineData("Rar5.none.rar")]
+    public async Task RarHeaderFactory_ReadHeadersAsync_ShouldRespectCancellationAfterSignature(
+        string archiveName
+    )
+    {
+        var archiveBytes = await File.ReadAllBytesAsync(
+            Path.Join(TEST_ARCHIVES_PATH, archiveName)
+        );
+        using var cts = new CancellationTokenSource();
+        // RAR4 signature is 7 bytes and RAR5 is 8; cancel after that so MarkHeader
+        // does not wrap the cancellation into RarHeaderReadException.
+        await using var stream = new CancelAfterBytesReadStream(
+            new MemoryStream(archiveBytes),
+            cts,
+            cancelAfterBytes: 16
+        );
+        var factory = CreateRarHeaderFactory();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in factory.ReadHeadersAsync(stream, cts.Token)) { }
+        });
+    }
+
+    [Theory]
+    [InlineData("Rar.none.rar")]
+    [InlineData("Rar5.none.rar")]
+    [InlineData("Rar.comment.rar")]
+    [InlineData("Rar5.comment.rar")]
+    public async Task RarHeaderFactory_ReadHeadersAsync_StopAfterFirstFile_SkipsNoPackedData(
+        string archiveName
+    )
+    {
+        var archiveBytes = await File.ReadAllBytesAsync(
+            Path.Join(TEST_ARCHIVES_PATH, archiveName)
+        );
+        await using var stream = new SeekCountingStream(new MemoryStream(archiveBytes));
+        var factory = CreateRarHeaderFactory();
+        IRarFileHeader? firstFile = null;
+        var seeksAtYield = -1;
+
+        await foreach (var header in factory.ReadHeadersAsync(stream))
+        {
+            if (header.HeaderType != HeaderType.File || header is not IRarFileHeader fileHeader)
+            {
+                continue;
+            }
+
+            if (fileHeader.IsDirectory)
+            {
+                continue;
+            }
+
+            firstFile = fileHeader;
+            seeksAtYield = stream.SeekCount;
+            break;
+        }
+
+        Assert.NotNull(firstFile);
+        Assert.Equal(firstFile.DataStartPosition, stream.Position);
+        Assert.Equal(seeksAtYield, stream.SeekCount);
+        Assert.DoesNotContain(
+            firstFile.DataStartPosition + firstFile.CompressedSize,
+            stream.SeekTargets
+        );
+    }
+
+    [Theory]
+    [InlineData("Rar.encrypted_filesAndHeader.rar")]
+    [InlineData("Rar5.encrypted_filesAndHeader.rar")]
+    public async Task RarHeaderFactory_ReadHeadersAsync_EncryptedHeaders_ShouldMatchSync(
+        string archiveName
+    )
+    {
+        const string password = "test";
+        var syncHeaders = ReadRarHeaders(archiveName, password);
+        var asyncHeaders = await ReadRarHeadersAsync(archiveName, password);
+
+        Assert.Equal(syncHeaders, asyncHeaders);
+        Assert.Contains(asyncHeaders, header => header.HeaderType == HeaderType.File);
+    }
+
     [Fact]
     public async Task OpenAsyncArchive_CallerProvidedStream_ShouldRemainOpenByDefault()
     {
@@ -335,10 +432,134 @@ public class AsyncParityAndCancellationTests : TestBase
         return stream.ToArray();
     }
 
+    private static RarHeaderFactory CreateRarHeaderFactory(string? password = null) =>
+        new(
+            StreamingMode.Seekable,
+            ReaderOptions.ForExternalStream with
+            {
+                Password = password,
+            }
+        );
+
+    private static List<HeaderFieldSnapshot> ReadRarHeaders(
+        string archiveName,
+        string? password = null
+    )
+    {
+        using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, archiveName));
+        var factory = CreateRarHeaderFactory(password);
+        return factory.ReadHeaders(stream).Select(SnapshotHeader).ToList();
+    }
+
+    private static async Task<List<HeaderFieldSnapshot>> ReadRarHeadersAsync(
+        string archiveName,
+        string? password = null
+    )
+    {
+        await using var stream = File.OpenRead(Path.Join(TEST_ARCHIVES_PATH, archiveName));
+        var factory = CreateRarHeaderFactory(password);
+        var headers = new List<HeaderFieldSnapshot>();
+        await foreach (var header in factory.ReadHeadersAsync(stream))
+        {
+            headers.Add(SnapshotHeader(header));
+        }
+
+        return headers;
+    }
+
+    private static HeaderFieldSnapshot SnapshotHeader(IRarHeader header)
+    {
+        if (header is IRarFileHeader fileHeader)
+        {
+            return new HeaderFieldSnapshot(
+                header.HeaderType,
+                fileHeader.FileName,
+                fileHeader.DataStartPosition,
+                fileHeader.CompressedSize,
+                fileHeader.AdditionalDataSize
+            );
+        }
+
+        return new HeaderFieldSnapshot(header.HeaderType, null, null, null, null);
+    }
+
     private sealed record EntrySnapshot(
         string Key,
         long Size,
         CompressionType CompressionType,
         string Content
     );
+
+    private sealed record HeaderFieldSnapshot(
+        HeaderType HeaderType,
+        string? FileName,
+        long? DataStartPosition,
+        long? CompressedSize,
+        long? AdditionalDataSize
+    );
+
+    /// <summary>
+    /// Counts explicit <see cref="Stream.Seek"/> calls and <see cref="Stream.Position"/>
+    /// assignments so stop-after-first-file can prove packed data was not skipped.
+    /// </summary>
+    private sealed class SeekCountingStream(Stream inner) : Stream
+    {
+        public int SeekCount { get; private set; }
+        public List<long> SeekTargets { get; } = [];
+
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+
+        public override long Position
+        {
+            get => inner.Position;
+            set
+            {
+                SeekCount++;
+                SeekTargets.Add(value);
+                inner.Position = value;
+            }
+        }
+
+        public override void Flush() => inner.Flush();
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            inner.Read(buffer, offset, count);
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default
+        ) => await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            SeekCount++;
+            var result = inner.Seek(offset, origin);
+            SeekTargets.Add(result);
+            return result;
+        }
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync().ConfigureAwait(false);
+            await base.DisposeAsync().ConfigureAwait(false);
+        }
+    }
 }

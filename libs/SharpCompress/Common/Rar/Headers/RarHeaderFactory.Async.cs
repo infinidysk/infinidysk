@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpCompress.Common.Rar;
@@ -12,7 +13,10 @@ namespace SharpCompress.Common.Rar.Headers;
 public partial class RarHeaderFactory
 {
     /// <inheritdoc cref="ReadHeaders"/>
-    public async IAsyncEnumerable<IRarHeader> ReadHeadersAsync(Stream stream)
+    public async IAsyncEnumerable<IRarHeader> ReadHeadersAsync(
+        Stream stream,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default
+    )
     {
         _pendingSkipPosition = null;
         var markHeader = await MarkHeader
@@ -20,7 +24,7 @@ public partial class RarHeaderFactory
                 stream,
                 Options.LeaveStreamOpen,
                 Options.LookForHeader,
-                CancellationToken.None
+                cancellationToken
             )
             .ConfigureAwait(false);
         _isRar5 = markHeader.IsRar5;
@@ -29,7 +33,7 @@ public partial class RarHeaderFactory
         RarHeader? header;
         while (
             (
-                header = await TryReadNextHeaderAsync(stream, CancellationToken.None)
+                header = await TryReadNextHeaderAsync(stream, cancellationToken)
                     .ConfigureAwait(false)
             ) != null
         )
