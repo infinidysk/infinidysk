@@ -44,3 +44,34 @@ dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
 ```
 
 Full details: repository [CONTRIBUTING.md](https://github.com/infinidysk/infinidysk/blob/main/CONTRIBUTING.md) and [AGENTS.md](https://github.com/infinidysk/infinidysk/blob/main/AGENTS.md).
+
+## Performance regression gates
+
+Pull request CI compares **deterministic** fields from the streaming and SAB API
+reports (`transportRequests`, `transportBytes`, SAB `rowsReturned` /
+`totalCount` / `dbCommands`) against
+[`backend.Benchmarks/Baselines/`](https://github.com/infinidysk/infinidysk/blob/main/backend.Benchmarks/Baselines).
+Timing never blocks a PR.
+
+If that gate fails because you **intentionally** changed transport or query
+shape, update the matching baseline JSON in the same PR (and any adjacent
+count constants in
+`tests/NzbWebDAV.Tests/Streams/RepeatableStreamingBenchmarkCoverageTests.cs`):
+
+```bash
+dotnet run --project backend.Benchmarks -c Release -- --streaming-report --json /tmp/streaming.json
+dotnet run --project backend.Benchmarks -c Release -- --sab-api-report --json /tmp/sab-api.json
+python3 scripts/check-performance-baseline.py \
+  --candidates /tmp/streaming.json \
+  --write-baseline backend.Benchmarks/Baselines/streaming-baseline.json
+python3 scripts/check-performance-baseline.py \
+  --candidates /tmp/sab-api.json \
+  --write-baseline backend.Benchmarks/Baselines/sab-api-baseline.json
+```
+
+Nightly [Performance](https://github.com/infinidysk/infinidysk/actions/workflows/performance.yml)
+runs check latency / throughput / CPU against floored 3× envelopes. To refresh
+those envelopes: **Actions → Performance → Run workflow → rebaseline**. The
+workflow opens a PR and does not merge it. PRs created with `GITHUB_TOKEN` do
+not trigger CI — close/reopen (or push) to run checks.
+
