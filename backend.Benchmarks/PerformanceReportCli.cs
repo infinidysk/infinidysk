@@ -12,11 +12,11 @@ internal static class PerformanceReportCli
         for (var i = 0; i < args.Length;)
         {
             var arg = args[i];
-            if (arg == "--streaming-report")
+            if (arg is "--streaming-report" or "--sab-api-report")
             {
                 if (report is not null)
                     throw new ArgumentException("Multiple performance reports in one invocation.");
-                report = "streaming";
+                report = arg == "--streaming-report" ? "streaming" : "sab-api";
                 i++;
                 continue;
             }
@@ -38,11 +38,19 @@ internal static class PerformanceReportCli
         if (report is null)
         {
             if (jsonPath is not null)
-                throw new ArgumentException("--json requires --streaming-report.");
+                throw new ArgumentException("--json requires --streaming-report or --sab-api-report.");
             return false;
         }
 
-        await RepeatableStreamingReport.RunAsync(jsonPath).ConfigureAwait(false);
+        if (report == "streaming")
+        {
+            await RepeatableStreamingReport.RunAsync(jsonPath).ConfigureAwait(false);
+            return true;
+        }
+
+        if (jsonPath is null)
+            throw new ArgumentException("--sab-api-report requires --json <path>.");
+        await SabApiReport.RunAsync(jsonPath).ConfigureAwait(false);
         return true;
     }
 }
