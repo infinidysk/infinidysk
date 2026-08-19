@@ -35,6 +35,14 @@ public sealed class PrometheusMetrics
     private readonly Histogram _segmentFetchDuration;
     private readonly Counter _seekCount;
     private readonly Histogram _seekLatency;
+    private readonly Histogram _par2RepairDuration;
+    private readonly Counter _par2RepairBytesRead;
+    private readonly Counter _par2SegmentsReconstructed;
+    private readonly Counter _par2ValidationFailures;
+    private readonly Gauge _par2PatchStoreBytes;
+    private readonly Counter _par2PatchHits;
+    private readonly Counter _par2PatchEvictions;
+    private readonly Counter _par2RepairJobs;
     private readonly HashSet<string> _providerKeys = new(StringComparer.Ordinal);
 
     public PrometheusMetrics(CollectorRegistry registry)
@@ -64,6 +72,33 @@ public sealed class PrometheusMetrics
         _segmentFetchDuration = metrics.CreateHistogram("nzbdav_segment_fetch_duration_seconds", "Segment fetch duration.", new HistogramConfiguration { LabelNames = ["provider_key"], Buckets = Histogram.ExponentialBuckets(0.01, 2, 14) });
         _seekCount = metrics.CreateCounter("nzbdav_seek_total", "Seek operations.", new CounterConfiguration { LabelNames = ["kind"] });
         _seekLatency = metrics.CreateHistogram("nzbdav_seek_latency_seconds", "Post-seek preparation latency.", new HistogramConfiguration { LabelNames = ["kind"], Buckets = Histogram.ExponentialBuckets(0.001, 2, 14) });
+        _par2RepairJobs = metrics.CreateCounter(
+            "nzbdav_par2_repair_jobs_total",
+            "PAR2 background repair job state transitions.",
+            new CounterConfiguration { LabelNames = ["state"] });
+        _par2RepairDuration = metrics.CreateHistogram(
+            "nzbdav_par2_repair_duration_seconds",
+            "PAR2 background repair job duration.",
+            new HistogramConfiguration { Buckets = Histogram.ExponentialBuckets(1, 2, 14) });
+        _par2RepairBytesRead = metrics.CreateCounter(
+            "nzbdav_par2_repair_bytes_read_total",
+            "NNTP bytes read during PAR2 repairs.");
+        _par2SegmentsReconstructed = metrics.CreateCounter(
+            "nzbdav_par2_repair_segments_reconstructed_total",
+            "Segments reconstructed and committed by PAR2 repair.");
+        _par2ValidationFailures = metrics.CreateCounter(
+            "nzbdav_par2_validation_failures_total",
+            "PAR2 validation gate failures.",
+            new CounterConfiguration { LabelNames = ["gate"] });
+        _par2PatchStoreBytes = metrics.CreateGauge(
+            "nzbdav_par2_patch_store_bytes",
+            "Current repair patch store size in bytes.");
+        _par2PatchHits = metrics.CreateCounter(
+            "nzbdav_par2_patch_hits_total",
+            "Segment fetches served from the repair patch store.");
+        _par2PatchEvictions = metrics.CreateCounter(
+            "nzbdav_par2_patch_evictions_total",
+            "Repair patch store evictions.");
     }
 
     public static PrometheusMetrics? Current { get; set; }
@@ -79,6 +114,23 @@ public sealed class PrometheusMetrics
         _seekCount.WithLabels(kind).Inc();
         _seekLatency.WithLabels(kind).Observe(elapsed.TotalSeconds);
     }
+
+    public void RecordPar2RepairJob(string state) => _par2RepairJobs.WithLabels(state).Inc();
+
+    public void ObservePar2RepairDuration(TimeSpan elapsed)
+        => _par2RepairDuration.Observe(elapsed.TotalSeconds);
+
+    public void AddPar2RepairBytesRead(long bytes) => _par2RepairBytesRead.Inc(bytes);
+
+    public void AddPar2SegmentsReconstructed(int count) => _par2SegmentsReconstructed.Inc(count);
+
+    public void RecordPar2ValidationFailure(string gate) => _par2ValidationFailures.WithLabels(gate).Inc();
+
+    public void SetPar2PatchStoreBytes(long bytes) => _par2PatchStoreBytes.Set(bytes);
+
+    public void RecordPar2PatchHit() => _par2PatchHits.Inc();
+
+    public void RecordPar2PatchEviction() => _par2PatchEvictions.Inc();
 
     public void Refresh(
         ActiveReadRegistry activeReads,

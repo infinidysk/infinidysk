@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
 using Serilog;
 
@@ -11,7 +12,8 @@ public sealed class PrometheusMetricsCollector(
     ActiveReadRegistry activeReads,
     ConcurrentReadTracker concurrentReads,
     MetricsWriter metricsWriter,
-    UsenetStreamingClient usenetClient) : BackgroundService
+    UsenetStreamingClient usenetClient,
+    RepairPatchStore repairPatchStore) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
 
@@ -22,7 +24,10 @@ public sealed class PrometheusMetricsCollector(
             try
             {
                 if (InFlightArticleBudget.Current is { } budget)
+                {
                     metrics.Refresh(activeReads, concurrentReads, budget, metricsWriter, usenetClient);
+                    metrics.SetPar2PatchStoreBytes(repairPatchStore.CurrentBytes);
+                }
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
