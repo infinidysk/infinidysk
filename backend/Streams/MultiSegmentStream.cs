@@ -8,6 +8,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services.Diagnostics;
+using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using Serilog;
 using UsenetSharp.Models;
@@ -958,6 +959,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 "Using the observed {Bytes}-byte segment size of {FileName} to replace failed segment {SegmentId}.",
                 fill, _fileName, segmentId);
         }
+
+        Par2RepairTriggerSink.Current?.ReportZeroFill(_fileName, segmentId, segmentIndex, fill);
 
 #pragma warning disable CA2000 // gap-fill stream ownership transfers to the returned SegmentDownloadResult
         return SegmentDownloadResult.ZeroFill(

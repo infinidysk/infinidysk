@@ -26,6 +26,7 @@ using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.Observability;
 using NzbWebDAV.Services.SupportPack;
 using NzbWebDAV.Services.StreamTrace;
@@ -300,6 +301,21 @@ public partial class Program
                     sp.GetRequiredService<ConfigManager>(),
                     () => new DavDatabaseContext()))
                 .AddHostedService(sp => sp.GetRequiredService<ArticleMissNegativeCache>())
+                .AddSingleton(sp =>
+                {
+                    var cfg = sp.GetRequiredService<ConfigManager>();
+                    return new RepairPatchStore(
+                        cfg.GetRepairPatchStorePath(),
+                        cfg.GetPar2MaxPatchBytes());
+                })
+                .AddSingleton<Par2RepairService>()
+                .AddHostedService(sp => sp.GetRequiredService<Par2RepairService>())
+                .AddSingleton(sp =>
+                {
+                    var sink = new Par2RepairTriggerSink(sp.GetRequiredService<Par2RepairService>());
+                    Par2RepairTriggerSink.Current = sink;
+                    return sink;
+                })
                 .AddSingleton<WardenStore>()
                 .AddSingleton<WardenRemoteSourceService>()
                 .AddHostedService(sp => sp.GetRequiredService<WardenRemoteSourceService>())

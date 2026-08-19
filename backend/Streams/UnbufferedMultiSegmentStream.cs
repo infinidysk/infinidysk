@@ -1,6 +1,7 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using Serilog;
 using UsenetSharp.Streams;
@@ -114,6 +115,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                             e);
                         if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
                             StreamTrace.TryZeroFill(sessionId, e.SegmentId, fill);
+                        Par2RepairTriggerSink.Current?.ReportZeroFill(_fileName, e.SegmentId, segmentIndex, fill);
                         if (_consecutiveZeroFills >= MaxConsecutiveZeroFills)
                             throw;
 

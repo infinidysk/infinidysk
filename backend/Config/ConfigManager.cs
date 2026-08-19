@@ -438,6 +438,8 @@ public class ConfigManager
                 case ConfigKeys.WardenHideDead:
                 case ConfigKeys.WardenBackboneScope:
                 case ConfigKeys.RepairEnable:
+                case ConfigKeys.RepairPar2Enabled:
+                case ConfigKeys.RepairPar2PreferredOverArr:
                 case ConfigKeys.RepairHealthcheckAging:
                 case ConfigKeys.RepairAutoRemoveUnlinkedOnly:
                 case ConfigKeys.RcloneRcEnabled:
@@ -1010,6 +1012,60 @@ public class ConfigManager
         var gb = long.TryParse(v, out var n) ? n : 10;
         return Math.Max(1, gb) * 1024L * 1024L * 1024L;
     }
+
+    public bool IsPar2RepairEnabled()
+    {
+        var repairValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
+        if (repairValue == null || !bool.Parse(repairValue)) return false;
+        var par2Value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2Enabled));
+        return par2Value != null && bool.Parse(par2Value);
+    }
+
+    public bool IsPar2PreferredOverArr()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2PreferredOverArr));
+        return v == null || bool.Parse(v);
+    }
+
+    public int GetPar2MaxMissingSlices()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2MaxMissingSlices));
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 1, 64) : 8;
+    }
+
+    public int GetPar2MaxReleaseGb()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2MaxReleaseGb));
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 1, 200) : 16;
+    }
+
+    public int GetPar2MaxMemoryMb()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2MaxMemoryMb));
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 64, 2048) : 256;
+    }
+
+    public long GetPar2MaxPatchBytes()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2MaxPatchGb));
+        var gb = int.TryParse(v, out var n) ? Math.Clamp(n, 1, 100) : 4;
+        return gb * 1024L * 1024L * 1024L;
+    }
+
+    public int GetPar2FetchConcurrency()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2FetchConcurrency));
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 1, 8) : 2;
+    }
+
+    public int GetPar2FailureCooldownHours()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2FailureCooldownHours));
+        return int.TryParse(v, out var n) ? Math.Clamp(n, 1, 168) : 6;
+    }
+
+    public string GetRepairPatchStorePath()
+        => Path.Join(DavDatabaseContext.ConfigPath, "repair-segments");
 
     // When true, RAR archives are mounted instantly by parsing only the first
     // volume at import; trailing volumes are resolved on first read. Falls

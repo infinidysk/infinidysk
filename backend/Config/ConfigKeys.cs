@@ -88,6 +88,14 @@ public static class ConfigKeys
     public const string RepairHealthcheckAging = "repair.healthcheck-aging";
     public const string RepairAutoRemoveAfterFailures = "repair.auto-remove-after-failures";
     public const string RepairAutoRemoveUnlinkedOnly = "repair.auto-remove-unlinked-only";
+    public const string RepairPar2Enabled = "repair.par2-enabled";
+    public const string RepairPar2PreferredOverArr = "repair.par2-preferred-over-arr";
+    public const string RepairPar2MaxMissingSlices = "repair.par2-max-missing-slices";
+    public const string RepairPar2MaxReleaseGb = "repair.par2-max-release-gb";
+    public const string RepairPar2MaxMemoryMb = "repair.par2-max-memory-mb";
+    public const string RepairPar2MaxPatchGb = "repair.par2-max-patch-gb";
+    public const string RepairPar2FetchConcurrency = "repair.par2-fetch-concurrency";
+    public const string RepairPar2FailureCooldownHours = "repair.par2-failure-cooldown-hours";
     public const string ArrInstances = "arr.instances";
 
     // rclone
