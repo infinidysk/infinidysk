@@ -41,22 +41,29 @@ public static class SegmentDamageClassifier
         if (segmentStartOffsets.Count != totalSegments)
             throw new ArgumentException("Segment start offset count must match totalSegments.", nameof(segmentStartOffsets));
 
-        var missingBytes = missingIndices.Sum(index => exactSegmentSizes[index]);
+        // The run/head checks below assume sorted, unique, in-range indices; normalize
+        // defensively so a mis-ordered or duplicated list cannot misclassify.
+        var missing = missingIndices.Distinct().OrderBy(index => index).ToArray();
+        foreach (var index in missing)
+            if (index < 0 || index >= totalSegments)
+                throw new ArgumentOutOfRangeException(nameof(missingIndices), index, "Missing segment index out of range.");
+
+        var missingBytes = missing.Sum(index => exactSegmentSizes[index]);
         var totalBytes = exactSegmentSizes.Sum();
         var bytePercent = totalBytes == 0 ? 100d : missingBytes * 100d / totalBytes;
-        var longestRun = GetLongestRun(missingIndices);
-        reason = $"{missingIndices.Count} missing segment(s) (largest run {longestRun}, {bytePercent:0.##}% of file)";
+        var longestRun = GetLongestRun(missing);
+        reason = $"{missing.Length} missing segment(s) (largest run {longestRun}, {bytePercent:0.##}% of file)";
 
-        if (missingIndices.Count == 0) return SegmentDamageVerdict.Clean;
+        if (missing.Length == 0) return SegmentDamageVerdict.Clean;
         if (containerClass is MediaContainerClass.Unknown or MediaContainerClass.Mp4MoovAtEnd)
             return SegmentDamageVerdict.Failed;
-        if (missingIndices[0] == 0) return SegmentDamageVerdict.Failed;
+        if (missing[0] == 0) return SegmentDamageVerdict.Failed;
         if (containerClass == MediaContainerClass.Mp4FastStart
             && criticalHeadEndExclusive > 0
-            && missingIndices.Any(index => segmentStartOffsets[index] < criticalHeadEndExclusive))
+            && missing.Any(index => segmentStartOffsets[index] < criticalHeadEndExclusive))
             return SegmentDamageVerdict.Failed;
         if (longestRun > caps.MaxConsecutiveMissing) return SegmentDamageVerdict.Failed;
-        if (missingIndices.Count > caps.MaxTotalMissing) return SegmentDamageVerdict.Failed;
+        if (missing.Length > caps.MaxTotalMissing) return SegmentDamageVerdict.Failed;
         if (bytePercent > caps.MaxMissingBytePercent) return SegmentDamageVerdict.Failed;
 
         return SegmentDamageVerdict.Degraded;

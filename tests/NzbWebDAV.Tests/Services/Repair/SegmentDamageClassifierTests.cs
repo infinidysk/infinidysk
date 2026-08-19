@@ -182,6 +182,39 @@ public class SegmentDamageClassifierTests
                 MediaContainerClass.ResyncTolerant, Caps, 0, out _));
     }
 
+    [Fact]
+    public void Classify_UnsortedIndices_ClassifiesSameAsSorted()
+    {
+        var sorted = Classify(
+            [2, 3], Sizes(10, (2, 10), (3, 10)), MediaContainerClass.ResyncTolerant, out _);
+        var unsorted = Classify(
+            [3, 2], Sizes(10, (2, 10), (3, 10)), MediaContainerClass.ResyncTolerant, out var reason);
+
+        Assert.Equal(sorted, unsorted);
+        Assert.Contains("largest run 2", reason);
+    }
+
+    [Fact]
+    public void Classify_DuplicateIndices_CountOnce()
+    {
+        var verdict = Classify(
+            [2, 2], Sizes(10, (2, 10)), MediaContainerClass.ResyncTolerant, out var reason);
+
+        Assert.Equal(SegmentDamageVerdict.Degraded, verdict);
+        Assert.Contains("1 missing segment(s)", reason);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(4)]
+    public void Classify_OutOfRangeIndex_Throws(int index)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            SegmentDamageClassifier.Classify(
+                [index], 4, [100L, 100, 100, 100], Starts([100L, 100, 100, 100]),
+                MediaContainerClass.ResyncTolerant, Caps, 0, out _));
+    }
+
     private static SegmentDamageVerdict Classify(
         int[] missing,
         long[] sizes,
