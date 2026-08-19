@@ -1,0 +1,254 @@
+name: Performance
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      rebaseline:
+        description: Write new baselines from this run and open a PR
+        type: boolean
+        default: false
+
+concurrency:
+  group: performance-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'infinidysk/infinidysk'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore benchmarks
+        run: dotnet restore backend.Benchmarks/NzbWebDAV.Benchmarks.csproj
+
+      - name: Build benchmarks
+        run: dotnet build backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-restore
+
+      - name: Measure and compare
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p performance-out
+
+          run_report() {
+            local name="$1"
+            local flag="$2"
+            local i
+            for i in 1 2 3; do
+              dotnet run --project backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-build -- \
+                "${flag}" --json "performance-out/${name}-${i}.json"
+            done
+          }
+
+          compare_report() {
+            local name="$1"
+            python3 scripts/check-performance-baseline.py \
+              --baseline "backend.Benchmarks/Baselines/${name}-baseline.json" \
+              --candidates \
+                "performance-out/${name}-1.json" \
+                "performance-out/${name}-2.json" \
+                "performance-out/${name}-3.json" \
+              --summary "${GITHUB_STEP_SUMMARY}" \
+              2>&1 | tee -a performance-out/compare.log
+          }
+
+          run_with_retry() {
+            local name="$1"
+            local flag="$2"
+            run_report "${name}" "${flag}"
+            set +e
+            set -o pipefail
+            compare_report "${name}"
+            local status=$?
+            set -e
+            if [ "${status}" -eq 0 ]; then
+              return 0
+            fi
+            if [ "${status}" -eq 2 ]; then
+              echo "Deterministic/schema failure for ${name}; not retrying."
+              return 2
+            fi
+            echo "Envelope failure for ${name}; retrying once..."
+            run_report "${name}" "${flag}"
+            compare_report "${name}"
+          }
+
+          streaming_status=0
+          sab_status=0
+          set +e
+          run_with_retry streaming --streaming-report
+          streaming_status=$?
+          set -e
+          if [ "${streaming_status}" -eq 2 ]; then
+            exit 2
+          fi
+          set +e
+          run_with_retry sab-api --sab-api-report
+          sab_status=$?
+          set -e
+          if [ "${sab_status}" -eq 2 ]; then
+            exit 2
+          fi
+          if [ "${streaming_status}" -ne 0 ] || [ "${sab_status}" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload candidate artifacts
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: performance-candidates
+          path: performance-out/
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Notify development Discord
+        if: ${{ failure() }}
+        env:
+          DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_DEVELOPMENT_WEBHOOK_URL}" ]; then
+            echo "Discord webhook not configured; skipping failure notification."
+            exit 0
+          fi
+          DETAILS=""
+          if [ -f performance-out/compare.log ]; then
+            DETAILS=$(tail -n 40 performance-out/compare.log)
+          fi
+          ANNOUNCEMENT_BODY=$(printf '📉 **Performance envelopes failed** (`%s`)\nRun: %s\n\n%s' \
+            "${SHA:0:7}" "${RUN_URL}" "${DETAILS}")
+          MAX_LEN=1900
+          if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then
+            ANNOUNCEMENT_BODY="${ANNOUNCEMENT_BODY:0:$((MAX_LEN - 3))}..."
+          fi
+          ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
+          curl --fail-with-body -sS -H "Content-Type: application/json" \
+            -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
+            "$DISCORD_DEVELOPMENT_WEBHOOK_URL"
+
+  rebaseline:
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.rebaseline && needs.measure.result != 'skipped' }}
+    needs: measure
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download measurement artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: performance-candidates
+          path: performance-out
+
+      - name: Write baselines and open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/check-performance-baseline.py \
+            --candidates \
+              performance-out/streaming-1.json \
+              performance-out/streaming-2.json \
+              performance-out/streaming-3.json \
+            --write-baseline backend.Benchmarks/Baselines/streaming-baseline.json
+          python3 scripts/check-performance-baseline.py \
+            --candidates \
+              performance-out/sab-api-1.json \
+              performance-out/sab-api-2.json \
+              performance-out/sab-api-3.json \
+            --write-baseline backend.Benchmarks/Baselines/sab-api-baseline.json
+
+          BODY_FILE="$(mktemp)"
+          python3 - "${BODY_FILE}" "${RUN_URL}" <<'PY'
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          body_path = Path(sys.argv[1])
+          run_url = sys.argv[2]
+          files = [
+              ("streaming", "backend.Benchmarks/Baselines/streaming-baseline.json"),
+              ("sab-api", "backend.Benchmarks/Baselines/sab-api-baseline.json"),
+          ]
+          lines = [
+              "## Summary",
+              "",
+              f"Nightly/manual performance re-baseline from [this run]({run_url}).",
+              "",
+              "## Timing changes",
+              "",
+          ]
+          for report, path in files:
+              old = json.loads(subprocess.check_output(["git", "show", f"HEAD:{path}"]))
+              new = json.loads(Path(path).read_text(encoding="utf-8"))
+              lines.append(f"### {report}")
+              lines.append("")
+              lines.append("| Scenario | Field | Old baseline | New baseline |")
+              lines.append("| --- | --- | --- | --- |")
+              for scenario, payload in new["scenarios"].items():
+                  old_timing = old["scenarios"].get(scenario, {}).get("timing", {})
+                  for field, spec in payload["timing"].items():
+                      old_spec = old_timing.get(field, {})
+                      lines.append(
+                          f"| `{scenario}` | `{field}` | {old_spec.get('baseline', old_spec.get('floor', '_n/a_'))} "
+                          f"| {spec.get('baseline', spec.get('floor'))} |"
+                      )
+              lines.append("")
+          lines.extend(
+              [
+                  "## CI note",
+                  "",
+                  "Pull requests created with `GITHUB_TOKEN` do not trigger `pull_request` workflows "
+                  "(GitHub anti-recursion, same limitation as release-please). **Close and reopen this PR "
+                  "(or push an empty commit) to run checks.**",
+                  "",
+              ]
+          )
+          body_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "chore/performance-rebaseline-${RUN_ID}"
+          git add backend.Benchmarks/Baselines/streaming-baseline.json \
+            backend.Benchmarks/Baselines/sab-api-baseline.json
+          if git diff --cached --quiet; then
+            echo "Baselines are unchanged; no PR opened."
+            exit 0
+          fi
+          git commit -m "chore(ci): re-baseline performance envelopes"
+          git push -u origin "HEAD:chore/performance-rebaseline-${RUN_ID}"
+          gh pr create \
+            --title "chore(ci): re-baseline performance envelopes" \
+            --body-file "${BODY_FILE}"
