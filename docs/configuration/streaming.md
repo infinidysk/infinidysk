@@ -43,7 +43,8 @@ is saturated.
 | Article Buffer Size | `usenet.article-buffer-size` | `40` | Articles buffered ahead per stream |
 | In-flight article budget (MiB) [since 0.8.2](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.2){ .nzbdav-since } | `usenet.in-flight-article-budget-mb` | auto | Host-wide decoded-byte cap, 64–8192 MiB |
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | Close unused connections after 15–300 seconds |
-| Pipelined article downloads | `usenet.pipelined-body-requests` | on | Fetch WebDAV BODY requests in small batches |
+| Batched article downloads | `usenet.pipelined-body-requests` | on | Fetch WebDAV BODY requests in small batches |
+| Streaming batch width [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `usenet.streaming-body-batch-width` | `4` | Maximum articles per BODY batch (1–8) |
 | Container-aware gap fill [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | on | Experimental MPEG-TS null-packet fill for confirmed gaps |
 
 ### Segment-cache storage
@@ -61,11 +62,18 @@ write endurance; alternatively, point **Cache path** at suitable local storage.
 ahead of the consumer. The in-flight article budget separately caps decoded
 bytes across all concurrent streams.
 
-When **Pipelined article downloads** is on, WebDAV BODY requests start in
-batches of up to four articles on one connection. If playback starves waiting
-for the next segment, InfiniDysk narrows that batch width (`4 → 2 → 1`) so more
-connections can work in parallel. The width recovers gradually when the
-consumer remains ahead.
+When **Batched article downloads** is on, WebDAV BODY requests start in
+batches of up to the configured streaming batch width (default four articles
+on one connection). If playback starves waiting for the next segment,
+InfiniDysk narrows that batch width (`4 → 2 → 1`) so more connections can
+work in parallel. The width recovers gradually when the consumer remains
+ahead, but never above the configured maximum.
+
+The segment task window and prefetch byte ceiling are computed once at stream
+construction from the initial batch width and article buffer. Adaptive
+narrowing does not shrink those ceilings — only future batch sizes. Leave the
+width at the default unless you have measured a benefit; wide settings can
+starve other concurrent streams via the shared in-flight article budget.
 
 ## Experimental container-aware gap fill
 

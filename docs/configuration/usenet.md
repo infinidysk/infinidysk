@@ -46,10 +46,12 @@ a man-in-the-middle attacker to impersonate the provider and read credentials.
 |---------|------------|---------|--------|
 | Enable cascade routing | `usenet.cascade.enabled` | off | Prefer providers in drag order; off = shared pool. Thinly-spared primaries (≤25% free) yield to idler peers; larger MaxConnections alone does not outrank priority. |
 | Re-probe primary after miss | `usenet.cascade.retry-primary-on-miss` | on | After a clean 430/451 on the first batch attempt, try the primary once more before cascading (multi-node spool). Off = skip straight to backups. |
-| Enable NNTP pipelining | `usenet.pipelining.enabled` | off | Batch first-segment BODY during queue imports/benchmarks |
-| Default pipeline depth | `usenet.pipelining.depth` | `8` | Requests in flight per connection (1–64) |
+| Enable queue pipelining | `usenet.queue-pipelining.enabled` | off | Batch first-segment BODY during queue imports/benchmarks |
+| Queue pipeline depth | `usenet.queue-pipelining.depth` | `8` | Requests in flight per connection (1–64) |
 
-Run Auto-tune before enabling queue pipelining. WebDAV streaming pipelining is a **separate** toggle on [WebDAV](webdav.md).
+Legacy keys `usenet.pipelining.enabled` / `usenet.pipelining.depth` remain honored; env vars use `NZBDAV_CONFIG__USENET__QUEUE_PIPELINING__*` for the new names.
+
+Run Auto-tune before enabling queue pipelining. WebDAV streaming batching is a **separate** toggle on [Streaming](streaming.md).
 
 See [NNTP pipelining](../features/nntp-pipelining.md) and [Multi-provider](../features/multi-provider.md).
 
