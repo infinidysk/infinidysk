@@ -179,6 +179,127 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
             </Tooltip>
             </ManagedSetting>
             </SettingsCard>
+
+            <SettingsCard
+                icon="healing"
+                title="PAR2 gap repair"
+                description="Reconstruct missing segments from parity volumes in the background instead of triggering an immediate Arr replacement."
+                contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
+            >
+            {!isRepairEnabled && (
+                <p className="text-[11px] leading-relaxed text-base-content/45 lg:col-span-2">
+                    Enable Background Repairs above to activate PAR2 gap repair.
+                </p>
+            )}
+            <ManagedSetting configKey="repair.par2-enabled">
+            <Tooltip content="When enabled, missing segments discovered during streaming or health checks are reconstructed from PAR2 recovery data when feasible. Defaults to off because repairs read the full recovery set once.">
+                <Toggle
+                    id="par2-repair-enabled-checkbox"
+                    className="cursor-pointer gap-2 p-0"
+                    checked={isRepairEnabled && config["repair.par2-enabled"] === "true"}
+                    disabled={!isRepairEnabled}
+                    onChange={e => setNewConfig({ ...config, "repair.par2-enabled": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Enable PAR2 background repair</span>}
+                />
+            </Tooltip>
+            </ManagedSetting>
+            <ManagedSetting configKey="repair.par2-preferred-over-arr">
+            <Tooltip content="When enabled (default), try PAR2 reconstruction before removing the release through Radarr/Sonarr.">
+                <Toggle
+                    id="par2-preferred-over-arr-checkbox"
+                    className="cursor-pointer gap-2 p-0"
+                    checked={(config["repair.par2-preferred-over-arr"] ?? "true") === "true"}
+                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    onChange={e => setNewConfig({ ...config, "repair.par2-preferred-over-arr": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Prefer PAR2 over Arr replacement</span>}
+                />
+            </Tooltip>
+            </ManagedSetting>
+            <ManagedSetting
+                configKeys={[
+                    "repair.par2-max-missing-slices",
+                    "repair.par2-max-release-gb",
+                    "repair.par2-max-memory-mb",
+                    "repair.par2-max-patch-gb",
+                    "repair.par2-fetch-concurrency",
+                    "repair.par2-failure-cooldown-hours",
+                ]}
+                className="grid grid-cols-1 gap-4 lg:col-span-2 lg:grid-cols-2"
+            >
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-base-content" htmlFor="par2-max-missing-slices-input">Max missing slices</label>
+                <Input
+                    className={`w-full ${!isPositiveInteger(config["repair.par2-max-missing-slices"] ?? "8") ? "input-error" : ""}`}
+                    type="text"
+                    id="par2-max-missing-slices-input"
+                    placeholder="8"
+                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    value={config["repair.par2-max-missing-slices"] ?? ""}
+                    onChange={e => setNewConfig({ ...config, "repair.par2-max-missing-slices": e.target.value })} />
+                <p className="text-[11px] leading-relaxed text-base-content/45">
+                    Maximum number of missing PAR2 slices to reconstruct in one job (1–64).
+                </p>
+            </div>
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-base-content" htmlFor="par2-max-release-gb-input">Max release size (GB)</label>
+                <Input
+                    className={`w-full ${!isPositiveInteger(config["repair.par2-max-release-gb"] ?? "16") ? "input-error" : ""}`}
+                    type="text"
+                    id="par2-max-release-gb-input"
+                    placeholder="16"
+                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    value={config["repair.par2-max-release-gb"] ?? ""}
+                    onChange={e => setNewConfig({ ...config, "repair.par2-max-release-gb": e.target.value })} />
+                <p className="text-[11px] leading-relaxed text-base-content/45">
+                    Refuse PAR2 repair when the recovery set exceeds this size. A repair reads the full recovery set once.
+                </p>
+            </div>
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-base-content" htmlFor="par2-max-memory-mb-input">Max memory (MB)</label>
+                <Input
+                    className={`w-full ${!isPositiveInteger(config["repair.par2-max-memory-mb"] ?? "256") ? "input-error" : ""}`}
+                    type="text"
+                    id="par2-max-memory-mb-input"
+                    placeholder="256"
+                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    value={config["repair.par2-max-memory-mb"] ?? ""}
+                    onChange={e => setNewConfig({ ...config, "repair.par2-max-memory-mb": e.target.value })} />
+            </div>
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-base-content" htmlFor="par2-max-patch-gb-input">Patch store cap (GB)</label>
+                <Input
+                    className={`w-full ${!isPositiveInteger(config["repair.par2-max-patch-gb"] ?? "4") ? "input-error" : ""}`}
+                    type="text"
+                    id="par2-max-patch-gb-input"
+                    placeholder="4"
+                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    value={config["repair.par2-max-patch-gb"] ?? ""}
+                    onChange={e => setNewConfig({ ...config, "repair.par2-max-patch-gb": e.target.value })} />
+            </div>
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-base-content" htmlFor="par2-fetch-concurrency-input">Fetch concurrency</label>
+                <Input
+                    className={`w-full ${!isPositiveInteger(config["repair.par2-fetch-concurrency"] ?? "2") ? "input-error" : ""}`}
+                    type="text"
+                    id="par2-fetch-concurrency-input"
+                    placeholder="2"
+                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    value={config["repair.par2-fetch-concurrency"] ?? ""}
+                    onChange={e => setNewConfig({ ...config, "repair.par2-fetch-concurrency": e.target.value })} />
+            </div>
+            <div className="space-y-2">
+                <label className="block text-sm font-medium text-base-content" htmlFor="par2-failure-cooldown-hours-input">Failure cooldown (hours)</label>
+                <Input
+                    className={`w-full ${!isPositiveInteger(config["repair.par2-failure-cooldown-hours"] ?? "6") ? "input-error" : ""}`}
+                    type="text"
+                    id="par2-failure-cooldown-hours-input"
+                    placeholder="6"
+                    disabled={!isRepairEnabled || config["repair.par2-enabled"] !== "true"}
+                    value={config["repair.par2-failure-cooldown-hours"] ?? ""}
+                    onChange={e => setNewConfig({ ...config, "repair.par2-failure-cooldown-hours": e.target.value })} />
+            </div>
+            </ManagedSetting>
+            </SettingsCard>
             </div>
         </SettingsPage>
     );
@@ -191,13 +312,33 @@ export function isRepairsSettingsUpdated(config: Record<string, string>, newConf
         || config["repair.healthcheck-aging"] !== newConfig["repair.healthcheck-aging"]
         || config["repair.auto-remove-after-failures"] !== newConfig["repair.auto-remove-after-failures"]
         || config["repair.auto-remove-unlinked-only"] !== newConfig["repair.auto-remove-unlinked-only"]
+        || config["repair.par2-enabled"] !== newConfig["repair.par2-enabled"]
+        || config["repair.par2-preferred-over-arr"] !== newConfig["repair.par2-preferred-over-arr"]
+        || config["repair.par2-max-missing-slices"] !== newConfig["repair.par2-max-missing-slices"]
+        || config["repair.par2-max-release-gb"] !== newConfig["repair.par2-max-release-gb"]
+        || config["repair.par2-max-memory-mb"] !== newConfig["repair.par2-max-memory-mb"]
+        || config["repair.par2-max-patch-gb"] !== newConfig["repair.par2-max-patch-gb"]
+        || config["repair.par2-fetch-concurrency"] !== newConfig["repair.par2-fetch-concurrency"]
+        || config["repair.par2-failure-cooldown-hours"] !== newConfig["repair.par2-failure-cooldown-hours"]
         || config["media.library-dir"] !== newConfig["media.library-dir"];
 }
 
 export function isRepairsSettingsValid(newConfig: Record<string, string>) {
     const concurrency = newConfig["repair.healthcheck-concurrency"];
     const autoRemove = newConfig["repair.auto-remove-after-failures"];
+    const par2NumericKeys = [
+        "repair.par2-max-missing-slices",
+        "repair.par2-max-release-gb",
+        "repair.par2-max-memory-mb",
+        "repair.par2-max-patch-gb",
+        "repair.par2-fetch-concurrency",
+        "repair.par2-failure-cooldown-hours",
+    ] as const;
     const concurrencyOk = concurrency === undefined || concurrency === "" || isPositiveInteger(concurrency);
     const autoRemoveOk = autoRemove === undefined || autoRemove === "" || isNonNegativeInteger(autoRemove);
-    return concurrencyOk && autoRemoveOk;
+    const par2Ok = par2NumericKeys.every(key => {
+        const value = newConfig[key];
+        return value === undefined || value === "" || isPositiveInteger(value);
+    });
+    return concurrencyOk && autoRemoveOk && par2Ok;
 }
