@@ -407,6 +407,26 @@ public class ConfigManager
                     RequireLongInRange(item.ConfigName, value, 1, 8);
                     break;
 
+                case ConfigKeys.UsenetSharedStreamsMaxEntries:
+                    RequireLongInRange(item.ConfigName, value, 1, 32);
+                    break;
+
+                case ConfigKeys.UsenetSharedStreamsMaxEntriesPerFile:
+                    RequireLongInRange(item.ConfigName, value, 1, 8);
+                    break;
+
+                case ConfigKeys.UsenetSharedStreamsRingMb:
+                    RequireLongInRange(item.ConfigName, value, 4, 256);
+                    break;
+
+                case ConfigKeys.UsenetSharedStreamsGraceSeconds:
+                    RequireLongInRange(item.ConfigName, value, 0, 60);
+                    break;
+
+                case ConfigKeys.UsenetSharedStreamsSmallRangeMaxMb:
+                    RequireLongInRange(item.ConfigName, value, 1, 256);
+                    break;
+
                 case ConfigKeys.ProwlarrUrl:
                     RequireHttpUrl(item.ConfigName, value);
                     break;
@@ -430,6 +450,7 @@ public class ConfigManager
                 case ConfigKeys.UsenetContainerAwareFill:
                 case ConfigKeys.UsenetPipelinedBodyRequests:
                 case ConfigKeys.UsenetSegmentCacheEnabled:
+                case ConfigKeys.UsenetSharedStreamsEnabled:
                 case ConfigKeys.PlayWatchdogEnabled:
                 case ConfigKeys.PlayPreferSubtitles:
                 case ConfigKeys.GrabStallFailoverEnabled:
@@ -901,6 +922,41 @@ public class ConfigManager
         var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingBodyBatchWidth));
         if (configured is null || !int.TryParse(configured, out var value)) return 4;
         return Math.Clamp(value, 1, 8);
+    }
+
+    public bool IsSharedStreamsEnabled()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetSharedStreamsEnabled));
+        return value == null || bool.Parse(value);
+    }
+
+    public int GetSharedStreamsMaxEntries() =>
+        GetClampedInt(ConfigKeys.UsenetSharedStreamsMaxEntries, 4, 1, 32);
+
+    public int GetSharedStreamsMaxEntriesPerFile() =>
+        GetClampedInt(ConfigKeys.UsenetSharedStreamsMaxEntriesPerFile, 3, 1, 8);
+
+    public int GetSharedStreamsRingMb() =>
+        GetClampedInt(ConfigKeys.UsenetSharedStreamsRingMb, 32, 4, 256);
+
+    public long GetSharedStreamsRingBytes() =>
+        (long)GetSharedStreamsRingMb() * 1024L * 1024L;
+
+    public int GetSharedStreamsGraceSeconds() =>
+        GetClampedInt(ConfigKeys.UsenetSharedStreamsGraceSeconds, 10, 0, 60);
+
+    public int GetSharedStreamsSmallRangeMaxMb() =>
+        GetClampedInt(ConfigKeys.UsenetSharedStreamsSmallRangeMaxMb, 16, 1, 256);
+
+    public long GetSharedStreamsSmallRangeMaxBytes() =>
+        (long)GetSharedStreamsSmallRangeMaxMb() * 1024L * 1024L;
+
+    private int GetClampedInt(string key, int defaultValue, int min, int max)
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(key));
+        if (configured is null || !int.TryParse(configured, out var value))
+            return defaultValue;
+        return Math.Clamp(value, min, max);
     }
 
     public int GetArticleBufferSize()

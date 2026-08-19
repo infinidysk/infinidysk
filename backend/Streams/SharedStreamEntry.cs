@@ -91,6 +91,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
 
     internal Action<SharedStreamEntry, SharedStreamReapReason>? OnReaped { get; set; }
     internal Action<long>? OnRingRetainedBytes { get; set; }
+    internal Action<int>? OnForceEvictions { get; set; }
 
     internal bool IsAttachable
     {
@@ -359,7 +360,9 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         var newTail = frontier - _ringSize;
         if (newTail < Anchor)
             newTail = Anchor;
-        _ring.ForceEvictBelow(newTail);
+        var evicted = _ring.ForceEvictBelow(newTail);
+        if (evicted.Count > 0)
+            OnForceEvictions?.Invoke(evicted.Count);
     }
 
     private void StartGraceLocked()

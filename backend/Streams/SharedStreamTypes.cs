@@ -15,14 +15,14 @@ internal enum SharedStreamEntryState
     Disposed = 4,
 }
 
-internal enum SharedStreamReapReason
+public enum SharedStreamReapReason
 {
     Grace,
     Failure,
     Shutdown,
 }
 
-internal enum SharedStreamAttachMissReason
+public enum SharedStreamAttachMissReason
 {
     BehindWindow,
     AheadOfFrontier,
@@ -34,4 +34,4 @@ internal enum SharedStreamAttachMissReason
     NoCoveringEntry,
 }
 
-internal delegate Task<Stream> SharedStreamFallbackFactory(long offset, CancellationToken cancellationToken);
+public delegate Task<Stream> SharedStreamFallbackFactory(long offset, CancellationToken cancellationToken);

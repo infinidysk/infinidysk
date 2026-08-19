@@ -1,3 +1,5 @@
+using NzbWebDAV.Streams;
+
 namespace NzbWebDAV.Services;
 
 /// <summary>
@@ -23,6 +25,24 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null)
     private long _totalStartDistanceBytes;
     private long _maxStartDistanceBytes;
     private readonly long[] _regionStarts = new long[Enum.GetValues<ConcurrentReadRegion>().Length];
+    private long _sharedAttachHits;
+    private long _sharedAttachMissesBehindWindow;
+    private long _sharedAttachMissesAheadOfFrontier;
+    private long _sharedAttachMissesEntryUnusable;
+    private long _sharedAttachMissesAtEntryCap;
+    private long _sharedAttachMissesAtGlobalCap;
+    private long _sharedAttachMissesSmallRangeNoEntry;
+    private long _sharedAttachMissesIneligible;
+    private long _sharedAttachMissesNoCoveringEntry;
+    private long _sharedEntriesCreated;
+    private long _sharedEntriesReapedGrace;
+    private long _sharedEntriesReapedFailure;
+    private long _sharedReaderEvictions;
+    private long _sharedReadersServedTotal;
+    private long _sharedStreamRingRetainedBytes;
+    private long _sharedStreamRingRetainedBytesPeak;
+    private long _sharedStreamTotalBytesPumped;
+    private long _sharedStreamTotalEntryLifetimeMs;
 
     public ReadScope BeginRead(
         string path,
@@ -122,7 +142,108 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null)
                 _regionStarts[(int)ConcurrentReadRegion.Full],
                 _regionStarts[(int)ConcurrentReadRegion.StartRange],
                 _regionStarts[(int)ConcurrentReadRegion.OffsetRange],
-                _regionStarts[(int)ConcurrentReadRegion.SuffixRange]);
+                _regionStarts[(int)ConcurrentReadRegion.SuffixRange],
+                _sharedAttachHits,
+                _sharedAttachMissesBehindWindow,
+                _sharedAttachMissesAheadOfFrontier,
+                _sharedAttachMissesEntryUnusable,
+                _sharedAttachMissesAtEntryCap,
+                _sharedAttachMissesAtGlobalCap,
+                _sharedAttachMissesSmallRangeNoEntry,
+                _sharedAttachMissesIneligible,
+                _sharedAttachMissesNoCoveringEntry,
+                _sharedEntriesCreated,
+                _sharedEntriesReapedGrace,
+                _sharedEntriesReapedFailure,
+                _sharedReaderEvictions,
+                _sharedReadersServedTotal,
+                _sharedStreamRingRetainedBytes,
+                _sharedStreamRingRetainedBytesPeak,
+                _sharedStreamTotalBytesPumped,
+                _sharedStreamTotalEntryLifetimeMs);
+        }
+    }
+
+    public void RecordSharedAttachHit()
+    {
+        lock (_gate)
+        {
+            _sharedAttachHits++;
+            _sharedReadersServedTotal++;
+        }
+    }
+
+    public void RecordSharedAttachMiss(SharedStreamAttachMissReason reason)
+    {
+        lock (_gate)
+        {
+            switch (reason)
+            {
+                case SharedStreamAttachMissReason.BehindWindow:
+                    _sharedAttachMissesBehindWindow++;
+                    break;
+                case SharedStreamAttachMissReason.AheadOfFrontier:
+                    _sharedAttachMissesAheadOfFrontier++;
+                    break;
+                case SharedStreamAttachMissReason.EntryUnusable:
+                    _sharedAttachMissesEntryUnusable++;
+                    break;
+                case SharedStreamAttachMissReason.AtEntryCap:
+                    _sharedAttachMissesAtEntryCap++;
+                    break;
+                case SharedStreamAttachMissReason.AtGlobalCap:
+                    _sharedAttachMissesAtGlobalCap++;
+                    break;
+                case SharedStreamAttachMissReason.SmallRangeNoEntry:
+                    _sharedAttachMissesSmallRangeNoEntry++;
+                    break;
+                case SharedStreamAttachMissReason.NoCoveringEntry:
+                    _sharedAttachMissesNoCoveringEntry++;
+                    break;
+                default:
+                    _sharedAttachMissesIneligible++;
+                    break;
+            }
+        }
+    }
+
+    public void RecordSharedEntryCreated()
+    {
+        lock (_gate) _sharedEntriesCreated++;
+    }
+
+    public void RecordSharedEntryReaped(SharedStreamReapReason reason, long bytesPumped, long lifetimeMs)
+    {
+        lock (_gate)
+        {
+            if (reason == SharedStreamReapReason.Failure)
+                _sharedEntriesReapedFailure++;
+            else
+                _sharedEntriesReapedGrace++;
+            _sharedStreamTotalBytesPumped += Math.Max(0, bytesPumped);
+            _sharedStreamTotalEntryLifetimeMs += Math.Max(0, lifetimeMs);
+        }
+    }
+
+    public void RecordSharedReaderEvictions(int count)
+    {
+        if (count <= 0) return;
+        lock (_gate) _sharedReaderEvictions += count;
+    }
+
+    public void RecordSharedReadersServed(int count)
+    {
+        if (count <= 0) return;
+        lock (_gate) _sharedReadersServedTotal += count;
+    }
+
+    public void UpdateSharedRingRetainedBytes(long currentBytes)
+    {
+        lock (_gate)
+        {
+            _sharedStreamRingRetainedBytes = Math.Max(0, currentBytes);
+            _sharedStreamRingRetainedBytesPeak = Math.Max(
+                _sharedStreamRingRetainedBytesPeak, _sharedStreamRingRetainedBytes);
         }
     }
 
@@ -309,4 +430,35 @@ public readonly record struct ConcurrentReadSnapshot(
     long FullReads,
     long StartRangeReads,
     long OffsetRangeReads,
-    long SuffixRangeReads);
+    long SuffixRangeReads,
+    long SharedAttachHits = 0,
+    long SharedAttachMissesBehindWindow = 0,
+    long SharedAttachMissesAheadOfFrontier = 0,
+    long SharedAttachMissesEntryUnusable = 0,
+    long SharedAttachMissesAtEntryCap = 0,
+    long SharedAttachMissesAtGlobalCap = 0,
+    long SharedAttachMissesSmallRangeNoEntry = 0,
+    long SharedAttachMissesIneligible = 0,
+    long SharedAttachMissesNoCoveringEntry = 0,
+    long SharedEntriesCreated = 0,
+    long SharedEntriesReapedGrace = 0,
+    long SharedEntriesReapedFailure = 0,
+    long SharedReaderEvictions = 0,
+    long SharedReadersServedTotal = 0,
+    long SharedStreamRingRetainedBytes = 0,
+    long SharedStreamRingRetainedBytesPeak = 0,
+    long SharedStreamTotalBytesPumped = 0,
+    long SharedStreamTotalEntryLifetimeMs = 0)
+{
+    public long SharedAttachMisses =>
+        SharedAttachMissesBehindWindow +
+        SharedAttachMissesAheadOfFrontier +
+        SharedAttachMissesEntryUnusable +
+        SharedAttachMissesAtEntryCap +
+        SharedAttachMissesAtGlobalCap +
+        SharedAttachMissesSmallRangeNoEntry +
+        SharedAttachMissesIneligible +
+        SharedAttachMissesNoCoveringEntry;
+
+    public long SharedAttachAttempts => SharedAttachHits + SharedAttachMisses;
+}
