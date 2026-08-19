@@ -515,6 +515,9 @@ namespace NzbWebDAV.Database.Migrations
                     b.Property<int>("Priority")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long>("SortOrder")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("TotalSegmentBytes")
                         .HasColumnType("INTEGER");
 
@@ -531,9 +534,9 @@ namespace NzbWebDAV.Database.Migrations
                     b.HasIndex("Category", "FileName")
                         .IsUnique();
 
-                    b.HasIndex("Priority", "CreatedAt");
+                    b.HasIndex("Priority", "SortOrder");
 
-                    b.HasIndex("Category", "Priority", "CreatedAt");
+                    b.HasIndex("Category", "Priority", "SortOrder");
 
                     b.ToTable("QueueItems", (string)null);
                 });

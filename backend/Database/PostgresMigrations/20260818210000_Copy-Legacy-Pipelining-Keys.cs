@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -5,6 +6,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace NzbWebDAV.Database.PostgresMigrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(PostgresDavDatabaseContext))]
+    [Migration("20260818210000_Copy-Legacy-Pipelining-Keys")]
     public partial class CopyLegacyPipeliningKeys : Migration
     {
         /// <inheritdoc />
