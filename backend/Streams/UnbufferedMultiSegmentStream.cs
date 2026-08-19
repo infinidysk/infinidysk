@@ -4,7 +4,6 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using Serilog;
-using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
@@ -246,7 +245,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 await SegmentResponseValidator
                     .ThrowOnSegmentIdMismatchAsync(fallbackId, body)
                     .ConfigureAwait(false);
-                if (!await IsFallbackPartSizeCompatibleAsync(body.Stream!, segmentIndex, cancellationToken)
+                if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
+                        body.Stream!, _segmentSizes, segmentIndex, cancellationToken)
                         .ConfigureAwait(false))
                 {
                     Log.Debug(
@@ -268,28 +268,6 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         }
 
         return null;
-    }
-
-    private async ValueTask<bool> IsFallbackPartSizeCompatibleAsync(
-        Stream bodyStream, int segmentIndex, CancellationToken ct)
-    {
-        if (!_segmentSizes.TryGetExactSize(segmentIndex, out var exact)) return true;
-        if (bodyStream is not YencStream yenc) return true;
-        UsenetYencHeader? header;
-        try
-        {
-            header = await yenc.GetYencHeadersAsync(ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception e) when (e is InvalidDataException or IOException)
-        {
-            return true;
-        }
-
-        return header is null || header.PartSize <= 0 || header.PartSize == exact;
     }
 
     private void ThrowIfDisposed()

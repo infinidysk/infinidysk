@@ -2,6 +2,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Exceptions;
 using Serilog;
 using UsenetSharp.Models;
+using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
@@ -35,5 +36,26 @@ internal static class SegmentResponseValidator
         throw new UsenetUnexpectedResponseException(
             segmentId,
             $"Response carried segment {actualId} instead of {segmentId}.");
+    }
+
+    public static async ValueTask<bool> IsFallbackPartSizeCompatibleAsync(
+        Stream bodyStream, SegmentSizes segmentSizes, int segmentIndex, CancellationToken ct)
+    {
+        if (!segmentSizes.TryGetExactSize(segmentIndex, out var exact)) return true;
+        if (bodyStream is not YencStream yenc) return true;
+
+        try
+        {
+            var header = await yenc.GetYencHeadersAsync(ct).ConfigureAwait(false);
+            return header is null || header.PartSize <= 0 || header.PartSize == exact;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception e) when (e is InvalidDataException or IOException)
+        {
+            return true;
+        }
     }
 }

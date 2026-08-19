@@ -52,9 +52,8 @@ internal static class SiblingDonorAttacher
                 var added = 0;
                 foreach (var primary in nzbFiles)
                 {
-                    foreach (var donor in document.Files)
+                    foreach (var donor in document.Files.Where(donor => IsDonorMatch(primary, donor)))
                     {
-                        if (!IsDonorMatch(primary, donor)) continue;
                         added += MergeDonorIds(primary, donor, maxPerSegment);
                     }
                 }
@@ -137,7 +136,7 @@ internal static class SiblingDonorAttacher
     private static async Task BackfillSiblingBlobsAsync(
         DavDatabaseContext ctx,
         Guid siblingHistoryId,
-        Dictionary<string, NzbFile> siblingFilesByKey,
+        Dictionary<IReadOnlyList<string>, NzbFile> siblingFilesByKey,
         List<NzbFile> newFiles,
         int maxPerSegment,
         CancellationToken ct)
@@ -155,7 +154,7 @@ internal static class SiblingDonorAttacher
             var copy = await DeserializeDavNzbFileCopyAsync(davItem.FileBlobId!.Value, ct)
                 .ConfigureAwait(false);
             if (copy is null || copy.SegmentIds.Length == 0) continue;
-            if (!siblingFilesByKey.TryGetValue(SegmentKey(copy.SegmentIds), out var siblingFile))
+            if (!siblingFilesByKey.TryGetValue(copy.SegmentIds, out var siblingFile))
                 continue;
 
             var newFile = FindMatchingFile(newFiles, siblingFile);
@@ -175,17 +174,16 @@ internal static class SiblingDonorAttacher
 
     private static void MergeSiblingIntoPendingBlob(
         DavNzbFile pending,
-        Dictionary<string, NzbFile> newFilesByKey,
+        Dictionary<IReadOnlyList<string>, NzbFile> newFilesByKey,
         IReadOnlyList<NzbFile> siblingFiles,
         int maxPerSegment)
     {
         if (pending.SegmentIds.Length == 0) return;
-        if (!newFilesByKey.TryGetValue(SegmentKey(pending.SegmentIds), out var newFile))
+        if (!newFilesByKey.TryGetValue(pending.SegmentIds, out var newFile))
             return;
 
-        foreach (var siblingFile in siblingFiles)
+        foreach (var siblingFile in siblingFiles.Where(siblingFile => IsDonorMatch(newFile, siblingFile)))
         {
-            if (!IsDonorMatch(newFile, siblingFile)) continue;
             MergeDonorIdsIntoDavNzbFile(pending, siblingFile, maxPerSegment);
         }
     }
@@ -284,9 +282,6 @@ internal static class SiblingDonorAttacher
             yield return id;
     }
 
-    internal static string SegmentKey(IReadOnlyList<string> segmentIds) =>
-        string.Join("\u0001", segmentIds);
-
     internal static bool AppendIds(
         ref string[] existing,
         string ownPrimary,
@@ -300,9 +295,9 @@ internal static class SiblingDonorAttacher
 
         var seen = new HashSet<string>(existing, StringComparer.Ordinal) { ownPrimary };
         List<string>? extra = null;
-        foreach (var id in candidates)
+        foreach (var id in candidates.Where(id => !string.IsNullOrEmpty(id)))
         {
-            if (string.IsNullOrEmpty(id) || !seen.Add(id)) continue;
+            if (!seen.Add(id)) continue;
             extra ??= [.. existing];
             extra.Add(id);
             if (extra.Count >= maxPerSegment) break;
@@ -314,13 +309,12 @@ internal static class SiblingDonorAttacher
         return true;
     }
 
-    internal static Dictionary<string, NzbFile> IndexBySegmentIds(IEnumerable<NzbFile> files)
+    internal static Dictionary<IReadOnlyList<string>, NzbFile> IndexBySegmentIds(IEnumerable<NzbFile> files)
     {
-        var map = new Dictionary<string, NzbFile>(StringComparer.Ordinal);
-        foreach (var file in files)
+        var map = new Dictionary<IReadOnlyList<string>, NzbFile>(SegmentIdListComparer.Instance);
+        foreach (var file in files.Where(file => file.Segments.Count > 0))
         {
-            if (file.Segments.Count == 0) continue;
-            map.TryAdd(SegmentKey(file.GetSegmentIds()), file);
+            map.TryAdd(file.GetSegmentIds(), file);
         }
 
         return map;
@@ -328,12 +322,7 @@ internal static class SiblingDonorAttacher
 
     internal static NzbFile? FindMatchingFile(IEnumerable<NzbFile> files, NzbFile target)
     {
-        foreach (var file in files)
-        {
-            if (IsDonorMatch(file, target)) return file;
-        }
-
-        return null;
+        return files.FirstOrDefault(file => IsDonorMatch(file, target));
     }
 
     internal static bool MergePrimaryIdsIntoDavNzbFile(
@@ -420,6 +409,24 @@ internal static class SiblingDonorAttacher
         {
             Log.Debug(e, "Sibling DavNzbFile blob {BlobId} is unreadable; skipping donor backfill.", blobId);
             return null;
+        }
+    }
+
+    private sealed class SegmentIdListComparer : IEqualityComparer<IReadOnlyList<string>>
+    {
+        public static SegmentIdListComparer Instance { get; } = new();
+
+        public bool Equals(IReadOnlyList<string>? x, IReadOnlyList<string>? y)
+            => ReferenceEquals(x, y) ||
+               (x is not null && y is not null && x.Count == y.Count &&
+                x.SequenceEqual(y, StringComparer.Ordinal));
+
+        public int GetHashCode(IReadOnlyList<string> segmentIds)
+        {
+            var hash = new HashCode();
+            foreach (var segmentId in segmentIds)
+                hash.Add(segmentId, StringComparer.Ordinal);
+            return hash.ToHashCode();
         }
     }
 }
