@@ -216,11 +216,13 @@ public class SharedStreamRegistryTests
             await using var stream = result.Stream;
         }
 
+        await WaitUntil(() => budget.ThrottleEvents > 0);
+
         clock.Advance(TimeSpan.FromSeconds(1));
         await WaitUntil(() => registry.IsEmpty);
         Assert.Equal(segmentSize, budget.LeasedBytes);
         held.Dispose();
-        Assert.Equal(0, budget.LeasedBytes);
+        await WaitUntil(() => budget.LeasedBytes == 0);
         Assert.Equal(0, tracker.Snapshot().SharedStreamRingRetainedBytes);
     }
 
