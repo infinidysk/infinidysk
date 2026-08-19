@@ -34,7 +34,6 @@ export type QueueTableProps = {
     onPageSelected: (page: number) => void,
     onPageSizeSelected: (pageSize: number) => void,
     categories: string[],
-    manualCategoryRef: React.RefObject<string>,
     onIsSelectedChanged: (nzo_ids: Set<string>, isSelected: boolean) => void,
     onIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void,
     onRemoved: (nzo_ids: Set<string>) => void,
@@ -94,7 +93,6 @@ export function QueueTable({
     onPageSelected,
     onPageSizeSelected,
     categories,
-    manualCategoryRef,
     onIsSelectedChanged,
     onIsRemovingChanged,
     onRemoved,
@@ -233,12 +231,6 @@ export function QueueTable({
 
 
     // view
-    const categoryDropdown = useMemo(() => isReadOnly ? null : (
-        <Tooltip content="Choose the category for manual nzb uploads.">
-            <SimpleDropdown options={categories} valueRef={manualCategoryRef} />
-        </Tooltip>
-    ), [categories, isReadOnly, manualCategoryRef]);
-
     const sectionTitle = (
         <div className="flex flex-wrap items-center gap-2.5">
             <h2
@@ -289,15 +281,6 @@ export function QueueTable({
                     <ActionButton type="delete" onClick={onRemove} />
                 </>
             }
-            <div className="ml-2.5 hidden min-[450px]:block">
-                {categoryDropdown}
-            </div>
-        </div>
-    );
-
-    const sectionSubTitle = (
-        <div className="block min-[450px]:hidden">
-            {categoryDropdown}
         </div>
     );
 
@@ -319,7 +302,6 @@ export function QueueTable({
     return (
         <PageSection
             title={sectionTitle}
-            subTitle={sectionSubTitle}
             {...(totalQueueCount > 0 ? { badgeText: String(totalQueueCount) } : {})}
         >
             <ListToolbar
