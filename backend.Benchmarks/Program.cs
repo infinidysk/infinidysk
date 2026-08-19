@@ -80,6 +80,94 @@ namespace NzbWebDAV.Benchmarks
     }
 
     [MemoryDiagnoser]
+    public class SegmentBufferPoolScenarioBenchmarks
+    {
+        private static readonly int[] MixedSizes = [700_000, 750_000, 800_000];
+        private const int BurstCount = 64;
+        private const int GrowthHintBytes = 64 * 1024;
+        private const int GrowthPayloadBytes = 8 * 1024 * 1024;
+
+        private byte[][] _mixedPayloads = null!;
+        private int[] _mixedSchedule = null!;
+
+        // Production derivation is clamp(startup budget / 2, 32 MiB, 256 MiB).
+        [Params(32L * 1024 * 1024, 128L * 1024 * 1024, 256L * 1024 * 1024)]
+        public long MaxIdleBytes { get; set; }
+
+        [GlobalSetup]
+        public void Setup()
+        {
+            var random = new Random(42);
+            _mixedPayloads = MixedSizes.Select(size =>
+            {
+                var payload = new byte[size];
+                random.NextBytes(payload);
+                return payload;
+            }).ToArray();
+            _mixedSchedule = Enumerable.Range(0, 24)
+                .Select(_ => random.Next(MixedSizes.Length))
+                .ToArray();
+        }
+
+        [Benchmark]
+        public long MixedSizes_Drain()
+        {
+            var pool = new SegmentBufferPool(MaxIdleBytes);
+            var diagnostics = new BufferPoolDiagnostics();
+            long bytesRead = 0;
+            foreach (var index in _mixedSchedule)
+            {
+                var payload = _mixedPayloads[index];
+                using var buffer = new PooledBufferStream(payload.Length, pool, diagnostics);
+                buffer.Write(payload);
+                buffer.Position = 0;
+                buffer.CopyTo(Stream.Null);
+                bytesRead += buffer.Length;
+            }
+
+            return bytesRead;
+        }
+
+        [Benchmark]
+        public long BurstThenIdle_RespectsByteCap()
+        {
+            var pool = new SegmentBufferPool(MaxIdleBytes);
+            var buffers = new byte[BurstCount][];
+            for (var i = 0; i < BurstCount; i++)
+                buffers[i] = pool.Rent(MixedSizes[i % MixedSizes.Length]);
+
+            foreach (var buffer in buffers)
+                pool.Return(buffer);
+
+            var snapshot = pool.Snapshot();
+            if (snapshot.IdleBytes > MaxIdleBytes)
+                throw new InvalidOperationException(
+                    $"IdleBytes {snapshot.IdleBytes} exceeded maxIdleBytes {MaxIdleBytes}.");
+            if (snapshot.RentCount != snapshot.ReturnCount)
+                throw new InvalidOperationException(
+                    $"Rent/return imbalance: {snapshot.RentCount}/{snapshot.ReturnCount}.");
+            return snapshot.IdleBytes + snapshot.TrimmedBytes + snapshot.ReuseCount;
+        }
+
+        [Benchmark]
+        public long GrowthAmplification_SmallHintToMultiMiB()
+        {
+            var pool = new SegmentBufferPool(MaxIdleBytes);
+            var diagnostics = new BufferPoolDiagnostics();
+            using var stream = new PooledBufferStream(GrowthHintBytes, pool, diagnostics);
+            var chunk = new byte[GrowthHintBytes];
+            for (var written = 0; written < GrowthPayloadBytes; written += chunk.Length)
+                stream.Write(chunk);
+
+            var snapshot = diagnostics.Snapshot();
+            if (snapshot.Rents > 15)
+                throw new InvalidOperationException(
+                    $"Growth was not log-bounded: {snapshot.Rents} rents for 64 KiB hint → 8 MiB.");
+            return snapshot.Rents;
+        }
+    }
+
+    [MemoryDiagnoser]
     public class YencDecodeBenchmarks
     {
         private byte[] _decoded = null!;
