@@ -18,7 +18,7 @@ public class DatabaseStoreIdFile(
     ConfigManager configManager,
     LazyRarResolver lazyRarResolver,
     InFlightArticleBudget inFlightArticleBudget
-) : BaseStoreReadonlyItem
+) : BaseStoreReadonlyItem, IDetachedStreamSource
 {
     public override string Name => davItem.Id.ToString();
     public override string UniqueKey => davItem.Id.ToString();
@@ -35,6 +35,15 @@ public class DatabaseStoreIdFile(
     public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
     {
         return GetItem(davItem).GetReadableStreamAsync(cancellationToken);
+    }
+
+    public Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
+    {
+        var item = GetItem(davItem);
+        if (item is IDetachedStreamSource source)
+            return source.GetDetachedReadableStreamAsync(cancellationToken);
+
+        throw new InvalidOperationException($"Id child type {davItem.SubType} cannot open a detached stream.");
     }
 
     private IStoreItem GetItem(DavItem davItem)

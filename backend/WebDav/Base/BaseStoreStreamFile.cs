@@ -2,11 +2,13 @@
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.WebDav.Base;
 
-public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager configManager) : BaseStoreReadonlyItem
+public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager configManager)
+    : BaseStoreReadonlyItem, IDetachedStreamSource
 {
     // Derived stream files must use these properties instead of capturing
     // the primary-constructor parameters (CS9107 double-capture).
@@ -17,14 +19,50 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
 
     public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
     {
+        var ownership = CreateStreamingScope(cancellationToken);
+        context.Response.OnCompleted(async () =>
+        {
+            await ownership.DisposeAsync().ConfigureAwait(false);
+        });
+
+        return GetStreamAsync(cancellationToken);
+    }
+
+    public async Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
+    {
+        var ownership = CreateStreamingScope(cancellationToken);
+        try
+        {
+            var stream = await GetStreamAsync(cancellationToken).ConfigureAwait(false);
+            return new DetachedStreamLease
+            {
+                Stream = stream,
+                Ownership = ownership,
+                DavItem = Context.Items["DavItem"] as DavItem,
+            };
+        }
+        catch
+        {
+            await ownership.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Request-token or entry-token contexts plus the per-stream semaphore.
+    /// Each call allocates fresh instances so the response-registered path and
+    /// the entry-owned path never share disposables.
+    /// </summary>
+    private StreamingScope CreateStreamingScope(CancellationToken token)
+    {
         var streamSemaphore = CreatePerStreamSemaphore();
         var downloadPriorityContext = new DownloadPriorityContext()
         {
             Priority = SemaphorePriority.High,
             StreamSemaphore = streamSemaphore,
         };
-#pragma warning disable CA2000 // scoped context is disposed via Response.OnCompleted when the response completes
-        var scopedDownloadPriorityContext = cancellationToken.SetContext(downloadPriorityContext);
+#pragma warning disable CA2000 // ownership handle disposes the token-keyed context
+        var scopedDownloadPriorityContext = token.SetContext(downloadPriorityContext);
 #pragma warning restore CA2000
 
         var streamingTimeoutContext = new StreamingTimeoutContext
@@ -32,8 +70,8 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             PerSegmentTimeout = configManager.GetStreamingSegmentTimeout(),
             MaxRetries = configManager.GetStreamingSegmentRetries(),
         };
-#pragma warning disable CA2000 // scoped context is disposed via Response.OnCompleted when the response completes
-        var scopedStreamingTimeoutContext = cancellationToken.SetContext(streamingTimeoutContext);
+#pragma warning disable CA2000 // ownership handle disposes the token-keyed context
+        var scopedStreamingTimeoutContext = token.SetContext(streamingTimeoutContext);
 #pragma warning restore CA2000
 
         // Keep this stream's per-stream budget in sync with live config changes,
@@ -59,16 +97,12 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             configManager.OnConfigChanged += onConfigChanged;
         }
 
-        context.Response.OnCompleted(() =>
-        {
-            if (onConfigChanged is not null) configManager.OnConfigChanged -= onConfigChanged;
-            scopedDownloadPriorityContext.Dispose();
-            scopedStreamingTimeoutContext.Dispose();
-            streamSemaphore?.Dispose();
-            return Task.CompletedTask;
-        });
-
-        return GetStreamAsync(cancellationToken);
+        return new StreamingScope(
+            configManager,
+            onConfigChanged,
+            scopedDownloadPriorityContext,
+            scopedStreamingTimeoutContext,
+            streamSemaphore);
     }
 
     // In "per stream" mode each playback session gets its own streaming semaphore
@@ -80,5 +114,28 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         if (!configManager.IsMaxDownloadConnectionsPerStream()) return null;
         var max = configManager.GetMaxDownloadConnectionsPerStreamCount();
         return new PrioritizedSemaphore(max, max, configManager.GetStreamingPriority());
+    }
+
+    private sealed class StreamingScope(
+        ConfigManager configManager,
+        EventHandler<ConfigManager.ConfigEventArgs>? onConfigChanged,
+        IDisposable downloadPriorityContext,
+        IDisposable streamingTimeoutContext,
+        PrioritizedSemaphore? streamSemaphore) : IAsyncDisposable
+    {
+        private int _disposed;
+
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return ValueTask.CompletedTask;
+
+            if (onConfigChanged is not null)
+                configManager.OnConfigChanged -= onConfigChanged;
+            downloadPriorityContext.Dispose();
+            streamingTimeoutContext.Dispose();
+            streamSemaphore?.Dispose();
+            return ValueTask.CompletedTask;
+        }
     }
 }
