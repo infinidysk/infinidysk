@@ -114,7 +114,9 @@ Backend tests use xUnit and live in `tests/NzbWebDAV.Tests/`. They cover streams
 NZB/PAR2 parsing, NNTP caching and concurrency, queue logic, and SQLite-backed
 database behavior. Frontend tests use Vitest and are colocated as `*.test.ts`.
 Performance benchmarks live in `backend.Benchmarks/` and are run manually with
-`dotnet run --project backend.Benchmarks -c Release`; do not run benchmarks in CI.
+`dotnet run --project backend.Benchmarks -c Release`. BenchmarkDotNet timing
+stays off CI; the deterministic streaming/SAB reports are compared in PR CI
+and against floored envelopes in `performance.yml`.
 
 ## In-tree libraries (UsenetSharp / SharpCompress / RapidYencSharp)
 
@@ -403,6 +405,7 @@ Skip this handoff if there are no local changes and nothing to push or PR. Do no
 | `release.yml` | Push to `main` | release-please versioning; publishes Linux archives plus release, `dev`, and `rc` Docker tags; refreshes the rolling `dev` pre-release; moves git `dev` and `rc` tags (`dev` first); deletes versioned `v*-rc.*` pre-releases and their image tags |
 | `release.yml` | Manual `workflow_dispatch` | Republishes Linux archives plus release, `dev`, and `rc` Docker tags for an existing version; refreshes the rolling `dev` pre-release; moves git `dev` and `rc` tags (`dev` first); deletes versioned `v*-rc.*` pre-releases and their image tags |
 | `promote-lts.yml` | Manual `workflow_dispatch` | Moves git `lts` and GHCR `:lts` to an existing published version (no rebuild) |
+| `performance.yml` | Nightly cron (`17 5 * * *`) + `workflow_dispatch` | Streaming and SAB API report compare (deterministic + floored timing envelopes); optional re-baseline PR |
 | `dependency-submission.yml` | GitHub Release `published` (plus manual `workflow_dispatch`) | Dependency graph submission (NuGet + npm) |
 | `docker-build-push.yml` | Reusable (called by refresh-dev/cut-prerelease/release) | Multi-arch Docker build with GHA cache |
 | `build-release-assets.yml` | Reusable/manual (called by refresh-dev/cut-prerelease/release) | Builds linux-x64/arm64 archives and attaches them to GitHub Releases |
