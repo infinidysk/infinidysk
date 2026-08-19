@@ -5,8 +5,15 @@
  */
 export function generateUuid(): string {
     const browserCrypto = globalThis.crypto;
+    if (!browserCrypto) {
+        throw new Error("This browser does not provide the cryptographic random source required to generate a UUID.");
+    }
+
     if (typeof browserCrypto.randomUUID === "function") {
         return browserCrypto.randomUUID();
+    }
+    if (typeof browserCrypto.getRandomValues !== "function") {
+        throw new Error("This browser does not provide the cryptographic random source required to generate a UUID.");
     }
 
     const bytes = new Uint8Array(16);
