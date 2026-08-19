@@ -3,6 +3,7 @@ import {
     Alert,
     Badge,
     Input,
+    Label,
     ManagedSetting,
     Select,
     SettingsCard,
@@ -367,7 +368,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                 </ManagedSetting>
 
                 <ManagedSetting configKey="usenet.pipelined-body-requests">
-                    <Tooltip content="Fetch articles in small NNTP batches for smoother WebDAV streaming. Queue imports use the separate NNTP pipelining toggle under Usenet settings.">
+                    <Tooltip content="Fetch articles in small pipelined BODY batches for smoother WebDAV playback. Queue imports use the separate Queue pipelining toggle under Usenet settings.">
                         <Toggle
                             id="pipelined-body-requests-checkbox"
                             className="cursor-pointer gap-2 p-0"
@@ -376,9 +377,36 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                                 ...config,
                                 "usenet.pipelined-body-requests": String(e.target.checked),
                             })}
-                            label={<span className="text-sm text-base-content">Pipelined article downloads</span>}
+                            label={<span className="text-sm text-base-content">Batched article downloads</span>}
                         />
                     </Tooltip>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="usenet.streaming-body-batch-width">
+                    <div className="space-y-2">
+                        <Label htmlFor="streaming-body-batch-width-input" className="text-sm text-base-content">
+                            Streaming batch width
+                        </Label>
+                        <Input
+                            {...className(["w-full max-w-xs", !isValidStreamingBodyBatchWidth(config["usenet.streaming-body-batch-width"]) && "input-error"])}
+                            type="text"
+                            inputMode="numeric"
+                            id="streaming-body-batch-width-input"
+                            aria-describedby="streaming-body-batch-width-help"
+                            placeholder="4"
+                            value={config["usenet.streaming-body-batch-width"] ?? ""}
+                            onChange={e => setNewConfig({
+                                ...config,
+                                "usenet.streaming-body-batch-width": e.target.value,
+                            })} />
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="streaming-body-batch-width-help">
+                            BODY requests sent per batch on one connection (1–8, default 4). Higher widths reduce
+                            connection churn but concentrate stall impact and raise per-stream memory: the segment
+                            task window and prefetch ceiling are fixed at stream start from this width and do not
+                            shrink when playback narrows batches. Wide settings can starve other concurrent streams
+                            via the shared in-flight article budget — leave at 4 unless you have measured a benefit.
+                        </p>
+                    </div>
                 </ManagedSetting>
 
                 <ManagedSetting configKey="usenet.container-aware-fill">
@@ -427,6 +455,7 @@ export function isStreamingSettingsUpdated(
         || config["usenet.in-flight-article-budget-mb"] !== newConfig["usenet.in-flight-article-budget-mb"]
         || config["usenet.idle-connection-timeout-seconds"] !== newConfig["usenet.idle-connection-timeout-seconds"]
         || config["usenet.pipelined-body-requests"] !== newConfig["usenet.pipelined-body-requests"]
+        || config["usenet.streaming-body-batch-width"] !== newConfig["usenet.streaming-body-batch-width"]
         || config["usenet.container-aware-fill"] !== newConfig["usenet.container-aware-fill"]
         || config["usenet.segment-cache.enabled"] !== newConfig["usenet.segment-cache.enabled"]
         || config["usenet.segment-cache.path"] !== newConfig["usenet.segment-cache.path"]
@@ -446,6 +475,7 @@ export function isStreamingSettingsValid(config: Record<string, string>): boolea
         && isValidArticleBufferSize(config["usenet.article-buffer-size"] ?? "")
         && isValidInFlightArticleBudget(config["usenet.in-flight-article-budget-mb"])
         && isValidIdleConnectionTimeout(config["usenet.idle-connection-timeout-seconds"])
+        && isValidStreamingBodyBatchWidth(config["usenet.streaming-body-batch-width"])
         && segmentCacheValid;
 }
 
@@ -501,6 +531,12 @@ function isValidIdleConnectionTimeout(value: string | undefined): boolean {
     if (value == null || value.trim() === "") return true;
     const number = Number(value);
     return Number.isInteger(number) && number >= 15 && number <= 300;
+}
+
+function isValidStreamingBodyBatchWidth(value: string | undefined): boolean {
+    if (value == null || value.trim() === "") return true;
+    const number = Number(value);
+    return Number.isInteger(number) && number >= 1 && number <= 8;
 }
 
 function isValidSegmentCachePath(value: string): boolean {

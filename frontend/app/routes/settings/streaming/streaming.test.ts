@@ -23,6 +23,7 @@ const validConfig = {
     "usenet.in-flight-article-budget-mb": "",
     "usenet.idle-connection-timeout-seconds": "60",
     "usenet.pipelined-body-requests": "true",
+    "usenet.streaming-body-batch-width": "",
     "usenet.container-aware-fill": "true",
     "usenet.segment-cache.enabled": "true",
     "usenet.segment-cache.path": "/config/segment-cache",
@@ -112,10 +113,17 @@ describe("Streaming settings", () => {
         }
 
         const pipelining = screen.getByRole<HTMLInputElement>("checkbox", {
-            name: "Pipelined article downloads",
+            name: "Batched article downloads",
         });
         await user.click(pipelining);
         expect(pipelining.checked).toBe(false);
+
+        const batchWidth = screen.getByRole<HTMLInputElement>("textbox", {
+            name: "Streaming batch width",
+        });
+        await user.clear(batchWidth);
+        await user.type(batchWidth, "6");
+        expect(batchWidth.value).toBe("6");
 
         const gapFill = screen.getByRole<HTMLInputElement>("checkbox", {
             name: /Container-aware gap fill/,
@@ -156,6 +164,18 @@ describe("Streaming settings", () => {
         expect(isStreamingSettingsValid({
             ...validConfig,
             "usenet.streaming-read-timeout-seconds": "4",
+        })).toBe(false);
+        expect(isStreamingSettingsValid({
+            ...validConfig,
+            "usenet.streaming-body-batch-width": "0",
+        })).toBe(false);
+        expect(isStreamingSettingsValid({
+            ...validConfig,
+            "usenet.streaming-body-batch-width": "9",
+        })).toBe(false);
+        expect(isStreamingSettingsValid({
+            ...validConfig,
+            "usenet.streaming-body-batch-width": "abc",
         })).toBe(false);
         expect(isStreamingSettingsValid({
             ...validConfig,

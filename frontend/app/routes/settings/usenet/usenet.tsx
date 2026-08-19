@@ -574,7 +574,7 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
         const patch: Record<string, string> = {
             "usenet.providers": serializeProviderConfig({ ...providerConfig, Providers: providers }),
             // Include current draft so a speed-test "Apply" pipelining change persists with the provider.
-            "usenet.pipelining.enabled": config["usenet.pipelining.enabled"] ?? "false",
+            "usenet.queue-pipelining.enabled": config["usenet.queue-pipelining.enabled"] ?? "false",
         };
         await persistConfigPatch(patch);
         handleCloseModal();
@@ -583,7 +583,7 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
     const handleApplyPipelining = useCallback((enabled: boolean) => {
         setNewConfig(prev => ({
             ...prev,
-            "usenet.pipelining.enabled": enabled ? "true" : "false",
+            "usenet.queue-pipelining.enabled": enabled ? "true" : "false",
         }));
     }, [setNewConfig]);
 
@@ -786,8 +786,8 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
             <ManagedSetting configKeys={[
                 "usenet.cascade.enabled",
                 "usenet.cascade.retry-primary-on-miss",
-                "usenet.pipelining.enabled",
-                "usenet.pipelining.depth",
+                "usenet.queue-pipelining.enabled",
+                "usenet.queue-pipelining.depth",
                 "usenet.article-miss-cache-ttl-seconds",
                 "usenet.article-miss-cache-max-entries",
             ]}>
@@ -840,30 +840,30 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
                     <div className="hidden h-4 w-px shrink-0 bg-base-content/10 lg:block" aria-hidden="true" />
 
                     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-                        <Tooltip content="Batch first-segment BODY requests during queue imports and provider benchmarks. Speed-test a provider with Auto-tune before enabling. WebDAV streaming has its own toggle.">
+                        <Tooltip content="Batch first-segment BODY requests during queue imports and provider Auto-tune benchmarks. Does not affect WebDAV playback — streaming batching lives under Settings → Streaming.">
                             <Toggle
                                 id="pipelining-enabled"
                                 className="cursor-pointer gap-2 p-0"
-                                checked={config["usenet.pipelining.enabled"] === "true"}
+                                checked={config["usenet.queue-pipelining.enabled"] === "true"}
                                 onChange={(e) => setNewConfig({
                                     ...config,
-                                    "usenet.pipelining.enabled": e.target.checked ? "true" : "false",
+                                    "usenet.queue-pipelining.enabled": e.target.checked ? "true" : "false",
                                 })}
-                                label={<span className="text-sm text-base-content">NNTP pipelining</span>}
+                                label={<span className="text-sm text-base-content">Queue pipelining</span>}
                             />
                         </Tooltip>
-                        <Tooltip content="Requests kept in flight per connection (1–64). 8 is a good default. Each provider can override this.">
+                        <Tooltip content="Requests kept in flight per connection during queue imports (1–64). 8 is a good default. Each provider can override this.">
                             <div className="flex items-center gap-1.5">
                                 <Label htmlFor="pipelining-depth" className="mb-0 shrink-0 text-[11px] text-base-content/50">
-                                    Depth
+                                    Queue depth
                                 </Label>
                                 <Input
                                     type="text"
                                     id="pipelining-depth"
-                                    className={`input-sm w-16 ${config["usenet.pipelining.depth"] !== undefined && config["usenet.pipelining.depth"] !== "" && !isPositiveInteger(config["usenet.pipelining.depth"]) ? "input-error" : ""}`}
+                                    className={`input-sm w-16 ${config["usenet.queue-pipelining.depth"] !== undefined && config["usenet.queue-pipelining.depth"] !== "" && !isPositiveInteger(config["usenet.queue-pipelining.depth"]) ? "input-error" : ""}`}
                                     placeholder="8"
-                                    value={config["usenet.pipelining.depth"] ?? ""}
-                                    onChange={(e) => setNewConfig({ ...config, "usenet.pipelining.depth": e.target.value })}
+                                    value={config["usenet.queue-pipelining.depth"] ?? ""}
+                                    onChange={(e) => setNewConfig({ ...config, "usenet.queue-pipelining.depth": e.target.value })}
                                 />
                             </div>
                         </Tooltip>
@@ -1003,7 +1003,7 @@ export function UsenetSettings({ config, savedConfig, setNewConfig, persistConfi
                 onClose={handleCloseModal}
                 onSave={handleSaveProvider}
                 onApplyPipelining={handleApplyPipelining}
-                defaultPipeliningDepth={config["usenet.pipelining.depth"] || "8"}
+                defaultPipeliningDepth={config["usenet.queue-pipelining.depth"] || "8"}
             />
         </SettingsPage>
     );
@@ -2095,8 +2095,8 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
                                 </div>
                                 <div className="mt-3 text-sm leading-relaxed text-base-content/80">
                                     {pipe.recommendEnabled
-                                        ? <>Turn on <strong className="font-semibold text-base-content">NNTP pipelining</strong> at depth <strong className="font-semibold text-base-content">{pipe.recommendedDepth}</strong> — measurably faster at your {pipe.testedAtConnections} connections.</>
-                                        : <>NNTP pipelining didn’t help at your {pipe.testedAtConnections} connections — leave it off.</>}
+                                        ? <>Turn on <strong className="font-semibold text-base-content">Queue pipelining</strong> at depth <strong className="font-semibold text-base-content">{pipe.recommendedDepth}</strong> for faster queue imports at your {pipe.testedAtConnections} connections — not WebDAV playback.</>
+                                        : <>Queue pipelining didn’t help at your {pipe.testedAtConnections} connections — leave it off.</>}
                                 </div>
                             </>
                         ) : (
@@ -2190,8 +2190,8 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
                     {!result.pipeliningOnly && pipe && (
                         <div className="mt-3 text-sm leading-relaxed text-base-content/80">
                             {pipe.recommendEnabled
-                                ? <>Turn on <strong className="font-semibold text-base-content">NNTP pipelining</strong> at depth <strong className="font-semibold text-base-content">{pipe.recommendedDepth}</strong> — measurably faster on this connection.</>
-                                : <>NNTP pipelining didn’t help here — leave it off.</>}
+                                ? <>Turn on <strong className="font-semibold text-base-content">Queue pipelining</strong> at depth <strong className="font-semibold text-base-content">{pipe.recommendedDepth}</strong> for faster queue imports — not WebDAV playback.</>
+                                : <>Queue pipelining didn’t help here — leave it off.</>}
                         </div>
                     )}
                     {!result.pipeliningOnly && !pipe && result.throughputTested && recommended != null && (
@@ -2312,8 +2312,8 @@ function DepthChart({ pipe }: { pipe: BenchmarkPipelining }) {
 
 export function isUsenetSettingsUpdated(config: Record<string, string>, newConfig: Record<string, string>) {
     return config["usenet.providers"] !== newConfig["usenet.providers"]
-        || config["usenet.pipelining.enabled"] !== newConfig["usenet.pipelining.enabled"]
-        || config["usenet.pipelining.depth"] !== newConfig["usenet.pipelining.depth"]
+        || config["usenet.queue-pipelining.enabled"] !== newConfig["usenet.queue-pipelining.enabled"]
+        || config["usenet.queue-pipelining.depth"] !== newConfig["usenet.queue-pipelining.depth"]
         || config["usenet.cascade.enabled"] !== newConfig["usenet.cascade.enabled"]
         || config["usenet.cascade.retry-primary-on-miss"] !== newConfig["usenet.cascade.retry-primary-on-miss"]
         || config["usenet.article-miss-cache-ttl-seconds"] !== newConfig["usenet.article-miss-cache-ttl-seconds"]
