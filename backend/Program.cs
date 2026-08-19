@@ -293,7 +293,8 @@ public partial class Program
                 .AddSingleton<NzbWebDAV.Services.Benchmark.BenchmarkRunControl>()
                 .AddHostedService<LogBroadcaster>()
                 .AddSingleton<ActiveReadRegistry>()
-                .AddSingleton<ConcurrentReadTracker>()
+                .AddSingleton(sp => new ConcurrentReadTracker(
+                    configManager: sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<SharedStreamRegistry>()
                 .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())

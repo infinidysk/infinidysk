@@ -173,6 +173,10 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.Equal(
             1_000_000,
             runtime.GetProperty("concurrentReadMaxStartDistanceBytes").GetInt64());
+        Assert.Equal(0, runtime.GetProperty("sharedStreamAttachHits").GetInt64());
+        Assert.True(runtime.TryGetProperty("sharedStreamRingRetainedBytes", out var ringBytes));
+        Assert.Equal(0, ringBytes.GetInt64());
+        Assert.True(runtime.TryGetProperty("sharedStreamRingRetainedBytesPeak", out _));
     }
 
     [Fact]

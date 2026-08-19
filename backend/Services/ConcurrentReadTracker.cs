@@ -1,15 +1,17 @@
+using NzbWebDAV.Config;
 using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.Services;
 
 /// <summary>
-/// Measures opportunities a hypothetical shared stream could serve. It does not
-/// alter streaming behavior: every overlapping request still uses a private stream.
+/// Tracks overlapping WebDAV and /view reads and, when shared streams are
+/// enabled, real attach hits versus private fallbacks.
 /// </summary>
-public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null)
+public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null, ConfigManager? configManager = null)
 {
     private readonly object _gate = new();
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly ConfigManager? _configManager = configManager;
     private readonly Dictionary<string, PathState> _paths = new(StringComparer.Ordinal);
     private readonly AsyncLocal<ReadContext?> _currentRead = new();
     private long _nextReaderId;
@@ -74,7 +76,8 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null)
             if (overlaps)
             {
                 _overlapEvents++;
-                _privateFallbacksNoRegistry++;
+                if (!IsSharedStreamsEnabled())
+                    _privateFallbacksNoRegistry++;
                 RecordStartDistanceLocked(state, readerId, reader);
             }
 
@@ -164,6 +167,35 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null)
         }
     }
 
+    /// <summary>
+    /// Counts a real private fallback for the current overlapping reader when
+    /// shared streams are enabled. No-op when the feature is off (BeginRead
+    /// already counted every overlap) or when this reader is not overlapping.
+    /// </summary>
+    public void RecordPrivateFallbackIfOverlapping()
+    {
+        if (!IsSharedStreamsEnabled())
+            return;
+
+        var context = _currentRead.Value;
+        if (context is null)
+            return;
+
+        lock (_gate)
+        {
+            if (!_paths.TryGetValue(context.Path, out var state) ||
+                !state.Readers.TryGetValue(context.ReaderId, out var reader) ||
+                !reader.JoinedOverlap ||
+                reader.FallbackRecorded)
+            {
+                return;
+            }
+
+            reader.FallbackRecorded = true;
+            _privateFallbacksNoRegistry++;
+        }
+    }
+
     public void RecordSharedAttachHit()
     {
         lock (_gate)
@@ -246,6 +278,9 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null)
                 _sharedStreamRingRetainedBytesPeak, _sharedStreamRingRetainedBytes);
         }
     }
+
+    private bool IsSharedStreamsEnabled() =>
+        _configManager?.IsSharedStreamsEnabled() ?? false;
 
     private void UpdateStart(ReadContext context, long startOffset)
     {
@@ -402,6 +437,7 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null)
         public long? StartOffset { get; set; } = startOffset;
         public bool JoinedOverlap { get; } = joinedOverlap;
         public bool DistanceRecorded { get; set; }
+        public bool FallbackRecorded { get; set; }
     }
 }
 

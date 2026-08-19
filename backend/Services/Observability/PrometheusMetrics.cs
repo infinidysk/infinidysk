@@ -44,7 +44,14 @@ public sealed class PrometheusMetrics
     private readonly Counter _par2PatchHits;
     private readonly Counter _par2PatchEvictions;
     private readonly Counter _par2RepairJobs;
-    private readonly HashSet<string> _providerKeys = new(StringComparer.Ordinal);
+    private readonly Gauge _sharedStreamRingBytes;
+    private readonly Gauge _sharedStreamRingBytesPeak;
+    private readonly Counter _sharedStreamAttachHits;
+    private readonly Counter _sharedStreamAttachMisses;
+    private readonly Counter _sharedStreamEntriesCreated;
+    private readonly Counter _sharedStreamReadersServed;
+    private readonly Counter _privateFallbacks;
+    private readonly HashSet<string> _providerKeys;
 
     public PrometheusMetrics(CollectorRegistry registry)
     {
@@ -103,6 +110,28 @@ public sealed class PrometheusMetrics
         _par2PatchEvictions = metrics.CreateCounter(
             "nzbdav_par2_patch_evictions_total",
             "Repair patch store evictions.");
+        _sharedStreamRingBytes = metrics.CreateGauge(
+            "nzbdav_shared_stream_ring_retained_bytes",
+            "Decoded bytes currently retained in shared-stream rings.");
+        _sharedStreamRingBytesPeak = metrics.CreateGauge(
+            "nzbdav_shared_stream_ring_retained_bytes_peak",
+            "Peak decoded bytes retained in shared-stream rings.");
+        _sharedStreamAttachHits = metrics.CreateCounter(
+            "nzbdav_shared_stream_attach_hits_total",
+            "Requests served from an existing shared stream.");
+        _sharedStreamAttachMisses = metrics.CreateCounter(
+            "nzbdav_shared_stream_attach_misses_total",
+            "Requests that did not attach to a shared stream.");
+        _sharedStreamEntriesCreated = metrics.CreateCounter(
+            "nzbdav_shared_stream_entries_created_total",
+            "Shared stream region entries created.");
+        _sharedStreamReadersServed = metrics.CreateCounter(
+            "nzbdav_shared_stream_readers_served_total",
+            "Readers attached to a shared stream, including the creator.");
+        _privateFallbacks = metrics.CreateCounter(
+            "nzbdav_concurrent_read_private_fallbacks_total",
+            "Overlapping reads that used a private stream.");
+        _providerKeys = new HashSet<string>(StringComparer.Ordinal);
     }
 
     public static PrometheusMetrics? Current { get; set; }
@@ -155,6 +184,13 @@ public sealed class PrometheusMetrics
         _readStarts.WithLabels("suffix_range").IncTo(reads.SuffixRangeReads);
         _readOverlaps.IncTo(reads.OverlapEvents);
         _duplicateSegmentFetches.IncTo(reads.DuplicateInFlightSegmentFetches);
+        _privateFallbacks.IncTo(reads.PrivateFallbacksNoRegistry);
+        _sharedStreamAttachHits.IncTo(reads.SharedAttachHits);
+        _sharedStreamAttachMisses.IncTo(reads.SharedAttachMisses);
+        _sharedStreamEntriesCreated.IncTo(reads.SharedEntriesCreated);
+        _sharedStreamReadersServed.IncTo(reads.SharedReadersServedTotal);
+        _sharedStreamRingBytes.Set(reads.SharedStreamRingRetainedBytes);
+        _sharedStreamRingBytesPeak.Set(reads.SharedStreamRingRetainedBytesPeak);
         _overlappingPaths.Set(reads.CurrentOverlappingPaths);
         _inFlightSegmentFetches.Set(reads.CurrentInFlightSegmentFetches);
 

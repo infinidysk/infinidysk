@@ -118,8 +118,12 @@ public class GetWebdavItemController(
             }
         }
 
-        // get the file stream and set the file-size in header
-        stream ??= await item.GetReadableStreamAsync(ct).ConfigureAwait(false);
+        if (stream is null)
+        {
+            concurrentReadTracker.RecordPrivateFallbackIfOverlapping();
+            stream = await item.GetReadableStreamAsync(ct).ConfigureAwait(false);
+        }
+
         var fileSize = stream.Length;
 
         var idFile = item as DatabaseStoreIdFile;

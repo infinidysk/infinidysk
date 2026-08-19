@@ -408,6 +408,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
             }
         }
 
+        _concurrentReadTracker.RecordPrivateFallbackIfOverlapping();
         return await entry.GetReadableStreamAsync(ct).ConfigureAwait(false);
     }
 
