@@ -240,6 +240,107 @@ public sealed class Par2RepairIntegrationTests
     }
 
     [Fact]
+    public async Task ReportZeroFill_Disabled_IsNoOp()
+    {
+        var dir = Path.Join(Path.GetTempPath(), "nzbdav-zf-disabled-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var config = new ConfigManager();
+            var store = new RepairPatchStore(dir, 1024 * 1024);
+            await store.CatalogLoadTask;
+            var service = new Par2RepairService(config, null!, store);
+
+            service.ReportZeroFill("/view/test.mkv", "seg1@test");
+
+            Assert.Equal(0, service.PendingZeroFillCount);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReportZeroFill_Burst_IsDeduplicatedAndBounded()
+    {
+        var dir = Path.Join(Path.GetTempPath(), "nzbdav-zf-burst-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+            ]);
+            var store = new RepairPatchStore(dir, 1024 * 1024);
+            await store.CatalogLoadTask;
+            var service = new Par2RepairService(config, null!, store);
+
+            // Repeated zero-fills for the same path collapse to one pending event.
+            for (var i = 0; i < 1_000; i++)
+                service.ReportZeroFill("/view/same.mkv", $"seg{i}@test");
+            Assert.Equal(1, service.PendingZeroFillCount);
+
+            // A scrub across many paths is capped by the bounded channel; excess
+            // events are rejected synchronously and leave no bookkeeping behind.
+            for (var i = 0; i < 1_000; i++)
+                service.ReportZeroFill($"/view/file{i}.mkv", "seg@test");
+            Assert.Equal(50, service.PendingZeroFillCount);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReportZeroFill_ShutdownDrainsCleanly()
+    {
+        var tempDir = Path.Join(Path.GetTempPath(), $"nzbdav-zf-shutdown-{Guid.NewGuid():N}");
+        var patchDir = Path.Join(tempDir, "patches");
+        Directory.CreateDirectory(tempDir);
+        var prevConfigPath = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", tempDir);
+            DavDatabaseContext.ResetOptionsForTests();
+            await using (var ctx = new DavDatabaseContext())
+                await ctx.Database.EnsureCreatedAsync();
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+            ]);
+            var store = new RepairPatchStore(patchDir, 1024 * 1024);
+            await store.CatalogLoadTask;
+            var service = new Par2RepairService(config, null!, store);
+
+            await service.StartAsync(CancellationToken.None);
+            try
+            {
+                service.ReportZeroFill("/view/unknown.mkv", "seg1@test");
+
+                // The single consumer resolves the (unknown) path and clears the dedup entry.
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+                while (service.PendingZeroFillCount > 0 && DateTime.UtcNow < deadline)
+                    await Task.Delay(25);
+                Assert.Equal(0, service.PendingZeroFillCount);
+            }
+            finally
+            {
+                using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await service.StopAsync(stopCts.Token);
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", prevConfigPath);
+            DavDatabaseContext.ResetOptionsForTests();
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void UnbufferedStream_ZeroFill_SinkCallSiteExists()
     {
         var repoRoot = FindRepoRoot();
@@ -288,8 +389,13 @@ public sealed class Par2RepairIntegrationTests
 
             store.CommitPatch("seg1@test", new byte[100], new UsenetYencHeader
             {
-                FileName = "test.bin", FileSize = 300, LineLength = 128,
-                PartNumber = 2, TotalParts = 3, PartSize = 100, PartOffset = 100,
+                FileName = "test.bin",
+                FileSize = 300,
+                LineLength = 128,
+                PartNumber = 2,
+                TotalParts = 3,
+                PartSize = 100,
+                PartOffset = 100,
             });
 
             var nzbFile = new DavNzbFile
@@ -322,8 +428,13 @@ public sealed class Par2RepairIntegrationTests
         Random.Shared.NextBytes(content);
         var header = new UsenetYencHeader
         {
-            FileName = "movie.mkv", FileSize = 8192, LineLength = 128,
-            PartNumber = 1, TotalParts = 2, PartSize = 4096, PartOffset = 0,
+            FileName = "movie.mkv",
+            FileSize = 8192,
+            LineLength = 128,
+            PartNumber = 1,
+            TotalParts = 2,
+            PartSize = 4096,
+            PartOffset = 0,
         };
 
         try

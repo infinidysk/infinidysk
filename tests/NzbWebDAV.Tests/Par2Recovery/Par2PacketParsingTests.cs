@@ -45,7 +45,7 @@ public sealed class Par2PacketParsingTests
         Assert.Equal((int)sliceSize, recv.Payload.Length);
     }
 
-  [Fact]
+    [Fact]
     public async Task ReadVerifiedPacket_CorruptedHash_Throws()
     {
         var data = new byte[32];
