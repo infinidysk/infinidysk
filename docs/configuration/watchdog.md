@@ -41,5 +41,10 @@ Playback failover, stall failover, and size-variant retention when a release can
 | Fallback on fetch failure | `variants.fallback-on-failure` | on | Use closest existing |
 | Eviction strategy | `variants.eviction-strategy` | `lru` | lru / size / never |
 | Active-use grace (seconds) | `variants.eviction-active-grace-seconds` | `60` | Skip eviction if recently used |
+| Segment donors [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `variants.segment-donors-enabled` | on | Borrow equivalent MessageIds from same-group copies |
+| Max donor siblings [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `variants.segment-donors-max-siblings` | `3` | Newest completed copies considered (0–10) |
+| Max donor IDs per segment [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `variants.segment-donors-max-per-segment` | `6` | Cap including intra-NZB fallbacks (1–32) |
+
+Segment donors require a content-grouped sibling (profile-play, variants, or retry flows). Plain Sonarr/Radarr SAB adds never set a group key, so they do not donate or receive donors. Donation only happens between same-segmentation postings whose subject filenames match; obfuscated posts (unparseable names) do not match. An existing damaged item gains donors when a new same-group copy completes.
 
 [Warden, Watchdog, Preflight](../features/warden-watchdog-preflight.md)
