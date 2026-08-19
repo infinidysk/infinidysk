@@ -12,7 +12,7 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 |---------|------------|---------|--------|
 | API Key | `api.key` | from `FRONTEND_BACKEND_API_KEY` if unset | *Arr download client auth |
 | Categories | `api.categories` | env/`audio,software,tv,movies` | Letters/numbers/dashes |
-| Manual Upload Category | `api.manual-category` | `uncategorized` | Queue page uploads |
+| Manual Upload Category (upload-time picker [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }) | `api.manual-category` | `uncategorized` | Queue page uploads; default for the category picker beside the Upload NZB button |
 | Import Strategy | `api.import-strategy` | `symlinks` | Symlinks (Plex) / STRM (Emby/Jellyfin) |
 | Rclone Mount Directory | `rclone.mount-dir` | env `MOUNT_DIR` or `/mnt/nzbdav` | When symlinks |
 | Completed Downloads Dir | `api.completed-downloads-dir` | backend default under `/data` | When STRM |
