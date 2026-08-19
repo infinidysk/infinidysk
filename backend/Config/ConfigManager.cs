@@ -15,6 +15,17 @@ public class ConfigManager
 {
     public static readonly string AppVersion = EnvironmentUtil.GetEnvironmentVariable("NZBDAV_VERSION") ?? "0.0.0";
 
+    /// <summary>
+    /// New config keys that inherit persisted or env values from a legacy name when unset.
+    /// Resolution order: env(new) → env(legacy) → DB(new) → DB(legacy).
+    /// </summary>
+    private static readonly Dictionary<string, string> LegacyConfigKeyAliases =
+        new(StringComparer.Ordinal)
+        {
+            [ConfigKeys.UsenetQueuePipeliningEnabled] = ConfigKeys.UsenetPipeliningEnabled,
+            [ConfigKeys.UsenetQueuePipeliningDepth] = ConfigKeys.UsenetPipeliningDepth,
+        };
+
     // Depth a background health check uses when none is configured.
     public const HealthCheckDepth DefaultHealthCheckDepth = HealthCheckDepth.Standard;
 
@@ -67,7 +78,11 @@ public class ConfigManager
     {
         lock (_config)
         {
-            return _environmentOverlay.IsManaged(configName);
+            if (_environmentOverlay.IsManaged(configName))
+                return true;
+
+            return LegacyConfigKeyAliases.TryGetValue(configName, out var legacyKey)
+                   && _environmentOverlay.IsManaged(legacyKey);
         }
     }
 
@@ -75,7 +90,13 @@ public class ConfigManager
     {
         lock (_config)
         {
-            return _environmentOverlay.GetEnvironmentVariableName(configName);
+            var envName = _environmentOverlay.GetEnvironmentVariableName(configName);
+            if (envName is not null)
+                return envName;
+
+            return LegacyConfigKeyAliases.TryGetValue(configName, out var legacyKey)
+                ? _environmentOverlay.GetEnvironmentVariableName(legacyKey)
+                : null;
         }
     }
 
@@ -83,7 +104,10 @@ public class ConfigManager
     /// Effective value for a key: ENV overlay wins, then SQLite. Used by the
     /// Settings API so the UI shows what the process is actually running.
     /// </summary>
-    public string? GetEffectiveConfigValue(string configName) => GetConfigValue(configName);
+    public string? GetEffectiveConfigValue(string configName) =>
+        LegacyConfigKeyAliases.ContainsKey(configName)
+            ? GetAliasedConfigValue(configName)
+            : GetConfigValue(configName);
 
     /// <summary>Persisted SQLite value only (ignores ENV overlay). Used when normalizing provider IDs.</summary>
     public string? GetPersistedConfigValue(string configName)
@@ -130,6 +154,28 @@ public class ConfigManager
             if (_environmentOverlay.TryGetValue(configName, out var envValue))
                 return envValue;
             return _config.TryGetValue(configName, out string? value) ? value : null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves a key with a legacy alias: env(new) → env(legacy) → DB(new) → DB(legacy).
+    /// </summary>
+    private string? GetAliasedConfigValue(string configName)
+    {
+        if (!LegacyConfigKeyAliases.TryGetValue(configName, out var legacyConfigName))
+            return GetConfigValue(configName);
+
+        lock (_config)
+        {
+            if (_environmentOverlay.TryGetValue(configName, out var envNew))
+                return envNew;
+            if (_environmentOverlay.TryGetValue(legacyConfigName, out var envLegacy))
+                return envLegacy;
+            if (_config.TryGetValue(configName, out var dbNew))
+                return dbNew;
+            if (_config.TryGetValue(legacyConfigName, out var dbLegacy))
+                return dbLegacy;
+            return null;
         }
     }
 
@@ -283,6 +329,7 @@ public class ConfigManager
                 case ConfigKeys.UsenetMaxDownloadConnections:
                 case ConfigKeys.UsenetMaxQueueConnections:
                 case ConfigKeys.QueueWorkerCount:
+                case ConfigKeys.UsenetQueuePipeliningDepth:
                 case ConfigKeys.UsenetPipeliningDepth:
                 case ConfigKeys.UsenetArticleBufferSize:
                 case ConfigKeys.UsenetInFlightArticleBudgetMb:
@@ -348,6 +395,10 @@ public class ConfigManager
                     RequireLongInRange(item.ConfigName, value, 5, 10080);
                     break;
 
+                case ConfigKeys.UsenetStreamingBodyBatchWidth:
+                    RequireLongInRange(item.ConfigName, value, 1, 8);
+                    break;
+
                 case ConfigKeys.ProwlarrUrl:
                     RequireHttpUrl(item.ConfigName, value);
                     break;
@@ -363,6 +414,7 @@ public class ConfigManager
                 case ConfigKeys.WebdavPreviewPar2Files:
                 case ConfigKeys.WebdavWindowsSafePaths:
                 case ConfigKeys.UsenetMaxDownloadConnectionsPerStream:
+                case ConfigKeys.UsenetQueuePipeliningEnabled:
                 case ConfigKeys.UsenetPipeliningEnabled:
                 case ConfigKeys.UsenetCascadeEnabled:
                 case ConfigKeys.UsenetCascadeRetryPrimaryOnMiss:
@@ -799,10 +851,10 @@ public class ConfigManager
         return int.TryParse(v, out var n) ? Math.Max(0, n) : 0;
     }
 
-    public bool IsPipeliningEnabled()
+    public bool IsQueuePipeliningEnabled()
     {
-        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetPipeliningEnabled));
-        return v != null && bool.Parse(v);
+        var v = StringUtil.EmptyToNull(GetAliasedConfigValue(ConfigKeys.UsenetQueuePipeliningEnabled));
+        return v is not null && bool.TryParse(v, out var enabled) && enabled;
     }
 
     public bool IsCascadeEnabled()
@@ -822,11 +874,22 @@ public class ConfigManager
         return v == null || bool.Parse(v);
     }
 
-    public int GetPipeliningDepth()
+    public int GetQueuePipeliningDepth()
     {
-        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetPipeliningDepth));
+        var configured = StringUtil.EmptyToNull(GetAliasedConfigValue(ConfigKeys.UsenetQueuePipeliningDepth));
         if (configured is null || !int.TryParse(configured, out var value)) return 8;
         return Math.Clamp(value, 1, 64);
+    }
+
+    /// <summary>
+    /// Maximum pipelined BODY batch width per streaming connection. Default 4;
+    /// clamped to [1, 8]. The adaptive sizer narrows below this on starvation.
+    /// </summary>
+    public int GetStreamingBodyBatchWidth()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingBodyBatchWidth));
+        if (configured is null || !int.TryParse(configured, out var value)) return 4;
+        return Math.Clamp(value, 1, 8);
     }
 
     public int GetArticleBufferSize()

@@ -28,7 +28,7 @@ public static class FetchFirstSegmentsStep
     {
         var files = nzbFiles.Where(x => x.Segments.Count > 0).ToList();
 
-        if (configManager.IsPipeliningEnabled())
+        if (configManager.IsQueuePipeliningEnabled())
             return await FetchFirstSegmentsPipelined(
                 files, usenetClient, configManager, cancellationToken, progress).ConfigureAwait(false);
 
@@ -83,7 +83,7 @@ public static class FetchFirstSegmentsStep
     {
         // Import fetches don't benefit from deep BODY windows; cap to bound
         // peak decoded-article memory at boot (~750 KB × depth per connection).
-        var depth = Math.Min(configManager.GetPipeliningDepth(), 16);
+        var depth = Math.Min(configManager.GetQueuePipeliningDepth(), 16);
         var segmentIds = files.Select(x => x.Segments[0].MessageId).ToList();
         var results = new NzbFileWithFirstSegment?[files.Count];
         var indexBySegmentId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

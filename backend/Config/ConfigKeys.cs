@@ -55,8 +55,13 @@ public static class ConfigKeys
     public const string QueuePaused = "queue.paused";
     public const string QueueSpeedLimitKbps = "queue.speed-limit-kbps";
     public const string UsenetPipelinedBodyRequests = "usenet.pipelined-body-requests";
+    public const string UsenetQueuePipeliningEnabled = "usenet.queue-pipelining.enabled";
+    public const string UsenetQueuePipeliningDepth = "usenet.queue-pipelining.depth";
+    // Deprecated: legacy alias of usenet.queue-pipelining.*; still read as fallback and env-mapped.
     public const string UsenetPipeliningDepth = "usenet.pipelining.depth";
+    // Deprecated: legacy alias of usenet.queue-pipelining.*; still read as fallback and env-mapped.
     public const string UsenetPipeliningEnabled = "usenet.pipelining.enabled";
+    public const string UsenetStreamingBodyBatchWidth = "usenet.streaming-body-batch-width";
     public const string UsenetProviders = "usenet.providers";
     public const string UsenetSegmentCacheEnabled = "usenet.segment-cache.enabled";
     public const string UsenetSegmentCacheMaxGb = "usenet.segment-cache.max-gb";

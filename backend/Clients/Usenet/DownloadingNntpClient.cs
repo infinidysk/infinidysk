@@ -41,7 +41,7 @@ public class DownloadingNntpClient : WrappingNntpClient
     }
 
     public override int PipeliningDepth =>
-        _configManager.IsPipeliningEnabled() ? _configManager.GetPipeliningDepth() : 0;
+        _configManager.IsQueuePipeliningEnabled() ? _configManager.GetQueuePipeliningDepth() : 0;
 
     private void OnConfigChanged(object? sender, ConfigManager.ConfigEventArgs e)
     {
