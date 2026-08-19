@@ -185,6 +185,11 @@ public partial class Program
             var poolOverride = EnvironmentUtil.GetEnvironmentVariable("NZBDAV_SEGMENT_BUFFER_POOL");
             if (string.Equals(poolOverride, "shared", StringComparison.OrdinalIgnoreCase))
             {
+                // Explicit assignment is deliberate: DefaultPool is documented as
+                // set-once-at-startup, and this is the one sanctioned alternate
+                // assignment so tests or later refactors cannot leave it on the
+                // custom pool despite NZBDAV_SEGMENT_BUFFER_POOL=shared.
+                PooledBufferStream.DefaultPool = SharedArrayPoolAdapter.Instance;
                 Log.Information(
                     "Segment buffer pool override active: using ArrayPool<byte>.Shared " +
                     "(NZBDAV_SEGMENT_BUFFER_POOL=shared).");
