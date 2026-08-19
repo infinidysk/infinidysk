@@ -1,0 +1,252 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Streams;
+using NzbWebDAV.Services.Observability;
+using Serilog;
+using UsenetSharp.Models;
+
+namespace NzbWebDAV.Services.Repair;
+
+public sealed class RepairPatchStore
+{
+    private readonly string _dir;
+    private readonly long _maxBytes;
+    private readonly ConcurrentDictionary<string, CacheEntry> _index = new();
+    private readonly object _evictLock = new();
+    private readonly Func<IEnumerable<string>> _enumerateCacheFiles;
+    private long _currentBytes;
+    private int _catalogReady;
+
+    private static readonly JsonSerializerOptions HeaderJsonOptions = new() { IncludeFields = true };
+
+    public RepairPatchStore(string cacheDir, long maxBytes)
+        : this(cacheDir, maxBytes, enumerateCacheFiles: null)
+    {
+    }
+
+    internal RepairPatchStore(
+        string cacheDir,
+        long maxBytes,
+        Func<IEnumerable<string>>? enumerateCacheFiles)
+    {
+        _dir = cacheDir;
+        _maxBytes = maxBytes;
+        Directory.CreateDirectory(_dir);
+        _enumerateCacheFiles = enumerateCacheFiles
+                               ?? (() => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
+        Log.Information("PAR2 repair patch store path: {Path}", _dir);
+        CatalogLoadTask = Task.Run(LoadIndex);
+    }
+
+    public bool IsCatalogReady => Volatile.Read(ref _catalogReady) != 0;
+    internal Task CatalogLoadTask { get; }
+    internal long CurrentBytes => Interlocked.Read(ref _currentBytes);
+
+    public bool Contains(string segmentId)
+        => IsCatalogReady && _index.ContainsKey(Hash(segmentId));
+
+    public bool TryGet(string segmentId, out UsenetDecodedBodyResponse? response)
+    {
+        response = null;
+        if (!IsCatalogReady) return false;
+
+        var hash = Hash(segmentId);
+        if (!_index.TryGetValue(hash, out var entry)) return false;
+
+        var blobPath = BlobPath(hash);
+        try
+        {
+            var header = JsonSerializer.Deserialize<UsenetYencHeader>(
+                File.ReadAllText(blobPath + ".h"), HeaderJsonOptions);
+            if (header == null || header.PartSize != entry.Size)
+            {
+                Drop(hash);
+                return false;
+            }
+
+            var fileStream = new FileStream(blobPath, FileMode.Open, FileAccess.Read,
+                FileShare.Read | FileShare.Delete, bufferSize: 81920, useAsync: true);
+            entry.LastAccessTicks = DateTime.UtcNow.Ticks;
+            response = new UsenetDecodedBodyResponse
+            {
+                SegmentId = segmentId,
+                ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+                ResponseMessage = "222 - Article retrieved from repair patch store",
+                Stream = new CachedYencStream(header, fileStream),
+            };
+            return true;
+        }
+        catch
+        {
+            Drop(hash);
+            return false;
+        }
+    }
+
+    public bool IsRepaired(string segmentId, long expectedSize)
+    {
+        if (!IsCatalogReady) return false;
+
+        var hash = Hash(segmentId);
+        if (!_index.TryGetValue(hash, out var entry) || entry.Size != expectedSize)
+            return false;
+
+        var blobPath = BlobPath(hash);
+        if (!File.Exists(blobPath) || !File.Exists(blobPath + ".h"))
+            return false;
+
+        try
+        {
+            var header = JsonSerializer.Deserialize<UsenetYencHeader>(
+                File.ReadAllText(blobPath + ".h"), HeaderJsonOptions);
+            return header != null && header.PartSize == expectedSize;
+        }
+        catch
+        {
+            Drop(hash);
+            return false;
+        }
+    }
+
+    public void CommitPatch(string segmentId, byte[] bytes, UsenetYencHeader header)
+    {
+        if (bytes.Length != header.PartSize)
+            throw new ArgumentException("Patch bytes length does not match yEnc header PartSize.");
+
+        var hash = Hash(segmentId);
+        var blobPath = BlobPath(hash);
+        var tempPath = blobPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
+        try
+        {
+            File.WriteAllBytes(tempPath, bytes);
+            File.WriteAllText(blobPath + ".h", JsonSerializer.Serialize(header, HeaderJsonOptions));
+            File.Move(tempPath, blobPath, overwrite: true);
+            OnFinalized(hash, bytes.Length);
+        }
+        catch
+        {
+            SafeDelete(tempPath);
+            SafeDelete(blobPath + ".h");
+            throw;
+        }
+    }
+
+    private void OnFinalized(string hash, long size)
+    {
+        lock (_evictLock)
+        {
+            if (_index.TryGetValue(hash, out var existing)) _currentBytes -= existing.Size;
+            _index[hash] = new CacheEntry { Size = size, LastAccessTicks = DateTime.UtcNow.Ticks };
+            _currentBytes += size;
+        }
+
+        EvictIfNeeded();
+    }
+
+    private void Drop(string hash)
+    {
+        lock (_evictLock)
+        {
+            if (_index.TryRemove(hash, out var entry)) _currentBytes -= entry.Size;
+        }
+
+        SafeDelete(BlobPath(hash));
+        SafeDelete(BlobPath(hash) + ".h");
+    }
+
+    private void EvictIfNeeded()
+    {
+        if (Interlocked.Read(ref _currentBytes) <= _maxBytes) return;
+        lock (_evictLock)
+        {
+            if (_currentBytes <= _maxBytes) return;
+            foreach (var kv in _index.OrderBy(x => x.Value.LastAccessTicks).ToList())
+            {
+                if (_currentBytes <= _maxBytes) break;
+                if (!_index.TryRemove(kv.Key, out var entry)) continue;
+                _currentBytes -= entry.Size;
+                SafeDelete(BlobPath(kv.Key));
+                SafeDelete(BlobPath(kv.Key) + ".h");
+                PrometheusMetrics.Current?.RecordPar2PatchEviction();
+            }
+        }
+    }
+
+    private void LoadIndex()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            foreach (var file in _enumerateCacheFiles())
+            {
+                if (file.EndsWith(".tmp", StringComparison.Ordinal))
+                {
+                    SafeDelete(file);
+                    continue;
+                }
+
+                if (file.EndsWith(".h", StringComparison.Ordinal)) continue;
+                var info = new FileInfo(file);
+                if (!info.Exists) continue;
+                var entry = new CacheEntry
+                {
+                    Size = info.Length,
+                    LastAccessTicks = info.LastWriteTimeUtc.Ticks,
+                };
+
+                lock (_evictLock)
+                {
+                    if (_index.TryAdd(Path.GetFileName(file), entry))
+                        _currentBytes += info.Length;
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Warning(e, "Repair patch store: failed to scan {Dir}; starting empty.", _dir);
+        }
+        finally
+        {
+            try
+            {
+                EvictIfNeeded();
+            }
+            finally
+            {
+                Volatile.Write(ref _catalogReady, 1);
+                stopwatch.Stop();
+                Log.Information(
+                    "Repair patch store catalog loaded: {Count} entries, {Size} bytes in {Elapsed}ms.",
+                    _index.Count, Interlocked.Read(ref _currentBytes), stopwatch.ElapsedMilliseconds);
+            }
+        }
+    }
+
+    private string BlobPath(string hash) => Path.Join(_dir, hash[..2], hash);
+
+    private static string Hash(string id)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)));
+
+    private static void SafeDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private sealed class CacheEntry
+    {
+        public long Size;
+        public long LastAccessTicks;
+    }
+}
