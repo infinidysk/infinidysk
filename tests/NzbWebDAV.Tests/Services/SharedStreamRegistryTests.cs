@@ -209,15 +209,21 @@ public class SharedStreamRegistryTests
         var registry = new SharedStreamRegistry(config, tracker, clock);
         await using var registryDispose = registry;
         var source = new NzbFileSource(segmentCount: 4, segmentSize: segmentSize, budget);
-
-        for (var i = 0; i < 50; i++)
+        var pin = (await Attach(registry, source, "/movie.mkv", 0)).Stream;
+        try
         {
-            var result = await Attach(registry, source, "/movie.mkv", 0);
-            await using var stream = result.Stream;
+            await WaitUntil(() => budget.ThrottleEvents > 0);
+
+            for (var i = 0; i < 50; i++)
+            {
+                var result = await Attach(registry, source, "/movie.mkv", 0);
+                await using var stream = result.Stream;
+            }
         }
-
-        await WaitUntil(() => budget.ThrottleEvents > 0);
-
+        finally
+        {
+            await pin.DisposeAsync();
+        }
         clock.Advance(TimeSpan.FromSeconds(1));
         await WaitUntil(() => registry.IsEmpty);
         Assert.Equal(segmentSize, budget.LeasedBytes);
