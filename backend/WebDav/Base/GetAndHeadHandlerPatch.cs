@@ -38,6 +38,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
     private readonly ConcurrentReadTracker _concurrentReadTracker;
     private readonly StreamTraceBuffer _streamTrace;
     private readonly StreamingFailureTracker _failureTracker;
+    private readonly SharedStreamRegistry _sharedStreams;
 
     public GetAndHeadHandlerPatch(
         IStore store,
@@ -46,7 +47,8 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         ActiveReadRegistry activeReadRegistry,
         ConcurrentReadTracker concurrentReadTracker,
         StreamTraceBuffer streamTrace,
-        StreamingFailureTracker failureTracker)
+        StreamingFailureTracker failureTracker,
+        SharedStreamRegistry sharedStreams)
     {
         _store = store;
         _configManager = configManager;
@@ -55,6 +57,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         _concurrentReadTracker = concurrentReadTracker;
         _streamTrace = streamTrace;
         _failureTracker = failureTracker;
+        _sharedStreams = sharedStreams;
     }
 
     /// <summary>
@@ -201,7 +204,11 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         }
 
         // Stream the actual entry
-        var stream = await entry.GetReadableStreamAsync(ct).ConfigureAwait(false);
+        var stream = await TryGetSharedOrPrivateStreamAsync(
+            entry, path, range, isHeadRequest, httpContext, ct).ConfigureAwait(false);
+        if (stream is null)
+            return true;
+
         await using (stream.ConfigureAwait(false))
         {
             if (stream != Stream.Null)
@@ -348,6 +355,84 @@ public class GetAndHeadHandlerPatch : IRequestHandler
             }
         }
         return true;
+    }
+
+    /// <summary>
+    /// GET-only shared-stream attach. HEAD never touches the registry. 416 is
+    /// checked against FileSize before any attach or private open for eligible
+    /// items; misses fall through to today's GetReadableStreamAsync path.
+    /// Returns null when this method already wrote a 416 response.
+    /// </summary>
+    private async Task<Stream?> TryGetSharedOrPrivateStreamAsync(
+        IStoreItem entry,
+        string path,
+        NWebDav.Server.Helpers.Range? range,
+        bool isHeadRequest,
+        HttpContext httpContext,
+        CancellationToken ct)
+    {
+        if (!isHeadRequest &&
+            entry is IDetachedStreamSource detachedSource &&
+            entry is BaseStoreItem sizedItem)
+        {
+            var fileSize = sizedItem.FileSize;
+            var (start, endOffset, unsatisfiable) = ResolveAttachRange(range, fileSize);
+            if (unsatisfiable)
+            {
+                httpContext.Response.Headers.AcceptRanges = "bytes";
+                httpContext.Response.Headers.ContentRange = $"bytes */{fileSize}";
+                httpContext.Response.SetStatus((DavStatusCode)416);
+                return null;
+            }
+
+            var attach = await _sharedStreams.TryAttachAsync(
+                Uri.UnescapeDataString(path),
+                start,
+                endOffset,
+                fileSize,
+                detachedSource,
+                async (offset, readerCt) =>
+                {
+                    var privateStream = await entry.GetReadableStreamAsync(readerCt).ConfigureAwait(false);
+                    if (offset != 0)
+                        privateStream.Seek(offset, SeekOrigin.Begin);
+                    return privateStream;
+                },
+                ct).ConfigureAwait(false);
+
+            if (attach is not null)
+            {
+                if (attach.DavItem is not null)
+                    httpContext.Items["DavItem"] = attach.DavItem;
+                return attach.Stream;
+            }
+        }
+
+        return await entry.GetReadableStreamAsync(ct).ConfigureAwait(false);
+    }
+
+    internal static (long Start, long? EndOffset, bool Unsatisfiable) ResolveAttachRange(
+        NWebDav.Server.Helpers.Range? range,
+        long fileSize)
+    {
+        if (range is null)
+            return (0, null, false);
+
+        long start;
+        long end;
+        if (!range.Start.HasValue && range.End.HasValue)
+        {
+            var suffixLength = range.End.Value;
+            start = suffixLength > 0 ? Math.Max(0, fileSize - suffixLength) : fileSize;
+            end = fileSize - 1;
+        }
+        else
+        {
+            start = range.Start ?? 0;
+            end = Math.Min(range.End ?? fileSize - 1, fileSize - 1);
+        }
+
+        return (start, end, start < 0 || start > end);
     }
 
     private static ConcurrentReadRegion ResolveReadRegion(NWebDav.Server.Helpers.Range? range)

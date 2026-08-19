@@ -294,6 +294,7 @@ public partial class Program
                 .AddHostedService<LogBroadcaster>()
                 .AddSingleton<ActiveReadRegistry>()
                 .AddSingleton<ConcurrentReadTracker>()
+                .AddSingleton<SharedStreamRegistry>()
                 .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())
                 .AddSingleton<GcDiagnosticsStore>()

@@ -16,6 +16,7 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
+using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.WebDav.Requests;
 
 namespace NzbWebDAV.Api.Controllers.GetWebdavItem;
@@ -29,7 +30,8 @@ public class GetWebdavItemController(
     ActiveReadRegistry activeReadRegistry,
     ConcurrentReadTracker concurrentReadTracker,
     CandidateNegativeCache negativeCache,
-    StreamTraceBuffer streamTrace
+    StreamTraceBuffer streamTrace,
+    SharedStreamRegistry sharedStreamRegistry
 ) : ControllerBase
 {
     private async Task<Stream> GetWebdavItem(GetWebdavItemRequest request, CancellationToken ct)
@@ -67,8 +69,57 @@ public class GetWebdavItemController(
         if (request.RangeStart is { } provisionalStart && request.RangeEnd is { } provisionalEnd)
             RangeContext.SetReadBudget(provisionalEnd - provisionalStart + 1);
 
+        var fileSizeHint = (item as BaseStoreItem)?.FileSize;
+        Stream? stream = null;
+
+        if (ShouldAttemptSharedAttach(HttpContext.Request.Method, item) &&
+            item is IDetachedStreamSource detachedSource &&
+            fileSizeHint is { } attachFileSize)
+        {
+            long? attachStart = request.RangeStart;
+            long? attachEnd = request.RangeEnd;
+            if (request.SuffixLength is { } attachSuffixLen)
+            {
+                attachStart = Math.Max(0, attachFileSize - attachSuffixLen);
+                attachEnd = attachFileSize - 1;
+            }
+
+            if (attachStart is not null)
+            {
+                var end = ResolveRangeEnd(attachEnd, attachFileSize);
+                if (attachStart.Value < 0 || attachStart.Value >= attachFileSize || attachStart.Value > end)
+                {
+                    Response.Headers["Content-Range"] = $"bytes */{attachFileSize}";
+                    Response.StatusCode = StatusCodes.Status416RangeNotSatisfiable;
+                    return Stream.Null;
+                }
+            }
+
+            var attach = await sharedStreamRegistry.TryAttachAsync(
+                request.Item,
+                attachStart ?? 0,
+                attachEnd,
+                attachFileSize,
+                detachedSource,
+                async (offset, readerCt) =>
+                {
+                    var privateStream = await item.GetReadableStreamAsync(readerCt).ConfigureAwait(false);
+                    if (offset != 0)
+                        privateStream.Seek(offset, SeekOrigin.Begin);
+                    return privateStream;
+                },
+                ct).ConfigureAwait(false);
+
+            if (attach is not null)
+            {
+                stream = attach.Stream;
+                if (attach.DavItem is not null)
+                    HttpContext.Items["DavItem"] = attach.DavItem;
+            }
+        }
+
         // get the file stream and set the file-size in header
-        var stream = await item.GetReadableStreamAsync(ct).ConfigureAwait(false);
+        stream ??= await item.GetReadableStreamAsync(ct).ConfigureAwait(false);
         var fileSize = stream.Length;
 
         var idFile = item as DatabaseStoreIdFile;
@@ -358,6 +409,13 @@ public class GetWebdavItemController(
             Response.StatusCode = 401;
         }
     }
+
+    /// <summary>
+    /// /view HEAD reuses <see cref="GetWebdavItem"/> and must never create or
+    /// join a shared stream. GET of an <see cref="IDetachedStreamSource"/> may.
+    /// </summary>
+    internal static bool ShouldAttemptSharedAttach(string method, IStoreItem item) =>
+        !HttpMethods.IsHead(method) && item is IDetachedStreamSource;
 
     /// <summary>
     /// Resolves the inclusive range end for a /view response, clamping past-EOF
