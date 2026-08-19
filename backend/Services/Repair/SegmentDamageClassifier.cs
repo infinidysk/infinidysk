@@ -44,9 +44,8 @@ public static class SegmentDamageClassifier
         // The run/head checks below assume sorted, unique, in-range indices; normalize
         // defensively so a mis-ordered or duplicated list cannot misclassify.
         var missing = missingIndices.Distinct().OrderBy(index => index).ToArray();
-        foreach (var index in missing)
-            if (index < 0 || index >= totalSegments)
-                throw new ArgumentOutOfRangeException(nameof(missingIndices), index, "Missing segment index out of range.");
+        foreach (var index in missing.Where(index => index < 0 || index >= totalSegments))
+            throw new ArgumentOutOfRangeException(nameof(missingIndices), index, "Missing segment index out of range.");
 
         var missingBytes = missing.Sum(index => exactSegmentSizes[index]);
         var totalBytes = exactSegmentSizes.Sum();
