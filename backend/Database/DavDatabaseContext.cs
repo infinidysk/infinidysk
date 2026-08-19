@@ -88,6 +88,7 @@ public class DavDatabaseContext : DbContext
     public DbSet<WantedItem> WantedItems => Set<WantedItem>();
     public DbSet<NzbResolutionGroup> NzbResolutionGroups => Set<NzbResolutionGroup>();
     public DbSet<ArticleMissCacheEntry> ArticleMissCacheEntries => Set<ArticleMissCacheEntry>();
+    public DbSet<Par2RepairJob> Par2RepairJobs => Set<Par2RepairJob>();
 
     // Pending blob writes for the current unit of work (flushed in SaveChangesAsync).
     private readonly List<DavNzbFile> _blobNzbFiles = [];
@@ -771,6 +772,80 @@ public class DavDatabaseContext : DbContext
             e.Property(i => i.CacheKey).IsRequired();
             e.Property(i => i.ConfirmedAtUnix).IsRequired();
             e.HasIndex(i => i.ConfirmedAtUnix);
+        });
+
+        // Par2RepairJob
+        b.Entity<Par2RepairJob>(e =>
+        {
+            e.ToTable("Par2RepairJobs");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.DavItemId)
+                .ValueGeneratedNever()
+                .IsRequired();
+
+            e.Property(i => i.Path)
+                .IsRequired();
+
+            e.Property(i => i.State)
+                .HasConversion<int>()
+                .IsRequired();
+
+            e.Property(i => i.MissingSegmentIds)
+                .HasConversion(new ValueConverter<string[], string>
+                (
+                    v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                    v => DeserializeOrFallback<string[]>(v) ?? Array.Empty<string>()
+                ))
+                .HasColumnType("TEXT")
+                .IsRequired();
+
+            e.Property(i => i.CreatedAt)
+                .ValueGeneratedNever()
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
+
+            e.Property(i => i.StartedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.ToUnixTimeSeconds() : (long?)null,
+                    x => x.HasValue ? DateTimeOffset.FromUnixTimeSeconds(x.Value) : null
+                );
+
+            e.Property(i => i.CompletedAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.ToUnixTimeSeconds() : (long?)null,
+                    x => x.HasValue ? DateTimeOffset.FromUnixTimeSeconds(x.Value) : null
+                );
+
+            e.Property(i => i.Attempts)
+                .IsRequired();
+
+            e.Property(i => i.NextAttemptAt)
+                .ValueGeneratedNever()
+                .HasConversion(
+                    x => x.HasValue ? x.Value.ToUnixTimeSeconds() : (long?)null,
+                    x => x.HasValue ? DateTimeOffset.FromUnixTimeSeconds(x.Value) : null
+                );
+
+            e.Property(i => i.FailureReason)
+                .IsRequired(false);
+
+            e.Property(i => i.BytesRead)
+                .IsRequired();
+
+            e.Property(i => i.SlicesReconstructed)
+                .IsRequired();
+
+            e.HasIndex(i => i.DavItemId);
+            e.HasIndex(i => new { i.State, i.NextAttemptAt });
         });
 
         if (DatabaseProviderConfig.IsPostgres)
