@@ -54,7 +54,7 @@ public class LazyRarProcessor(
             await using var firstStream = usenetClient.GetFileStream(
                 firstInfo.NzbFile, firstFileSize, articleBufferSize: 0);
             first16KB = await VideoSignatureUtil.ReadFirst16KBAsync(firstStream, ct).ConfigureAwait(false);
-            // Stop as soon as the first file header lands. NzbDav.SharpCompress
+            // Stop as soon as the first file header lands. In-tree SharpCompress
             // deferred data-skip means this does not seek past packed payload.
             headers = await RarUtil.ReadHeadersUntilFirstFileAsync(firstStream, password, ct)
                 .ConfigureAwait(false);

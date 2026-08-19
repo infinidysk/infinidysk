@@ -18,74 +18,8 @@ public static class RarUtil
         CancellationToken ct
     )
     {
+        ct.ThrowIfCancellationRequested();
         await using var cancellableStream = new CancellableStream(stream, ct);
-        return await Task.Run(() => GetRarHeaders(cancellableStream, password), ct).ConfigureAwait(false);
-    }
-
-    // Stops iterating as soon as `predicate` matches a file header. With NzbDav.SharpCompress
-    // deferred data-skip, stopping after a match performs no packed-data seek on NzbFileStream.
-    public static async Task<IRarFileHeader?> FindFirstFileHeaderAsync
-    (
-        Stream stream,
-        string? password,
-        Func<IRarFileHeader, bool> predicate,
-        CancellationToken ct
-    )
-    {
-        await using var cancellableStream = new CancellableStream(stream, ct);
-        return await Task.Run(() => FindFirstFileHeader(cancellableStream, password, predicate), ct)
-            .ConfigureAwait(false);
-    }
-
-    private static IRarFileHeader? FindFirstFileHeader(
-        Stream stream,
-        string? password,
-        Func<IRarFileHeader, bool> predicate)
-    {
-        try
-        {
-            var readerOptions = new ReaderOptions
-            {
-                Password = password,
-                LeaveStreamOpen = true,
-            };
-            var headerFactory = new RarHeaderFactory(StreamingMode.Seekable, readerOptions);
-            foreach (var header in headerFactory.ReadHeaders(stream))
-            {
-                if (header.HeaderType != HeaderType.File) continue;
-                if (header is not IRarFileHeader fh || fh.IsDirectory) continue;
-                if (!fh.IsStored)
-                    throw new UnsupportedRarCompressionMethodException(
-                        "Only rar files with compression method m0 are supported.");
-                if (predicate(fh)) return fh;
-            }
-            return null;
-        }
-        catch (Exception e) when (TryMapHeaderParseFailure(e, stream, out var mapped) && e is not OutOfMemoryException)
-        {
-            throw mapped;
-        }
-    }
-
-    // Reads headers from the start of a RAR volume and stops as soon as the
-    // first file header is yielded. Deferred data-skip means this no longer
-    // seeks past packed payload. Returned list typically contains
-    // [archive_header, file_header]; callers use the archive header for the
-    // IsFirstVolume eligibility check and the file header for path/size/AES metadata.
-    public static async Task<List<IRarHeader>> ReadHeadersUntilFirstFileAsync
-    (
-        Stream stream,
-        string? password,
-        CancellationToken ct
-    )
-    {
-        await using var cancellableStream = new CancellableStream(stream, ct);
-        return await Task.Run(() => ReadHeadersUntilFirstFile(cancellableStream, password), ct)
-            .ConfigureAwait(false);
-    }
-
-    private static List<IRarHeader> ReadHeadersUntilFirstFile(Stream stream, string? password)
-    {
         try
         {
             var readerOptions = new ReaderOptions
@@ -95,36 +29,8 @@ public static class RarUtil
             };
             var headerFactory = new RarHeaderFactory(StreamingMode.Seekable, readerOptions);
             var headers = new List<IRarHeader>();
-            foreach (var header in headerFactory.ReadHeaders(stream))
-            {
-                headers.Add(header);
-                if (header.HeaderType != HeaderType.File) continue;
-                if (header is not IRarFileHeader fh || fh.IsDirectory) continue;
-                if (!fh.IsStored)
-                    throw new UnsupportedRarCompressionMethodException(
-                        "Only rar files with compression method m0 are supported.");
-                return headers;
-            }
-            return headers;
-        }
-        catch (Exception e) when (TryMapHeaderParseFailure(e, stream, out var mapped) && e is not OutOfMemoryException)
-        {
-            throw mapped;
-        }
-    }
-
-    private static List<IRarHeader> GetRarHeaders(Stream stream, string? password)
-    {
-        try
-        {
-            var readerOptions = new ReaderOptions
-            {
-                Password = password,
-                LeaveStreamOpen = true,
-            };
-            var headerFactory = new RarHeaderFactory(StreamingMode.Seekable, readerOptions);
-            var headers = new List<IRarHeader>();
-            foreach (var header in headerFactory.ReadHeaders(stream))
+            await foreach (var header in headerFactory
+                .ReadHeadersAsync(cancellableStream, ct).ConfigureAwait(false))
             {
                 // add archive headers
                 if (header.HeaderType is HeaderType.Archive or HeaderType.EndArchive)
@@ -156,7 +62,90 @@ public static class RarUtil
 
             return headers;
         }
-        catch (Exception e) when (TryMapHeaderParseFailure(e, stream, out var mapped) && e is not OutOfMemoryException)
+        catch (Exception e) when (TryMapHeaderParseFailure(e, cancellableStream, out var mapped)
+            && e is not OutOfMemoryException)
+        {
+            throw mapped;
+        }
+    }
+
+    // Stops iterating as soon as `predicate` matches a file header. With in-tree
+    // SharpCompress deferred data-skip, stopping after a match performs no packed-data seek on NzbFileStream.
+    public static async Task<IRarFileHeader?> FindFirstFileHeaderAsync
+    (
+        Stream stream,
+        string? password,
+        Func<IRarFileHeader, bool> predicate,
+        CancellationToken ct
+    )
+    {
+        ct.ThrowIfCancellationRequested();
+        await using var cancellableStream = new CancellableStream(stream, ct);
+        try
+        {
+            var readerOptions = new ReaderOptions
+            {
+                Password = password,
+                LeaveStreamOpen = true,
+            };
+            var headerFactory = new RarHeaderFactory(StreamingMode.Seekable, readerOptions);
+            await foreach (var header in headerFactory
+                .ReadHeadersAsync(cancellableStream, ct).ConfigureAwait(false))
+            {
+                if (header.HeaderType != HeaderType.File) continue;
+                if (header is not IRarFileHeader fh || fh.IsDirectory) continue;
+                if (!fh.IsStored)
+                    throw new UnsupportedRarCompressionMethodException(
+                        "Only rar files with compression method m0 are supported.");
+                if (predicate(fh)) return fh;
+            }
+            return null;
+        }
+        catch (Exception e) when (TryMapHeaderParseFailure(e, cancellableStream, out var mapped)
+            && e is not OutOfMemoryException)
+        {
+            throw mapped;
+        }
+    }
+
+    // Reads headers from the start of a RAR volume and stops as soon as the
+    // first file header is yielded. Deferred data-skip means this no longer
+    // seeks past packed payload. Returned list typically contains
+    // [archive_header, file_header]; callers use the archive header for the
+    // IsFirstVolume eligibility check and the file header for path/size/AES metadata.
+    public static async Task<List<IRarHeader>> ReadHeadersUntilFirstFileAsync
+    (
+        Stream stream,
+        string? password,
+        CancellationToken ct
+    )
+    {
+        ct.ThrowIfCancellationRequested();
+        await using var cancellableStream = new CancellableStream(stream, ct);
+        try
+        {
+            var readerOptions = new ReaderOptions
+            {
+                Password = password,
+                LeaveStreamOpen = true,
+            };
+            var headerFactory = new RarHeaderFactory(StreamingMode.Seekable, readerOptions);
+            var headers = new List<IRarHeader>();
+            await foreach (var header in headerFactory
+                .ReadHeadersAsync(cancellableStream, ct).ConfigureAwait(false))
+            {
+                headers.Add(header);
+                if (header.HeaderType != HeaderType.File) continue;
+                if (header is not IRarFileHeader fh || fh.IsDirectory) continue;
+                if (!fh.IsStored)
+                    throw new UnsupportedRarCompressionMethodException(
+                        "Only rar files with compression method m0 are supported.");
+                return headers;
+            }
+            return headers;
+        }
+        catch (Exception e) when (TryMapHeaderParseFailure(e, cancellableStream, out var mapped)
+            && e is not OutOfMemoryException)
         {
             throw mapped;
         }

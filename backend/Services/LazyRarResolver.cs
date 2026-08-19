@@ -194,7 +194,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         await using var stream = OpenVolumeStream(
             pending.SegmentIds, fileSize, pending.SegmentFallbackIds);
 
-        // Find-and-stop after the matching header. With NzbDav.SharpCompress
+        // Find-and-stop after the matching header. With in-tree SharpCompress
         // deferred data-skip, this no longer seeks past packed payload on
         // NzbFileStream (which previously triggered InterpolationSearch).
         // Measure-and-retry for understated Length remains as defense in depth.
