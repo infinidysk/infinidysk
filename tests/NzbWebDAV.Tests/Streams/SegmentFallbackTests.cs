@@ -80,7 +80,13 @@ public class SegmentFallbackTests
     public async Task MultiSegmentStream_ConsecutiveMissingArticlesStopPrefetch(
         bool usePipelinedBodyRequests)
     {
-        var segmentIds = Enumerable.Range(0, 20)
+        // The consumer aborts on the third consecutive zero-fill, but each consumed
+        // zero-fill releases prefetch-ceiling bytes first, so the producer may legally
+        // top up one more batch before it observes the cancellation. With a window of
+        // articleBufferSize * batchWidth (16) plus that top-up, up to ~24 requests can
+        // fire; use enough segments that even the worst-case interleaving stays below
+        // the total, keeping this assertion deterministic (see #1031).
+        var segmentIds = Enumerable.Range(0, 40)
             .Select(index => $"missing-{index}")
             .ToArray();
         var client = new RawBodyNntpClient(new Dictionary<string, byte[]>());
@@ -102,7 +108,12 @@ public class SegmentFallbackTests
                 using var destination = new MemoryStream();
                 return stream.CopyToAsync(destination);
             });
-        await Task.Delay(50);
+
+        // Wait for the producer loop to exit instead of sleeping: if the
+        // consecutive-zero-fill cancellation regresses, the producer blocks at the
+        // prefetch ceiling and this times out instead of passing vacuously.
+        var multiSegmentStream = Assert.IsType<MultiSegmentStream>(stream);
+        await multiSegmentStream.DownloadTaskForTests.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.True(
             client.BodyRequestCount < segmentIds.Length,

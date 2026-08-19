@@ -64,6 +64,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// <summary>Current adaptive BODY batch width (or the fixed pipeline size when not adaptive).</summary>
     internal int PrefetchBatchWidth => _batchSizer?.Current ?? _bodyPipelineBatchSize;
 
+    /// <summary>
+    /// Test hook: completes when the producer loop has exited (e.g. after observing
+    /// the consecutive-zero-fill cancellation), so tests can assert on the final
+    /// request count without racing the prefetch top-up.
+    /// </summary>
+    internal Task DownloadTaskForTests => _downloadTask;
+
     public static Stream Create(
         Memory<string> segmentIds,
         INntpClient usenetClient,
