@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
@@ -9,6 +10,19 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
 {
     private const int SegmentSize = 8 * 1024;
     private const int SegmentCount = 6;
+    private const int RangeProbeOffset = SegmentSize + 127;
+    private const int RangeProbeCount = 1024;
+    private const int TailProbeCount = 257;
+    private const int RangeProbeTransportRequests = 0;
+    private const int RangeProbeTransportBytes = 0;
+    private const int TailProbeTransportRequests = 0;
+    private const int TailProbeTransportBytes = 0;
+    private const int SeekTransportRequests = 0;
+    private const int SeekTransportBytes = 0;
+    private const int DeadArticleTransportRequests = 2;
+    private const int DeadArticleTransportBytes = 0;
+    private const string TransportContractMessage =
+        "Intentional transport-contract change ⇒ update this constant and the committed baseline.";
 
     [Fact]
     public async Task DeterministicFixture_CoversColdWarmRangeTailSeekAndDeadArticlePaths()
@@ -27,7 +41,7 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
 
             await AssertReadMatchesAsync(transport, fixture, offset: 0, count: fixture.Source.Length);
             var coldTransportRequests = transport.BodyRequestCount;
-            var coldTransportBytes = transport.RequestedSegmentIds.Sum(id => fixture.Segments[id].Length);
+            var coldTransportBytes = TransportBytes(transport, fixture.Segments);
             Assert.Equal(SegmentCount, coldTransportRequests);
             Assert.Equal(fixture.Source.Length, coldTransportBytes);
 
@@ -36,9 +50,16 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
             await AssertReadMatchesAsync(cached, fixture, offset: 0, count: fixture.Source.Length);
             Assert.Equal(requestsBeforeWarmRead, transport.BodyRequestCount);
 
-            await AssertReadMatchesAsync(cached, fixture, offset: SegmentSize + 127, count: 1024);
-            await AssertReadMatchesAsync(cached, fixture, offset: fixture.Source.Length - 257, count: 257);
+            await AssertTransportDeltaAsync(
+                transport, fixture.Segments, "range-probe", RangeProbeTransportRequests, RangeProbeTransportBytes,
+                () => AssertReadMatchesAsync(cached, fixture, RangeProbeOffset, RangeProbeCount));
+            await AssertTransportDeltaAsync(
+                transport, fixture.Segments, "tail-probe", TailProbeTransportRequests, TailProbeTransportBytes,
+                () => AssertReadMatchesAsync(
+                    cached, fixture, fixture.Source.Length - TailProbeCount, TailProbeCount));
 
+            var requestsBeforeSeeks = transport.BodyRequestCount;
+            var bytesBeforeSeeks = TransportBytes(transport, fixture.Segments);
             await using (var stream = fixture.CreateStream(cached))
             {
                 foreach (var offset in new[] { 17, SegmentSize * 3 + 91, SegmentSize * 2 + 7 })
@@ -49,6 +70,13 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
                     Assert.Equal(fixture.Source.AsSpan(offset, read).ToArray(), buffer);
                 }
             }
+
+            AssertTransportContract(
+                "seeks",
+                SeekTransportRequests,
+                transport.BodyRequestCount - requestsBeforeSeeks,
+                SeekTransportBytes,
+                TransportBytes(transport, fixture.Segments) - bytesBeforeSeeks);
 
             var deadSegments = fixture.Segments
                 .Where(pair => pair.Key != fixture.SegmentIds[2])
@@ -64,6 +92,12 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
                 deadBuffer, deadBuffer.Length, throwOnEndOfStream: true));
             Assert.Equal(new byte[SegmentSize], deadBuffer);
             Assert.Contains(fixture.SegmentIds[2], deadTransport.RequestedSegmentIds);
+            AssertTransportContract(
+                "dead-article",
+                DeadArticleTransportRequests,
+                deadTransport.BodyRequestCount,
+                DeadArticleTransportBytes,
+                TransportBytes(deadTransport, deadSegments));
         }
         finally
         {
@@ -71,6 +105,81 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
                 Directory.Delete(cacheDir, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task MaxConsecutiveZeroFills_ZeroFillsUpToBoundThenAborts()
+    {
+        var fixture = CreateFixture();
+        // Keep segment 0 so NzbFileStream does not fail-fast on the first article,
+        // then remove the next MaxConsecutiveZeroFills segments.
+        var missingIds = fixture.SegmentIds
+            .Skip(1)
+            .Take(GapFillLimits.MaxConsecutiveZeroFills)
+            .ToHashSet(StringComparer.Ordinal);
+        var remaining = fixture.Segments
+            .Where(pair => !missingIds.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        var transport = new FakeNntpClient(
+            remaining,
+            useCachedYencStreams: true,
+            segmentRanges: fixture.RangesById);
+        await using var stream = fixture.CreateStream(transport);
+        var buffer = new byte[SegmentSize];
+
+        Assert.Equal(SegmentSize, await stream.ReadAtLeastAsync(
+            buffer, buffer.Length, throwOnEndOfStream: true));
+        Assert.Equal(fixture.Source.AsSpan(0, SegmentSize).ToArray(), buffer);
+
+        for (var index = 0; index < GapFillLimits.MaxConsecutiveZeroFills - 1; index++)
+        {
+            Assert.Equal(SegmentSize, await stream.ReadAtLeastAsync(
+                buffer, buffer.Length, throwOnEndOfStream: true));
+            Assert.Equal(new byte[SegmentSize], buffer);
+        }
+
+        await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            async () => await stream.ReadAtLeastAsync(
+                buffer, buffer.Length, throwOnEndOfStream: false));
+        Assert.Equal(1 + GapFillLimits.MaxConsecutiveZeroFills, transport.BodyRequestCount);
+    }
+
+    private static async Task AssertTransportDeltaAsync(
+        FakeNntpClient transport,
+        IReadOnlyDictionary<string, byte[]> servedSegments,
+        string scenario,
+        int expectedRequests,
+        long expectedBytes,
+        Func<Task> action)
+    {
+        var requestsBefore = transport.BodyRequestCount;
+        var bytesBefore = TransportBytes(transport, servedSegments);
+        await action();
+        AssertTransportContract(
+            scenario,
+            expectedRequests,
+            transport.BodyRequestCount - requestsBefore,
+            expectedBytes,
+            TransportBytes(transport, servedSegments) - bytesBefore);
+    }
+
+    private static void AssertTransportContract(
+        string scenario,
+        int expectedRequests,
+        int actualRequests,
+        long expectedBytes,
+        long actualBytes)
+    {
+        Assert.True(
+            actualRequests == expectedRequests && actualBytes == expectedBytes,
+            $"{scenario} expected requests={expectedRequests} bytes={expectedBytes} " +
+            $"but was requests={actualRequests} bytes={actualBytes}. {TransportContractMessage}");
+    }
+
+    private static long TransportBytes(
+        FakeNntpClient transport,
+        IReadOnlyDictionary<string, byte[]> servedSegments) =>
+        transport.RequestedSegmentIds.Sum(id =>
+            servedSegments.TryGetValue(id, out var bytes) ? bytes.Length : 0);
 
     private static async Task AssertReadMatchesAsync(
         INntpClient client,
