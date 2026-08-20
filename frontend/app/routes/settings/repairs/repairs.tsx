@@ -324,6 +324,18 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 />
             </Tooltip>
             </ManagedSetting>
+            <ManagedSetting configKey="repair.corruption-tracking-enabled">
+            <Tooltip content="Record streaming-confirmed corrupt articles on the file, include them in health classification, and skip the retry storm on later reads. Enabled by default. Disable to stop persistence and the known-corrupt fast path. Playback-breaking corruption still escalates to repair when Background Repairs is on.">
+                <Toggle
+                    id="corruption-tracking-enabled-checkbox"
+                    className="cursor-pointer gap-2 p-0"
+                    checked={isRepairEnabled && (config["repair.corruption-tracking-enabled"] ?? "true") === "true"}
+                    disabled={!isRepairEnabled}
+                    onChange={e => setNewConfig({ ...config, "repair.corruption-tracking-enabled": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Track corrupt articles during playback</span>}
+                />
+            </Tooltip>
+            </ManagedSetting>
             <ManagedSetting
                 configKeys={[
                     "repair.degraded-max-consecutive-missing",
@@ -397,6 +409,7 @@ export function isRepairsSettingsUpdated(config: Record<string, string>, newConf
         || config["repair.par2-fetch-concurrency"] !== newConfig["repair.par2-fetch-concurrency"]
         || config["repair.par2-failure-cooldown-hours"] !== newConfig["repair.par2-failure-cooldown-hours"]
         || config["repair.degraded-tolerance-enabled"] !== newConfig["repair.degraded-tolerance-enabled"]
+        || config["repair.corruption-tracking-enabled"] !== newConfig["repair.corruption-tracking-enabled"]
         || config["repair.degraded-max-consecutive-missing"] !== newConfig["repair.degraded-max-consecutive-missing"]
         || config["repair.degraded-max-total-missing"] !== newConfig["repair.degraded-max-total-missing"]
         || config["repair.degraded-max-missing-byte-percent"] !== newConfig["repair.degraded-max-missing-byte-percent"]
