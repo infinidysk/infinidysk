@@ -529,10 +529,6 @@ public class MultiProviderNntpClient(
                     primaryStopwatch.ElapsedMilliseconds, 0, primaryTraceRange);
                 (priorMisses ??= []).Add((primaryProvider.MetricsKey, SegmentFetch.FetchStatus.Missing));
             }
-            else if (response is { ResponseType: UsenetResponseType.ArticleRetrievedBodyFollows })
-            {
-                // counted as success below
-            }
             else if (response != null)
             {
                 walk.Attempts++;

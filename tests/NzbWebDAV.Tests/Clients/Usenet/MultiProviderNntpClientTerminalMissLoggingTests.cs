@@ -301,10 +301,11 @@ public sealed class MultiProviderNntpClientTerminalMissLoggingTests
             });
             var reader = entry.TryAttach(0, NoFallback, out var reason);
             Assert.True(reader is not null, $"attach missed: {reason}");
-            await using (reader)
+            var attached = reader!;
+            await using (attached)
             {
                 var buffer = new byte[8];
-                _ = await reader.ReadAsync(buffer);
+                _ = await attached.ReadAsync(buffer);
             }
         });
 
