@@ -252,7 +252,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
 
     private async Task PumpLoopAsync()
     {
-        var scratch = SharedArrayPoolAdapter.Instance.Rent(_chunkSize);
+        var scratch = SharedStreamAccountingPool.PumpScratch.Rent(_chunkSize);
         try
         {
             var upstream = _upstream
@@ -312,7 +312,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         }
         finally
         {
-            SharedArrayPoolAdapter.Instance.Return(scratch);
+            SharedStreamAccountingPool.PumpScratch.Return(scratch);
         }
     }
 
@@ -350,6 +350,8 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         if (min is { } minCursor)
             _ring.EvictThrough(minCursor);
 
+        OnRingRetainedBytes?.Invoke(_ring.RetainedBytes);
+
         min = _ring.GetMinCursor();
         if (min is not { } pinning)
             return;
@@ -363,6 +365,8 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         var evicted = _ring.ForceEvictBelow(newTail);
         if (evicted.Count > 0)
             OnForceEvictions?.Invoke(evicted.Count);
+
+        OnRingRetainedBytes?.Invoke(_ring.RetainedBytes);
     }
 
     private void StartGraceLocked()

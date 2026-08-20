@@ -7,11 +7,16 @@ namespace NzbWebDAV.Services;
 /// Tracks overlapping WebDAV and /view reads and, when shared streams are
 /// enabled, real attach hits versus private fallbacks.
 /// </summary>
-public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null, ConfigManager? configManager = null)
+public sealed class ConcurrentReadTracker(
+    TimeProvider? timeProvider = null,
+    ConfigManager? configManager = null,
+    SharedStreamRetentionAccount? retentionAccount = null)
 {
     private readonly object _gate = new();
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly ConfigManager? _configManager = configManager;
+    private readonly SharedStreamRetentionAccount _retention =
+        retentionAccount ?? SharedStreamRetentionAccount.Instance;
     private readonly Dictionary<string, PathState> _paths = new(StringComparer.Ordinal);
     private readonly AsyncLocal<ReadContext?> _currentRead = new();
     private long _nextReaderId;
@@ -41,10 +46,15 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null, Con
     private long _sharedEntriesReapedFailure;
     private long _sharedReaderEvictions;
     private long _sharedReadersServedTotal;
-    private long _sharedStreamRingRetainedBytes;
-    private long _sharedStreamRingRetainedBytesPeak;
     private long _sharedStreamTotalBytesPumped;
     private long _sharedStreamTotalEntryLifetimeMs;
+    private long _sharedStreamRingLogicalBytes;
+    private long _sharedStreamLiveEntries;
+    private long _sharedStreamReadyEntries;
+    private long _sharedStreamDrainingEntries;
+    private long _sharedStreamLaggingReaders;
+    private long _sharedStreamPressureDetaches;
+    private long _sharedStreamPressureReaps;
 
     public ReadScope BeginRead(
         string path,
@@ -125,6 +135,7 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null, Con
 
     public ConcurrentReadSnapshot Snapshot()
     {
+        var retention = _retention.Snapshot();
         lock (_gate)
         {
             return new ConcurrentReadSnapshot(
@@ -160,10 +171,19 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null, Con
                 _sharedEntriesReapedFailure,
                 _sharedReaderEvictions,
                 _sharedReadersServedTotal,
-                _sharedStreamRingRetainedBytes,
-                _sharedStreamRingRetainedBytesPeak,
+                retention.RingRentedBytes,
+                retention.RingRentedBytesPeak,
                 _sharedStreamTotalBytesPumped,
-                _sharedStreamTotalEntryLifetimeMs);
+                _sharedStreamTotalEntryLifetimeMs,
+                _sharedStreamRingLogicalBytes,
+                retention.PumpScratchRentedBytes,
+                retention.PumpScratchRentedBytesPeak,
+                _sharedStreamLiveEntries,
+                _sharedStreamReadyEntries,
+                _sharedStreamDrainingEntries,
+                _sharedStreamLaggingReaders,
+                _sharedStreamPressureDetaches,
+                _sharedStreamPressureReaps);
         }
     }
 
@@ -272,11 +292,32 @@ public sealed class ConcurrentReadTracker(TimeProvider? timeProvider = null, Con
     public void UpdateSharedRingRetainedBytes(long currentBytes)
     {
         lock (_gate)
+            _sharedStreamRingLogicalBytes = Math.Max(0, currentBytes);
+    }
+
+    public void UpdateSharedStreamCensus(
+        long liveEntries,
+        long readyEntries,
+        long drainingEntries,
+        long laggingReaders)
+    {
+        lock (_gate)
         {
-            _sharedStreamRingRetainedBytes = Math.Max(0, currentBytes);
-            _sharedStreamRingRetainedBytesPeak = Math.Max(
-                _sharedStreamRingRetainedBytesPeak, _sharedStreamRingRetainedBytes);
+            _sharedStreamLiveEntries = Math.Max(0, liveEntries);
+            _sharedStreamReadyEntries = Math.Max(0, readyEntries);
+            _sharedStreamDrainingEntries = Math.Max(0, drainingEntries);
+            _sharedStreamLaggingReaders = Math.Max(0, laggingReaders);
         }
+    }
+
+    public void RecordSharedPressureDetach()
+    {
+        lock (_gate) _sharedStreamPressureDetaches++;
+    }
+
+    public void RecordSharedPressureReap()
+    {
+        lock (_gate) _sharedStreamPressureReaps++;
     }
 
     private bool IsSharedStreamsEnabled() =>
@@ -484,7 +525,16 @@ public readonly record struct ConcurrentReadSnapshot(
     long SharedStreamRingRetainedBytes = 0,
     long SharedStreamRingRetainedBytesPeak = 0,
     long SharedStreamTotalBytesPumped = 0,
-    long SharedStreamTotalEntryLifetimeMs = 0)
+    long SharedStreamTotalEntryLifetimeMs = 0,
+    long SharedStreamRingLogicalBytes = 0,
+    long SharedStreamPumpScratchRentedBytes = 0,
+    long SharedStreamPumpScratchRentedBytesPeak = 0,
+    long SharedStreamLiveEntries = 0,
+    long SharedStreamReadyEntries = 0,
+    long SharedStreamDrainingEntries = 0,
+    long SharedStreamLaggingReaders = 0,
+    long SharedStreamPressureDetaches = 0,
+    long SharedStreamPressureReaps = 0)
 {
     public long SharedAttachMisses =>
         SharedAttachMissesBehindWindow +

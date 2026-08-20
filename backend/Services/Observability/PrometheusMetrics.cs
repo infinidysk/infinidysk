@@ -46,6 +46,14 @@ public sealed class PrometheusMetrics
     private readonly Counter _par2RepairJobs;
     private readonly Gauge _sharedStreamRingBytes;
     private readonly Gauge _sharedStreamRingBytesPeak;
+    private readonly Gauge _sharedStreamRingLogicalBytes;
+    private readonly Gauge _sharedStreamPumpScratchBytes;
+    private readonly Gauge _sharedStreamLiveEntries;
+    private readonly Gauge _sharedStreamReadyEntries;
+    private readonly Gauge _sharedStreamDrainingEntries;
+    private readonly Gauge _sharedStreamLaggingReaders;
+    private readonly Counter _sharedStreamPressureDetaches;
+    private readonly Counter _sharedStreamPressureReaps;
     private readonly Counter _sharedStreamAttachHits;
     private readonly Counter _sharedStreamAttachMisses;
     private readonly Counter _sharedStreamEntriesCreated;
@@ -113,10 +121,34 @@ public sealed class PrometheusMetrics
             "Repair patch store evictions.");
         _sharedStreamRingBytes = metrics.CreateGauge(
             "nzbdav_shared_stream_ring_retained_bytes",
-            "Decoded bytes currently retained in shared-stream rings.");
+            "ArrayPool capacity currently rented by shared-stream rings. Returning buffers to the pool does not release those pages to the OS.");
         _sharedStreamRingBytesPeak = metrics.CreateGauge(
             "nzbdav_shared_stream_ring_retained_bytes_peak",
-            "Peak decoded bytes retained in shared-stream rings.");
+            "Peak ArrayPool capacity rented by shared-stream rings.");
+        _sharedStreamRingLogicalBytes = metrics.CreateGauge(
+            "nzbdav_shared_stream_ring_logical_bytes",
+            "Logical decoded bytes currently stored in shared-stream rings.");
+        _sharedStreamPumpScratchBytes = metrics.CreateGauge(
+            "nzbdav_shared_stream_pump_scratch_bytes",
+            "ArrayPool capacity currently rented by shared-stream pump scratch buffers.");
+        _sharedStreamLiveEntries = metrics.CreateGauge(
+            "nzbdav_shared_stream_live_entries",
+            "Live shared-stream region entries.");
+        _sharedStreamReadyEntries = metrics.CreateGauge(
+            "nzbdav_shared_stream_ready_entries",
+            "Shared-stream entries currently serving readers.");
+        _sharedStreamDrainingEntries = metrics.CreateGauge(
+            "nzbdav_shared_stream_draining_entries",
+            "Shared-stream entries in the last-reader grace period.");
+        _sharedStreamLaggingReaders = metrics.CreateGauge(
+            "nzbdav_shared_stream_lagging_readers",
+            "Shared-stream readers more than lead-bytes behind the fastest cursor.");
+        _sharedStreamPressureDetaches = metrics.CreateCounter(
+            "nzbdav_shared_stream_pressure_detaches_total",
+            "Readers detached because shared-stream retention pressure required a private fallback.");
+        _sharedStreamPressureReaps = metrics.CreateCounter(
+            "nzbdav_shared_stream_pressure_reaps_total",
+            "Shared-stream entries reaped because of retention pressure.");
         _sharedStreamAttachHits = metrics.CreateCounter(
             "nzbdav_shared_stream_attach_hits_total",
             "Requests served from an existing shared stream.");
@@ -196,6 +228,14 @@ public sealed class PrometheusMetrics
         _sharedStreamReadersServed.IncTo(reads.SharedReadersServedTotal);
         _sharedStreamRingBytes.Set(reads.SharedStreamRingRetainedBytes);
         _sharedStreamRingBytesPeak.Set(reads.SharedStreamRingRetainedBytesPeak);
+        _sharedStreamRingLogicalBytes.Set(reads.SharedStreamRingLogicalBytes);
+        _sharedStreamPumpScratchBytes.Set(reads.SharedStreamPumpScratchRentedBytes);
+        _sharedStreamLiveEntries.Set(reads.SharedStreamLiveEntries);
+        _sharedStreamReadyEntries.Set(reads.SharedStreamReadyEntries);
+        _sharedStreamDrainingEntries.Set(reads.SharedStreamDrainingEntries);
+        _sharedStreamLaggingReaders.Set(reads.SharedStreamLaggingReaders);
+        _sharedStreamPressureDetaches.IncTo(reads.SharedStreamPressureDetaches);
+        _sharedStreamPressureReaps.IncTo(reads.SharedStreamPressureReaps);
         _overlappingPaths.Set(reads.CurrentOverlappingPaths);
         _inFlightSegmentFetches.Set(reads.CurrentInFlightSegmentFetches);
 

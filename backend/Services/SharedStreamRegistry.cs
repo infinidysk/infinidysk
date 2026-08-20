@@ -318,17 +318,31 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
 
     private void PublishRetainedBytes()
     {
-        long total = 0;
+        long logical = 0;
+        long live = 0;
+        long ready = 0;
+        long draining = 0;
+        long lagging = 0;
         lock (_gate)
         {
             foreach (var list in _entries.Values)
             {
                 foreach (var entry in list)
-                    total += entry.Ring.RetainedBytes;
+                {
+                    live++;
+                    var state = entry.State;
+                    if (state == SharedStreamEntryState.Ready)
+                        ready++;
+                    else if (state == SharedStreamEntryState.Draining)
+                        draining++;
+                    logical += entry.Ring.RetainedBytes;
+                    lagging += entry.Ring.CountLaggingReaders(entry.LeadBytes);
+                }
             }
         }
 
-        _tracker.UpdateSharedRingRetainedBytes(total);
+        _tracker.UpdateSharedRingRetainedBytes(logical);
+        _tracker.UpdateSharedStreamCensus(live, ready, draining, lagging);
     }
 
     private List<SharedStreamEntry> SnapshotPath(string path)

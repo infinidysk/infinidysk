@@ -107,13 +107,26 @@ HEAD requests never join a shared stream. Unsatisfiable ranges still return
 416 before any stream is opened. A declined attach uses today's private-stream
 path unchanged.
 
-Ring bytes are rented as needed and returned when readers catch up or the
-entry is torn down. Steady-state retention per stream is typically the
-divergence between readers plus about 4 MiB of lead data — not the full ring.
-The theoretical worst case is max-entries × ring size (128 MiB at the
-defaults) under sustained maximal divergence on every slot at once. Those
-bytes are **not** leased from the in-flight article budget; watch
-`sharedStreamRingRetainedBytes` in a support pack if memory is tight.
+Ring bytes are rented from `ArrayPool` as needed and returned when readers
+catch up or the entry is torn down. Support packs and Prometheus report:
+
+- `sharedStreamRingConfiguredMaxBytes` — max-entries × ring size (128 MiB at
+  the defaults). This is the theoretical ceiling under sustained maximal
+  divergence on every slot at once.
+- `sharedStreamRingLogicalBytes` — decoded bytes currently sitting in ring
+  chunks (reader divergence plus about 4 MiB of lead data in the steady state).
+- `sharedStreamRingRetainedBytes` / `…Peak` — actual `ArrayPool` array
+  capacity currently (and ever) rented by those chunks. Bucket sizes are
+  typically larger than the requested chunk length.
+- `sharedStreamPumpScratchRentedBytes` — the pump's separate scratch buffer,
+  counted in its own category.
+
+Returning an array to `ArrayPool` does **not** give those pages back to the
+OS; process working set can stay elevated after the counters drop. Ring bytes
+are **not** leased from the in-flight article budget. A dedicated retention
+cap will be added only if field support packs show shared-ring rented
+capacity contributing to memory-pressure events or occupying a large fraction
+of the container limit.
 
 Disable shared streams if you need a guaranteed private prefetch window per
 client, or if a support pack shows ring retention competing with Article RAM

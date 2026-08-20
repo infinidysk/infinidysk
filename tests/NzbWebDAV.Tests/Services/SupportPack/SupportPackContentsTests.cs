@@ -189,6 +189,14 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.True(runtime.TryGetProperty("sharedStreamRingRetainedBytes", out var ringBytes));
         Assert.Equal(0, ringBytes.GetInt64());
         Assert.True(runtime.TryGetProperty("sharedStreamRingRetainedBytesPeak", out _));
+        Assert.True(runtime.TryGetProperty("sharedStreamRingLogicalBytes", out var logical));
+        Assert.Equal(0, logical.GetInt64());
+        Assert.True(runtime.TryGetProperty("sharedStreamPumpScratchRentedBytes", out _));
+        Assert.True(runtime.TryGetProperty("sharedStreamRingConfiguredMaxBytes", out var configuredMax));
+        Assert.True(configuredMax.GetInt64() > 0);
+        Assert.True(runtime.TryGetProperty("sharedStreamLiveEntries", out _));
+        Assert.True(runtime.TryGetProperty("sharedStreamLaggingReaders", out _));
+        Assert.True(runtime.TryGetProperty("sharedStreamPressureDetaches", out _));
     }
 
     [Fact]

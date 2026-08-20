@@ -1,3 +1,5 @@
+using NzbWebDAV.Streams;
+
 namespace NzbWebDAV.Tests.TestUtils;
 
 /// <summary>
@@ -6,4 +8,11 @@ namespace NzbWebDAV.Tests.TestUtils;
 /// interleave with other budget tests that share timing assumptions.
 /// </summary>
 [CollectionDefinition(nameof(SharedStreamCollection), DisableParallelization = true)]
-public class SharedStreamCollection;
+public class SharedStreamCollection : ICollectionFixture<SharedStreamRetentionResetFixture>;
+
+public sealed class SharedStreamRetentionResetFixture : IDisposable
+{
+    public SharedStreamRetentionResetFixture() => SharedStreamRetentionAccount.Instance.Reset();
+
+    public void Dispose() => SharedStreamRetentionAccount.Instance.Reset();
+}

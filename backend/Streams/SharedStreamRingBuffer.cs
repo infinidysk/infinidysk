@@ -38,7 +38,7 @@ internal sealed class SharedStreamRingBuffer
         _ringSize = ringSizeBytes;
         _tailStart = tailStart;
         _frontier = tailStart;
-        _pool = pool ?? SharedArrayPoolAdapter.Instance;
+        _pool = pool ?? SharedStreamAccountingPool.Ring;
         _chunkSize = chunkSize ?? DefaultChunkSize;
         ArgumentOutOfRangeException.ThrowIfLessThan(_chunkSize, 1);
     }
@@ -59,6 +59,11 @@ internal sealed class SharedStreamRingBuffer
     public long RetainedBytes
     {
         get { lock (_lock) return RetainedBytesLocked(); }
+    }
+
+    public long RentedBytes
+    {
+        get { lock (_lock) return RentedBytesLocked(); }
     }
 
     public bool IsComplete
@@ -84,6 +89,25 @@ internal sealed class SharedStreamRingBuffer
     internal int ReaderCount
     {
         get { lock (_lock) return _readers.Count; }
+    }
+
+    internal int CountLaggingReaders(int leadBytes)
+    {
+        lock (_lock)
+        {
+            if (_readers.Count == 0 || leadBytes <= 0)
+                return 0;
+
+            var threshold = MaxCursorLocked() - leadBytes;
+            var count = 0;
+            foreach (var slot in _readers.Values)
+            {
+                if (slot.Cursor < threshold)
+                    count++;
+            }
+
+            return count;
+        }
     }
 
     public void RegisterReader(long readerId, long cursor)
@@ -354,6 +378,14 @@ internal sealed class SharedStreamRingBuffer
         long total = 0;
         foreach (var chunk in _chunks)
             total += chunk.Length;
+        return total;
+    }
+
+    private long RentedBytesLocked()
+    {
+        long total = 0;
+        foreach (var chunk in _chunks)
+            total += chunk.Buffer.Length;
         return total;
     }
 
