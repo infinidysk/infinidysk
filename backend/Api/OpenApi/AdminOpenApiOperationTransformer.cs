@@ -29,8 +29,31 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
         operation.Responses ??= [];
         if (!operation.Responses.ContainsKey("200"))
             operation.Responses["200"] = new OpenApiResponse { Description = "Success." };
+        AddProblemResponse(operation, "400", "Bad request.");
+        AddProblemResponse(operation, "401", "Unauthorized.");
+        AddProblemResponse(operation, "403", "Forbidden.");
+        AddProblemResponse(operation, "404", "Not found.");
+        AddProblemResponse(operation, "409", "Conflict.");
+        AddProblemResponse(operation, "500", "Unexpected server error. Detail is sanitized; use traceId.");
 
         return Task.CompletedTask;
+    }
+
+    private static void AddProblemResponse(OpenApiOperation operation, string status, string description)
+    {
+        operation.Responses ??= [];
+        if (operation.Responses.ContainsKey(status)) return;
+        operation.Responses[status] = new OpenApiResponse
+        {
+            Description = description,
+            Content = new Dictionary<string, OpenApiMediaType>
+            {
+                ["application/problem+json"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchemaReference("ProblemDetails"),
+                },
+            },
+        };
     }
 
     private static string HumanizeControllerName(string controllerName)

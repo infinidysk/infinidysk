@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { backendClient, BackendUnavailableError } from "./backend-client.server";
+import {
+  backendClient,
+  BackendApiError,
+  BackendUnavailableError,
+  parseBackendFailure,
+} from "./backend-client.server";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -229,6 +234,66 @@ describe("BackendClient", () => {
     await expect(backendClient.getQueue(1)).rejects.toThrow(
       "Failed to get queue: bad request",
     );
+  });
+
+  it("parses RFC 7807 ProblemDetails including the trace id", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      type: "https://www.infinidysk.com/problems/unauthorized",
+      title: "Unauthorized",
+      status: 401,
+      detail: "API Key Required",
+      traceId: "abc123",
+    }), {
+      status: 401,
+      headers: {
+        "Content-Type": "application/problem+json",
+        "X-Correlation-ID": "abc123",
+      },
+    }));
+
+    const error = await backendClient.isOnboarding().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(BackendApiError);
+    expect(error).toMatchObject({
+      status: 401,
+      title: "Unauthorized",
+      detail: "API Key Required",
+      traceId: "abc123",
+      message: "Failed to fetch onboarding status: API Key Required (trace abc123)",
+    });
+  });
+
+  it("parses SAB nested problems, validation errors, html, and empty bodies", () => {
+    const sab = parseBackendFailure("Failed", 400, {
+      status: false,
+      error: "Invalid mode",
+      problem: {
+        type: "https://www.infinidysk.com/problems/bad-request",
+        title: "Bad Request",
+        status: 400,
+        detail: "Invalid mode",
+        traceId: "sab-1",
+      },
+    });
+    expect(sab).toMatchObject({ status: 400, detail: "Invalid mode", traceId: "sab-1" });
+
+    const validation = parseBackendFailure("Failed", 400, {
+      type: "https://www.infinidysk.com/problems/validation",
+      title: "One or more validation errors occurred.",
+      status: 400,
+      detail: "One or more validation errors occurred.",
+      traceId: "val-1",
+      errors: { host: ["Host is required."] },
+    });
+    expect(validation.fieldErrors).toEqual({ host: ["Host is required."] });
+
+    const html = parseBackendFailure("Failed", 502, "<html><body>Bad gateway</body></html>");
+    expect(html.detail).toBe("Bad gateway");
+
+    const empty = parseBackendFailure("Failed", 500, null, "hdr-1");
+    expect(empty).toMatchObject({ detail: "HTTP 500", traceId: "hdr-1" });
   });
 
   it("throws BackendUnavailableError when fetch fails", async () => {

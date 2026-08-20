@@ -65,6 +65,19 @@ public sealed class AdminOpenApiIntegrationTests(NzbDavWebApplicationFactory fac
             Assert.Equal("x-api-key", apiKey.GetProperty("name").GetString());
             Assert.Equal("header", apiKey.GetProperty("in").GetString());
 
+            var problem = root.GetProperty("components")
+                .GetProperty("schemas")
+                .GetProperty("ProblemDetails");
+            Assert.True(problem.GetProperty("properties").TryGetProperty("traceId", out _));
+            Assert.Equal(
+                "application/problem+json",
+                getConfigPost.GetProperty("responses")
+                    .GetProperty("401")
+                    .GetProperty("content")
+                    .EnumerateObject()
+                    .First()
+                    .Name);
+
             using var scalarRejected = await client.GetAsync("/scalar/");
             Assert.Equal(HttpStatusCode.Unauthorized, scalarRejected.StatusCode);
 

@@ -48,6 +48,118 @@ export class BackendUnavailableError extends Error {
     }
 }
 
+/** Structured failure from RFC 7807 ProblemDetails, SAB nested problems, or legacy JSON. */
+export class BackendApiError extends Error {
+    public constructor(
+        message: string,
+        public readonly status: number,
+        public readonly title: string,
+        public readonly detail: string,
+        public readonly traceId?: string,
+        public readonly fieldErrors?: Record<string, string[]>,
+        options?: ErrorOptions,
+    ) {
+        super(message, options);
+        this.name = "BackendApiError";
+    }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function asString(value: unknown): string | undefined {
+    return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function asFieldErrors(value: unknown): Record<string, string[]> | undefined {
+    const record = asRecord(value);
+    if (!record) return undefined;
+    const errors: Record<string, string[]> = {};
+    for (const [key, raw] of Object.entries(record)) {
+        if (!Array.isArray(raw) || !raw.every((item) => typeof item === "string")) continue;
+        errors[key] = raw;
+    }
+    return Object.keys(errors).length > 0 ? errors : undefined;
+}
+
+function stripMarkup(value: string): string {
+    return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function parseBackendFailure(
+    errorPrefix: string,
+    status: number,
+    body: unknown,
+    correlationHeader?: string | null,
+): BackendApiError {
+    const record = asRecord(body);
+    const nested = record ? asRecord(record["problem"]) : null;
+    const problem = nested
+        ?? (record && typeof record["status"] === "number" ? record : null);
+
+    if (problem) {
+        const detail = asString(problem["detail"])
+            ?? asString(record?.["error"])
+            ?? asString(problem["title"])
+            ?? `HTTP ${status}`;
+        const title = asString(problem["title"]) ?? "Request failed";
+        const traceId = asString(problem["traceId"]) ?? correlationHeader ?? undefined;
+        const fieldErrors = asFieldErrors(problem["errors"]);
+        const suffix = traceId ? `${detail} (trace ${traceId})` : detail;
+        return new BackendApiError(
+            `${errorPrefix}: ${suffix}`,
+            typeof problem["status"] === "number" ? problem["status"] : status,
+            title,
+            detail,
+            traceId,
+            fieldErrors,
+        );
+    }
+
+    if (record && asString(record["error"])) {
+        const detail = asString(record["error"])!;
+        return new BackendApiError(
+            `${errorPrefix}: ${detail}`,
+            status,
+            "Request failed",
+            detail,
+            correlationHeader ?? undefined,
+        );
+    }
+
+    if (typeof body === "string" && body.trim().length > 0) {
+        const detail = stripMarkup(body) || `HTTP ${status}`;
+        return new BackendApiError(
+            `${errorPrefix}: ${detail}`,
+            status,
+            "Request failed",
+            detail,
+            correlationHeader ?? undefined,
+        );
+    }
+
+    return new BackendApiError(
+        `${errorPrefix}: HTTP ${status}`,
+        status,
+        "Request failed",
+        `HTTP ${status}`,
+        correlationHeader ?? undefined,
+    );
+}
+
+async function readFailureBody(response: Response): Promise<unknown> {
+    const raw = await response.text();
+    if (raw.length === 0) return null;
+    try {
+        return JSON.parse(raw) as unknown;
+    } catch {
+        return raw;
+    }
+}
+
 /** Walks cause/AggregateError chains for undici / Node network failure codes. */
 function extractNetworkErrorCode(error: unknown): string | undefined {
     const candidates: unknown[] = [error];
@@ -107,21 +219,21 @@ async function call<T = unknown>(path: string, errorPrefix: string, init?: Reque
     }
 
     if (!response.ok) {
-        const body = await response.json().catch(() => null) as
-            | { error?: string; status?: string }
-            | null;
-        if (response.status === 503 || body?.status === "migrating") {
+        const body = await readFailureBody(response);
+        const migrating = asRecord(body)?.["status"] === "migrating";
+        if (response.status === 503 || migrating) {
             throw new BackendUnavailableError(
                 `${errorPrefix}: backend is starting or migrating`,
                 "MIGRATING",
             );
         }
 
-        const backendError =
-            body && typeof body === "object" && "error" in body
-                ? (body.error ?? "unknown error")
-                : `HTTP ${response.status}`;
-        throw new Error(`${errorPrefix}: ${backendError}`);
+        throw parseBackendFailure(
+            errorPrefix,
+            response.status,
+            body,
+            response.headers.get("x-correlation-id"),
+        );
     }
 
     // The type parameter is the caller's declared contract for the backend
@@ -938,6 +1050,7 @@ export type LogEntry = {
     msg: string,
     source: string | null,
     exception: string | null,
+    traceId?: string | null,
 }
 
 export type GetLogsParams = {

@@ -11,6 +11,7 @@ using Microsoft.Extensions.Hosting;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
 using Scalar.AspNetCore;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.OpenApi;
 using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Auth;
@@ -76,6 +77,7 @@ public partial class Program
             : new StreamTraceBuffer(StreamTraceBuffer.DefaultUiCapacity, enabled: false);
         StreamTrace.Configure(streamTraceBuffer);
         Log.Logger = new LoggerConfiguration()
+            .Enrich.FromLogContext()
             .MinimumLevel.Is(level)
             .MinimumLevel.Override("NWebDAV", AtLeast(level, LogEventLevel.Warning))
             .MinimumLevel.Override("Microsoft", AtLeast(level, LogEventLevel.Information))
@@ -230,7 +232,8 @@ public partial class Program
             var maxRequestBodySize = EnvironmentUtil.GetLongVariable("MAX_REQUEST_BODY_SIZE") ?? 100 * 1024 * 1024;
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
-            builder.Services.AddControllers();
+            builder.Services.AddControllers(options =>
+                options.Filters.Add<ApiErrorContractFilter>());
             builder.Services.AddHttpContextAccessor();
             if (apiDocsEnabled)
                 builder.Services.AddOpenApi(AdminOpenApiExtensions.DocumentName, AdminOpenApiExtensions.Configure);
@@ -423,6 +426,7 @@ public partial class Program
             var app = builder.Build();
             // Must run before anything that reads Scheme/Host/RemoteIpAddress.
             app.UseForwardedHeaders();
+            app.UseMiddleware<RequestCorrelationMiddleware>();
             app.UseMiddleware<ExceptionMiddleware>();
             app.UseMiddleware<MetricsAuthenticationMiddleware>();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });

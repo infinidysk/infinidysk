@@ -35,6 +35,33 @@ internal sealed class AdminOpenApiDocumentTransformer : IOpenApiDocumentTransfor
             Description = "Admin API key. Use FRONTEND_BACKEND_API_KEY for local development.",
         };
 
+        document.Components.Schemas ??= new Dictionary<string, IOpenApiSchema>();
+        document.Components.Schemas["ProblemDetails"] = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            Description =
+                "RFC 7807 problem document. Failures also return the X-Correlation-ID header, " +
+                "which matches the traceId property and Serilog TraceId log context.",
+            Properties = new Dictionary<string, IOpenApiSchema>
+            {
+                ["type"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                ["title"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                ["status"] = new OpenApiSchema { Type = JsonSchemaType.Integer },
+                ["detail"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                ["traceId"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                ["errors"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.Object,
+                    AdditionalProperties = new OpenApiSchema
+                    {
+                        Type = JsonSchemaType.Array,
+                        Items = new OpenApiSchema { Type = JsonSchemaType.String },
+                    },
+                },
+            },
+            Required = new HashSet<string> { "type", "title", "status", "traceId" },
+        };
+
         document.Security ??= [];
         document.Security.Add(new OpenApiSecurityRequirement
         {

@@ -28,7 +28,6 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Websocket;
-using Serilog;
 
 namespace NzbWebDAV.Api.SabControllers;
 
