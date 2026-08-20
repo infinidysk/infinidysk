@@ -18,10 +18,12 @@ import { CatalogueBlock } from "./components/catalogue-block/catalogue-block";
 import { LifetimeBlock } from "./components/lifetime-block/lifetime-block";
 import { RecordsBlock } from "./components/records-block/records-block";
 import { FailoverSaves } from "./components/failover-saves/failover-saves";
+import { ArrHealth } from "./components/arr-health/arr-health";
 import { SortableRow } from "./components/sortable-row/sortable-row";
-import { backendClient } from "~/clients/backend-client.server";
+import { backendClient, type ArrHealthResponse } from "~/clients/backend-client.server";
 import { useRowOrder } from "./utils/use-row-order";
 import { hasConfiguredIndexers } from "./utils/has-configured-indexers";
+import { hasConfiguredArrs } from "./utils/has-configured-arrs";
 import {
     EMPTY_OVERVIEW_STATS,
     mergeOverviewStats,
@@ -54,6 +56,7 @@ const DEFAULT_ROW_ORDER = [
     "latency",
     "errorsSessions",
     "failover",
+    "arrHealth",
     "indexers",
     "indexerApiUsage",
     "recordsCatalogue",
@@ -62,11 +65,14 @@ const DEFAULT_ROW_ORDER = [
 
 /** Shell-only loader — stats load client-side in sections so first paint is instant. */
 export async function loader() {
-    const config = await backendClient.getConfig(["indexers.instances"]);
+    const config = await backendClient.getConfig(["indexers.instances", "arr.instances"]);
     return {
         stats: null as OverviewStatsResponse | null,
         hasConfiguredIndexers: hasConfiguredIndexers(
             config.find(item => item.configName === "indexers.instances")?.configValue,
+        ),
+        hasConfiguredArrs: hasConfiguredArrs(
+            config.find(item => item.configName === "arr.instances")?.configValue,
         ),
     };
 }
@@ -96,6 +102,8 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     const [windowLoaded, setWindowLoaded] = useState(false);
     const [detailLoaded, setDetailLoaded] = useState(false);
     const [staticLoaded, setStaticLoaded] = useState(false);
+    const [arrHealth, setArrHealth] = useState<ArrHealthResponse | null>(null);
+    const [arrHealthLoaded, setArrHealthLoaded] = useState(false);
     const { order, save, reset } = useRowOrder(DEFAULT_ROW_ORDER);
     const editModeRef = useRef(editMode);
     editModeRef.current = editMode;
@@ -139,6 +147,41 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             document.removeEventListener("visibilitychange", onVisible);
         };
     }, [window, isLongWindow]);
+
+    // Arr Health: poll on the same 30s cadence, only when Arr instances are configured.
+    useEffect(() => {
+        if (!loaderData.hasConfiguredArrs) return;
+        let cancelled = false;
+        setArrHealthLoaded(false);
+
+        const fetchArrHealth = async () => {
+            if (typeof document !== "undefined" && document.hidden) return;
+            try {
+                const res = await fetch(withUrlBase(`/api/get-arr-health?window=${window}`));
+                if (!res.ok || cancelled) return;
+                const data = await res.json() as ArrHealthResponse;
+                if (cancelled) return;
+                setArrHealth(data);
+                setArrHealthLoaded(true);
+            } catch { /* network blip, retry next tick */ }
+        };
+
+        void fetchArrHealth();
+        const interval = setInterval(() => {
+            if (editModeRef.current) return;
+            void fetchArrHealth();
+        }, 30_000);
+        const onVisible = () => {
+            if (editModeRef.current) return;
+            if (!document.hidden) void fetchArrHealth();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+            document.removeEventListener("visibilitychange", onVisible);
+        };
+    }, [window, loaderData.hasConfiguredArrs]);
 
     // Detail (latency + errors): once per 24h window selection — not on the 30s poll.
     useEffect(() => {
@@ -275,6 +318,11 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         failover: windowLoaded
             ? <FailoverSaves failover={stats.failover} window={window} />
             : <Skeleton height={180} />,
+        arrHealth: loaderData.hasConfiguredArrs
+            ? (arrHealthLoaded && arrHealth
+                ? <ArrHealth data={arrHealth} window={window} />
+                : <Skeleton height={140} />)
+            : null,
         indexers: loaderData.hasConfiguredIndexers && staticLoaded
             ? <IndexerScoreboard indexers={stats.indexers} />
             : loaderData.hasConfiguredIndexers ? <Skeleton height={140} /> : null,
@@ -294,13 +342,15 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         lifetime: staticLoaded
             ? <LifetimeBlock lifetime={stats.lifetime} />
             : <Skeleton height={120} />,
-    }), [liveTiles, stats, window, isLongWindow, windowLoaded, detailLoaded, staticLoaded, editMode, loaderData.hasConfiguredIndexers]);
+    }), [liveTiles, stats, window, isLongWindow, windowLoaded, detailLoaded, staticLoaded, editMode, loaderData.hasConfiguredIndexers, loaderData.hasConfiguredArrs, arrHealth, arrHealthLoaded]);
 
     const visibleOrder = useMemo(
-        () => loaderData.hasConfiguredIndexers
-            ? order
-            : order.filter(id => id !== "indexers" && id !== "indexerApiUsage"),
-        [loaderData.hasConfiguredIndexers, order],
+        () => order.filter(id => {
+            if (!loaderData.hasConfiguredIndexers && (id === "indexers" || id === "indexerApiUsage")) return false;
+            if (!loaderData.hasConfiguredArrs && id === "arrHealth") return false;
+            return true;
+        }),
+        [loaderData.hasConfiguredIndexers, loaderData.hasConfiguredArrs, order],
     );
 
     const sensors = useSensors(

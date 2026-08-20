@@ -736,6 +736,48 @@ export type OverviewStatsResponse = {
     },
 }
 
+export type ArrInstanceStatus = "pending" | "healthy" | "degraded" | "offline";
+
+export type ArrHealthSummary = {
+    instancesOnline: number,
+    instancesTotal: number,
+    importsCompleted: number,
+    medianHandoffMs: number | null,
+    p95HandoffMs: number | null,
+    awaitingImport: number,
+    degraded: number,
+}
+
+export type ArrHealthInstanceRow = {
+    key: string,
+    name: string,
+    appType: string,
+    host: string,
+    status: ArrInstanceStatus,
+    imports: number,
+    medianHandoffMs: number | null,
+    p95HandoffMs: number | null,
+    queueCount: number,
+    awaitingCount: number,
+    lastImportAtMs: number | null,
+    lastError: string | null,
+}
+
+export type ArrAwaitingItem = {
+    title: string | null,
+    instanceKey: string,
+    instanceName: string,
+    waitingMs: number | null,
+    isUnusual: boolean,
+}
+
+export type ArrHealthResponse = {
+    configured: boolean,
+    summary: ArrHealthSummary,
+    instances: ArrHealthInstanceRow[],
+    awaiting: ArrAwaitingItem[],
+}
+
 export type FailoverBlock = {
     articlesRecovered: number,
     previousArticlesRecovered: number | null,

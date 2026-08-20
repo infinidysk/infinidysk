@@ -1,0 +1,175 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import type { ArrHealthResponse } from "~/clients/backend-client.server";
+import { ArrHealth } from "./arr-health";
+
+const emptySummary = {
+    instancesOnline: 0,
+    instancesTotal: 0,
+    importsCompleted: 0,
+    medianHandoffMs: null,
+    p95HandoffMs: null,
+    awaitingImport: 0,
+    degraded: 0,
+};
+
+function render(data: ArrHealthResponse, window: "24h" | "all" = "24h") {
+    return renderToStaticMarkup(<ArrHealth data={data} window={window} />);
+}
+
+describe("ArrHealth", () => {
+    it("renders healthy, degraded, offline, and pending badges with summary chips", () => {
+        const markup = render({
+            configured: true,
+            summary: {
+                instancesOnline: 2,
+                instancesTotal: 4,
+                importsCompleted: 121,
+                medianHandoffMs: 7800,
+                p95HandoffMs: 21000,
+                awaitingImport: 3,
+                degraded: 1,
+            },
+            instances: [
+                {
+                    key: "sonarr|http://sonarr:8989",
+                    name: "Sonarr Main",
+                    appType: "sonarr",
+                    host: "http://sonarr:8989",
+                    status: "healthy",
+                    imports: 121,
+                    medianHandoffMs: 7800,
+                    p95HandoffMs: 21000,
+                    queueCount: 0,
+                    awaitingCount: 0,
+                    lastImportAtMs: Date.now() - 180_000,
+                    lastError: null,
+                },
+                {
+                    key: "sonarr|http://sonarr-4k:8989",
+                    name: "Sonarr 4K",
+                    appType: "sonarr",
+                    host: "http://sonarr-4k:8989",
+                    status: "degraded",
+                    imports: 29,
+                    medianHandoffMs: 41000,
+                    p95HandoffMs: 138000,
+                    queueCount: 3,
+                    awaitingCount: 3,
+                    lastImportAtMs: Date.now() - 19 * 60_000,
+                    lastError: null,
+                },
+                {
+                    key: "radarr|http://radarr:7878",
+                    name: "Radarr",
+                    appType: "radarr",
+                    host: "http://radarr:7878",
+                    status: "offline",
+                    imports: 0,
+                    medianHandoffMs: null,
+                    p95HandoffMs: null,
+                    queueCount: 0,
+                    awaitingCount: 0,
+                    lastImportAtMs: null,
+                    lastError: "Unreachable",
+                },
+                {
+                    key: "radarr|http://radarr-new:7878",
+                    name: "Radarr New",
+                    appType: "radarr",
+                    host: "http://radarr-new:7878",
+                    status: "pending",
+                    imports: 0,
+                    medianHandoffMs: null,
+                    p95HandoffMs: null,
+                    queueCount: 0,
+                    awaitingCount: 0,
+                    lastImportAtMs: null,
+                    lastError: null,
+                },
+            ],
+            awaiting: [],
+        });
+
+        expect(markup).toContain("Arr Health");
+        expect(markup).toContain("2/4");
+        expect(markup).toContain("7.8s");
+        expect(markup).toContain("21s");
+        expect(markup).toContain("badge-success");
+        expect(markup).toContain("badge-warning");
+        expect(markup).toContain("badge-error");
+        expect(markup).toContain("badge-ghost");
+        expect(markup).toContain("healthy");
+        expect(markup).toContain("degraded");
+        expect(markup).toContain("offline");
+        expect(markup).toContain("pending");
+        expect(markup).toContain("Unreachable");
+    });
+
+    it("shows the empty state when no instances have imported yet", () => {
+        const markup = render({
+            configured: true,
+            summary: emptySummary,
+            instances: [],
+            awaiting: [],
+        });
+        expect(markup).toContain("No imports recorded yet.");
+    });
+
+    it("highlights unusually long awaits and shows an em dash for unknown waits", () => {
+        const markup = render({
+            configured: true,
+            summary: {
+                ...emptySummary,
+                instancesOnline: 1,
+                instancesTotal: 1,
+                awaitingImport: 2,
+            },
+            instances: [{
+                key: "sonarr|http://sonarr:8989",
+                name: "Sonarr Main",
+                appType: "sonarr",
+                host: "http://sonarr:8989",
+                status: "degraded",
+                imports: 0,
+                medianHandoffMs: 8000,
+                p95HandoffMs: 20000,
+                queueCount: 2,
+                awaitingCount: 2,
+                lastImportAtMs: null,
+                lastError: null,
+            }],
+            awaiting: [
+                {
+                    title: "Example Show S04E06",
+                    instanceKey: "sonarr|http://sonarr:8989",
+                    instanceName: "Sonarr Main",
+                    waitingMs: 47 * 60_000,
+                    isUnusual: true,
+                },
+                {
+                    title: "Unknown release",
+                    instanceKey: "sonarr|http://sonarr:8989",
+                    instanceName: "Sonarr Main",
+                    waitingMs: null,
+                    isUnusual: false,
+                },
+            ],
+        });
+
+        expect(markup).toContain("Example Show S04E06");
+        expect(markup).toContain("unusually long");
+        expect(markup).toContain("text-warning");
+        expect(markup).toContain("waiting —");
+    });
+
+    it("notes the 90-day retention on the All window", () => {
+        const markup = render({
+            configured: true,
+            summary: emptySummary,
+            instances: [],
+            awaiting: [],
+        }, "all");
+        expect(markup).toContain("~90 days of stored events");
+    });
+});
