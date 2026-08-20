@@ -289,7 +289,7 @@ public sealed class ConcurrentReadTracker(
         lock (_gate) _sharedReadersServedTotal += count;
     }
 
-    public void UpdateSharedRingRetainedBytes(long currentBytes)
+    public void UpdateSharedRingLogicalBytes(long currentBytes)
     {
         lock (_gate)
             _sharedStreamRingLogicalBytes = Math.Max(0, currentBytes);

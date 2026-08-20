@@ -341,7 +341,7 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
             }
         }
 
-        _tracker.UpdateSharedRingRetainedBytes(logical);
+        _tracker.UpdateSharedRingLogicalBytes(logical);
         _tracker.UpdateSharedStreamCensus(live, ready, draining, lagging);
     }
 

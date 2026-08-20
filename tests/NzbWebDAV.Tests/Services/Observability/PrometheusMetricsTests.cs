@@ -38,10 +38,14 @@ public sealed class PrometheusMetricsTests
         var exposition = Encoding.UTF8.GetString(stream.ToArray());
 
         Assert.Contains("nzbdav_shared_stream_ring_retained_bytes", exposition);
+        Assert.Contains("nzbdav_shared_stream_ring_retained_bytes_peak", exposition);
         Assert.Contains("nzbdav_shared_stream_ring_logical_bytes", exposition);
         Assert.Contains("nzbdav_shared_stream_pump_scratch_bytes", exposition);
         Assert.Contains("nzbdav_shared_stream_live_entries", exposition);
+        Assert.Contains("nzbdav_shared_stream_ready_entries", exposition);
+        Assert.Contains("nzbdav_shared_stream_draining_entries", exposition);
         Assert.Contains("nzbdav_shared_stream_lagging_readers", exposition);
         Assert.Contains("nzbdav_shared_stream_pressure_detaches_total", exposition);
+        Assert.Contains("nzbdav_shared_stream_pressure_reaps_total", exposition);
     }
 }

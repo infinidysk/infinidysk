@@ -99,14 +99,7 @@ internal sealed class SharedStreamRingBuffer
                 return 0;
 
             var threshold = MaxCursorLocked() - leadBytes;
-            var count = 0;
-            foreach (var slot in _readers.Values)
-            {
-                if (slot.Cursor < threshold)
-                    count++;
-            }
-
-            return count;
+            return _readers.Values.Count(slot => slot.Cursor < threshold);
         }
     }
 
