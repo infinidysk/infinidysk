@@ -73,3 +73,7 @@ dotnet_diagnostic.CA3003.severity = none
 # default-search-order loading, which the resolver preempts. The assembly-level
 # DefaultDllImportSearchPaths attribute stays as defense-in-depth.
 dotnet_diagnostic.CA5393.severity = none
+# Cancellation and disposal conventions (#849). Mirror the root .editorconfig
+# explicit errors — this file is root = true and does not inherit them.
+dotnet_diagnostic.CA2016.severity = error
+dotnet_diagnostic.CA1001.severity = error

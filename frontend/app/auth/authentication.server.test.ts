@@ -39,9 +39,9 @@ function getSetCookie(responseInit: SessionResponseInit): string {
 
 describe("authentication sessions", () => {
   it("starts unauthenticated without a session cookie", async () => {
-    await expect(
-      authentication.isAuthenticated(new Request("http://localhost/")),
-    ).resolves.toBe(false);
+    await expect(authentication.isAuthenticated(new Request("http://localhost/"))).resolves.toBe(
+      false,
+    );
   });
 
   it("logs in valid credentials and authenticates the resulting request", async () => {
@@ -92,9 +92,13 @@ describe("authentication sessions", () => {
 
     const logoutResult = await authentication.logout(authenticatedRequest);
     const loggedOutCookie = getSetCookie(logoutResult);
-    await expect(authentication.isAuthenticated(new Request("http://localhost/", {
-      headers: { Cookie: loggedOutCookie },
-    }))).resolves.toBe(false);
+    await expect(
+      authentication.isAuthenticated(
+        new Request("http://localhost/", {
+          headers: { Cookie: loggedOutCookie },
+        }),
+      ),
+    ).resolves.toBe(false);
   });
 
   it("stores OIDC users and clears the temporary flow state", async () => {
@@ -118,11 +122,7 @@ describe("authentication sessions", () => {
       state: "state",
     });
 
-    const loginResult = await authentication.setSessionUser(
-      flowRequest,
-      "reader",
-      "readonly",
-    );
+    const loginResult = await authentication.setSessionUser(flowRequest, "reader", "readonly");
     const authenticatedRequest = new Request("http://localhost/", {
       headers: { Cookie: getSetCookie(loginResult) },
     });

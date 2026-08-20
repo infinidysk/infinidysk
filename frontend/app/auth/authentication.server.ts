@@ -5,7 +5,7 @@ import path from "path";
 import { backendClient } from "~/clients/backend-client.server";
 import type { IncomingMessage } from "http";
 
-export const IS_FRONTEND_AUTH_DISABLED = process.env["DISABLE_FRONTEND_AUTH"] === 'true';
+export const IS_FRONTEND_AUTH_DISABLED = process.env["DISABLE_FRONTEND_AUTH"] === "true";
 
 export type UserRole = "admin" | "readonly";
 
@@ -68,9 +68,11 @@ function resolveSessionKey(): string {
 
 const sessionKey = resolveSessionKey();
 const sessionMaxAge = resolveSessionMaxAgeSeconds();
-const oidcConfigured = ["OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"]
-  .every((name) => Boolean(process.env[name]?.trim()));
-const secureCookiesExplicit = process.env["SECURE_COOKIES"] !== undefined && process.env["SECURE_COOKIES"] !== "";
+const oidcConfigured = ["OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"].every((name) =>
+  Boolean(process.env[name]?.trim()),
+);
+const secureCookiesExplicit =
+  process.env["SECURE_COOKIES"] !== undefined && process.env["SECURE_COOKIES"] !== "";
 if (!secureCookiesExplicit && !IS_FRONTEND_AUTH_DISABLED) {
   console.warn(
     "SECURE_COOKIES is unset; session cookies will be sent over HTTP. Set SECURE_COOKIES=true behind HTTPS.",
@@ -151,12 +153,8 @@ export async function getOidcFlowState(
 ): Promise<OidcFlowState | null> {
   const session = await sessionStorage.getSession(getCookieHeader(request));
   const oidcFlow = session.get("oidcFlow") as OidcFlowState | undefined;
-  if (
-    !oidcFlow?.codeVerifier
-    || !oidcFlow.nonce
-    || !oidcFlow.redirectUri
-    || !oidcFlow.state
-  ) return null;
+  if (!oidcFlow?.codeVerifier || !oidcFlow.nonce || !oidcFlow.redirectUri || !oidcFlow.state)
+    return null;
   return oidcFlow;
 }
 
@@ -182,7 +180,5 @@ async function authenticate(request: Request): Promise<User> {
 }
 
 function getCookieHeader(request: Request | IncomingMessage): string | null | undefined {
-  return request instanceof Request
-    ? request.headers.get("cookie")
-    : request.headers.cookie;
+  return request instanceof Request ? request.headers.get("cookie") : request.headers.cookie;
 }

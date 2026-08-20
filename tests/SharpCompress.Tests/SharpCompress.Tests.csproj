@@ -10,7 +10,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <RestoreConfigFile>$(MSBuildThisFileDirectory)..\..\backend\nuget.config</RestoreConfigFile>
     <!--
       Vendored upstream test suite (ported with libs/SharpCompress): exempt
       from the repo-wide latest-All analyzer policy, same as the library it
@@ -31,12 +30,12 @@
     <ProjectReference Include="..\..\libs\SharpCompress\SharpCompress.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="AwesomeAssertions" Version="9.4.0" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.runner.visualstudio">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.v3" />
   </ItemGroup>
 </Project>

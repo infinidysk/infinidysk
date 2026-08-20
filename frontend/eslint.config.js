@@ -71,7 +71,7 @@ export default tseslint.config(
       // Plugin registered so existing eslint-disable comments resolve.
       // Full react-hooks recommended (incl. React Compiler rules) is a follow-up ratchet.
       "react-hooks/rules-of-hooks": "error",
-      "react-hooks/exhaustive-deps": "warn",
+      "react-hooks/exhaustive-deps": "error",
 
       // Type-aware strictness (#853 phase 1). The four promise rules per the
       // issue; no-unsafe-* come from recommendedTypeChecked.
@@ -93,15 +93,14 @@ export default tseslint.config(
       // recommends turning it off for TS files.
       "no-undef": "off",
 
-      // Remaining warning budget — driven to zero in phase 3 (kept as warn so
-      // the type-aware rollout stays reviewable; the lint script caps the count).
-      "@typescript-eslint/no-empty-object-type": "warn",
-      "@typescript-eslint/no-unused-expressions": "warn",
+      // Remaining recommended rules kept as errors now that the warning budget is zero.
+      "@typescript-eslint/no-empty-object-type": "error",
+      "@typescript-eslint/no-unused-expressions": "error",
       "no-unused-expressions": "off",
-      "no-empty": "warn",
-      "no-extra-boolean-cast": "warn",
-      "no-useless-assignment": "warn",
-      "prefer-const": "warn",
+      "no-empty": "error",
+      "no-extra-boolean-cast": "error",
+      "no-useless-assignment": "error",
+      "prefer-const": "error",
     },
   },
   {

@@ -15,11 +15,7 @@ describe("securityHeadersMiddleware", () => {
   it("sets defensive headers on UI paths", () => {
     const res = mockRes();
     const next = vi.fn();
-    securityHeadersMiddleware(
-      { method: "GET", path: "/queue" } as never,
-      res as never,
-      next,
-    );
+    securityHeadersMiddleware({ method: "GET", path: "/queue" } as never, res as never, next);
 
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
@@ -43,11 +39,7 @@ describe("securityHeadersMiddleware", () => {
   it("skips headers on WebDAV methods", () => {
     const res = mockRes();
     const next = vi.fn();
-    securityHeadersMiddleware(
-      { method: "PROPFIND", path: "/" } as never,
-      res as never,
-      next,
-    );
+    securityHeadersMiddleware({ method: "PROPFIND", path: "/" } as never, res as never, next);
 
     expect(res.headers.size).toBe(0);
     expect(next).toHaveBeenCalledOnce();

@@ -18,10 +18,12 @@
     "pretest:coverage": "npm run generate:api",
     "dev": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx server.ts",
     "start": "node dist-node/server.js",
-    "lint": "react-router typegen && eslint . --max-warnings 27",
+    "lint": "react-router typegen && eslint . --max-warnings 0",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "react-router typegen && tsc -b"
+    "typecheck": "react-router typegen && tsc -b",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -69,6 +71,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "^30.0.1",
     "openapi-typescript": "7.13.0",
+    "prettier": "^3.9.6",
     "tailwindcss": "^4.2.1",
     "tsx": "^4.23.11",
     "typescript": "^6.0.3",

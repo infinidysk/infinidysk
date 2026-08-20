@@ -41,24 +41,55 @@ export function ListToolbar({
           type="search"
           className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 focus:outline-none"
           value={query}
-          onChange={event => onQueryChange(event.target.value)}
+          onChange={(event) => onQueryChange(event.target.value)}
           aria-label={`Search ${label.toLowerCase()}`}
           placeholder={`Search ${label.toLowerCase()}`}
         />
       </label>
-      <Select className="select-sm" value={category} onChange={event => onCategoryChange(event.target.value)} aria-label={`Filter ${label.toLowerCase()} by category`}>
+      <Select
+        className="select-sm"
+        value={category}
+        onChange={(event) => onCategoryChange(event.target.value)}
+        aria-label={`Filter ${label.toLowerCase()} by category`}
+      >
         <option value="">All categories</option>
-        {categories.map(value => <option key={value} value={value}>{value}</option>)}
+        {categories.map((value) => (
+          <option key={value} value={value}>
+            {value}
+          </option>
+        ))}
       </Select>
-      <Select className="select-sm" value={status} onChange={event => onStatusChange(event.target.value)} aria-label={`Filter ${label.toLowerCase()} by status`}>
+      <Select
+        className="select-sm"
+        value={status}
+        onChange={(event) => onStatusChange(event.target.value)}
+        aria-label={`Filter ${label.toLowerCase()} by status`}
+      >
         <option value="">All statuses</option>
-        {statuses.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        {statuses.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
       </Select>
-      <Select className="select-sm max-[899px]:flex" value={sort} onChange={event => onSortChange(event.target.value)} aria-label={`Sort ${label.toLowerCase()}`}>
+      <Select
+        className="select-sm max-[899px]:flex"
+        value={sort}
+        onChange={(event) => onSortChange(event.target.value)}
+        aria-label={`Sort ${label.toLowerCase()}`}
+      >
         <option value="">Default order</option>
-        {sorts.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        {sorts.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
       </Select>
-      {isFiltered && <Button variant="ghost" size="xsmall" onClick={onClear}>Clear</Button>}
+      {isFiltered && (
+        <Button variant="ghost" size="xsmall" onClick={onClear}>
+          Clear
+        </Button>
+      )}
     </div>
   );
 }

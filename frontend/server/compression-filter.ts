@@ -8,8 +8,7 @@ import { shouldSkipCompression } from "./proxy-path.js";
 // MaxListenersExceededWarning (11+). Decide from response Content-Type at
 // onHeaders time (after RR sets headers, before the body), not from Accept —
 // curl/fetch often send `*/*` for the same SSR paths.
-const REACT_ROUTER_STREAM_TYPE =
-  /^(?:text\/html|text\/x-script|text\/event-stream)(?:\s*;|$)/i;
+const REACT_ROUTER_STREAM_TYPE = /^(?:text\/html|text\/x-script|text\/event-stream)(?:\s*;|$)/i;
 
 function contentType(res: Response): string | undefined {
   const header = res.getHeader("Content-Type");

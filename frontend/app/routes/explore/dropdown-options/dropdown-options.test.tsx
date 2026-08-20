@@ -10,12 +10,7 @@ describe("DropdownOptions", () => {
   it("closes the menu when a button option is selected", async () => {
     const onSelect = vi.fn();
     const onClose = vi.fn();
-    render(
-      <DropdownOptions
-        options={[{ option: "Delete", onSelect }]}
-        onClose={onClose}
-      />,
-    );
+    render(<DropdownOptions options={[{ option: "Delete", onSelect }]} onClose={onClose} />);
 
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
@@ -62,9 +57,7 @@ describe("DropdownOptions", () => {
 
   it("does not close from clicks landing inside the menu itself", async () => {
     const onClose = vi.fn();
-    render(
-      <DropdownOptions options={[{ option: "Rename" }]} onClose={onClose} />,
-    );
+    render(<DropdownOptions options={[{ option: "Rename" }]} onClose={onClose} />);
 
     await userEvent.click(screen.getByRole("list"));
 

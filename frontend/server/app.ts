@@ -31,9 +31,9 @@ app.disable("x-powered-by");
 export const initializeWebsocketServer = websocketServer.initialize;
 
 const trustProxy =
-  process.env["TRUST_PROXY"] === "1"
-  || process.env["TRUST_PROXY"]?.toLowerCase() === "true"
-  || process.env["TRUST_PROXY"]?.toLowerCase() === "yes";
+  process.env["TRUST_PROXY"] === "1" ||
+  process.env["TRUST_PROXY"]?.toLowerCase() === "true" ||
+  process.env["TRUST_PROXY"]?.toLowerCase() === "yes";
 if (trustProxy) {
   // Opt-in: honor X-Forwarded-* from the reverse proxy in front of this container.
   // Required for correct public scheme/host when rewriting headers to the backend.
@@ -90,16 +90,8 @@ const forwardToBackend = createProxyMiddleware({
   },
 });
 
-const credentialPostPaths = new Set([
-  "/login",
-  "/login.data",
-  "/onboarding",
-  "/onboarding.data",
-]);
-const oidcGetPaths = new Set([
-  "/auth/oidc/login",
-  "/auth/oidc/callback",
-]);
+const credentialPostPaths = new Set(["/login", "/login.data", "/onboarding", "/onboarding.data"]);
+const oidcGetPaths = new Set(["/auth/oidc/login", "/auth/oidc/callback"]);
 const credentialRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 20,
@@ -119,15 +111,13 @@ const credentialRateLimiter = rateLimit({
 
     const method = req.method.toUpperCase();
     return !(
-      (method === "POST" && credentialPostPaths.has(decodedPath))
-      || (method === "GET" && oidcGetPaths.has(decodedPath))
-      || (method === "GET" && decodedPath === "/metrics")
+      (method === "POST" && credentialPostPaths.has(decodedPath)) ||
+      (method === "GET" && oidcGetPaths.has(decodedPath)) ||
+      (method === "GET" && decodedPath === "/metrics")
     );
   },
   handler: (req, res, _next, options) => {
-    logger.warn(
-      `Credential rate limit exceeded for ${req.ip ?? "unknown IP"} on ${req.path}`,
-    );
+    logger.warn(`Credential rate limit exceeded for ${req.ip ?? "unknown IP"} on ${req.path}`);
     res.status(options.statusCode).send(options.message);
   },
 });
@@ -138,7 +128,7 @@ app.use(credentialRateLimiter);
 app.use(async (req, res, next) => {
   if (shouldProxyToBackend(req.method, req.path)) {
     const decodedPath = safeDecodePath(req.path);
-    if (decodedPath === "/metrics" && !await isAuthenticated(req)) {
+    if (decodedPath === "/metrics" && !(await isAuthenticated(req))) {
       res.status(401).type("text/plain").send("Metrics authentication required.");
       return;
     }
@@ -146,10 +136,10 @@ app.use(async (req, res, next) => {
     await setApiKeyForAuthenticatedRequests(req);
 
     if (
-      decodedPath !== null
-      && req.method.toUpperCase() === "POST"
-      && (decodedPath === "/api/delete-webdav-item"
-        || decodedPath.startsWith("/api/delete-webdav-item/"))
+      decodedPath !== null &&
+      req.method.toUpperCase() === "POST" &&
+      (decodedPath === "/api/delete-webdav-item" ||
+        decodedPath.startsWith("/api/delete-webdav-item/"))
     ) {
       const user = await getSessionUser(req);
       if (user?.role === "readonly") {

@@ -16,7 +16,16 @@ export type ModalProps = {
   preventClose?: boolean;
 };
 
-export function Modal({ open, title, children, footer, onClose, className = "", size = "default", preventClose = false }: ModalProps) {
+export function Modal({
+  open,
+  title,
+  children,
+  footer,
+  onClose,
+  className = "",
+  size = "default",
+  preventClose = false,
+}: ModalProps) {
   const sizeClass = size === "wide" ? "max-w-5xl" : "max-w-xl";
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -66,7 +75,9 @@ export function Modal({ open, title, children, footer, onClose, className = "", 
         {footer && <div className="modal-action">{footer}</div>}
       </div>
       <form method="dialog" className="modal-backdrop">
-        <button type="submit" disabled={preventClose}>close</button>
+        <button type="submit" disabled={preventClose}>
+          close
+        </button>
       </form>
     </dialog>
   );

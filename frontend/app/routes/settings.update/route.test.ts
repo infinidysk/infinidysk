@@ -27,10 +27,12 @@ describe("settings.update route action", () => {
 
   it("updates every submitted setting and returns the saved values", async () => {
     updateConfigMock.mockResolvedValueOnce(true);
-    const request = configRequest(JSON.stringify({
-      "repair.enable": "true",
-      "api.manual-category": "movies",
-    }));
+    const request = configRequest(
+      JSON.stringify({
+        "repair.enable": "true",
+        "api.manual-category": "movies",
+      }),
+    );
 
     const result = await action({ request } as Parameters<typeof action>[0]);
 
@@ -68,8 +70,8 @@ describe("settings.update route action", () => {
     updateConfigMock.mockRejectedValueOnce(new Error("backend unavailable"));
     const request = configRequest(JSON.stringify({ "repair.enable": "false" }));
 
-    await expect(
-      action({ request } as Parameters<typeof action>[0]),
-    ).rejects.toThrow("backend unavailable");
+    await expect(action({ request } as Parameters<typeof action>[0])).rejects.toThrow(
+      "backend unavailable",
+    );
   });
 });

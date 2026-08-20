@@ -58,7 +58,7 @@ internal sealed class AdminOpenApiDocumentTransformer : IOpenApiDocumentTransfor
                     },
                 },
             },
-            Required = new HashSet<string> { "type", "title", "status", "traceId" },
+            Required = new HashSet<string> { "type", "title", "status", "detail", "traceId" },
         };
 
         document.Security ??= [];
