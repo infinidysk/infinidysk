@@ -795,6 +795,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
             {
+                // A corrupt rescue response is swallowed here and the original non-corrupt
+                // batch failure is surfaced as TransientSegmentExhaustionException.
+                // Corruption evidence for this read is dropped; the next read hits the
+                // proper corrupt path.
                 Log.Debug(e, "Individual rescue of segment {SegmentId} failed (attempt {Attempt}).",
                     segmentId, attempt);
             }
