@@ -641,12 +641,9 @@ public class Par2RepairService : BackgroundService
                 var assembled = await accessor.FetchSliceBytesAsync(globalSlice, sliceMap.SliceSize, ct)
                     .ConfigureAwait(false);
                 AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
-                if (assembled is null ||
-                    !Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
-                {
-                    if (unavailableSlices.Add(globalSlice))
-                        expanded = true;
-                }
+                expanded |= (assembled is null ||
+                             !Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
+                            && unavailableSlices.Add(globalSlice);
             }
         }
     }
@@ -1746,19 +1743,8 @@ public class Par2RepairService : BackgroundService
 
         private void EvictSiblingFile(int fileIndex)
         {
-            List<int>? indices = null;
-            foreach (var key in _siblingSegmentBodies.Keys)
-            {
-                if (key.FileIndex != fileIndex)
-                    continue;
-                indices ??= [];
-                indices.Add(key.SegmentIndex);
-            }
-
-            if (indices is null)
-                return;
-            foreach (var segmentIndex in indices)
-                EvictSiblingSegment(fileIndex, segmentIndex);
+            foreach (var key in _siblingSegmentBodies.Keys.Where(key => key.FileIndex == fileIndex).ToList())
+                EvictSiblingSegment(key.FileIndex, key.SegmentIndex);
         }
 
         private void EvictSiblingSegment(int fileIndex, int segmentIndex)
