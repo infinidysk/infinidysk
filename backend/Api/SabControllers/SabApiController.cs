@@ -21,6 +21,7 @@ using NzbWebDAV.Api.SabControllers.SetQueuePriority;
 using NzbWebDAV.Api.SabControllers.RetryHistory;
 using NzbWebDAV.Api.SabControllers.SpeedLimit;
 using NzbWebDAV.Api.SabControllers.SwitchQueue;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -51,6 +52,15 @@ public class SabApiController(
         {
             var controller = GetController();
             return await controller.HandleRequest().ConfigureAwait(false);
+        }
+        catch (ApiValidationException e)
+        {
+            HttpContext.Items[ApiValidationException.HttpContextItemKey] = e;
+            return BadRequest(new SabBaseResponse()
+            {
+                Status = false,
+                Error = e.Message
+            });
         }
         catch (BadHttpRequestException e)
         {

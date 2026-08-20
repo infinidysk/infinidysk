@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Database.Models;
 
 namespace NzbWebDAV.Api.Controllers.CreateAccount;
@@ -11,14 +12,16 @@ public class CreateAccountRequest
 
     public CreateAccountRequest(HttpContext context)
     {
-        Username = context.Request.Form["username"].FirstOrDefault()?.ToLowerInvariant() ??
-            throw new BadHttpRequestException("Username is required");
-
-        Password = context.Request.Form["password"].FirstOrDefault() ??
-            throw new BadHttpRequestException("Password is required");
-
-        Type = !Enum.TryParse<Account.AccountType>(context.Request.Form["type"], ignoreCase: true, out var parsedType)
-            ? throw new BadHttpRequestException("Invalid account type")
-            : parsedType;
+        var errors = new ValidationErrors();
+        Username = context.Request.Form["username"].FirstOrDefault()?.ToLowerInvariant() ?? "";
+        Password = context.Request.Form["password"].FirstOrDefault() ?? "";
+        if (string.IsNullOrEmpty(Username))
+            errors.Add("username", "Username is required");
+        if (context.Request.Form["password"].FirstOrDefault() is null)
+            errors.Add("password", "Password is required");
+        if (!Enum.TryParse<Account.AccountType>(context.Request.Form["type"], ignoreCase: true, out var parsedType))
+            errors.Add("type", "Invalid account type");
+        errors.ThrowIfAny();
+        Type = parsedType;
     }
 }

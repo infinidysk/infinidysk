@@ -1,22 +1,37 @@
 import type { Route } from "./+types/route";
+import { z } from "zod";
 import { backendClient, type ConfigItem } from "~/clients/backend-client.server";
 
+const configFormSchema = z.object({
+    config: z.string().min(1),
+});
+
+const configMapSchema = z.record(z.string().min(1), z.string());
+
 export async function action({ request }: Route.ActionArgs) {
-    // get the ConfigItems to update
     const formData = await request.formData();
-    const configJson = formData.get("config");
-    if (typeof configJson !== "string") throw new Error("config required");
-    // settings.update posts a JSON object mapping config names to string values (backend contract)
-    const config = JSON.parse(configJson) as Record<string, string>;
-    const configItems: ConfigItem[] = [];
-    for (const [key, value] of Object.entries<string>(config)) {
-        configItems.push({
-            configName: key,
-            configValue: value
-        })
+    const form = configFormSchema.safeParse({ config: formData.get("config") });
+    if (!form.success) {
+        throw new Error("config required");
     }
 
-    // update the config items
+    let parsedJson: unknown;
+    try {
+        parsedJson = JSON.parse(form.data.config) as unknown;
+    } catch {
+        throw new Error("Config payload is not valid JSON.");
+    }
+
+    const config = configMapSchema.safeParse(parsedJson);
+    if (!config.success) {
+        throw new Error("Config values must be a map of string keys to string values.");
+    }
+
+    const configItems: ConfigItem[] = Object.entries(config.data).map(([configName, configValue]) => ({
+        configName,
+        configValue,
+    }));
+
     await backendClient.updateConfig(configItems);
-    return { config: config }
+    return { config: config.data };
 }

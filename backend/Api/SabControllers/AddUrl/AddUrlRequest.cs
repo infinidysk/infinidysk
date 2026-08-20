@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers.AddFile;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
@@ -21,7 +22,22 @@ public class AddUrlRequest() : AddFileRequest
 
     public static async Task<AddUrlRequest> New(HttpContext context, ConfigManager configManager, IndexerHitTracker hitTracker)
     {
+        var errors = new ValidationErrors();
         var nzbUrl = context.GetRequestParam("name");
+        if (string.IsNullOrWhiteSpace(nzbUrl))
+            errors.Add("name", "The nzb url is required.");
+        else if (!Uri.TryCreate(nzbUrl, UriKind.Absolute, out var requestUri)
+                 || (requestUri.Scheme != Uri.UriSchemeHttp && requestUri.Scheme != Uri.UriSchemeHttps))
+        {
+            errors.Add("name", "The nzb url must be an absolute HTTP or HTTPS URL.");
+        }
+
+        if (!AddFileRequest.TryMapPriorityOption(context.GetRequestParam("priority"), out _))
+            errors.Add("priority", "Invalid priority");
+        if (!AddFileRequest.TryMapPostProcessingOption(context.GetRequestParam("pp"), out _))
+            errors.Add("pp", "Invalid pp param");
+        errors.ThrowIfAny();
+
         var nzbName = context.GetRequestParam("nzbname");
         var indexerConfig = configManager.GetIndexerConfig();
         var matchedIndexer = MatchIndexerByHost(nzbUrl, indexerConfig);

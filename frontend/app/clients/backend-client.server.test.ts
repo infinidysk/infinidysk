@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   backendClient,
   BackendApiError,
+  BackendContractError,
   BackendUnavailableError,
   parseBackendFailure,
+  parseBackendSuccess,
 } from "./backend-client.server";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -233,6 +236,24 @@ describe("BackendClient", () => {
 
     await expect(backendClient.getQueue(1)).rejects.toThrow(
       "Failed to get queue: bad request",
+    );
+  });
+
+  it("rejects malformed success bodies without echoing the payload", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("[1, 2, 3]", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    const error = await backendClient.isOnboarding().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(BackendContractError);
+    expect(String(error)).toContain("backend response did not match the expected contract");
+    expect(String(error)).not.toContain("[1, 2, 3]");
+    expect(() => parseBackendSuccess("Failed", [1, 2, 3], z.looseObject({}))).toThrow(
+      BackendContractError,
     );
   });
 

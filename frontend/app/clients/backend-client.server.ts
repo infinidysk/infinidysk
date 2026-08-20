@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
     toStreamTracingStatus,
     type StreamTracingStatus,
@@ -62,6 +63,30 @@ export class BackendApiError extends Error {
         super(message, options);
         this.name = "BackendApiError";
     }
+}
+
+/** Thrown when a 2xx backend body does not match the expected runtime schema. */
+export class BackendContractError extends Error {
+    public constructor(message: string, options?: ErrorOptions) {
+        super(message, options);
+        this.name = "BackendContractError";
+    }
+}
+
+const backendObject: z.ZodType<Record<string, unknown>> = z.looseObject({});
+
+export function parseBackendSuccess<T>(
+    errorPrefix: string,
+    json: unknown,
+    schema: z.ZodType<T>,
+): T {
+    const result = schema.safeParse(json);
+    if (!result.success) {
+        throw new BackendContractError(
+            `${errorPrefix}: backend response did not match the expected contract`,
+        );
+    }
+    return result.data;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -198,7 +223,12 @@ function form(...entries: [string, string | Blob, string?][]): FormData {
  * shared api key, and converts a non-2xx response into an Error whose message is
  * prefixed with `errorPrefix` and suffixed with the backend's reported error.
  */
-async function call<T = unknown>(path: string, errorPrefix: string, init?: RequestInit): Promise<T> {
+async function call<T = Record<string, unknown>>(
+    path: string,
+    errorPrefix: string,
+    init?: RequestInit,
+    schema: z.ZodType<T> = backendObject as z.ZodType<T>,
+): Promise<T> {
     let response: Response;
     try {
         response = await fetch(process.env["BACKEND_URL"] + path, {
@@ -236,9 +266,8 @@ async function call<T = unknown>(path: string, errorPrefix: string, init?: Reque
         );
     }
 
-    // The type parameter is the caller's declared contract for the backend
-    // response shape; the assertion is centralized here.
-    return (await response.json()) as T;
+    const json: unknown = await response.json();
+    return parseBackendSuccess(errorPrefix, json, schema);
 }
 
 class BackendClient {
