@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <RestoreConfigFile>$(MSBuildThisFileDirectory)..\..\backend\nuget.config</RestoreConfigFile>
   </PropertyGroup>
 
   <ItemGroup>

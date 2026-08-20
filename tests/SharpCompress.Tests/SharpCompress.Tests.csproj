@@ -10,7 +10,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <RestoreConfigFile>$(MSBuildThisFileDirectory)..\..\backend\nuget.config</RestoreConfigFile>
     <!--
       Vendored upstream test suite (ported with libs/SharpCompress): exempt
       from the repo-wide latest-All analyzer policy, same as the library it

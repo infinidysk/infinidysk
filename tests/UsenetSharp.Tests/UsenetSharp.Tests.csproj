@@ -8,7 +8,6 @@
     <IsTestProject>true</IsTestProject>
     <!-- InternalsVisibleTo in UsenetSharp targets this assembly name. -->
     <AssemblyName>UsenetSharpTest</AssemblyName>
-    <RestoreConfigFile>$(MSBuildThisFileDirectory)..\..\backend\nuget.config</RestoreConfigFile>
     <!-- NUnit assertions establish null state; stream tests intentionally exercise partial reads. -->
     <NoWarn>$(NoWarn);CS1998;CS8604;CA2022</NoWarn>
   </PropertyGroup>

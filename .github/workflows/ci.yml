@@ -398,7 +398,9 @@ jobs:
             entrypoint.sh \
             scripts/preflight-config-path.sh \
             backend/NzbWebDAV.csproj \
-            backend/nuget.config \
+            nuget.config \
+            Directory.Packages.props \
+            Directory.Build.props \
             libs/ \
             .gitmodules \
             frontend/package.json \
