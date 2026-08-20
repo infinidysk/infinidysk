@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.WebDav.Base;
 using Serilog;
@@ -257,6 +258,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         {
             var upstream = _upstream
                 ?? throw new InvalidOperationException("Shared stream pump started without an upstream.");
+            using var fetchAttribution = FetchAttributionContext.Begin(System.IO.Path.GetFileName(Path));
             if (Anchor > 0 && upstream.CanSeek)
                 upstream.Seek(Anchor, SeekOrigin.Begin);
 

@@ -1,11 +1,13 @@
 using System.Buffers;
 using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using Serilog;
+using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
@@ -119,7 +121,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 Stream? fetched = null;
                 try
                 {
-                    var body = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
+                    var body = await FetchBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
                     fetched = body.Stream;
                     await SegmentResponseValidator
                         .ThrowOnSegmentIdMismatchAsync(segmentId, body)
@@ -405,7 +407,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             Stream? retryStream = null;
             try
             {
-                var body = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+                var body = await FetchBodyAsync(segmentId, cancellationToken)
                     .ConfigureAwait(false);
                 retryStream = body.Stream;
                 await SegmentResponseValidator
@@ -469,7 +471,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
 
         try
         {
-            var body = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+            var body = await FetchBodyAsync(segmentId, cancellationToken)
                 .ConfigureAwait(false);
             await SegmentResponseValidator
                 .ThrowOnSegmentIdMismatchAsync(segmentId, body)
@@ -590,8 +592,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             Stream? fallbackStream = null;
             try
             {
-                var body = await _usenetClient
-                    .DecodedBodyAsync(fallbackId, cancellationToken)
+                var body = await FetchBodyAsync(fallbackId, cancellationToken)
                     .ConfigureAwait(false);
                 fallbackStream = body.Stream;
                 await SegmentResponseValidator
@@ -631,6 +632,17 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         }
 
         return null;
+    }
+
+    private async Task<UsenetDecodedBodyResponse> FetchBodyAsync(
+        string segmentId,
+        CancellationToken cancellationToken)
+    {
+        using (FetchAttributionContext.Begin(_fileName))
+        {
+            return await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+                .ConfigureAwait(false);
+        }
     }
 
     private async Task DisposeOpenBodyAsync()

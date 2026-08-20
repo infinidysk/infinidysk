@@ -173,6 +173,76 @@ public class MultiProviderNntpClient(
         public void Dispose() => onDispose();
     }
 
+    private sealed class ProviderWalkSummary(int eligibleProviders)
+    {
+        public int EligibleProviders { get; } = eligibleProviders;
+        public int Attempts { get; set; }
+        public int CurrentDefinitiveMisses { get; set; }
+        public int CachedSkips { get; set; }
+        public int StorageGroupSkips { get; set; }
+        public int Timeouts { get; set; }
+        public int TransportFailures { get; set; }
+        public int AuthFailures { get; set; }
+        public int ProtocolFailures { get; set; }
+        public int CorruptionFailures { get; set; }
+        public int UnexpectedResponses { get; set; }
+        public int OtherExceptions { get; set; }
+        public bool Cancelled { get; set; }
+        public bool Retired { get; set; }
+        public bool LastOutcomeWasException { get; set; }
+        private readonly Stopwatch _clock = Stopwatch.StartNew();
+        public TimeSpan Elapsed => _clock.Elapsed;
+
+        public bool IsPureDefinitiveMiss =>
+            EligibleProviders > 0
+            && !Cancelled
+            && !Retired
+            && (CurrentDefinitiveMisses > 0 || CachedSkips > 0)
+            && Timeouts == 0
+            && TransportFailures == 0
+            && AuthFailures == 0
+            && ProtocolFailures == 0
+            && CorruptionFailures == 0
+            && UnexpectedResponses == 0
+            && OtherExceptions == 0
+            && !LastOutcomeWasException;
+
+        public void NoteException(Exception ex)
+        {
+            var status = ClassifyException(ex);
+            switch (status)
+            {
+                case SegmentFetch.FetchStatus.Missing:
+                    CurrentDefinitiveMisses++;
+                    break;
+                case SegmentFetch.FetchStatus.Timeout:
+                    Timeouts++;
+                    LastOutcomeWasException = true;
+                    break;
+                case SegmentFetch.FetchStatus.Network:
+                    TransportFailures++;
+                    LastOutcomeWasException = true;
+                    break;
+                case SegmentFetch.FetchStatus.Auth:
+                    AuthFailures++;
+                    LastOutcomeWasException = true;
+                    break;
+                case SegmentFetch.FetchStatus.Protocol:
+                    ProtocolFailures++;
+                    LastOutcomeWasException = true;
+                    break;
+                case SegmentFetch.FetchStatus.Corrupt:
+                    CorruptionFailures++;
+                    LastOutcomeWasException = true;
+                    break;
+                default:
+                    OtherExceptions++;
+                    LastOutcomeWasException = true;
+                    break;
+            }
+        }
+    }
+
     // Per-call attribution. Caller (e.g. PlaybackFastVerifier) sets a mutable
     // holder on AttributionContext BEFORE invoking; we read it inside the call and
     // mutate Host on a non-"missing" response. AsyncLocal reliably flows the holder
@@ -196,13 +266,13 @@ public class MultiProviderNntpClient(
     public override Task<UsenetStatResponse> StatAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
         return RunFromPoolWithBackup(
-            x => x.StatAsync(segmentId, cancellationToken), segmentId, cancellationToken);
+            x => x.StatAsync(segmentId, cancellationToken), segmentId, NntpOperation.Stat, cancellationToken);
     }
 
     public override Task<UsenetHeadResponse> HeadAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
         return RunFromPoolWithBackup(
-            x => x.HeadAsync(segmentId, cancellationToken), segmentId, cancellationToken);
+            x => x.HeadAsync(segmentId, cancellationToken), segmentId, NntpOperation.Head, cancellationToken);
     }
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync
@@ -212,7 +282,7 @@ public class MultiProviderNntpClient(
     )
     {
         return RunFromPoolWithBackup(
-            x => x.DecodedBodyAsync(segmentId, cancellationToken), segmentId, cancellationToken);
+            x => x.DecodedBodyAsync(segmentId, cancellationToken), segmentId, NntpOperation.Body, cancellationToken);
     }
 
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync
@@ -222,12 +292,13 @@ public class MultiProviderNntpClient(
     )
     {
         return RunFromPoolWithBackup(
-            x => x.DecodedArticleAsync(segmentId, cancellationToken), segmentId, cancellationToken);
+            x => x.DecodedArticleAsync(segmentId, cancellationToken), segmentId, NntpOperation.Article, cancellationToken);
     }
 
     public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken)
     {
-        return RunFromPoolWithBackup(x => x.DateAsync(cancellationToken), articleId: null, cancellationToken);
+        return RunFromPoolWithBackup(
+            x => x.DateAsync(cancellationToken), articleId: null, NntpOperation.Date, cancellationToken);
     }
 
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync
@@ -258,6 +329,7 @@ public class MultiProviderNntpClient(
                         fetchScope?.Dispose();
                     }
                 },
+                NntpOperation.Body,
                 cancellationToken).ConfigureAwait(false);
         }
         catch
@@ -406,6 +478,8 @@ public class MultiProviderNntpClient(
         var primaryTraceRange = CurrentStreamTraceRange;
         var primaryStopwatch = Stopwatch.StartNew();
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses = null;
+        var walk = new ProviderWalkSummary(1 + fallbackProviders.Length);
+        MultiConnectionNntpClient? lastAttemptedProvider = primaryProvider;
         // Fresh per article resolution. When primary re-probe is enabled, do not mark the
         // primary's storage group on the initial batch 430 so that re-probe is not skipped
         // by its own miss. Cross-request negative cache may skip re-probe separately.
@@ -420,11 +494,14 @@ public class MultiProviderNntpClient(
             }
             catch (NntpClientRetiredException)
             {
+                walk.Retired = true;
                 throw;
             }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
                 primaryStopwatch.Stop();
+                walk.Attempts++;
+                walk.NoteException(e);
                 var reason = ClassifyAndRecordFailure(
                     primaryProvider.MetricsKey, e, primaryStopwatch.ElapsedMilliseconds, 0,
                     primaryTraceRange);
@@ -445,10 +522,21 @@ public class MultiProviderNntpClient(
                 UsenetArticleAvailability.IsDefinitiveMissing(response);
             if (definitiveMiss)
             {
+                walk.Attempts++;
+                walk.CurrentDefinitiveMisses++;
                 primaryStopwatch.Stop();
                 RecordFetch(primaryProvider.MetricsKey, SegmentFetch.FetchStatus.Missing,
                     primaryStopwatch.ElapsedMilliseconds, 0, primaryTraceRange);
                 (priorMisses ??= []).Add((primaryProvider.MetricsKey, SegmentFetch.FetchStatus.Missing));
+            }
+            else if (response is { ResponseType: UsenetResponseType.ArticleRetrievedBodyFollows })
+            {
+                // counted as success below
+            }
+            else if (response != null)
+            {
+                walk.Attempts++;
+                walk.UnexpectedResponses++;
             }
 
             // Re-probe primary once on a definitive miss when enabled (default). Multi-node
@@ -507,6 +595,7 @@ public class MultiProviderNntpClient(
                     var group = NormalizeStorageGroup(provider.StorageGroup);
                     if (group.Length > 0 && missingGroups.Contains(group))
                     {
+                        walk.StorageGroupSkips++;
                         Log.Debug(
                             "Skipping provider `{Host}` on storage group `{Group}` — " +
                             "a sibling provider already reported the article missing.",
@@ -516,6 +605,7 @@ public class MultiProviderNntpClient(
 
                     if (IsCachedMissing(segmentId, provider))
                     {
+                        walk.CachedSkips++;
                         Log.Debug(
                             "Skipping provider `{Host}` for article `{SegmentId}` — " +
                             "cached as missing. Reason: article-miss-cache",
@@ -527,8 +617,10 @@ public class MultiProviderNntpClient(
                     var deferredCallback = new DeferredArticleBodyCallback();
                     var traceRange = CurrentStreamTraceRange;
                     var stopwatch = Stopwatch.StartNew();
+                    lastAttemptedProvider = provider;
                     try
                     {
+                        walk.Attempts++;
                         response = await provider.DecodedBodyAsync(
                             segmentId, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
                         stopwatch.Stop();
@@ -561,6 +653,7 @@ public class MultiProviderNntpClient(
                             (priorMisses ??= []).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
                             if (UsenetArticleAvailability.IsDefinitiveMissing(response))
                             {
+                                walk.CurrentDefinitiveMisses++;
                                 if (group.Length > 0) missingGroups.Add(group);
                                 MarkCachedMissing(segmentId, provider);
                             }
@@ -572,6 +665,7 @@ public class MultiProviderNntpClient(
                     }
                     catch (NntpClientRetiredException)
                     {
+                        walk.Retired = true;
                         // The whole provider set belongs to the retired generation.
                         deferredCallback.Discard();
                         coordinator.CompleteAttempt();
@@ -580,6 +674,7 @@ public class MultiProviderNntpClient(
                     catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
                     {
                         stopwatch.Stop();
+                        walk.NoteException(e);
                         var reason = ClassifyAndRecordFailure(
                             provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
                             priorMisses?.Count ?? 0, traceRange);
@@ -608,6 +703,14 @@ public class MultiProviderNntpClient(
                     _batchFallbackStartGate.Release();
             }
 
+            walk.LastOutcomeWasException = lastException is not null
+                && ClassifyException(lastException.SourceException) != SegmentFetch.FetchStatus.Missing;
+            LogProviderWalkOutcome(
+                walk,
+                segmentId,
+                NntpOperation.PipelinedBody,
+                lastAttemptedProvider.Host,
+                lastException?.SourceException);
             lastException?.Throw();
             throw new UsenetArticleNotFoundException(segmentId, response?.ResponseMessage);
         }
@@ -698,6 +801,7 @@ public class MultiProviderNntpClient(
             UsenetResponseType.ArticleRetrievedHeadAndBodyFollow,
             segmentId,
             onConnectionReadyAgain,
+            NntpOperation.Article,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -706,6 +810,7 @@ public class MultiProviderNntpClient(
         UsenetResponseType successResponseType,
         SegmentId segmentId,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        NntpOperation operation,
         CancellationToken cancellationToken)
         where T : UsenetResponse
     {
@@ -718,12 +823,15 @@ public class MultiProviderNntpClient(
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var orderedProviders = SelectOrderedProviders(out var reserved);
         using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending());
+        var walk = new ProviderWalkSummary(orderedProviders.Count);
+        MultiConnectionNntpClient? lastAttemptedProvider = null;
         var attemptIndex = 0;
         foreach (var provider in orderedProviders)
         {
             var group = NormalizeStorageGroup(provider.StorageGroup);
             if (group.Length > 0 && missingGroups.Contains(group))
             {
+                walk.StorageGroupSkips++;
                 Log.Debug(
                     "Skipping provider `{Host}` on storage group `{Group}` — " +
                     "a sibling provider already reported the article missing.",
@@ -733,6 +841,7 @@ public class MultiProviderNntpClient(
 
             if (IsCachedMissing(segmentId, provider))
             {
+                walk.CachedSkips++;
                 Log.Debug(
                     "Skipping provider `{Host}` for article `{SegmentId}` — " +
                     "cached as missing. Reason: article-miss-cache",
@@ -743,9 +852,11 @@ public class MultiProviderNntpClient(
             var deferredCallback = new DeferredArticleBodyCallback();
             var traceRange = CurrentStreamTraceRange;
             var stopwatch = Stopwatch.StartNew();
+            lastAttemptedProvider = provider;
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                walk.Attempts++;
                 var result = await task(provider, deferredCallback.Invoke)
                     .ConfigureAwait(false);
                 stopwatch.Stop();
@@ -764,6 +875,7 @@ public class MultiProviderNntpClient(
                 deferredCallback.Discard();
                 if (UsenetArticleAvailability.IsDefinitiveMissing(result))
                 {
+                    walk.CurrentDefinitiveMisses++;
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
                         stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
                     (priorMisses ??= []).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
@@ -775,6 +887,7 @@ public class MultiProviderNntpClient(
                     continue;
                 }
 
+                walk.UnexpectedResponses++;
                 RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
                     stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
                 InvokeCompletionCallback(
@@ -783,6 +896,7 @@ public class MultiProviderNntpClient(
             }
             catch (NntpClientRetiredException)
             {
+                walk.Retired = true;
                 deferredCallback.Discard();
                 InvokeCompletionCallback(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
@@ -791,17 +905,19 @@ public class MultiProviderNntpClient(
             catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
                 stopwatch.Stop();
+                walk.NoteException(e);
                 var reason = ClassifyAndRecordFailure(
                     provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex,
                     traceRange);
                 (priorMisses ??= []).Add((provider.MetricsKey, reason));
                 deferredCallback.Discard();
                 lastException = ExceptionDispatchInfo.Capture(e);
-                lastOutcomeWasException = true;
+                lastOutcomeWasException = ClassifyException(e) != SegmentFetch.FetchStatus.Missing;
                 attemptIndex++;
             }
             catch
             {
+                walk.Cancelled = cancellationToken.IsCancellationRequested;
                 deferredCallback.Discard();
                 InvokeCompletionCallback(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
@@ -811,10 +927,14 @@ public class MultiProviderNntpClient(
 
         // Terminal 430 after skips/exhaustion must fire the completion callback exactly once.
         InvokeCompletionCallback(onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
+        walk.LastOutcomeWasException = lastOutcomeWasException;
+        LogProviderWalkOutcome(
+            walk, segmentId, operation, lastAttemptedProvider?.Host, lastException?.SourceException);
         if (lastOutcomeWasException) lastException!.Throw();
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         if (orderedProviders.Count == 0)
             throw new InvalidOperationException("There are no usenet providers configured.");
+        lastException?.Throw();
         // All providers were skipped (negative cache / storage-group) without a probe.
         throw new UsenetArticleNotFoundException(segmentId.ToString()!);
     }
@@ -823,6 +943,7 @@ public class MultiProviderNntpClient(
     (
         Func<INntpClient, Task<T>> task,
         SegmentId? articleId,
+        NntpOperation operation,
         CancellationToken cancellationToken
     ) where T : UsenetResponse
     {
@@ -836,6 +957,7 @@ public class MultiProviderNntpClient(
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var orderedProviders = SelectOrderedProviders(out var reserved);
         using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending());
+        var walk = new ProviderWalkSummary(orderedProviders.Count);
         var attemptIndex = 0;
         foreach (var provider in orderedProviders)
         {
@@ -843,6 +965,7 @@ public class MultiProviderNntpClient(
             var group = NormalizeStorageGroup(provider.StorageGroup);
             if (group.Length > 0 && missingGroups.Contains(group))
             {
+                walk.StorageGroupSkips++;
                 Log.Debug(
                     "Skipping provider `{Host}` on storage group `{Group}` — " +
                     "a sibling provider already reported the article missing.",
@@ -852,6 +975,7 @@ public class MultiProviderNntpClient(
 
             if (articleId is { } segmentId && IsCachedMissing(segmentId, provider))
             {
+                walk.CachedSkips++;
                 Log.Debug(
                     "Skipping provider `{Host}` for article `{SegmentId}` — " +
                     "cached as missing. Reason: article-miss-cache",
@@ -874,6 +998,7 @@ public class MultiProviderNntpClient(
             var stopwatch = Stopwatch.StartNew();
             try
             {
+                walk.Attempts++;
                 var result = await task.Invoke(provider).ConfigureAwait(false);
                 stopwatch.Stop();
 
@@ -882,6 +1007,7 @@ public class MultiProviderNntpClient(
                 // never a connection error.
                 if (UsenetArticleAvailability.IsDefinitiveMissing(result))
                 {
+                    walk.CurrentDefinitiveMisses++;
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
                         stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
                     (priorMisses ??= new()).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
@@ -912,6 +1038,7 @@ public class MultiProviderNntpClient(
                 else if (result is UsenetDecodedBodyResponse or UsenetDecodedArticleResponse)
                 {
                     // BODY/ARTICLE response with an unexpected (non-success, non-430) response type.
+                    walk.UnexpectedResponses++;
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
                         stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
                 }
@@ -922,17 +1049,19 @@ public class MultiProviderNntpClient(
             }
             catch (NntpClientRetiredException)
             {
+                walk.Retired = true;
                 throw;
             }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
                 stopwatch.Stop();
+                walk.NoteException(e);
                 var reason = ClassifyAndRecordFailure(
                     provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex,
                     traceRange);
                 (priorMisses ??= new()).Add((provider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
-                lastOutcomeWasException = true;
+                lastOutcomeWasException = ClassifyException(e) != SegmentFetch.FetchStatus.Missing;
                 attemptIndex++;
             }
         }
@@ -940,14 +1069,15 @@ public class MultiProviderNntpClient(
         // Whichever terminal outcome occurred on the last attempted provider wins,
         // matching the original fallback precedence (a later connection error beats
         // an earlier 430, and a later 430 beats an earlier error).
+        walk.LastOutcomeWasException = lastOutcomeWasException;
+        LogProviderWalkOutcome(
+            walk, articleId, operation, lastAttemptedProvider?.Host, lastException?.SourceException);
         if (lastOutcomeWasException)
-        {
-            LogExhaustedProviders(lastAttemptedProvider?.Host, lastException!.SourceException);
-            lastException.Throw();
-        }
+            lastException!.Throw();
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         if (orderedProviders.Count == 0)
             throw new InvalidOperationException("There are no usenet providers configured.");
+        lastException?.Throw();
         // All providers were skipped (negative cache / storage-group) without a probe.
         if (articleId is { } exhaustedId)
             throw new UsenetArticleNotFoundException(exhaustedId.ToString()!);
@@ -967,6 +1097,46 @@ public class MultiProviderNntpClient(
 
     private static string CacheKey(SegmentId segmentId, MultiConnectionNntpClient provider) =>
         ArticleMissNegativeCache.BuildKey(segmentId.ToString()!, provider.MetricsKey, provider.StorageGroup);
+
+    private static void LogProviderWalkOutcome(
+        ProviderWalkSummary walk,
+        SegmentId? segmentId,
+        NntpOperation operation,
+        string? lastHost,
+        Exception? lastException)
+    {
+        try
+        {
+            if (segmentId is null)
+                return;
+
+            if (walk.IsPureDefinitiveMiss)
+            {
+                Log.Warning(
+                    "Usenet segment was unavailable from all eligible provider sources. " +
+                    "Segment: {SegmentId}; File: {FileName}; Operation: {Operation}; " +
+                    "EligibleProviders: {EligibleProviders}; Attempts: {Attempts}; " +
+                    "CachedSkips: {CachedSkips}; StorageGroupSkips: {StorageGroupSkips}; " +
+                    "DurationMs: {DurationMs}",
+                    segmentId,
+                    FetchAttributionContext.Current?.FileName,
+                    LatencyNames.ToWireName(operation),
+                    walk.EligibleProviders,
+                    walk.Attempts,
+                    walk.CachedSkips,
+                    walk.StorageGroupSkips,
+                    walk.Elapsed.TotalMilliseconds);
+                return;
+            }
+
+            if (walk.LastOutcomeWasException && lastException is not null)
+                LogExhaustedProviders(lastHost, lastException);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // Logging is observational; never change fetch, callback, or fallback ownership.
+        }
+    }
 
     /// <summary>
     /// Logs the terminal failure once all providers have been tried. Known

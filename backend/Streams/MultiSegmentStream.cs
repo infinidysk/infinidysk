@@ -403,12 +403,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 if (liveIndexes.Length > 0)
                 {
                     var liveIds = liveIndexes.Select(index => segmentIds[index]).ToArray();
-                    var batch = await _usenetClient.DecodedBodiesAsync(
-                        liveIds, onConnectionReadyAgain: null, cancellationToken).ConfigureAwait(false);
-                    if (batch.Responses.Count != liveIndexes.Length)
-                        throw new InvalidOperationException(
-                            $"Pipelined BODY returned {batch.Responses.Count} responses for {liveIndexes.Length} requests.");
-                    liveResponses = batch.Responses.ToArray();
+                    liveResponses = await FetchAttributedBatchResponsesAsync(liveIds, cancellationToken)
+                        .ConfigureAwait(false);
                 }
 
                 streamTasks = new Task<SegmentDownloadResult>[batchCount];
@@ -517,6 +513,19 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         return false;
     }
 
+    private async Task<Task<UsenetDecodedBodyResponse>[]> FetchAttributedBatchResponsesAsync(
+        SegmentId[] liveIds,
+        CancellationToken cancellationToken)
+    {
+        using var fetchAttribution = FetchAttributionContext.Begin(_fileName);
+        var batch = await _usenetClient.DecodedBodiesAsync(
+            liveIds, onConnectionReadyAgain: null, cancellationToken).ConfigureAwait(false);
+        if (batch.Responses.Count != liveIds.Length)
+            throw new InvalidOperationException(
+                $"Pipelined BODY returned {batch.Responses.Count} responses for {liveIds.Length} requests.");
+        return batch.Responses.ToArray();
+    }
+
     /// <summary>
     /// When <see cref="_readBudget"/> is null, pause the producer once in-flight planned
     /// bytes reach task-window-size × estimated segment size so full-file GETs cannot retain
@@ -576,9 +585,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 try
                 {
-                    var bodyResponse = await _usenetClient
-                        .DecodedBodyAsync(segmentId, cancellationToken)
-                        .ConfigureAwait(false);
+                    UsenetDecodedBodyResponse bodyResponse;
+                    using (FetchAttributionContext.Begin(_fileName))
+                    {
+                        bodyResponse = await _usenetClient
+                            .DecodedBodyAsync(segmentId, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
 
                     await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
@@ -921,8 +934,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                         lease = await LeaseSegmentBytesAsync(
                             GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
 
-                    var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
-                        .ConfigureAwait(false);
+                    UsenetDecodedBodyResponse response;
+                    using (FetchAttributionContext.Begin(_fileName))
+                    {
+                        response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                     await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var stream = await DrainSegmentAsync(
@@ -994,8 +1011,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                         lease = await LeaseSegmentBytesAsync(
                             GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
 
-                    var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
-                        .ConfigureAwait(false);
+                    UsenetDecodedBodyResponse response;
+                    using (FetchAttributionContext.Begin(_fileName))
+                    {
+                        response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                     await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var stream = await DrainSegmentAsync(
@@ -1055,9 +1076,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                         lease = await LeaseSegmentBytesAsync(
                             GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
 
-                    var bodyResponse = await _usenetClient
-                        .DecodedBodyAsync(fallbackId, cancellationToken)
-                        .ConfigureAwait(false);
+                    UsenetDecodedBodyResponse bodyResponse;
+                    using (FetchAttributionContext.Begin(_fileName))
+                    {
+                        bodyResponse = await _usenetClient
+                            .DecodedBodyAsync(fallbackId, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                     await ThrowOnSegmentIdMismatchAsync(fallbackId, bodyResponse).ConfigureAwait(false);
                     if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
                             bodyResponse.Stream!, _segmentSizes, segmentIndex, cancellationToken)

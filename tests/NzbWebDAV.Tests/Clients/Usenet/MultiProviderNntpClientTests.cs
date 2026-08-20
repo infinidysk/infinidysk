@@ -1928,7 +1928,7 @@ public class MultiProviderNntpClientTests
         Assert.Equal(SegmentFetch.FetchStatus.Corrupt, status);
     }
 
-    private static MultiConnectionNntpClient CreateProvider(
+    internal static MultiConnectionNntpClient CreateProvider(
         INntpClient connection,
         string host = "test",
         string storageGroup = "",
@@ -1969,7 +1969,7 @@ public class MultiProviderNntpClientTests
         return breaker;
     }
 
-    private sealed class ScriptedNntpClient : NntpClient
+    internal sealed class ScriptedNntpClient : NntpClient
     {
         public required int BatchResponseCode { get; init; }
         public int SingularResponseCode { get; init; } = 222;

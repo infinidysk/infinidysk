@@ -312,6 +312,7 @@ public class HealthCheckService : BackgroundService
 
         // Attribution for latency histograms — does not change pool admission priority.
         using var maintenanceScope = ct.SetContext(MaintenanceDownloadContext.Instance);
+        using var fetchAttribution = FetchAttributionContext.Begin(davItem.Name);
 
         ContextualCancellationTokenSource? statCts = null;
         try

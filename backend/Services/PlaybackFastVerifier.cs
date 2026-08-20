@@ -47,6 +47,8 @@ public class PlaybackFastVerifier
 
         var attribution = new MultiProviderNntpClient.ResponderAttribution();
         MultiProviderNntpClient.AttributionContext.Value = attribution;
+        using var fetchAttribution = FetchAttributionContext.Begin(
+            nzb.Files.FirstOrDefault()?.GetSubjectFileName());
 
         var timeout = segmentTimeout ?? DefaultSegmentTimeout;
         var tasks = samples.Select(s => CheckSegmentAsync(s, mode, timeout, priority, ct)).ToList();

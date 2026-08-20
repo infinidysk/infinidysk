@@ -285,6 +285,7 @@ public class Par2RepairService : BackgroundService
             // MaintenanceDownloadContext is attribution-only; it does NOT set AttributionContext,
             // so recovery-volume BODY fetches MAY populate the playback segment cache (harmless).
             using var maintenanceScope = ct.SetContext(MaintenanceDownloadContext.Instance);
+            using var fetchAttribution = FetchAttributionContext.Begin(davItem.Name);
 
             var result = await ExecuteRepairJobAsync(davItem, job, ct).ConfigureAwait(false);
             stopwatch.Stop();
