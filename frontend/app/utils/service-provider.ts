@@ -1,4 +1,4 @@
-import type { SettingsTab } from "~/routes/settings/settings-tabs";
+import type { SettingsTab } from "~/navigation/settings-tabs";
 
 export const NAV_FEATURE_IDS = [
   "overview",

@@ -9,7 +9,7 @@ import { useQueueHistoryWebsocket } from "./controllers/websocket-controller";
 import { useUploadController } from "./controllers/nzb-upload-controller";
 import { useQueueDropzone } from "./controllers/dropzone-controller";
 import { Alert, Button } from "~/components/ui";
-import { SimpleDropdown } from "./components/simple-dropdown/simple-dropdown";
+import { SimpleDropdown } from "~/components/simple-dropdown/simple-dropdown";
 import { useIsReadOnly } from "~/auth/authorization";
 import { isDefaultList, parseHistoryListParams, parseQueueListParams } from "./list-params";
 

@@ -9,7 +9,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { lookup as getMimeType } from 'mime-types';
 import { getDownloadKey } from "~/auth/downloads.server";
-import { Loading } from "../_index/components/loading/loading";
+import { Loading } from "~/components/loading/loading";
 import { formatFileSize } from "~/utils/file-size";
 import { parseExploreWebdavPath } from "~/utils/path";
 import { fileKindRank, getExtension, getIcon, isPlayableMedia } from "./file-kind/file-kind";

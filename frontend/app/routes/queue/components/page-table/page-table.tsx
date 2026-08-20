@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { TriCheckbox, type TriCheckboxState } from "../tri-checkbox/tri-checkbox";
-import { Truncate } from "../truncate/truncate";
+import { Truncate } from "~/components/truncate/truncate";
 import { StatusBadge } from "../status-badge/status-badge";
 import { formatFileSize } from "~/utils/file-size";
 import type { ProviderUsage } from "~/clients/backend-client.server";

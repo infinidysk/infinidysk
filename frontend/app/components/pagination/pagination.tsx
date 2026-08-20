@@ -1,4 +1,4 @@
-import { SimpleDropdown } from "../simple-dropdown/simple-dropdown";
+import { SimpleDropdown } from "~/components/simple-dropdown/simple-dropdown";
 import { memo } from "react";
 import { Icon } from "~/components/ui";
 

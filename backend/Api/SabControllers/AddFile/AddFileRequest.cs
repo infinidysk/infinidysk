@@ -2,6 +2,7 @@
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Api.SabControllers.AddFile;
@@ -58,17 +59,34 @@ public class AddFileRequest()
         };
     }
 
+    internal NzbSubmissionRequest ToSubmissionRequest() => new()
+    {
+        NzoId = NzoId,
+        ReplaceExistingQueueItem = ReplaceExistingQueueItem,
+        FileName = FileName,
+        NzbFileStream = NzbFileStream,
+        Category = Category,
+        Priority = Priority,
+        PostProcessing = PostProcessing,
+        PauseUntil = PauseUntil,
+        IndexerName = IndexerName,
+        ContentGroupKey = ContentGroupKey,
+        CancellationToken = CancellationToken,
+    };
+
     /// <summary>
     /// Resolve the NZB filename from an optional SAB <c>nzbname</c> param and the uploaded file name.
     /// </summary>
     internal static string ResolveFileName(string? nzbName, string? formFileName)
     {
-        var fileName = !string.IsNullOrWhiteSpace(nzbName) ? nzbName : formFileName;
-
-        if (string.IsNullOrWhiteSpace(fileName))
-            throw new BadHttpRequestException("NZB filename could not be determined.");
-
-        return NzbStreamUtil.NormalizeFileName(fileName);
+        try
+        {
+            return NzbFileName.Resolve(nzbName, formFileName);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new BadHttpRequestException("NZB filename could not be determined.", ex);
+        }
     }
 
     internal static QueueItem.PriorityOption MapPriorityOption(string? priority)

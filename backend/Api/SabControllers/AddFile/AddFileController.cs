@@ -1,16 +1,10 @@
-﻿using System.Xml;
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
-using NzbWebDAV.Database.Models;
-using NzbWebDAV.Extensions;
 using NzbWebDAV.Queue;
-using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
-using Serilog;
 
 namespace NzbWebDAV.Api.SabControllers.AddFile;
 
@@ -22,286 +16,41 @@ public class AddFileController(
     WebsocketManager websocketManager
 ) : SabApiController.BaseController(httpContext, configManager)
 {
-    private static readonly XmlReaderSettings XmlSettings = new()
-    {
-        Async = true,
-        DtdProcessing = DtdProcessing.Ignore
-    };
+    private readonly NzbSubmissionService _service = new(
+        dbClient, queueManager, configManager, websocketManager);
 
     /// <summary>
     /// Creates a short-lived context for conflict removal without flushing
     /// pending Added entities on the request-scoped context. Tests can override
     /// this to target the same temporary database as the request context.
     /// </summary>
-    internal Func<DavDatabaseContext> FreshContextFactory { get; set; } = static () => new DavDatabaseContext();
+    internal Func<DavDatabaseContext> FreshContextFactory
+    {
+        get => _service.FreshContextFactory;
+        set => _service.FreshContextFactory = value;
+    }
 
     /// <summary>
     /// Test hook invoked after the duplicate pre-check and before the blob is written,
     /// so the UNIQUE retry path can be exercised without a real concurrent request.
     /// </summary>
-    internal Func<Task>? AfterDuplicatePreCheckHook { get; set; }
+    internal Func<Task>? AfterDuplicatePreCheckHook
+    {
+        get => _service.AfterDuplicatePreCheckHook;
+        set => _service.AfterDuplicatePreCheckHook = value;
+    }
 
     public async Task<AddFileResponse> AddFileAsync(AddFileRequest request)
     {
-        await using var sourceStream = request.NzbFileStream;
-        var id = request.NzoId ?? Guid.NewGuid();
-        var category = StringUtil.EmptyToNull(request.Category)
-                       ?? Config.GetManualUploadCategory();
-
-        var replacesExisting = await dbClient.Ctx.QueueItems
-            .AnyAsync(
-                x => x.FileName == request.FileName && x.Category == category,
-                request.CancellationToken)
-            .ConfigureAwait(false);
-
-        IDisposable? admissionReservation = null;
-        if (!replacesExisting)
-        {
-            var maxItems = Config.GetQueueMaxItems();
-            if (maxItems > 0)
-            {
-                var currentCount = await dbClient.Ctx.QueueItems
-                    .CountAsync(request.CancellationToken)
-                    .ConfigureAwait(false);
-                var resumeThreshold = Config.GetQueueResumeThreshold();
-#pragma warning disable CA2000 // reservation is assigned to the method-scoped using below; the only statements between creation and the using are a null check and logging
-                admissionReservation = queueManager.TryReserveQueueSlot(
-                    currentCount, maxItems, resumeThreshold);
-#pragma warning restore CA2000
-                if (admissionReservation is null)
-                {
-                    Log.Warning(
-                        "Rejected NZB submission because the queue has {QueueCount} of {QueueLimit} items. " +
-                        "Admission resumes at or below {ResumeThreshold} items.",
-                        currentCount, maxItems, resumeThreshold);
-                    return new AddFileResponse
-                    {
-                        Status = false,
-                        Error = $"Queue is full ({currentCount} of {maxItems} items); " +
-                                $"submissions resume at or below {resumeThreshold}.",
-                    };
-                }
-            }
-        }
-
-        using var queueSlotReservation = admissionReservation;
-        await HandleExistingQueueItemAsync(
-                request.FileName,
-                category,
-                request.ReplaceExistingQueueItem,
-                request.CancellationToken)
-            .ConfigureAwait(false);
-        if (AfterDuplicatePreCheckHook is not null)
-            await AfterDuplicatePreCheckHook().ConfigureAwait(false);
-
-        QueueItem? queueItem;
-        try
-        {
-            var prepared = await NzbStreamUtil.OpenMaybeCompressedAsync(
-                    sourceStream, request.CancellationToken)
-                .ConfigureAwait(false);
-            await using var nzbInputStream = prepared.Stream;
-            try
-            {
-                // Store normalized XML so every downstream parser remains
-                // compression-agnostic.
-                await BlobStore.WriteBlob(id, nzbInputStream, request.CancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (InvalidDataException exception) when (prepared.IsGzip)
-            {
-                throw new BadHttpRequestException("The uploaded gzip NZB is invalid.", exception);
-            }
-
-            // backup the nzb file if enabled
-            if (Config.IsNzbBackupEnabled())
-            {
-                var backupLocation = Config.GetNzbBackupLocation();
-                if (backupLocation != null)
-                {
-                    await BackupNzbAsync(id, request.FileName, category, backupLocation).ConfigureAwait(false);
-                }
-            }
-
-            // compute the total segment bytes
-            await using var nzbFileStream = BlobStore.ReadBlob(id)!;
-            long totalSegmentBytes;
-            try
-            {
-                totalSegmentBytes = ComputeTotalSegmentBytes(nzbFileStream);
-            }
-            catch (XmlException exception) when (prepared.IsGzip)
-            {
-                throw new BadHttpRequestException(
-                    "The uploaded gzip file does not contain a valid NZB document.",
-                    exception);
-            }
-
-            // Keep enqueues after any manually moved item in their priority band.
-            // CreatedAt remains the immutable enqueue timestamp; SortOrder owns
-            // user-directed positioning.
-            var createdAt = DateTime.Now;
-            var bandMax = await dbClient.Ctx.QueueItems
-                .Where(item => item.Priority == request.Priority)
-                .Select(item => (long?)item.SortOrder)
-                .MaxAsync(request.CancellationToken)
-                .ConfigureAwait(false) ?? 0;
-            var sortOrder = Math.Max(
-                createdAt.Ticks,
-                checked(bandMax + QueueItem.SortOrderStride));
-
-            // create the queue item record
-            queueItem = new QueueItem
-            {
-                Id = id,
-                CreatedAt = createdAt,
-                SortOrder = sortOrder,
-                FileName = request.FileName,
-                JobName = FilenameUtil.GetJobName(request.FileName),
-                NzbFileSize = nzbFileStream.Length,
-                TotalSegmentBytes = totalSegmentBytes,
-                Category = category,
-                Priority = request.Priority,
-                PostProcessing = request.PostProcessing,
-                PauseUntil = request.PauseUntil,
-                IndexerName = request.IndexerName,
-                ContentGroupKey = request.ContentGroupKey,
-            };
-
-            // record the original NZB filename so it can be served at download time
-            var nzbName = new NzbName
-            {
-                Id = id,
-                FileName = request.FileName
-            };
-
-            // save — never Clear() the change tracker here: WebDAV watch-folder create
-            // reads the new QueueItem from the tracker after AddFileAsync returns.
-            dbClient.Ctx.QueueItems.Add(queueItem);
-            dbClient.Ctx.NzbNames.Add(nzbName);
-            try
-            {
-                await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
-            }
-            catch (DbUpdateException ex) when (
-                request.ReplaceExistingQueueItem && IsCategoryFileNameUniqueViolation(ex))
-            {
-                // TOCTOU: another insert landed after our pre-check. Remove via a fresh
-                // context so this request context's pending Added entities are not flushed
-                // by RemoveQueueItemsAsync's inner SaveChangesAsync, then retry once.
-                await RemoveConflictingQueueItemViaFreshContextAsync(
-                        request.FileName, category, request.CancellationToken)
-                    .ConfigureAwait(false);
-                await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
-            }
-            catch (DbUpdateException ex) when (IsCategoryFileNameUniqueViolation(ex))
-            {
-                throw new BadHttpRequestException(
-                    $"A queue item named '{request.FileName}' already exists in category '{category}'.",
-                    ex);
-            }
-
-            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
-        }
-        catch
-        {
-            // Delete partial or unreferenced blobs after ingest/database failures.
-            BlobStore.Delete(id);
-            throw;
-        }
-
-        // inform the frontend that a new item was added to the queue
-        var message = GetQueueResponse.QueueSlot.FromQueueItem(queueItem).ToJson();
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemAdded, message);
-
-        // awaken the queue if it is sleeping
-        queueManager.AwakenQueue(request.PauseUntil);
-
-        // return response
-        return new AddFileResponse()
-        {
-            Status = true,
-            NzoIds = [queueItem.Id.ToString()],
-        };
-    }
-
-    private async Task HandleExistingQueueItemAsync(
-        string fileName,
-        string category,
-        bool replaceExisting,
-        CancellationToken ct)
-    {
-        var existingId = await dbClient.Ctx.QueueItems.AsNoTracking()
-            .Where(q => q.Category == category && q.FileName == fileName)
-            .Select(q => (Guid?)q.Id)
-            .FirstOrDefaultAsync(ct)
-            .ConfigureAwait(false);
-        if (existingId is null) return;
-
-        if (!replaceExisting)
-            throw new BadHttpRequestException(
-                $"A queue item named '{fileName}' already exists in category '{category}'.");
-
-        var wasInProgress = queueManager.FindInProgressQueueItem(existingId.Value) is not null;
-        Log.Warning(
-            "Replacing existing queue item {QueueItemId} ({FileName} in {Category}) on re-add{InProgressSuffix}",
-            existingId.Value,
-            fileName,
-            category,
-            wasInProgress ? "; cancelling in-progress download" : "");
-
-        await queueManager.RemoveQueueItemsAsync([existingId.Value], dbClient, ct).ConfigureAwait(false);
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, existingId.Value.ToString());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
-    }
-
-    private async Task RemoveConflictingQueueItemViaFreshContextAsync(
-        string fileName,
-        string category,
-        CancellationToken ct)
-    {
-        await using var freshCtx = FreshContextFactory();
-        var freshClient = new DavDatabaseClient(freshCtx);
-        var conflictingId = await freshCtx.QueueItems.AsNoTracking()
-            .Where(q => q.Category == category && q.FileName == fileName)
-            .Select(q => (Guid?)q.Id)
-            .FirstOrDefaultAsync(ct)
-            .ConfigureAwait(false);
-        if (conflictingId is null) return;
-
-        var wasInProgress = queueManager.FindInProgressQueueItem(conflictingId.Value) is not null;
-        Log.Warning(
-            "Replacing existing queue item {QueueItemId} ({FileName} in {Category}) after UNIQUE conflict on re-add{InProgressSuffix}",
-            conflictingId.Value,
-            fileName,
-            category,
-            wasInProgress ? "; cancelling in-progress download" : "");
-
-        await queueManager.RemoveQueueItemsAsync([conflictingId.Value], freshClient, ct).ConfigureAwait(false);
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, conflictingId.Value.ToString());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+        var result = await _service.SubmitAsync(request.ToSubmissionRequest()).ConfigureAwait(false);
+        return ToResponse(result);
     }
 
     internal static bool IsCategoryFileNameUniqueViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e is not null; e = e.InnerException)
-        {
-            if (!e.IsUniqueConstraintException()) continue;
+        => NzbSubmissionService.IsCategoryFileNameUniqueViolation(ex);
 
-            var message = e.Message;
-            if (message.Contains("IX_QueueItems_Category_FileName", StringComparison.OrdinalIgnoreCase))
-                return true;
-            if (message.Contains("QueueItems.Category", StringComparison.OrdinalIgnoreCase)
-                && message.Contains("QueueItems.FileName", StringComparison.OrdinalIgnoreCase))
-                return true;
-            if (message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-                && message.Contains("Category", StringComparison.OrdinalIgnoreCase)
-                && message.Contains("FileName", StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-
-        return false;
-    }
+    internal static string GetSafeBackupFileName(Guid id, string fileName)
+        => NzbSubmissionService.GetSafeBackupFileName(id, fileName);
 
     protected override async Task<IActionResult> Handle()
     {
@@ -309,103 +58,10 @@ public class AddFileController(
         return Ok(await AddFileAsync(request).ConfigureAwait(false));
     }
 
-    private static async Task BackupNzbAsync(Guid id, string fileName, string category, string backupLocation)
+    private static AddFileResponse ToResponse(NzbSubmissionResult result) => new()
     {
-        try
-        {
-            ValidateBackupCategory(category);
-            ValidateBackupLeafName(fileName);
-            fileName = Path.GetFileName(fileName);
-
-            var backupRoot = Path.GetFullPath(backupLocation);
-            var backupRootPrefix = Path.EndsInDirectorySeparator(backupRoot)
-                ? backupRoot
-                : backupRoot + Path.DirectorySeparatorChar;
-            if (!Directory.Exists(backupRoot))
-                Directory.CreateDirectory(backupRoot);
-
-            var destDir = Path.GetFullPath(Path.Join(backupRootPrefix, category));
-            if (!destDir.StartsWith(backupRootPrefix, StringComparison.Ordinal))
-                throw new ArgumentException("The NZB backup category must stay within the configured directory.");
-            if (!Directory.Exists(destDir))
-                Directory.CreateDirectory(destDir);
-
-            var destDirPrefix = Path.EndsInDirectorySeparator(destDir)
-                ? destDir
-                : destDir + Path.DirectorySeparatorChar;
-            var safeFileName = GetSafeBackupFileName(id, fileName);
-            var destPath = Path.GetFullPath(Path.Join(destDirPrefix, safeFileName));
-            if (!destPath.StartsWith(destDirPrefix, StringComparison.Ordinal))
-                throw new ArgumentException("The NZB backup file must stay within its category directory.");
-            var counter = 2;
-            while (System.IO.File.Exists(destPath))
-            {
-                var safeBaseName = Path.GetFileNameWithoutExtension(safeFileName);
-                destPath = Path.GetFullPath(Path.Join(destDirPrefix, $"{safeBaseName} ({counter}).nzb"));
-                if (!destPath.StartsWith(destDirPrefix, StringComparison.Ordinal))
-                    throw new ArgumentException("The NZB backup file must stay within its category directory.");
-                counter++;
-            }
-
-            await using var src = BlobStore.ReadBlob(id);
-            await using var dst = System.IO.File.Create(destPath);
-            await src!.CopyToAsync(dst).ConfigureAwait(false);
-        }
-        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
-        {
-            throw new InvalidOperationException($"Could not save nzb to `{backupLocation}`", e);
-        }
-    }
-
-    internal static string GetSafeBackupFileName(Guid id, string fileName)
-    {
-        ValidateBackupLeafName(fileName);
-        var leafName = Path.GetFileName(fileName);
-        var baseName = Path.GetFileNameWithoutExtension(leafName);
-        if (string.IsNullOrWhiteSpace(baseName)) baseName = id.ToString();
-        return $"{baseName}.nzb";
-    }
-
-    private static void ValidateBackupLeafName(string fileName)
-    {
-        if (string.IsNullOrWhiteSpace(fileName) ||
-            Path.IsPathRooted(fileName) ||
-            fileName is "." or ".." ||
-            fileName.Contains('/', StringComparison.Ordinal) ||
-            fileName.Contains('\\', StringComparison.Ordinal) ||
-            fileName.Contains('\0', StringComparison.Ordinal))
-        {
-            throw new ArgumentException("The NZB backup file name must be a single file name.", nameof(fileName));
-        }
-    }
-
-    private static void ValidateBackupCategory(string category)
-    {
-        if (string.IsNullOrWhiteSpace(category) ||
-            Path.IsPathRooted(category) ||
-            category is "." or ".." ||
-            category.Contains('/', StringComparison.Ordinal) ||
-            category.Contains('\\', StringComparison.Ordinal) ||
-            category.Contains('\0', StringComparison.Ordinal))
-        {
-            throw new ArgumentException("The NZB backup category must be a single directory name.", nameof(category));
-        }
-    }
-
-    private static long ComputeTotalSegmentBytes(Stream stream)
-    {
-        long totalBytes = 0;
-        using var reader = XmlReader.Create(stream, XmlSettings);
-        while (reader.Read())
-        {
-            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "segment") continue;
-            var bytesAttr = reader.GetAttribute("bytes");
-            if (bytesAttr != null && long.TryParse(bytesAttr, out var bytes))
-            {
-                totalBytes += bytes;
-            }
-        }
-
-        return totalBytes;
-    }
+        Status = result.Status,
+        Error = result.Error,
+        NzoIds = result.NzoIds.ToList(),
+    };
 }

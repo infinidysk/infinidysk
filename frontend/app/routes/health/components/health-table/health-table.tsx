@@ -1,5 +1,5 @@
 import type { HealthCheckQueueItem } from "~/clients/backend-client.server";
-import { Truncate } from "~/routes/queue/components/truncate/truncate";
+import { Truncate } from "~/components/truncate/truncate";
 import { Badge, Icon } from "~/components/ui";
 
 export type HealthTableProps = {

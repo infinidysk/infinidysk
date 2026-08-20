@@ -1,7 +1,8 @@
 import { useCallback, useState, type ReactNode } from "react"
 import type { ExploreFile } from "../route"
-import { DropdownOptions } from "~/routes/explore/dropdown-options/dropdown-options"
+import { DropdownOptions } from "~/components/dropdown-options/dropdown-options"
 import { Icon } from "~/components/ui"
+import { ExportNzb, Remove } from "~/components/item-action-labels"
 
 export type ItemMenuProps = {
     className?: string
@@ -60,17 +61,5 @@ export function Preview(): ReactNode {
 export function Download(): ReactNode {
     return (
         <><Icon name="download" className="mr-2 !text-[18px]" /> Download</>
-    );
-}
-
-export function ExportNzb(): ReactNode {
-    return (
-        <><Icon name="upload" className="mr-2 !text-[18px]" /> Export NZB</>
-    );
-}
-
-export function Remove(): ReactNode {
-    return (
-        <><Icon name="delete" className="mr-2 !text-[18px]" /> Remove</>
     );
 }

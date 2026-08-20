@@ -1,7 +1,7 @@
 import type { HealthCheckResult } from "~/clients/backend-client.server";
 import { Badge, Icon } from "~/components/ui";
-import { Pagination } from "~/routes/queue/components/pagination/pagination";
-import { Truncate } from "~/routes/queue/components/truncate/truncate";
+import { Pagination } from "~/components/pagination/pagination";
+import { Truncate } from "~/components/truncate/truncate";
 
 export type HealthHistoryFilter = "all" | "deleted" | "repaired" | "degraded";
 
