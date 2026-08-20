@@ -89,6 +89,7 @@ public class GetWebdavItemController(
                 var end = ResolveRangeEnd(attachEnd, attachFileSize);
                 if (attachStart.Value < 0 || attachStart.Value >= attachFileSize || attachStart.Value > end)
                 {
+                    Response.Headers["Accept-Ranges"] = "bytes";
                     Response.Headers["Content-Range"] = $"bytes */{attachFileSize}";
                     Response.StatusCode = StatusCodes.Status416RangeNotSatisfiable;
                     return Stream.Null;

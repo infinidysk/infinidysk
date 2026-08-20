@@ -59,7 +59,7 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(privateFallbackFactory);
-        _ = readerCt;
+        readerCt.ThrowIfCancellationRequested();
 
         path = NormalizePath(path);
 
@@ -99,6 +99,7 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
             return null;
         }
 
+        readerCt.ThrowIfCancellationRequested();
         var reserved = TryReserveOpening(path, startOffset, fileSize, out var capMiss);
         if (reserved is null)
         {
@@ -108,6 +109,7 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
 
         try
         {
+            readerCt.ThrowIfCancellationRequested();
             var lease = await source.GetDetachedReadableStreamAsync(reserved.EntryToken)
                 .ConfigureAwait(false);
             reserved.BindAndStart(lease);

@@ -17,7 +17,7 @@ public class BaseStoreStreamFileTests
         using var cts = new CancellationTokenSource();
         var file = new TestStoreFile(context, new ConfigManager(), payload: [1, 2, 3]);
 
-        await file.GetReadableStreamAsync(cts.Token);
+        await using var stream = await file.GetReadableStreamAsync(cts.Token);
 
         Assert.NotNull(cts.Token.GetContext<DownloadPriorityContext>());
         Assert.NotNull(cts.Token.GetContext<StreamingTimeoutContext>());
@@ -57,7 +57,7 @@ public class BaseStoreStreamFileTests
         using var entryCts = new CancellationTokenSource();
         var file = new TestStoreFile(context, new ConfigManager(), payload: [9]);
 
-        await file.GetReadableStreamAsync(requestCts.Token);
+        await using var readable = await file.GetReadableStreamAsync(requestCts.Token);
         var lease = await file.GetDetachedReadableStreamAsync(entryCts.Token);
         var requestCtx = requestCts.Token.GetContext<DownloadPriorityContext>();
         var entryCtx = entryCts.Token.GetContext<DownloadPriorityContext>();
@@ -82,6 +82,18 @@ public class BaseStoreStreamFileTests
         var file = new ThrowingStoreFile(context, new ConfigManager());
 
         await Assert.ThrowsAsync<IOException>(() => file.GetDetachedReadableStreamAsync(cts.Token));
+        Assert.Null(cts.Token.GetContext<DownloadPriorityContext>());
+        Assert.Null(cts.Token.GetContext<StreamingTimeoutContext>());
+    }
+
+    [Fact]
+    public async Task ReadableStreamOpenFailure_DisposesOwnershipHandle()
+    {
+        var (context, _) = NewContext();
+        using var cts = new CancellationTokenSource();
+        var file = new ThrowingStoreFile(context, new ConfigManager());
+
+        await Assert.ThrowsAsync<IOException>(() => file.GetReadableStreamAsync(cts.Token));
         Assert.Null(cts.Token.GetContext<DownloadPriorityContext>());
         Assert.Null(cts.Token.GetContext<StreamingTimeoutContext>());
     }
@@ -134,7 +146,9 @@ public class BaseStoreStreamFileTests
         {
             if (davItem is not null)
                 Context.Items["DavItem"] = davItem;
+#pragma warning disable CA2000 // returned stream is owned by the caller
             return Task.FromResult<Stream>(new MemoryStream(payload, writable: false));
+#pragma warning restore CA2000
         }
     }
 

@@ -17,7 +17,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
 
     protected abstract Task<Stream> GetStreamAsync(CancellationToken cancellationToken);
 
-    public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
+    public override async Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
     {
         var ownership = CreateStreamingScope(cancellationToken);
         context.Response.OnCompleted(async () =>
@@ -25,7 +25,15 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             await ownership.DisposeAsync().ConfigureAwait(false);
         });
 
-        return GetStreamAsync(cancellationToken);
+        try
+        {
+            return await GetStreamAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await ownership.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     public async Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)

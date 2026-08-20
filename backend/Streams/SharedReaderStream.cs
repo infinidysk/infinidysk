@@ -84,16 +84,16 @@ internal sealed class SharedReaderStream : FastReadOnlyStream
                     return result.Count;
 
                 case RingReadKind.NeedWait:
-                {
-                    var waitStarted = Stopwatch.GetTimestamp();
-                    await _ring.WaitForDataAsync(_readerId, _cursor, cancellationToken)
-                        .ConfigureAwait(false);
-                    StreamTrace.TryStall(
-                        MultiProviderNntpClient.CurrentStreamTraceRange,
-                        StreamStallKind.ConsumerWait,
-                        Stopwatch.GetElapsedTime(waitStarted));
-                    continue;
-                }
+                    {
+                        var waitStarted = Stopwatch.GetTimestamp();
+                        await _ring.WaitForDataAsync(_readerId, _cursor, cancellationToken)
+                            .ConfigureAwait(false);
+                        StreamTrace.TryStall(
+                            MultiProviderNntpClient.CurrentStreamTraceRange,
+                            StreamStallKind.ConsumerWait,
+                            Stopwatch.GetElapsedTime(waitStarted));
+                        continue;
+                    }
 
                 case RingReadKind.Evicted:
                 case RingReadKind.Released:

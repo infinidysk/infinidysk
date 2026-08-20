@@ -109,10 +109,9 @@ internal sealed class ControllableTimeProvider : TimeProvider
         {
             lock (_gate)
             {
-                if (_period > TimeSpan.Zero && _period != Timeout.InfiniteTimeSpan)
-                    _nextDue = now + _period;
-                else
-                    _nextDue = null;
+                _nextDue = _period > TimeSpan.Zero && _period != Timeout.InfiniteTimeSpan
+                    ? now + _period
+                    : null;
             }
         }
 

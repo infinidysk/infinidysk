@@ -280,9 +280,11 @@ public class SharedStreamEntryTests
         await using var reader = Attach(entry, 0, (offset, _) =>
         {
             fallbackAt.TrySetResult(offset);
+#pragma warning disable CA2000 // returned stream is owned by SharedReaderStream
             var ms = new MemoryStream(payload);
             ms.Seek(offset, SeekOrigin.Begin);
             return Task.FromResult<Stream>(ms);
+#pragma warning restore CA2000
         });
         Assert.Equal(8, await ReadExactAsync(reader, new byte[8]));
         reader.Seek(payload.Length - 4, SeekOrigin.Begin);

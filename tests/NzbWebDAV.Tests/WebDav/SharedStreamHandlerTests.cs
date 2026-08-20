@@ -44,11 +44,14 @@ public class SharedStreamHandlerTests
         var item = new DetachedStoreItem(payload: [1, 2, 3, 4]);
         var (handler, _, _) = Handler(item);
         var context = Request(HttpMethods.Get, "/movie.mkv", range: "bytes=99-120");
-        context.Response.Body = new MemoryStream();
+        using var body = new MemoryStream();
+        context.Response.Body = body;
 
         await handler.HandleRequestAsync(context);
 
         Assert.Equal(416, context.Response.StatusCode);
+        Assert.Equal("bytes", context.Response.Headers.AcceptRanges);
+        Assert.Equal("bytes */4", context.Response.Headers.ContentRange);
         Assert.Equal(0, item.DetachedOpenCount);
         Assert.Equal(0, item.PrivateOpenCount);
     }
@@ -62,14 +65,15 @@ public class SharedStreamHandlerTests
         failureTracker.RecordFailure(davItem.Id);
         var (handler, _, _) = Handler(item, failureTracker);
         var context = Request(HttpMethods.Get, "/movie.mkv");
-        context.Response.Body = new MemoryStream();
+        using var body = new MemoryStream();
+        context.Response.Body = body;
 
         await handler.HandleRequestAsync(context);
 
         Assert.Same(davItem, context.Items["DavItem"]);
         Assert.Equal(1, item.DetachedOpenCount);
         Assert.Equal(0, item.PrivateOpenCount);
-        Assert.Equal(new byte[] { 10, 20, 30, 40 }, ((MemoryStream)context.Response.Body).ToArray());
+        Assert.Equal(new byte[] { 10, 20, 30, 40 }, body.ToArray());
         Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
     }
 
@@ -85,11 +89,12 @@ public class SharedStreamHandlerTests
         await using var pin = pinned!.Stream;
 
         var suffix = Request(HttpMethods.Get, "/movie.mkv", range: "bytes=-4");
-        suffix.Response.Body = new MemoryStream();
+        using var body = new MemoryStream();
+        suffix.Response.Body = body;
         await handler.HandleRequestAsync(suffix);
 
         Assert.Equal(StatusCodes.Status206PartialContent, suffix.Response.StatusCode);
-        Assert.Equal(payload[^4..], ((MemoryStream)suffix.Response.Body).ToArray());
+        Assert.Equal(payload[^4..], body.ToArray());
         Assert.Equal(1, item.DetachedOpenCount);
         Assert.Equal(0, item.PrivateOpenCount);
         Assert.Equal(payload.Length - 4, GetAndHeadHandlerPatch.ResolveAttachRange(
@@ -103,14 +108,15 @@ public class SharedStreamHandlerTests
         var item = new DetachedStoreItem(payload);
         var (handler, _, tracker) = Handler(item);
         var context = Request(HttpMethods.Get, "/movie.mkv", range: "bytes=-4");
-        context.Response.Body = new MemoryStream();
+        using var body = new MemoryStream();
+        context.Response.Body = body;
 
         await handler.HandleRequestAsync(context);
 
         Assert.Equal(0, item.DetachedOpenCount);
         Assert.Equal(1, item.PrivateOpenCount);
         Assert.Equal(1, tracker.Snapshot().SharedAttachMissesSmallRangeNoEntry);
-        Assert.Equal(payload[^4..], ((MemoryStream)context.Response.Body).ToArray());
+        Assert.Equal(payload[^4..], body.ToArray());
     }
 
     [Fact]
@@ -139,12 +145,13 @@ public class SharedStreamHandlerTests
         var item = new PrivateOnlyItem();
         var (handler, _, _) = Handler(item);
         var context = Request(HttpMethods.Get, "/movie.mkv");
-        context.Response.Body = new MemoryStream();
+        using var body = new MemoryStream();
+        context.Response.Body = body;
 
         await handler.HandleRequestAsync(context);
 
         Assert.Equal(1, item.PrivateOpenCount);
-        Assert.Equal(new byte[] { 7, 8, 9 }, ((MemoryStream)context.Response.Body).ToArray());
+        Assert.Equal(new byte[] { 7, 8, 9 }, body.ToArray());
     }
 
     private static (GetAndHeadHandlerPatch Handler, SharedStreamRegistry Registry, ConcurrentReadTracker Tracker)
@@ -193,18 +200,22 @@ public class SharedStreamHandlerTests
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref PrivateOpenCount);
+#pragma warning disable CA2000 // returned stream is owned by the caller
             return Task.FromResult<Stream>(new MemoryStream(payload, writable: false));
+#pragma warning restore CA2000
         }
 
         public Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref DetachedOpenCount);
+#pragma warning disable CA2000 // lease.Stream is owned by the shared-stream entry
             return Task.FromResult(new DetachedStreamLease
             {
                 Stream = new MemoryStream(payload, writable: false),
                 Ownership = NullAsyncDisposable.Instance,
                 DavItem = davItem,
             });
+#pragma warning restore CA2000
         }
     }
 
@@ -219,7 +230,9 @@ public class SharedStreamHandlerTests
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref PrivateOpenCount);
+#pragma warning disable CA2000 // returned stream is owned by the caller
             return Task.FromResult<Stream>(new MemoryStream([7, 8, 9], writable: false));
+#pragma warning restore CA2000
         }
     }
 

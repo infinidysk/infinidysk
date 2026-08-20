@@ -153,6 +153,21 @@ public class SharedStreamRegistryTests
     }
 
     [Fact]
+    public async Task CancelledReader_DoesNotOpenOrReserve()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var (registry, _, source) = CreateRegistry();
+        await using var registryDispose = registry;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => registry.TryAttachAsync(
+            "/movie.mkv", 0, null, source.FileSize, source, NoFallback, cts.Token));
+        Assert.Equal(0, source.OpenCount);
+        Assert.True(registry.IsEmpty);
+        Assert.Equal(0, registry.LiveEntryCount);
+    }
+
+    [Fact]
     public async Task HitsPlusMisses_EqualsAttempts()
     {
         var (registry, tracker, source) = CreateRegistry();
