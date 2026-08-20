@@ -11,14 +11,14 @@ preflight_config_path() {
 
     if [ -e "$CONFIG_PATH" ] && [ ! -d "$CONFIG_PATH" ]; then
         echo "Fatal: CONFIG_PATH '$CONFIG_PATH' exists but is not a directory." >&2
-        echo "Mount a persistent directory at /config and grant PUID=${PUID:-?} PGID=${PGID:-?} read/write access." >&2
+        echo "Mount a persistent directory at '$CONFIG_PATH' (default /config) and grant PUID=${PUID:-?} PGID=${PGID:-?} read/write access." >&2
         return 1
     fi
 
     if [ ! -d "$CONFIG_PATH" ]; then
         echo "Fatal: CONFIG_PATH '$CONFIG_PATH' is not an existing directory." >&2
-        echo "Mount a persistent directory at /config and grant PUID=${PUID:-?} PGID=${PGID:-?} read/write access." >&2
-        echo "The image contains an empty /config; a path existing inside the container is not proof a host volume is mounted." >&2
+        echo "Mount a persistent directory at '$CONFIG_PATH' (default /config) and grant PUID=${PUID:-?} PGID=${PGID:-?} read/write access." >&2
+        echo "The image contains an empty default /config; a path existing inside the container is not proof a host volume is mounted." >&2
         return 1
     fi
 
@@ -26,10 +26,9 @@ preflight_config_path() {
         echo "Warning: could not adjust ownership of '$CONFIG_PATH'; checking effective access." >&2
     fi
 
-    probe_path="$CONFIG_PATH/.config-path-probe-$$"
-    if ! su-exec "$USER_NAME" sh -c 'umask 077; : > "$1" && rm -f "$1"' sh "$probe_path"; then
+    if ! su-exec "$USER_NAME" sh -c 'umask 077; probe=$(mktemp "$1/.config-path-probe.XXXXXX") && rm -f "$probe"' sh "$CONFIG_PATH"; then
         echo "Fatal: CONFIG_PATH '$CONFIG_PATH' is not writable by PUID=$PUID PGID=$PGID." >&2
-        echo "Verify the persistent /config mount and host permissions." >&2
+        echo "Verify the persistent mount at '$CONFIG_PATH' and host permissions." >&2
         return 1
     fi
 

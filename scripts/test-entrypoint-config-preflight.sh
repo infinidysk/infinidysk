@@ -95,7 +95,12 @@ write_stub chown 'exit 0'
 success="$WORKDIR/success"
 mkdir "$success"
 if CONFIG_PATH="$success" preflight_config_path >/dev/null 2>"$WORKDIR/success.err"; then
-    [ ! -e "$success/.config-path-probe-$$" ] || fail "probe file leaked"
+    leaked=0
+    for probe in "$success"/.config-path-probe*; do
+        [ -e "$probe" ] || continue
+        leaked=1
+    done
+    [ "$leaked" -eq 0 ] || fail "probe file leaked"
     pass "writable directory"
 else
     fail "writable directory should pass"
