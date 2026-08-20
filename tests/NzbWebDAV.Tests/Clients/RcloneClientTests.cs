@@ -27,10 +27,10 @@ public class RcloneClientTests : IDisposable
             ("POST /vfs/forget", FailResponse("transient failure")),
             ("POST /vfs/forget", SuccessResponse()));
 
-        var result = await RcloneClient.ForgetVfsPaths(["/content/test"]);
+        var result = await RcloneClient.Current!.ForgetVfsPaths(["/content/test"]);
 
         Assert.True(result.Success);
-        Assert.Null(RcloneClient.LastForgetError);
+        Assert.Null(RcloneClient.Current.LastForgetError);
     }
 
     [Fact]
@@ -39,11 +39,11 @@ public class RcloneClientTests : IDisposable
         RcloneClient.TestHandler = CreateHandler(
             ("POST /vfs/forget", UnauthorizedResponse()));
 
-        var result = await RcloneClient.ForgetVfsPaths(["/content/test"]);
+        var result = await RcloneClient.Current!.ForgetVfsPaths(["/content/test"]);
 
         Assert.False(result.Success);
         Assert.Equal("Authentication failed", result.Error);
-        Assert.Null(RcloneClient.LastForgetError);
+        Assert.Null(RcloneClient.Current.LastForgetError);
     }
 
     [Fact]
@@ -56,14 +56,14 @@ public class RcloneClientTests : IDisposable
             ("POST /vfs/forget", FailResponse("transient failure")),
             ("POST /vfs/forget", UnauthorizedResponse()));
 
-        await RcloneClient.ForgetVfsPaths(["/content/seed-error"]);
-        Assert.NotNull(RcloneClient.LastForgetError);
+        await RcloneClient.Current!.ForgetVfsPaths(["/content/seed-error"]);
+        Assert.NotNull(RcloneClient.Current.LastForgetError);
 
-        var result = await RcloneClient.ForgetVfsPaths(["/content/test"]);
+        var result = await RcloneClient.Current.ForgetVfsPaths(["/content/test"]);
 
         Assert.False(result.Success);
         Assert.Equal("Authentication failed", result.Error);
-        Assert.Null(RcloneClient.LastForgetError);
+        Assert.Null(RcloneClient.Current.LastForgetError);
     }
 
     [Fact]
@@ -75,11 +75,11 @@ public class RcloneClientTests : IDisposable
             ("POST /vfs/forget", FailResponse("persistent failure")),
             ("POST /vfs/forget", FailResponse("persistent failure")));
 
-        var result = await RcloneClient.ForgetVfsPaths(["/content/test"]);
+        var result = await RcloneClient.Current!.ForgetVfsPaths(["/content/test"]);
 
         Assert.False(result.Success);
-        Assert.NotNull(RcloneClient.LastForgetError);
-        Assert.Equal("persistent failure", RcloneClient.LastForgetError!.Value.Message);
+        Assert.NotNull(RcloneClient.Current.LastForgetError);
+        Assert.Equal("persistent failure", RcloneClient.Current.LastForgetError!.Value.Message);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public class RcloneClientTests : IDisposable
         RcloneClient.TestHandler = CreateHandler(
             ("POST /vfs/forget", SuccessResponse()));
 
-        var result = await RcloneClient.ForgetVfsPaths([]);
+        var result = await RcloneClient.Current!.ForgetVfsPaths([]);
 
         Assert.True(result.Success);
         Assert.Empty(result.Forgotten ?? []);
@@ -98,6 +98,7 @@ public class RcloneClientTests : IDisposable
     {
         RcloneClient.TestHandler = null;
         RcloneClient.BackoffOverride = null;
+        RcloneClient.Current?.Dispose();
     }
 
     private static HttpResponseMessage SuccessResponse() =>
