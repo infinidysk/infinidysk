@@ -53,6 +53,15 @@ public partial class DavNzbFile
     [MemoryPackOrder(6)]
     public long? CriticalHeadEndExclusive { get; set; }
 
+    /// <summary>
+    /// Absolute segment indices confirmed corrupt on all providers during streaming
+    /// (ascending). Null = no streaming-corruption record.
+    /// Blob/MemoryPack only — not an EF column. VersionTolerant / additive — no migration.
+    /// </summary>
+    [NotMapped]
+    [MemoryPackOrder(7)]
+    public int[]? CorruptSegmentIndices { get; set; }
+
     // navigation helpers
     [MemoryPackIgnore]
     public DavItem? DavItem { get; set; }

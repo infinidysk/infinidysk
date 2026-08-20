@@ -1090,6 +1090,14 @@ public class ConfigManager
         return toleranceValue == null || bool.Parse(toleranceValue);
     }
 
+    public bool IsCorruptionTrackingEnabled()
+    {
+        var repairValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
+        if (repairValue == null || !bool.Parse(repairValue)) return false;
+        var trackingValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairCorruptionTrackingEnabled));
+        return trackingValue == null || bool.Parse(trackingValue);
+    }
+
     public int GetDegradedMaxConsecutiveMissing()
     {
         var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairDegradedMaxConsecutiveMissing));

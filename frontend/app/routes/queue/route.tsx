@@ -9,6 +9,7 @@ import { useQueueHistoryWebsocket } from "./controllers/websocket-controller";
 import { useUploadController } from "./controllers/nzb-upload-controller";
 import { useQueueDropzone } from "./controllers/dropzone-controller";
 import { Alert, Button } from "~/components/ui";
+import { SimpleDropdown } from "./components/simple-dropdown/simple-dropdown";
 import { useIsReadOnly } from "~/auth/authorization";
 import { isDefaultList, parseHistoryListParams, parseQueueListParams } from "./list-params";
 
@@ -206,7 +207,16 @@ export default function Queue(props: Route.ComponentProps) {
             {/* queue */}
             <div className="min-h-[413.9px] min-[450px]:min-h-[382.9px]">
                 {!isReadOnly && (
-                    <div className="mb-3 flex justify-end">
+                    <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                        <label className="flex items-center gap-2 text-xs text-base-content/60">
+                            Category
+                            <SimpleDropdown
+                                type="bordered"
+                                options={props.loaderData.categories}
+                                valueRef={manualCategoryRef}
+                                ariaLabel="Upload category"
+                            />
+                        </label>
                         <Button variant="primary" size="small" onClick={dropzone.open}>
                             Upload NZB
                         </Button>
@@ -232,7 +242,6 @@ export default function Queue(props: Route.ComponentProps) {
                         onPageSelected={onQueuePageSelected}
                         onPageSizeSelected={onQueuePageSizeSelected}
                         categories={props.loaderData.categories}
-                        manualCategoryRef={manualCategoryRef}
                         onIsSelectedChanged={queueEvents.onSelectQueueSlots}
                         onIsRemovingChanged={queueEvents.onRemovingQueueSlots}
                         onRemoved={queueEvents.onRemoveQueueSlots}

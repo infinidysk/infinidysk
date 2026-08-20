@@ -82,7 +82,15 @@ public class Par2RepairService : BackgroundService
             _pendingZeroFillPaths.TryRemove(path, out _);
     }
 
-    public async Task EnqueueAsync(
+    public void ReportCorruption(string path, string segmentId)
+    {
+        if (!_configManager.IsCorruptionTrackingEnabled()) return;
+        if (!_pendingZeroFillPaths.TryAdd(path, 0)) return;
+        if (!_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId, IsCorruption: true)))
+            _pendingZeroFillPaths.TryRemove(path, out _);
+    }
+
+    public virtual async Task EnqueueAsync(
         DavItem davItem,
         IReadOnlyList<string> missingSegmentIds,
         CancellationToken ct = default)
@@ -175,8 +183,57 @@ public class Par2RepairService : BackgroundService
     {
         await using var dbContext = new DavDatabaseContext();
         var dbClient = new DavDatabaseClient(dbContext);
+        if (evt.IsCorruption)
+        {
+            await ProcessCorruptionEventAsync(dbContext, dbClient, evt, ct).ConfigureAwait(false);
+            return;
+        }
+
         var davItem = await dbClient.GetItemByPathAsync(evt.Path, ct).ConfigureAwait(false);
         if (davItem != null)
+            await EnqueueAsync(davItem, [evt.SegmentId], ct).ConfigureAwait(false);
+    }
+
+    internal Task ProcessCorruptionEventForTestsAsync(string path, string segmentId, CancellationToken ct) =>
+        ProcessZeroFillEventAsync(new ZeroFillEvent(path, segmentId, IsCorruption: true), ct);
+
+    private async Task ProcessCorruptionEventAsync(
+        DavDatabaseContext dbContext,
+        DavDatabaseClient dbClient,
+        ZeroFillEvent evt,
+        CancellationToken ct)
+    {
+        if (!_configManager.IsCorruptionTrackingEnabled()) return;
+
+        var davItem = await dbContext.Items
+            .FirstOrDefaultAsync(x => x.Path == evt.Path, ct)
+            .ConfigureAwait(false);
+        if (davItem is null) return;
+
+        var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
+        if (nzbFile is null) return;
+
+        var index = Array.IndexOf(nzbFile.SegmentIds, evt.SegmentId);
+        if (index < 0) return;
+
+        await DavNzbFileBlobUpdater.MutateAsync(
+            davItem,
+            current =>
+            {
+                var existing = current.CorruptSegmentIndices ?? [];
+                if (existing.Contains(index))
+                    return current;
+                current.CorruptSegmentIndices = existing
+                    .Append(index)
+                    .Distinct()
+                    .OrderBy(i => i)
+                    .ToArray();
+                return current;
+            },
+            fallback: nzbFile).ConfigureAwait(false);
+        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        if (_configManager.IsPar2RepairEnabled())
             await EnqueueAsync(davItem, [evt.SegmentId], ct).ConfigureAwait(false);
     }
 
@@ -955,7 +1012,7 @@ public class Par2RepairService : BackgroundService
 
     private sealed record RepairWorkItem(Guid DavItemId, string Path, string[] MissingSegmentIds);
 
-    private sealed record ZeroFillEvent(string Path, string SegmentId);
+    private sealed record ZeroFillEvent(string Path, string SegmentId, bool IsCorruption = false);
 
     private sealed record MissingSegment(string SegmentId, int Index);
 
