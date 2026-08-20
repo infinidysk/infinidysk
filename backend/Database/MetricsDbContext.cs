@@ -50,6 +50,7 @@ public sealed class MetricsDbContext : DbContext
     public DbSet<FailoverHourly> FailoverHourly => Set<FailoverHourly>();
     public DbSet<CatalogueDaily> CatalogueDaily => Set<CatalogueDaily>();
     public DbSet<ProviderLifetimeTotal> ProviderLifetimeTotals => Set<ProviderLifetimeTotal>();
+    public DbSet<ArrImportEvent> ArrImportEvents => Set<ArrImportEvent>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -191,6 +192,21 @@ public sealed class MetricsDbContext : DbContext
             e.Property(x => x.Retries).IsRequired();
             e.Property(x => x.SumDurationMs).IsRequired();
             e.Property(x => x.FailoverSaves).IsRequired();
+        });
+
+        b.Entity<ArrImportEvent>(e =>
+        {
+            e.ToTable("ArrImportEvents");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.InstanceKey).IsRequired().HasMaxLength(512);
+            e.Property(x => x.ArrRecordId).IsRequired();
+            e.Property(x => x.DownloadId).IsRequired();
+            e.Property(x => x.ImportedAtMs).IsRequired();
+
+            e.HasIndex(x => new { x.InstanceKey, x.ArrRecordId }).IsUnique();
+            e.HasIndex(x => x.ImportedAtMs);
+            e.HasIndex(x => new { x.InstanceKey, x.ImportedAtMs });
         });
     }
 }
