@@ -931,24 +931,36 @@ public class DavDatabaseContext : DbContext
             .ToList();
     }
 
-    public static Task RcloneVfsForget(
+    public static async Task RcloneVfsForget(
         List<DavItem> addedOrRemovedDavItems,
         CancellationToken cancellationToken = default)
     {
-        if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
-        if (RcloneClient.Host == null) return Task.CompletedTask;
-        if (addedOrRemovedDavItems.Count == 0) return Task.CompletedTask;
+        if (!RcloneClient.IsRemoteControlEnabled) return;
+        if (RcloneClient.Host == null) return;
+        if (addedOrRemovedDavItems.Count == 0) return;
         var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
-        if (vfsForgetPaths.Count == 0) return Task.CompletedTask;
-        return RcloneClient.ForgetVfsPaths(vfsForgetPaths, cancellationToken);
+        if (vfsForgetPaths.Count == 0) return;
+        await ForgetVfsPathsQuietly(vfsForgetPaths, cancellationToken).ConfigureAwait(false);
     }
 
-    public static Task RcloneVfsForget(List<string> paths, CancellationToken cancellationToken = default)
+    public static async Task RcloneVfsForget(List<string> paths, CancellationToken cancellationToken = default)
     {
-        if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
-        if (RcloneClient.Host == null) return Task.CompletedTask;
-        if (paths.Count == 0) return Task.CompletedTask;
-        return RcloneClient.ForgetVfsPaths(paths, cancellationToken);
+        if (!RcloneClient.IsRemoteControlEnabled) return;
+        if (RcloneClient.Host == null) return;
+        if (paths.Count == 0) return;
+        await ForgetVfsPathsQuietly(paths, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task ForgetVfsPathsQuietly(List<string> paths, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await RcloneClient.ForgetVfsPaths(paths, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Call sites are fire-and-forget; do not surface cancellation as UnobservedTaskException.
+        }
     }
 
     public void ClearChangeTracker()

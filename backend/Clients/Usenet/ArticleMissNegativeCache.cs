@@ -269,47 +269,47 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         {
             while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-            var marks = new Dictionary<string, long>(StringComparer.Ordinal);
-            var clearPending = false;
-            TaskCompletionSource? barrier = null;
-            var itemsRead = 0;
-            while (itemsRead < MaxPersistenceBatchSize && reader.TryRead(out var item))
-            {
-                itemsRead++;
-                switch (item)
+                var marks = new Dictionary<string, long>(StringComparer.Ordinal);
+                var clearPending = false;
+                TaskCompletionSource? barrier = null;
+                var itemsRead = 0;
+                while (itemsRead < MaxPersistenceBatchSize && reader.TryRead(out var item))
                 {
-                    case ClearItem:
-                        // Marks queued before the clear must not survive it.
-                        marks.Clear();
-                        clearPending = true;
-                        break;
-                    case MarkItem mark:
-                        marks[mark.Key] = mark.ConfirmedAtUnix;
-                        break;
-                    case BarrierItem b:
-                        barrier = b.Completion;
-                        break;
+                    itemsRead++;
+                    switch (item)
+                    {
+                        case ClearItem:
+                            // Marks queued before the clear must not survive it.
+                            marks.Clear();
+                            clearPending = true;
+                            break;
+                        case MarkItem mark:
+                            marks[mark.Key] = mark.ConfirmedAtUnix;
+                            break;
+                        case BarrierItem b:
+                            barrier = b.Completion;
+                            break;
+                    }
+                    if (barrier is not null) break;
                 }
-                if (barrier is not null) break;
-            }
 
-            try
-            {
-                if (clearPending || marks.Count > 0)
-                    await ApplyBatchAsync(clearPending, marks, cancellationToken).ConfigureAwait(false);
-                barrier?.TrySetResult();
+                try
+                {
+                    if (clearPending || marks.Count > 0)
+                        await ApplyBatchAsync(clearPending, marks, cancellationToken).ConfigureAwait(false);
+                    barrier?.TrySetResult();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    barrier?.TrySetCanceled(cancellationToken);
+                    throw;
+                }
+                catch (Exception e) when (e is not OutOfMemoryException)
+                {
+                    Log.Debug(e, "Unable to persist definitive article misses; retaining memory-only entries.");
+                    barrier?.TrySetException(e);
+                }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                barrier?.TrySetCanceled(cancellationToken);
-                throw;
-            }
-            catch (Exception e) when (e is not OutOfMemoryException)
-            {
-                Log.Debug(e, "Unable to persist definitive article misses; retaining memory-only entries.");
-                barrier?.TrySetException(e);
-            }
-        }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
