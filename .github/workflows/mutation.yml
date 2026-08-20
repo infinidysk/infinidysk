@@ -1,0 +1,203 @@
+name: Mutation
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Mutation scope
+        type: choice
+        options:
+          - changed
+          - queue
+          - streams
+          - usenet
+          - range-strm
+          - frontend
+          - all
+        default: all
+      fail_on_regression:
+        description: Fail when a file score drops below its baseline floor
+        type: boolean
+        default: false
+
+concurrency:
+  group: mutation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_NOLOGO: true
+
+jobs:
+  backend:
+    name: Backend mutation
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["changed","queue","streams","usenet","range-strm","all"]'), github.event.inputs.scope)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore local tools
+        run: dotnet tool restore
+
+      - name: Verify mutation baseline fixtures
+        run: bash scripts/test-mutation-baseline.sh
+
+      - name: Resolve mutate globs
+        id: mutate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SCOPE: ${{ github.event.inputs.scope || 'changed' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          args=(--baseline quality/mutation-baseline.json --scope "${SCOPE}")
+          if [ "$EVENT_NAME" = pull_request ]; then
+            args=(--baseline quality/mutation-baseline.json --scope changed --base "$BASE_SHA" --head "$HEAD_SHA")
+          fi
+          python3 scripts/list-mutation-changes.py "${args[@]}" > mutate-globs.txt
+          if [ ! -s mutate-globs.txt ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No backend mutation-pilot files changed."
+            exit 0
+          fi
+          FILTER=""
+          if [ "$(wc -l < mutate-globs.txt | tr -d ' ')" = 1 ] && grep -q 'Queue/QueueThroughput.cs' mutate-globs.txt; then
+            FILTER="FullyQualifiedName~QueueThroughputTests"
+          fi
+          python3 scripts/write-stryker-mutate-config.py \
+            --base tests/NzbWebDAV.Tests/stryker-config.json \
+            --output tests/NzbWebDAV.Tests/stryker-config.ci.json \
+            --globs-file mutate-globs.txt \
+            ${FILTER:+--test-case-filter "$FILTER"}
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          cat mutate-globs.txt
+
+      - name: Run Stryker.NET
+        if: steps.mutate.outputs.skip != 'true'
+        working-directory: tests/NzbWebDAV.Tests
+        run: dotnet stryker --verbosity warning --config-file stryker-config.ci.json
+
+      - name: Compare mutation baseline
+        if: steps.mutate.outputs.skip != 'true'
+        env:
+          FAIL_ON_REGRESSION: ${{ github.event.inputs.fail_on_regression || 'false' }}
+        run: |
+          report="$(find tests/NzbWebDAV.Tests/StrykerOutput -name mutation-report.json | sort | tail -n 1)"
+          extra=()
+          if [ "$FAIL_ON_REGRESSION" != "true" ]; then
+            extra+=(--informational)
+          fi
+          python3 scripts/check-mutation-baseline.py \
+            --report "$report" \
+            --baseline quality/mutation-baseline.json \
+            "${extra[@]}"
+
+      - name: Upload backend mutation report
+        if: steps.mutate.outputs.skip != 'true' && !cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-mutation
+          path: tests/NzbWebDAV.Tests/StrykerOutput/**/reports/*
+          if-no-files-found: error
+
+  frontend:
+    name: Frontend mutation
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["changed","frontend","all"]'), github.event.inputs.scope)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect frontend pilot changes
+        id: mutate
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
+            frontend/app/clients \
+            frontend/app/auth \
+            frontend/stryker.config.json \
+            frontend/package-lock.json; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No frontend mutation-pilot files changed."
+          else
+            status=$?
+            if [ "$status" -ne 1 ]; then
+              exit "$status"
+            fi
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node.js
+        if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'
+        working-directory: frontend
+        run: npm ci
+
+      - name: Restore Stryker incremental cache
+        if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'
+        uses: actions/cache@v6
+        with:
+          path: frontend/reports/stryker-incremental.json
+          key: stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-${{ github.ref_name }}
+          restore-keys: |
+            stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-
+
+      - name: Run StrykerJS
+        if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'
+        working-directory: frontend
+        run: npm exec stryker -- run
+
+      - name: Compare mutation baseline
+        if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'
+        env:
+          FAIL_ON_REGRESSION: ${{ github.event.inputs.fail_on_regression || 'false' }}
+        run: |
+          extra=()
+          if [ "$FAIL_ON_REGRESSION" != "true" ]; then
+            extra+=(--informational)
+          fi
+          python3 scripts/check-mutation-baseline.py \
+            --report frontend/reports/mutation/mutation.json \
+            --baseline quality/mutation-baseline.json \
+            "${extra[@]}"
+
+      - name: Upload frontend mutation report
+        if: (github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true') && !cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-mutation
+          path: |
+            frontend/reports/mutation/mutation.json
+            frontend/reports/mutation/mutation.html
+          if-no-files-found: error

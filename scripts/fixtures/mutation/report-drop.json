@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1",
+  "files": {
+    "backend/Queue/QueueThroughput.cs": {
+      "language": "cs",
+      "mutants": [
+        { "id": "1", "status": "Killed" },
+        { "id": "2", "status": "Survived" },
+        { "id": "3", "status": "Survived" },
+        { "id": "4", "status": "Survived" },
+        { "id": "5", "status": "Survived" }
+      ]
+    }
+  }
+}

@@ -249,6 +249,25 @@ Notes:
   code fix twice. Restore the package afterwards (builds are unaffected either
   way; only the format tool is).
 
+## Mutation testing
+
+Pilot mutation testing covers a small set of streaming, queue, Usenet, and
+frontend client/auth files listed in `quality/mutation-baseline.json`. Scores
+are informational until two consecutive main runs look stable; they are not
+part of the required quality gate.
+
+```bash
+dotnet tool restore
+# Optional: scripts/build-rapidyenc.sh when mutating code that loads natives
+cd tests/NzbWebDAV.Tests && dotnet stryker
+cd ../../frontend && npm exec stryker -- run
+```
+
+Full scoped runs: **Actions → Mutation → Run workflow**. PR CI mutates only
+changed pilot files (complete files, not just changed lines) and compares
+each file to its committed baseline − 5pp. Do not commit `StrykerOutput/`,
+HTML reports, or `frontend/reports/stryker-incremental.json`.
+
 ## Contributing
 
 Before creating a PR:

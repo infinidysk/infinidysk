@@ -1,0 +1,22 @@
+{
+  "stryker-config": {
+    "solution": "../../NzbWebDAV.sln",
+    "project": "NzbWebDAV.csproj",
+    "configuration": "Release",
+    "target-framework": "net10.0",
+    "coverage-analysis": "perTest",
+    "mutation-level": "Standard",
+    "reporters": ["progress", "cleartext", "json"],
+    "thresholds": {
+      "high": 80,
+      "low": 60,
+      "break": 0
+    },
+    "concurrency": 4,
+    "additional-timeout": 10000,
+    "test-case-filter": "FullyQualifiedName~QueueThroughputTests",
+    "mutate": [
+      "**/Queue/QueueThroughput.cs"
+    ]
+  }
+}

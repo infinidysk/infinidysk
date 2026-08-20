@@ -1,0 +1,115 @@
+{
+  "tool": {
+    "dotnet-stryker": "4.16.0",
+    "stryker-js": "10.0.0"
+  },
+  "generatedOn": "2026-08-20",
+  "scopes": [
+    {
+      "id": "backend.queue",
+      "glob": "backend/Queue/QueueThroughput.cs",
+      "files": [
+        "backend/Queue/QueueThroughput.cs"
+      ]
+    },
+    {
+      "id": "backend.streams",
+      "glob": "backend/Streams/{InFlightArticleBudget,SharedStreamRingBuffer}.cs",
+      "files": [
+        "backend/Streams/InFlightArticleBudget.cs",
+        "backend/Streams/SharedStreamRingBuffer.cs"
+      ]
+    },
+    {
+      "id": "backend.usenet",
+      "glob": "backend/Clients/Usenet/**/{ProviderCircuitBreaker,PrioritizedSemaphore}.cs",
+      "files": [
+        "backend/Clients/Usenet/Connections/ProviderCircuitBreaker.cs",
+        "backend/Clients/Usenet/Concurrency/PrioritizedSemaphore.cs"
+      ]
+    },
+    {
+      "id": "backend.range-strm",
+      "glob": "backend/{Models/LongRange.cs,Queue/NestedRarExpansion/NestedRarRangeMapper.cs,Utils/SymlinkAndStrmUtil.cs}",
+      "files": [
+        "backend/Models/LongRange.cs",
+        "backend/Queue/NestedRarExpansion/NestedRarRangeMapper.cs",
+        "backend/Utils/SymlinkAndStrmUtil.cs"
+      ]
+    },
+    {
+      "id": "frontend.clients-auth",
+      "glob": "frontend/app/{clients,auth}/**/*.ts",
+      "files": [
+        "frontend/app/auth/auth-middleware.server.ts",
+        "frontend/app/auth/authentication.server.ts",
+        "frontend/app/auth/authorization.ts",
+        "frontend/app/auth/downloads.server.ts",
+        "frontend/app/clients/backend-client.server.ts"
+      ]
+    }
+  ],
+  "moduleFloor": 60,
+  "files": {
+    "backend/Queue/QueueThroughput.cs": {
+      "total": 76,
+      "killed": 60,
+      "survived": 16,
+      "noCoverage": 0,
+      "timeout": 0,
+      "ignored": 5,
+      "score": 78.95,
+      "breakFloor": 73
+    },
+    "app/auth/authentication.server.ts": {
+      "total": 184,
+      "killed": 135,
+      "survived": 16,
+      "noCoverage": 33,
+      "timeout": 0,
+      "ignored": 0,
+      "score": 73.37,
+      "breakFloor": 68
+    },
+    "app/auth/authorization.ts": {
+      "total": 5,
+      "killed": 0,
+      "survived": 0,
+      "noCoverage": 5,
+      "timeout": 0,
+      "ignored": 0,
+      "score": 0.0,
+      "breakFloor": 0
+    },
+    "app/auth/downloads.server.ts": {
+      "total": 8,
+      "killed": 0,
+      "survived": 0,
+      "noCoverage": 8,
+      "timeout": 0,
+      "ignored": 0,
+      "score": 0.0,
+      "breakFloor": 0
+    },
+    "app/clients/backend-client.server.ts": {
+      "total": 441,
+      "killed": 230,
+      "survived": 102,
+      "noCoverage": 109,
+      "timeout": 0,
+      "ignored": 0,
+      "score": 52.15,
+      "breakFloor": 47
+    },
+    "app/auth/auth-middleware.server.ts": {
+      "total": 17,
+      "killed": 16,
+      "survived": 1,
+      "noCoverage": 0,
+      "timeout": 0,
+      "ignored": 0,
+      "score": 94.12,
+      "breakFloor": 89
+    }
+  }
+}

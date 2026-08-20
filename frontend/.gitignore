@@ -9,6 +9,8 @@
 /build/
 /dist-node/
 /coverage/
+/reports/
+/.stryker-tmp/
 /server.js
 /server.d.ts
 /vite.config.js

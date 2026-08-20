@@ -52,3 +52,11 @@ libs/rapidyenc/build/
 # Coverage reports
 frontend/coverage/
 TestResults/
+
+# Mutation testing
+StrykerOutput/
+frontend/reports/
+quality/mutation-reports/
+tests/NzbWebDAV.Tests/stryker-config.ci.json
+mutate-globs.txt
+

@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.config.ts",
+    "related": false
+  },
+  "mutate": [
+    "app/clients/**/*.ts",
+    "app/auth/**/*.ts",
+    "!**/*.test.ts"
+  ],
+  "reporters": ["clear-text", "progress", "html", "json"],
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "htmlReporter": {
+    "fileName": "reports/mutation/mutation.html"
+  },
+  "incremental": true,
+  "incrementalFile": "reports/stryker-incremental.json",
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": null
+  },
+  "concurrency": "50%",
+  "timeoutMS": 10000,
+  "tsconfigFile": "tsconfig.vite.json",
+  "ignorePatterns": ["coverage", "build", "dist-node", ".react-router"]
+}
