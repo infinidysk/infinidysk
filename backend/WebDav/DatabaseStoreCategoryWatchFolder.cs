@@ -2,8 +2,6 @@ using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
-using NzbWebDAV.Api.SabControllers.AddFile;
-using NzbWebDAV.Api.SabControllers.RemoveFromQueue;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -49,19 +47,17 @@ public class DatabaseStoreCategoryWatchFolder(
 
     protected override async Task<StoreItemResult> CreateItemAsync(CreateItemRequest request)
     {
-        var controller = new AddFileController(null!, dbClient, queueManager, configManager, websocketManager);
-        var addFileRequest = new AddFileRequest()
+        var service = new NzbSubmissionService(dbClient, queueManager, configManager, websocketManager);
+        var response = await service.SubmitAsync(new NzbSubmissionRequest
         {
             FileName = request.Name,
-            ContentType = "application/x-nzb",
             Category = category,
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.RepairUnpackDelete,
             PauseUntil = DateTime.Now.AddSeconds(3),
             NzbFileStream = request.Stream,
-            CancellationToken = request.CancellationToken
-        };
-        var response = await controller.AddFileAsync(addFileRequest).ConfigureAwait(false);
+            CancellationToken = request.CancellationToken,
+        }).ConfigureAwait(false);
         if (!response.Status)
             return new StoreItemResult(DavStatusCode.InsufficientStorage);
 
@@ -74,7 +70,7 @@ public class DatabaseStoreCategoryWatchFolder(
 
     protected override async Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)
     {
-        var controller = new RemoveFromQueueController(null!, dbClient, queueManager, configManager, websocketManager);
+        var service = new QueueRemovalService(dbClient, queueManager, websocketManager);
 
         // get the item to delete
         var item = await dbClient.Ctx.QueueItems
@@ -87,11 +83,7 @@ public class DatabaseStoreCategoryWatchFolder(
 
         // delete the item
         dbClient.Ctx.ClearChangeTracker();
-        await controller.RemoveFromQueue(new RemoveFromQueueRequest()
-        {
-            NzoIds = [item.Id],
-            CancellationToken = request.CancellationToken
-        }).ConfigureAwait(false);
+        await service.RemoveAsync([item.Id], request.CancellationToken).ConfigureAwait(false);
         return DavStatusCode.NoContent;
     }
 }

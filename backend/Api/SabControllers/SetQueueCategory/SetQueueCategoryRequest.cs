@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Config;
 using NzbWebDAV.Extensions;
@@ -18,17 +19,17 @@ public class SetQueueCategoryRequest
             .ConfigureAwait(false);
         var category = httpContext.GetRequestParam("cat")
                        ?? httpContext.GetRequestParam("category");
+        var errors = new ValidationErrors();
         if (string.IsNullOrWhiteSpace(category))
-            throw new BadHttpRequestException("Missing cat/category param.");
-
-        var allowed = configManager.GetApiCategories();
-        if (!allowed.Contains(category, StringComparer.OrdinalIgnoreCase))
-            throw new BadHttpRequestException("Invalid category.");
+            errors.Add("cat", "Missing cat/category param.");
+        else if (!configManager.GetApiCategories().Contains(category, StringComparer.OrdinalIgnoreCase))
+            errors.Add("cat", "Invalid category.");
+        errors.ThrowIfAny();
 
         return new SetQueueCategoryRequest
         {
             NzoIds = parsed.NzoIds,
-            Category = category,
+            Category = category!,
             CancellationToken = SigtermUtil.GetCancellationToken(),
         };
     }

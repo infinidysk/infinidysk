@@ -1,7 +1,9 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Api.SabControllers.AddFile;
@@ -33,47 +35,109 @@ public class AddFileRequest()
     public string? ContentGroupKey { get; init; }
     public CancellationToken CancellationToken { get; init; }
 
-    public static async Task<AddFileRequest> New(HttpContext context, ConfigManager configManager)
+    public static Task<AddFileRequest> New(HttpContext context, ConfigManager configManager)
     {
+        var errors = new ValidationErrors();
         var file =
-            context.Request.Form.Files["nzbFile"] ??
-            context.Request.Form.Files["name"] ??
-            throw new BadHttpRequestException("Invalid nzbFile/name param");
+            context.Request.HasFormContentType
+                ? context.Request.Form.Files["nzbFile"] ?? context.Request.Form.Files["name"]
+                : null;
+        if (file is null)
+            errors.Add("nzbFile", "Invalid nzbFile/name param");
 
-        // Prefer the nzbname query/form param (set by some SAB clients); fall back to the
-        // form file's filename. Without this, file.FileName can be null/empty and downstream
-        // Regex.Match throws a 500. Adopted from elfhosted/rebased-v3.
-        var fileName = ResolveFileName(context.GetRequestParam("nzbname"), file.FileName);
+        var fileName = TryResolveFileName(
+            context.GetRequestParam("nzbname"),
+            file?.FileName,
+            errors);
 
-        return new AddFileRequest()
+        if (!TryMapPriorityOption(context.GetRequestParam("priority"), out var priority))
+            errors.Add("priority", "Invalid priority");
+        if (!TryMapPostProcessingOption(context.GetRequestParam("pp"), out var postProcessing))
+            errors.Add("pp", "Invalid pp param");
+
+        errors.ThrowIfAny();
+
+        return Task.FromResult(new AddFileRequest()
         {
-            FileName = fileName,
-            ContentType = file.ContentType,
+            FileName = fileName!,
+            ContentType = file!.ContentType,
             NzbFileStream = file.OpenReadStream(),
             Category = SabCategoryResolver.GetCategory(context, configManager)
                        ?? configManager.GetManualUploadCategory(),
-            Priority = MapPriorityOption(context.GetRequestParam("priority")),
-            PostProcessing = MapPostProcessingOption(context.GetRequestParam("pp")),
+            Priority = priority,
+            PostProcessing = postProcessing,
             CancellationToken = context.RequestAborted
-        };
+        });
     }
+
+    internal NzbSubmissionRequest ToSubmissionRequest() => new()
+    {
+        NzoId = NzoId,
+        ReplaceExistingQueueItem = ReplaceExistingQueueItem,
+        FileName = FileName,
+        NzbFileStream = NzbFileStream,
+        Category = Category,
+        Priority = Priority,
+        PostProcessing = PostProcessing,
+        PauseUntil = PauseUntil,
+        IndexerName = IndexerName,
+        ContentGroupKey = ContentGroupKey,
+        CancellationToken = CancellationToken,
+    };
 
     /// <summary>
     /// Resolve the NZB filename from an optional SAB <c>nzbname</c> param and the uploaded file name.
     /// </summary>
     internal static string ResolveFileName(string? nzbName, string? formFileName)
     {
+        var errors = new ValidationErrors();
+        var fileName = TryResolveFileName(nzbName, formFileName, errors);
+        errors.ThrowIfAny();
+        return fileName!;
+    }
+
+    internal static string? TryResolveFileName(string? nzbName, string? formFileName, ValidationErrors errors)
+    {
         var fileName = !string.IsNullOrWhiteSpace(nzbName) ? nzbName : formFileName;
-
         if (string.IsNullOrWhiteSpace(fileName))
-            throw new BadHttpRequestException("NZB filename could not be determined.");
+        {
+            errors.Add("nzbname", "NZB filename could not be determined.");
+            return null;
+        }
 
-        return NzbStreamUtil.NormalizeFileName(fileName);
+        var normalized = NzbStreamUtil.NormalizeFileName(fileName);
+        if (normalized.Contains('/', StringComparison.Ordinal)
+            || normalized.Contains('\\', StringComparison.Ordinal)
+            || normalized.Contains('\0', StringComparison.Ordinal)
+            || normalized is "." or ".."
+            || Path.IsPathRooted(normalized))
+        {
+            errors.Add("nzbname", "NZB filename must be a single path segment.");
+            return null;
+        }
+
+        if (normalized.Length > NzbInputLimits.Default.MaxNameLength)
+        {
+            errors.Add("nzbname", "NZB filename exceeds the maximum name length.");
+            return null;
+        }
+
+        return normalized;
     }
 
     internal static QueueItem.PriorityOption MapPriorityOption(string? priority)
     {
-        return priority switch
+        if (TryMapPriorityOption(priority, out var option))
+            return option;
+        var errors = new ValidationErrors();
+        errors.Add("priority", "Invalid priority");
+        errors.ThrowIfAny();
+        return default;
+    }
+
+    internal static bool TryMapPriorityOption(string? priority, out QueueItem.PriorityOption option)
+    {
+        option = priority switch
         {
             "-100" => QueueItem.PriorityOption.Normal,
             "-3" => QueueItem.PriorityOption.Duplicate,
@@ -83,13 +147,24 @@ public class AddFileRequest()
             "1" => QueueItem.PriorityOption.High,
             "2" => QueueItem.PriorityOption.Force,
             null => QueueItem.PriorityOption.Normal,
-            _ => throw new BadHttpRequestException("Invalid priority")
+            _ => (QueueItem.PriorityOption)int.MinValue,
         };
+        return option != (QueueItem.PriorityOption)int.MinValue;
     }
 
     protected static QueueItem.PostProcessingOption MapPostProcessingOption(string? postProcessing)
     {
-        return postProcessing switch
+        if (TryMapPostProcessingOption(postProcessing, out var option))
+            return option;
+        var errors = new ValidationErrors();
+        errors.Add("pp", "Invalid pp param");
+        errors.ThrowIfAny();
+        return default;
+    }
+
+    internal static bool TryMapPostProcessingOption(string? postProcessing, out QueueItem.PostProcessingOption option)
+    {
+        option = postProcessing switch
         {
             "-1" => QueueItem.PostProcessingOption.None,
             "0" => QueueItem.PostProcessingOption.None,
@@ -97,7 +172,8 @@ public class AddFileRequest()
             "2" => QueueItem.PostProcessingOption.RepairUnpack,
             "3" => QueueItem.PostProcessingOption.RepairUnpackDelete,
             null => QueueItem.PostProcessingOption.None,
-            _ => throw new BadHttpRequestException("Invalid pp param")
+            _ => (QueueItem.PostProcessingOption)int.MinValue,
         };
+        return option != (QueueItem.PostProcessingOption)int.MinValue;
     }
 }

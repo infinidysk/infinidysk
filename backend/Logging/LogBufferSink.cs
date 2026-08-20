@@ -104,6 +104,7 @@ public sealed class LogBufferSink : ILogEventSink
         if (entry.Message.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
         if (entry.Exception is { } ex && ex.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
         if (entry.Source is { } src && src.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
+        if (entry.TraceId is { } trace && trace.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 
@@ -113,6 +114,13 @@ public sealed class LogBufferSink : ILogEventSink
         if (e.Properties.TryGetValue("SourceContext", out var sc) && sc is ScalarValue { Value: string s })
             source = s;
 
+        string? traceId = null;
+        if (e.Properties.TryGetValue("TraceId", out var tp) && tp is ScalarValue { Value: string trace } &&
+            trace.Length > 0)
+        {
+            traceId = trace;
+        }
+
         return new LogEntry
         {
             Sequence = sequence,
@@ -121,6 +129,7 @@ public sealed class LogBufferSink : ILogEventSink
             Message = e.RenderMessage(),
             Source = source,
             Exception = e.Exception?.ToString(),
+            TraceId = traceId,
         };
     }
 }

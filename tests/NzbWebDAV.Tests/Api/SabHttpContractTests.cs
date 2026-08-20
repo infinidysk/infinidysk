@@ -22,12 +22,14 @@ public sealed class SabHttpContractTests
         form.Add(new ByteArrayContent(TestNzbs.SingleFile), "name", "sample.nzb");
         using var addResponse = await client.PostAsync("/api?mode=addfile&output=json&cat=tv", form);
         using var addJson = await SabContractAssertions.AssertSuccessAsync(addResponse);
+        JsonContractValidator.AssertMatchesSchema(addJson.RootElement, "sab/v1/addfile.schema.json");
         var nzoId = Assert.Single(addJson.RootElement.GetProperty("nzo_ids").EnumerateArray())
             .GetString();
         Assert.True(Guid.TryParse(nzoId, out var queuedId));
 
         using var queueResponse = await client.GetAsync("/api?mode=queue&output=json");
         using var queueJson = await SabContractAssertions.AssertSuccessAsync(queueResponse);
+        JsonContractValidator.AssertMatchesSchema(queueJson.RootElement, "sab/v1/queue.schema.json");
         var queue = queueJson.RootElement.GetProperty("queue");
         Assert.Equal(JsonValueKind.True, queue.GetProperty("paused").ValueKind);
         Assert.Equal(JsonValueKind.Number, queue.GetProperty("noofslots").ValueKind);
@@ -49,11 +51,13 @@ public sealed class SabHttpContractTests
 
         using var emptyQueueResponse = await client.GetAsync("/api?mode=queue&output=json");
         using var emptyQueueJson = await SabContractAssertions.AssertSuccessAsync(emptyQueueResponse);
+        JsonContractValidator.AssertMatchesSchema(emptyQueueJson.RootElement, "sab/v1/queue.schema.json");
         Assert.Empty(emptyQueueJson.RootElement.GetProperty("queue").GetProperty("slots").EnumerateArray());
         Assert.Equal(0, emptyQueueJson.RootElement.GetProperty("queue").GetProperty("noofslots").GetInt32());
 
         using var emptyHistoryResponse = await client.GetAsync("/api?mode=history&output=json");
         using var emptyHistoryJson = await SabContractAssertions.AssertSuccessAsync(emptyHistoryResponse);
+        JsonContractValidator.AssertMatchesSchema(emptyHistoryJson.RootElement, "sab/v1/history.schema.json");
         Assert.Empty(
             emptyHistoryJson.RootElement.GetProperty("history").GetProperty("slots").EnumerateArray());
 
@@ -62,6 +66,7 @@ public sealed class SabHttpContractTests
 
         using var historyResponse = await client.GetAsync("/api?mode=history&output=json");
         using var historyJson = await SabContractAssertions.AssertSuccessAsync(historyResponse);
+        JsonContractValidator.AssertMatchesSchema(historyJson.RootElement, "sab/v1/history.schema.json");
         var history = historyJson.RootElement.GetProperty("history");
         Assert.Equal(JsonValueKind.Number, history.GetProperty("noofslots").ValueKind);
         var historySlot = Assert.Single(history.GetProperty("slots").EnumerateArray());
@@ -73,6 +78,7 @@ public sealed class SabHttpContractTests
         using var retryResponse = await client.GetAsync(
             $"/api?mode=retry&value={historyId}&output=json");
         using var retryJson = await SabContractAssertions.AssertSuccessAsync(retryResponse);
+        JsonContractValidator.AssertMatchesSchema(retryJson.RootElement, "sab/v1/retry.schema.json");
         var retriedId = retryJson.RootElement.GetProperty("nzo_id").GetString();
         Assert.True(Guid.TryParse(retriedId, out var newQueueId));
         Assert.NotEqual(historyId, newQueueId);
@@ -103,8 +109,9 @@ public sealed class SabHttpContractTests
         using var client = factory.CreateAuthenticatedClient();
 
         using var missingKey = await anonymous.GetAsync("/api?mode=queue&output=json");
-        await SabContractAssertions.AssertFailureAsync(
+        using var missingKeyJson = await SabContractAssertions.AssertFailureAsync(
             missingKey, HttpStatusCode.Unauthorized, "API Key Required");
+        JsonContractValidator.AssertMatchesSchema(missingKeyJson.RootElement, "sab/v1/error.schema.json");
 
         using var wrongKeyRequest = new HttpRequestMessage(HttpMethod.Get, "/api?mode=queue&output=json");
         wrongKeyRequest.Headers.Add("x-api-key", "not-the-key");
@@ -137,6 +144,6 @@ public sealed class SabHttpContractTests
             "/api?mode=addfile&output=json",
             serverErrorBody);
         await SabContractAssertions.AssertFailureAsync(
-            serverError, HttpStatusCode.InternalServerError, "internal server error");
+            serverError, HttpStatusCode.BadRequest, "nzbFile");
     }
 }

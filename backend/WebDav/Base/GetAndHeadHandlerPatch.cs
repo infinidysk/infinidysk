@@ -6,7 +6,6 @@ using NWebDav.Server.Handlers;
 using NWebDav.Server.Helpers;
 using NWebDav.Server.Props;
 using NWebDav.Server.Stores;
-using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
@@ -481,7 +480,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         if (isHeadRequest)
             return null;
 
-        if (!GetWebdavItemRequest.TryParseRangeHeader(
+        if (!HttpByteRange.TryParse(
                 rangeHeader, out var rStart, out var rEnd, out var rSuffix))
             return null;
 

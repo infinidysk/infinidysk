@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
@@ -22,6 +23,7 @@ public class GetHistoryRequest
 
     public GetHistoryRequest(HttpContext context, ConfigManager configManager)
     {
+        var errors = new ValidationErrors();
         var startParam = context.GetRequestParam("start");
         var limitParam = context.GetRequestParam("limit");
         var pageSizeParam = context.GetRequestParam("pageSize");
@@ -39,9 +41,8 @@ public class GetHistoryRequest
 
         if (startParam is not null)
         {
-            var isValidStartParam = int.TryParse(startParam, out int start);
-            if (!isValidStartParam) throw new BadHttpRequestException("Invalid start parameter");
-            Start = Math.Max(0, start);
+            if (errors.TryParseInt("start", startParam, "Invalid start parameter", out var start))
+                Start = Math.Max(0, start);
         }
 
         // The official Sabnzbd api uses the `limit` param to specify the number of history items
@@ -55,9 +56,8 @@ public class GetHistoryRequest
         // (see GetHistoryMaxPageSize) so responses stay bounded.
         if (limitParam is not null && !configManager.IsIgnoreSabHistoryLimitEnabled())
         {
-            var isValidLimit = int.TryParse(limitParam, out var limit);
-            if (!isValidLimit) throw new BadHttpRequestException("Invalid limit parameter");
-            Limit = limit > 0 ? limit : int.MaxValue;
+            if (errors.TryParseInt("limit", limitParam, "Invalid limit parameter", out var limit))
+                Limit = limit > 0 ? limit : int.MaxValue;
         }
 
         // Even though we may want to ignore the `limit` param from the Arrs, NzbDAV frontend
@@ -66,9 +66,8 @@ public class GetHistoryRequest
         // the Sabnzbd api, and is intended to be used only by the NzbDAV frontend.
         if (pageSizeParam is not null)
         {
-            var isValidPageSize = int.TryParse(pageSizeParam, out var pageSize);
-            if (!isValidPageSize) throw new BadHttpRequestException("Invalid pageSize parameter");
-            Limit = pageSize > 0 ? pageSize : int.MaxValue;
+            if (errors.TryParseInt("pageSize", pageSizeParam, "Invalid pageSize parameter", out var pageSize))
+                Limit = pageSize > 0 ? pageSize : int.MaxValue;
         }
 
         // Server-side ceiling: keep ignore-limit semantics for Arrs but never materialize
@@ -101,11 +100,13 @@ public class GetHistoryRequest
                     bad += $", ... ({badTokens.Count - maxBadTokensShown} more)";
                 }
 
-                throw new BadHttpRequestException($"Invalid nzo_ids parameter: {bad}");
+                errors.Add("nzo_ids", $"Invalid nzo_ids parameter: {bad}");
             }
 
             NzoIds = nzoIds;
         }
+
+        errors.ThrowIfAny();
     }
 
     private static bool IsEnabled(string? value) =>

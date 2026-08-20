@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/health-check-queue.schema.json",
+  "title": "Admin health-check queue success",
+  "type": "object",
+  "required": ["status", "items", "uncheckedCount"],
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "uncheckedCount": { "type": "integer" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "path"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "releaseDate": { "type": ["string", "null"] },
+          "lastHealthCheck": { "type": ["string", "null"] },
+          "nextHealthCheck": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

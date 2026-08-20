@@ -5,7 +5,7 @@ namespace NzbWebDAV.Tests.UsenetMigration;
 /// <summary>
 /// Verifies that migration naming uses NzbDAV's own transforms instead of assuming
 /// <c>basename == JobName</c>. Each case runs the raw store basename through
-/// AddFileRequest.ResolveFileName and FilenameUtil.GetJobName via NzbDavNaming,
+/// NzbFileName.Resolve and FilenameUtil.GetJobName via NzbDavNaming,
 /// then asserts the mount-folder name NzbDAV produces.
 /// </summary>
 public class NzbDavNamingTests

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/sab/v1/history.schema.json",
+  "title": "SAB history success",
+  "type": "object",
+  "required": ["status", "history"],
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "history": {
+      "type": "object",
+      "required": ["slots", "noofslots"],
+      "properties": {
+        "slots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/historySlot" }
+        },
+        "noofslots": { "type": "integer" }
+      }
+    }
+  },
+  "$defs": {
+    "historySlot": {
+      "type": "object",
+      "required": [
+        "nzo_id",
+        "nzb_name",
+        "name",
+        "category",
+        "status",
+        "bytes",
+        "download_time",
+        "completed",
+        "fail_message"
+      ],
+      "properties": {
+        "nzo_id": { "type": "string", "minLength": 1 },
+        "nzb_name": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "status": { "type": "string", "enum": ["Completed", "Failed"] },
+        "bytes": { "type": "integer" },
+        "storage": { "type": ["string", "null"] },
+        "download_time": { "type": "integer" },
+        "completed": { "type": "integer" },
+        "fail_message": { "type": ["string", "null"] },
+        "nzb_blob_id": { "type": ["string", "null"] },
+        "indexer": { "type": ["string", "null"] },
+        "providers": { "type": ["array", "null"] }
+      }
+    }
+  }
+}

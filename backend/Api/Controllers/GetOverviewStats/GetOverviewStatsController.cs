@@ -387,9 +387,11 @@ public class GetOverviewStatsController(
         var tiles = BuildLiveTiles(liveCounts?.Articles ?? 0, liveCounts?.Errors ?? 0);
         var sessionsBlock = BuildSessionsBlock(sessionsRows.Select(s => (s.DurationMs, s.BytesServed)));
         providers = ProviderCircuitOverviewEnricher.EnrichProviders(
-            providers,
+            providers.Select(ProviderOverviewRowMapper.ToMetrics).ToList(),
             usenetStreamingClient.GetProviderCircuitSnapshots(),
-            labelsByMetricsKey);
+            labelsByMetricsKey)
+            .Select(ProviderOverviewRowMapper.ToApi)
+            .ToList();
         ApplyLiveSpeedFallback(providers);
         var circuitEvents = await circuitEventsTask.ConfigureAwait(false);
         ApplyOutageSparks(

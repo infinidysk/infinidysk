@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.Api.Controllers.GetOverviewStats;
@@ -12,6 +13,7 @@ public class GetOverviewStatsRequest
     public GetOverviewStatsRequest(HttpContext context)
     {
         CancellationToken = context.RequestAborted;
+        var errors = new ValidationErrors();
         var w = context.GetQueryParam("window");
         if (w is not null)
         {
@@ -22,11 +24,22 @@ public class GetOverviewStatsRequest
                 "7d" => OverviewWindow.Last7Days,
                 "30d" => OverviewWindow.Last30Days,
                 "all" => OverviewWindow.AllTime,
-                _ => throw new BadHttpRequestException("Invalid window parameter (use 1h, 24h, 7d, 30d, or all)")
+                _ => OverviewWindow.Last24Hours,
             };
+            if (w.ToLowerInvariant() is not ("1h" or "24h" or "7d" or "30d" or "all"))
+                errors.Add("window", "Invalid window parameter (use 1h, 24h, 7d, 30d, or all)");
         }
 
-        Sections = ParseSections(context.GetQueryParam("sections"));
+        try
+        {
+            Sections = ParseSections(context.GetQueryParam("sections"));
+        }
+        catch (BadHttpRequestException ex)
+        {
+            errors.Add("sections", ex.Message);
+        }
+
+        errors.ThrowIfAny();
     }
 
     private static OverviewSections ParseSections(string? raw)
