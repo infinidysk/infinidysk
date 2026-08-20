@@ -34,7 +34,7 @@ export default defineConfig({
       reportsDirectory: "./coverage",
       thresholds: {
         ...coverageThresholds.global,
-        ...coverageThresholds.globs,
+        ...(coverageThresholds.globs ?? {}),
       },
     },
   },

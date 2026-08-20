@@ -419,7 +419,8 @@ describe("BackendClient", () => {
     );
     expect(error).toBeInstanceOf(BackendUnavailableError);
     expect(error).toMatchObject({
-      message: expect.stringContaining("Failed to fetch onboarding status"),
+      name: "BackendUnavailableError",
+      message: "Failed to fetch onboarding status: The operation was aborted.",
     });
   });
 });

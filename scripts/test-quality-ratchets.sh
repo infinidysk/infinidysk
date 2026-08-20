@@ -4,8 +4,6 @@ set -eu
 root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 script="$root/scripts/check-quality-ratchets.py"
 fixtures="$root/scripts/fixtures/quality-ratchets"
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 
 python3 "$script" \
   --thresholds "$fixtures/thresholds.json" \
