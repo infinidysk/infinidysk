@@ -3,9 +3,12 @@ using NzbWebDAV.Exceptions;
 namespace NzbWebDAV.Database;
 
 /// <summary>
-/// Fails fast with one actionable error when CONFIG_PATH or a known state file under
-/// it is not readable/writable by the process user, instead of aborting later with an
-/// unhandled UnauthorizedAccessException (which core-dumps and hides the cause).
+/// Fails fast with one actionable error when CONFIG_PATH is missing, is not a
+/// directory, or a known state file under it is not readable/writable by the
+/// process user, instead of aborting later with an unhandled
+/// UnauthorizedAccessException (which core-dumps and hides the cause).
+/// Does not create a missing CONFIG_PATH: forgotten volume mounts should fail
+/// rather than write into an ephemeral container directory.
 /// Best-effort early report: a file can become unreadable between this probe and the
 /// real open, so the open sites (e.g. DatabaseMigrationLease) remain the backstop.
 /// </summary>
@@ -26,6 +29,14 @@ internal static class ConfigPathPreflight
         "blobs",
         "data-protection",
         "migration-backups",
+        "backups",
+        "restore-staging",
+    ];
+
+    private static readonly string[] KnownStateFiles =
+    [
+        "pending-restore.json",
+        "session.key",
     ];
 
     public static void VerifyAccess()
@@ -33,21 +44,18 @@ internal static class ConfigPathPreflight
         var configPath = DavDatabaseContext.ConfigPath;
         var failures = new List<string>();
 
-        if (Directory.Exists(configPath))
+        if (File.Exists(configPath))
         {
-            if (!CanWriteToDirectory(configPath))
-                failures.Add($"{configPath} (directory is not writable)");
+            failures.Add($"{configPath} (path exists but is not a directory)");
         }
-        else
+        else if (!Directory.Exists(configPath))
         {
-            try
-            {
-                Directory.CreateDirectory(configPath);
-            }
-            catch (Exception e) when (e is UnauthorizedAccessException or IOException)
-            {
-                failures.Add($"{configPath} (directory cannot be created)");
-            }
+            failures.Add(
+                $"{configPath} (directory does not exist; create or mount it before startup, typically as /config)");
+        }
+        else if (!CanWriteToDirectory(configPath))
+        {
+            failures.Add($"{configPath} (directory is not writable)");
         }
 
         if (Directory.Exists(configPath))
@@ -71,6 +79,9 @@ internal static class ConfigPathPreflight
                 if (Directory.Exists(path) && !CanWriteToDirectory(path))
                     failures.Add($"{path} (directory is not writable)");
             }
+
+            foreach (var path in KnownStateFiles.Select(fileName => Path.Join(configPath, fileName)))
+                ProbeFile(path, failures);
         }
 
         if (failures.Count > 0)

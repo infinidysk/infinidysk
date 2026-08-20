@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
@@ -59,10 +60,23 @@ public class LazyRarProcessor(
             headers = await RarUtil.ReadHeadersUntilFirstFileAsync(firstStream, password, ct)
                 .ConfigureAwait(false);
         }
+        catch (RetryableDownloadException)
+        {
+            throw;
+        }
+        catch (Exception e) when (
+            !ct.IsCancellationRequested &&
+            e.IsTransientTransportException() &&
+            e is not OutOfMemoryException)
+        {
+            throw new RetryableDownloadException(
+                $"Transient provider failure while reading RAR headers for {firstInfo.FileName}.",
+                e);
+        }
         catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
         {
             Log.Information(
-                "LazyRarProcessor: first-volume parse failed for {File}, falling back to eager: {Msg}",
+                "Lazy RAR parsing failed for {FileName}; falling back to eager parsing. Reason: {Reason}",
                 firstInfo.FileName, e.Message);
             return null;
         }

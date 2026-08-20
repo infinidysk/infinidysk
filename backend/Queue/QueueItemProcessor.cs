@@ -429,7 +429,8 @@ public class QueueItemProcessor(
         // step 2b -- per-file processing for everything else (and for the
         // rar group when lazy mounting was skipped or unsupported).
         var skipRarGroup = lazyRarResult is not null;
-        var fileProcessors = GetFileProcessors(fileInfos, archivePassword, skipRarGroup).ToList();
+        using var processorCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(ct);
+        var fileProcessors = GetFileProcessors(fileInfos, archivePassword, skipRarGroup, processorCts.Token).ToList();
         var part2Progress = progress
             .Offset(60)
             .Scale(40, 100)
@@ -437,8 +438,9 @@ public class QueueItemProcessor(
         var fileProcessingResults = await RunStageAsync("processors", async () =>
         {
             var fileProcessingResultsAll = await fileProcessors
-                .Select(x => x!.ProcessAsync(part2Progress.SubProgress))
-                .WithConcurrencyAsync(QueueFanOut.GetConcurrency(configManager, ct))
+                .Select(x => RunProcessorWithRarSiblingAbortAsync(
+                    x!, part2Progress.SubProgress, processorCts, ct))
+                .WithConcurrencyAsync(QueueFanOut.GetConcurrency(configManager, ct), ct)
                 .GetAllAsync(ct: ct).ConfigureAwait(false);
             var results = fileProcessingResultsAll
                 .Where(x => x is not null)
@@ -525,11 +527,54 @@ public class QueueItemProcessor(
         }).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Runs one file processor. A RAR header timeout/transient failure cancels the
+    /// linked stage token so sibling volume scans abort instead of grinding, then
+    /// rethrows as <see cref="RetryableDownloadException"/> (without double-wrapping).
+    /// Sibling cancellation from that abort is swallowed so <see cref="WithConcurrencyAsync"/>
+    /// keeps the first retryable failure authoritative instead of racing to OCE.
+    /// </summary>
+    internal static async Task<BaseProcessor.Result?> RunProcessorWithRarSiblingAbortAsync(
+        BaseProcessor processor,
+        IProgress<int> progress,
+        ContextualCancellationTokenSource processorCts,
+        CancellationToken workerToken)
+    {
+        try
+        {
+            return await processor.ProcessAsync(progress).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            processor is RarProcessor &&
+            !workerToken.IsCancellationRequested &&
+            exception is not OutOfMemoryException &&
+            (exception.IsRetryableDownloadException() || exception.IsTransientTransportException()))
+        {
+            await processorCts.CancelAsync().ConfigureAwait(false);
+
+            if (exception.IsRetryableDownloadException())
+                throw;
+
+            throw new RetryableDownloadException(
+                "Transient provider failure while reading RAR volume headers.",
+                exception);
+        }
+        catch (Exception exception) when (
+            processor is RarProcessor &&
+            exception.IsCancellationException(processorCts.Token) &&
+            exception is not OutOfMemoryException &&
+            !workerToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
     private IEnumerable<BaseProcessor> GetFileProcessors
     (
         List<GetFileInfosStep.FileInfo> fileInfos,
         string? archivePassword,
-        bool skipRarGroup = false
+        bool skipRarGroup,
+        CancellationToken rarProcessorCt
     )
     {
         var groups = GroupFilesForProcessing(fileInfos);
@@ -543,7 +588,7 @@ public class QueueItemProcessor(
             {
                 if (skipRarGroup) continue;
                 foreach (var fileInfo in group)
-                    yield return new RarProcessor(fileInfo, usenetClient, archivePassword, ct);
+                    yield return new RarProcessor(fileInfo, usenetClient, archivePassword, rarProcessorCt);
             }
 
             else if (group.Key.StartsWith("split-video:", StringComparison.Ordinal))

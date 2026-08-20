@@ -34,14 +34,40 @@ public sealed class ConfigPathPreflightTests : IDisposable
     }
 
     [Fact]
-    public void VerifyAccess_CreatesMissingConfigDirectory()
+    public void VerifyAccess_ThrowsWhenConfigDirectoryIsMissing()
     {
         var missing = Path.Join(_configRoot, "nested", "config");
         Environment.SetEnvironmentVariable("CONFIG_PATH", missing);
 
-        ConfigPathPreflight.VerifyAccess();
+        var exception = Assert.Throws<ConfigPathAccessException>(() => ConfigPathPreflight.VerifyAccess());
 
-        Assert.True(Directory.Exists(missing));
+        Assert.Contains(missing, exception.Message);
+        Assert.Contains("does not exist", exception.Message);
+        Assert.False(Directory.Exists(missing));
+    }
+
+    [Fact]
+    public void VerifyAccess_ThrowsWhenConfigPathIsARegularFile()
+    {
+        var filePath = Path.Join(_configRoot, "not-a-directory");
+        File.WriteAllText(filePath, "not a directory");
+        Environment.SetEnvironmentVariable("CONFIG_PATH", filePath);
+
+        var exception = Assert.Throws<ConfigPathAccessException>(() => ConfigPathPreflight.VerifyAccess());
+
+        Assert.Contains(filePath, exception.Message);
+        Assert.Contains("not a directory", exception.Message);
+    }
+
+    [Fact]
+    public void VerifyAccess_PassesWithExistingBackupAndSessionStateFiles()
+    {
+        Directory.CreateDirectory(Path.Join(_configRoot, "backups"));
+        Directory.CreateDirectory(Path.Join(_configRoot, "restore-staging"));
+        File.WriteAllText(Path.Join(_configRoot, "pending-restore.json"), "{}");
+        File.WriteAllText(Path.Join(_configRoot, "session.key"), "test-session-key");
+
+        ConfigPathPreflight.VerifyAccess();
     }
 
     [SkippableFact]

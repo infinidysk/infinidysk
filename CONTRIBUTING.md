@@ -13,7 +13,10 @@ Environment variables:
 export CONFIG_PATH=/where/to/create/database/
 export FRONTEND_BACKEND_API_KEY=$(head -c 32 /dev/urandom | hexdump -ve '1/1 "%.2x"')
 export BACKEND_URL=http://localhost:5000
+mkdir -p "$CONFIG_PATH"
 ```
+
+The backend fails startup if `CONFIG_PATH` is missing, is a regular file, or is not writable. Create the directory yourself (or use `./scripts/run-backend.sh`, which does).
 
 ### PostgreSQL main database
 

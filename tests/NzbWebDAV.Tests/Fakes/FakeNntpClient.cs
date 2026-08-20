@@ -24,7 +24,9 @@ internal sealed class FakeNntpClient(
 
     public int BatchRequestCount { get; private set; }
     public int BodyRequestCount { get; private set; }
+    public int CompletionCallbackCount { get; private set; }
     public Dictionary<string, int> BodyRequestCounts { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, int> CompletionCallbackCounts { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, int> StatRequestCounts { get; } = new(StringComparer.Ordinal);
     public HashSet<string> RequestedSegmentIds { get; } = new(StringComparer.Ordinal);
 
@@ -85,6 +87,7 @@ internal sealed class FakeNntpClient(
         try
         {
             var response = CreateBodyResponse(segmentId);
+            NoteCompletion(segmentKey);
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
             return Task.FromResult(response);
         }
@@ -162,6 +165,12 @@ internal sealed class FakeNntpClient(
 
     public override void Dispose()
     {
+    }
+
+    private void NoteCompletion(string segmentKey)
+    {
+        CompletionCallbackCount++;
+        CompletionCallbackCounts[segmentKey] = CompletionCallbackCounts.GetValueOrDefault(segmentKey) + 1;
     }
 
     private UsenetDecodedBodyResponse CreateBodyResponse(SegmentId segmentId) =>
