@@ -16,9 +16,6 @@ from pathlib import Path
 from typing import Any
 
 
-TERMINAL = ("Killed", "Survived", "NoCoverage", "Timeout")
-
-
 def load_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise SystemExit(f"error: missing {path}")
@@ -123,7 +120,8 @@ def main(argv: list[str] | None = None) -> int:
 
     report = load_json(args.report)
     baseline = load_json(args.baseline)
-    module_floor = float(baseline.get("moduleFloor") or 60)
+    raw_floor = baseline.get("moduleFloor", 60)
+    module_floor = 60.0 if raw_floor is None else float(raw_floor)
     known = baseline.get("files")
     if not isinstance(known, dict):
         known = {}
