@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Api.Controllers.GetOverviewStats;
+using NzbWebDAV.Api.Errors;
 
 namespace NzbWebDAV.Tests.Api;
 
@@ -31,7 +32,7 @@ public class GetOverviewStatsRequestTests
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?sections=window,nope");
 
-        Assert.Throws<BadHttpRequestException>(() => new GetOverviewStatsRequest(context));
+        Assert.Throws<ApiValidationException>(() => new GetOverviewStatsRequest(context));
     }
 
     [Theory]

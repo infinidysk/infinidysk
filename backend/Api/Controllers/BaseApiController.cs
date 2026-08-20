@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
 using Serilog;
@@ -26,6 +27,15 @@ public abstract class BaseApiController : ControllerBase
             }
 
             return await HandleRequest().ConfigureAwait(false);
+        }
+        catch (ApiValidationException e)
+        {
+            HttpContext.Items[ApiValidationException.HttpContextItemKey] = e;
+            return BadRequest(new BaseApiResponse()
+            {
+                Status = false,
+                Error = e.Message
+            });
         }
         catch (Exception e) when (e is BadHttpRequestException or ArgumentException)
         {

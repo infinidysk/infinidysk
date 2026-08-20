@@ -1,12 +1,13 @@
-﻿using System.Xml;
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
@@ -22,12 +23,6 @@ public class AddFileController(
     WebsocketManager websocketManager
 ) : SabApiController.BaseController(httpContext, configManager)
 {
-    private static readonly XmlReaderSettings XmlSettings = new()
-    {
-        Async = true,
-        DtdProcessing = DtdProcessing.Ignore
-    };
-
     /// <summary>
     /// Creates a short-lived context for conflict removal without flushing
     /// pending Added entities on the request-scoped context. Tests can override
@@ -125,17 +120,8 @@ public class AddFileController(
 
             // compute the total segment bytes
             await using var nzbFileStream = BlobStore.ReadBlob(id)!;
-            long totalSegmentBytes;
-            try
-            {
-                totalSegmentBytes = ComputeTotalSegmentBytes(nzbFileStream);
-            }
-            catch (XmlException exception) when (prepared.IsGzip)
-            {
-                throw new BadHttpRequestException(
-                    "The uploaded gzip file does not contain a valid NZB document.",
-                    exception);
-            }
+            var totalSegmentBytes = NzbInputValidator.ValidateAndSumSegmentBytes(
+                nzbFileStream, NzbInputLimits.Default);
 
             // Keep enqueues after any manually moved item in their priority band.
             // CreatedAt remains the immutable enqueue timestamp; SortOrder owns
@@ -390,22 +376,5 @@ public class AddFileController(
         {
             throw new ArgumentException("The NZB backup category must be a single directory name.", nameof(category));
         }
-    }
-
-    private static long ComputeTotalSegmentBytes(Stream stream)
-    {
-        long totalBytes = 0;
-        using var reader = XmlReader.Create(stream, XmlSettings);
-        while (reader.Read())
-        {
-            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "segment") continue;
-            var bytesAttr = reader.GetAttribute("bytes");
-            if (bytesAttr != null && long.TryParse(bytesAttr, out var bytes))
-            {
-                totalBytes += bytes;
-            }
-        }
-
-        return totalBytes;
     }
 }

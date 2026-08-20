@@ -24,7 +24,7 @@ public sealed class ApiErrorContractFilter : IAsyncResultFilter
             && ApiRequestClassifier.IsAdminApi(httpContext))
         {
             var status = objectResult.StatusCode ?? StatusCodes.Status400BadRequest;
-            var problem = ApiProblemDetailsFactory.FromStatus(httpContext, status, admin.Error);
+            var problem = CreateProblem(httpContext, status, admin.Error);
             context.Result = new ProblemJsonResult(
                 problem.Status ?? status,
                 ApiProblemDetailsFactory.ToWritablePayload(problem));
@@ -36,7 +36,17 @@ public sealed class ApiErrorContractFilter : IAsyncResultFilter
         {
             var status = objectResult.StatusCode ?? StatusCodes.Status400BadRequest;
             sab.Problem ??= ApiProblemDetailsFactory.ToWritablePayload(
-                ApiProblemDetailsFactory.FromStatus(httpContext, status, sab.Error));
+                CreateProblem(httpContext, status, sab.Error));
         }
+    }
+
+    private static ProblemDetails CreateProblem(HttpContext httpContext, int status, string? detail)
+    {
+        if (httpContext.Items[ApiValidationException.HttpContextItemKey] is ApiValidationException validation)
+        {
+            return ApiProblemDetailsFactory.Validation(httpContext, validation.Errors, validation.Message);
+        }
+
+        return ApiProblemDetailsFactory.FromStatus(httpContext, status, detail);
     }
 }

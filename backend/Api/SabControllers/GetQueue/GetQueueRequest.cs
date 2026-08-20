@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Config;
 using NzbWebDAV.Extensions;
 
@@ -18,6 +19,7 @@ public class GetQueueRequest
 
     public GetQueueRequest(HttpContext context, ConfigManager configManager)
     {
+        var errors = new ValidationErrors();
         var startParam = context.GetRequestParam("start");
         var limitParam = context.GetRequestParam("limit");
         Category = SabCategoryResolver.GetCategory(context, configManager);
@@ -29,17 +31,17 @@ public class GetQueueRequest
 
         if (startParam is not null)
         {
-            var isValidStartParam = int.TryParse(startParam, out int start);
-            if (!isValidStartParam) throw new BadHttpRequestException("Invalid start parameter");
-            Start = Math.Max(0, start);
+            if (errors.TryParseInt("start", startParam, "Invalid start parameter", out var start))
+                Start = Math.Max(0, start);
         }
 
         if (limitParam is not null)
         {
-            var isValidLimit = int.TryParse(limitParam, out int limit);
-            if (!isValidLimit) throw new BadHttpRequestException("Invalid limit parameter");
-            Limit = limit > 0 ? limit : int.MaxValue;
+            if (errors.TryParseInt("limit", limitParam, "Invalid limit parameter", out var limit))
+                Limit = limit > 0 ? limit : int.MaxValue;
         }
+
+        errors.ThrowIfAny();
     }
 
     private static string? NormalizeStatus(string? value) => value?.Trim().ToLowerInvariant() switch

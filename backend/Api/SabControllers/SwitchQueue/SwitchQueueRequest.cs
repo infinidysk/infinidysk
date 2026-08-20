@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.Api.SabControllers.SwitchQueue;
@@ -11,15 +12,19 @@ public sealed class SwitchQueueRequest
 
     public static SwitchQueueRequest New(HttpContext context)
     {
+        var errors = new ValidationErrors();
         var value = context.GetRequestParam("value");
         var value2 = context.GetRequestParam("value2");
-        if (!Guid.TryParse(value, out var sourceId) || string.IsNullOrWhiteSpace(value2))
-            throw new BadHttpRequestException("Switch expects two parameters.");
+        if (!Guid.TryParse(value, out var sourceId))
+            errors.Add("value", "Switch expects a queue item id.");
+        if (string.IsNullOrWhiteSpace(value2))
+            errors.Add("value2", "Switch expects two parameters.");
+        errors.ThrowIfAny();
 
         return new SwitchQueueRequest
         {
             SourceId = sourceId,
-            Target = value2,
+            Target = value2!,
             CancellationToken = context.RequestAborted,
         };
     }

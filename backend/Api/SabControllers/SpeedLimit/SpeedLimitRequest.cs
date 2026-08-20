@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.Api.SabControllers.SpeedLimit;
@@ -20,8 +21,13 @@ public class SpeedLimitRequest
         if (string.IsNullOrWhiteSpace(raw))
             return new SpeedLimitRequest { LimitKbps = 0 };
 
-        if (!int.TryParse(raw, out var limitKbps) || limitKbps < 0)
-            throw new BadHttpRequestException("Invalid speed limit value.");
+        var errors = new ValidationErrors();
+        if (!errors.TryParseInt("value", raw, "Invalid speed limit value.", out var limitKbps) || limitKbps < 0)
+        {
+            if (limitKbps < 0)
+                errors.Add("value", "Invalid speed limit value.");
+            errors.ThrowIfAny();
+        }
 
         return new SpeedLimitRequest { LimitKbps = limitKbps };
     }

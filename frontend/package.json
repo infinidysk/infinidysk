@@ -38,7 +38,8 @@
     "react-router": "~8.3.0",
     "remix-auth": "^4.2.0",
     "remix-auth-form": "^3.0.0",
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

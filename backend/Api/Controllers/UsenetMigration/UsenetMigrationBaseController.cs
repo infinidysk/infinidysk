@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
 using NzbWebDAV.Extensions;
@@ -30,6 +31,11 @@ public abstract class UsenetMigrationBaseController : ControllerBase
             var migrationStore = HttpContext.RequestServices.GetRequiredService<UsenetMigrationStore>();
             await migrationStore.EnsureDatabaseAsync(HttpContext.RequestAborted).ConfigureAwait(false);
             return await handler().ConfigureAwait(false);
+        }
+        catch (ApiValidationException e)
+        {
+            HttpContext.Items[ApiValidationException.HttpContextItemKey] = e;
+            return BadRequest(new BaseApiResponse { Status = false, Error = e.Message });
         }
         catch (Exception e) when (e is BadHttpRequestException or ArgumentException)
         {

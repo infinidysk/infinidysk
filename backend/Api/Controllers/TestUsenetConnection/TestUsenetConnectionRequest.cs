@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Config;
 using NzbWebDAV.Models;
 
@@ -15,29 +16,35 @@ public class TestUsenetConnectionRequest
 
     public TestUsenetConnectionRequest(HttpContext context, ConfigManager configManager)
     {
-        Host = context.Request.Form["host"].FirstOrDefault()
-               ?? throw new BadHttpRequestException("Usenet host is required");
+        var errors = new ValidationErrors();
+        Host = context.Request.Form["host"].FirstOrDefault() ?? "";
+        User = context.Request.Form["user"].FirstOrDefault() ?? "";
+        var submittedPass = context.Request.Form["pass"].FirstOrDefault();
+        var port = context.Request.Form["port"].FirstOrDefault();
+        var useSsl = context.Request.Form["use-ssl"].FirstOrDefault();
 
-        User = context.Request.Form["user"].FirstOrDefault()
-               ?? throw new BadHttpRequestException("Usenet user is required");
+        if (string.IsNullOrEmpty(Host))
+            errors.Add("host", "Usenet host is required");
+        if (string.IsNullOrEmpty(User))
+            errors.Add("user", "Usenet user is required");
+        if (submittedPass is null)
+            errors.Add("pass", "Usenet pass is required");
+        if (port is null)
+            errors.Add("port", "Usenet port is required");
+        else if (!int.TryParse(port, out var portValue))
+            errors.Add("port", "Invalid usenet port");
+        else
+            Port = portValue;
 
-        var submittedPass = context.Request.Form["pass"].FirstOrDefault()
-               ?? throw new BadHttpRequestException("Usenet pass is required");
-        Pass = UsenetPassResolver.Resolve(submittedPass, configManager);
+        if (useSsl is null)
+            errors.Add("use-ssl", "Usenet use-ssl is required");
+        else if (!bool.TryParse(useSsl, out var useSslValue))
+            errors.Add("use-ssl", "Invalid use-ssl value");
+        else
+            UseSsl = useSslValue;
 
-        var port = context.Request.Form["port"].FirstOrDefault()
-                   ?? throw new BadHttpRequestException("Usenet port is required");
-
-        var useSsl = context.Request.Form["use-ssl"].FirstOrDefault()
-                     ?? throw new BadHttpRequestException("Usenet use-ssl is required");
-
-        Port = !int.TryParse(port, out int portValue)
-            ? throw new BadHttpRequestException("Invalid usenet port")
-            : portValue;
-
-        UseSsl = !bool.TryParse(useSsl, out bool useSslValue)
-            ? throw new BadHttpRequestException("Invalid use-ssl value")
-            : useSslValue;
+        errors.ThrowIfAny();
+        Pass = UsenetPassResolver.Resolve(submittedPass!, configManager);
 
         var skipTlsVerification = context.Request.Form["skip-tls-verification"].FirstOrDefault();
         SkipTlsVerification = bool.TryParse(skipTlsVerification, out var skipTlsVerificationValue)
