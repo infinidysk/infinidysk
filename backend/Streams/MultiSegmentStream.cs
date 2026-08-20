@@ -715,7 +715,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
             var missing = new UsenetArticleNotFoundException(segmentId);
             if (_failFastOnFirstSegment && isFirstSegment)
+            {
+                missing.LogWarningKnownOrStack(
+                    "First article {SegmentId} is health-confirmed missing at playback start while reading {FileName}. " +
+                    "Failing the stream so the player surfaces an error.",
+                    segmentId, _fileName);
                 throw missing;
+            }
             return ZeroFillSegment(
                 "Article {SegmentId} is a health-confirmed missing segment of {FileName}. Filling the {Bytes}-byte gap without a provider request.",
                 segmentId,

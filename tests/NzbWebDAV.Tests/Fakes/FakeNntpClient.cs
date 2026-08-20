@@ -174,6 +174,8 @@ internal sealed class FakeNntpClient(
         var key = segmentId.ToString();
         if (!segments.TryGetValue(key, out var bytes))
             throw new UsenetArticleNotFoundException(key, "430 No such article");
+        var range = default(LongRange);
+        var hasRange = segmentRanges is not null && segmentRanges.TryGetValue(key, out range);
 
         YencStream stream = useCachedYencStreams
             ? new CachedYencStream(
@@ -186,8 +188,8 @@ internal sealed class FakeNntpClient(
                     LineLength = 128,
                     PartNumber = 1,
                     TotalParts = segments.Count,
-                    PartOffset = segmentRanges?[key].StartInclusive ?? 0,
-                    PartSize = segmentRanges?[key].Count ?? bytes.Length,
+                    PartOffset = hasRange ? range!.StartInclusive : 0,
+                    PartSize = hasRange ? range!.Count : bytes.Length,
                 },
                 decodedStreamFactory?.Invoke(key, bytes)
                     ?? new MemoryStream(bytes, writable: false))

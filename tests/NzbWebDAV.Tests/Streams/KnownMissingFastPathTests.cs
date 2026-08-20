@@ -83,6 +83,36 @@ public class KnownMissingFastPathTests
     }
 
     [Fact]
+    public async Task KnownMissingSegment_UsesLocalFallbackWithoutRangeMetadata()
+    {
+        const string primary = "missing@test";
+        const string fallback = "fallback@test";
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>(),
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange> { [primary] = new(0, 5) },
+            localSegments: new Dictionary<string, byte[]> { [fallback] = "local"u8.ToArray() });
+        await using var stream = MultiSegmentStream.Create(
+            new[] { primary }.AsMemory(),
+            client,
+            articleBufferSize: 0,
+            estimatedSegmentSize: 5,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "movie.mkv",
+            segmentFallbacks: [new[] { fallback }],
+            exactSegmentSizes: new long[] { 5 },
+            knownMissingSegmentIndices: new HashSet<int> { 0 });
+        using var output = new MemoryStream();
+
+        await stream.CopyToAsync(output);
+
+        Assert.Equal("local", Encoding.ASCII.GetString(output.ToArray()));
+        Assert.Equal(0, client.BodyRequestCount);
+    }
+
+    [Fact]
     public async Task ThirdConsecutiveKnownMissingSegment_FailsWithoutProviderRequests()
     {
         var ids = new[] { "missing-one", "missing-two", "missing-three" };
@@ -98,6 +128,31 @@ public class KnownMissingFastPathTests
             fileName: "movie.mkv",
             exactSegmentSizes: new long[] { 5, 5, 5 },
             knownMissingSegmentIndices: new HashSet<int> { 0, 1, 2 });
+
+        await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            async () => await stream.CopyToAsync(Stream.Null));
+
+        Assert.Equal(0, client.BodyRequestCount);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4)]
+    public async Task KnownMissingFirstSegment_PreservesFailFastBehavior(int articleBufferSize)
+    {
+        const string segmentId = "missing@test";
+        var client = new FakeNntpClient(new Dictionary<string, byte[]>());
+        await using var stream = MultiSegmentStream.Create(
+            new[] { segmentId }.AsMemory(),
+            client,
+            articleBufferSize,
+            estimatedSegmentSize: 5,
+            failFastOnFirstSegment: true,
+            usePipelinedBodyRequests: articleBufferSize > 0,
+            CancellationToken.None,
+            fileName: "movie.mkv",
+            exactSegmentSizes: new long[] { 5 },
+            knownMissingSegmentIndices: new HashSet<int> { 0 });
 
         await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
             async () => await stream.CopyToAsync(Stream.Null));

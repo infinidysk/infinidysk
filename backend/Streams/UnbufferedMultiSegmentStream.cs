@@ -292,6 +292,14 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         }
 
         var missing = new UsenetArticleNotFoundException(segmentId);
+        if (_failFastOnFirstSegment && segmentIndex == 0)
+        {
+            missing.LogWarningKnownOrStack(
+                "First article {SegmentId} is health-confirmed missing at playback start while reading {FileName}. " +
+                "Failing the stream so the player surfaces an error.",
+                segmentId, _fileName);
+            throw missing;
+        }
         if (!_segmentSizes.TryGetFillLength(segmentIndex, out var fill, out _))
             throw CreateUnknownLengthFailure(segmentIndex, missing);
         ApplyZeroFill(segmentIndex, segmentId, fill, missing, isCorruption: false);
