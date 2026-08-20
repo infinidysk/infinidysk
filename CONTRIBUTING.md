@@ -261,6 +261,7 @@ npm run typecheck
 npm run build
 npm test
 npm run test:coverage
+cd ..
 
 # Backend job (from repository root; build rapidyenc first when tests load natives)
 python3 scripts/check-quality-ratchets.py \
