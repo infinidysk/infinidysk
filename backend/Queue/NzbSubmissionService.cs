@@ -316,9 +316,7 @@ public class NzbSubmissionService(
             if (!Directory.Exists(backupRoot))
                 Directory.CreateDirectory(backupRoot);
 
-            var destDir = Path.GetFullPath(Path.Join(backupRootPrefix, category));
-            if (!destDir.StartsWith(backupRootPrefix, StringComparison.Ordinal))
-                throw new ArgumentException("The NZB backup category must stay within the configured directory.");
+            var destDir = CombineUnderDirectory(backupRootPrefix, category);
             if (!Directory.Exists(destDir))
                 Directory.CreateDirectory(destDir);
 
@@ -326,16 +324,12 @@ public class NzbSubmissionService(
                 ? destDir
                 : destDir + Path.DirectorySeparatorChar;
             var safeFileName = GetSafeBackupFileName(id, fileName);
-            var destPath = Path.GetFullPath(Path.Join(destDirPrefix, safeFileName));
-            if (!destPath.StartsWith(destDirPrefix, StringComparison.Ordinal))
-                throw new ArgumentException("The NZB backup file must stay within its category directory.");
+            var destPath = CombineUnderDirectory(destDirPrefix, safeFileName);
             var counter = 2;
             while (System.IO.File.Exists(destPath))
             {
                 var safeBaseName = Path.GetFileNameWithoutExtension(safeFileName);
-                destPath = Path.GetFullPath(Path.Join(destDirPrefix, $"{safeBaseName} ({counter}).nzb"));
-                if (!destPath.StartsWith(destDirPrefix, StringComparison.Ordinal))
-                    throw new ArgumentException("The NZB backup file must stay within its category directory.");
+                destPath = CombineUnderDirectory(destDirPrefix, $"{safeBaseName} ({counter}).nzb");
                 counter++;
             }
 
@@ -358,29 +352,45 @@ public class NzbSubmissionService(
         return $"{baseName}.nzb";
     }
 
-    private static void ValidateBackupLeafName(string fileName)
+    /// <summary>
+    /// Join a single validated leaf onto <paramref name="directoryPrefix"/> and
+    /// reject the result unless it stays inside that directory.
+    /// </summary>
+    internal static string CombineUnderDirectory(string directoryPrefix, string leafName)
     {
-        if (string.IsNullOrWhiteSpace(fileName) ||
-            Path.IsPathRooted(fileName) ||
-            fileName is "." or ".." ||
-            fileName.Contains('/', StringComparison.Ordinal) ||
-            fileName.Contains('\\', StringComparison.Ordinal) ||
-            fileName.Contains('\0', StringComparison.Ordinal))
+        ValidateBackupSegment(leafName, nameof(leafName), "The NZB backup path must be a single file or directory name.");
+        var destPath = Path.GetFullPath(Path.Join(directoryPrefix, leafName));
+        var relative = Path.GetRelativePath(
+            Path.TrimEndingDirectorySeparator(directoryPrefix),
+            destPath);
+        if (relative is "." or ".."
+            || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+            || relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal)
+            || Path.IsPathRooted(relative))
         {
-            throw new ArgumentException("The NZB backup file name must be a single file name.", nameof(fileName));
+            throw new ArgumentException("The NZB backup path must stay within the configured directory.");
         }
+
+        return destPath;
     }
 
+    private static void ValidateBackupLeafName(string fileName)
+        => ValidateBackupSegment(fileName, nameof(fileName), "The NZB backup file name must be a single file name.");
+
     private static void ValidateBackupCategory(string category)
+        => ValidateBackupSegment(category, nameof(category), "The NZB backup category must be a single directory name.");
+
+    private static void ValidateBackupSegment(string value, string paramName, string message)
     {
-        if (string.IsNullOrWhiteSpace(category) ||
-            Path.IsPathRooted(category) ||
-            category is "." or ".." ||
-            category.Contains('/', StringComparison.Ordinal) ||
-            category.Contains('\\', StringComparison.Ordinal) ||
-            category.Contains('\0', StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(value) ||
+            Path.IsPathRooted(value) ||
+            value is "." or ".." ||
+            value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+            value.Contains('/', StringComparison.Ordinal) ||
+            value.Contains('\\', StringComparison.Ordinal) ||
+            value.Contains('\0', StringComparison.Ordinal))
         {
-            throw new ArgumentException("The NZB backup category must be a single directory name.", nameof(category));
+            throw new ArgumentException(message, paramName);
         }
     }
 

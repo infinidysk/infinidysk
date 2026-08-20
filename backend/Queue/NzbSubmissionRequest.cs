@@ -11,7 +11,7 @@ public sealed class NzbSubmissionRequest
     public Guid? NzoId { get; init; }
     public bool ReplaceExistingQueueItem { get; init; } = true;
     public required string FileName { get; init; }
-    public Stream NzbFileStream { get; init; } = Stream.Null;
+    public required Stream NzbFileStream { get; init; }
     public string Category { get; init; } = "";
     public QueueItem.PriorityOption Priority { get; init; }
     public QueueItem.PostProcessingOption PostProcessing { get; init; }

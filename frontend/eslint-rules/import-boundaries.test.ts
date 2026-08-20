@@ -56,6 +56,14 @@ describe("import-boundaries", () => {
     expect(violation?.message).toContain("must not import route module");
   });
 
+  it("rejects shared navigation importing routes via alias", () => {
+    const violation = check(
+      "app/navigation/settings-tabs.ts",
+      "~/routes/settings/settings-tabs",
+    );
+    expect(violation?.message).toContain("must not import route module");
+  });
+
   it("rejects shared components importing routes via a relative path", () => {
     const violation = check(
       "app/components/service-provider-gate.tsx",

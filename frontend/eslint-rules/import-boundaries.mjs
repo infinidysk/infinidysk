@@ -42,6 +42,7 @@ function isSharedImporter(relFromApp) {
     relFromApp.startsWith("clients/") ||
     relFromApp.startsWith("auth/") ||
     relFromApp.startsWith("components/") ||
+    relFromApp.startsWith("navigation/") ||
     relFromApp.startsWith("utils/")
   );
 }
@@ -73,7 +74,7 @@ export function describeImportViolation(fromFile, source, options = {}) {
     return {
       message:
         `${fromRel} must not import route module ${importedRel}. ` +
-        `Shared clients/auth/components/utils cannot depend on app/routes.`,
+        `Shared clients/auth/components/navigation/utils cannot depend on app/routes.`,
     };
   }
 
@@ -110,17 +111,30 @@ export const importBoundariesPlugin = {
         },
       },
       create(context) {
+        function checkSource(sourceNode) {
+          const source = sourceNode?.value;
+          if (typeof source !== "string") return;
+          const violation = describeImportViolation(context.filename, source);
+          if (!violation) return;
+          context.report({
+            node: sourceNode,
+            messageId: "forbidden",
+            data: { detail: violation.message },
+          });
+        }
+
         return {
           ImportDeclaration(node) {
-            const source = node.source?.value;
-            if (typeof source !== "string") return;
-            const violation = describeImportViolation(context.filename, source);
-            if (!violation) return;
-            context.report({
-              node: node.source,
-              messageId: "forbidden",
-              data: { detail: violation.message },
-            });
+            checkSource(node.source);
+          },
+          ExportNamedDeclaration(node) {
+            if (node.source) checkSource(node.source);
+          },
+          ExportAllDeclaration(node) {
+            checkSource(node.source);
+          },
+          ImportExpression(node) {
+            checkSource(node.source);
           },
         };
       },
