@@ -594,6 +594,52 @@ public class MultiSegmentStreamPrefetchBudgetTests
         Assert.True(client.BodyRequestCounts.GetValueOrDefault("seg-1") >= 2);
     }
 
+    [Fact]
+    public async Task PipeAccounting_TinyBudget_PrefetchWindowRetry_CompletesWithoutDeadlock()
+    {
+        // Repro from issue 1043: budget ≈ 1.25 segments and a prefetch window of 4.
+        // Dispose-then-re-lease queued the retry behind already-enqueued waiters while
+        // drained-but-unread buffers held the cap. Retaining the original lease across
+        // the retry must complete the copy.
+        const int segmentCount = 4;
+        const int segmentSize = 2_000;
+        var budget = new InFlightArticleBudget(segmentSize + 500);
+        var keys = Enumerable.Range(0, segmentCount).Select(i => $"seg-{i}").ToArray();
+        var segments = keys.ToDictionary(
+            key => key,
+            key => Enumerable.Repeat((byte)(key[^1] - '0'), segmentSize).ToArray());
+        var retryAttempts = new int[1];
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            decodedStreamFactory: (key, bytes) =>
+            {
+                var failOnce = key == "seg-1" && Interlocked.Increment(ref retryAttempts[0]) == 1;
+                return new PipeDeltaReportingStream(bytes, budget, failOnce);
+            });
+
+        await using var stream = MultiSegmentStream.Create(
+            keys.AsMemory(),
+            client,
+            articleBufferSize: 4,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "pipe-budget-retry-window.bin",
+            readBudget: null,
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, segmentCount).ToArray(),
+            inFlightArticleBudget: budget);
+
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output).WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal(keys.SelectMany(key => segments[key]).ToArray(), output.ToArray());
+        Assert.Equal(0, budget.LeasedBytes);
+        Assert.True(retryAttempts[0] >= 2);
+        Assert.True(client.BodyRequestCounts.GetValueOrDefault("seg-1") >= 2);
+    }
+
     private sealed class ThrowingCorruptStream(string segmentId) : Stream
     {
         public override bool CanRead => true;
