@@ -1,5 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using NzbWebDAV.Api.Controllers.GetWebdavItem;
+using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -109,7 +109,7 @@ public class CreateStrmFilesPostProcessor(
         var pathUrl = DatabaseStoreSymlinkFile.GetTargetPath(davItem.Id, "", '/');
         if (pathUrl.StartsWith('/')) pathUrl = pathUrl.TrimStart('/');
         var strmKey = configManager.GetStrmKey();
-        var downloadKey = GetWebdavItemRequest.GenerateDownloadKey(strmKey, pathUrl);
+        var downloadKey = DownloadKey.Generate(strmKey, pathUrl);
         var extension = Path.GetExtension(davItem.Name).ToLowerInvariant().TrimStart('.');
         return $"{baseUrl}/view/{pathUrl}?downloadKey={downloadKey}&extension={extension}";
     }

@@ -33,6 +33,14 @@ internal static class SabContractAssertions
         Assert.False(json.RootElement.TryGetProperty("type", out _));
         Assert.False(json.RootElement.TryGetProperty("title", out _));
         Assert.False(json.RootElement.TryGetProperty("traceId", out _));
+        Assert.True(json.RootElement.TryGetProperty("problem", out var problem));
+        Assert.Equal((int)statusCode, problem.GetProperty("status").GetInt32());
+        Assert.Equal(JsonValueKind.String, problem.GetProperty("type").ValueKind);
+        Assert.Equal(JsonValueKind.String, problem.GetProperty("title").ValueKind);
+        Assert.Equal(JsonValueKind.String, problem.GetProperty("detail").ValueKind);
+        Assert.Equal(JsonValueKind.String, problem.GetProperty("traceId").ValueKind);
+        Assert.True(response.Headers.TryGetValues("X-Correlation-ID", out var correlation));
+        Assert.Equal(Assert.Single(correlation), problem.GetProperty("traceId").GetString());
         if (errorContains is not null)
         {
             Assert.Contains(

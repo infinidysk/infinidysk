@@ -92,6 +92,7 @@ nav = [
     { "Rename FAQ" = "community/renaming-to-infinidysk.md" },
     { "Connect" = "community/github.md" },
     { "Contributing" = "community/contributing.md" },
+    { "Code boundaries" = "decisions/0001-code-boundaries.md" },
     { "DI topology" = "decisions/0002-di-topology.md" },
     { "Changelog" = "community/changelog.md" },
     { "About" = "community/about.md" },

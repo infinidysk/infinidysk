@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Config;
 
 namespace NzbWebDAV.Api.Controllers.TestArrConnection;
@@ -10,11 +11,14 @@ public class TestArrConnectionRequest
 
     public TestArrConnectionRequest(HttpContext context, ConfigManager configManager)
     {
-        Host = context.Request.Form["host"].FirstOrDefault()
-               ?? throw new BadHttpRequestException("Arr host is required");
-
-        var submittedApiKey = context.Request.Form["apiKey"].FirstOrDefault()
-               ?? throw new BadHttpRequestException("Arr apiKey is required");
-        ApiKey = ArrApiKeyResolver.Resolve(submittedApiKey, configManager);
+        var errors = new ValidationErrors();
+        Host = context.Request.Form["host"].FirstOrDefault() ?? "";
+        var submittedApiKey = context.Request.Form["apiKey"].FirstOrDefault();
+        if (string.IsNullOrEmpty(Host))
+            errors.Add("host", "Arr host is required");
+        if (submittedApiKey is null)
+            errors.Add("apiKey", "Arr apiKey is required");
+        errors.ThrowIfAny();
+        ApiKey = ArrApiKeyResolver.Resolve(submittedApiKey!, configManager);
     }
 }

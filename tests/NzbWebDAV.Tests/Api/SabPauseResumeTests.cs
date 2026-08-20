@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Api.SabControllers.Pause;
@@ -202,7 +203,7 @@ public sealed class SabPauseResumeTests : IAsyncLifetime
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?value=-5");
 
-        Assert.Throws<BadHttpRequestException>(() => SpeedLimitRequest.New(context));
+        Assert.Throws<ApiValidationException>(() => SpeedLimitRequest.New(context));
     }
 
     [Fact]

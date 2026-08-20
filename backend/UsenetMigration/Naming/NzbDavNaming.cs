@@ -1,4 +1,3 @@
-using NzbWebDAV.Api.SabControllers.AddFile;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.UsenetMigration.Naming;
@@ -8,7 +7,7 @@ namespace NzbWebDAV.UsenetMigration.Naming;
 /// identity and predicted mount paths therefore follow the same rules as regular
 /// SAB submissions, including cases where <c>basename != JobName</c>. Because the
 /// migration runs in the same assembly, it can call
-/// <see cref="AddFileRequest.ResolveFileName"/> and
+/// <see cref="NzbFileName.Resolve"/> and
 /// <see cref="FilenameUtil.GetJobName"/> directly and automatically inherits
 /// changes to either transform.
 /// </summary>
@@ -20,7 +19,7 @@ public static class NzbDavNaming
     /// <paramref name="nzbBasename"/> as the SAB <c>nzbname</c> param.
     /// </summary>
     public static string QueueFileName(string nzbBasename) =>
-        AddFileRequest.ResolveFileName(nzbBasename, null);
+        NzbFileName.Resolve(nzbBasename, null);
 
     /// <summary>
     /// The predicted mount folder: <c>/content/{category}/{JobName}/</c>.

@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using NzbWebDAV.Api.SabControllers.GetHistory;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
@@ -803,7 +802,7 @@ public class QueueItemProcessor(
         // and hang forever on a wedged finalize lock.
         var finalizeCt = cancellationToken ?? ct;
         HistoryItem? historyItem = null;
-        GetHistoryResponse.HistorySlot? historySlot = null;
+        string? historyJson = null;
         IReadOnlyDictionary<string, long>? providerUsage = null;
 
         await WithFinalizeLockAsync(async () =>
@@ -816,8 +815,8 @@ public class QueueItemProcessor(
             providerUsage = providerUsageTracker.Snapshot(queueItem.Id);
             var displayByMetricsKey = ProviderUsageHelper
                 .BuildDisplayByMetricsKey(configManager.GetUsenetProviderConfig().Providers);
-            historySlot = GetHistoryResponse.HistorySlot.FromHistoryItem(
-                historyItem, mountFolder, configManager, providerUsage, displayByMetricsKey);
+            historyJson = HistoryItemAddedPayload.FromHistoryItem(
+                historyItem, mountFolder, configManager, providerUsage, displayByMetricsKey).ToJson();
             dbClient.Ctx.QueueItems.Remove(queueItem);
             dbClient.Ctx.HistoryItems.Add(historyItem);
             await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
@@ -826,7 +825,7 @@ public class QueueItemProcessor(
         try
         {
             _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
-            _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot!.ToJson());
+            _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historyJson!);
             _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
             _ = RefreshMonitoredDownloads();
             if (error is null)

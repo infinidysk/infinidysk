@@ -1,6 +1,7 @@
 import eslint from "@eslint/js";
 import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
+import { importBoundariesPlugin } from "./eslint-rules/import-boundaries.mjs";
 
 export default tseslint.config(
   {
@@ -10,6 +11,7 @@ export default tseslint.config(
       ".react-router/**",
       "node_modules/**",
       "coverage/**",
+      "app/generated/**",
       // Build/compile outputs that may exist locally but are gitignored.
       "server.js",
       "server.d.ts",
@@ -25,6 +27,7 @@ export default tseslint.config(
   {
     plugins: {
       "react-hooks": reactHooks,
+      "import-boundaries": importBoundariesPlugin,
     },
     languageOptions: {
       parserOptions: {
@@ -71,6 +74,7 @@ export default tseslint.config(
       // Full react-hooks recommended (incl. React Compiler rules) is a follow-up ratchet.
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "error",
+      "import-boundaries/no-cross-feature-imports": "error",
 
       // Type-aware strictness (#853 phase 1). The four promise rules per the
       // issue; no-unsafe-* come from recommendedTypeChecked.
@@ -105,7 +109,7 @@ export default tseslint.config(
   {
     // Root config files are not part of any tsconfig project; lint them
     // without type information.
-    files: ["*.js", "*.ts", "*.mjs"],
+    files: ["*.js", "*.ts", "*.mjs", "eslint-rules/**", "scripts/**/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
   },
 );

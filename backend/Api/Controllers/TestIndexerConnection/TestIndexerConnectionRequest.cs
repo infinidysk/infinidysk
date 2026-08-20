@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Config;
 
 namespace NzbWebDAV.Api.Controllers.TestIndexerConnection;
@@ -14,12 +15,15 @@ public class TestIndexerConnectionRequest
 
     public TestIndexerConnectionRequest(HttpContext context, ConfigManager configManager)
     {
-        Url = context.Request.Form["url"].FirstOrDefault()
-              ?? throw new BadHttpRequestException("Indexer url is required");
-
-        var submittedApiKey = context.Request.Form["apiKey"].FirstOrDefault()
-                              ?? throw new BadHttpRequestException("Indexer apiKey is required");
-        ApiKey = IndexerApiKeyResolver.Resolve(submittedApiKey, configManager);
+        var errors = new ValidationErrors();
+        Url = context.Request.Form["url"].FirstOrDefault() ?? "";
+        var submittedApiKey = context.Request.Form["apiKey"].FirstOrDefault();
+        if (string.IsNullOrEmpty(Url))
+            errors.Add("url", "Indexer url is required");
+        if (submittedApiKey is null)
+            errors.Add("apiKey", "Indexer apiKey is required");
+        errors.ThrowIfAny();
+        ApiKey = IndexerApiKeyResolver.Resolve(submittedApiKey!, configManager);
 
         UserAgent = context.Request.Form["userAgent"].FirstOrDefault();
         ProxyUrl = context.Request.Form["proxyUrl"].FirstOrDefault();

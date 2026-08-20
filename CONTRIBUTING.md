@@ -90,6 +90,15 @@ cd frontend && npm install && npm run dev
 
 `scripts/run-backend.sh` defaults `LOG_LEVEL=Debug` (and `LOG_BUFFER_SIZE=2000`) when unset so local playback debugging is verbose. Docker/production leave these unset and keep Information-level logging. It also enables the contributor-only admin API reference locally; sign in through the frontend and open `http://localhost:5173/scalar/`. The backend's `/openapi/admin.json` endpoint requires `x-api-key` when accessed directly. Set `ENABLE_API_DOCS=false` to disable it; released Docker images keep it disabled unless explicitly enabled.
 
+The committed admin OpenAPI contract lives at `contracts/openapi/admin-v1.json` (versioned independently of the product release). After adding or changing an admin endpoint used by the frontend, refresh it and regenerate TypeScript types:
+
+```bash
+./scripts/export-admin-openapi.sh
+cd frontend && npm run generate:api
+```
+
+The export command starts the test host, normalizes the document (stable key order, empty `servers`, contract version `1.0.0`), and fails if the result does not match the committed file unless you are rewriting it. Frontend `lint` / `typecheck` / `test` / `build` regenerate `app/generated/admin-api.ts` automatically (gitignored).
+
 Stream tracing is **opt-in** and off by default. Toggle it from **Settings → Support** for 15/30/60 minutes (no restart; it auto-expires and never survives a restart), or set `STREAM_TRACE_EVENTS` to a positive value for an always-on capture from startup. When tracing is off, no trace events are recorded and the trace APIs report `enabled: false`.
 
 `scripts/run-backend.sh` builds the host rapidyenc native (via `scripts/build-rapidyenc.sh`) when missing and exports `RAPIDYENC_LIBRARY_PATH`. With that in place, yEnc-decoding tests run on macOS and Linux; without a native library they are skipped.
@@ -268,6 +277,32 @@ Notes:
   code fix twice. Restore the package afterwards (builds are unaffected either
   way; only the format tool is).
 
+## Architecture boundaries
+
+Inbound adapters (API, WebDAV HTTP, middleware) call Queue and other application
+services. Those services talk to external clients and the database. `Program` is
+the composition root. `Services` is currently mixed — do not treat it as one
+clean layer. Details and exceptions: [Code boundaries](docs/decisions/0001-code-boundaries.md).
+
+```mermaid
+flowchart LR
+    API[API and middleware] --> Domain[Queue and application services]
+    WebDAV[WebDAV handlers] --> Domain
+    Domain --> Clients[External clients]
+    Domain --> Database[Database and blob contracts]
+    Clients --> DatabaseModels[Database models where explicitly allowed]
+    Program[Program composition root] --> API
+    Program --> Domain
+    Program --> Clients
+    Program --> Database
+```
+
+Frontend route features may use shared `app/components`, `app/navigation`,
+`app/clients`, `app/auth`, and `app/utils`, plus files inside the same feature.
+They must not import another route feature. Shared code must not import
+`app/routes`. ArchUnitNET (`tests/NzbWebDAV.ArchitectureTests`) and the
+`import-boundaries/no-cross-feature-imports` ESLint rule enforce this.
+
 ## Contributing
 
 Before creating a PR:
@@ -279,4 +314,7 @@ npm run format:check
 npm run typecheck
 npm run build
 npm test
+cd ..
+dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
+dotnet test tests/NzbWebDAV.ArchitectureTests/NzbWebDAV.ArchitectureTests.csproj -c Debug
 ```

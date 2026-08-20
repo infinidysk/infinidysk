@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.Api.Controllers.GetHealthCheckQueue;
@@ -12,12 +13,14 @@ public class GetHealthCheckQueueRequest
     {
         var pageSizeParam = context.GetQueryParam("pageSize");
         CancellationToken = context.RequestAborted;
+        var errors = new ValidationErrors();
 
         if (pageSizeParam is not null)
         {
-            var isValidStartParam = int.TryParse(pageSizeParam, out int pageSize);
-            if (!isValidStartParam) throw new BadHttpRequestException("Invalid pageSize parameter");
-            PageSize = pageSize;
+            if (errors.TryParseInt("pageSize", pageSizeParam, "Invalid pageSize parameter", out var pageSize))
+                PageSize = pageSize;
         }
+
+        errors.ThrowIfAny();
     }
 }

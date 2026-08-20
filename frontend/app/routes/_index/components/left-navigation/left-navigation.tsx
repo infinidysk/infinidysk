@@ -8,7 +8,7 @@ import {
   parseSettingsTab,
   settingsPath,
   type SettingsTab,
-} from "~/routes/settings/settings-tabs";
+} from "~/navigation/settings-tabs";
 import {
   isFeatureDisabled,
   isSettingsTabDisabled,

@@ -47,7 +47,7 @@ import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } fr
 import { useBlocker, useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { ServiceProviderNotice } from "~/components/service-provider-notice";
-import { parseSettingsTab, getSettingsTabItem, type SettingsTab } from "./settings-tabs";
+import { parseSettingsTab, getSettingsTabItem, type SettingsTab } from "~/navigation/settings-tabs";
 import { Icon } from "~/components/ui";
 import type { AppOutletContext } from "~/auth/authorization";
 import { isSettingsTabDisabled } from "~/utils/service-provider";

@@ -1,9 +1,7 @@
-using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.UsenetMigration.Model;
 using NzbWebDAV.UsenetMigration.Nzb;
 using NzbWebDAV.UsenetMigration.Source;
-using NzbWebDAV.Api.SabControllers.AddFile;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -18,9 +16,7 @@ namespace NzbWebDAV.UsenetMigration.Runner;
 /// Submits pending releases into NzbDAV's own SAB pipeline, in-process, up to the
 /// session's queue-depth gate. Rebuilds each release's NZB from
 /// its <c>.nzbz</c> store, re-injects the encryption head, and calls
-/// <see cref="AddFileController.AddFileAsync"/> directly — the controller reads
-/// only the <see cref="AddFileRequest"/>, not the HttpContext, so a bare
-/// <see cref="DefaultHttpContext"/> suffices.
+/// <see cref="NzbSubmissionService.SubmitAsync"/> with a durable claimed nzo id.
 ///
 /// Scan-time collision validation guarantees that included releases have distinct
 /// queue identities, allowing the configured workers to submit safely in parallel.
@@ -278,10 +274,9 @@ public sealed class SubmissionWorkerPool(
     {
         await using var dbCtx = NewDavContext();
         var dbClient = new DavDatabaseClient(dbCtx);
-        var controller = new AddFileController(
-            new DefaultHttpContext(), dbClient, queueManager, configManager, websocketManager);
+        var service = new NzbSubmissionService(dbClient, queueManager, configManager, websocketManager);
 
-        var request = new AddFileRequest
+        var request = new NzbSubmissionRequest
         {
             NzoId = claimedId,
             ReplaceExistingQueueItem = false,
@@ -295,13 +290,13 @@ public sealed class SubmissionWorkerPool(
             CancellationToken = ct,
         };
 
-        var response = await controller.AddFileAsync(request).ConfigureAwait(false);
+        var response = await service.SubmitAsync(request).ConfigureAwait(false);
         if (response.NzoIds.Count != 1
             || !Guid.TryParse(response.NzoIds[0], out var returnedId)
             || returnedId != claimedId)
         {
             throw new InvalidOperationException(
-                $"AddFileAsync did not return the durable claimed nzo id {claimedId}.");
+                $"SubmitAsync did not return the durable claimed nzo id {claimedId}.");
         }
     }
 

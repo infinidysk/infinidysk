@@ -2,6 +2,8 @@
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using NWebDav.Server.Helpers;
+using NzbWebDAV.Api.Errors;
+using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -478,6 +480,63 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             AbortStartedResponse(context);
         }
+        catch (Exception e) when (
+            e is not OutOfMemoryException &&
+            ApiRequestClassifier.IsProblemDetailsApi(context))
+        {
+            await WriteUnhandledApiFailureAsync(context, e).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task WriteUnhandledApiFailureAsync(HttpContext context, Exception exception)
+    {
+        if (context.Response.HasStarted)
+        {
+            Log.Warning(
+                "API request failed after the response started. Path={Path} Reason: {Reason}",
+                context.Request.Path.Value,
+                exception.GetType().Name);
+            Log.Debug(exception, "API failure after response started");
+            return;
+        }
+
+        var problem = ApiProblemDetailsFactory.FromException(context, exception);
+        var status = problem.Status ?? StatusCodes.Status500InternalServerError;
+        if (status >= 500)
+            Log.Error(exception, "Unhandled API request failure");
+        else
+        {
+            Log.Warning(
+                "API request rejected. Status={Status} Reason: {Reason}",
+                status,
+                problem.Detail ?? problem.Title);
+            Log.Debug(exception, "API rejection stack");
+        }
+
+        context.Response.Clear();
+        RequestCorrelation.ApplyResponseHeader(context);
+
+        if (ApiRequestClassifier.IsSabApi(context))
+        {
+            var sab = new SabBaseResponse
+            {
+                Status = false,
+                Error = status >= 500
+                    ? "An internal server error occurred."
+                    : problem.Detail ?? problem.Title ?? "Request failed",
+                Problem = ApiProblemDetailsFactory.ToWritablePayload(problem),
+            };
+            await ApiProblemResponse.WriteAsync(context, status, sab, "application/json; charset=utf-8")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        await ApiProblemResponse.WriteAsync(
+                context,
+                status,
+                ApiProblemDetailsFactory.ToWritablePayload(problem),
+                ApiProblemDetailsFactory.ProblemContentType)
+            .ConfigureAwait(false);
     }
 
     /// <summary>

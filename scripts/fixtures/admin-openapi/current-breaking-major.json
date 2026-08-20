@@ -1,0 +1,9 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "t", "version": "2.0.0" },
+  "paths": {
+    "/api/get-config": {
+      "post": { "operationId": "post-api-get-config" }
+    }
+  }
+}

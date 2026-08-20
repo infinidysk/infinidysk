@@ -118,20 +118,20 @@ public sealed class AdminContractTests
         using var client = factory.CreateAuthenticatedClient();
 
         using var missingKey = await anonymous.GetAsync("/api/get-health-check-queue");
-        await SabContractAssertions.AssertFailureAsync(
+        await AdminProblemAssertions.AssertProblemAsync(
             missingKey, HttpStatusCode.Unauthorized, "API Key Required");
 
         using var missingDirectoryForm = new MultipartFormDataContent();
         missingDirectoryForm.Add(new StringContent("/content/does-not-exist"), "directory");
         using var missingDirectory = await client.PostAsync(
             "/api/list-webdav-directory", missingDirectoryForm);
-        await SabContractAssertions.AssertFailureAsync(
+        await AdminProblemAssertions.AssertProblemAsync(
             missingDirectory, HttpStatusCode.BadRequest, "does not exist");
 
         using var readonlyDeleteForm = new MultipartFormDataContent();
         readonlyDeleteForm.Add(new StringContent("/content/does-not-exist"), "path");
         using var readonlyDelete = await client.PostAsync("/api/delete-webdav-item", readonlyDeleteForm);
-        await SabContractAssertions.AssertFailureAsync(
+        await AdminProblemAssertions.AssertProblemAsync(
             readonlyDelete, HttpStatusCode.Forbidden, "read-only");
 
         using var disableReadonly = new MultipartFormDataContent();
@@ -142,14 +142,14 @@ public sealed class AdminContractTests
         using var missingItemForm = new MultipartFormDataContent();
         missingItemForm.Add(new StringContent("/content/does-not-exist"), "path");
         using var missingItem = await client.PostAsync("/api/delete-webdav-item", missingItemForm);
-        await SabContractAssertions.AssertFailureAsync(
+        await AdminProblemAssertions.AssertProblemAsync(
             missingItem, HttpStatusCode.NotFound, "Item not found");
 
         using var serverError = await client.GetAsync("/api/get-config");
-        await SabContractAssertions.AssertFailureAsync(
-            serverError, HttpStatusCode.InternalServerError, "internal server error");
+        await AdminProblemAssertions.AssertProblemAsync(
+            serverError, HttpStatusCode.InternalServerError, "trace ID");
         Assert.Equal(
-            "application/json",
+            "application/problem+json",
             serverError.Content.Headers.ContentType?.MediaType);
     }
 
