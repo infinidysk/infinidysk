@@ -66,19 +66,22 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             }
 
             var filePath = GetRequestFilePath(context);
-            LogWithDedup(RecentStreamingWriteTimeouts, filePath, suppressed =>
+            var reason = string.IsNullOrEmpty(e.Reason)
+                ? StreamingWriteTimeoutException.PerWriteStallReason
+                : e.Reason;
+            var isReclaim = reason == StreamingWriteTimeoutException.AggregateReclaimReason;
+            var warning = isReclaim
+                ? "WebDAV write reclaimed; stream cancelled to release Article RAM. Path={Path} Reason: {Reason}"
+                : "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason}";
+            var warningWithSuppressed = isReclaim
+                ? "WebDAV write reclaimed; stream cancelled to release Article RAM. Path={Path} Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)"
+                : "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)";
+            LogWithDedup(RecentStreamingWriteTimeouts, $"{filePath}|{reason}", suppressed =>
             {
                 if (suppressed > 0)
-                    Log.Warning(
-                        "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)",
-                        filePath,
-                        "streaming-write-timeout",
-                        suppressed);
+                    Log.Warning(warningWithSuppressed, filePath, reason, suppressed);
                 else
-                    Log.Warning(
-                        "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason}",
-                        filePath,
-                        "streaming-write-timeout");
+                    Log.Warning(warning, filePath, reason);
             });
             Log.Debug(e, "WebDAV streaming-write-timeout stack");
         }
@@ -110,6 +113,45 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             if (context.Items["DavItem"] is DavItem davItem)
             {
                 RecordMissingArticleForFailFast(davItem, notFound.SegmentId);
+                ScheduleRepair(davItem);
+            }
+
+            AbortStartedResponse(context);
+        }
+        catch (Exception e) when (
+            e.TryGetCausingException(out UsenetCorruptArticleException? corrupt) &&
+            e is not OutOfMemoryException &&
+            e is not TransientSegmentExhaustionException &&
+            e is not SeekPositionNotFoundException &&
+            !context.RequestAborted.IsCancellationRequested)
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 404;
+            }
+
+            var filePath = GetRequestFilePath(context);
+            var dedupeKey = $"{filePath}|{corrupt!.SegmentId}";
+            LogWithDedup(RecentReadErrors, dedupeKey, suppressed =>
+            {
+                if (suppressed > 0)
+                    Log.Warning(
+                        "File {FilePath} has corrupt articles: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)",
+                        filePath,
+                        corrupt.Message,
+                        suppressed);
+                else
+                    Log.Warning(
+                        "File {FilePath} has corrupt articles: {Reason}",
+                        filePath,
+                        corrupt.Message);
+            });
+            Log.Debug(e, "File {FilePath} corrupt-article stack", filePath);
+
+            if (context.Items["DavItem"] is DavItem davItem)
+            {
+                RecordMissingArticleForFailFast(davItem, corrupt.SegmentId);
                 ScheduleRepair(davItem);
             }
 
@@ -443,6 +485,8 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     /// missing article discovered mid-stream must feed the step-0 queue precheck. Otherwise a
     /// re-grab of the same broken release imports cleanly again and loops through repair
     /// forever (issue #732). Failing the re-grab pre-import lets Arr blocklist it properly.
+    /// Persistently corrupt segments that break playback are seeded here too — the cache is
+    /// segment-ID keyed and cause-agnostic.
     /// </summary>
     internal static void RecordMissingArticleForFailFast(DavItem davItem, string segmentId)
     {

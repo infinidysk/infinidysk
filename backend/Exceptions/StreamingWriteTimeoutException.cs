@@ -12,4 +12,13 @@ namespace NzbWebDAV.Exceptions;
 public class StreamingWriteTimeoutException(string message, Exception? innerException = null)
     : OperationCanceledException(message, innerException)
 {
+    public const string PerWriteStallReason = "streaming-write-timeout";
+    public const string AggregateReclaimReason = "streaming-write-reclaim";
+
+    /// <summary>
+    /// Operator-facing reason token. Per-write stalls use
+    /// <see cref="PerWriteStallReason"/>; contention-gated trickle reclaim uses
+    /// <see cref="AggregateReclaimReason"/>.
+    /// </summary>
+    public string Reason { get; init; } = PerWriteStallReason;
 }

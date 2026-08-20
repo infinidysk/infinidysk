@@ -48,6 +48,19 @@ public class DatabaseStoreNzbFile(
             nzbFile.SegmentFallbackIds,
             inFlightArticleBudget,
             useContainerAwareFill: Config.IsContainerAwareFillEnabled(),
-            streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth());
+            streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth(),
+            knownCorruptSegmentIds: ResolveKnownCorruptSegmentIds(nzbFile));
+    }
+
+    private HashSet<string>? ResolveKnownCorruptSegmentIds(DavNzbFile nzbFile)
+    {
+        if (!Config.IsCorruptionTrackingEnabled()) return null;
+        if (nzbFile.CorruptSegmentIndices is not { Length: > 0 } indices) return null;
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var index in indices.Where(i => (uint)i < (uint)nzbFile.SegmentIds.Length))
+            ids.Add(nzbFile.SegmentIds[index]);
+
+        return ids.Count == 0 ? null : ids;
     }
 }

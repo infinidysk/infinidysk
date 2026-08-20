@@ -17,6 +17,7 @@ const baseConfig: Record<string, string> = {
     "repair.par2-fetch-concurrency": "2",
     "repair.par2-failure-cooldown-hours": "6",
     "repair.degraded-tolerance-enabled": "true",
+    "repair.corruption-tracking-enabled": "true",
     "repair.degraded-max-consecutive-missing": "2",
     "repair.degraded-max-total-missing": "5",
     "repair.degraded-max-missing-byte-percent": "1.0",
@@ -57,6 +58,14 @@ describe("Repairs settings helpers", () => {
         expect(isRepairsSettingsUpdated(baseConfig, {
             ...baseConfig,
             "repair.degraded-max-missing-byte-percent": "2.5",
+        })).toBe(true);
+        expect(isRepairsSettingsUpdated(baseConfig, baseConfig)).toBe(false);
+    });
+
+    it("detects corruption tracking setting changes", () => {
+        expect(isRepairsSettingsUpdated(baseConfig, {
+            ...baseConfig,
+            "repair.corruption-tracking-enabled": "false",
         })).toBe(true);
         expect(isRepairsSettingsUpdated(baseConfig, baseConfig)).toBe(false);
     });

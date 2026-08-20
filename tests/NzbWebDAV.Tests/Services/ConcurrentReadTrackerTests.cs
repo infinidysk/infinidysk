@@ -1,4 +1,6 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Config;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
 using UsenetSharp.Models;
 
@@ -25,6 +27,42 @@ public class ConcurrentReadTrackerTests
         Assert.Equal(1, snapshot.StartDistanceSamples);
         Assert.Equal(5_000_000_000, snapshot.TotalStartDistanceBytes);
         Assert.Equal(5_000_000_000, snapshot.MaxStartDistanceBytes);
+    }
+
+    [Fact]
+    public void EnabledSharedStreams_CountFallbackOnlyOnPrivatePath()
+    {
+        var tracker = new ConcurrentReadTracker(configManager: new ConfigManager());
+        using var first = tracker.BeginRead(
+            "/content/movie.mkv", 0, ConcurrentReadRegion.Full);
+        using var second = tracker.BeginRead(
+            "/content/movie.mkv", 0, ConcurrentReadRegion.Full);
+
+        Assert.Equal(1, tracker.Snapshot().OverlapEvents);
+        Assert.Equal(0, tracker.Snapshot().PrivateFallbacksNoRegistry);
+
+        tracker.RecordPrivateFallbackIfOverlapping();
+        Assert.Equal(1, tracker.Snapshot().PrivateFallbacksNoRegistry);
+        tracker.RecordPrivateFallbackIfOverlapping();
+        Assert.Equal(1, tracker.Snapshot().PrivateFallbacksNoRegistry);
+    }
+
+    [Fact]
+    public void DisabledSharedStreams_CountEveryOverlapAsFallback()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.UsenetSharedStreamsEnabled, ConfigValue = "false" },
+        ]);
+        var tracker = new ConcurrentReadTracker(configManager: config);
+        using var first = tracker.BeginRead(
+            "/content/movie.mkv", 0, ConcurrentReadRegion.Full);
+        using var second = tracker.BeginRead(
+            "/content/movie.mkv", 0, ConcurrentReadRegion.Full);
+
+        Assert.Equal(1, tracker.Snapshot().PrivateFallbacksNoRegistry);
+        tracker.RecordPrivateFallbackIfOverlapping();
+        Assert.Equal(1, tracker.Snapshot().PrivateFallbacksNoRegistry);
     }
 
     [Fact]

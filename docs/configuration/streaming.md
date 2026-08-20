@@ -87,6 +87,38 @@ This can help compatible players resynchronize sooner, but cannot restore
 missing audio or video. Matroska, MP4/MOV, archive-backed files, and transient
 transport failures retain their existing behavior.
 
+## Shared streams for concurrent readers [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
+
+Players often issue a probe GET and a playback GET for the same file at the
+same time. Shared streams join those overlapping requests onto one Usenet
+fetch when their byte offsets are close enough, instead of opening a private
+stream per request.
+
+| Control | Config key | Default | Effect |
+|---------|------------|---------|--------|
+| Share one stream across concurrent readers | `usenet.shared-streams.enabled` | on | Master switch; off restores a private stream per request without a restart |
+| Max shared streams | `usenet.shared-streams.max-entries` | `4` | Global cap on live shared streams (1–32) |
+| Max regions per file | `usenet.shared-streams.max-entries-per-file` | `3` | Separate streams for far-apart offsets of the same file (1–8) |
+| Ring size (MiB) | `usenet.shared-streams.ring-mb` | `32` | Recently fetched bytes late joiners can read without refetching (4–256) |
+| Grace period (seconds) | `usenet.shared-streams.grace-seconds` | `10` | Keep a stream warm after the last reader disconnects (0–60) |
+| Small-range skip (MiB) | `usenet.shared-streams.small-range-max-mb` | `16` | Closed ranges at or below this size stay private unless they already overlap a live stream (1–256) |
+
+HEAD requests never join a shared stream. Unsatisfiable ranges still return
+416 before any stream is opened. A declined attach uses today's private-stream
+path unchanged.
+
+Ring bytes are rented as needed and returned when readers catch up or the
+entry is torn down. Steady-state retention per stream is typically the
+divergence between readers plus about 4 MiB of lead data — not the full ring.
+The theoretical worst case is max-entries × ring size (128 MiB at the
+defaults) under sustained maximal divergence on every slot at once. Those
+bytes are **not** leased from the in-flight article budget; watch
+`sharedStreamRingRetainedBytes` in a support pack if memory is tight.
+
+Disable shared streams if you need a guaranteed private prefetch window per
+client, or if a support pack shows ring retention competing with Article RAM
+on a small host.
+
 ## Capturing a buffering support pack
 
 1. Use `LOG_LEVEL=INFO` so routine debug activity does not evict streaming events.

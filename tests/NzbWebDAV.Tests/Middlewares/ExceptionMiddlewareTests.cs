@@ -514,6 +514,34 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task StreamingWriteTimeout_AggregateReclaim_LogsDistinctReason()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: true, lifetimeFeature);
+        context.Request.Path = $"/content/write-reclaim-{Guid.NewGuid():N}.mkv";
+        var middleware = CreateMiddleware(
+            _ => throw new StreamingWriteTimeoutException(
+                "Client transferred under 64 KB per timeout window while other streams waited on Article RAM.")
+            {
+                Reason = StreamingWriteTimeoutException.AggregateReclaimReason,
+            });
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        Assert.True(lifetimeFeature.Aborted);
+        var logged = Assert.Single(
+            events,
+            e => e.RenderMessage().Contains("streaming-write-reclaim", StringComparison.Ordinal)
+                 && e.Level == LogEventLevel.Warning
+                 && e.Exception is null);
+        Assert.Contains("write reclaimed", logged.RenderMessage(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            "write stalled",
+            logged.RenderMessage(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task StreamingWriteTimeout_BeforeResponseStarted_Returns499WithoutAborting()
     {
         var lifetimeFeature = new TestHttpRequestLifetimeFeature();
@@ -572,6 +600,180 @@ public class ExceptionMiddlewareTests
         var ex = Assert.Throws<UsenetArticleNotFoundException>(
             () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
         Assert.Equal(segmentId, ex.SegmentId);
+    }
+
+    [Fact]
+    public async Task CorruptArticleWithDavItem_RecordsFailureAndSeedsFailFastCache()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new UsenetCorruptArticleException(
+                segmentId, "provider-a", new InvalidDataException("CRC mismatch")),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.False(lifetimeFeature.Aborted);
+        Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
+        Assert.Throws<UsenetArticleNotFoundException>(
+            () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
+    }
+
+    [Fact]
+    public async Task CorruptArticleAfterResponseStarted_AbortsConnection()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: true, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new UsenetCorruptArticleException(
+                segmentId, "provider-a", new InvalidDataException("CRC mismatch")),
+            CreateRepairEnabledConfig());
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(lifetimeFeature.Aborted);
+    }
+
+    [Fact]
+    public async Task CorruptArticleWithRepairsDisabled_WarnsWithoutRecordingFailureCount()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new UsenetCorruptArticleException(
+                segmentId, "provider-a", new InvalidDataException("CRC mismatch")),
+            new ConfigManager(),
+            failureTracker);
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        var logged = Assert.Single(events, e =>
+            e.RenderMessage().Contains("will not trigger repair", StringComparison.Ordinal));
+        Assert.Equal(LogEventLevel.Warning, logged.Level);
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+        Assert.Throws<UsenetArticleNotFoundException>(
+            () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
+    }
+
+    [Fact]
+    public async Task CorruptArticleWrappedInRetryableDownloadException_StillEscalates()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var inner = new UsenetCorruptArticleException(
+            segmentId, "provider-a", new InvalidDataException("CRC mismatch"));
+        var middleware = CreateMiddleware(
+            _ => throw new RetryableDownloadException(
+                "Segment could not be downloaded.", inner),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
+        Assert.Throws<UsenetArticleNotFoundException>(
+            () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
+    }
+
+    [Fact]
+    public async Task CorruptArticleWhenRequestAborted_DoesNotEscalate()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature
+        {
+            RequestAborted = new CancellationToken(canceled: true),
+        };
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new UsenetCorruptArticleException(
+                segmentId, "provider-a", new InvalidDataException("CRC mismatch")),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);
+    }
+
+    [Fact]
+    public async Task SeekFailureWithCorruptInner_DoesNotEscalate()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new SeekPositionNotFoundException(
+                "Corrupt file. Cannot find byte position 50.",
+                new UsenetCorruptArticleException(
+                    segmentId, "provider-a", new InvalidDataException("CRC mismatch"))),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);
+    }
+
+    [Fact]
+    public async Task TransientSegmentExhaustion_DoesNotEscalateEvenWithCorruptInner()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new TransientSegmentExhaustionException(
+                $"Segment ({segmentId}) failed CRC after bytes were delivered, but a confirmation re-fetch was clean; corruption was transient/provider-specific."),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);
+    }
+
+    [Fact]
+    public async Task TransientSegmentExhaustionWithCorruptInner_DoesNotEscalate()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new TransientSegmentExhaustionException(
+                "range retry",
+                new UsenetCorruptArticleException(
+                    segmentId, "provider-a", new InvalidDataException("CRC mismatch"))),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);
     }
 
     [Fact]

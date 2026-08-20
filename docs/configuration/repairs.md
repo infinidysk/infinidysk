@@ -18,6 +18,7 @@ Background health monitoring and replacement of unhealthy library items.
 | Repair After Streaming Failures | `repair.auto-remove-after-failures` | `0` | Consecutive streaming failures before urgent repair; `0` = immediate repair |
 | Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items are removed and blocklisted through *Arr instead of force-deleted |
 | Degraded damage tolerance [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.degraded-tolerance-enabled` | on | Keep slightly damaged videos playable instead of replacing the release |
+| Track corrupt articles during playback [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.corruption-tracking-enabled` | on | Record streaming-confirmed corrupt articles, include them in health classification, and skip the retry storm on later reads |
 | Max consecutive missing segments | `repair.degraded-max-consecutive-missing` | `2` | Longest tolerable run of adjacent holes (1–2) |
 | Max total missing segments | `repair.degraded-max-total-missing` | `5` | Total tolerable holes per file (1–1000) |
 | Max missing data (% of file) | `repair.degraded-max-missing-byte-percent` | `1.0` | Tolerable hole share of file bytes (0.01–50) |
@@ -90,6 +91,31 @@ Degraded verdicts compose with the rest of the repair pipeline:
 
 Degraded files appear on the [Health page](../operations/health-repairs.md) with a warning
 badge, a dedicated history filter, and an overview stat card.
+
+## Realtime corruption detection [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
+
+A corrupt-but-present article (right size, STAT succeeds, yEnc CRC fails) used to play as
+silent garbage. InfiniDysk now detects that on the playback path:
+
+1. **Detect** — yEnc CRC failures surface as corrupt articles, including trailer-CRC
+   corruption on exact-size segments in the unbuffered first-segment reader.
+2. **Re-fetch / failover** — the reader retries across providers, then sibling donor
+   Message-Ids, then gap-fills a known-length hole so later bytes stay aligned. There is
+   **no synchronous PAR2** on the read path (reconstruction stays in the background).
+3. **Record** — persistently corrupt segment IDs are stored on the file payload when
+   `repair.corruption-tracking-enabled` is on (the default whenever Background Repairs is
+   on). Later reads of those IDs probe once instead of repeating the retry storm.
+4. **Classify** — full-coverage health sweeps union remaining recorded corruption with
+   STAT holes, so a present-but-corrupt file is no longer reported Healthy.
+5. **Escalate** — when playback actually breaks, the same streaming-failure path used for
+   missing articles runs: PAR2-first when enabled, then *Arr remove-and-blocklist, with
+   re-grab protection.
+
+Disable **Track corrupt articles during playback** if you need the previous retry-only
+behavior. Playback-breaking corruption still schedules repair whenever Background Repairs
+is on.
+
+[Health and repairs](../operations/health-repairs.md)
 
 ## Replacement-loop protection [since 0.9.4](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.4){ .nzbdav-since }
 

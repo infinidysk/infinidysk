@@ -109,6 +109,18 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_ReportsCorruptionTrackingCountsInPar2RepairSection()
+    {
+        var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));
+
+        using var environment = JsonDocument.Parse(entries["environment.json"]);
+        var tracking = environment.RootElement.GetProperty("par2Repair").GetProperty("corruptionTracking");
+        Assert.False(tracking.GetProperty("enabled").GetBoolean());
+        Assert.Equal(0, tracking.GetProperty("filesWithCorruptRecords").GetInt32());
+        Assert.Equal(0, tracking.GetProperty("recordedCorruptSegments").GetInt32());
+    }
+
+    [Fact]
     public async Task Pack_ReportsCpuGcAndThreadPoolCountersForBottleneckTriage()
     {
         var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));
@@ -173,6 +185,10 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.Equal(
             1_000_000,
             runtime.GetProperty("concurrentReadMaxStartDistanceBytes").GetInt64());
+        Assert.Equal(0, runtime.GetProperty("sharedStreamAttachHits").GetInt64());
+        Assert.True(runtime.TryGetProperty("sharedStreamRingRetainedBytes", out var ringBytes));
+        Assert.Equal(0, ringBytes.GetInt64());
+        Assert.True(runtime.TryGetProperty("sharedStreamRingRetainedBytesPeak", out _));
     }
 
     [Fact]

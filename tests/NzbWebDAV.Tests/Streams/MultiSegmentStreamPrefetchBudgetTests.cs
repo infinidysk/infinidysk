@@ -626,10 +626,61 @@ public class MultiSegmentStreamPrefetchBudgetTests
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: false,
             CancellationToken.None,
-            fileName: "pipe-budget-retry-window.bin",
+            fileName: "pipe-budget-retry-pipelined.bin",
             readBudget: null,
             exactSegmentSizes: Enumerable.Repeat((long)segmentSize, segmentCount).ToArray(),
             inFlightArticleBudget: budget);
+
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output).WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal(keys.SelectMany(key => segments[key]).ToArray(), output.ToArray());
+        Assert.Equal(0, budget.LeasedBytes);
+        Assert.True(retryAttempts[0] >= 2);
+        Assert.True(client.BodyRequestCounts.GetValueOrDefault("seg-1") >= 2);
+    }
+
+    [Fact]
+    public async Task PipeAccounting_TinyBudget_PipelinedPrefetchWindowRetry_CompletesWithoutDeadlock()
+    {
+        // Same retry-under-saturation shape as the non-pipelined test, on the
+        // DownloadBatchSegment → TryRescue path. Batch width 1 so the producer does
+        // not try to lease a whole window before the consumer can drain — that is a
+        // separate admission issue, not the dispose-then-re-lease stall.
+        const int segmentCount = 4;
+        const int segmentSize = 2_000;
+        var budget = new InFlightArticleBudget(segmentSize + 500);
+        var keys = Enumerable.Range(0, segmentCount).Select(i => $"seg-{i}").ToArray();
+        var segments = keys.ToDictionary(
+            key => key,
+            key => Enumerable.Repeat((byte)(key[^1] - '0'), segmentSize).ToArray());
+        var retryAttempts = new int[1];
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            decodedStreamFactory: (key, bytes) =>
+            {
+                // FakeNntpClient materializes the whole pipelined batch up front. Charging
+                // every body pipe before any lease is released would hang this tiny cap
+                // for reasons unrelated to production BODY occupancy.
+                if (key == "seg-1" && Interlocked.Increment(ref retryAttempts[0]) == 1)
+                    throw new IOException("simulated transient body failure");
+                return new MemoryStream(bytes, writable: false);
+            });
+
+        await using var stream = MultiSegmentStream.Create(
+            keys.AsMemory(),
+            client,
+            articleBufferSize: 4,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "pipe-budget-retry-pipelined.bin",
+            readBudget: null,
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, segmentCount).ToArray(),
+            inFlightArticleBudget: budget,
+            bodyPipelineBatchWidth: 1);
 
         using var output = new MemoryStream();
         await stream.CopyToAsync(output).WaitAsync(TimeSpan.FromSeconds(15));

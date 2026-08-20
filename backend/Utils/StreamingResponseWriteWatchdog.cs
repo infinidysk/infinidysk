@@ -35,36 +35,41 @@ internal sealed class StreamingResponseWriteWatchdog(
         var writeStarted = Stopwatch.GetTimestamp();
         await WriteWithProgressTimeoutAsync(dest, chunk, timeout, readCts, cancellationToken)
             .ConfigureAwait(false);
-        ObserveWrite(chunk.Length, Stopwatch.GetElapsedTime(writeStarted));
+        if (ObserveWrite(chunk.Length, Stopwatch.GetElapsedTime(writeStarted)))
+        {
+            await readCts.CancelAsync().ConfigureAwait(false);
+            throw new StreamingWriteTimeoutException(
+                "Client transferred under 64 KB per timeout window while other streams waited on Article RAM.")
+            {
+                Reason = StreamingWriteTimeoutException.AggregateReclaimReason,
+            };
+        }
     }
 
     /// <summary>
-    /// Records a completed client write. Throws
-    /// <see cref="StreamingWriteTimeoutException"/> when write-side throughput
-    /// stays below one copy chunk per timeout window and the article budget is
-    /// contended. Time spent in <c>ReadAsync</c> is excluded by only counting
-    /// durations passed here.
+    /// Records a completed client write. Returns true when write-side throughput
+    /// stayed below one copy chunk per timeout window and the article budget is
+    /// contended — the caller must cancel the linked read token and throw
+    /// <see cref="StreamingWriteTimeoutException"/>. Time spent in <c>ReadAsync</c>
+    /// is excluded by only counting durations passed here.
     /// </summary>
-    internal void ObserveWrite(int bytes, TimeSpan writeDuration)
+    internal bool ObserveWrite(int bytes, TimeSpan writeDuration)
     {
-        if (timeout <= TimeSpan.Zero) return;
-        if (bytes < 0) return;
+        if (timeout <= TimeSpan.Zero) return false;
+        if (bytes < 0) return false;
 
         _windowBytes += bytes;
         if (writeDuration > TimeSpan.Zero)
             _windowWriteTicks += writeDuration.Ticks;
 
-        if (_windowWriteTicks < timeout.Ticks) return;
+        if (_windowWriteTicks < timeout.Ticks) return false;
 
         if (_windowBytes < CopyChunkBytes && budget is { HasWaiters: true })
-        {
-            readCts.Cancel();
-            throw new StreamingWriteTimeoutException(
-                "Client stopped reading; streaming write timed out.");
-        }
+            return true;
 
         _windowBytes = 0;
         _windowWriteTicks = 0;
+        return false;
     }
 
     /// <summary>
@@ -95,7 +100,10 @@ internal sealed class StreamingResponseWriteWatchdog(
         {
             await readCts.CancelAsync().ConfigureAwait(false);
             throw new StreamingWriteTimeoutException(
-                "Client stopped reading; streaming write timed out.");
+                "Client stopped reading; streaming write timed out.")
+            {
+                Reason = StreamingWriteTimeoutException.PerWriteStallReason,
+            };
         }
     }
 }

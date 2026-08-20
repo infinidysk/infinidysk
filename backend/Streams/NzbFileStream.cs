@@ -25,7 +25,8 @@ public class NzbFileStream(
     string[][]? segmentFallbacks = null,
     InFlightArticleBudget? inFlightArticleBudget = null,
     bool useContainerAwareFill = false,
-    int streamingBodyBatchWidth = 4
+    int streamingBodyBatchWidth = 4,
+    HashSet<string>? knownCorruptSegmentIds = null
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
@@ -333,7 +334,7 @@ public class NzbFileStream(
 
     private const int MaxSeekGuessCorrection = 3;
 
-    private async Task<Stream?> TryGetSeekStreamFast(long rangeStart, CancellationToken ct)
+    internal async Task<Stream?> TryGetSeekStreamFast(long rangeStart, CancellationToken ct)
     {
         var avg = EstimatedSegmentSize;
         if (avg <= 0 || fileSegmentIds.Length == 0) return null;
@@ -491,13 +492,22 @@ public class NzbFileStream(
         return null;
     }
 
-    private static long EstimateSeekTailBytes(long rangeStart, int index, long avg)
+    private long EstimateSeekTailBytes(long rangeStart, int index, long avg)
     {
+        if (_segmentByteRanges is { } ranges && (uint)index < (uint)ranges.Length)
+        {
+            var exactTail = ranges[index].EndExclusive - rangeStart;
+            return exactTail > 0 ? exactTail : ranges[index].Count;
+        }
+
         var segmentStart = (long)index * avg;
         var offset = rangeStart - segmentStart;
         if (offset < 0) offset = 0;
         var tail = avg - offset;
-        return tail > 0 ? tail : 0;
+        // Downward guess correction yields offset >= avg, so tail would be 0 and
+        // LeaseSeekTailAsync would return Empty — leaving the pooled head unbudgeted.
+        // Over-reserve one average segment; Adjust releases the surplus after drain.
+        return tail > 0 ? tail : avg;
     }
 
     private async ValueTask<ArticleByteLease> LeaseSeekTailAsync(long estimate, CancellationToken ct)
@@ -541,7 +551,8 @@ public class NzbFileStream(
             inFlightArticleBudget: inFlightArticleBudget,
             useContainerAwareFill: useContainerAwareFill,
             firstSegmentFileOffset: firstSegmentFileOffset,
-            bodyPipelineBatchWidth: streamingBodyBatchWidth);
+            bodyPipelineBatchWidth: streamingBodyBatchWidth,
+            knownCorruptSegmentIds: knownCorruptSegmentIds);
     }
 
     protected override void Dispose(bool disposing)

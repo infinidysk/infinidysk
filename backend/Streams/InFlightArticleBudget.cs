@@ -69,6 +69,17 @@ public sealed class InFlightArticleBudget
         Stopwatch? waitTimer = null;
         try
         {
+            void RecordCapWaitIfAny()
+            {
+                if (waitTimer is null) return;
+                _latencyTracker?.Record(
+                    providerKey: null,
+                    LatencyPhase.LocalCapWait,
+                    DownloadWorkloadClassifier.Classify(ct),
+                    NntpOperation.Admission,
+                    waitTimer.Elapsed);
+            }
+
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
@@ -78,15 +89,7 @@ public sealed class InFlightArticleBudget
                 // can still race this read; the lock below is the fairness authority.
                 if (waiter is null && Volatile.Read(ref _waiterCount) == 0 && TryLease(bytes))
                 {
-                    if (waitTimer is not null)
-                    {
-                        _latencyTracker?.Record(
-                            providerKey: null,
-                            LatencyPhase.LocalCapWait,
-                            DownloadWorkloadClassifier.Classify(ct),
-                            NntpOperation.Admission,
-                            waitTimer.Elapsed);
-                    }
+                    RecordCapWaitIfAny();
                     return new ArticleByteLease(this, bytes);
                 }
 
@@ -101,7 +104,10 @@ public sealed class InFlightArticleBudget
                         && ReferenceEquals(_waiters.First, waiter.Node);
                     var canTake = isHead || (waiter.Node is null && _waiters.First is null);
                     if (canTake && TryLease(bytes))
+                    {
+                        RecordCapWaitIfAny();
                         return new ArticleByteLease(this, bytes);
+                    }
 
                     if (waiter.Node is null)
                     {

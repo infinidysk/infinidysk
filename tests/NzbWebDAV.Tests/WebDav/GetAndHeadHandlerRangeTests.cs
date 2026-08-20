@@ -69,7 +69,8 @@ public class GetAndHeadHandlerRangeTests
             new ActiveReadRegistry(),
             new ConcurrentReadTracker(),
             new StreamTraceBuffer(100, enabled: false),
-            new StreamingFailureTracker());
+            new StreamingFailureTracker(),
+            new SharedStreamRegistry(new ConfigManager(), new ConcurrentReadTracker()));
 
         var handled = await handler.HandleRequestAsync(context);
 
