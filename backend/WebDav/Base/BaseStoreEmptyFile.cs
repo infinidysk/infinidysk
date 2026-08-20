@@ -9,6 +9,8 @@ public class BaseStoreEmptyFile(string name) : BaseStoreReadonlyItem
 
     public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult<Stream>(new MemoryStream([]));
+        return Task.FromResult<Stream>(CreateContentStream());
     }
+
+    private static MemoryStream CreateContentStream() => new([]);
 }

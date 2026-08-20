@@ -278,8 +278,9 @@ public class NntpClientCheckAllSegmentsTests
             result = item;
 
         Assert.NotNull(result);
-        Assert.False(result!.Found);
-        Assert.Null(result.Stream);
+        var body = result ?? throw new InvalidOperationException("expected result");
+        Assert.False(body.Found);
+        Assert.Null(body.Stream);
     }
 
     private sealed class TrackingPipelinedStatClient(

@@ -55,7 +55,7 @@ public sealed partial class LhaStream<TDecoderConfig>
 
     private async ValueTask<byte> ReadCodeLengthAsync(CancellationToken cancellationToken)
     {
-        byte len = (byte)await _bitReader.ReadBitsAsync(3, cancellationToken).ConfigureAwait(false);
+        var len = await _bitReader.ReadBitsAsync(3, cancellationToken).ConfigureAwait(false);
         if (len == 7)
         {
             while (await _bitReader.ReadBitAsync(cancellationToken).ConfigureAwait(false) != 0)
@@ -67,7 +67,7 @@ public sealed partial class LhaStream<TDecoderConfig>
                 }
             }
         }
-        return len;
+        return (byte)len;
     }
 
     private async ValueTask<int> ReadCodeSkipAsync(

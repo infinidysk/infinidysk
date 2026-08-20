@@ -52,7 +52,7 @@ public class NestedRarExpansionStepTests
 
         var expanded = await NestedRarExpansionStep.ExpandSegmentsAsync(
             [nested],
-            (_, _) => Task.FromResult<Stream>(new MemoryStream(nestedRar, writable: false)),
+            (_, _) => Task.FromResult(Frozen(nestedRar)),
             password: null,
             CancellationToken.None);
 
@@ -78,7 +78,7 @@ public class NestedRarExpansionStepTests
 
         var expanded = await NestedRarExpansionStep.ExpandSegmentsAsync(
             [nested],
-            (_, _) => Task.FromResult<Stream>(new MemoryStream(compressedNested, writable: false)),
+            (_, _) => Task.FromResult(Frozen(compressedNested)),
             password: null,
             CancellationToken.None);
 
@@ -136,7 +136,7 @@ public class NestedRarExpansionStepTests
         // Depth 1: outer.rar → mid.rar (still rar, stop)
         var depthOne = await NestedRarExpansionStep.ExpandSegmentsAsync(
             [outer],
-            (_, _) => Task.FromResult<Stream>(new MemoryStream(outerNested, writable: false)),
+            (_, _) => Task.FromResult(Frozen(outerNested)),
             password: null,
             CancellationToken.None,
             maxDepth: 1);
@@ -150,19 +150,9 @@ public class NestedRarExpansionStepTests
             {
                 opens++;
                 if (opens == 1)
-                    return Task.FromResult<Stream>(new MemoryStream(outerNested, writable: false));
+                    return Task.FromResult(Frozen(outerNested));
 
-                var composed = new MemoryStream();
-                foreach (var segment in segments)
-                {
-                    var slice = outerNested.AsSpan(
-                        (int)segment.ByteRangeWithinPart.StartInclusive,
-                        (int)segment.ByteRangeWithinPart.Count);
-                    composed.Write(slice);
-                }
-
-                composed.Position = 0;
-                return Task.FromResult<Stream>(composed);
+                return Task.FromResult(ComposeSlices(outerNested, segments));
             },
             password: null,
             CancellationToken.None,
@@ -192,13 +182,31 @@ public class NestedRarExpansionStepTests
                 other,
                 new RarProcessor.Result { StoredFileSegments = [nested] },
             ],
-            (_, _) => Task.FromResult<Stream>(new MemoryStream(nestedRar, writable: false)),
+            (_, _) => Task.FromResult(Frozen(nestedRar)),
             password: null,
             CancellationToken.None);
 
         Assert.Contains(other, results);
         var rar = Assert.Single(results.OfType<RarProcessor.Result>());
         Assert.Equal("movie.mkv", Assert.Single(rar.StoredFileSegments).PathWithinArchive);
+    }
+
+    private static Stream Frozen(byte[] bytes) => new MemoryStream(bytes, writable: false);
+
+    private static Stream ComposeSlices(
+        byte[] source, IEnumerable<RarProcessor.StoredFileSegment> segments)
+    {
+        var composed = new MemoryStream();
+        foreach (var segment in segments)
+        {
+            var slice = source.AsSpan(
+                (int)segment.ByteRangeWithinPart.StartInclusive,
+                (int)segment.ByteRangeWithinPart.Count);
+            composed.Write(slice);
+        }
+
+        composed.Position = 0;
+        return composed;
     }
 
     private sealed class FileProcessorResultMarker : BaseProcessor.Result;

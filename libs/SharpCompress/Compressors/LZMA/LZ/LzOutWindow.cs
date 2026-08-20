@@ -28,7 +28,7 @@ internal partial class OutWindow : IDisposable
         {
             throw new InvalidFormatException($"LZMA: invalid dictionary size {windowSize}");
         }
-        if (_windowSize != windowSize)
+        if (_buffer is null || _windowSize != windowSize)
         {
             if (_buffer is not null)
             {

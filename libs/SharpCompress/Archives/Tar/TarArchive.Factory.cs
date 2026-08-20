@@ -172,7 +172,7 @@ public partial class TarArchive
         try
         {
             var tarHeader = new TarHeader(new ArchiveEncoding());
-            var reader = new BinaryReader(stream, Encoding.UTF8, false);
+            using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
             var readSucceeded = tarHeader.Read(reader);
             var isEmptyArchive =
                 tarHeader.Name?.Length == 0

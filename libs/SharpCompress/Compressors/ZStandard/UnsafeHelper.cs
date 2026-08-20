@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -57,7 +58,9 @@ public static unsafe class UnsafeHelper
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void assert(bool condition, string? message = null)
+    public static void assert(
+        [DoesNotReturnIf(false)] bool condition,
+        string? message = null)
     {
         if (!condition)
         {

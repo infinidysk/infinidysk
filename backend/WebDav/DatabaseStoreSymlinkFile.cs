@@ -17,8 +17,10 @@ public class DatabaseStoreSymlinkFile(DavItem davFile, ConfigManager configManag
 
     public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult<Stream>(new MemoryStream(ContentBytes));
+        return Task.FromResult<Stream>(CreateContentStream());
     }
+
+    private MemoryStream CreateContentStream() => new(ContentBytes);
 
     private string GetTargetPath()
     {

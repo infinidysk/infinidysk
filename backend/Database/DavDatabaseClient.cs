@@ -212,14 +212,16 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 .FirstOrDefaultAsync(q => q.Id == queueItem.Id, ct)
                 .ConfigureAwait(false);
 
-            queueNzbStream = queueNzbContents != null
-                ? new MemoryStream(Encoding.UTF8.GetBytes(queueNzbContents.NzbContents))
-                : null;
+            if (queueNzbContents != null)
+                return (queueItem, CreateNzbContentStream(queueNzbContents.NzbContents));
         }
 
         // return
         return (queueItem, queueNzbStream);
     }
+
+    private static MemoryStream CreateNzbContentStream(string contents) =>
+        new(Encoding.UTF8.GetBytes(contents));
 
     public Task<DateTime?> GetNextQueueItemPauseUntil(CancellationToken ct = default)
     {

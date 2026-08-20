@@ -19,7 +19,7 @@ internal static partial class TarHeaderFactory
             TarHeader? header = null;
             try
             {
-                var reader = new BinaryReader(stream, archiveEncoding.Default, leaveOpen: false);
+                using var reader = new BinaryReader(stream, archiveEncoding.Default, leaveOpen: true);
                 header = new TarHeader(archiveEncoding);
 
                 if (!header.Read(reader, globalPaxMetadata))

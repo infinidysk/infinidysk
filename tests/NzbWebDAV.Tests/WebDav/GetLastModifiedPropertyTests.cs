@@ -86,7 +86,9 @@ public class GetLastModifiedPropertyTests
         public override DateTime CreatedAt => createdAt;
 
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
-            => Task.FromResult<Stream>(new MemoryStream([]));
+            => Task.FromResult(CreateEmptyContentStream());
+
+        private static Stream CreateEmptyContentStream() => new MemoryStream([]);
     }
 
     private sealed class StubStoreCollection(DateTime createdAt) : BaseStoreReadonlyCollection

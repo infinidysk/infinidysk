@@ -65,9 +65,14 @@ public class ZipEntry : Entry
 
     private ZipCompressionMethod GetActualCompressionMethod()
     {
-        if (_filePart?.Header.CompressionMethod != ZipCompressionMethod.WinzipAes)
+        if (_filePart is null)
         {
-            return _filePart?.Header.CompressionMethod ?? ZipCompressionMethod.None;
+            return ZipCompressionMethod.None;
+        }
+
+        if (_filePart.Header.CompressionMethod != ZipCompressionMethod.WinzipAes)
+        {
+            return _filePart.Header.CompressionMethod;
         }
 
         // For WinZip AES, the actual compression method is stored in the extra data

@@ -251,7 +251,7 @@ public partial class SevenZipWriter
                 Name = filename,
                 ModificationTime = modificationTime,
                 IsDirectory = false,
-                IsEmpty = isEmpty || actuallyEmpty,
+                IsEmpty = actuallyEmpty,
             }
         );
     }

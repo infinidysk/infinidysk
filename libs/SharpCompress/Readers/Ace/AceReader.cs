@@ -94,7 +94,7 @@ public abstract partial class AceReader : AbstractReader<AceEntry, AceVolume>
             yield break;
         }
 
-        if (mainHeader?.IsMultiVolume == true)
+        if (mainHeader.IsMultiVolume)
         {
             throw new MultiVolumeExtractionException("Multi volumes are currently not supported");
         }

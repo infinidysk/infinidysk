@@ -7,41 +7,58 @@ public static class DebounceUtil
     public static Action<Action> CreateDebounce(TimeSpan timespan)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(timespan, TimeSpan.Zero);
-        var synchronizationLock = new object();
-        DateTime lastInvocationTime = default;
-        var isFlushScheduled = false;
-        Action? pendingAction = null;
-        Timer? flushTimer = null;
+        var debouncer = new Debouncer(timespan);
+        return debouncer.Invoke;
+    }
 
-        return actionToInvoke =>
+    public static Action<Action> RunOnlyOnce()
+    {
+        var isAlreadyRan = false;
+        return actionToMaybeInvoke =>
+        {
+            if (isAlreadyRan) return;
+            isAlreadyRan = true;
+            actionToMaybeInvoke?.Invoke();
+        };
+    }
+
+    private sealed class Debouncer(TimeSpan timespan)
+    {
+        private readonly object _synchronizationLock = new();
+        private DateTime _lastInvocationTime;
+        private bool _isFlushScheduled;
+        private Action? _pendingAction;
+        private Timer? _flushTimer;
+
+        public void Invoke(Action actionToInvoke)
         {
             Action? invokeNow = null;
-            lock (synchronizationLock)
+            lock (_synchronizationLock)
             {
                 var now = DateTime.Now;
-                var elapsed = now - lastInvocationTime;
-                if (elapsed >= timespan && !isFlushScheduled)
+                var elapsed = now - _lastInvocationTime;
+                if (elapsed >= timespan && !_isFlushScheduled)
                 {
-                    lastInvocationTime = now;
+                    _lastInvocationTime = now;
                     invokeNow = actionToInvoke;
                 }
                 else
                 {
-                    pendingAction = actionToInvoke;
-                    if (!isFlushScheduled)
+                    _pendingAction = actionToInvoke;
+                    if (!_isFlushScheduled)
                     {
-                        isFlushScheduled = true;
+                        _isFlushScheduled = true;
                         var delay = timespan - elapsed;
                         if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
-                        flushTimer ??= new Timer(_ =>
+                        _flushTimer ??= new Timer(_ =>
                         {
                             Action? trailingAction;
-                            lock (synchronizationLock)
+                            lock (_synchronizationLock)
                             {
-                                isFlushScheduled = false;
-                                lastInvocationTime = DateTime.Now;
-                                trailingAction = pendingAction;
-                                pendingAction = null;
+                                _isFlushScheduled = false;
+                                _lastInvocationTime = DateTime.Now;
+                                trailingAction = _pendingAction;
+                                _pendingAction = null;
                             }
 
                             try
@@ -53,7 +70,7 @@ public static class DebounceUtil
                                 Log.Warning(e, "Debounced trailing action failed");
                             }
                         });
-                        flushTimer.Change(delay, Timeout.InfiniteTimeSpan);
+                        _flushTimer.Change(delay, Timeout.InfiniteTimeSpan);
                     }
                 }
             }
@@ -66,17 +83,6 @@ public static class DebounceUtil
             {
                 Log.Warning(e, "Debounced action failed");
             }
-        };
-    }
-
-    public static Action<Action> RunOnlyOnce()
-    {
-        var isAlreadyRan = false;
-        return actionToMaybeInvoke =>
-        {
-            if (isAlreadyRan) return;
-            isAlreadyRan = true;
-            actionToMaybeInvoke?.Invoke();
-        };
+        }
     }
 }

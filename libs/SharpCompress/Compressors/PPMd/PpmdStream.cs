@@ -194,9 +194,10 @@ public class PpmdStream : Stream, IAsyncDisposable
         _isDisposed = true;
         if (_compress)
         {
+            using var remainder = new MemoryStream();
             await _model
                 .NotNull()
-                .EncodeBlockAsync(_stream, new MemoryStream(), true)
+                .EncodeBlockAsync(_stream, remainder, true)
                 .ConfigureAwait(false);
         }
         _modelH?.Dispose();
@@ -444,7 +445,8 @@ public class PpmdStream : Stream, IAsyncDisposable
     {
         if (_compress)
         {
-            _model.NotNull().EncodeBlock(_stream, new MemoryStream(buffer, offset, count), false);
+            using var block = new MemoryStream(buffer, offset, count);
+            _model.NotNull().EncodeBlock(_stream, block, false);
         }
     }
 
@@ -458,11 +460,12 @@ public class PpmdStream : Stream, IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (_compress)
         {
+            using var block = new MemoryStream(buffer, offset, count);
             await _model
                 .NotNull()
                 .EncodeBlockAsync(
                     _stream,
-                    new MemoryStream(buffer, offset, count),
+                    block,
                     false,
                     cancellationToken
                 )
@@ -478,11 +481,12 @@ public class PpmdStream : Stream, IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (_compress)
         {
+            using var block = new MemoryStream(buffer.ToArray());
             await _model
                 .NotNull()
                 .EncodeBlockAsync(
                     _stream,
-                    new MemoryStream(buffer.ToArray()),
+                    block,
                     false,
                     cancellationToken
                 )

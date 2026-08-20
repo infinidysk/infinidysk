@@ -273,6 +273,7 @@ public sealed class DeleteWebdavItemControllerTests : IAsyncLifetime
     [Fact]
     public async Task DeleteAsync_InProgressQueueItem_Returns409()
     {
+        using var cts = new CancellationTokenSource();
         var (jobDir, _, _) = await SeedContentReleaseAsync(category: "tv", jobName: "Show.S01E01");
         AddInProgressForTest(
             _queueManager,
@@ -287,7 +288,8 @@ public sealed class DeleteWebdavItemControllerTests : IAsyncLifetime
                 Category = "tv",
                 Priority = QueueItem.PriorityOption.Normal,
                 PostProcessing = QueueItem.PostProcessingOption.None,
-            });
+            },
+            cts);
 
         var result = await InvokeDeleteAsync(jobDir.Path);
         Assert.Equal(409, GetStatusCode(result));
@@ -557,7 +559,8 @@ public sealed class DeleteWebdavItemControllerTests : IAsyncLifetime
         return Assert.IsType<T>(objectResult.Value);
     }
 
-    private static void AddInProgressForTest(QueueManager queueManager, QueueItem queueItem)
+    private static void AddInProgressForTest(
+        QueueManager queueManager, QueueItem queueItem, CancellationTokenSource cancellation)
     {
         var managerType = typeof(QueueManager);
         var inProgressField = managerType.GetField("_inProgress", BindingFlags.Instance | BindingFlags.NonPublic)
@@ -573,7 +576,7 @@ public sealed class DeleteWebdavItemControllerTests : IAsyncLifetime
         itemType.GetProperty("ProgressPercentage")!.SetValue(inProgressItem, 10);
         itemType.GetProperty("ProcessingTask")!.SetValue(inProgressItem, Task.CompletedTask);
         itemType.GetProperty("CompletionSignal")!.SetValue(inProgressItem, new TaskCompletionSource());
-        itemType.GetProperty("CancellationTokenSource")!.SetValue(inProgressItem, new CancellationTokenSource());
+        itemType.GetProperty("CancellationTokenSource")!.SetValue(inProgressItem, cancellation);
         itemType.GetProperty("QueueDownloadContext")!.SetValue(inProgressItem, new QueueDownloadContext
         {
             IsPrimary = true,

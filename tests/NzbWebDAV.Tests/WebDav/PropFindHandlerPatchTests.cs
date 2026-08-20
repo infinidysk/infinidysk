@@ -241,15 +241,16 @@ public class PropFindHandlerPatchTests
         bool hasStarted = false,
         string? contentType = null)
     {
-        var body = new MemoryStream();
         var context = new DefaultHttpContext();
         context.Features.Set<IHttpResponseFeature>(new TestHttpResponseFeature(hasStarted)
         {
             StatusCode = statusCode
         });
-        context.Response.Body = body;
+        context.Response.Body = CreateResponseBody();
         context.Response.ContentType = contentType;
-        return (context, body);
+        return (context, (MemoryStream)context.Response.Body);
+
+        static MemoryStream CreateResponseBody() => new();
     }
 
     private sealed class TestHttpResponseFeature(bool hasStarted) : IHttpResponseFeature

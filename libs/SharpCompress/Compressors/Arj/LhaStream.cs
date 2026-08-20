@@ -79,7 +79,7 @@ public sealed partial class LhaStream<TDecoderConfig> : Stream
 
     private byte ReadCodeLength()
     {
-        byte len = (byte)_bitReader.ReadBits(3);
+        var len = _bitReader.ReadBits(3);
         if (len == 7)
         {
             while (_bitReader.ReadBit() != 0)
@@ -91,7 +91,7 @@ public sealed partial class LhaStream<TDecoderConfig> : Stream
                 }
             }
         }
-        return len;
+        return (byte)len;
     }
 
     private int ReadCodeSkip(int skipRange)

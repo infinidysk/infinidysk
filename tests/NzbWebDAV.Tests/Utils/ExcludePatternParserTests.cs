@@ -10,8 +10,9 @@ public class ExcludePatternParserTests
     {
         var parsed = ExcludePatternParser.Parse(@"\.iso$");
         Assert.NotNull(parsed);
-        Assert.Matches(parsed!.Value.Regex, "FILE.ISO");
-        Assert.DoesNotMatch(parsed!.Value.Regex, "FILE.mkv");
+        var pattern = parsed ?? throw new InvalidOperationException("expected pattern");
+        Assert.Matches(pattern.Regex, "FILE.ISO");
+        Assert.DoesNotMatch(pattern.Regex, "FILE.mkv");
     }
 
     [Fact]
@@ -21,8 +22,10 @@ public class ExcludePatternParserTests
         var wrapped = ExcludePatternParser.Parse(@"/\.(iso|img)$/i");
         Assert.NotNull(bare);
         Assert.NotNull(wrapped);
-        Assert.Equal(bare!.Value.Key, wrapped!.Value.Key);
-        Assert.Matches(wrapped!.Value.Regex, "Movie.ISO");
+        var parsedBare = bare ?? throw new InvalidOperationException("expected bare pattern");
+        var parsedWrapped = wrapped ?? throw new InvalidOperationException("expected wrapped pattern");
+        Assert.Equal(parsedBare.Key, parsedWrapped.Key);
+        Assert.Matches(parsedWrapped.Regex, "Movie.ISO");
     }
 
     [Fact]
@@ -32,9 +35,11 @@ public class ExcludePatternParserTests
         var sm = ExcludePatternParser.Parse("/x/sm");
         Assert.NotNull(ms);
         Assert.NotNull(sm);
-        Assert.Equal(ms!.Value.Key, sm!.Value.Key);
-        Assert.True((ms!.Value.Regex.Options & RegexOptions.Multiline) != 0);
-        Assert.True((ms.Value.Regex.Options & RegexOptions.Singleline) != 0);
+        var parsedMs = ms ?? throw new InvalidOperationException("expected ms pattern");
+        var parsedSm = sm ?? throw new InvalidOperationException("expected sm pattern");
+        Assert.Equal(parsedMs.Key, parsedSm.Key);
+        Assert.True((parsedMs.Regex.Options & RegexOptions.Multiline) != 0);
+        Assert.True((parsedMs.Regex.Options & RegexOptions.Singleline) != 0);
     }
 
     [Theory]
@@ -53,7 +58,8 @@ public class ExcludePatternParserTests
     {
         var parsed = ExcludePatternParser.Parse("/foo/gu");
         Assert.NotNull(parsed);
-        Assert.Equal("foo ", parsed!.Value.Key);
-        Assert.Matches(parsed!.Value.Regex, "FOO");
+        var pattern = parsed ?? throw new InvalidOperationException("expected pattern");
+        Assert.Equal("foo ", pattern.Key);
+        Assert.Matches(pattern.Regex, "FOO");
     }
 }

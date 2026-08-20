@@ -94,8 +94,11 @@ public static partial class ADCBase
     /// <param name="output">Buffer to hold decompressed data</param>
     /// <param name="bufferSize">Max size for decompressed data</param>
     /// <returns>How many bytes are stored on <paramref name="output"/></returns>
-    public static int Decompress(byte[] input, out byte[]? output, int bufferSize = 262144) =>
-        Decompress(new MemoryStream(input), out output, bufferSize);
+    public static int Decompress(byte[] input, out byte[]? output, int bufferSize = 262144)
+    {
+        using var stream = new MemoryStream(input);
+        return Decompress(stream, out output, bufferSize);
+    }
 
     // Async methods moved to ADCBase.Async.cs
 

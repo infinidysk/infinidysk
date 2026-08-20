@@ -17,12 +17,13 @@ public sealed class AsyncBinaryReader : IDisposable, IAsyncDisposable
 
     public AsyncBinaryReader(Stream stream, bool leaveOpen = false)
     {
+        ArgumentNullException.ThrowIfNull(stream);
         if (!stream.CanRead)
         {
             throw new ArgumentException("Stream must be readable.");
         }
 
-        _originalStream = stream ?? throw new ArgumentNullException(nameof(stream));
+        _originalStream = stream;
         _leaveOpen = leaveOpen;
         _stream = stream;
     }

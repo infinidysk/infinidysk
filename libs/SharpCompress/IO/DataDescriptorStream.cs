@@ -58,7 +58,7 @@ public class DataDescriptorStream : Stream, IStreamStack
 
     private bool validate_data_descriptor(Stream stream, long size)
     {
-        var br = new BinaryReader(stream);
+        using var br = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
         br.ReadUInt32();
         br.ReadUInt32(); // CRC32 can be checked if we calculate it
         var compressedSize = br.ReadUInt32();
@@ -106,7 +106,7 @@ public class DataDescriptorStream : Stream, IStreamStack
 
                     if (read - i > _dataDescriptorSize)
                     {
-                        var check = new MemoryStream(
+                        using var check = new MemoryStream(
                             buffer.Slice(i - 3, (int)_dataDescriptorSize).ToArray()
                         );
                         _done = validate_data_descriptor(
@@ -172,7 +172,7 @@ public class DataDescriptorStream : Stream, IStreamStack
 
                     if (read - i > _dataDescriptorSize)
                     {
-                        var check = new MemoryStream(
+                        using var check = new MemoryStream(
                             buffer.Slice(i - 3, (int)_dataDescriptorSize).ToArray()
                         );
                         _done = validate_data_descriptor(

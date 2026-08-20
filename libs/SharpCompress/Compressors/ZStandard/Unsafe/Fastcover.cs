@@ -560,7 +560,6 @@ public static unsafe partial class Methods
                 nbFinalizeSamples,
                 coverParams.zParams
             );
-            if (!ERR_isError(dictionarySize)) { }
 
             FASTCOVER_ctx_destroy(&ctx);
             free(segmentFreqs);

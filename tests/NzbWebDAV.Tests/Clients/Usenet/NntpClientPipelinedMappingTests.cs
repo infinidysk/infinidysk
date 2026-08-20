@@ -118,9 +118,10 @@ public class NntpClientPipelinedMappingTests
             result = item;
 
         Assert.NotNull(result);
-        Assert.False(result!.Found);
-        Assert.Null(result.Stream);
-        Assert.Equal("expected@example.com", result.SegmentId);
+        var body = result ?? throw new InvalidOperationException("expected result");
+        Assert.False(body.Found);
+        Assert.Null(body.Stream);
+        Assert.Equal("expected@example.com", body.SegmentId);
     }
 
     [Fact]
@@ -137,9 +138,11 @@ public class NntpClientPipelinedMappingTests
             result = item;
 
         Assert.NotNull(result);
-        Assert.True(result!.Found);
-        Assert.NotNull(result.Stream);
-        await result.Stream!.DisposeAsync();
+        var body = result ?? throw new InvalidOperationException("expected result");
+        Assert.True(body.Found);
+        Assert.NotNull(body.Stream);
+        var stream = body.Stream ?? throw new InvalidOperationException("expected stream");
+        await stream.DisposeAsync();
     }
 
     private sealed class MismatchedSegmentNntpClient(

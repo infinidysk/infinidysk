@@ -31,16 +31,18 @@ namespace NzbWebDAV.Services.Repair;
 internal static class DavNzbFileBlobUpdater
 {
     private const int StripeCount = 32;
-    private static readonly SemaphoreSlim[] Stripes = CreateStripes();
+    private static readonly SemaphoreSlim[] Stripes =
+    [
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+    ];
     private static readonly ConcurrentDictionary<Guid, Guid> LatestBlobIds = new();
-
-    private static SemaphoreSlim[] CreateStripes()
-    {
-        var stripes = new SemaphoreSlim[StripeCount];
-        for (var i = 0; i < stripes.Length; i++)
-            stripes[i] = new SemaphoreSlim(1, 1);
-        return stripes;
-    }
 
     private static SemaphoreSlim StripeFor(Guid itemId)
     {

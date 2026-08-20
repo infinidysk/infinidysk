@@ -196,7 +196,7 @@ internal class CryptKey5 : ICryptKey
 
     private static ICryptoTransform CreateDecryptor(byte[] aesKey, byte[] iv)
     {
-        var aes = Aes.Create();
+        using var aes = Aes.Create();
         aes.KeySize = AES_256;
         aes.Mode = CipherMode.CBC;
         aes.Padding = PaddingMode.None;

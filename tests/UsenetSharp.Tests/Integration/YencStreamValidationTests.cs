@@ -31,7 +31,8 @@ public class YencStreamValidationTests
         var cancellationToken = timeoutSource.Token;
 
         // Connect both clients once
-        var usenetClient = new NntpClient(new NntpConnection());
+        using var connection = new NntpConnection();
+        var usenetClient = new NntpClient(connection);
         await usenetClient.ConnectAsync(Credentials.Host, 563, true);
         usenetClient.Authenticate(Credentials.Username, Credentials.Password);
 
@@ -121,7 +122,8 @@ public class YencStreamValidationTests
 
         // Decode with Usenet package
         byte[] usenetPackageDecoded;
-        var usenetClient = new NntpClient(new NntpConnection());
+        using var connection = new NntpConnection();
+        var usenetClient = new NntpClient(connection);
         try
         {
             await usenetClient.ConnectAsync(Credentials.Host, 563, true);

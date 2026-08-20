@@ -316,8 +316,8 @@ public class ZipArchiveTests : ArchiveTests
         using (var arc = ZipArchive.CreateArchive())
         {
             var str = "test.txt";
-            var source = new MemoryStream(Encoding.UTF8.GetBytes(str));
-            arc.AddEntry("test.txt", source, true, source.Length);
+            var bytes = Encoding.UTF8.GetBytes(str);
+            arc.AddEntry("test.txt", Frozen(bytes), true, bytes.Length);
             arc.SaveTo(scratchPath1, new ZipWriterOptions(CompressionType.Deflate));
             arc.SaveTo(scratchPath2, new ZipWriterOptions(CompressionType.Deflate));
         }
@@ -1113,4 +1113,6 @@ public class ZipArchiveTests : ArchiveTests
             remaining -= chunk;
         }
     }
+
+    private static Stream Frozen(byte[] bytes) => new MemoryStream(bytes);
 }

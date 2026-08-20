@@ -52,6 +52,5 @@ internal struct CStreamSwitch : IDisposable
             _needRemove = true;
             _active = true;
         }
-        else { }
     }
 }

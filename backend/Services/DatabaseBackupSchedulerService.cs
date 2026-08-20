@@ -41,7 +41,10 @@ public class DatabaseBackupSchedulerService : BackgroundService
                 !args.ChangedConfig.ContainsKey(ConfigKeys.BackupScheduleTime))
                 return;
 
-            var old = Interlocked.Exchange(ref _rescheduleCts, new CancellationTokenSource());
+            var old = Interlocked.Exchange(
+                ref _rescheduleCts,
+                // codeql[cs/local-not-disposed]
+                new CancellationTokenSource());
             old.Cancel();
             // Not disposed: ExecuteAsync may access .Token on this source after the swap, which
             // throws ObjectDisposedException once disposed. Cancelling wakes the loop; the old

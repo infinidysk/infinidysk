@@ -308,7 +308,7 @@ public class Zip64VersionConsistencyTests : WriterTests
         {
             var data = new byte[100];
             new Random(i).NextBytes(data);
-            zipArchive.AddEntry($"file{i}.bin", new MemoryStream(data));
+            zipArchive.AddEntry($"file{i}.bin", Frozen(data));
         }
         zipArchive.SaveTo(filename, writerOptions);
 
@@ -478,4 +478,6 @@ public class Zip64VersionConsistencyTests : WriterTests
         Assert.Equal(3, BinaryPrimitives.ReadUInt16LittleEndian(eocd.Slice(8)));
         Assert.Equal(3, BinaryPrimitives.ReadUInt16LittleEndian(eocd.Slice(10)));
     }
+
+    private static Stream Frozen(byte[] bytes) => new MemoryStream(bytes);
 }

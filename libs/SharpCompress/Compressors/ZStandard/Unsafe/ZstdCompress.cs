@@ -127,6 +127,7 @@ public static unsafe partial class Methods
                 &cctx->workspace,
                 (nuint)(
                     (
+                        // codeql[cs/constant-condition]
                         (8 << 10) + 512 + sizeof(uint) * (52 + 2) > 8208
                             ? (8 << 10) + 512 + sizeof(uint) * (52 + 2)
                             : 8208
@@ -149,11 +150,13 @@ public static unsafe partial class Methods
         );
         cctx->tmpWorkspace = ZSTD_cwksp_reserve_object(
             &cctx->workspace,
+            // codeql[cs/constant-condition]
             (8 << 10) + 512 + sizeof(uint) * (52 + 2) > 8208
                 ? (8 << 10) + 512 + sizeof(uint) * (52 + 2)
                 : 8208
         );
         cctx->tmpWkspSize =
+            // codeql[cs/constant-condition]
             (8 << 10) + 512 + sizeof(uint) * (52 + 2) > 8208
                 ? (8 << 10) + 512 + sizeof(uint) * (52 + 2)
                 : 8208;
@@ -2533,6 +2536,7 @@ public static unsafe partial class Methods
             + ZSTD_cwksp_aligned64_alloc_size(maxNbSeq * (nuint)sizeof(SeqDef_s))
             + 3 * ZSTD_cwksp_alloc_size(maxNbSeq * sizeof(byte));
         nuint tmpWorkSpace = ZSTD_cwksp_alloc_size(
+            // codeql[cs/constant-condition]
             (8 << 10) + 512 + sizeof(uint) * (52 + 2) > 8208
                 ? (8 << 10) + 512 + sizeof(uint) * (52 + 2)
                 : 8208
@@ -3190,6 +3194,7 @@ public static unsafe partial class Methods
 
                     zc->tmpWorkspace = ZSTD_cwksp_reserve_object(
                         ws,
+                        // codeql[cs/constant-condition]
                         (8 << 10) + 512 + sizeof(uint) * (52 + 2) > 8208
                             ? (8 << 10) + 512 + sizeof(uint) * (52 + 2)
                             : 8208
@@ -3202,6 +3207,7 @@ public static unsafe partial class Methods
                     }
 
                     zc->tmpWkspSize =
+                        // codeql[cs/constant-condition]
                         (8 << 10) + 512 + sizeof(uint) * (52 + 2) > 8208
                             ? (8 << 10) + 512 + sizeof(uint) * (52 + 2)
                             : 8208;

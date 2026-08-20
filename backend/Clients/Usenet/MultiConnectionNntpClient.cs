@@ -594,7 +594,7 @@ public class MultiConnectionNntpClient(
             catch (Exception e) when (e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
-                var wasReused = connectionLock?.WasReused ?? false;
+                var wasReused = connectionLock.WasReused;
                 // STAT, HEAD, and DATE failures do not feed a closed circuit because their
                 // successes intentionally do not reset its BODY failure sampling window.
                 if (!wasReused && IsBodyCommand(name))

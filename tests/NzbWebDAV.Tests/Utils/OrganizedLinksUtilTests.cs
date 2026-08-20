@@ -31,8 +31,9 @@ public class OrganizedLinksUtilTests
         var link = OrganizedLinksUtil.GetDavItemLink(symlink, "/mnt/nzbdav");
 
         Assert.NotNull(link);
-        Assert.Equal(id, link!.Value.DavItemId);
-        Assert.Equal("/library/movie.mkv", link.Value.LinkPath);
+        var parsed = link ?? throw new InvalidOperationException("expected link");
+        Assert.Equal(id, parsed.DavItemId);
+        Assert.Equal("/library/movie.mkv", parsed.LinkPath);
     }
 
     [Fact]
@@ -76,7 +77,8 @@ public class OrganizedLinksUtilTests
         var link = OrganizedLinksUtil.GetDavItemLink(strm);
 
         Assert.NotNull(link);
-        Assert.Equal(id, link!.Value.DavItemId);
-        Assert.Equal("/library/movie.strm", link.Value.LinkPath);
+        var parsed = link ?? throw new InvalidOperationException("expected link");
+        Assert.Equal(id, parsed.DavItemId);
+        Assert.Equal("/library/movie.strm", parsed.LinkPath);
     }
 }

@@ -147,24 +147,26 @@ public class StreamTraceBufferTests
         var second = buffer.RangeOpen(session, "/view/a.mkv", "GET", 100, 199, 1000, null, null);
         Assert.NotNull(first);
         Assert.NotNull(second);
-        Assert.NotEqual(first!.Value.Generation, second!.Value.Generation);
+        var firstRange = first ?? throw new InvalidOperationException("expected first range");
+        var secondRange = second ?? throw new InvalidOperationException("expected second range");
+        Assert.NotEqual(firstRange.Generation, secondRange.Generation);
 
-        buffer.AddFetchWait(first, TimeSpan.FromMilliseconds(40));
-        buffer.AddFetchWait(second, TimeSpan.FromMilliseconds(90));
+        buffer.AddFetchWait(firstRange, TimeSpan.FromMilliseconds(40));
+        buffer.AddFetchWait(secondRange, TimeSpan.FromMilliseconds(90));
 
         // End in reverse open order.
-        buffer.RangeEnd(session, second, ReadSession.EndReasonCode.Completed, 100);
-        buffer.RangeEnd(session, first, ReadSession.EndReasonCode.Aborted, 50);
+        buffer.RangeEnd(session, secondRange, ReadSession.EndReasonCode.Completed, 100);
+        buffer.RangeEnd(session, firstRange, ReadSession.EndReasonCode.Aborted, 50);
 
         var events = buffer.GetSessionEvents(session);
         var opens = events.Where(e => e.Kind == StreamTraceKind.RangeOpen.ToString()).ToList();
         var ends = events.Where(e => e.Kind == StreamTraceKind.RangeEnd.ToString()).ToList();
 
-        Assert.Equal(first!.Value.Generation, opens[0].RangeGeneration);
-        Assert.Equal(second!.Value.Generation, opens[1].RangeGeneration);
-        Assert.Equal(second.Value.Generation, ends[0].RangeGeneration);
+        Assert.Equal(firstRange.Generation, opens[0].RangeGeneration);
+        Assert.Equal(secondRange.Generation, opens[1].RangeGeneration);
+        Assert.Equal(secondRange.Generation, ends[0].RangeGeneration);
         Assert.Equal(90, ends[0].ProviderWaitMs);
-        Assert.Equal(first.Value.Generation, ends[1].RangeGeneration);
+        Assert.Equal(firstRange.Generation, ends[1].RangeGeneration);
         Assert.Equal(40, ends[1].ProviderWaitMs);
 
         var json = JsonSerializer.Serialize(ends[0]);

@@ -82,8 +82,9 @@ public class RarUncompressedSizeUnknownTests
         }
 
         Assert.NotNull(first);
-        Assert.False(first!.IsUncompressedSizeUnknown);
-        Assert.NotEqual(long.MaxValue, first.UncompressedSize);
+        var fileHeader = first ?? throw new InvalidOperationException("expected file header");
+        Assert.False(fileHeader.IsUncompressedSizeUnknown);
+        Assert.NotEqual(long.MaxValue, fileHeader.UncompressedSize);
     }
 
     private static IRarFileHeader ReadFirstFileHeader(byte[] bytes)

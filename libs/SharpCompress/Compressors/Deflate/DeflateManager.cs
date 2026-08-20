@@ -1858,13 +1858,13 @@ internal sealed partial class DeflateManager
 
     internal int SetDictionary(byte[] dictionary)
     {
-        var length = dictionary.Length;
-        var index = 0;
-
         if (dictionary is null || status != INIT_STATE)
         {
             throw new ZlibException("Stream error.");
         }
+
+        var length = dictionary.Length;
+        var index = 0;
 
         _codec._adler32 = Adler32.Calculate(_codec._adler32, dictionary);
 

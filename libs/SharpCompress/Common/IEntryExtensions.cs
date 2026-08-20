@@ -45,6 +45,7 @@ internal static partial class IEntryExtensions
             Action<string>? write
         )
         {
+            ArgumentNullException.ThrowIfNull(options);
             var destinationFileName = GetEntryDestinationFileName(
                 entry,
                 fullDestinationDirectoryPath,

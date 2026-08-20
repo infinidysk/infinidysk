@@ -34,8 +34,8 @@ public class SevenZipWritableArchiveTests : TestBase
         using var archiveStream = new MemoryStream();
         using (var archive = SevenZipArchive.CreateArchive())
         {
-            archive.AddEntry("first.txt", new MemoryStream(content1), true, content1.Length);
-            archive.AddEntry("dir/second.txt", new MemoryStream(content2), true, content2.Length);
+            archive.AddEntry("first.txt", Frozen(content1), true, content1.Length);
+            archive.AddEntry("dir/second.txt", Frozen(content2), true, content2.Length);
             archive.SaveTo(archiveStream, new SevenZipWriterOptions(CompressionType.LZMA2));
         }
 
@@ -70,7 +70,7 @@ public class SevenZipWritableArchiveTests : TestBase
             archive.RemoveEntry(toRemove);
             archive.AddEntry(
                 "added/new.txt",
-                new MemoryStream(newContent),
+                Frozen(newContent),
                 true,
                 newContent.Length
             );
@@ -102,13 +102,13 @@ public class SevenZipWritableArchiveTests : TestBase
         {
             await archive.AddEntryAsync(
                 "first.txt",
-                new MemoryStream(content1),
+                Frozen(content1),
                 true,
                 content1.Length
             );
             await archive.AddEntryAsync(
                 "dir/second.txt",
-                new MemoryStream(content2),
+                Frozen(content2),
                 true,
                 content2.Length
             );
@@ -159,7 +159,7 @@ public class SevenZipWritableArchiveTests : TestBase
             await archive.RemoveEntryAsync(toRemove);
             await archive.AddEntryAsync(
                 "added/new.txt",
-                new MemoryStream(newContent),
+                Frozen(newContent),
                 true,
                 newContent.Length
             );
@@ -182,4 +182,6 @@ public class SevenZipWritableArchiveTests : TestBase
             Assert.Equal(expected, ReadAll(resultFiles.First(e => e.Key == key)));
         }
     }
+
+    private static Stream Frozen(byte[] bytes) => new MemoryStream(bytes);
 }

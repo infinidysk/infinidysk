@@ -139,14 +139,11 @@ internal class PpmContext : Pointer
     {
         var pc = GetTempPpmContext(model.SubAlloc.Heap);
         pc.Address = model.SubAlloc.AllocContext();
-        if (pc is not null)
-        {
-            pc.NumStats = 1;
-            pc.SetOneState(firstState);
-            pc.SetSuffix(this);
-            pStats.SetSuccessor(pc);
-        }
-        return pc.NotNull().Address;
+        pc.NumStats = 1;
+        pc.SetOneState(firstState);
+        pc.SetSuffix(this);
+        pStats.SetSuccessor(pc);
+        return pc.Address;
     }
 
     internal void Rescale(ModelPpm model)

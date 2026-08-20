@@ -158,9 +158,9 @@ public class BasicStreamTests
         var streams = new[]
         {
             Task.FromResult<Stream>(new PaddedLengthStream(
-                new MemoryStream(Encoding.ASCII.GetBytes("ab")), 4, "part-1", "test.bin",
+                Frozen(Encoding.ASCII.GetBytes("ab")), 4, "part-1", "test.bin",
                 EncryptedPartContext())),
-            Task.FromResult<Stream>(new MemoryStream(Encoding.ASCII.GetBytes("cd")))
+            Task.FromResult(Frozen(Encoding.ASCII.GetBytes("cd")))
         };
         await using var stream = new CombinedStream(streams);
 
@@ -177,9 +177,9 @@ public class BasicStreamTests
     {
         var streams = new[]
         {
-            Task.FromResult<Stream>(new MemoryStream(Encoding.ASCII.GetBytes("abc"))),
-            Task.FromResult<Stream>(new MemoryStream()),
-            Task.FromResult<Stream>(new MemoryStream(Encoding.ASCII.GetBytes("def")))
+            Task.FromResult(Frozen(Encoding.ASCII.GetBytes("abc"))),
+            Task.FromResult(Empty()),
+            Task.FromResult(Frozen(Encoding.ASCII.GetBytes("def")))
         };
         await using var stream = new CombinedStream(streams);
 
@@ -189,6 +189,10 @@ public class BasicStreamTests
         Assert.Equal("abcdef", Encoding.ASCII.GetString(destination.ToArray()));
         Assert.Equal(6, stream.Position);
     }
+
+    private static Stream Frozen(byte[] bytes) => new MemoryStream(bytes, writable: false);
+
+    private static Stream Empty() => new MemoryStream();
 
     [Theory]
     [InlineData("", true)]

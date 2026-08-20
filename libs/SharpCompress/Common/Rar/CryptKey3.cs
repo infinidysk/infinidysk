@@ -25,7 +25,7 @@ internal class CryptKey3 : ICryptKey
         var (aesKey, aesIV) = DeriveKeyAndIv(salt);
         try
         {
-            var aes = Aes.Create();
+            using var aes = Aes.Create();
             aes.KeySize = AES_128;
             aes.Mode = CipherMode.CBC;
             aes.Padding = PaddingMode.None;
