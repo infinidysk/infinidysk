@@ -342,7 +342,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         lifetime: staticLoaded
             ? <LifetimeBlock lifetime={stats.lifetime} />
             : <Skeleton height={120} />,
-    }), [liveTiles, stats, window, isLongWindow, windowLoaded, detailLoaded, staticLoaded, editMode, loaderData.hasConfiguredIndexers, loaderData.hasConfiguredArrs, arrHealth, arrHealthLoaded]);
+    }), [liveTiles, stats, window, isLongWindow, windowLoaded, detailLoaded, staticLoaded, loaderData.hasConfiguredIndexers, loaderData.hasConfiguredArrs, arrHealth, arrHealthLoaded]);
 
     const visibleOrder = useMemo(
         () => order.filter(id => {

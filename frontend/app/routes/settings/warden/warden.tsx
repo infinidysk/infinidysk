@@ -164,7 +164,9 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             const res = await fetch(withUrlBase("/api/warden-backup"));
             // GET /api/warden-backup → WardenBackupStatusResponse
             if (res.ok) setBackup((await res.json()) as BackupStatus);
-        } catch { }
+        } catch {
+            // backup status stays at its default when the fetch fails
+        }
     };
 
     // Initial load; both fetches catch internally and report via state.

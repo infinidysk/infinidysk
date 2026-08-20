@@ -20,7 +20,7 @@ export function useUploadController(
     useEffect(() => {
         // fire-and-forget: the queue processor runs in the background and updates state itself
         void processUploadQueue(isUploadingRef, uploadQueueRef, setUploadingFiles);
-    }, [uploadingFiles]);
+    }, [isUploadingRef, uploadQueueRef, uploadingFiles, setUploadingFiles]);
 }
 
 export function buildAddFileUploadUrl(category: string): string {

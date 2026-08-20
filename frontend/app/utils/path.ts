@@ -1,6 +1,6 @@
 export function getLeafDirectoryName(fullPath: string): string {
     // Normalize the path by removing a trailing slash/backslash.
-    let normalizedPath = fullPath.replace(/[/\\]$/, '');
+    const normalizedPath = fullPath.replace(/[/\\]$/, '');
 
     // Find the index of the last separator.
     const lastSlash = normalizedPath.lastIndexOf('/');
