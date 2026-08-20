@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using NzbWebDAV.Services.Observability;
 
 namespace NzbWebDAV.Services.Repair;
 
@@ -40,6 +41,7 @@ public sealed class Par2RepairTriggerSink
     public static void ReportCorruption(string path, string segmentId)
     {
         TestReports?.Add((path, segmentId, true));
+        PrometheusMetrics.Current?.RecordStreamingCorruptSegment();
         Current?.OnCorruptionReported(path, segmentId);
     }
 

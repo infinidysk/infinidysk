@@ -590,6 +590,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
                     if (_failFastOnFirstSegment && isFirstSegment)
                     {
+                        Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
                         e.LogWarningKnownOrStack(
                             "First article {SegmentId} persistently corrupt at playback start while reading {FileName}. " +
                             "Failing the stream so the player surfaces an error.",
@@ -702,7 +703,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch (UsenetCorruptArticleException persistent)
             {
-                if (_failFastOnFirstSegment && isFirstSegment) throw;
+                if (_failFastOnFirstSegment && isFirstSegment)
+                {
+                    Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
+                    throw;
+                }
                 return ZeroFillSegment(
                     "Article {SegmentId} persistently corrupt while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
                     segmentId,
@@ -985,7 +990,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         Exception exception)
     {
         if (!_segmentSizes.TryGetFillLength(segmentIndex, out var fill, out var isExact))
+        {
+            if (exception.TryGetCausingException(out UsenetCorruptArticleException? _))
+                Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
             throw CreateUnknownLengthFailure(segmentId, segmentIndex, exception);
+        }
 
         if (!isExact)
         {

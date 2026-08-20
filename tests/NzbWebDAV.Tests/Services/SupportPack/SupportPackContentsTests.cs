@@ -109,6 +109,18 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_ReportsCorruptionTrackingCountsInPar2RepairSection()
+    {
+        var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));
+
+        using var environment = JsonDocument.Parse(entries["environment.json"]);
+        var tracking = environment.RootElement.GetProperty("par2Repair").GetProperty("corruptionTracking");
+        Assert.True(tracking.TryGetProperty("enabled", out _));
+        Assert.True(tracking.GetProperty("filesWithCorruptRecords").GetInt32() >= 0);
+        Assert.True(tracking.GetProperty("recordedCorruptSegments").GetInt32() >= 0);
+    }
+
+    [Fact]
     public async Task Pack_ReportsCpuGcAndThreadPoolCountersForBottleneckTriage()
     {
         var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));

@@ -44,6 +44,7 @@ public sealed class PrometheusMetrics
     private readonly Counter _par2PatchHits;
     private readonly Counter _par2PatchEvictions;
     private readonly Counter _par2RepairJobs;
+    private readonly Counter _streamingCorruptSegments;
     private readonly HashSet<string> _providerKeys = new(StringComparer.Ordinal);
 
     public PrometheusMetrics(CollectorRegistry registry)
@@ -103,6 +104,9 @@ public sealed class PrometheusMetrics
         _par2PatchEvictions = metrics.CreateCounter(
             "nzbdav_par2_patch_evictions_total",
             "Repair patch store evictions.");
+        _streamingCorruptSegments = metrics.CreateCounter(
+            "nzbdav_streaming_corrupt_segments_total",
+            "Streaming-confirmed corrupt Usenet articles.");
     }
 
     public static PrometheusMetrics? Current { get; set; }
@@ -137,6 +141,8 @@ public sealed class PrometheusMetrics
     public void RecordPar2PatchHit() => _par2PatchHits.Inc();
 
     public void RecordPar2PatchEviction() => _par2PatchEvictions.Inc();
+
+    public void RecordStreamingCorruptSegment() => _streamingCorruptSegments.Inc();
 
     public void Refresh(
         ActiveReadRegistry activeReads,
