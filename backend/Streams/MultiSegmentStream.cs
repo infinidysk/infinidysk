@@ -519,121 +519,124 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     )
     {
         var estimate = GetPlannedSegmentBytes(segmentIndex);
-        for (var attempt = 0; ; attempt++)
+        var lease = initialLease;
+        try
         {
-            var lease = attempt == 0
-                ? initialLease
-                : await LeaseSegmentBytesAsync(estimate, cancellationToken).ConfigureAwait(false);
-            try
+            for (var attempt = 0; ; attempt++)
             {
-                var bodyResponse = await _usenetClient
-                    .DecodedBodyAsync(segmentId, cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    var bodyResponse = await _usenetClient
+                        .DecodedBodyAsync(segmentId, cancellationToken)
+                        .ConfigureAwait(false);
 
-                await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
+                    await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
-                var stream = await DrainSegmentAsync(
+                    var stream = await DrainSegmentAsync(
 #pragma warning restore CA2000
-                        bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate)
-                    .ConfigureAwait(false);
-                lease = null;
-                return SegmentDownloadResult.Success(stream, estimate);
-            }
-            catch (UsenetArticleNotFoundException e)
-            {
-                lease?.Dispose();
-                lease = null;
-                var fallback = await TryFallbackSegmentsAsync(segmentIndex, cancellationToken)
-                    .ConfigureAwait(false);
-                if (fallback is not null)
-                    return SegmentDownloadResult.Success(fallback, estimate);
-
-                if (_failFastOnFirstSegment && isFirstSegment)
-                {
-                    e.LogWarningKnownOrStack(
-                        "First article {SegmentId} missing on all providers at playback start while reading {FileName}. " +
-                        "Failing the stream so the player surfaces an error.",
-                        segmentId, _fileName);
-                    throw;
+                            bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate)
+                        .ConfigureAwait(false);
+                    lease = null;
+                    return SegmentDownloadResult.Success(stream, estimate);
                 }
-
-                return ZeroFillSegment(
-                    "Article {SegmentId} missing on all providers while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
-                    e.SegmentId,
-                    segmentIndex,
-                    e);
-            }
-            catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
-            {
-                lease?.Dispose();
-                lease = null;
-                if (attempt >= MaxCorruptionRetries)
+                catch (UsenetArticleNotFoundException e)
                 {
-                    var fallback = await TryFallbackSegmentsAsync(segmentIndex, cancellationToken)
+                    var fallback = await TryFallbackSegmentsAsync(
+                            segmentIndex, lease, cancellationToken)
                         .ConfigureAwait(false);
                     if (fallback is not null)
+                    {
+                        lease = null;
                         return SegmentDownloadResult.Success(fallback, estimate);
+                    }
 
                     if (_failFastOnFirstSegment && isFirstSegment)
                     {
                         e.LogWarningKnownOrStack(
-                            "First article {SegmentId} persistently corrupt at playback start while reading {FileName}. " +
+                            "First article {SegmentId} missing on all providers at playback start while reading {FileName}. " +
                             "Failing the stream so the player surfaces an error.",
                             segmentId, _fileName);
                         throw;
                     }
 
                     return ZeroFillSegment(
-                        "Article {SegmentId} persistently corrupt while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
-                        segmentId,
+                        "Article {SegmentId} missing on all providers while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
+                        e.SegmentId,
                         segmentIndex,
                         e);
                 }
-
-                Log.Debug(
-                    e,
-                    "Corrupt segment {SegmentId} from provider {Provider}; retrying to allow provider failover (attempt {Attempt}).",
-                    segmentId,
-                    e.ProviderKey,
-                    attempt + 1);
-                await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (OutOfMemoryException oom)
-            {
-                OomDiagnostics.LogHeapStateOnOom(oom, "segment body retry");
-                throw;
-            }
-            catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
-            {
-                lease?.Dispose();
-                lease = null;
-                if (attempt < MaxBodyRetries)
+                catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
                 {
-                    Log.Debug(e, "Transient failure fetching segment {SegmentId} (attempt {Attempt}). Retrying.",
-                        segmentId, attempt + 1);
-                    if (MultiProviderNntpClient.CurrentReadSessionId is { } retrySession)
-                        StreamTrace.TryRetry(retrySession, segmentId, attempt + 1, e.Message);
+                    if (attempt >= MaxCorruptionRetries)
+                    {
+                        var fallback = await TryFallbackSegmentsAsync(
+                                segmentIndex, lease, cancellationToken)
+                            .ConfigureAwait(false);
+                        if (fallback is not null)
+                        {
+                            lease = null;
+                            return SegmentDownloadResult.Success(fallback, estimate);
+                        }
+
+                        if (_failFastOnFirstSegment && isFirstSegment)
+                        {
+                            e.LogWarningKnownOrStack(
+                                "First article {SegmentId} persistently corrupt at playback start while reading {FileName}. " +
+                                "Failing the stream so the player surfaces an error.",
+                                segmentId, _fileName);
+                            throw;
+                        }
+
+                        return ZeroFillSegment(
+                            "Article {SegmentId} persistently corrupt while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.",
+                            segmentId,
+                            segmentIndex,
+                            e);
+                    }
+
+                    Log.Debug(
+                        e,
+                        "Corrupt segment {SegmentId} from provider {Provider}; retrying to allow provider failover (attempt {Attempt}).",
+                        segmentId,
+                        e.ProviderKey,
+                        attempt + 1);
                     await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), cancellationToken)
                         .ConfigureAwait(false);
-                    continue;
                 }
-
-                if (_failFastOnFirstSegment && isFirstSegment)
+                catch (OutOfMemoryException oom)
                 {
-                    e.LogWarningKnownOrStack(
-                        "Segment {SegmentId} unavailable at playback start after {Attempts} attempts while reading {FileName}. " +
-                        "Failing the stream so the player surfaces an error.",
-                        segmentId, attempt + 1, _fileName);
+                    OomDiagnostics.LogHeapStateOnOom(oom, "segment body retry");
                     throw;
                 }
+                catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
+                {
+                    if (attempt < MaxBodyRetries)
+                    {
+                        Log.Debug(e, "Transient failure fetching segment {SegmentId} (attempt {Attempt}). Retrying.",
+                            segmentId, attempt + 1);
+                        if (MultiProviderNntpClient.CurrentReadSessionId is { } retrySession)
+                            StreamTrace.TryRetry(retrySession, segmentId, attempt + 1, e.Message);
+                        await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), cancellationToken)
+                            .ConfigureAwait(false);
+                        continue;
+                    }
 
-                throw CreateTransientSegmentFailure(segmentId, segmentIndex, e);
+                    if (_failFastOnFirstSegment && isFirstSegment)
+                    {
+                        e.LogWarningKnownOrStack(
+                            "Segment {SegmentId} unavailable at playback start after {Attempts} attempts while reading {FileName}. " +
+                            "Failing the stream so the player surfaces an error.",
+                            segmentId, attempt + 1, _fileName);
+                        throw;
+                    }
+
+                    throw CreateTransientSegmentFailure(segmentId, segmentIndex, e);
+                }
             }
-            finally
-            {
-                lease?.Dispose();
-            }
+        }
+        finally
+        {
+            lease?.Dispose();
         }
     }
 
@@ -661,12 +664,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
         catch (UsenetArticleNotFoundException e)
         {
-            lease?.Dispose();
-            lease = null;
-            var fallback = await TryFallbackSegmentsAsync(segmentIndex, cancellationToken)
+            var fallback = await TryFallbackSegmentsAsync(segmentIndex, lease, cancellationToken)
                 .ConfigureAwait(false);
             if (fallback is not null)
+            {
+                lease = null;
                 return SegmentDownloadResult.Success(fallback, estimate);
+            }
 
             if (_failFastOnFirstSegment && isFirstSegment) throw;
             return ZeroFillSegment(
@@ -677,13 +681,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
         catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
         {
-            lease?.Dispose();
-            lease = null;
             try
             {
                 var stream = await RetryCorruptSegmentAsync(
-                        segmentId, segmentIndex, e, cancellationToken)
+                        segmentId, segmentIndex, e, lease, cancellationToken)
                     .ConfigureAwait(false);
+                lease = null;
                 return SegmentDownloadResult.Success(stream, estimate);
             }
             catch (UsenetCorruptArticleException persistent)
@@ -703,8 +706,6 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
         catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
         {
-            lease?.Dispose();
-            lease = null;
             // A failure inside a pipelined batch says nothing about whether the article
             // can be fetched at all: the batch shares one connection, so a stall or a
             // dropped socket takes out unrelated segments with it. Re-request this
@@ -713,8 +714,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             Stream? rescued;
             try
             {
-                rescued = await TryRescueSegmentAsync(segmentId, segmentIndex, e, cancellationToken)
+                rescued = await TryRescueSegmentAsync(
+                        segmentId, segmentIndex, e, lease, cancellationToken)
                     .ConfigureAwait(false);
+                if (rescued is not null)
+                    lease = null;
             }
             catch (UsenetArticleNotFoundException notFound)
             {
@@ -750,8 +754,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         string segmentId,
         int segmentIndex,
         Exception batchFailure,
+        ArticleByteLease? existingLease,
         CancellationToken cancellationToken)
     {
+        var lease = existingLease;
         for (var attempt = 1; attempt <= MaxBodyRetries; attempt++)
         {
             Log.Debug(
@@ -765,24 +771,19 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken)
                     .ConfigureAwait(false);
-                ArticleByteLease? lease = await LeaseSegmentBytesAsync(
-                    GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
-                        .ConfigureAwait(false);
-                    await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+                if (lease is null)
+                    lease = await LeaseSegmentBytesAsync(
+                        GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
+
+                var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+                    .ConfigureAwait(false);
+                await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
-                    var stream = await DrainSegmentAsync(
+                var stream = await DrainSegmentAsync(
 #pragma warning restore CA2000
-                        response.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
-                    lease = null;
-                    return stream;
-                }
-                finally
-                {
-                    lease?.Dispose();
-                }
+                    response.Stream!, segmentIndex, cancellationToken, lease).ConfigureAwait(false);
+                lease = null;
+                return stream;
             }
             catch (UsenetArticleNotFoundException)
             {
@@ -812,26 +813,30 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         string segmentId,
         int segmentIndex,
         UsenetCorruptArticleException initialFailure,
+        ArticleByteLease? existingLease,
         CancellationToken cancellationToken)
     {
         var failure = initialFailure;
-        for (var attempt = 1; attempt <= MaxCorruptionRetries; attempt++)
+        var lease = existingLease;
+        try
         {
-            Log.Debug(
-                failure,
-                "Corrupt pipelined segment {SegmentId} from provider {Provider}; retrying to allow provider failover (attempt {Attempt}).",
-                segmentId,
-                failure.ProviderKey,
-                attempt);
-            await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken)
-                .ConfigureAwait(false);
-
-            try
+            for (var attempt = 1; attempt <= MaxCorruptionRetries; attempt++)
             {
-                ArticleByteLease? lease = await LeaseSegmentBytesAsync(
-                    GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
+                Log.Debug(
+                    failure,
+                    "Corrupt pipelined segment {SegmentId} from provider {Provider}; retrying to allow provider failover (attempt {Attempt}).",
+                    segmentId,
+                    failure.ProviderKey,
+                    attempt);
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken)
+                    .ConfigureAwait(false);
+
                 try
                 {
+                    if (lease is null)
+                        lease = await LeaseSegmentBytesAsync(
+                            GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
+
                     var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                         .ConfigureAwait(false);
                     await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
@@ -842,45 +847,56 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     lease = null;
                     return stream;
                 }
-                finally
+                catch (UsenetCorruptArticleException exception)
                 {
-                    lease?.Dispose();
+                    failure = exception;
                 }
             }
-            catch (UsenetCorruptArticleException exception)
+
+            var fallback = await TryFallbackSegmentsAsync(segmentIndex, lease, cancellationToken)
+                .ConfigureAwait(false);
+            if (fallback is not null)
             {
-                failure = exception;
+                lease = null;
+                return fallback;
             }
+
+            ExceptionDispatchInfo.Capture(failure).Throw();
+            throw new InvalidOperationException("Unreachable after rethrowing a corrupt segment failure.");
         }
-
-        var fallback = await TryFallbackSegmentsAsync(segmentIndex, cancellationToken)
-            .ConfigureAwait(false);
-        if (fallback is not null)
-            return fallback;
-
-        ExceptionDispatchInfo.Capture(failure).Throw();
-        throw new InvalidOperationException("Unreachable after rethrowing a corrupt segment failure.");
+        finally
+        {
+            lease?.Dispose();
+        }
     }
 
     /// <summary>
     /// Try alternate MessageIds for a missing primary segment. Each BODY
     /// attempt completes its callback exactly once via DecodedBodyAsync.
+    /// When <paramref name="existingLease"/> is supplied it is retained across
+    /// attempts; on success ownership transfers to the returned stream, on miss
+    /// the caller still owns the lease.
     /// </summary>
     private async Task<Stream?> TryFallbackSegmentsAsync(
         int segmentIndex,
+        ArticleByteLease? existingLease,
         CancellationToken cancellationToken)
     {
         var fallbacks = GetFallbacks(segmentIndex);
         if (fallbacks.Length == 0) return null;
 
-        foreach (var fallbackId in fallbacks)
+        var lease = existingLease;
+        var ownsLease = existingLease is null;
+        try
         {
-            try
+            foreach (var fallbackId in fallbacks)
             {
-                ArticleByteLease? lease = await LeaseSegmentBytesAsync(
-                    GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
                 try
                 {
+                    if (lease is null)
+                        lease = await LeaseSegmentBytesAsync(
+                            GetPlannedSegmentBytes(segmentIndex), cancellationToken).ConfigureAwait(false);
+
                     var bodyResponse = await _usenetClient
                         .DecodedBodyAsync(fallbackId, cancellationToken)
                         .ConfigureAwait(false);
@@ -905,26 +921,27 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     lease = null;
                     return stream;
                 }
-                finally
+                catch (UsenetArticleNotFoundException)
                 {
-                    lease?.Dispose();
+                    // Try the next alternate MessageId.
+                }
+                catch (UsenetCorruptArticleException)
+                {
+                    // Corrupt fallback — try the next alternate MessageId.
+                }
+                catch (UsenetUnexpectedResponseException e)
+                {
+                    Log.Debug(e, "Fallback MessageId {FallbackId} returned another article.", fallbackId);
                 }
             }
-            catch (UsenetArticleNotFoundException)
-            {
-                // Try the next alternate MessageId.
-            }
-            catch (UsenetCorruptArticleException)
-            {
-                // Corrupt fallback — try the next alternate MessageId.
-            }
-            catch (UsenetUnexpectedResponseException e)
-            {
-                Log.Debug(e, "Fallback MessageId {FallbackId} returned another article.", fallbackId);
-            }
-        }
 
-        return null;
+            return null;
+        }
+        finally
+        {
+            if (ownsLease)
+                lease?.Dispose();
+        }
     }
 
     private string[] GetFallbacks(int segmentIndex)
@@ -1083,14 +1100,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 _segmentSizes.RecordObservedSize(segmentIndex, drained);
 
             var actual = buffer.Length;
-            if (actual != estimate)
-                lease.Adjust(actual - estimate);
-
             buffer.Position = 0;
             // Keep the buffer and any internally acquired lease locally owned until
             // source disposal succeeds. A disposal failure must not strand either.
             sourceDisposeAttempted = true;
             await source.DisposeAsync().ConfigureAwait(false);
+            if (actual != estimate)
+                lease.Adjust(actual - estimate);
             // Build the wrapper that takes over the buffer and lease before dropping
             // local ownership, so a failure here still routes both through the catch.
             var result = ReferenceEquals(lease, ArticleByteLease.Empty)

@@ -342,133 +342,170 @@ public class NzbFileStream(
 
         for (var step = 0; step <= MaxSeekGuessCorrection; step++)
         {
-            UsenetDecodedBodyResponse response;
+            var estimate = EstimateSeekTailBytes(rangeStart, index, avg);
+            ArticleByteLease? seekLease = null;
             try
             {
-                response = await usenetClient.DecodedBodyAsync(fileSegmentIds[index], ct).ConfigureAwait(false);
-            }
-            catch (OutOfMemoryException oom)
-            {
-                OomDiagnostics.LogHeapStateOnOom(oom, "fast-seek body fetch");
-                throw;
-            }
-            catch
-            {
-                return null;
-            }
+                seekLease = await LeaseSeekTailAsync(estimate, ct).ConfigureAwait(false);
 
-            var body = response.Stream!;
-            UsenetYencHeader? header;
-            try
-            {
-                header = await body.GetYencHeadersAsync(ct).ConfigureAwait(false);
-            }
-            catch (OutOfMemoryException oom)
-            {
-                OomDiagnostics.LogHeapStateOnOom(oom, "fast-seek header read");
-                throw;
-            }
-            catch
-            {
-                await body.DisposeAsync().ConfigureAwait(false);
-                return null;
-            }
-
-            if (header == null)
-            {
-                await body.DisposeAsync().ConfigureAwait(false);
-                return null;
-            }
-
-            var start = header.PartOffset;
-            var end = header.PartOffset + header.PartSize;
-
-            if (rangeStart < start || rangeStart >= end)
-            {
-                await body.DisposeAsync().ConfigureAwait(false);
-                var next = rangeStart < start ? index - 1 : index + 1;
-                if (next < 0 || next >= fileSegmentIds.Length) return null;
-                index = next;
-                continue;
-            }
-
-            PooledBufferStream? head = null;
-            var bodyDisposeAttempted = false;
-            try
-            {
+                UsenetDecodedBodyResponse response;
                 try
                 {
-                    await body.DiscardExactBytesAsync(rangeStart - start, ct).ConfigureAwait(false);
-                    var tail = end - rangeStart;
-                    var capacity = tail is > 0 and <= int.MaxValue ? (int)tail : 0;
-#pragma warning disable CA2000 // head is disposed in the outer finally on all non-transferred paths; on success ownership moves to the returned CombinedStream
-                    head = new PooledBufferStream(capacity);
-#pragma warning restore CA2000
-                    await body.CopyToAsync(head, ct).ConfigureAwait(false);
-                    head.Position = 0;
-                    // Do not relinquish the pooled head until body disposal succeeds.
-                    // Otherwise a disposal exception aborts the return with no owner
-                    // left to return the rented array.
-                    bodyDisposeAttempted = true;
-                    await body.DisposeAsync().ConfigureAwait(false);
+                    response = await usenetClient.DecodedBodyAsync(fileSegmentIds[index], ct).ConfigureAwait(false);
                 }
                 catch (OutOfMemoryException oom)
                 {
-                    OomDiagnostics.LogHeapStateOnOom(oom, "fast-seek body drain");
+                    OomDiagnostics.LogHeapStateOnOom(oom, "fast-seek body fetch");
                     throw;
                 }
-                catch (Exception e) when (!ct.IsCancellationRequested && e is not OutOfMemoryException)
+                catch
                 {
-                    // The guess was right (headers matched) but the body read failed,
-                    // e.g. a mid-stream NNTP read timeout. Fall back to the slow seek
-                    // path, whose MultiSegmentStream applies the normal retry and
-                    // failure policy for the segment.
-                    var displayName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
-                    if (e.TryGetKnownErrorMessage(out var reason))
-                    {
-                        ThrottledSegmentWarning.Write(
-                            displayName,
-                            "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek. Reason: {Reason}",
-                            displayName,
-                            reason);
-                        Log.Debug(e, "Fast seek known failure stack while reading {FileName}", displayName);
-                    }
-                    else
-                    {
-                        Log.Warning(
-                            e,
-                            "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek.",
-                            displayName);
-                    }
-
                     return null;
                 }
 
-                // OnDispose returns the rented head if CombinedStream is disposed before
-                // its first read (head never becomes current). Idempotent dispose is safe
-                // when CombinedStream also disposes head after consuming it.
-                var owned = head;
-                var spliced = new CombinedStream(SpliceHeadThenRest(owned, index + 1, ct))
-                    .OnDispose(() => owned.Dispose());
-                head = null;
-                return spliced;
-            }
-            finally
-            {
+                var body = response.Stream!;
+                UsenetYencHeader? header;
                 try
                 {
-                    if (!bodyDisposeAttempted)
+                    header = await body.GetYencHeadersAsync(ct).ConfigureAwait(false);
+                }
+                catch (OutOfMemoryException oom)
+                {
+                    OomDiagnostics.LogHeapStateOnOom(oom, "fast-seek header read");
+                    throw;
+                }
+                catch
+                {
+                    await body.DisposeAsync().ConfigureAwait(false);
+                    return null;
+                }
+
+                if (header == null)
+                {
+                    await body.DisposeAsync().ConfigureAwait(false);
+                    return null;
+                }
+
+                var start = header.PartOffset;
+                var end = header.PartOffset + header.PartSize;
+
+                if (rangeStart < start || rangeStart >= end)
+                {
+                    await body.DisposeAsync().ConfigureAwait(false);
+                    var next = rangeStart < start ? index - 1 : index + 1;
+                    if (next < 0 || next >= fileSegmentIds.Length) return null;
+                    index = next;
+                    continue;
+                }
+
+                PooledBufferStream? head = null;
+                var bodyDisposeAttempted = false;
+                try
+                {
+                    try
+                    {
+                        await body.DiscardExactBytesAsync(rangeStart - start, ct).ConfigureAwait(false);
+                        var tail = end - rangeStart;
+                        var capacity = tail is > 0 and <= int.MaxValue ? (int)tail : 0;
+#pragma warning disable CA2000 // head is disposed in the outer finally on all non-transferred paths; on success ownership moves to the returned CombinedStream
+                        head = new PooledBufferStream(capacity);
+#pragma warning restore CA2000
+                        await body.CopyToAsync(head, ct).ConfigureAwait(false);
+                        head.Position = 0;
+                        // Do not relinquish the pooled head until body disposal succeeds.
+                        // Otherwise a disposal exception aborts the return with no owner
+                        // left to return the rented array.
+                        bodyDisposeAttempted = true;
                         await body.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch (OutOfMemoryException oom)
+                    {
+                        OomDiagnostics.LogHeapStateOnOom(oom, "fast-seek body drain");
+                        throw;
+                    }
+                    catch (Exception e) when (!ct.IsCancellationRequested && e is not OutOfMemoryException)
+                    {
+                        // The guess was right (headers matched) but the body read failed,
+                        // e.g. a mid-stream NNTP read timeout. Fall back to the slow seek
+                        // path, whose MultiSegmentStream applies the normal retry and
+                        // failure policy for the segment.
+                        var displayName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
+                        if (e.TryGetKnownErrorMessage(out var reason))
+                        {
+                            ThrottledSegmentWarning.Write(
+                                displayName,
+                                "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek. Reason: {Reason}",
+                                displayName,
+                                reason);
+                            Log.Debug(e, "Fast seek known failure stack while reading {FileName}", displayName);
+                        }
+                        else
+                        {
+                            Log.Warning(
+                                e,
+                                "Fast seek failed mid-segment while reading {FileName}. Falling back to segment-index seek.",
+                                displayName);
+                        }
+
+                        return null;
+                    }
+
+                    var actual = head.Length;
+                    if (actual != estimate)
+                        seekLease.Adjust(actual - estimate);
+
+                    // OnDispose returns the rented head if CombinedStream is disposed before
+                    // its first read (head never becomes current). Idempotent dispose is safe
+                    // when CombinedStream also disposes head after consuming it.
+#pragma warning disable CA2000 // ownership transfers to CombinedStream / OnDispose
+                    Stream owned = ReferenceEquals(seekLease, ArticleByteLease.Empty)
+                        ? head
+                        : new BudgetedStream(head, seekLease);
+#pragma warning restore CA2000
+                    seekLease = null;
+                    var spliced = new CombinedStream(SpliceHeadThenRest(owned, index + 1, ct))
+                        .OnDispose(() => owned.Dispose());
+                    head = null;
+                    return spliced;
                 }
                 finally
                 {
-                    if (head is not null)
-                        await head.DisposeAsync().ConfigureAwait(false);
+                    try
+                    {
+                        if (!bodyDisposeAttempted)
+                            await body.DisposeAsync().ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        if (head is not null)
+                            await head.DisposeAsync().ConfigureAwait(false);
+                    }
                 }
+            }
+            finally
+            {
+                seekLease?.Dispose();
             }
         }
 
         return null;
+    }
+
+    private static long EstimateSeekTailBytes(long rangeStart, int index, long avg)
+    {
+        var segmentStart = (long)index * avg;
+        var offset = rangeStart - segmentStart;
+        if (offset < 0) offset = 0;
+        var tail = avg - offset;
+        return tail > 0 ? tail : 0;
+    }
+
+    private async ValueTask<ArticleByteLease> LeaseSeekTailAsync(long estimate, CancellationToken ct)
+    {
+        var budget = inFlightArticleBudget ?? InFlightArticleBudget.Current;
+        if (budget is null || estimate <= 0)
+            return ArticleByteLease.Empty;
+        return await budget.LeaseAsync(estimate, ct).ConfigureAwait(false);
     }
 
     private IEnumerable<Task<Stream>> SpliceHeadThenRest(Stream head, int restFirstIndex, CancellationToken ct)
