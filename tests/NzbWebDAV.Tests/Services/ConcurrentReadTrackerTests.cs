@@ -2,6 +2,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.Streams;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Services;
@@ -138,7 +139,7 @@ public class ConcurrentReadTrackerTests
     [Fact]
     public void FetchOutsideReadContext_IsIgnored()
     {
-        var tracker = new ConcurrentReadTracker();
+        var tracker = new ConcurrentReadTracker(retentionAccount: new SharedStreamRetentionAccount());
 
         using var fetch = tracker.BeginSegmentFetch("segment-42");
 
