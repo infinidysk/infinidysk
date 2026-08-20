@@ -13,7 +13,7 @@ public class SegmentDamageClassifierTests
             [], [100L, 100, 100, 100], MediaContainerClass.ResyncTolerant, out var reason);
 
         Assert.Equal(SegmentDamageVerdict.Clean, verdict);
-        Assert.Contains("0 missing segment(s)", reason);
+        Assert.Contains("0 missing/corrupt segment(s)", reason);
     }
 
     [Fact]
@@ -168,7 +168,7 @@ public class SegmentDamageClassifierTests
             [4, 5], Sizes(10, (4, 100), (5, 100)), MediaContainerClass.ResyncTolerant,
             out var reason);
 
-        Assert.Contains("2 missing segment(s)", reason);
+        Assert.Contains("2 missing/corrupt segment(s)", reason);
         Assert.Contains("largest run 2", reason);
         Assert.Contains("of file", reason);
     }
@@ -201,7 +201,7 @@ public class SegmentDamageClassifierTests
             [2, 2], Sizes(10, (2, 10)), MediaContainerClass.ResyncTolerant, out var reason);
 
         Assert.Equal(SegmentDamageVerdict.Degraded, verdict);
-        Assert.Contains("1 missing segment(s)", reason);
+        Assert.Contains("1 missing/corrupt segment(s)", reason);
     }
 
     [Theory]

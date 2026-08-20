@@ -146,6 +146,107 @@ public sealed class Par2RepairIntegrationTests
     }
 
     [Fact]
+    public async Task Reconstruct_CorruptTargetSegment_CommitsPatch_AndServesPatchedBytes()
+    {
+        var fileData = new byte[4096 * 3];
+        for (var i = 0; i < fileData.Length; i++)
+            fileData[i] = (byte)(i ^ 0x5A);
+
+        const ulong sliceSize = 4096;
+        var (_, volume) = Par2TestEncoder.EncodeSet("corrupt-target.bin", fileData, sliceSize, [0u, 1u]);
+
+        var descriptors = new Dictionary<string, FileDesc>();
+        var ifscs = new Dictionary<string, IfscPacket>();
+        MainPacket? main = null;
+        var recovery = new List<Par2Reconstructor.RecoverySlice>();
+
+        await using (var stream = new MemoryStream(volume))
+        {
+            while (stream.Position < stream.Length)
+            {
+                var packet = await Par2RepairReader.ReadVerifiedPacketAsync(stream, true, CancellationToken.None);
+                switch (packet)
+                {
+                    case FileDesc fd:
+                        descriptors[Convert.ToHexString(fd.FileID)] = fd;
+                        break;
+                    case MainPacket mp:
+                        main = mp;
+                        break;
+                    case IfscPacket ifsc:
+                        ifscs[Convert.ToHexString(ifsc.FileId)] = ifsc;
+                        break;
+                    case RecvSlic recv:
+                        recovery.Add(new Par2Reconstructor.RecoverySlice(recv.Exponent, recv.Payload));
+                        break;
+                }
+            }
+        }
+
+        Assert.NotNull(main);
+        var slices = BuildSliceBytes(fileData, sliceSize);
+        const int corruptIndex = 1;
+        var garbage = (byte[])slices[corruptIndex].Clone();
+        garbage[0] ^= 0xFF;
+
+        var reconstructor = new Par2Reconstructor();
+        var result = await reconstructor.ReconstructAsync(
+            main!,
+            descriptors,
+            ifscs,
+            [corruptIndex],
+            recovery,
+            (globalSlice, size, _) =>
+            {
+                // Present-but-corrupt: the IFSC-failing slice is treated as missing so
+                // Reed-Solomon can rebuild it. Returning the garbage would fail the
+                // present-slice IFSC gate instead of reconstructing.
+                if (globalSlice == corruptIndex)
+                    return Task.FromResult<byte[]?>(null);
+                return Task.FromResult<byte[]?>(slices[globalSlice]);
+            },
+            CancellationToken.None);
+
+        Assert.True(result.Success, result.FailureReason);
+        Assert.Equal(slices[corruptIndex], result.ReconstructedSlices[corruptIndex]);
+        Assert.NotEqual(garbage, result.ReconstructedSlices[corruptIndex]);
+
+        var dir = Path.Join(Path.GetTempPath(), "nzbdav-corrupt-par2-" + Guid.NewGuid().ToString("N"));
+        const string segmentId = "corrupt-target-seg1@test";
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024 * 1024);
+            await store.CatalogLoadTask;
+            store.CommitPatch(segmentId, result.ReconstructedSlices[corruptIndex], new UsenetYencHeader
+            {
+                FileName = "corrupt-target.bin",
+                FileSize = fileData.Length,
+                LineLength = 128,
+                PartNumber = corruptIndex + 1,
+                TotalParts = slices.Length,
+                PartSize = (int)sliceSize,
+                PartOffset = corruptIndex * (int)sliceSize,
+            });
+
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = garbage },
+                useCachedYencStreams: true);
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            Assert.Equal(0, inner.BodyRequestCount);
+
+            await using var ms = new MemoryStream();
+            await response.Stream!.CopyToAsync(ms);
+            Assert.Equal(slices[corruptIndex], ms.ToArray());
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Reconstruct_CorruptRecoverySlice_GateFailure_NothingPersisted()
     {
         var fileData = new byte[4096 * 2];
