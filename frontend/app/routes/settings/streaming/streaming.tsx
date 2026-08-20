@@ -435,6 +435,146 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                     </div>
                 </ManagedSetting>
             </SettingsCard>
+
+            <SettingsCard
+                icon="hub"
+                title="Shared streams"
+                description="Let overlapping playback of the same file share one Usenet stream instead of opening a private copy for each request."
+            >
+                <ManagedSetting configKey="usenet.shared-streams.enabled">
+                    <Tooltip content="When on, overlapping GETs of the same file join a shared stream when their offsets are close enough. Turning this off restores a private stream per request without a restart.">
+                        <Toggle
+                            id="shared-streams-enabled-checkbox"
+                            className="cursor-pointer gap-2 p-0"
+                            checked={config["usenet.shared-streams.enabled"] !== "false"}
+                            onChange={e => setNewConfig({
+                                ...config,
+                                "usenet.shared-streams.enabled": String(e.target.checked),
+                            })}
+                            label={<span className="text-sm text-base-content">Share one stream across concurrent readers</span>}
+                        />
+                    </Tooltip>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="usenet.shared-streams.max-entries">
+                    <div className="space-y-2">
+                        <Label htmlFor="shared-streams-max-entries-input" className="text-sm text-base-content">
+                            Max shared streams
+                        </Label>
+                        <Input
+                            {...className(["w-full max-w-xs", !isValidSharedStreamsMaxEntries(config["usenet.shared-streams.max-entries"]) && "input-error"])}
+                            type="text"
+                            inputMode="numeric"
+                            id="shared-streams-max-entries-input"
+                            aria-describedby="shared-streams-max-entries-help"
+                            placeholder="4"
+                            value={config["usenet.shared-streams.max-entries"] ?? ""}
+                            onChange={e => setNewConfig({
+                                ...config,
+                                "usenet.shared-streams.max-entries": e.target.value,
+                            })} />
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="shared-streams-max-entries-help">
+                            Global cap on live shared streams (1–32, default 4). Extra overlapping reads fall
+                            back to a private stream.
+                        </p>
+                    </div>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="usenet.shared-streams.max-entries-per-file">
+                    <div className="space-y-2">
+                        <Label htmlFor="shared-streams-max-per-file-input" className="text-sm text-base-content">
+                            Max regions per file
+                        </Label>
+                        <Input
+                            {...className(["w-full max-w-xs", !isValidSharedStreamsMaxEntriesPerFile(config["usenet.shared-streams.max-entries-per-file"]) && "input-error"])}
+                            type="text"
+                            inputMode="numeric"
+                            id="shared-streams-max-per-file-input"
+                            aria-describedby="shared-streams-max-per-file-help"
+                            placeholder="3"
+                            value={config["usenet.shared-streams.max-entries-per-file"] ?? ""}
+                            onChange={e => setNewConfig({
+                                ...config,
+                                "usenet.shared-streams.max-entries-per-file": e.target.value,
+                            })} />
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="shared-streams-max-per-file-help">
+                            Separate shared streams for far-apart offsets of the same file (1–8, default 3).
+                        </p>
+                    </div>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="usenet.shared-streams.ring-mb">
+                    <div className="space-y-2">
+                        <Label htmlFor="shared-streams-ring-mb-input" className="text-sm text-base-content">
+                            Ring size (MiB)
+                        </Label>
+                        <Input
+                            {...className(["w-full max-w-xs", !isValidSharedStreamsRingMb(config["usenet.shared-streams.ring-mb"]) && "input-error"])}
+                            type="text"
+                            inputMode="numeric"
+                            id="shared-streams-ring-mb-input"
+                            aria-describedby="shared-streams-ring-mb-help"
+                            placeholder="32"
+                            value={config["usenet.shared-streams.ring-mb"] ?? ""}
+                            onChange={e => setNewConfig({
+                                ...config,
+                                "usenet.shared-streams.ring-mb": e.target.value,
+                            })} />
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="shared-streams-ring-mb-help">
+                            Per-stream window of recently fetched bytes that late joiners can read without
+                            refetching (4–256 MiB, default 32). Not counted against Article RAM.
+                        </p>
+                    </div>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="usenet.shared-streams.grace-seconds">
+                    <div className="space-y-2">
+                        <Label htmlFor="shared-streams-grace-seconds-input" className="text-sm text-base-content">
+                            Grace period (seconds)
+                        </Label>
+                        <Input
+                            {...className(["w-full max-w-xs", !isValidSharedStreamsGraceSeconds(config["usenet.shared-streams.grace-seconds"]) && "input-error"])}
+                            type="text"
+                            inputMode="numeric"
+                            id="shared-streams-grace-seconds-input"
+                            aria-describedby="shared-streams-grace-seconds-help"
+                            placeholder="10"
+                            value={config["usenet.shared-streams.grace-seconds"] ?? ""}
+                            onChange={e => setNewConfig({
+                                ...config,
+                                "usenet.shared-streams.grace-seconds": e.target.value,
+                            })} />
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="shared-streams-grace-seconds-help">
+                            Keep a shared stream warm after the last reader disconnects so a quick follow-up
+                            request can reattach (0–60 seconds, default 10).
+                        </p>
+                    </div>
+                </ManagedSetting>
+
+                <ManagedSetting configKey="usenet.shared-streams.small-range-max-mb">
+                    <div className="space-y-2">
+                        <Label htmlFor="shared-streams-small-range-max-mb-input" className="text-sm text-base-content">
+                            Small-range skip (MiB)
+                        </Label>
+                        <Input
+                            {...className(["w-full max-w-xs", !isValidSharedStreamsSmallRangeMaxMb(config["usenet.shared-streams.small-range-max-mb"]) && "input-error"])}
+                            type="text"
+                            inputMode="numeric"
+                            id="shared-streams-small-range-max-mb-input"
+                            aria-describedby="shared-streams-small-range-max-mb-help"
+                            placeholder="16"
+                            value={config["usenet.shared-streams.small-range-max-mb"] ?? ""}
+                            onChange={e => setNewConfig({
+                                ...config,
+                                "usenet.shared-streams.small-range-max-mb": e.target.value,
+                            })} />
+                        <p className="text-[11px] leading-relaxed text-base-content/45" id="shared-streams-small-range-max-mb-help">
+                            Closed ranges at or below this size use a private stream unless they already overlap
+                            a live shared stream (1–256 MiB, default 16).
+                        </p>
+                    </div>
+                </ManagedSetting>
+            </SettingsCard>
         </SettingsPage>
     );
 }
@@ -459,7 +599,13 @@ export function isStreamingSettingsUpdated(
         || config["usenet.container-aware-fill"] !== newConfig["usenet.container-aware-fill"]
         || config["usenet.segment-cache.enabled"] !== newConfig["usenet.segment-cache.enabled"]
         || config["usenet.segment-cache.path"] !== newConfig["usenet.segment-cache.path"]
-        || config["usenet.segment-cache.max-gb"] !== newConfig["usenet.segment-cache.max-gb"];
+        || config["usenet.segment-cache.max-gb"] !== newConfig["usenet.segment-cache.max-gb"]
+        || config["usenet.shared-streams.enabled"] !== newConfig["usenet.shared-streams.enabled"]
+        || config["usenet.shared-streams.max-entries"] !== newConfig["usenet.shared-streams.max-entries"]
+        || config["usenet.shared-streams.max-entries-per-file"] !== newConfig["usenet.shared-streams.max-entries-per-file"]
+        || config["usenet.shared-streams.ring-mb"] !== newConfig["usenet.shared-streams.ring-mb"]
+        || config["usenet.shared-streams.grace-seconds"] !== newConfig["usenet.shared-streams.grace-seconds"]
+        || config["usenet.shared-streams.small-range-max-mb"] !== newConfig["usenet.shared-streams.small-range-max-mb"];
 }
 
 export function isStreamingSettingsValid(config: Record<string, string>): boolean {
@@ -476,6 +622,11 @@ export function isStreamingSettingsValid(config: Record<string, string>): boolea
         && isValidInFlightArticleBudget(config["usenet.in-flight-article-budget-mb"])
         && isValidIdleConnectionTimeout(config["usenet.idle-connection-timeout-seconds"])
         && isValidStreamingBodyBatchWidth(config["usenet.streaming-body-batch-width"])
+        && isValidSharedStreamsMaxEntries(config["usenet.shared-streams.max-entries"])
+        && isValidSharedStreamsMaxEntriesPerFile(config["usenet.shared-streams.max-entries-per-file"])
+        && isValidSharedStreamsRingMb(config["usenet.shared-streams.ring-mb"])
+        && isValidSharedStreamsGraceSeconds(config["usenet.shared-streams.grace-seconds"])
+        && isValidSharedStreamsSmallRangeMaxMb(config["usenet.shared-streams.small-range-max-mb"])
         && segmentCacheValid;
 }
 
@@ -537,6 +688,32 @@ function isValidStreamingBodyBatchWidth(value: string | undefined): boolean {
     if (value == null || value.trim() === "") return true;
     const number = Number(value);
     return Number.isInteger(number) && number >= 1 && number <= 8;
+}
+
+function isOptionalIntInRange(value: string | undefined, min: number, max: number): boolean {
+    if (value == null || value.trim() === "") return true;
+    const number = Number(value);
+    return Number.isInteger(number) && number >= min && number <= max;
+}
+
+function isValidSharedStreamsMaxEntries(value: string | undefined): boolean {
+    return isOptionalIntInRange(value, 1, 32);
+}
+
+function isValidSharedStreamsMaxEntriesPerFile(value: string | undefined): boolean {
+    return isOptionalIntInRange(value, 1, 8);
+}
+
+function isValidSharedStreamsRingMb(value: string | undefined): boolean {
+    return isOptionalIntInRange(value, 4, 256);
+}
+
+function isValidSharedStreamsGraceSeconds(value: string | undefined): boolean {
+    return isOptionalIntInRange(value, 0, 60);
+}
+
+function isValidSharedStreamsSmallRangeMaxMb(value: string | undefined): boolean {
+    return isOptionalIntInRange(value, 1, 256);
 }
 
 function isValidSegmentCachePath(value: string): boolean {

@@ -28,6 +28,12 @@ const validConfig = {
     "usenet.segment-cache.enabled": "true",
     "usenet.segment-cache.path": "/config/segment-cache",
     "usenet.segment-cache.max-gb": "10",
+    "usenet.shared-streams.enabled": "true",
+    "usenet.shared-streams.max-entries": "",
+    "usenet.shared-streams.max-entries-per-file": "",
+    "usenet.shared-streams.ring-mb": "",
+    "usenet.shared-streams.grace-seconds": "",
+    "usenet.shared-streams.small-range-max-mb": "",
 };
 
 afterEach(cleanup);
@@ -130,6 +136,20 @@ describe("Streaming settings", () => {
         });
         await user.click(gapFill);
         expect(gapFill.checked).toBe(false);
+
+        const sharedStreams = screen.getByRole<HTMLInputElement>("checkbox", {
+            name: "Share one stream across concurrent readers",
+        });
+        expect(sharedStreams.checked).toBe(true);
+        await user.click(sharedStreams);
+        expect(sharedStreams.checked).toBe(false);
+
+        const maxEntries = screen.getByRole<HTMLInputElement>("textbox", {
+            name: "Max shared streams",
+        });
+        await user.clear(maxEntries);
+        await user.type(maxEntries, "8");
+        expect(maxEntries.value).toBe("8");
     });
 
     it("detects changes to every owned setting", () => {
@@ -153,7 +173,21 @@ describe("Streaming settings", () => {
             "usenet.streaming-segment-retries": "0",
             "usenet.in-flight-article-budget-mb": "8192",
             "usenet.idle-connection-timeout-seconds": "15",
+            "usenet.shared-streams.max-entries": "32",
+            "usenet.shared-streams.grace-seconds": "0",
         })).toBe(true);
+        expect(isStreamingSettingsValid({
+            ...validConfig,
+            "usenet.shared-streams.max-entries": "0",
+        })).toBe(false);
+        expect(isStreamingSettingsValid({
+            ...validConfig,
+            "usenet.shared-streams.ring-mb": "3",
+        })).toBe(false);
+        expect(isStreamingSettingsValid({
+            ...validConfig,
+            "usenet.shared-streams.grace-seconds": "61",
+        })).toBe(false);
     });
 
     it("rejects invalid limits and enabled cache settings", () => {

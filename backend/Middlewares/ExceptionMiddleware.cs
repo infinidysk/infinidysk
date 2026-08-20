@@ -115,6 +115,45 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             AbortStartedResponse(context);
         }
+        catch (Exception e) when (
+            e.TryGetCausingException(out UsenetCorruptArticleException? corrupt) &&
+            e is not OutOfMemoryException &&
+            e is not TransientSegmentExhaustionException &&
+            e is not SeekPositionNotFoundException &&
+            !context.RequestAborted.IsCancellationRequested)
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 404;
+            }
+
+            var filePath = GetRequestFilePath(context);
+            var dedupeKey = $"{filePath}|{corrupt!.SegmentId}";
+            LogWithDedup(RecentReadErrors, dedupeKey, suppressed =>
+            {
+                if (suppressed > 0)
+                    Log.Warning(
+                        "File {FilePath} has corrupt articles: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)",
+                        filePath,
+                        corrupt.Message,
+                        suppressed);
+                else
+                    Log.Warning(
+                        "File {FilePath} has corrupt articles: {Reason}",
+                        filePath,
+                        corrupt.Message);
+            });
+            Log.Debug(e, "File {FilePath} corrupt-article stack", filePath);
+
+            if (context.Items["DavItem"] is DavItem davItem)
+            {
+                RecordMissingArticleForFailFast(davItem, corrupt.SegmentId);
+                ScheduleRepair(davItem);
+            }
+
+            AbortStartedResponse(context);
+        }
         catch (SeekPositionNotFoundException e)
         {
             if (!context.Response.HasStarted)
@@ -443,6 +482,8 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     /// missing article discovered mid-stream must feed the step-0 queue precheck. Otherwise a
     /// re-grab of the same broken release imports cleanly again and loops through repair
     /// forever (issue #732). Failing the re-grab pre-import lets Arr blocklist it properly.
+    /// Persistently corrupt segments that break playback are seeded here too — the cache is
+    /// segment-ID keyed and cause-agnostic.
     /// </summary>
     internal static void RecordMissingArticleForFailFast(DavItem davItem, string segmentId)
     {

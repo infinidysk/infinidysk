@@ -71,6 +71,12 @@ public static class ConfigKeys
     public const string UsenetStreamingSegmentRetries = "usenet.streaming-segment-retries";
     public const string UsenetStreamingReadTimeoutSeconds = "usenet.streaming-read-timeout-seconds";
     public const string UsenetStreamingWriteTimeoutSeconds = "usenet.streaming-write-timeout-seconds";
+    public const string UsenetSharedStreamsEnabled = "usenet.shared-streams.enabled";
+    public const string UsenetSharedStreamsMaxEntries = "usenet.shared-streams.max-entries";
+    public const string UsenetSharedStreamsMaxEntriesPerFile = "usenet.shared-streams.max-entries-per-file";
+    public const string UsenetSharedStreamsRingMb = "usenet.shared-streams.ring-mb";
+    public const string UsenetSharedStreamsGraceSeconds = "usenet.shared-streams.grace-seconds";
+    public const string UsenetSharedStreamsSmallRangeMaxMb = "usenet.shared-streams.small-range-max-mb";
 
     // webdav
     public const string WebdavEnforceReadonly = "webdav.enforce-readonly";
@@ -100,6 +106,7 @@ public static class ConfigKeys
     public const string RepairDegradedMaxConsecutiveMissing = "repair.degraded-max-consecutive-missing";
     public const string RepairDegradedMaxTotalMissing = "repair.degraded-max-total-missing";
     public const string RepairDegradedMaxMissingBytePercent = "repair.degraded-max-missing-byte-percent";
+    public const string RepairCorruptionTrackingEnabled = "repair.corruption-tracking-enabled";
     public const string ArrInstances = "arr.instances";
 
     // rclone

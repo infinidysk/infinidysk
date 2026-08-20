@@ -51,7 +51,7 @@ public static class SegmentDamageClassifier
         var totalBytes = exactSegmentSizes.Sum();
         var bytePercent = totalBytes == 0 ? 100d : missingBytes * 100d / totalBytes;
         var longestRun = GetLongestRun(missing);
-        reason = $"{missing.Length} missing segment(s) (largest run {longestRun}, {bytePercent:0.##}% of file)";
+        reason = $"{missing.Length} missing/corrupt segment(s) (largest run {longestRun}, {bytePercent:0.##}% of file)";
 
         if (missing.Length == 0) return SegmentDamageVerdict.Clean;
         if (containerClass is MediaContainerClass.Unknown or MediaContainerClass.Mp4MoovAtEnd)

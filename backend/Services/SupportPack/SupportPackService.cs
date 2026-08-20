@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Services.Diagnostics;
@@ -366,6 +367,25 @@ public sealed class SupportPackService(
                 concurrentReadStartRangeStarts = concurrentReads.StartRangeReads,
                 concurrentReadOffsetRangeStarts = concurrentReads.OffsetRangeReads,
                 concurrentReadSuffixRangeStarts = concurrentReads.SuffixRangeReads,
+                sharedStreamAttachHits = concurrentReads.SharedAttachHits,
+                sharedStreamAttachMisses = concurrentReads.SharedAttachMisses,
+                sharedStreamAttachMissesBehindWindow = concurrentReads.SharedAttachMissesBehindWindow,
+                sharedStreamAttachMissesAheadOfFrontier = concurrentReads.SharedAttachMissesAheadOfFrontier,
+                sharedStreamAttachMissesEntryUnusable = concurrentReads.SharedAttachMissesEntryUnusable,
+                sharedStreamAttachMissesAtEntryCap = concurrentReads.SharedAttachMissesAtEntryCap,
+                sharedStreamAttachMissesAtGlobalCap = concurrentReads.SharedAttachMissesAtGlobalCap,
+                sharedStreamAttachMissesSmallRangeNoEntry = concurrentReads.SharedAttachMissesSmallRangeNoEntry,
+                sharedStreamAttachMissesIneligible = concurrentReads.SharedAttachMissesIneligible,
+                sharedStreamAttachMissesNoCoveringEntry = concurrentReads.SharedAttachMissesNoCoveringEntry,
+                sharedStreamEntriesCreated = concurrentReads.SharedEntriesCreated,
+                sharedStreamEntriesReapedGrace = concurrentReads.SharedEntriesReapedGrace,
+                sharedStreamEntriesReapedFailure = concurrentReads.SharedEntriesReapedFailure,
+                sharedStreamReaderEvictions = concurrentReads.SharedReaderEvictions,
+                sharedStreamReadersServedTotal = concurrentReads.SharedReadersServedTotal,
+                sharedStreamRingRetainedBytes = concurrentReads.SharedStreamRingRetainedBytes,
+                sharedStreamRingRetainedBytesPeak = concurrentReads.SharedStreamRingRetainedBytesPeak,
+                sharedStreamTotalBytesPumped = concurrentReads.SharedStreamTotalBytesPumped,
+                sharedStreamTotalEntryLifetimeMs = concurrentReads.SharedStreamTotalEntryLifetimeMs,
                 segmentBufferRents = bufferPool.Rents,
                 segmentBufferReturns = bufferPool.Returns,
                 segmentBufferGrowths = bufferPool.Growths,
@@ -655,10 +675,18 @@ public sealed class SupportPackService(
         try
         {
             var snapshot = par2RepairService.GetDiagnosticSnapshot();
+            var trackingEnabled = configManager.IsCorruptionTrackingEnabled();
+            var corruptRecords = trackingEnabled ? CountCorruptRecords() : (Files: 0, Segments: 0);
             return new
             {
                 enabled = configManager.IsPar2RepairEnabled(),
                 preferredOverArr = configManager.IsPar2PreferredOverArr(),
+                corruptionTracking = new
+                {
+                    enabled = trackingEnabled,
+                    filesWithCorruptRecords = corruptRecords.Files,
+                    recordedCorruptSegments = corruptRecords.Segments,
+                },
                 maxMissingSlices = configManager.GetPar2MaxMissingSlices(),
                 maxReleaseGb = configManager.GetPar2MaxReleaseGb(),
                 maxMemoryMb = configManager.GetPar2MaxMemoryMb(),
@@ -690,6 +718,36 @@ public sealed class SupportPackService(
         {
             Log.Debug(e, "Support pack: could not read PAR2 repair diagnostics");
             return new { enabled = false, error = e.Message };
+        }
+    }
+
+    private static (int Files, int Segments) CountCorruptRecords()
+    {
+        try
+        {
+            using var db = new DavDatabaseContext();
+            var blobIds = db.Items.AsNoTracking()
+                .Where(item => item.SubType == DavItem.ItemSubType.NzbFile && item.FileBlobId != null)
+                .Select(item => item.FileBlobId!.Value)
+                .ToList();
+
+            var files = 0;
+            var segments = 0;
+            foreach (var blobId in blobIds)
+            {
+                var blob = BlobStore.ReadBlob<DavNzbFile>(blobId).GetAwaiter().GetResult();
+                if (blob?.CorruptSegmentIndices is not { Length: > 0 } indices)
+                    continue;
+                files++;
+                segments += indices.Length;
+            }
+
+            return (files, segments);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Log.Debug(e, "Support pack: could not count streaming-corrupt segment records");
+            return (0, 0);
         }
     }
 

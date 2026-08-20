@@ -126,7 +126,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var row = Assert.Single(GetHealthRows(item.Id));
         Assert.Equal(HealthCheckResult.HealthResult.Degraded, row.Result);
         Assert.Equal(HealthCheckResult.RepairAction.None, row.RepairStatus);
-        Assert.Contains("1 missing segment(s) (largest run 1", row.Message);
+        Assert.Contains("1 missing/corrupt segment(s) (largest run 1", row.Message);
         Assert.Contains("within tolerance for a resync-tolerant container", row.Message);
         Assert.Equal(1, _context.Items.AsNoTracking().Count(x => x.Id == item.Id));
 
@@ -490,15 +490,199 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal([2], blob!.MissingSegmentIndices!);
     }
 
+    [Fact]
+    public async Task RecordedCorrupt_StatClean_MarksDegradedWithinCaps()
+    {
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [2]);
+        var fake = NewFakeClient(segments, missing: [], corrupt: [2]);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Degraded, row.Result);
+        Assert.Contains("1 missing/corrupt segment(s)", row.Message);
+        Assert.Equal([segments[2]], Assert.Single(par2.Requests));
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
+        Assert.Equal([2], blob!.CorruptSegmentIndices!);
+        Assert.Null(blob.MissingSegmentIndices);
+    }
+
+    [Fact]
+    public async Task RecordedCorruptOverCap_FailsAndRepairs()
+    {
+        var segments = NewSegmentIds(8);
+        var sizes = Enumerable.Repeat(10_000L, 8).ToArray();
+        var corrupt = new[] { 1, 2, 3, 4, 5, 6 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: corrupt);
+        var fake = NewFakeClient(segments, missing: [], corrupt: corrupt);
+        var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+    }
+
+    [Fact]
+    public async Task RecordedCorruptAtSegmentZero_Fails()
+    {
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [0]);
+        var fake = NewFakeClient(segments, missing: [], corrupt: [0]);
+        var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+    }
+
+    [Fact]
+    public async Task RecordedCorruptUnionsWithStatHoles()
+    {
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000, 50, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [4]);
+        var fake = NewFakeClient(segments, missing: [2], corrupt: [4]);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Degraded, row.Result);
+        Assert.Equal([segments[2], segments[4]], Assert.Single(par2.Requests));
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
+        Assert.Equal([2], blob!.MissingSegmentIndices!);
+        Assert.Equal([4], blob.CorruptSegmentIndices!);
+    }
+
+    [Fact]
+    public async Task PatchedCorruptIndices_AreExcludedFromClassification()
+    {
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 100, 50, 10_000 };
+        var (item, oldBlobId) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [1]);
+        CommitPatch(segments[1], (int)sizes[1]);
+        var fake = NewFakeClient(segments, missing: []);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        Assert.Empty(par2.Requests);
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
+        Assert.Null(blob!.CorruptSegmentIndices);
+        Assert.NotEqual(oldBlobId, ReloadItem(item.Id).FileBlobId);
+    }
+
+    [Fact]
+    public async Task ReconfirmationProbe_ClearsNowCleanCorruptRecord()
+    {
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [2]);
+        var fake = NewFakeClient(segments, missing: []);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        Assert.Empty(par2.Requests);
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
+        Assert.Null(blob!.CorruptSegmentIndices);
+        Assert.Null(blob.MissingSegmentIndices);
+    }
+
+    [Fact]
+    public async Task ReconfirmationProbe_MismatchedSegmentId_KeepsCorruptRecord()
+    {
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [2]);
+        var fake = NewFakeClient(segments, missing: []);
+        fake.ForcedResponseSegmentId = "wrong@example.com";
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Degraded, row.Result);
+        Assert.Equal([segments[2]], Assert.Single(par2.Requests));
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
+        Assert.Equal([2], blob!.CorruptSegmentIndices!);
+    }
+
+    [Fact]
+    public async Task HealthyBranchDetour_ClearsStaleCorruptRecordWhenProbesPass()
+    {
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 10_000, 10_000 };
+        var (item, oldBlobId) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingHoles: [1], preExistingCorrupt: [2]);
+        var fake = NewFakeClient(segments, missing: []);
+        var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        var persisted = ReloadItem(item.Id);
+        Assert.NotEqual(oldBlobId, persisted.FileBlobId);
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(persisted.FileBlobId!.Value);
+        Assert.Null(blob!.MissingSegmentIndices);
+        Assert.Null(blob.CorruptSegmentIndices);
+    }
+
     private static string[] NewSegmentIds(int count) =>
         Enumerable.Range(0, count).Select(i => $"seg{i}-{Guid.NewGuid():N}@test").ToArray();
 
-    private static FakeNntpClient NewFakeClient(string[] segments, int[] missing)
+    private static FakeNntpClient NewFakeClient(string[] segments, int[] missing, int[]? corrupt = null)
     {
+        var corruptSet = new HashSet<int>(corrupt ?? []);
         var present = segments
             .Where((_, index) => !missing.Contains(index))
             .ToDictionary(id => id, _ => new byte[128], StringComparer.Ordinal);
-        return new FakeNntpClient(present);
+        if (corruptSet.Count == 0)
+            return new FakeNntpClient(present);
+
+        return new FakeNntpClient(
+            present,
+            useCachedYencStreams: true,
+            decodedStreamFactory: (id, bytes) =>
+            {
+                var index = Array.IndexOf(segments, id);
+                if (index >= 0 && corruptSet.Contains(index))
+                    return new ThrowingReadStream(id);
+                return new MemoryStream(bytes, writable: false);
+            });
+    }
+
+    private sealed class ThrowingReadStream(string segmentId) : MemoryStream
+    {
+        private UsenetCorruptArticleException CreateException() =>
+            new(segmentId, "provider-a", new InvalidDataException("CRC mismatch"));
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw CreateException();
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<int>(CreateException());
     }
 
     private async Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(
@@ -525,6 +709,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         long[] segmentSizes,
         string[][]? fallbackIds = null,
         int[]? preExistingHoles = null,
+        int[]? preExistingCorrupt = null,
         byte? containerClass = null,
         long? criticalHeadEndExclusive = null)
     {
@@ -545,6 +730,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             SegmentByteRanges = ranges,
             SegmentFallbackIds = fallbackIds,
             MissingSegmentIndices = preExistingHoles,
+            CorruptSegmentIndices = preExistingCorrupt,
             ContainerClass = containerClass,
             CriticalHeadEndExclusive = criticalHeadEndExclusive,
         });

@@ -35,6 +35,33 @@ public sealed class DegradedToleranceConfigTests
     }
 
     [Fact]
+    public void CorruptionTracking_DefaultsToOffWhenRepairsAreOff()
+    {
+        Assert.False(new ConfigManager().IsCorruptionTrackingEnabled());
+    }
+
+    [Fact]
+    public void CorruptionTracking_DefaultsToOnWhenRepairsAreOn()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues([Item(ConfigKeys.RepairEnable, "true")]);
+
+        Assert.True(config.IsCorruptionTrackingEnabled());
+    }
+
+    [Fact]
+    public void CorruptionTracking_RespectsExplicitDisable()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues([
+            Item(ConfigKeys.RepairEnable, "true"),
+            Item(ConfigKeys.RepairCorruptionTrackingEnabled, "false"),
+        ]);
+
+        Assert.False(config.IsCorruptionTrackingEnabled());
+    }
+
+    [Fact]
     public void MaxConsecutiveMissing_DefaultsToTwo()
     {
         Assert.Equal(2, new ConfigManager().GetDegradedMaxConsecutiveMissing());
