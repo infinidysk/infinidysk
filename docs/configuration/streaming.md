@@ -38,7 +38,7 @@ is saturated.
 | Maximum size (GB) | `usenet.segment-cache.max-gb` | `10` | Segment-cache size limit |
 | Streaming Segment Timeout | `usenet.streaming-segment-timeout-seconds` | `8` | Per-segment deadline, 2–40 seconds |
 | Streaming Read Timeout [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `usenet.streaming-read-timeout-seconds` | `30` | Initial 5–120 second wait to open a GET/range |
-| Streaming Write Timeout | `usenet.streaming-write-timeout-seconds` | `60` | Per-write deadline, 0–600 seconds (0 disables); cancels a stream whose client stopped reading but kept the connection open, releasing its Article RAM |
+| Streaming Write Timeout | `usenet.streaming-write-timeout-seconds` | `60` | Per-write deadline, 0–600 seconds (0 disables); also cancels a stream that transfers less than 64 KB per timeout window while other streams wait on Article RAM |
 | Streaming Segment Retries | `usenet.streaming-segment-retries` | `3` | Fresh-connection retries after timeout, 0–5 |
 | Article Buffer Size | `usenet.article-buffer-size` | `40` | Articles buffered ahead per stream |
 | In-flight article budget (MiB) [since 0.8.2](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.2){ .nzbdav-since } | `usenet.in-flight-article-budget-mb` | auto | Host-wide decoded-byte cap, 64–8192 MiB |

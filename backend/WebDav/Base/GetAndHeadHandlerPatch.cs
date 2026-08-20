@@ -14,6 +14,7 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav.Requests;
 
@@ -38,6 +39,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
     private readonly ConcurrentReadTracker _concurrentReadTracker;
     private readonly StreamTraceBuffer _streamTrace;
     private readonly StreamingFailureTracker _failureTracker;
+    private readonly InFlightArticleBudget? _inFlightArticleBudget;
 
     public GetAndHeadHandlerPatch(
         IStore store,
@@ -46,7 +48,8 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         ActiveReadRegistry activeReadRegistry,
         ConcurrentReadTracker concurrentReadTracker,
         StreamTraceBuffer streamTrace,
-        StreamingFailureTracker failureTracker)
+        StreamingFailureTracker failureTracker,
+        InFlightArticleBudget? inFlightArticleBudget = null)
     {
         _store = store;
         _configManager = configManager;
@@ -55,6 +58,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         _concurrentReadTracker = concurrentReadTracker;
         _streamTrace = streamTrace;
         _failureTracker = failureTracker;
+        _inFlightArticleBudget = inFlightArticleBudget ?? InFlightArticleBudget.Current;
     }
 
     /// <summary>
@@ -440,8 +444,10 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         var bytesToRead = end - start + 1 ?? long.MaxValue;
 
         // Read in 64KB blocks without allocating a large array for every request.
-        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        var buffer = ArrayPool<byte>.Shared.Rent(StreamingResponseWriteWatchdog.CopyChunkBytes);
         var position = start;
+        var writeWatchdog = new StreamingResponseWriteWatchdog(
+            _configManager.GetStreamingWriteTimeout(), readCts, _inFlightArticleBudget);
         try
         {
             // Copy, until we don't get any data anymore
@@ -469,8 +475,8 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                 // that stopped reading but kept the connection open (HTTP/2 flow control,
                 // tunnel, or proxy) cannot hold its in-flight article budget until restart.
                 var writeStarted = Stopwatch.GetTimestamp();
-                await WriteWithProgressTimeoutAsync(
-                    dest, buffer.AsMemory(0, bytesRead), readCts, cancellationToken).ConfigureAwait(false);
+                await writeWatchdog.WriteAsync(
+                    dest, buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
                 _streamTrace.AddStall(
                     traceRange, StreamStallKind.ClientWrite, Stopwatch.GetElapsedTime(writeStarted));
 
@@ -525,50 +531,4 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         }
     }
 
-    private ValueTask WriteWithProgressTimeoutAsync(
-        Stream dest,
-        Memory<byte> chunk,
-        CancellationTokenSource readCts,
-        CancellationToken cancellationToken) =>
-        WriteWithProgressTimeoutAsync(
-            dest, chunk, _configManager.GetStreamingWriteTimeout(), readCts, cancellationToken);
-
-    /// <summary>
-    /// Writes one chunk to the client, enforcing a per-write progress deadline. A healthy
-    /// client completes a 64 KB write in milliseconds; a write that has not completed within
-    /// the configured window means the client stopped reading but kept the connection open,
-    /// which would otherwise pin the in-flight article budget until the container restarts.
-    /// On timeout the linked read token is cancelled so the whole pipeline unwinds and the
-    /// stream's leases are released.
-    /// </summary>
-    internal static async ValueTask WriteWithProgressTimeoutAsync(
-        Stream dest,
-        Memory<byte> chunk,
-        TimeSpan timeout,
-        CancellationTokenSource readCts,
-        CancellationToken cancellationToken)
-    {
-        if (timeout <= TimeSpan.Zero)
-        {
-            await dest.WriteAsync(chunk, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        try
-        {
-            await dest.WriteAsync(chunk, cancellationToken).AsTask()
-                .WaitAsync(timeout, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-            // Cancel the linked token so the producer stops prefetching and the stream is
-            // disposed, releasing its in-flight article budget. Surface as a
-            // StreamingWriteTimeoutException (an OperationCanceledException) so the request
-            // unwinds through the client-abort path rather than a 500 with a stack trace.
-            await readCts.CancelAsync().ConfigureAwait(false);
-            throw new StreamingWriteTimeoutException(
-                "Client stopped reading; streaming write timed out.");
-        }
-    }
 }

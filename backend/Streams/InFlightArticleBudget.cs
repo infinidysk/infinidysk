@@ -19,6 +19,7 @@ public sealed class InFlightArticleBudget
     private long _throttleEvents;
     private long _lastWarningTicks;
     private long _lastPipeOverReleaseWarningTicks;
+    private int _waiterCount;
     private readonly ProviderLatencyTracker? _latencyTracker;
     private readonly object _gate = new();
     private readonly LinkedList<Waiter> _waiters = new();
@@ -38,6 +39,13 @@ public sealed class InFlightArticleBudget
     public long LeasedBytes => Interlocked.Read(ref _leased);
     public long CapBytes => Interlocked.Read(ref _capBytes);
     public long ThrottleEvents => Interlocked.Read(ref _throttleEvents);
+
+    /// <summary>
+    /// True when at least one caller is blocked in <see cref="LeaseAsync"/>.
+    /// Used by the streaming write watchdog to reclaim leases from a trickle
+    /// reader only while other streams are waiting on the cap.
+    /// </summary>
+    public bool HasWaiters => Volatile.Read(ref _waiterCount) > 0;
 
     /// <summary>
     /// Updates the cap (e.g. after a settings change). Wakes waiters when the cap grows.
@@ -65,7 +73,10 @@ public sealed class InFlightArticleBudget
             {
                 ct.ThrowIfCancellationRequested();
 
-                if (TryLease(bytes))
+                // Fast path only when nobody is queued. Newcomers must not CAS the
+                // leased counter ahead of a FIFO head (barging). A concurrent enqueue
+                // can still race this read; the lock below is the fairness authority.
+                if (waiter is null && Volatile.Read(ref _waiterCount) == 0 && TryLease(bytes))
                 {
                     if (waitTimer is not null)
                     {
@@ -86,13 +97,23 @@ public sealed class InFlightArticleBudget
                 waiter ??= new Waiter(bytes);
                 lock (_gate)
                 {
-                    if (TryLease(bytes))
+                    var isHead = waiter.Node is not null
+                        && ReferenceEquals(_waiters.First, waiter.Node);
+                    var canTake = isHead || (waiter.Node is null && _waiters.First is null);
+                    if (canTake && TryLease(bytes))
                         return new ArticleByteLease(this, bytes);
 
                     if (waiter.Node is null)
+                    {
                         waiter.Node = _waiters.AddLast(waiter);
+                        _waiterCount++;
+                    }
 
                     // Fresh TCS each wait so a prior wake cannot complete a later wait.
+                    // TryLease and Reset share this lock with SignalWaiters' TCS read,
+                    // so a Release either frees bytes that this TryLease already saw or
+                    // observes the TCS created here — a signal cannot land on a stale
+                    // TCS after a failed TryLease without also seeing the reset TCS.
                     waiter.Reset();
                 }
 
@@ -123,6 +144,7 @@ public sealed class InFlightArticleBudget
             var wasHead = ReferenceEquals(_waiters.First, waiter.Node);
             _waiters.Remove(waiter.Node);
             waiter.Node = null;
+            _waiterCount--;
             // A Release that raced with cancellation may have signalled only this
             // waiter; wake the new head so FIFO waiters do not stall forever.
             if (wasHead)
@@ -211,7 +233,8 @@ public sealed class InFlightArticleBudget
 
     /// <summary>
     /// Wake the head waiter only; they re-attempt <see cref="TryLease"/> so accounting
-    /// stays single-owner. Fairness comes from FIFO queue order.
+    /// stays single-owner. Fairness comes from FIFO queue order: newcomers skip the
+    /// lock-free fast path while <see cref="_waiterCount"/> is non-zero.
     /// </summary>
     private void SignalWaiters()
     {

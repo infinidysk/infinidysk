@@ -1149,8 +1149,11 @@ public class ConfigManager
     /// <summary>
     /// Per-write deadline for streaming response bytes to the client. A write that has not
     /// completed within this window means the client stopped reading but kept the connection
-    /// open (HTTP/2 flow control, tunnel, or proxy), so the handler is cancelled to release
-    /// its in-flight article budget instead of wedging until restart. 0 disables the watchdog.
+    /// open (HTTP/2 flow control, tunnel, or proxy). The same window is also the aggregate
+    /// reclaim interval: a stream that transfers less than 64 KB of write-side progress per
+    /// window while other streams are waiting on Article RAM is cancelled so its leases
+    /// release instead of wedging the host. 0 disables both the per-write and aggregate
+    /// watchdogs.
     /// </summary>
     public TimeSpan GetStreamingWriteTimeout()
     {

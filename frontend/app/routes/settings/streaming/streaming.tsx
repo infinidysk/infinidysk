@@ -268,8 +268,8 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                         </div>
                         <p className="text-[11px] leading-relaxed text-base-content/45" id="streaming-write-timeout-help">
                             Per-write deadline for streaming bytes to the client (0–600s, default 60; 0 disables).
-                            Cancels a stream whose client stopped reading but kept the connection open, releasing
-                            its Article RAM instead of wedging until restart.
+                            Also cancels a stream that transfers less than 64 KB per timeout window while other
+                            streams are waiting on Article RAM, so a paused or trickling client cannot wedge playback.
                         </p>
                     </div>
                 </ManagedSetting>

@@ -14,6 +14,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
 using NzbWebDAV.WebDav.Requests;
@@ -29,7 +30,8 @@ public class GetWebdavItemController(
     ActiveReadRegistry activeReadRegistry,
     ConcurrentReadTracker concurrentReadTracker,
     CandidateNegativeCache negativeCache,
-    StreamTraceBuffer streamTrace
+    StreamTraceBuffer streamTrace,
+    InFlightArticleBudget? inFlightArticleBudget = null
 ) : ControllerBase
 {
     private async Task<Stream> GetWebdavItem(GetWebdavItemRequest request, CancellationToken ct)
@@ -196,10 +198,17 @@ public class GetWebdavItemController(
                     // Body transfer can run for minutes; drop the admission/open
                     // deadline and rely on per-segment mid-stream timeouts.
                     readCts.CancelAfter(Timeout.InfiniteTimeSpan);
-                    await CopyAndReportAsync(response, Response.Body, sessionId, effectiveStart, traceRange, ct).ConfigureAwait(false);
+                    await CopyAndReportAsync(
+                            response, Response.Body, sessionId, effectiveStart, traceRange, readCts, ct)
+                        .ConfigureAwait(false);
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed);
                 }
                 catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
+                    throw;
+                }
+                catch (StreamingWriteTimeoutException)
                 {
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
                     throw;
@@ -254,13 +263,18 @@ public class GetWebdavItemController(
         Guid sessionId,
         long startOffset,
         StreamTraceRangeContext? traceRange,
+        CancellationTokenSource readCts,
         CancellationToken ct)
     {
         // 64 KB chunks; after each write report (bytesRead, absolutePosition)
         // so the Right-Now panel can show real playback location and the
         // throughput rate populates correctly.
-        var buffer = new byte[64 * 1024];
+        var buffer = new byte[StreamingResponseWriteWatchdog.CopyChunkBytes];
         var position = startOffset;
+        var writeWatchdog = new StreamingResponseWriteWatchdog(
+            configManager.GetStreamingWriteTimeout(),
+            readCts,
+            inFlightArticleBudget ?? InFlightArticleBudget.Current);
         while (true)
         {
             int read;
@@ -286,7 +300,7 @@ public class GetWebdavItemController(
             }
             if (read <= 0) break;
             var writeStarted = Stopwatch.GetTimestamp();
-            await dest.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            await writeWatchdog.WriteAsync(dest, buffer.AsMemory(0, read), ct).ConfigureAwait(false);
             streamTrace.AddStall(
                 traceRange, StreamStallKind.ClientWrite, Stopwatch.GetElapsedTime(writeStarted));
             position += read;
