@@ -2,8 +2,8 @@
 
 InfiniDysk exposes Prometheus metrics at `/metrics`. The endpoint includes standard
 .NET process/runtime metrics plus `nzbdav_` metrics for active streaming, seek
-latency, NNTP provider pools, circuit breakers, article outcomes, and internal
-metrics-pipeline health.
+latency, NNTP provider pools, circuit breakers, article outcomes, PAR2 repair,
+streaming-confirmed corrupt articles, and internal metrics-pipeline health.
 
 Metric labels are deliberately bounded. Provider metrics use the configured provider
 identity; other labels are fixed enums such as `region`, `kind`, `state`, and

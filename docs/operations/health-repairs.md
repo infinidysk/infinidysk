@@ -17,6 +17,11 @@ failures before InfiniDysk starts a repair or asks *Arr to find a replacement. A
 playback or background health check resets that count. The counter is in memory, so it also resets
 when InfiniDysk restarts.
 
+Corrupt-but-present articles (CRC failures on otherwise complete files) now follow the same
+escalation path when playback breaks. Confirmed corrupt segments are recorded and included in
+full-coverage health classification so those files are not reported healthy — see
+[Realtime corruption detection](../configuration/repairs.md).
+
 ## Health-check retention
 
 Health result rows prune by age (**Maintenance** retention or `DATABASE_HEALTHCHECK_RETENTION_DAYS`). Reset counters from Maintenance when needed.
