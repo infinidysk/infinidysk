@@ -560,6 +560,7 @@ public class QueueItemProcessor(
                 exception);
         }
         catch (Exception exception) when (
+            processor is RarProcessor &&
             exception.IsCancellationException(processorCts.Token) &&
             exception is not OutOfMemoryException &&
             !workerToken.IsCancellationRequested)

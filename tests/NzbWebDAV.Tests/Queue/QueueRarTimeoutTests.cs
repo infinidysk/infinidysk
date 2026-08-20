@@ -165,6 +165,30 @@ public class QueueRarTimeoutTests
             run.WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
+    [Fact]
+    public async Task NonRarProcessorCancellation_IsNotSwallowed()
+    {
+        using var workerCts = new CancellationTokenSource();
+        using var processorCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(workerCts.Token);
+        await processorCts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            QueueItemProcessor.RunProcessorWithRarSiblingAbortAsync(
+                new CancellingNonRarProcessor(processorCts.Token),
+                new Progress<int>(),
+                processorCts,
+                workerCts.Token));
+    }
+
+    private sealed class CancellingNonRarProcessor(CancellationToken token) : BaseProcessor
+    {
+        public override Task<Result?> ProcessAsync()
+        {
+            token.ThrowIfCancellationRequested();
+            return Task.FromResult<Result?>(null);
+        }
+    }
+
     private static Task<List<BaseProcessor.Result?>> RunEagerStageAsync(
         IReadOnlyList<BaseProcessor> processors,
         ContextualCancellationTokenSource processorCts,
