@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/sab/v1/error.schema.json",
+  "title": "SAB and admin status-error envelope",
+  "type": "object",
+  "required": ["status", "error"],
+  "properties": {
+    "status": { "const": false },
+    "error": { "type": "string", "minLength": 1 }
+  }
+}

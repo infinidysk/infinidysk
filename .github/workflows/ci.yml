@@ -278,6 +278,77 @@ jobs:
           dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore
           --filter "FullyQualifiedName~PostgresMigrationTests"
 
+  contracts:
+    name: HTTP contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Install native build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
+
+      - name: Build rapidyenc (linux-x64)
+        run: scripts/build-rapidyenc.sh linux-x64
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend production server
+        working-directory: frontend
+        run: npm run build && npm run build:server
+
+      - name: Restore contract tests
+        run: dotnet restore tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj
+
+      - name: Run SAB, admin, and WebDAV contract tests
+        run: >
+          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore
+          --filter "FullyQualifiedName~SabHttpContractTests|FullyQualifiedName~AdminContractTests|FullyQualifiedName~WebDavContractTests"
+          --logger "trx;LogFileName=http-contracts.trx"
+          --results-directory ./ContractResults
+
+      - name: Run cross-stack frontend proxy contracts
+        run: >
+          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore
+          --filter "Category=CrossStack"
+          --logger "trx;LogFileName=cross-stack.trx"
+          --results-directory ./ContractResults
+
+      - name: Upload contract failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: contract-diagnostics
+          path: ContractResults/*.trx
+          if-no-files-found: ignore
+
   macos-yenc:
     name: macOS yEnc / library tests
     runs-on: macos-latest

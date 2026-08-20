@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/list-webdav-directory.schema.json",
+  "title": "Admin list-webdav-directory success",
+  "type": "object",
+  "required": ["items"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "isDirectory"],
+        "properties": {
+          "name": { "type": "string" },
+          "isDirectory": { "type": "boolean" },
+          "size": { "type": ["integer", "null"] },
+          "nzbBlobId": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

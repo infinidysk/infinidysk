@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/sab/v1/retry.schema.json",
+  "title": "SAB retry success",
+  "type": "object",
+  "required": ["status", "nzo_id", "nzo_ids"],
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "nzo_id": { "type": "string", "minLength": 1 },
+    "nzo_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "failed": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "required": ["nzo_id", "error"],
+        "properties": {
+          "nzo_id": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      }
+    }
+  }
+}

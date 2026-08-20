@@ -33,6 +33,7 @@ internal static class SabContractAssertions
         Assert.False(json.RootElement.TryGetProperty("type", out _));
         Assert.False(json.RootElement.TryGetProperty("title", out _));
         Assert.False(json.RootElement.TryGetProperty("traceId", out _));
+        JsonContractValidator.AssertMatchesSchema(json.RootElement, "sab/v1/error.schema.json");
         if (errorContains is not null)
         {
             Assert.Contains(

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/sab/v1/status-envelope.schema.json",
+  "title": "SAB status envelope",
+  "type": "object",
+  "required": ["status"],
+  "properties": {
+    "status": { "type": "boolean" },
+    "error": { "type": ["string", "null"] }
+  }
+}
