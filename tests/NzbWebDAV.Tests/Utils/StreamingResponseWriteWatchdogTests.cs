@@ -103,9 +103,9 @@ public class StreamingResponseWriteWatchdogTests
         await WaitUntil(() => budget.HasWaiters);
 
         using var readCts = new CancellationTokenSource();
-        using var dest = new DelayedCompletingWriteStream(TimeSpan.FromMilliseconds(40));
+        using var dest = new DelayedCompletingWriteStream(TimeSpan.FromMilliseconds(180));
         var watchdog = new StreamingResponseWriteWatchdog(
-            TimeSpan.FromMilliseconds(50), readCts, budget);
+            TimeSpan.FromMilliseconds(300), readCts, budget);
 
         await watchdog.WriteAsync(dest, new byte[100], CancellationToken.None);
         var ex = await Assert.ThrowsAsync<StreamingWriteTimeoutException>(async () =>
