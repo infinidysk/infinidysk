@@ -3,11 +3,6 @@ import type React from "react";
 import { Fragment, useEffect, useState } from "react";
 import { Icon } from "~/components/ui";
 import { ServiceProviderNotice } from "~/components/service-provider-notice";
-import { Link, useLocation, useNavigation } from "react-router";
-import type React from "react";
-import { Fragment, useEffect, useState } from "react";
-import { Icon } from "~/components/ui";
-import { ServiceProviderNotice } from "~/components/service-provider-notice";
 import {
   SETTINGS_TAB_GROUPS,
   parseSettingsTab,
