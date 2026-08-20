@@ -1,5 +1,7 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Tasks;
 using NzbWebDAV.Utils;
@@ -15,12 +17,17 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
 {
     private readonly ConfigManager _configManager;
     private readonly WebsocketManager _websocketManager;
+    private readonly IDbContextFactory<DavDatabaseContext> _dbContextFactory;
     private CancellationTokenSource _rescheduleCts = new();
 
-    public RemoveOrphanedFilesSchedulerService(ConfigManager configManager, WebsocketManager websocketManager)
+    public RemoveOrphanedFilesSchedulerService(
+        ConfigManager configManager,
+        WebsocketManager websocketManager,
+        IDbContextFactory<DavDatabaseContext> dbContextFactory)
     {
         _configManager = configManager;
         _websocketManager = websocketManager;
+        _dbContextFactory = dbContextFactory;
 
         _configManager.OnConfigChanged += (_, args) =>
         {
@@ -89,7 +96,11 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
                 if (DateTime.Now < nextRun) continue;
 
                 Log.Information("RemoveOrphanedFilesScheduler: running scheduled Remove Orphaned Files task");
-                var task = new RemoveUnlinkedFilesTask(_configManager, _websocketManager, isDryRun: false);
+                var task = new RemoveUnlinkedFilesTask(
+                    _configManager,
+                    _websocketManager,
+                    isDryRun: false,
+                    createContext: () => _dbContextFactory.CreateDbContext());
                 var executed = await task.Execute().ConfigureAwait(false);
                 if (!executed)
                 {

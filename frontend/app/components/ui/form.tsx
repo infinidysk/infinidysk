@@ -14,7 +14,12 @@ export function Field({ className = "", ...props }: FieldsetHTMLAttributes<HTMLF
 }
 
 export function Label({ className = "", ...props }: LabelHTMLAttributes<HTMLLabelElement>) {
-  return <label className={`fieldset-legend text-sm font-medium text-base-content ${className}`} {...props} />;
+  return (
+    <label
+      className={`fieldset-legend text-sm font-medium text-base-content ${className}`}
+      {...props}
+    />
+  );
 }
 
 export function HelpText({
@@ -42,22 +47,16 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
   },
 );
 
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
-  function Textarea({ className = "", ...props }, ref) {
-    return <textarea ref={ref} className={`textarea ${className}`} {...props} />;
-  },
-);
+export const Textarea = forwardRef<
+  HTMLTextAreaElement,
+  TextareaHTMLAttributes<HTMLTextAreaElement>
+>(function Textarea({ className = "", ...props }, ref) {
+  return <textarea ref={ref} className={`textarea ${className}`} {...props} />;
+});
 
 export const Checkbox = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Checkbox({ className = "", ...props }, ref) {
-    return (
-      <input
-        ref={ref}
-        type="checkbox"
-        className={`checkbox ${className}`}
-        {...props}
-      />
-    );
+    return <input ref={ref} type="checkbox" className={`checkbox ${className}`} {...props} />;
   },
 );
 
@@ -70,12 +69,15 @@ export const Toggle = forwardRef<HTMLInputElement, ToggleProps>(function Toggle(
   ref,
 ) {
   return (
-    <label
-      htmlFor={id}
-      style={style}
-      className={`label ${className}`}
-    >
-      <input ref={ref} id={id} type="checkbox" disabled={disabled} className="toggle toggle-success" {...props} />
+    <label htmlFor={id} style={style} className={`label ${className}`}>
+      <input
+        ref={ref}
+        id={id}
+        type="checkbox"
+        disabled={disabled}
+        className="toggle toggle-success"
+        {...props}
+      />
       <span>{label}</span>
     </label>
   );
@@ -95,17 +97,8 @@ export const Check = forwardRef<HTMLInputElement, CheckProps>(function Check(
   }
 
   return (
-    <label
-      htmlFor={props.id}
-      style={style}
-      className={`label ${className}`}
-    >
-      <input
-        ref={ref}
-        type={type}
-        className={type === "radio" ? "radio" : "checkbox"}
-        {...props}
-      />
+    <label htmlFor={props.id} style={style} className={`label ${className}`}>
+      <input ref={ref} type={type} className={type === "radio" ? "radio" : "checkbox"} {...props} />
       <span>{label}</span>
     </label>
   );

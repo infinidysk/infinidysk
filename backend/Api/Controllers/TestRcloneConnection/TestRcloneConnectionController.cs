@@ -8,12 +8,12 @@ namespace NzbWebDAV.Api.Controllers.TestRcloneConnection;
 [Route("api/test-rclone-connection")]
 public class TestRcloneConnectionController(ConfigManager configManager) : BaseApiController
 {
-    private static async Task<TestRcloneConnectionResponse> TestRcloneConnection(TestRcloneConnectionRequest request)
+    private async Task<TestRcloneConnectionResponse> TestRcloneConnection(TestRcloneConnectionRequest request)
     {
         try
         {
             var result = await RcloneClient
-                .TestConnection(request.Host, request.User, request.Pass)
+                .TestConnection(request.Host, request.User, request.Pass, HttpContext.RequestAborted)
                 .ConfigureAwait(false);
 
             return new TestRcloneConnectionResponse

@@ -827,7 +827,7 @@ public class QueueItemProcessor(
         {
             _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
             _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot!.ToJson());
-            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
             _ = RefreshMonitoredDownloads();
             if (error is null)
             {
@@ -947,10 +947,10 @@ public class QueueItemProcessor(
     {
         try
         {
-            var downloadClients = await arrClient.GetDownloadClientsAsync().ConfigureAwait(false);
+            var downloadClients = await arrClient.GetDownloadClientsAsync(ct).ConfigureAwait(false);
             if (downloadClients.All(x => x.Category != queueItem.Category)) return;
-            var queueCount = await arrClient.GetQueueCountAsync().ConfigureAwait(false);
-            if (queueCount < 300) await arrClient.RefreshMonitoredDownloads().ConfigureAwait(false);
+            var queueCount = await arrClient.GetQueueCountAsync(ct).ConfigureAwait(false);
+            if (queueCount < 300) await arrClient.RefreshMonitoredDownloads(ct).ConfigureAwait(false);
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
         {

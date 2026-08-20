@@ -2,17 +2,21 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+type MetricThresholds = {
+  branches?: number;
+  functions?: number;
+  lines?: number;
+  statements?: number;
+};
+
+type CoverageThresholdFile = {
+  global: Required<MetricThresholds>;
+  globs?: Record<string, MetricThresholds>;
+};
+
 const coverageThresholds = JSON.parse(
   readFileSync(new URL("./coverage-thresholds.json", import.meta.url), "utf8"),
-) as {
-  global: {
-    branches: number;
-    functions: number;
-    lines: number;
-    statements: number;
-  };
-  globs?: Record<string, { lines?: number }>;
-};
+) as CoverageThresholdFile;
 
 export default defineConfig({
   resolve: {
@@ -24,11 +28,13 @@ export default defineConfig({
     environment: "node",
     coverage: {
       provider: "v8",
+      include: ["app/**/*.{ts,tsx}", "server/**/*.ts", "server.ts"],
+      exclude: ["**/*.d.ts", "**/*.test.{ts,tsx}", "app/routes.ts"],
       reporter: ["text", "json-summary", "lcov", "cobertura"],
       reportsDirectory: "./coverage",
       thresholds: {
         ...coverageThresholds.global,
-        ...coverageThresholds.globs,
+        ...(coverageThresholds.globs ?? {}),
       },
     },
   },

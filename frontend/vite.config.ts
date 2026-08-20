@@ -6,7 +6,10 @@ import { urlBaseFromEnv } from "./app/utils/url-base";
 function resolveAllowedHosts(): string[] {
   const raw = process.env["VITE_ALLOWED_HOSTS"]?.trim();
   if (!raw) return [".net"];
-  return raw.split(",").map((host) => host.trim()).filter(Boolean);
+  return raw
+    .split(",")
+    .map((host) => host.trim())
+    .filter(Boolean);
 }
 
 export default defineConfig(() => {
@@ -34,9 +37,6 @@ export default defineConfig(() => {
     define: {
       __URL_BASE__: JSON.stringify(token),
     },
-    plugins: [
-      tailwindcss(),
-      reactRouter(),
-    ],
+    plugins: [tailwindcss(), reactRouter()],
   };
 });

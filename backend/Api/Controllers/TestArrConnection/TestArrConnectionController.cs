@@ -10,12 +10,12 @@ namespace NzbWebDAV.Api.Controllers.TestArrConnection;
 [Route("api/test-arr-connection")]
 public class TestArrConnectionController(ConfigManager configManager) : BaseApiController
 {
-    private static async Task<TestArrConnectionResponse> TestArrConnection(TestArrConnectionRequest request)
+    private async Task<TestArrConnectionResponse> TestArrConnection(TestArrConnectionRequest request)
     {
         try
         {
             var client = new ArrClient(request.Host, request.ApiKey);
-            var apiInfo = await client.GetApiInfo().ConfigureAwait(false);
+            var apiInfo = await client.GetApiInfo(HttpContext.RequestAborted).ConfigureAwait(false);
             if (apiInfo.Current?.Length > 0)
             {
                 return new TestArrConnectionResponse

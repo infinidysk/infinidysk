@@ -34,11 +34,15 @@ public sealed class SearchExcludeSyncService : BackgroundService
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
 
     private readonly ConfigManager _configManager;
+    private readonly IDbContextFactory<DavDatabaseContext>? _dbContextFactory;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public SearchExcludeSyncService(ConfigManager configManager)
+    public SearchExcludeSyncService(
+        ConfigManager configManager,
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
     {
         _configManager = configManager;
+        _dbContextFactory = dbContextFactory;
         _configManager.OnConfigChanged += OnConfigChanged;
     }
 
@@ -262,7 +266,7 @@ public sealed class SearchExcludeSyncService : BackgroundService
     {
         var json = JsonSerializer.Serialize(cache);
 
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = _dbContextFactory?.CreateDbContext() ?? new DavDatabaseContext();
         var existing = await dbContext.ConfigItems
             .FirstOrDefaultAsync(x => x.ConfigName == CacheKey, ct).ConfigureAwait(false);
         if (existing is null)

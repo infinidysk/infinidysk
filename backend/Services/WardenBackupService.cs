@@ -150,7 +150,7 @@ public partial class WardenBackupService : BackgroundService
             if (resp.StatusCode == HttpStatusCode.NotFound)
                 throw new BadHttpRequestException("No backup file was found in the repo.");
             if (!resp.IsSuccessStatusCode)
-                throw new BadHttpRequestException($"GitHub returned {(int)resp.StatusCode}: {await GithubMessage(resp).ConfigureAwait(false)}");
+                throw new BadHttpRequestException($"GitHub returned {(int)resp.StatusCode}: {await GithubMessage(resp, ct).ConfigureAwait(false)}");
 
             await using var raw = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             using var buffer = await BufferAsync(raw, ct).ConfigureAwait(false);
@@ -178,7 +178,7 @@ public partial class WardenBackupService : BackgroundService
         using var resp = await Http.SendAsync(req, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
         if (!resp.IsSuccessStatusCode)
-            throw new GithubException($"{(int)resp.StatusCode} {await GithubMessage(resp).ConfigureAwait(false)}");
+            throw new GithubException($"{(int)resp.StatusCode} {await GithubMessage(resp, ct).ConfigureAwait(false)}");
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
         return doc.RootElement.TryGetProperty("sha", out var sha) ? sha.GetString() : null;
     }
@@ -200,7 +200,7 @@ public partial class WardenBackupService : BackgroundService
         if (resp.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.UnprocessableEntity && sha is not null)
             return new PutResult { StaleConflict = true };
         if (!resp.IsSuccessStatusCode)
-            throw new GithubException($"{(int)resp.StatusCode} {await GithubMessage(resp).ConfigureAwait(false)}");
+            throw new GithubException($"{(int)resp.StatusCode} {await GithubMessage(resp, ct).ConfigureAwait(false)}");
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
         var newSha = doc.RootElement.TryGetProperty("content", out var c) && c.TryGetProperty("sha", out var sh)
@@ -219,11 +219,11 @@ public partial class WardenBackupService : BackgroundService
         return req;
     }
 
-    private static async Task<string> GithubMessage(HttpResponseMessage resp)
+    private static async Task<string> GithubMessage(HttpResponseMessage resp, CancellationToken ct)
     {
         try
         {
-            var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(body);
             if (doc.RootElement.TryGetProperty("message", out var m) && m.GetString() is { } msg)
             {

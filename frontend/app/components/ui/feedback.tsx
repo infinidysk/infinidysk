@@ -14,13 +14,7 @@ export function Alert({
   className = "",
   ...props
 }: HTMLAttributes<HTMLDivElement> & { variant?: AlertVariant }) {
-  return (
-    <div
-      role="alert"
-      className={`alert ${alertVariants[variant]} ${className}`}
-      {...props}
-    />
-  );
+  return <div role="alert" className={`alert ${alertVariants[variant]} ${className}`} {...props} />;
 }
 
 export function Badge({ className = "", ...props }: HTMLAttributes<HTMLSpanElement>) {
@@ -28,7 +22,9 @@ export function Badge({ className = "", ...props }: HTMLAttributes<HTMLSpanEleme
 }
 
 export function Spinner({ className = "", size }: { className?: string; size?: string }) {
-  return <span className={`loading loading-spinner ${size === "sm" ? "loading-sm" : ""} ${className}`} />;
+  return (
+    <span className={`loading loading-spinner ${size === "sm" ? "loading-sm" : ""} ${className}`} />
+  );
 }
 
 type TooltipPlacement = "top" | "bottom" | "left" | "right";
@@ -52,7 +48,10 @@ export function Tooltip({
   className?: string;
 }) {
   return (
-    <span className={`tooltip ${tooltipPlacementClass[placement]} ${className}`.trim()} data-tip={content}>
+    <span
+      className={`tooltip ${tooltipPlacementClass[placement]} ${className}`.trim()}
+      data-tip={content}
+    >
       {children}
     </span>
   );

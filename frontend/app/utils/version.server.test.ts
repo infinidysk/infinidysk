@@ -65,9 +65,7 @@ describe("getBuildCommit", () => {
     process.env["NZBDAV_COMMIT_SHA"] = "ABCDEF0123456789abcdef0123456789abcdef01";
     process.env["NZBDAV_VERSION"] = "dev-abcdef0";
 
-    await expect(
-      getBuildCommit({ gitDir: join(tempGitDir, "missing") }),
-    ).resolves.toEqual({
+    await expect(getBuildCommit({ gitDir: join(tempGitDir, "missing") })).resolves.toEqual({
       sha: "abcdef0123456789abcdef0123456789abcdef01",
       branch: "dev",
       source: "env",
@@ -114,10 +112,7 @@ describe("getBuildCommit", () => {
   });
 
   it("returns undefined for detached HEAD", async () => {
-    await writeFile(
-      join(tempGitDir, "HEAD"),
-      "abcdef0123456789abcdef0123456789abcdef01\n",
-    );
+    await writeFile(join(tempGitDir, "HEAD"), "abcdef0123456789abcdef0123456789abcdef01\n");
 
     await expect(getBuildCommit({ gitDir: tempGitDir })).resolves.toBeUndefined();
   });
@@ -134,9 +129,7 @@ describe("getBuildCommit", () => {
   });
 
   it("returns undefined when .git is missing", async () => {
-    await expect(
-      getBuildCommit({ gitDir: join(tempGitDir, "missing") }),
-    ).resolves.toBeUndefined();
+    await expect(getBuildCommit({ gitDir: join(tempGitDir, "missing") })).resolves.toBeUndefined();
   });
 
   it("falls back to a SHA embedded in a main-<sha> version label", async () => {
@@ -169,13 +162,13 @@ describe("getBuildCommit", () => {
       "abcdef0123456789abcdef0123456789abcdef01\n",
     );
 
-    await expect(
-      getBuildCommit({ gitDir: tempGitDir, version: "main-e0eef520" }),
-    ).resolves.toEqual({
-      sha: "abcdef0123456789abcdef0123456789abcdef01",
-      branch: "main",
-      source: "git",
-    });
+    await expect(getBuildCommit({ gitDir: tempGitDir, version: "main-e0eef520" })).resolves.toEqual(
+      {
+        sha: "abcdef0123456789abcdef0123456789abcdef01",
+        branch: "main",
+        source: "git",
+      },
+    );
   });
 
   it("ignores version labels that do not embed a commit SHA", async () => {
@@ -191,7 +184,10 @@ describe("parseBuildCommitFromVersion", () => {
   it.each([
     ["main-e0eef520", "e0eef520"],
     ["Main-E0EEF520", "e0eef520"],
-    ["  main-abcdef0123456789abcdef0123456789abcdef01  ", "abcdef0123456789abcdef0123456789abcdef01"],
+    [
+      "  main-abcdef0123456789abcdef0123456789abcdef01  ",
+      "abcdef0123456789abcdef0123456789abcdef01",
+    ],
   ])("parses %s", (version, expectedSha) => {
     expect(parseBuildCommitFromVersion(version)).toEqual({
       sha: expectedSha,

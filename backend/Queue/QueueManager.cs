@@ -72,7 +72,10 @@ public sealed class QueueManager : IDisposable
     internal Func<CancellationToken, Task<DateTime?>>? GetNextPauseUntilOverride { get; set; }
     internal Func<DavDatabaseContext>? CreateDbContextOverride { get; set; }
 
-    private DavDatabaseContext CreateDbContext() => DavDatabaseContexts.Create(CreateDbContextOverride);
+    private readonly IDbContextFactory<DavDatabaseContext>? _dbContextFactory;
+
+    private DavDatabaseContext CreateDbContext() =>
+        DavDatabaseContexts.Create(CreateDbContextOverride, _dbContextFactory);
 
     public QueueManager(
         UsenetStreamingClient usenetClient,
@@ -81,10 +84,11 @@ public sealed class QueueManager : IDisposable
         ProviderUsageTracker providerUsageTracker,
         WatchdogLog watchdogLog,
         QueueItemSourceTracker sourceTracker,
-        BenchmarkGate benchmarkGate
+        BenchmarkGate benchmarkGate,
+        IDbContextFactory<DavDatabaseContext> dbContextFactory
     ) : this(
         usenetClient, configManager, websocketManager, providerUsageTracker,
-        watchdogLog, sourceTracker, benchmarkGate, startLoop: false)
+        watchdogLog, sourceTracker, benchmarkGate, startLoop: false, dbContextFactory)
     {
     }
 
@@ -96,7 +100,8 @@ public sealed class QueueManager : IDisposable
         WatchdogLog watchdogLog,
         QueueItemSourceTracker sourceTracker,
         BenchmarkGate benchmarkGate,
-        bool startLoop
+        bool startLoop,
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null
     )
     {
         _usenetClient = usenetClient;
@@ -106,6 +111,7 @@ public sealed class QueueManager : IDisposable
         _watchdogLog = watchdogLog;
         _sourceTracker = sourceTracker;
         _benchmarkGate = benchmarkGate;
+        _dbContextFactory = dbContextFactory;
         _cancellationTokenSource = CancellationTokenSource
             .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
         if (startLoop)
