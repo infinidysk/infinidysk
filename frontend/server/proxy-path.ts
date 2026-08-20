@@ -44,10 +44,12 @@ export function isBackendMetricsPath(pathname: string): boolean {
 /** True when the path is an opt-in backend API documentation endpoint. */
 export function isBackendApiDocsPath(pathname: string): boolean {
   const decodedPath = safeDecodePath(pathname);
-  return decodedPath === "/openapi"
-    || decodedPath?.startsWith("/openapi/") === true
-    || decodedPath === "/scalar"
-    || decodedPath?.startsWith("/scalar/") === true;
+  return (
+    decodedPath === "/openapi" ||
+    decodedPath?.startsWith("/openapi/") === true ||
+    decodedPath === "/scalar" ||
+    decodedPath?.startsWith("/scalar/") === true
+  );
 }
 
 export function shouldProxyToBackend(method: string, pathname: string): boolean {

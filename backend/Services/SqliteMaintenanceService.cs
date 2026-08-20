@@ -12,7 +12,7 @@ namespace NzbWebDAV.Services;
 /// not stay ballooned after bulk imports. First sweep ~2 minutes after startup,
 /// then every 6 hours.
 /// </summary>
-public class SqliteMaintenanceService : BackgroundService
+public class SqliteMaintenanceService(IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     private static readonly TimeSpan InitialDelay = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan TickInterval = TimeSpan.FromHours(6);
@@ -43,11 +43,11 @@ public class SqliteMaintenanceService : BackgroundService
         }
     }
 
-    private static async Task SafeSweepAsync()
+    private async Task SafeSweepAsync()
     {
         try
         {
-            await using var db = new DavDatabaseContext();
+            await using var db = dbContextFactory.CreateDbContext();
             await using var metrics = new MetricsDbContext();
             await SweepAsync(db, metrics).ConfigureAwait(false);
         }

@@ -25,7 +25,15 @@ describe("normalizeUrlBase", () => {
   it("rejects characters Express 5 would misparse as route patterns", () => {
     // ":" and "*" mount successfully in path-to-regexp v8 but silently turn
     // the prefix into a pattern; "(" and "{" crash at boot with a raw stack.
-    for (const bad of ["/nzb:dav", "/nzb*dav", "/nzb(dav", "/nzb{dav", "/nzb dav", "/nzb%64av", "/nzb?x=1"]) {
+    for (const bad of [
+      "/nzb:dav",
+      "/nzb*dav",
+      "/nzb(dav",
+      "/nzb{dav",
+      "/nzb dav",
+      "/nzb%64av",
+      "/nzb?x=1",
+    ]) {
       expect(() => normalizeUrlBase(bad), bad).toThrow(/Invalid URL base/);
     }
   });
@@ -71,7 +79,7 @@ describe("server.ts mirror parity", () => {
   const server = readFileSync(new URL("../../server.ts", import.meta.url), "utf8");
 
   it.each([
-    ['const SAFE_URL_BASE = /^[A-Za-z0-9._~\\-/]+$/;'],
+    ["const SAFE_URL_BASE = /^[A-Za-z0-9._~\\-/]+$/;"],
     ['if (trimmed === "" || trimmed === "/") return "";'],
     ['const withLeading = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;'],
     ['return withLeading.replace(/\\/+$/, "");'],

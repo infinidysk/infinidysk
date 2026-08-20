@@ -63,7 +63,11 @@ describe("queue route loader", () => {
 
   it("loads the requested queue and history pages with configured categories", async () => {
     const queueSlots = [{ nzo_id: "queue-1" }, { nzo_id: "queue-2" }];
-    const fetchedQueueSlots = [{ nzo_id: "queue-before" }, ...queueSlots, { nzo_id: "queue-after" }];
+    const fetchedQueueSlots = [
+      { nzo_id: "queue-before" },
+      ...queueSlots,
+      { nzo_id: "queue-after" },
+    ];
     const historySlots = [{ nzo_id: "history-1" }];
     getQueueMock.mockResolvedValueOnce({ slots: fetchedQueueSlots, noofslots: 30 });
     getHistoryMock.mockResolvedValueOnce({ slots: historySlots, noofslots: 700 });
@@ -75,15 +79,20 @@ describe("queue route loader", () => {
     const result = await loader(loaderRequest("?qp=2&hp=3&qps=25&hps=250"));
 
     expect(getQueueMock).toHaveBeenCalledWith(27, 24, {
-      search: "", category: "", status: "", sort: undefined, direction: undefined,
+      search: "",
+      category: "",
+      status: "",
+      sort: undefined,
+      direction: undefined,
     });
     expect(getHistoryMock).toHaveBeenCalledWith(250, 500, {
-      search: "", category: "", status: "", sort: undefined, direction: undefined,
+      search: "",
+      category: "",
+      status: "",
+      sort: undefined,
+      direction: undefined,
     });
-    expect(getConfigMock).toHaveBeenCalledWith([
-      "api.categories",
-      "api.manual-category",
-    ]);
+    expect(getConfigMock).toHaveBeenCalledWith(["api.categories", "api.manual-category"]);
     expect(result).toEqual({
       queueSlots: fetchedQueueSlots.slice(1),
       previousQueueSlot: fetchedQueueSlots[0],
@@ -110,10 +119,18 @@ describe("queue route loader", () => {
     const result = await loader(loaderRequest("?qp=0&hp=invalid&qps=10&hps=999"));
 
     expect(getQueueMock).toHaveBeenCalledWith(101, 0, {
-      search: "", category: "", status: "", sort: undefined, direction: undefined,
+      search: "",
+      category: "",
+      status: "",
+      sort: undefined,
+      direction: undefined,
     });
     expect(getHistoryMock).toHaveBeenCalledWith(100, 0, {
-      search: "", category: "", status: "", sort: undefined, direction: undefined,
+      search: "",
+      category: "",
+      status: "",
+      sort: undefined,
+      direction: undefined,
     });
     expect(result).toMatchObject({
       queueSlots: [],
@@ -134,13 +151,25 @@ describe("queue route loader", () => {
     getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
     getConfigMock.mockResolvedValueOnce([]);
 
-    await loader(loaderRequest("?qq=show&qcat=tv&qstatus=Paused&qsort=size:desc&hq=film&hcat=movies&hstatus=Failed&hsort=completed:asc"));
+    await loader(
+      loaderRequest(
+        "?qq=show&qcat=tv&qstatus=Paused&qsort=size:desc&hq=film&hcat=movies&hstatus=Failed&hsort=completed:asc",
+      ),
+    );
 
     expect(getQueueMock).toHaveBeenCalledWith(101, 0, {
-      search: "show", category: "tv", status: "Paused", sort: "size", direction: "desc",
+      search: "show",
+      category: "tv",
+      status: "Paused",
+      sort: "size",
+      direction: "desc",
     });
     expect(getHistoryMock).toHaveBeenCalledWith(100, 0, {
-      search: "film", category: "movies", status: "Failed", sort: "completed", direction: "asc",
+      search: "film",
+      category: "movies",
+      status: "Failed",
+      sort: "completed",
+      direction: "asc",
     });
   });
 

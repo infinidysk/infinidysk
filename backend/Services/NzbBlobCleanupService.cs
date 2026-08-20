@@ -12,7 +12,7 @@ namespace NzbWebDAV.Services;
 /// An NZB blob is only deleted once it is no longer referenced by any
 /// QueueItem, HistoryItem, or DavItem.
 /// </summary>
-public class NzbBlobCleanupService : BackgroundService
+public class NzbBlobCleanupService(IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -20,7 +20,7 @@ public class NzbBlobCleanupService : BackgroundService
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = dbContextFactory.CreateDbContext();
 
                 var processed = await ProcessNextCleanupItemAsync(dbContext, stoppingToken).ConfigureAwait(false);
 

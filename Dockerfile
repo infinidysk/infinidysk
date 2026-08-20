@@ -44,7 +44,8 @@ WORKDIR /src
 
 # Accept build-time architecture as ARG (e.g., x64 or arm64)
 ARG TARGETARCH
-COPY ./backend/NzbWebDAV.csproj ./backend/nuget.config ./backend/
+COPY ./Directory.Build.props ./Directory.Packages.props ./nuget.config ./.editorconfig ./
+COPY ./backend/NzbWebDAV.csproj ./backend/
 COPY ./libs/SharpCompress/SharpCompress.csproj ./libs/SharpCompress/
 COPY ./libs/UsenetSharp/UsenetSharp.csproj ./libs/UsenetSharp/
 COPY ./libs/RapidYencSharp/RapidYencSharp.csproj ./libs/RapidYencSharp/

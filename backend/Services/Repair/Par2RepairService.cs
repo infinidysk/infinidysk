@@ -31,6 +31,7 @@ public class Par2RepairService : BackgroundService
     private readonly ConfigManager _configManager;
     private readonly UsenetStreamingClient _usenetClient;
     private readonly RepairPatchStore _patchStore;
+    private readonly IDbContextFactory<DavDatabaseContext>? _dbContextFactory;
     private readonly Channel<RepairWorkItem> _queue;
     private readonly Channel<ZeroFillEvent> _zeroFillQueue;
     private readonly ConcurrentDictionary<Guid, byte> _queuedOrRunning = new();
@@ -45,11 +46,13 @@ public class Par2RepairService : BackgroundService
     public Par2RepairService(
         ConfigManager configManager,
         UsenetStreamingClient usenetClient,
-        RepairPatchStore patchStore)
+        RepairPatchStore patchStore,
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
     {
         _configManager = configManager;
         _usenetClient = usenetClient;
         _patchStore = patchStore;
+        _dbContextFactory = dbContextFactory;
         // Wait mode makes non-blocking TryWrite report full queues as false so
         // callers can undo bookkeeping; DropWrite would return true and silently
         // discard the item, leaking _queuedOrRunning/_pendingZeroFillPaths entries.
@@ -66,6 +69,9 @@ public class Par2RepairService : BackgroundService
             SingleWriter = false,
         });
     }
+
+    private DavDatabaseContext CreateContext() =>
+        _dbContextFactory?.CreateDbContext() ?? new DavDatabaseContext();
 
     internal int PendingZeroFillCount => _pendingZeroFillPaths.Count;
 
@@ -182,7 +188,7 @@ public class Par2RepairService : BackgroundService
 
     private async Task ProcessZeroFillEventAsync(ZeroFillEvent evt, CancellationToken ct)
     {
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = CreateContext();
         var dbClient = new DavDatabaseClient(dbContext);
         if (evt.IsCorruption)
         {
@@ -240,7 +246,7 @@ public class Par2RepairService : BackgroundService
 
     private async Task ProcessQueueItemAsync(RepairWorkItem item, CancellationToken ct)
     {
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = CreateContext();
         var dbClient = new DavDatabaseClient(dbContext);
         var davItem = await dbClient.Ctx.Items
             .FirstOrDefaultAsync(x => x.Id == item.DavItemId, ct)
@@ -382,7 +388,7 @@ public class Par2RepairService : BackgroundService
             return RepairExecutionResult.NotFeasible($"Could not parse NZB blob: {e.Message}");
         }
 
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = CreateContext();
         var dbClient = new DavDatabaseClient(dbContext);
         var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
         if (nzbFile?.SegmentIds is not { Length: > 0 } segmentIds)
@@ -741,7 +747,7 @@ public class Par2RepairService : BackgroundService
         return indices.Where(index => (uint)index < (uint)segmentCount).ToHashSet();
     }
 
-    private static async Task PersistDiscoveredDamageAsync(
+    private async Task PersistDiscoveredDamageAsync(
         DavItem davItem,
         DavNzbFile nzbFile,
         SliceSegmentAccessor accessor,
@@ -770,7 +776,7 @@ public class Par2RepairService : BackgroundService
             },
             fallback: nzbFile).ConfigureAwait(false);
 
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = CreateContext();
         var tracked = await dbContext.Items.FirstOrDefaultAsync(x => x.Id == davItem.Id, ct).ConfigureAwait(false);
         if (tracked is not null && davItem.FileBlobId is { } blobId)
         {
@@ -1169,7 +1175,7 @@ public class Par2RepairService : BackgroundService
     {
         if (_queuedOrRunning.ContainsKey(davItemId)) return false;
 
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = CreateContext();
         var now = DateTimeOffset.UtcNow;
         var active = await dbContext.Par2RepairJobs.AsNoTracking()
             .Where(x => x.DavItemId == davItemId)
@@ -1192,7 +1198,7 @@ public class Par2RepairService : BackgroundService
         IReadOnlyList<string>? missingSegmentIds,
         CancellationToken ct)
     {
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = CreateContext();
         var existing = await dbContext.Par2RepairJobs
             .Where(x => x.DavItemId == davItem.Id)
             .OrderByDescending(x => x.CreatedAt)
@@ -1231,9 +1237,9 @@ public class Par2RepairService : BackgroundService
         };
     }
 
-    private static async Task PersistJobAsync(Par2RepairJob job, CancellationToken ct)
+    private async Task PersistJobAsync(Par2RepairJob job, CancellationToken ct)
     {
-        await using var dbContext = new DavDatabaseContext();
+        await using var dbContext = CreateContext();
         var tracked = await dbContext.Par2RepairJobs
             .FirstOrDefaultAsync(x => x.Id == job.Id, ct)
             .ConfigureAwait(false);
@@ -1289,7 +1295,7 @@ public class Par2RepairService : BackgroundService
     {
         try
         {
-            using var dbContext = new DavDatabaseContext();
+            using var dbContext = CreateContext();
             return dbContext.Par2RepairJobs
                 .OrderByDescending(j => j.CreatedAt)
                 .Take(10)

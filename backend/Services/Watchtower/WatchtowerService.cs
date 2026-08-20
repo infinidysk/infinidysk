@@ -25,7 +25,8 @@ public class WatchtowerService(
     EpisodeEnumerator episodeEnumerator,
     PreferredOrderStore preferredOrderStore,
     NzbFetchCoalescer nzbFetchCoalescer,
-    BenchmarkGate benchmarkGate
+    BenchmarkGate benchmarkGate,
+    IDbContextFactory<DavDatabaseContext> dbContextFactory
 ) : BackgroundService
 {
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(20);
@@ -183,7 +184,7 @@ public class WatchtowerService(
     {
         if (!configManager.IsWatchtowerVerboseLoggingEnabled()) return;
 
-        await using var ctx = new DavDatabaseContext();
+        await using var ctx = dbContextFactory.CreateDbContext();
         var grouped = await ctx.WantedItems
             .GroupBy(w => w.State)
             .Select(g => new { State = g.Key, Count = g.Count() })
@@ -203,7 +204,7 @@ public class WatchtowerService(
         var now = Now();
         var interval = configManager.GetWatchtowerSyncIntervalSeconds();
 
-        await using var ctx = new DavDatabaseContext();
+        await using var ctx = dbContextFactory.CreateDbContext();
         var sources = await ctx.ListSources
             .Where(s => s.Enabled && s.Kind != ListSource.KindManual)
             .ToListAsync(ct).ConfigureAwait(false);
@@ -384,7 +385,7 @@ public class WatchtowerService(
         var now = Now();
         var interval = configManager.GetWatchtowerSyncIntervalSeconds();
 
-        await using var ctx = new DavDatabaseContext();
+        await using var ctx = dbContextFactory.CreateDbContext();
         var due = await ctx.WantedItems
             .Where(w => w.State == WantedItem.StateExpander
                         && (w.NextCheckAtUnix == null || w.NextCheckAtUnix <= now))
@@ -755,7 +756,7 @@ public class WatchtowerService(
             if (budgetRoom <= 0) return;
 
             var now = Now();
-            await using var ctx = new DavDatabaseContext();
+            await using var ctx = dbContextFactory.CreateDbContext();
 
             var cap = configManager.GetWatchtowerActiveSetCap();
             var activeReady = await ctx.WantedItems.CountAsync(w => w.State == WantedItem.StateReady, ct).ConfigureAwait(false);
@@ -792,7 +793,7 @@ public class WatchtowerService(
                 if (auto && !await searchProfileService.HasResolveHeadroomAsync(profileToken, itemCt).ConfigureAwait(false))
                     return;
 
-                await using var itemCtx = new DavDatabaseContext();
+                await using var itemCtx = dbContextFactory.CreateDbContext();
                 var item = await itemCtx.WantedItems.FirstOrDefaultAsync(w => w.Id == id, itemCt).ConfigureAwait(false);
                 if (item is null) return;
 
@@ -1029,7 +1030,7 @@ public class WatchtowerService(
     private async Task KeepFreshDueItemsAsync(CancellationToken ct)
     {
         var now = Now();
-        await using var ctx = new DavDatabaseContext();
+        await using var ctx = dbContextFactory.CreateDbContext();
         var due = await ctx.WantedItems
             .Where(w => w.State == WantedItem.StateReady
                         && w.NextCheckAtUnix != null && w.NextCheckAtUnix <= now)

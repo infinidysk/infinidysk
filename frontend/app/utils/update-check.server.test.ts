@@ -325,9 +325,7 @@ describe("checkForUpdate (dev builds)", () => {
       compareUrl: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
       trackRef: "dev",
     });
-    expect(firstCalledUrl()).toContain(
-      `/compare/${encodeURIComponent(buildSha)}...dev`,
-    );
+    expect(firstCalledUrl()).toContain(`/compare/${encodeURIComponent(buildSha)}...dev`);
   });
 
   it("returns null when the running :dev image matches the dev tag tip", async () => {
@@ -340,9 +338,7 @@ describe("checkForUpdate (dev builds)", () => {
     );
 
     await expect(checkForUpdate("dev-e0eef52")).resolves.toBeNull();
-    expect(firstCalledUrl()).toContain(
-      `/compare/${encodeURIComponent(buildSha)}...dev`,
-    );
+    expect(firstCalledUrl()).toContain(`/compare/${encodeURIComponent(buildSha)}...dev`);
   });
 
   it("returns null when compare status is identical", async () => {
@@ -413,15 +409,13 @@ describe("checkForUpdate (dev builds)", () => {
   });
 
   it("does not cache transient failures", async () => {
-    fetchMock
-      .mockRejectedValueOnce(new Error("network down"))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          status: "ahead",
-          ahead_by: 2,
-          html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
-        }),
-      );
+    fetchMock.mockRejectedValueOnce(new Error("network down")).mockResolvedValueOnce(
+      jsonResponse({
+        status: "ahead",
+        ahead_by: 2,
+        html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...dev`,
+      }),
+    );
 
     await expect(checkForUpdate("pre-42")).resolves.toBeNull();
     await expect(checkForUpdate("pre-42")).resolves.toMatchObject({

@@ -230,6 +230,8 @@ public partial class Program
             var maxRequestBodySize = EnvironmentUtil.GetLongVariable("MAX_REQUEST_BODY_SIZE") ?? 100 * 1024 * 1024;
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
+            builder.Services.Configure<HostOptions>(options =>
+                options.ShutdownTimeout = TimeSpan.FromSeconds(5));
             builder.Services.AddControllers();
             builder.Services.AddHttpContextAccessor();
             if (apiDocsEnabled)
@@ -313,7 +315,8 @@ public partial class Program
                     sp.GetRequiredService<UsenetStreamingClient>(),
                     sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<QueueManager>()
-                .AddSingleton(_ => new NzbResolutionCache(() => new DavDatabaseContext()))
+                .AddSingleton(sp => new NzbResolutionCache(
+                    () => sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext()))
                 .AddSingleton<PreferredOrderStore>()
                 .AddSingleton<NzbFetchCoalescer>()
                 .AddSingleton<PlayResolutionCoalescer>()
@@ -322,7 +325,7 @@ public partial class Program
                 // NNTP client never depends on scoped database services.
                 .AddSingleton(sp => new ArticleMissNegativeCache(
                     sp.GetRequiredService<ConfigManager>(),
-                    () => new DavDatabaseContext()))
+                    () => sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext()))
                 .AddHostedService(sp => sp.GetRequiredService<ArticleMissNegativeCache>())
                 .AddSingleton(sp =>
                 {
@@ -400,7 +403,10 @@ public partial class Program
                 .AddSingleton<ListSourceEnumerator>()
                 .AddSingleton<EpisodeEnumerator>()
                 .AddHostedService<WatchtowerService>()
-                .AddScoped<DavDatabaseContext>()
+                .AddDbContextFactory<DavDatabaseContext>(options =>
+                    DavDatabaseContext.ConfigureOptions(options))
+                .AddScoped(sp =>
+                    sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext())
                 .AddScoped<DavDatabaseClient>()
                 .AddScoped<NzbWebDAV.Services.Benchmark.BenchmarkCorpusProvider>()
                 .AddScoped<NzbWebDAV.Services.Benchmark.UsenetBenchmarkService>()

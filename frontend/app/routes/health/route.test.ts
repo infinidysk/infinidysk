@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./route";
 
-const {
-  getConfigMock,
-  getHealthCheckHistoryMock,
-  getHealthCheckQueueMock,
-} = vi.hoisted(() => ({
+const { getConfigMock, getHealthCheckHistoryMock, getHealthCheckQueueMock } = vi.hoisted(() => ({
   getConfigMock: vi.fn(),
   getHealthCheckHistoryMock: vi.fn(),
   getHealthCheckQueueMock: vi.fn(),
@@ -66,9 +62,7 @@ describe("health route loader", () => {
       items: historyItems,
       totalCount: 1,
     });
-    getConfigMock.mockResolvedValueOnce([
-      { configName: "repair.enable", configValue: "TRUE" },
-    ]);
+    getConfigMock.mockResolvedValueOnce([{ configName: "repair.enable", configValue: "TRUE" }]);
 
     await expect(loader(loaderArgs())).resolves.toEqual({
       uncheckedCount: 12,
@@ -102,9 +96,7 @@ describe("health route loader", () => {
     });
     getConfigMock
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { configName: "repair.enable", configValue: "false" },
-      ]);
+      .mockResolvedValueOnce([{ configName: "repair.enable", configValue: "false" }]);
 
     await expect(loader(loaderArgs())).resolves.toMatchObject({ isEnabled: false });
     await expect(loader(loaderArgs())).resolves.toMatchObject({ isEnabled: false });
@@ -115,7 +107,9 @@ describe("health route loader", () => {
     getHealthCheckHistoryMock.mockResolvedValue({ stats: [], items: [], totalCount: 0 });
     getConfigMock.mockResolvedValue([]);
 
-    await expect(loader(loaderArgs("/health?page=3&pageSize=50&status=deleted"))).resolves.toMatchObject({
+    await expect(
+      loader(loaderArgs("/health?page=3&pageSize=50&status=deleted")),
+    ).resolves.toMatchObject({
       historyPage: 3,
       historyPageSize: 50,
       historyFilter: "deleted",

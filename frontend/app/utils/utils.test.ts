@@ -73,13 +73,15 @@ describe("getLeafDirectoryName", () => {
 
 describe("getExploreContentLink", () => {
   it("builds an explore content URL", () => {
-    expect(getExploreContentLink("/completed/movies/Alien", "movies"))
-      .toBe("/explore/content/movies/Alien");
+    expect(getExploreContentLink("/completed/movies/Alien", "movies")).toBe(
+      "/explore/content/movies/Alien",
+    );
   });
 
   it("encodes category and folder segments", () => {
-    expect(getExploreContentLink("/completed/tv shows/Show Name", "tv shows"))
-      .toBe("/explore/content/tv%20shows/Show%20Name");
+    expect(getExploreContentLink("/completed/tv shows/Show Name", "tv shows")).toBe(
+      "/explore/content/tv%20shows/Show%20Name",
+    );
   });
 
   it("returns null when storage or category is missing", () => {
@@ -104,7 +106,9 @@ describe("getExploreBreadcrumbHref", () => {
     const directories = ["content", "My#1 Hits", "100%", "A?B", "tv shows", "日本語"];
     const href = getExploreBreadcrumbHref(directories, directories.length - 1);
 
-    expect(href).toBe("/explore/content/My%231%20Hits/100%25/A%3FB/tv%20shows/%E6%97%A5%E6%9C%AC%E8%AA%9E");
+    expect(href).toBe(
+      "/explore/content/My%231%20Hits/100%25/A%3FB/tv%20shows/%E6%97%A5%E6%9C%AC%E8%AA%9E",
+    );
     expect(parseExploreWebdavPath(href.slice("/explore/".length))).toEqual({
       ok: true,
       path: directories.join("/"),
@@ -130,30 +134,31 @@ describe("parseExploreWebdavPath", () => {
     expect(parseExploreWebdavPath("content//")).toEqual({ ok: false });
   });
 
-    it("rejects malformed percent-encoding", () => {
-        expect(parseExploreWebdavPath("content/%E0%A4%A")).toEqual({ ok: false });
-    });
+  it("rejects malformed percent-encoding", () => {
+    expect(parseExploreWebdavPath("content/%E0%A4%A")).toEqual({ ok: false });
+  });
 
-    it("keeps literal percent sequences when the path is already decoded", () => {
-        expect(parseExploreWebdavPath(
-            "content/tv/S02E14.Such.Sweet.Sorrow%2C.Part.2.1080",
-            { decode: false },
-        )).toEqual({
-            ok: true,
-            path: "content/tv/S02E14.Such.Sweet.Sorrow%2C.Part.2.1080",
-        });
-        expect(parseExploreWebdavPath("content/100%", { decode: false })).toEqual({
-            ok: true,
-            path: "content/100%",
-        });
+  it("keeps literal percent sequences when the path is already decoded", () => {
+    expect(
+      parseExploreWebdavPath("content/tv/S02E14.Such.Sweet.Sorrow%2C.Part.2.1080", {
+        decode: false,
+      }),
+    ).toEqual({
+      ok: true,
+      path: "content/tv/S02E14.Such.Sweet.Sorrow%2C.Part.2.1080",
     });
+    expect(parseExploreWebdavPath("content/100%", { decode: false })).toEqual({
+      ok: true,
+      path: "content/100%",
+    });
+  });
 
-    it("decodes percent sequences when the input is still encoded", () => {
-        expect(parseExploreWebdavPath("content/Sorrow%2C.Part.2")).toEqual({
-            ok: true,
-            path: "content/Sorrow,.Part.2",
-        });
+  it("decodes percent sequences when the input is still encoded", () => {
+    expect(parseExploreWebdavPath("content/Sorrow%2C.Part.2")).toEqual({
+      ok: true,
+      path: "content/Sorrow,.Part.2",
     });
+  });
 });
 
 describe("secret masking", () => {
@@ -165,13 +170,7 @@ describe("secret masking", () => {
 });
 
 describe("class name helpers", () => {
-  const values: (string | false | null | undefined)[] = [
-    "card",
-    false,
-    null,
-    undefined,
-    "active",
-  ];
+  const values: (string | false | null | undefined)[] = ["card", false, null, undefined, "active"];
 
   it("joins truthy class names", () => {
     expect(classNames(values)).toBe("card active");

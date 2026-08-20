@@ -1,80 +1,82 @@
 .grid {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    width: 100%;
-    min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
 }
 
 .row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
 }
 
 .cellRow {
-    display: grid;
-    grid-template-columns: repeat(24, minmax(0, 1fr));
-    gap: 2px;
-    flex: 1 1 0;
-    min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  gap: 2px;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .cell,
 .cellEmpty {
-    aspect-ratio: 1 / 1;
-    border-radius: 2px;
-    min-width: 0;
+  aspect-ratio: 1 / 1;
+  border-radius: 2px;
+  min-width: 0;
 }
 
 .cell {
-    transition: filter 80ms ease, box-shadow 80ms ease;
-    cursor: default;
+  transition:
+    filter 80ms ease,
+    box-shadow 80ms ease;
+  cursor: default;
 }
 
 .cellEmpty {
-    background-color: transparent;
-    pointer-events: none;
+  background-color: transparent;
+  pointer-events: none;
 }
 
 .cell:hover {
-    filter: brightness(1.4);
-    box-shadow: 0 0 0 1px var(--color-base-content);
-    z-index: 1;
-    position: relative;
+  filter: brightness(1.4);
+  box-shadow: 0 0 0 1px var(--color-base-content);
+  z-index: 1;
+  position: relative;
 }
 
 .grid[data-mode="day"] .cell,
 .grid[data-mode="day"] .cellEmpty {
-    aspect-ratio: auto;
-    height: 32px;
+  aspect-ratio: auto;
+  height: 32px;
 }
 
 .grid[data-mode="month"] .cell,
 .grid[data-mode="month"] .cellEmpty {
-    aspect-ratio: auto;
-    height: 12px;
+  aspect-ratio: auto;
+  height: 12px;
 }
 
 .grid[data-mode="year"] .cell,
 .grid[data-mode="year"] .cellEmpty {
-    aspect-ratio: 1 / 1;
-    height: auto;
+  aspect-ratio: 1 / 1;
+  height: auto;
 }
 
 .axisGrid {
-    display: grid;
-    gap: 2px;
-    flex: 1 1 0;
-    min-width: 0;
-    position: relative;
-    height: 14px;
+  display: grid;
+  gap: 2px;
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  height: 14px;
 }
 
 .axisTick {
-    grid-row: 1;
-    text-align: left;
-    white-space: nowrap;
+  grid-row: 1;
+  text-align: left;
+  white-space: nowrap;
 }

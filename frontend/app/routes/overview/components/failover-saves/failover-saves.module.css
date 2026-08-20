@@ -1,100 +1,112 @@
 .reasonBar {
-    display: flex;
-    height: 8px;
-    border-radius: 4px;
-    overflow: hidden;
-    background: var(--color-base-200);
-    gap: 1px;
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--color-base-200);
+  gap: 1px;
 }
 
 .reasonSeg {
-    height: 100%;
-    min-width: 2px;
+  height: 100%;
+  min-width: 2px;
 }
 
-.rMissing { background: color-mix(in srgb, var(--color-base-content) 45%, transparent); }
-.rTimeout { background: var(--color-warning); }
-.rAuth { background: var(--color-info); }
-.rNetwork { background: var(--color-error); }
-.rCorrupt { background: var(--color-accent); }
-.rOther { background: color-mix(in srgb, var(--color-base-content) 35%, transparent); }
+.rMissing {
+  background: color-mix(in srgb, var(--color-base-content) 45%, transparent);
+}
+.rTimeout {
+  background: var(--color-warning);
+}
+.rAuth {
+  background: var(--color-info);
+}
+.rNetwork {
+  background: var(--color-error);
+}
+.rCorrupt {
+  background: var(--color-accent);
+}
+.rOther {
+  background: color-mix(in srgb, var(--color-base-content) 35%, transparent);
+}
 
 .barFill {
-    display: block;
-    height: 100%;
-    border-radius: 4px;
-    background: linear-gradient(
-        to right,
-        color-mix(in srgb, var(--color-success) 55%, transparent),
-        var(--color-success)
-    );
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--color-success) 55%, transparent),
+    var(--color-success)
+  );
 }
 
 .barFillBad {
-    background: linear-gradient(
-        to right,
-        color-mix(in srgb, var(--color-error) 50%, transparent),
-        var(--color-error)
-    );
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--color-error) 50%, transparent),
+    var(--color-error)
+  );
 }
 
 .trendPlot {
-    display: flex;
-    gap: 10px;
-    min-width: 0;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
 }
 
 .trendArea {
-    flex: 1;
-    position: relative;
-    height: 120px;
-    min-width: 0;
-    cursor: crosshair;
-    touch-action: pan-y;
+  flex: 1;
+  position: relative;
+  height: 120px;
+  min-width: 0;
+  cursor: crosshair;
+  touch-action: pan-y;
 }
 
 .trendSvg {
-    width: 100%;
-    height: 100%;
-    display: block;
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .trendGrid {
-    stroke: color-mix(in srgb, var(--color-base-content) 5%, transparent);
-    stroke-width: 1;
-    vector-effect: non-scaling-stroke;
+  stroke: color-mix(in srgb, var(--color-base-content) 5%, transparent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .trendFill {
-    fill: color-mix(in srgb, var(--color-success) 10%, transparent);
-    stroke: none;
+  fill: color-mix(in srgb, var(--color-success) 10%, transparent);
+  stroke: none;
 }
 
 .trendLine {
-    stroke: var(--color-success);
-    stroke-width: 1.5;
-    fill: none;
-    vector-effect: non-scaling-stroke;
-    stroke-linejoin: round;
+  stroke: var(--color-success);
+  stroke-width: 1.5;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
 }
 
 .trendCrosshair {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 1px;
-    background: color-mix(in srgb, var(--color-base-content) 25%, transparent);
-    pointer-events: none;
-    transform: translateX(-0.5px);
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--color-base-content) 25%, transparent);
+  pointer-events: none;
+  transform: translateX(-0.5px);
 }
 
 .trendDot {
-    position: absolute;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--color-success);
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-    box-shadow: 0 0 0 2px var(--color-base-100);
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-success);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-shadow: 0 0 0 2px var(--color-base-100);
 }

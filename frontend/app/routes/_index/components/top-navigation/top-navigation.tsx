@@ -7,11 +7,11 @@ import { isComparableVersion, type UpdateAvailable } from "~/utils/update-check"
 import { withUrlBase } from "~/utils/url-base";
 
 export type TopNavigationProps = RequiredTopNavProps & {
-  version?: string,
-  updateAvailable?: UpdateAvailable | null,
-  isFrontendAuthDisabled?: boolean,
-  username?: string | null,
-  hasUsenetProviders?: boolean,
+  version?: string;
+  updateAvailable?: UpdateAvailable | null;
+  isFrontendAuthDisabled?: boolean;
+  username?: string | null;
+  hasUsenetProviders?: boolean;
 };
 
 export const TopNavigation = memo(function TopNavigation(props: TopNavigationProps) {
@@ -66,7 +66,9 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
         <button
           type="button"
           className="btn btn-ghost gap-3 px-2"
-          onClick={() => { void navigate("/"); }}
+          onClick={() => {
+            void navigate("/");
+          }}
         >
           <img
             className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary via-info to-success p-0.5 shadow-md shadow-primary/20"
@@ -118,9 +120,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
               </span>
             )}
           </summary>
-          <ul
-            className="dropdown-content menu z-50 mt-2 w-64 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg"
-          >
+          <ul className="dropdown-content menu z-50 mt-2 w-64 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg">
             <li className="menu-title">
               <span className="flex items-center justify-between gap-2">
                 <span>InfiniDysk {channelLabel}</span>
@@ -158,11 +158,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
               </li>
             )}
             <li>
-              <a
-                href="https://github.com/infinidysk/infinidysk"
-                target="_blank"
-                rel="noreferrer"
-              >
+              <a href="https://github.com/infinidysk/infinidysk" target="_blank" rel="noreferrer">
                 <Icon name="code" className="!text-[18px]" />
                 GitHub
               </a>
@@ -185,19 +181,14 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
               <input name="confirm" value="true" type="hidden" />
             </Form>
             <details className="dropdown dropdown-end" name="top-nav">
-              <summary
-                className="btn btn-ghost btn-circle btn-sm list-none"
-                aria-label="User menu"
-              >
+              <summary className="btn btn-ghost btn-circle btn-sm list-none" aria-label="User menu">
                 <div className="avatar avatar-placeholder">
                   <div className="w-8 rounded-full bg-neutral text-neutral-content">
                     <span className="text-xs">{initial}</span>
                   </div>
                 </div>
               </summary>
-              <ul
-                className="dropdown-content menu z-50 mt-2 w-56 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg"
-              >
+              <ul className="dropdown-content menu z-50 mt-2 w-56 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg">
                 <li className="menu-title">
                   <span>{username}</span>
                 </li>
