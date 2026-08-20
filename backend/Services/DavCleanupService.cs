@@ -7,7 +7,7 @@ using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Services;
 
-public class DavCleanupService : BackgroundService
+public class DavCleanupService(IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -15,7 +15,7 @@ public class DavCleanupService : BackgroundService
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = dbContextFactory.CreateDbContext();
 
                 // If no items in queue, wait 10 seconds before checking again
                 if (!await ProcessNextItemAsync(dbContext, stoppingToken).ConfigureAwait(false))

@@ -70,6 +70,7 @@ public class HealthCheckService : BackgroundService
     private readonly QueueManager _queueManager;
     private readonly Par2RepairService _par2RepairService;
     private readonly RepairPatchStore _repairPatchStore;
+    private readonly IDbContextFactory<DavDatabaseContext>? _dbContextFactory;
 
     private static readonly HashSet<string> _missingSegmentIds = [];
     private static readonly Queue<string> _missingSegmentOrder = [];
@@ -85,7 +86,8 @@ public class HealthCheckService : BackgroundService
         StreamingFailureTracker failureTracker,
         QueueManager queueManager,
         Par2RepairService par2RepairService,
-        RepairPatchStore repairPatchStore
+        RepairPatchStore repairPatchStore,
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null
     )
     {
         _configManager = configManager;
@@ -96,6 +98,7 @@ public class HealthCheckService : BackgroundService
         _queueManager = queueManager;
         _par2RepairService = par2RepairService;
         _repairPatchStore = repairPatchStore;
+        _dbContextFactory = dbContextFactory;
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
@@ -120,7 +123,7 @@ public class HealthCheckService : BackgroundService
             return;
         }
 
-        await ClearNonMediaHealthCheckEntries(stoppingToken).ConfigureAwait(false);
+        await ClearNonMediaHealthCheckEntriesAsync(stoppingToken).ConfigureAwait(false);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -154,7 +157,7 @@ public class HealthCheckService : BackgroundService
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
                 // get the davItem to health-check
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = CreateContext();
                 var dbClient = new DavDatabaseClient(dbContext);
                 var currentDateTime = DateTimeOffset.UtcNow;
 
@@ -232,16 +235,19 @@ public class HealthCheckService : BackgroundService
                 x.NextHealthCheck == DateTimeOffset.UnixEpoch);
     }
 
+    private DavDatabaseContext CreateContext() =>
+        _dbContextFactory?.CreateDbContext() ?? new DavDatabaseContext();
+
     /// <summary>
     /// One-shot cleanup: clear <c>NextHealthCheck</c>/<c>LastHealthCheck</c> for non-media files
     /// (images, subtitles, NFOs, etc.) that were queued before the media-type filter was added.
     /// Urgent repairs (<c>UnixEpoch</c> sentinel) are never cleared.
     /// </summary>
-    internal static async Task ClearNonMediaHealthCheckEntries(CancellationToken ct)
+    private async Task ClearNonMediaHealthCheckEntriesAsync(CancellationToken ct)
     {
         try
         {
-            await using var dbContext = new DavDatabaseContext();
+            await using var dbContext = CreateContext();
             await ClearNonMediaHealthCheckEntries(dbContext, ct).ConfigureAwait(false);
         }
         catch (Exception e) when (e is not OperationCanceledException and not OutOfMemoryException)

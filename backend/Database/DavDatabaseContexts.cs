@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+
 namespace NzbWebDAV.Database;
 
 /// <summary>
@@ -11,9 +13,15 @@ namespace NzbWebDAV.Database;
 internal static class DavDatabaseContexts
 {
     public static DavDatabaseContext Create(Func<DavDatabaseContext>? factoryOverride)
+        => Create(factoryOverride, dbContextFactory: null);
+
+    public static DavDatabaseContext Create(
+        Func<DavDatabaseContext>? factoryOverride,
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory)
     {
         var overridden = factoryOverride?.Invoke();
         if (overridden is not null) return overridden;
+        if (dbContextFactory is not null) return dbContextFactory.CreateDbContext();
         return new DavDatabaseContext();
     }
 }

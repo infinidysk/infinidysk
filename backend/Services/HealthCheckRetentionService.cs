@@ -12,7 +12,9 @@ namespace NzbWebDAV.Services;
 /// HealthCheckStats stay consistent via existing AFTER DELETE triggers.
 /// Inspired by elfhosted/nzbdav database maintenance (PR #199 retention idea).
 /// </summary>
-public class HealthCheckRetentionService(ConfigManager configManager) : BackgroundService
+public class HealthCheckRetentionService(
+    ConfigManager configManager,
+    IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -54,7 +56,7 @@ public class HealthCheckRetentionService(ConfigManager configManager) : Backgrou
             var retentionDays = configManager.GetHealthResultRetentionDays();
             if (retentionDays <= 0) return;
 
-            await using var dbContext = new DavDatabaseContext();
+            await using var dbContext = dbContextFactory.CreateDbContext();
             var deleted = await SweepAsync(dbContext, retentionDays, stoppingToken).ConfigureAwait(false);
             if (deleted > 0)
             {

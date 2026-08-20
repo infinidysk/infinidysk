@@ -11,7 +11,7 @@ namespace NzbWebDAV.Services;
 /// Background service that processes the blob cleanup queue.
 /// A payload blob is only deleted once no DavItem still references it.
 /// </summary>
-public class BlobCleanupService : BackgroundService
+public class BlobCleanupService(IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -19,7 +19,7 @@ public class BlobCleanupService : BackgroundService
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = dbContextFactory.CreateDbContext();
 
                 var processed = await ProcessNextCleanupItemAsync(dbContext, stoppingToken).ConfigureAwait(false);
 
