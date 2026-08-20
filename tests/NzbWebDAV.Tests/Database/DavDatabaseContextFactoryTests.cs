@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NzbWebDAV.Database;
@@ -47,13 +48,14 @@ public sealed class DavDatabaseContextFactoryTests
         {
             Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
             DavDatabaseContext.ResetOptionsForTests();
+            SqliteConnection.ClearAllPools();
             try
             {
                 Directory.Delete(configRoot, recursive: true);
             }
-            catch
+            catch (IOException)
             {
-                // Best-effort cleanup for transient SQLite file handles.
+                // Transient SQLite file handles after pool clear.
             }
         }
     }
