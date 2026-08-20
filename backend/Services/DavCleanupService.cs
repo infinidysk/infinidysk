@@ -76,7 +76,7 @@ public class DavCleanupService : BackgroundService
                 .Where(x => x.ParentId == cleanupItemIdPg)
                 .ExecuteDeleteAsync(cancellationToken)
                 .ConfigureAwait(false);
-            _ = DavDatabaseContext.RcloneVfsForget(deletedItemsPg);
+            _ = DavDatabaseContext.RcloneVfsForget(deletedItemsPg, cancellationToken);
 
             await dbContext.DavCleanupItems
                 .Where(x => x.Id == cleanupItemIdPg)
@@ -129,7 +129,7 @@ public class DavCleanupService : BackgroundService
             CreateParentIdParameters(cleanupItemId),
             cancellationToken).ConfigureAwait(false);
 
-        _ = DavDatabaseContext.RcloneVfsForget(deletedItems);
+        _ = DavDatabaseContext.RcloneVfsForget(deletedItems, cancellationToken);
 
         // Delete by the exact text selected above. A concurrent or repeated delete
         // affects zero rows without raising an optimistic-concurrency exception.

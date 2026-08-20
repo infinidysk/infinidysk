@@ -234,6 +234,12 @@ When a rule fires, resolve it in this order:
 
 Rules that must **never** be disabled rule-wide: the security rules (CA53xx) —
 use per-site justification suppressions so each instance stays auditable.
+`CA2016` (forward CancellationToken) and `CA1001` (types that own disposables
+implement IDisposable) are listed explicitly in `Directory.Build.props`
+`<WarningsAsErrors>` so they stay errors even if the blanket gate is narrowed.
+
+Hosted services must honor `stoppingToken`. The generic host `ShutdownTimeout`
+is 5 seconds (see `backend/Program.cs`).
 
 Notes:
 

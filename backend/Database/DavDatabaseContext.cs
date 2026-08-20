@@ -875,7 +875,7 @@ public class DavDatabaseContext : DbContext
             // save db changes
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
             var result = await base.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            _ = RcloneVfsForget(addedOrRemovedDavItems);
+            _ = RcloneVfsForget(addedOrRemovedDavItems, cancellationToken);
 
             // clear pending blob writes
             ClearBlobs();
@@ -931,22 +931,24 @@ public class DavDatabaseContext : DbContext
             .ToList();
     }
 
-    public static Task RcloneVfsForget(List<DavItem> addedOrRemovedDavItems)
+    public static Task RcloneVfsForget(
+        List<DavItem> addedOrRemovedDavItems,
+        CancellationToken cancellationToken = default)
     {
         if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
         if (RcloneClient.Host == null) return Task.CompletedTask;
         if (addedOrRemovedDavItems.Count == 0) return Task.CompletedTask;
         var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
         if (vfsForgetPaths.Count == 0) return Task.CompletedTask;
-        return RcloneClient.ForgetVfsPaths(vfsForgetPaths);
+        return RcloneClient.ForgetVfsPaths(vfsForgetPaths, cancellationToken);
     }
 
-    public static Task RcloneVfsForget(List<string> paths)
+    public static Task RcloneVfsForget(List<string> paths, CancellationToken cancellationToken = default)
     {
         if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
         if (RcloneClient.Host == null) return Task.CompletedTask;
         if (paths.Count == 0) return Task.CompletedTask;
-        return RcloneClient.ForgetVfsPaths(paths);
+        return RcloneClient.ForgetVfsPaths(paths, cancellationToken);
     }
 
     public void ClearChangeTracker()

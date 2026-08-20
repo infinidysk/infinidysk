@@ -230,6 +230,8 @@ public partial class Program
             var maxRequestBodySize = EnvironmentUtil.GetLongVariable("MAX_REQUEST_BODY_SIZE") ?? 100 * 1024 * 1024;
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
+            builder.Services.Configure<HostOptions>(options =>
+                options.ShutdownTimeout = TimeSpan.FromSeconds(5));
             builder.Services.AddControllers();
             builder.Services.AddHttpContextAccessor();
             if (apiDocsEnabled)

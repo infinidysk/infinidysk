@@ -110,6 +110,12 @@ dotnet_diagnostic.CA1725.severity = none
 # was introduced keep their ConfigureAwait(false) for consistency.
 dotnet_diagnostic.CA2007.severity = none
 
+# Cancellation and disposal conventions (#849). These stay errors even if the
+# blanket TreatWarningsAsErrors gate is ever narrowed. Tests relax both in
+# tests/.editorconfig; SharpCompress opts out via <NoWarn>.
+dotnet_diagnostic.CA2016.severity = error
+dotnet_diagnostic.CA1001.severity = error
+
 # --- Misc noise -------------------------------------------------------------
 
 # Justification: ASP.NET Core apps gain nothing from making every public type

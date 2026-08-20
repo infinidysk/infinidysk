@@ -49,6 +49,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     private readonly Func<DavDatabaseContext>? _contextFactory;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _missingAt = new(StringComparer.Ordinal);
     private readonly Channel<PersistenceWorkItem>? _persistenceQueue;
+    private CancellationTokenSource? _persistenceLoopCts;
     private Task _persistenceLoop = Task.CompletedTask;
     private volatile bool _persistenceLoopStarted;
     private long _hits;
@@ -166,7 +167,11 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         }
 
         // The loop outlives startup; it stops when StopAsync/Dispose completes the queue.
-        _persistenceLoop = Task.Run(RunPersistenceLoopAsync, CancellationToken.None);
+        // The loop token is cancelled only if the host ShutdownTimeout elapses mid-drain.
+        _persistenceLoopCts?.Dispose();
+        _persistenceLoopCts = new CancellationTokenSource();
+        var loopToken = _persistenceLoopCts.Token;
+        _persistenceLoop = Task.Run(() => RunPersistenceLoopAsync(loopToken), CancellationToken.None);
         _persistenceLoopStarted = true;
     }
 
@@ -180,11 +185,19 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         }
         catch (OperationCanceledException)
         {
+            if (_persistenceLoopCts is not null)
+                await _persistenceLoopCts.CancelAsync().ConfigureAwait(false);
             Log.Warning("Timed out draining the article-miss persistence queue; recent definitive misses may be lost.");
         }
     }
 
-    public void Dispose() => _persistenceQueue?.Writer.TryComplete();
+    public void Dispose()
+    {
+        _persistenceQueue?.Writer.TryComplete();
+        _persistenceLoopCts?.Cancel();
+        _persistenceLoopCts?.Dispose();
+        _persistenceLoopCts = null;
+    }
 
     /// <summary>Test helper: mark an entry as if it were recorded at <paramref name="at"/>.</summary>
     internal void MarkMissingAtForTests(string key, DateTimeOffset at)
@@ -249,11 +262,13 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         });
     }
 
-    private async Task RunPersistenceLoopAsync()
+    private async Task RunPersistenceLoopAsync(CancellationToken cancellationToken)
     {
         var reader = _persistenceQueue!.Reader;
-        while (await reader.WaitToReadAsync().ConfigureAwait(false))
+        try
         {
+            while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+            {
             var marks = new Dictionary<string, long>(StringComparer.Ordinal);
             var clearPending = false;
             TaskCompletionSource? barrier = null;
@@ -281,8 +296,13 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             try
             {
                 if (clearPending || marks.Count > 0)
-                    await ApplyBatchAsync(clearPending, marks).ConfigureAwait(false);
+                    await ApplyBatchAsync(clearPending, marks, cancellationToken).ConfigureAwait(false);
                 barrier?.TrySetResult();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                barrier?.TrySetCanceled(cancellationToken);
+                throw;
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
@@ -290,20 +310,28 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                 barrier?.TrySetException(e);
             }
         }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Host is stopping; remaining marks stay memory-only.
+        }
     }
 
-    private async Task ApplyBatchAsync(bool clearPending, Dictionary<string, long> marks)
+    private async Task ApplyBatchAsync(
+        bool clearPending,
+        Dictionary<string, long> marks,
+        CancellationToken cancellationToken)
     {
         await using var context = _contextFactory!();
         if (clearPending)
-            await context.ArticleMissCacheEntries.ExecuteDeleteAsync().ConfigureAwait(false);
+            await context.ArticleMissCacheEntries.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
 
         if (marks.Count > 0)
         {
             var keys = marks.Keys.ToList();
             var existing = await context.ArticleMissCacheEntries
                 .Where(x => keys.Contains(x.CacheKey))
-                .ToDictionaryAsync(x => x.CacheKey)
+                .ToDictionaryAsync(x => x.CacheKey, cancellationToken)
                 .ConfigureAwait(false);
             foreach (var (key, confirmedAtUnix) in marks)
             {
@@ -316,13 +344,13 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                         ConfirmedAtUnix = confirmedAtUnix,
                     });
             }
-            await context.SaveChangesAsync().ConfigureAwait(false);
+            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
 
         var cutoffUnix = (DateTimeOffset.UtcNow - _configManager.GetArticleMissCacheTtl())
             .ToUnixTimeMilliseconds();
         await TrimPersistedAsync(
-            context, cutoffUnix, _configManager.GetArticleMissCacheMaxEntries(), CancellationToken.None)
+            context, cutoffUnix, _configManager.GetArticleMissCacheMaxEntries(), cancellationToken)
             .ConfigureAwait(false);
     }
 
