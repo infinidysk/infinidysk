@@ -1,7 +1,7 @@
 import { Button } from "~/components/ui/button";
 import { Alert, Spinner, Tooltip } from "~/components/ui/feedback";
 import { SettingsCard, SettingsIntro, SettingsPage, ManagedSetting } from "~/components/ui";
-import { Input, Select } from "~/components/ui/form";
+import { Input, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
 import { withUrlBase } from "~/utils/url-base";
@@ -12,8 +12,10 @@ type ArrsSettingsProps = {
 };
 
 interface ConnectionDetails {
+    Name?: string;
     Host: string;
     ApiKey: string;
+    Enabled?: boolean;
 }
 
 interface QueueRule {
@@ -129,7 +131,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
             ...arrConfig,
             RadarrInstances: [
                 ...arrConfig.RadarrInstances,
-                { Host: "", ApiKey: "" }
+                { Host: "", ApiKey: "", Enabled: true }
             ]
         });
     }, [arrConfig, updateConfig]);
@@ -142,7 +144,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
         });
     }, [arrConfig, updateConfig]);
 
-    const updateRadarrInstance = useCallback((index: number, field: keyof ConnectionDetails, value: string) => {
+    const updateRadarrInstance = useCallback((index: number, field: keyof ConnectionDetails, value: string | boolean) => {
         updateConfig({
             ...arrConfig,
             RadarrInstances: arrConfig.RadarrInstances
@@ -157,7 +159,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
             ...arrConfig,
             SonarrInstances: [
                 ...arrConfig.SonarrInstances,
-                { Host: "", ApiKey: "" }
+                { Host: "", ApiKey: "", Enabled: true }
             ]
         });
     }, [arrConfig, updateConfig]);
@@ -170,7 +172,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
         });
     }, [arrConfig, updateConfig]);
 
-    const updateSonarrInstance = useCallback((index: number, field: keyof ConnectionDetails, value: string) => {
+    const updateSonarrInstance = useCallback((index: number, field: keyof ConnectionDetails, value: string | boolean) => {
         updateConfig({
             ...arrConfig,
             SonarrInstances: arrConfig.SonarrInstances
@@ -267,6 +269,27 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
             </SettingsCard>
             </div>
 
+            <ManagedSetting configKey="arr.health-enabled">
+            <SettingsCard
+                icon="monitor_heart"
+                title="Arr Health"
+                description="Optional Overview metrics for import handoff from InfiniDysk to Sonarr and Radarr."
+            >
+                <Toggle
+                    id="arr-health-enabled"
+                    className="cursor-pointer gap-2 p-0"
+                    checked={config["arr.health-enabled"] !== "false"}
+                    onChange={e => setNewConfig({ ...config, "arr.health-enabled": "" + e.target.checked })}
+                    label={<span className="text-sm text-base-content">Show Arr Health on Overview</span>}
+                />
+                <p className="text-[11px] leading-relaxed text-base-content/45">
+                    When this is off, enabled instances still handle queue rules and repairs, but InfiniDysk
+                    does not poll Arr APIs for import health and hides the Overview widget.
+                    The widget is also hidden when no instance is enabled.
+                </p>
+            </SettingsCard>
+            </ManagedSetting>
+
             <SettingsCard
                 icon="rule"
                 title="Automatic queue management"
@@ -314,7 +337,7 @@ interface InstanceFormProps {
     instance: ConnectionDetails;
     index: number;
     type: 'radarr' | 'sonarr';
-    onUpdate: (index: number, field: keyof ConnectionDetails, value: string) => void;
+    onUpdate: (index: number, field: keyof ConnectionDetails, value: string | boolean) => void;
     onRemove: (index: number) => void;
 }
 
@@ -371,6 +394,25 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
                 <Icon name="close" className="!text-[18px]" />
             </button>
             <div className="space-y-4">
+                <Toggle
+                    id={`${type}-${index}-enabled`}
+                    className="cursor-pointer gap-2 p-0"
+                    checked={instance.Enabled !== false}
+                    onChange={e => onUpdate(index, "Enabled", e.target.checked)}
+                    label={<span className="text-sm text-base-content">Enabled</span>}
+                />
+                <div className="space-y-2">
+                    <label className="block text-sm font-medium text-base-content" htmlFor={`${type}-${index}-name`}>Name</label>
+                    <Input
+                        id={`${type}-${index}-name`}
+                        type="text"
+                        placeholder={type === "radarr" ? "Radarr" : "Sonarr"}
+                        value={instance.Name ?? ""}
+                        onChange={e => onUpdate(index, "Name", e.target.value)} />
+                    <p className="text-[11px] leading-relaxed text-base-content/45">
+                        Optional display name on Overview. Defaults to the host URL.
+                    </p>
+                </div>
                 <div className="space-y-2">
                     <label className="block text-sm font-medium text-base-content">Host</label>
                     <div className="flex w-full">
@@ -428,7 +470,8 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
 }
 
 export function isArrsSettingsUpdated(config: Record<string, string>, newConfig: Record<string, string>) {
-    return config["arr.instances"] !== newConfig["arr.instances"];
+    return config["arr.instances"] !== newConfig["arr.instances"]
+        || config["arr.health-enabled"] !== newConfig["arr.health-enabled"];
 }
 
 export function isArrsSettingsValid(newConfig: Record<string, string>) {

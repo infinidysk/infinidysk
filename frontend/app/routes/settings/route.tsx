@@ -96,6 +96,7 @@ const defaultConfig = {
     "rclone.mount-dir": "",
     "media.library-dir": "",
     "arr.instances": "{\"RadarrInstances\":[],\"SonarrInstances\":[],\"QueueRules\":[]}",
+    "arr.health-enabled": "true",
     "indexers.instances": "{\"Indexers\":[]}",
     "profiles.instances": "{\"Profiles\":[]}",
     "prowlarr.url": "",
