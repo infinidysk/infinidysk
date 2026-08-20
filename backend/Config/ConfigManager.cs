@@ -474,6 +474,7 @@ public class ConfigManager
                 case ConfigKeys.BackupScheduleEnabled:
                 case ConfigKeys.QueuePaused:
                 case ConfigKeys.ProwlarrSyncEnabled:
+                case ConfigKeys.ArrHealthEnabled:
                     RequireBool(item.ConfigName, value);
                     break;
 
@@ -1904,6 +1905,16 @@ public class ConfigManager
     {
         var defaultValue = new ArrConfig();
         return GetConfigValue<ArrConfig>(ConfigKeys.ArrInstances) ?? defaultValue;
+    }
+
+    /// <summary>
+    /// Master switch for Arr Health polling and the Overview widget.
+    /// Defaults true; the feature is dormant until at least one instance is enabled.
+    /// </summary>
+    public bool IsArrHealthEnabled()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ArrHealthEnabled));
+        return v == null || bool.Parse(v);
     }
 
     public UsenetProviderConfig GetUsenetProviderConfig()

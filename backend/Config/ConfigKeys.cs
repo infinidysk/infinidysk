@@ -108,6 +108,7 @@ public static class ConfigKeys
     public const string RepairDegradedMaxMissingBytePercent = "repair.degraded-max-missing-byte-percent";
     public const string RepairCorruptionTrackingEnabled = "repair.corruption-tracking-enabled";
     public const string ArrInstances = "arr.instances";
+    public const string ArrHealthEnabled = "arr.health-enabled";
 
     // rclone
     public const string RcloneHost = "rclone.host";
