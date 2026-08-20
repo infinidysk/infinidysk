@@ -10,16 +10,14 @@ import { clientErrorKey, shouldLogClientError } from "./request-log-throttle.js"
 // stack; throttle the warning so a retrying client cannot flood the log.
 export const websocketUpgradeGuard: RequestHandler = (req, res, _next) => {
   const client = req.ip ?? req.socket.remoteAddress ?? "unknown";
-  const { log, suppressed } = shouldLogClientError(
-    clientErrorKey(req.method, 426, "/ws", client),
-  );
+  const { log, suppressed } = shouldLogClientError(clientErrorKey(req.method, 426, "/ws", client));
   if (log) {
     logger.warn(
-      `Rejected plain HTTP ${req.method} on the WebSocket endpoint from ${client}; `
-      + "this endpoint only accepts WebSocket upgrade requests. If this came from the web UI, "
-      + "the reverse proxy in front is not forwarding Upgrade/Connection headers "
-      + "(see docs/configuration/url-base.md)."
-      + (suppressed > 0 ? ` (+${suppressed} similar suppressed)` : ""),
+      `Rejected plain HTTP ${req.method} on the WebSocket endpoint from ${client}; ` +
+        "this endpoint only accepts WebSocket upgrade requests. If this came from the web UI, " +
+        "the reverse proxy in front is not forwarding Upgrade/Connection headers " +
+        "(see docs/configuration/url-base.md)." +
+        (suppressed > 0 ? ` (+${suppressed} similar suppressed)` : ""),
     );
   }
   res

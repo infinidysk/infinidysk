@@ -47,7 +47,7 @@ export function urlBaseFromEnv(env: Record<string, string | undefined>): string 
 export const URL_BASE: string =
   typeof __URL_BASE__ !== "undefined"
     ? __URL_BASE__
-    : urlBaseFromEnv(typeof process !== "undefined" ? process.env ?? {} : {});
+    : urlBaseFromEnv(typeof process !== "undefined" ? (process.env ?? {}) : {});
 
 /**
  * Prefix a server-relative path with URL_BASE. Always returns a leading slash.

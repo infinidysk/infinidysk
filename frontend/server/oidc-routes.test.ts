@@ -64,7 +64,7 @@ function mockRequest(originalUrl: string): Request {
   return {
     protocol: "https",
     originalUrl,
-    get: vi.fn((name: string) => name === "host" ? "nzbdav.example.com" : undefined),
+    get: vi.fn((name: string) => (name === "host" ? "nzbdav.example.com" : undefined)),
   } as unknown as Request;
 }
 
@@ -127,10 +127,7 @@ describe("OIDC Express routes", () => {
       }),
     );
     expect(res.setHeader).toHaveBeenCalledWith("Set-Cookie", "__session=flow");
-    expect(res.redirect).toHaveBeenCalledWith(
-      302,
-      "https://identity.example.com/authorize",
-    );
+    expect(res.redirect).toHaveBeenCalledWith(302, "https://identity.example.com/authorize");
   });
 
   it("exchanges the callback and creates a role-aware session", async () => {
