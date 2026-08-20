@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers.RetryHistory;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
@@ -159,7 +160,7 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         context.Request.QueryString = new QueryString("?value=not-a-guid");
         context.Request.Body = Stream.Null;
 
-        var ex = await Assert.ThrowsAsync<BadHttpRequestException>(() => RetryHistoryRequest.New(context));
+        var ex = await Assert.ThrowsAsync<ApiValidationException>(() => RetryHistoryRequest.New(context));
         Assert.Equal("Missing or invalid value (nzo_id).", ex.Message);
     }
 
@@ -169,7 +170,7 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         var context = new DefaultHttpContext();
         context.Request.Body = Stream.Null;
 
-        var ex = await Assert.ThrowsAsync<BadHttpRequestException>(() => RetryHistoryRequest.New(context));
+        var ex = await Assert.ThrowsAsync<ApiValidationException>(() => RetryHistoryRequest.New(context));
         Assert.Equal("Missing or invalid value (nzo_id).", ex.Message);
     }
 

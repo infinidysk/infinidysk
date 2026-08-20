@@ -1,4 +1,3 @@
-using NzbWebDAV.Api.Controllers.GetOverviewStats;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
@@ -7,8 +6,8 @@ namespace NzbWebDAV.Services.Metrics;
 
 internal static class ProviderCircuitOverviewEnricher
 {
-    internal static List<GetOverviewStatsResponse.ProviderRow> EnrichProviders(
-        IReadOnlyList<GetOverviewStatsResponse.ProviderRow> providers,
+    internal static List<ProviderOverviewRow> EnrichProviders(
+        IReadOnlyList<ProviderOverviewRow> providers,
         IReadOnlyList<ProviderCircuitRuntimeSnapshot> runtimeSnapshots,
         IReadOnlyDictionary<string, string?> labelsByMetricsKey)
     {
@@ -18,7 +17,7 @@ internal static class ProviderCircuitOverviewEnricher
             var fields = ToRowFields(runtime.Breaker);
             if (byKey.TryGetValue(runtime.MetricsKey, out var existing))
             {
-                byKey[runtime.MetricsKey] = new GetOverviewStatsResponse.ProviderRow
+                byKey[runtime.MetricsKey] = new ProviderOverviewRow
                 {
                     Provider = existing.Provider,
                     Nickname = existing.Nickname,
@@ -33,6 +32,7 @@ internal static class ProviderCircuitOverviewEnricher
                     Spark = existing.Spark,
                     ErrorSpark = existing.ErrorSpark,
                     RetrySpark = existing.RetrySpark,
+                    OutageSpark = existing.OutageSpark,
                     CircuitState = fields.CircuitState,
                     CooldownRemainingSeconds = fields.CooldownRemainingSeconds,
                     LastFailureReason = fields.LastFailureReason,
@@ -43,7 +43,7 @@ internal static class ProviderCircuitOverviewEnricher
                 continue;
             }
 
-            byKey[runtime.MetricsKey] = new GetOverviewStatsResponse.ProviderRow
+            byKey[runtime.MetricsKey] = new ProviderOverviewRow
             {
                 Provider = runtime.MetricsKey,
                 Nickname = labelsByMetricsKey.GetValueOrDefault(runtime.MetricsKey),

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Config;
 
@@ -50,7 +51,7 @@ public class GetQueueRequestTests
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?limit=abc");
 
-        var ex = Assert.Throws<BadHttpRequestException>(() => new GetQueueRequest(context, new ConfigManager()));
+        var ex = Assert.Throws<ApiValidationException>(() => new GetQueueRequest(context, new ConfigManager()));
         Assert.Equal("Invalid limit parameter", ex.Message);
     }
 

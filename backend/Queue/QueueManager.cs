@@ -14,7 +14,7 @@ using Serilog;
 
 namespace NzbWebDAV.Queue;
 
-public sealed class QueueManager : IDisposable
+public sealed class QueueManager : IQueueCoordinator, IDisposable
 {
     private readonly ConcurrentDictionary<Guid, InProgressQueueItem> _inProgress = new();
     private readonly ConcurrentDictionary<Guid, int> _retryAttempts = new();
@@ -45,6 +45,7 @@ public sealed class QueueManager : IDisposable
     private Guid? _primaryId;
     private int _pendingAdmissions;
     private bool _admissionPaused;
+    private int _disposed;
 
     private static readonly TimeSpan DefaultStuckItemThreshold =
         EnvironmentUtil.GetLongVariable("QUEUE_ITEM_STUCK_MINUTES") is long minutes and > 0
@@ -132,7 +133,7 @@ public sealed class QueueManager : IDisposable
     /// <summary>True while any NZB queue item is actively processing.</summary>
     public bool HasActiveQueueItems => !_inProgress.IsEmpty;
 
-    internal IDisposable? TryReserveQueueSlot(
+    public IDisposable? TryReserveQueueSlot(
         int persistedCount,
         int maxItems,
         int resumeThreshold)
@@ -1222,6 +1223,8 @@ public sealed class QueueManager : IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
         _cancellationTokenSource?.Cancel();
         try
         {

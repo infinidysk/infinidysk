@@ -13,3 +13,4 @@
 /server.d.ts
 /vite.config.js
 /vite.config.d.ts
+/app/generated/admin-api.ts

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { parseSettingsTab } from "~/routes/settings/settings-tabs";
+import { parseSettingsTab } from "~/navigation/settings-tabs";
 import {
   isNavRouteDisabled,
   isSettingsTabDisabled,

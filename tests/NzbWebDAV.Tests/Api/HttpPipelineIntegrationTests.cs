@@ -13,11 +13,8 @@ public sealed class HttpPipelineIntegrationTests(NzbDavWebApplicationFactory fac
         using var client = factory.CreateClient();
 
         using var rejected = await client.GetAsync("/api/is-onboarding");
-        Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
-        using var rejectedJson = await JsonDocument.ParseAsync(
-            await rejected.Content.ReadAsStreamAsync());
-        Assert.False(rejectedJson.RootElement.GetProperty("status").GetBoolean());
-        Assert.Equal("API Key Required", rejectedJson.RootElement.GetProperty("error").GetString());
+        await AdminProblemAssertions.AssertProblemAsync(
+            rejected, HttpStatusCode.Unauthorized, "API Key Required");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/is-onboarding");
         request.Headers.Add("x-api-key", NzbDavWebApplicationFactory.ApiKey);

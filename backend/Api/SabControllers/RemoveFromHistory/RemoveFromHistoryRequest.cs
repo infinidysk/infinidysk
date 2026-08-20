@@ -1,6 +1,5 @@
-﻿using System.Text.Json;
-using System.Text.Json.Serialization;
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 
@@ -19,7 +18,7 @@ public class RemoveFromHistoryRequest
     {
         var cancellationToken = SigtermUtil.GetCancellationToken();
         var query = SabDeleteValueParser.Parse(httpContext, allowFailed: true);
-        var bodyIds = await NzoIdsFromRequestBody(httpContext, cancellationToken).ConfigureAwait(false);
+        var bodyIds = await SabJsonNzoIds.ReadAsync(httpContext, cancellationToken).ConfigureAwait(false);
         return new RemoveFromHistoryRequest()
         {
             NzoIds = query.NzoIds.Concat(bodyIds).Distinct().ToList(),
@@ -32,25 +31,5 @@ public class RemoveFromHistoryRequest
             DeleteCompletedFiles = httpContext.GetRequestParam("del_completed_files") == "1",
             CancellationToken = cancellationToken
         };
-    }
-
-    private static async Task<List<Guid>> NzoIdsFromRequestBody(HttpContext httpContext, CancellationToken ct)
-    {
-        try
-        {
-            await using var stream = httpContext.Request.Body;
-            var deserialized = await JsonSerializer.DeserializeAsync<RequestBody>(stream, cancellationToken: ct).ConfigureAwait(false);
-            return deserialized?.NzoIds ?? [];
-        }
-        catch
-        {
-            return [];
-        }
-    }
-
-    private class RequestBody
-    {
-        [JsonPropertyName("nzo_ids")]
-        public List<Guid> NzoIds { get; set; } = [];
     }
 }

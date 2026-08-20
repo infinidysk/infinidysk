@@ -17,7 +17,7 @@ import { getSessionUser, IS_FRONTEND_AUTH_DISABLED } from "~/auth/authentication
 import { TopNavigation } from "./routes/_index/components/top-navigation/top-navigation";
 import { LeftNavigation } from "./routes/_index/components/left-navigation/left-navigation";
 import { PageLayout } from "./routes/_index/components/page-layout/page-layout";
-import { Loading } from "./routes/_index/components/loading/loading";
+import { Loading } from "~/components/loading/loading";
 import { getAppVersion } from "./utils/version.server";
 import { checkForUpdate } from "./utils/update-check.server";
 import { backendClient } from "./clients/backend-client.server";

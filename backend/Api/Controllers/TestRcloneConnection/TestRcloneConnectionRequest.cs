@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Config;
 
 namespace NzbWebDAV.Api.Controllers.TestRcloneConnection;
@@ -11,8 +12,11 @@ public class TestRcloneConnectionRequest
 
     public TestRcloneConnectionRequest(HttpContext context, ConfigManager configManager)
     {
-        Host = context.Request.Form["host"].FirstOrDefault()
-               ?? throw new BadHttpRequestException("Rclone host is required");
+        var errors = new ValidationErrors();
+        Host = context.Request.Form["host"].FirstOrDefault() ?? "";
+        if (string.IsNullOrEmpty(Host))
+            errors.Add("host", "Rclone host is required");
+        errors.ThrowIfAny();
 
         User = context.Request.Form["user"].FirstOrDefault();
         Pass = RclonePassResolver.Resolve(context.Request.Form["pass"].FirstOrDefault(), configManager);

@@ -144,6 +144,6 @@ public sealed class SabHttpContractTests
             "/api?mode=addfile&output=json",
             serverErrorBody);
         await SabContractAssertions.AssertFailureAsync(
-            serverError, HttpStatusCode.InternalServerError, "internal server error");
+            serverError, HttpStatusCode.BadRequest, "nzbFile");
     }
 }

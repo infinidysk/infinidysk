@@ -10,4 +10,7 @@ public sealed class LogEntry
     [JsonPropertyName("msg")] public required string Message { get; init; }
     [JsonPropertyName("source")] public string? Source { get; init; }
     [JsonPropertyName("exception")] public string? Exception { get; init; }
+    [JsonPropertyName("traceId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TraceId { get; init; }
 }
