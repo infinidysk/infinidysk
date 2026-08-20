@@ -82,6 +82,14 @@ public class UsenetStreamingClient : WrappingNntpClient
         };
     }
 
+    /// <summary>
+    /// Test constructor that wraps a scripted <see cref="INntpClient"/> without
+    /// opening real provider pools.
+    /// </summary>
+    internal UsenetStreamingClient(INntpClient inner) : base(inner)
+    {
+    }
+
     private static HeaderCachingNntpClient CreateDownloadingNntpClient
     (
         ConfigManager configManager,

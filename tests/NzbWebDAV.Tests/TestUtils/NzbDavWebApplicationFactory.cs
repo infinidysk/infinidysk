@@ -2,14 +2,19 @@ using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Queue;
+using NzbWebDAV.Tests.Fakes;
 
 namespace NzbWebDAV.Tests.TestUtils;
 
@@ -22,10 +27,16 @@ public sealed class NzbDavWebApplicationFactory : WebApplicationFactory<Program>
     private readonly string _configPath =
         Path.Join(Path.GetTempPath(), $"nzbdav-http-tests-{Guid.NewGuid():N}");
     private readonly Dictionary<string, string?> _previousEnvironment = new();
+    private readonly FakeNntpClient? _fakeNntpClient;
     private int _disposed;
 
-    public NzbDavWebApplicationFactory()
+    public NzbDavWebApplicationFactory() : this(fakeNntpClient: null)
     {
+    }
+
+    internal NzbDavWebApplicationFactory(FakeNntpClient? fakeNntpClient)
+    {
+        _fakeNntpClient = fakeNntpClient;
         Directory.CreateDirectory(_configPath);
         SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
         SetEnvironmentVariable("CONFIG_PATH", _configPath);
@@ -38,9 +49,34 @@ public sealed class NzbDavWebApplicationFactory : WebApplicationFactory<Program>
         InitializeDatabases();
     }
 
+    public string ConfigPath => _configPath;
+    internal FakeNntpClient? FakeNntpClient => _fakeNntpClient;
+
+    internal static NzbDavWebApplicationFactory CreateWithFakeNntp(
+        IReadOnlyDictionary<string, byte[]> segments)
+    {
+        return new NzbDavWebApplicationFactory(
+            new FakeNntpClient(segments, useCachedYencStreams: true));
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        if (_fakeNntpClient is null)
+            return;
+
+        builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<UsenetStreamingClient>();
+            services.AddSingleton(_ => new UsenetStreamingClient(_fakeNntpClient));
+        });
+    }
+
+    public HttpClient CreateAuthenticatedClient()
+    {
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Add("x-api-key", ApiKey);
+        return client;
     }
 
     public HttpRequestMessage CreateWebDavRequest(HttpMethod method, string path, string? depth = null)
@@ -71,6 +107,84 @@ public sealed class NzbDavWebApplicationFactory : WebApplicationFactory<Program>
         await context.SaveChangesAsync();
     }
 
+    public async Task WriteNzbBlobAsync(Guid id, byte[] nzbBytes)
+    {
+        _ = Services;
+        await using var stream = new MemoryStream(nzbBytes);
+        await BlobStore.WriteBlob(id, stream);
+    }
+
+    public async Task<QueueItem> SeedQueueItemAsync(
+        Guid id,
+        string fileName = "sample.nzb",
+        string category = "tv",
+        byte[]? nzbBytes = null)
+    {
+        await WriteNzbBlobAsync(id, nzbBytes ?? TestNzbs.SingleFile);
+        using var scope = Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
+        var item = new QueueItem
+        {
+            Id = id,
+            CreatedAt = DateTime.UtcNow,
+            SortOrder = DateTime.UtcNow.Ticks,
+            FileName = fileName,
+            JobName = Path.GetFileNameWithoutExtension(fileName),
+            NzbFileSize = nzbBytes?.Length ?? TestNzbs.SingleFile.Length,
+            TotalSegmentBytes = 128,
+            Category = category,
+            Priority = QueueItem.PriorityOption.Normal,
+            PostProcessing = QueueItem.PostProcessingOption.None,
+        };
+        context.QueueItems.Add(item);
+        context.NzbNames.Add(new NzbName { Id = id, FileName = fileName });
+        await context.SaveChangesAsync();
+        return item;
+    }
+
+    public async Task<HistoryItem> SeedHistoryItemAsync(
+        Guid id,
+        HistoryItem.DownloadStatusOption status = HistoryItem.DownloadStatusOption.Failed,
+        string fileName = "sample.nzb",
+        string category = "tv",
+        byte[]? nzbBytes = null)
+    {
+        await WriteNzbBlobAsync(id, nzbBytes ?? TestNzbs.SingleFile);
+        using var scope = Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
+        var item = new HistoryItem
+        {
+            Id = id,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-10),
+            FileName = fileName,
+            JobName = Path.GetFileNameWithoutExtension(fileName),
+            Category = category,
+            DownloadStatus = status,
+            TotalSegmentBytes = 128,
+            DownloadTimeSeconds = 5,
+            FailMessage = status == HistoryItem.DownloadStatusOption.Failed
+                ? "Timeout reading from NNTP stream."
+                : "",
+            NzbBlobId = id,
+        };
+        context.HistoryItems.Add(item);
+        context.NzbNames.Add(new NzbName { Id = id, FileName = fileName });
+        await context.SaveChangesAsync();
+        return item;
+    }
+
+    public async Task WaitUntilQueueIdleAsync(
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        timeout ??= TimeSpan.FromSeconds(10);
+        var queueManager = Services.GetRequiredService<QueueManager>();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeout.Value);
+        while (queueManager.HasActiveQueueItems)
+            await Task.Delay(25, cts.Token);
+    }
+
     protected override void Dispose(bool disposing)
     {
         try
@@ -81,6 +195,7 @@ public sealed class NzbDavWebApplicationFactory : WebApplicationFactory<Program>
         {
             if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
             {
+                _fakeNntpClient?.Dispose();
                 SqliteConnection.ClearAllPools();
                 foreach (var variable in _previousEnvironment)
                     Environment.SetEnvironmentVariable(variable.Key, variable.Value);
