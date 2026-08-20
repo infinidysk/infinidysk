@@ -8,6 +8,7 @@ const BACKEND_PATH_PREFIXES = [
   "/content",
   "/completed-symlinks",
   "/adapters/",
+  "/README",
 ];
 
 /** Decode a path; return null on malformed percent-encoding instead of throwing. */
