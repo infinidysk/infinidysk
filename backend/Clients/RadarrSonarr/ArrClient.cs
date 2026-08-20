@@ -40,11 +40,14 @@ public class ArrClient(string host, string apiKey)
     public Task<ArrCommand> RefreshMonitoredDownloads(CancellationToken ct = default) =>
         CommandAsync(new { name = "RefreshMonitoredDownloads" }, ct);
 
-    public Task<ArrQueueStatus> GetQueueStatusAsync(CancellationToken ct = default) =>
+    public virtual Task<ArrQueueStatus> GetQueueStatusAsync(CancellationToken ct = default) =>
         Get<ArrQueueStatus>($"/queue/status", ct);
 
-    public Task<ArrQueue<ArrQueueRecord>> GetQueueAsync(CancellationToken ct = default) =>
+    public virtual Task<ArrQueue<ArrQueueRecord>> GetQueueAsync(CancellationToken ct = default) =>
         Get<ArrQueue<ArrQueueRecord>>($"/queue?protocol=usenet&pageSize=5000", ct);
+
+    public virtual Task<ArrHistory> GetImportHistoryAsync(int page, int pageSize, CancellationToken ct = default) =>
+        Get<ArrHistory>($"/history?eventType=3&page={page}&pageSize={pageSize}&sortKey=date&sortDirection=descending", ct);
 
     public async Task<int> GetQueueCountAsync() =>
         (await Get<ArrQueue<ArrQueueRecord>>($"/queue?pageSize=1").ConfigureAwait(false)).TotalRecords;

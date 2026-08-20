@@ -31,6 +31,20 @@ public class ArrQueueRecord
     [JsonPropertyName("statusMessages")]
     public List<ArrQueueStatusMessage> StatusMessages { get; set; } = [];
 
+    [JsonPropertyName("size")]
+    public long Size { get; set; }
+
+    [JsonPropertyName("sizeleft")]
+    public long Sizeleft { get; set; }
+
+    [JsonPropertyName("downloadId")]
+    public string? DownloadId { get; set; }
+
+    public bool IsAwaitingImport =>
+        string.Equals(Status, "completed", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(TrackedDownloadState, "importPending", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(TrackedDownloadState, "importing", StringComparison.OrdinalIgnoreCase);
+
     public bool HasStatusMessage(string message)
     {
         return StatusMessages
