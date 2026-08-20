@@ -1,0 +1,13 @@
+{
+  "global": {
+    "branches": 50,
+    "functions": 47,
+    "lines": 50,
+    "statements": 54
+  },
+  "globs": {
+    "app/clients/**": {
+      "lines": 70
+    }
+  }
+}

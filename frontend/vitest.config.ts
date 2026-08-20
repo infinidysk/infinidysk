@@ -1,5 +1,18 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+
+const coverageThresholds = JSON.parse(
+  readFileSync(new URL("./coverage-thresholds.json", import.meta.url), "utf8"),
+) as {
+  global: {
+    branches: number;
+    functions: number;
+    lines: number;
+    statements: number;
+  };
+  globs?: Record<string, { lines?: number }>;
+};
 
 export default defineConfig({
   resolve: {
@@ -11,13 +24,11 @@ export default defineConfig({
     environment: "node",
     coverage: {
       provider: "v8",
-      reporter: ["text", "lcov", "cobertura"],
+      reporter: ["text", "json-summary", "lcov", "cobertura"],
       reportsDirectory: "./coverage",
       thresholds: {
-        branches: 50,
-        functions: 47,
-        lines: 56,
-        statements: 54,
+        ...coverageThresholds.global,
+        ...coverageThresholds.globs,
       },
     },
   },

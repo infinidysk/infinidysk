@@ -1,0 +1,13 @@
+{
+  "exceptions": [
+    {
+      "scope": "global",
+      "metric": "lines",
+      "oldValue": 56,
+      "newValue": 50,
+      "issueUrl": "https://github.com/infinidysk/infinidysk/issues/855",
+      "reason": "temporary fixture decrease",
+      "expiresOn": "2099-01-01"
+    }
+  ]
+}

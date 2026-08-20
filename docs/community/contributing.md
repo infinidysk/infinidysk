@@ -43,7 +43,15 @@ cd frontend && npm run lint && npm run typecheck && npm run build && npm test
 dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
 ```
 
-Full details: repository [CONTRIBUTING.md](https://github.com/infinidysk/infinidysk/blob/main/CONTRIBUTING.md) and [AGENTS.md](https://github.com/infinidysk/infinidysk/blob/main/AGENTS.md).
+Branch protection on `main` should require **`CI / Required quality gate`**
+(plus Documentation build and the three CodeQL language jobs). That aggregate
+check covers frontend lint/typecheck/build/tests, backend format/build/tests,
+PostgreSQL migrations, native yEnc jobs, quality ratchets, and the Docker
+runtime smoke when image inputs change.
+
+Full details, local commands, and ratchet/allowlist rules:
+repository [CONTRIBUTING.md](https://github.com/infinidysk/infinidysk/blob/main/CONTRIBUTING.md)
+and [AGENTS.md](https://github.com/infinidysk/infinidysk/blob/main/AGENTS.md).
 
 ## Performance regression gates
 

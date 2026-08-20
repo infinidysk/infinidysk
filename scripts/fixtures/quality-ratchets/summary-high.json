@@ -1,0 +1,11 @@
+{
+  "total": {
+    "lines": { "pct": 70.0, "covered": 700, "total": 1000 },
+    "statements": { "pct": 54.1, "covered": 541, "total": 1000 },
+    "functions": { "pct": 47.2, "covered": 472, "total": 1000 },
+    "branches": { "pct": 50.3, "covered": 503, "total": 1000 }
+  },
+  "/repo/frontend/app/clients/backend-client.server.ts": {
+    "lines": { "covered": 72, "total": 100 }
+  }
+}

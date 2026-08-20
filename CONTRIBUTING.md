@@ -251,12 +251,78 @@ Notes:
 
 ## Contributing
 
-Before creating a PR:
+Before creating a PR, run the checks that correspond to the required CI jobs:
 
 ```bash
+# Frontend job
 cd frontend
 npm run lint
 npm run typecheck
 npm run build
 npm test
+npm run test:coverage
+
+# Backend job (from repository root; build rapidyenc first when tests load natives)
+python3 scripts/check-quality-ratchets.py \
+  --package-json frontend/package.json \
+  --thresholds frontend/coverage-thresholds.json \
+  --summary frontend/coverage/coverage-summary.json \
+  --exceptions quality/ratchet-exceptions.json
+bash scripts/test-quality-ratchets.sh
+dotnet format whitespace --verify-no-changes --folder backend
+dotnet format whitespace --verify-no-changes --folder backend.Benchmarks
+dotnet format whitespace --verify-no-changes --folder tests/NzbWebDAV.Tests
+dotnet format whitespace --verify-no-changes --folder tests/UsenetSharp.Tests
+dotnet format whitespace --verify-no-changes --folder tests/RapidYencSharp.Tests
+dotnet format whitespace --verify-no-changes --folder libs/UsenetSharp
+dotnet format whitespace --verify-no-changes --folder libs/RapidYencSharp
+dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
 ```
+
+Vendored SharpCompress sources and tests are not part of the format gate.
+
+### Required status checks
+
+Branch protection on `main` should require this **one aggregate CI check**, plus
+the independent documentation and CodeQL workflows:
+
+| Check name | Workflow |
+| --- | --- |
+| `CI / Required quality gate` | `.github/workflows/ci.yml` |
+| `Documentation / build` | `.github/workflows/docs.yml` |
+| `CodeQL / Analyze (actions)` | `.github/workflows/codeql.yml` |
+| `CodeQL / Analyze (csharp)` | `.github/workflows/codeql.yml` |
+| `CodeQL / Analyze (javascript-typescript)` | `.github/workflows/codeql.yml` |
+
+`CI / Required quality gate` succeeds only when `frontend`, `backend`,
+`postgres-migrations`, `macos-yenc`, `alpine-yenc`, and `quality-ratchets`
+succeed. `docker-runtime-smoke` may be skipped when the runtime image inputs
+did not change, or on pushes to `main`. Coverage-upload jobs are not required
+(forks omit those artifacts).
+
+Configuring those names as required checks is a repository-admin action. Enable
+it after `CI / Required quality gate` has succeeded at least once on `main`.
+Also require the branch to be up to date, at least one approval, a code-owner
+review, stale-approval dismissal, conversation resolution, and no force-push or
+branch deletion. Limit bypass to designated maintainers.
+
+### Quality ratchets
+
+- **Coverage floors** live in `frontend/coverage-thresholds.json`. They cannot
+  decrease unless `quality/ratchet-exceptions.json` contains a complete,
+  unexpired exception (`scope`, `metric`, `oldValue`, `newValue`, `issueUrl`,
+  `reason`, `expiresOn`). Expired or malformed entries fail CI. When actual
+  coverage is at least 5 percentage points above a floor, raise the floor to
+  `floor(actual) - 2`.
+- **ESLint `--max-warnings`** in `frontend/package.json` can only decrease.
+  There is no exception path.
+- **NuGet high/critical** findings fail CI unless listed in
+  `scripts/nuget-vulnerability-allowlist.json` with `packageId`, `advisoryUrl`,
+  `reason`, and `expiresOn`. Expired allowlist rows are ignored and the finding
+  fails.
+- **Mutation baselines** (when present under `quality/`) follow the same
+  decrease rule as coverage floors.
+
+Do not commit generated coverage directories, mutation HTML, Stryker
+incremental state, `frontend/build/`, `frontend/dist-node/`, or local
+databases.

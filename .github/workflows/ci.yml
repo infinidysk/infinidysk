@@ -93,13 +93,20 @@ jobs:
         working-directory: frontend
         run: npm run test:coverage
 
+      - name: Enforce coverage floor ratchet
+        run: |
+          python3 scripts/check-quality-ratchets.py \
+            --thresholds frontend/coverage-thresholds.json \
+            --summary frontend/coverage/coverage-summary.json \
+            --exceptions quality/ratchet-exceptions.json
+
       - name: Upload frontend coverage artifact
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
           path: frontend/coverage/cobertura-coverage.xml
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   backend:
     runs-on: ubuntu-latest
@@ -125,7 +132,10 @@ jobs:
       - name: Verify formatting
         run: |
           dotnet format whitespace --verify-no-changes --folder backend
-          dotnet format whitespace --verify-no-changes --folder tests
+          dotnet format whitespace --verify-no-changes --folder backend.Benchmarks
+          dotnet format whitespace --verify-no-changes --folder tests/NzbWebDAV.Tests
+          dotnet format whitespace --verify-no-changes --folder tests/UsenetSharp.Tests
+          dotnet format whitespace --verify-no-changes --folder tests/RapidYencSharp.Tests
           dotnet format whitespace --verify-no-changes --folder libs/UsenetSharp
           dotnet format whitespace --verify-no-changes --folder libs/RapidYencSharp
 
@@ -219,7 +229,12 @@ jobs:
       - name: Collect backend coverage
         run: |
           mkdir -p coverage
-          find TestResults -name coverage.cobertura.xml | head -n 1 | xargs -I{} cp {} coverage/coverage.cobertura.xml || true
+          report="$(find TestResults -name coverage.cobertura.xml | head -n 1)"
+          if [ -z "$report" ]; then
+            echo "error: backend tests produced no Cobertura report" >&2
+            exit 1
+          fi
+          cp "$report" coverage/coverage.cobertura.xml
 
       - name: Upload backend coverage artifact
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -227,7 +242,7 @@ jobs:
         with:
           name: backend-coverage
           path: coverage/coverage.cobertura.xml
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   postgres-migrations:
     name: PostgreSQL migration tests
@@ -431,6 +446,74 @@ jobs:
       - name: Skip unchanged runtime image
         if: steps.changes.outputs.build != 'true'
         run: echo "No runtime image inputs changed; smoke build skipped."
+
+  quality-ratchets:
+    name: Quality ratchets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Fetch pull request base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_REF"
+
+      - name: Verify quality ratchet fixtures
+        run: bash scripts/test-quality-ratchets.sh
+
+      - name: Enforce ESLint ceiling and coverage-floor ratchets
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          extra=()
+          if [ "$EVENT_NAME" = pull_request ]; then
+            git show "origin/${BASE_REF}:frontend/package.json" > /tmp/base-package.json
+            extra+=(--base-package-json /tmp/base-package.json)
+            if git cat-file -e "origin/${BASE_REF}:frontend/coverage-thresholds.json" 2>/dev/null; then
+              git show "origin/${BASE_REF}:frontend/coverage-thresholds.json" > /tmp/base-thresholds.json
+              extra+=(--base-thresholds /tmp/base-thresholds.json)
+            fi
+          fi
+          python3 scripts/check-quality-ratchets.py \
+            --package-json frontend/package.json \
+            --thresholds frontend/coverage-thresholds.json \
+            --exceptions quality/ratchet-exceptions.json \
+            "${extra[@]}"
+
+  quality-gate:
+    name: Required quality gate
+    if: always()
+    needs:
+      - frontend
+      - backend
+      - postgres-migrations
+      - macos-yenc
+      - alpine-yenc
+      - docker-runtime-smoke
+      - quality-ratchets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify required job results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -e '
+            .frontend.result == "success" and
+            .backend.result == "success" and
+            ."postgres-migrations".result == "success" and
+            ."macos-yenc".result == "success" and
+            ."alpine-yenc".result == "success" and
+            ."quality-ratchets".result == "success" and
+            (."docker-runtime-smoke".result == "success" or ."docker-runtime-smoke".result == "skipped") and
+            all(.[]; .result == "success" or .result == "skipped")
+          ' <<<"$RESULTS"
 
   upload-coverage-typescript:
     needs: frontend

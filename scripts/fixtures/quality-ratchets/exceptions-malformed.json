@@ -1,0 +1,11 @@
+{
+  "exceptions": [
+    {
+      "scope": "global",
+      "metric": "lines",
+      "oldValue": 56,
+      "newValue": 50,
+      "reason": "missing issue URL"
+    }
+  ]
+}
