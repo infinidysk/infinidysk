@@ -933,20 +933,20 @@ public class DavDatabaseContext : DbContext
 
     public static Task RcloneVfsForget(List<DavItem> addedOrRemovedDavItems)
     {
-        if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
-        if (RcloneClient.Host == null) return Task.CompletedTask;
+        var rclone = RcloneClient.Current;
+        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return Task.CompletedTask;
         if (addedOrRemovedDavItems.Count == 0) return Task.CompletedTask;
         var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
         if (vfsForgetPaths.Count == 0) return Task.CompletedTask;
-        return RcloneClient.ForgetVfsPaths(vfsForgetPaths);
+        return rclone.ForgetVfsPaths(vfsForgetPaths);
     }
 
     public static Task RcloneVfsForget(List<string> paths)
     {
-        if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
-        if (RcloneClient.Host == null) return Task.CompletedTask;
+        var rclone = RcloneClient.Current;
+        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return Task.CompletedTask;
         if (paths.Count == 0) return Task.CompletedTask;
-        return RcloneClient.ForgetVfsPaths(paths);
+        return rclone.ForgetVfsPaths(paths);
     }
 
     public void ClearChangeTracker()

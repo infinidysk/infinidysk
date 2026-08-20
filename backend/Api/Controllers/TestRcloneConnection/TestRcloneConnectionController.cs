@@ -6,9 +6,11 @@ namespace NzbWebDAV.Api.Controllers.TestRcloneConnection;
 
 [ApiController]
 [Route("api/test-rclone-connection")]
-public class TestRcloneConnectionController(ConfigManager configManager) : BaseApiController
+public class TestRcloneConnectionController(
+    ConfigManager configManager,
+    IRcloneClient rcloneClient) : BaseApiController
 {
-    private static async Task<TestRcloneConnectionResponse> TestRcloneConnection(TestRcloneConnectionRequest request)
+    private async Task<TestRcloneConnectionResponse> TestRcloneConnection(TestRcloneConnectionRequest request)
     {
         try
         {
@@ -21,8 +23,8 @@ public class TestRcloneConnectionController(ConfigManager configManager) : BaseA
                 Status = true,
                 Connected = result.Success,
                 Error = result.Error,
-                LastInvalidationError = RcloneClient.LastForgetError?.Message,
-                LastInvalidationErrorAt = RcloneClient.LastForgetError?.At
+                LastInvalidationError = rcloneClient.LastForgetError?.Message,
+                LastInvalidationErrorAt = rcloneClient.LastForgetError?.At
             };
         }
         catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException or InvalidOperationException)

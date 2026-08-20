@@ -11,7 +11,7 @@ using Serilog;
 
 namespace NzbWebDAV.Websocket;
 
-public class WebsocketManager
+public class WebsocketManager : IWebsocketPublisher
 {
     private const int EventQueueCapacity = 64;
     private const int MaxSubscriptionMessageSize = 4096;
