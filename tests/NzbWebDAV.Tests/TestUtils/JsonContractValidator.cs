@@ -27,11 +27,18 @@ internal static class JsonContractValidator
 
     internal static string ResolveSchemaPath(string relativeSchemaPath)
     {
-        var fromOutput = Path.Combine(AppContext.BaseDirectory, "contracts", relativeSchemaPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativeSchemaPath);
+        if (Path.IsPathRooted(relativeSchemaPath)
+            || relativeSchemaPath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries)
+                .Contains("..", StringComparer.Ordinal))
+        {
+            throw new ArgumentException("Contract schema path must be a relative path without '..'.", nameof(relativeSchemaPath));
+        }
+        var fromOutput = Path.Join(AppContext.BaseDirectory, "contracts", relativeSchemaPath);
         if (File.Exists(fromOutput))
             return fromOutput;
 
-        var fromRepo = Path.Combine(RepoPaths.FindRepoRoot(), "contracts", relativeSchemaPath);
+        var fromRepo = Path.Join(RepoPaths.FindRepoRoot(), "contracts", relativeSchemaPath);
         if (File.Exists(fromRepo))
             return fromRepo;
 

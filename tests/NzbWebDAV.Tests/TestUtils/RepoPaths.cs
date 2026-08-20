@@ -7,8 +7,8 @@ internal static class RepoPaths
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            var sln = Path.Combine(directory.FullName, "NzbWebDAV.sln");
-            var frontend = Path.Combine(directory.FullName, "frontend");
+            var sln = Path.Join(directory.FullName, "NzbWebDAV.sln");
+            var frontend = Path.Join(directory.FullName, "frontend");
             if (File.Exists(sln) && Directory.Exists(frontend))
                 return directory.FullName;
             directory = directory.Parent;
@@ -17,12 +17,12 @@ internal static class RepoPaths
         throw new InvalidOperationException("Could not locate the repository root from the test output path.");
     }
 
-    public static string FrontendRoot => Path.Combine(FindRepoRoot(), "frontend");
+    public static string FrontendRoot => Path.Join(FindRepoRoot(), "frontend");
 
     public static bool FrontendProductionBuildExists()
     {
         var frontend = FrontendRoot;
-        return File.Exists(Path.Combine(frontend, "dist-node", "server.js"))
-            && File.Exists(Path.Combine(frontend, "build", "server", "index.js"));
+        return File.Exists(Path.Join(frontend, "dist-node", "server.js"))
+            && File.Exists(Path.Join(frontend, "build", "server", "index.js"));
     }
 }

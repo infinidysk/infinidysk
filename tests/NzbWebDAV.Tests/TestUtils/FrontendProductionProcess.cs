@@ -60,7 +60,7 @@ internal sealed class FrontendProductionProcess : IAsyncDisposable
             await host.WaitForHealthAsync(cancellationToken).ConfigureAwait(false);
             return host;
         }
-        catch
+        catch (Exception)
         {
             await host.DisposeAsync().ConfigureAwait(false);
             throw;
@@ -77,32 +77,34 @@ internal sealed class FrontendProductionProcess : IAsyncDisposable
         using var client = CreateClient();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
-        while (true)
+        try
         {
-            timeout.Token.ThrowIfCancellationRequested();
-            if (_process.HasExited)
+            while (true)
             {
-                throw new InvalidOperationException(
-                    $"Frontend process exited {_process.ExitCode}. Output:{Environment.NewLine}{_output}");
-            }
+                if (_process.HasExited)
+                {
+                    throw new InvalidOperationException(
+                        $"Frontend process exited {_process.ExitCode}. Output:{Environment.NewLine}{_output}");
+                }
 
-            try
-            {
-                using var response = await client.GetAsync("/healthz", timeout.Token).ConfigureAwait(false);
-                if (response.StatusCode == HttpStatusCode.OK)
-                    return;
-            }
-            catch (HttpRequestException)
-            {
-                // Process is still binding.
-            }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                throw new TimeoutException(
-                    $"Frontend /healthz did not become ready. Output:{Environment.NewLine}{_output}");
-            }
+                try
+                {
+                    using var response = await client.GetAsync("/healthz", timeout.Token).ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.OK)
+                        return;
+                }
+                catch (HttpRequestException)
+                {
+                    // Process is still binding.
+                }
 
-            await Task.Delay(50, timeout.Token).ConfigureAwait(false);
+                await Task.Delay(50, timeout.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Frontend /healthz did not become ready. Output:{Environment.NewLine}{_output}");
         }
     }
 
@@ -123,21 +125,36 @@ internal sealed class FrontendProductionProcess : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        try
+        using (_process)
         {
-            if (!_process.HasExited)
+            try
             {
-                _process.Kill(entireProcessTree: true);
-                await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                if (!_process.HasExited)
+                {
+                    _process.Kill(entireProcessTree: true);
+                    await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                }
             }
-        }
-        catch
-        {
-            // Best-effort teardown so backend disposal still runs.
-        }
-        finally
-        {
-            _process.Dispose();
+            catch (InvalidOperationException)
+            {
+                // Already exited between HasExited and Kill.
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // Process is gone or cannot be signalled.
+            }
+            catch (NotSupportedException)
+            {
+                // Entire process tree is unsupported on this platform.
+            }
+            catch (TimeoutException)
+            {
+                // Timed out waiting for exit; Dispose still runs.
+            }
+            catch (OperationCanceledException)
+            {
+                // Timed out waiting for exit; Dispose still runs.
+            }
         }
     }
 }
