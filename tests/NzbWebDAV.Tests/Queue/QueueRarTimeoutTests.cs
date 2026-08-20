@@ -652,8 +652,15 @@ public sealed class QueueRarTimeoutLoggingTests : IAsyncLifetime
         var warnings = sink.Events.Where(e => e.Level == LogEventLevel.Warning).ToList();
         Assert.Contains(warnings, e => e.MessageTemplate.Text.Contains("Provider connection issue"));
         Assert.Contains(warnings, e => e.Properties.ContainsKey("Reason"));
-        Assert.DoesNotContain(sink.Events, e => e.Level >= LogEventLevel.Error && e.Exception is not null);
+        Assert.DoesNotContain(
+            sink.Events.Where(e => HasJobName(e, queueItem.JobName)),
+            e => e.Level >= LogEventLevel.Error);
     }
+
+    private static bool HasJobName(LogEvent logEvent, string jobName)
+        => logEvent.Properties.TryGetValue("JobName", out var value)
+           && value is ScalarValue { Value: string name }
+           && name == jobName;
 
     private sealed class CollectingSink : ILogEventSink
     {

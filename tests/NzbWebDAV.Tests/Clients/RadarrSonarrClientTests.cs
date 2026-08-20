@@ -317,6 +317,24 @@ public class RadarrSonarrClientTests
             await client.RemoveAndBlocklist(filePath, downloadId));
     }
 
+    [Fact]
+    public async Task GetQueueCountAsync_HonorsCancellationToken()
+    {
+        using var httpClient = new HttpClient(new HangUntilCancelledHandler());
+        var client = new TestArrClient(httpClient);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => client.GetQueueCountAsync(cts.Token));
+    }
+
+    [Fact]
+    public void SharedHttpClient_HasExplicitTimeout()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(30), ArrClient.RequestTimeout);
+    }
+
     private static HttpResponseMessage JsonResponse(string json) =>
         new(HttpStatusCode.OK)
         {
@@ -367,6 +385,19 @@ public class RadarrSonarrClientTests
         protected override HttpClient Client => _client;
     }
 
+    private sealed class TestArrClient : ArrClient
+    {
+        private readonly HttpClient _client;
+
+        public TestArrClient(HttpClient client)
+            : base("http://arr.test", "test-key")
+        {
+            _client = client;
+        }
+
+        protected override HttpClient Client => _client;
+    }
+
     private sealed class ResponseQueueHandler(
         Dictionary<string, Queue<HttpResponseMessage>> responses) : HttpMessageHandler
     {
@@ -379,6 +410,17 @@ public class RadarrSonarrClientTests
                 throw new InvalidOperationException($"Unexpected request: {key}");
 
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class HangUntilCancelledHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Expected cancellation before a response.");
         }
     }
 }

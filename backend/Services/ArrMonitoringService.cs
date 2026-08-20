@@ -108,7 +108,7 @@ public class ArrMonitoringService : BackgroundService
             .Max();
 
         if (action is ArrConfig.QueueAction.DoNothing) return null;
-        await client.DeleteQueueRecord(item.Id, action).ConfigureAwait(false);
+        await client.DeleteQueueRecord(item.Id, action, ct).ConfigureAwait(false);
         Log.Debug(
             "Resolved stuck queue record {QueueRecordId} ({QueueItemTitle}) from {Host} with action {Action}",
             item.Id, item.Title, client.Host, action);

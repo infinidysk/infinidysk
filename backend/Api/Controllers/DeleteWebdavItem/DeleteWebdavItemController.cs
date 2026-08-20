@@ -95,7 +95,7 @@ public class DeleteWebdavItemController(
                     string.Join(",", prunedHistoryIds));
             }
 
-            _ = DavDatabaseContext.RcloneVfsForget(auditItems);
+            _ = DavDatabaseContext.RcloneVfsForget(auditItems, ct);
             return Ok(new BaseApiResponse { Status = true });
         }
         catch

@@ -11,13 +11,13 @@ namespace NzbWebDAV.Services;
 /// One-shot startup repair for multipart DavItems that still advertise
 /// <see cref="long.MaxValue"/> as FileSize (issue #537).
 /// </summary>
-public class MultipartFileSizeRepairService : BackgroundService
+public class MultipartFileSizeRepairService(IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            await using var ctx = new DavDatabaseContext();
+            await using var ctx = dbContextFactory.CreateDbContext();
             await RepairAsync(ctx, stoppingToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

@@ -29,4 +29,10 @@ public class MigrationProgressTests
     {
         Assert.True(MigrationProgress.IsSlow("20260713120000_Add-Path-Index-To-DavItems"));
     }
+
+    [Fact]
+    public void IsSlow_FlagsGuidTextCasingMigration()
+    {
+        Assert.True(MigrationProgress.IsSlow("20260820160000_Normalize-Guid-Text-Casing"));
+    }
 }

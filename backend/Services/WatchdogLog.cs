@@ -12,15 +12,18 @@ namespace NzbWebDAV.Services;
 /// hiccup. Cleanup happens both on cascade (queue/history deletion) and via
 /// a time-based background purge.
 /// </summary>
-public class WatchdogLog
+public class WatchdogLog(IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
 {
+    private DavDatabaseContext CreateContext() =>
+        dbContextFactory?.CreateDbContext() ?? new DavDatabaseContext();
+
     public void Record(WatchdogEntry entry)
     {
         _ = Task.Run(async () =>
         {
             try
             {
-                await using var ctx = new DavDatabaseContext();
+                await using var ctx = CreateContext();
                 ctx.WatchdogEntries.Add(entry);
                 await ctx.SaveChangesAsync().ConfigureAwait(false);
             }
@@ -33,7 +36,7 @@ public class WatchdogLog
 
     public async Task<IReadOnlyList<WatchdogEntry>> GetRecentAsync(int limit, CancellationToken ct = default)
     {
-        await using var ctx = new DavDatabaseContext();
+        await using var ctx = CreateContext();
         return await ctx.WatchdogEntries
             .AsNoTracking()
             .OrderByDescending(x => x.AttemptedAt)

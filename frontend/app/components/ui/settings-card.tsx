@@ -22,7 +22,9 @@ export function SettingsCard({
   contentClassName = "space-y-4",
 }: SettingsCardProps) {
   return (
-    <section className={`overflow-hidden rounded-lg border border-base-content/10 bg-base-100 ${className}`}>
+    <section
+      className={`overflow-hidden rounded-lg border border-base-content/10 bg-base-100 ${className}`}
+    >
       <div className="flex items-start gap-3 border-b border-base-content/10 p-4">
         <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <Icon name={icon} className="!text-[20px]" />

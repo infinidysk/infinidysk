@@ -127,7 +127,10 @@ describe("reload attempt storage", () => {
     storage.setItem("infinidysk.migration-reload-attempts", "{not-json");
     expect(readReloadAttempts(storage, 1_000)).toBe(0);
 
-    storage.setItem("infinidysk.migration-reload-attempts", JSON.stringify({ count: "bad", lastAt: 1 }));
+    storage.setItem(
+      "infinidysk.migration-reload-attempts",
+      JSON.stringify({ count: "bad", lastAt: 1 }),
+    );
     expect(readReloadAttempts(storage, 1_000)).toBe(0);
   });
 

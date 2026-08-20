@@ -67,9 +67,7 @@ type OidcFixture = {
   tokenRequest: () => URLSearchParams | undefined;
 };
 
-const originalOidcEnv = Object.fromEntries(
-  OIDC_ENV_NAMES.map((name) => [name, process.env[name]]),
-);
+const originalOidcEnv = Object.fromEntries(OIDC_ENV_NAMES.map((name) => [name, process.env[name]]));
 const servers: http.Server[] = [];
 
 beforeEach(() => {
@@ -102,9 +100,7 @@ describe("OIDC callback integration", () => {
   it("discovers the provider, validates its ID token, and creates a session", async () => {
     const fixture = await startOidcFixture();
     mocks.getOidcConfiguration.mockResolvedValue(fixture.configuration);
-    const req = mockRequest(
-      "/auth/oidc/callback?code=fixture-code&state=fixture-state",
-    );
+    const req = mockRequest("/auth/oidc/callback?code=fixture-code&state=fixture-state");
     const res = mockResponse();
 
     await oidcCallbackHandler(req, res as unknown as Response);
@@ -123,9 +119,7 @@ describe("OIDC callback integration", () => {
   it("rejects an ID token not signed by the discovered provider key", async () => {
     const fixture = await startOidcFixture(false);
     mocks.getOidcConfiguration.mockResolvedValue(fixture.configuration);
-    const req = mockRequest(
-      "/auth/oidc/callback?code=fixture-code&state=fixture-state",
-    );
+    const req = mockRequest("/auth/oidc/callback?code=fixture-code&state=fixture-state");
     const res = mockResponse();
 
     await oidcCallbackHandler(req, res as unknown as Response);
@@ -209,18 +203,9 @@ async function startOidcFixture(trustedSignature = true): Promise<OidcFixture> {
 
   const port = await listen(server);
   issuer = `http://127.0.0.1:${port}`;
-  const configuration = await oidc.discovery(
-    new URL(issuer),
-    CLIENT_ID,
-    CLIENT_SECRET,
-    undefined,
-    {
-      execute: [
-        oidc.allowInsecureRequests,
-        oidc.enableNonRepudiationChecks,
-      ],
-    },
-  );
+  const configuration = await oidc.discovery(new URL(issuer), CLIENT_ID, CLIENT_SECRET, undefined, {
+    execute: [oidc.allowInsecureRequests, oidc.enableNonRepudiationChecks],
+  });
 
   return {
     configuration,
@@ -276,7 +261,7 @@ function mockRequest(originalUrl: string): Request {
   return {
     protocol: "https",
     originalUrl,
-    get: vi.fn((name: string) => name === "host" ? "nzbdav.example.com" : undefined),
+    get: vi.fn((name: string) => (name === "host" ? "nzbdav.example.com" : undefined)),
   } as unknown as Request;
 }
 

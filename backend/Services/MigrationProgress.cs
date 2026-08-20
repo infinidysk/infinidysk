@@ -25,6 +25,7 @@ public sealed class MigrationProgress
         "20260203071130_Add-DavCleanupItems-Table",
         "20260712000000_Fix-Empty-Categories",
         "20260713120000_Add-Path-Index-To-DavItems",
+        "20260820160000_Normalize-Guid-Text-Casing",
     };
 
     private static readonly JsonSerializerOptions JsonOptions = new()

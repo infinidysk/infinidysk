@@ -39,19 +39,13 @@ describe("shouldCompressResponse", () => {
 
   it("skips React Router .data streams (text/x-script)", () => {
     expect(
-      shouldCompressResponse(
-        mockReq("/queue.data"),
-        mockRes({ "content-type": "text/x-script" }),
-      ),
+      shouldCompressResponse(mockReq("/queue.data"), mockRes({ "content-type": "text/x-script" })),
     ).toBe(false);
   });
 
   it("skips text/event-stream", () => {
     expect(
-      shouldCompressResponse(
-        mockReq("/events"),
-        mockRes({ "content-type": "text/event-stream" }),
-      ),
+      shouldCompressResponse(mockReq("/events"), mockRes({ "content-type": "text/event-stream" })),
     ).toBe(false);
   });
 
@@ -155,8 +149,8 @@ describe("compression filter integration", () => {
       expect(
         warnings.some(
           (w) =>
-            w.name === "MaxListenersExceededWarning"
-            || /drain listeners added to \[Gzip\]/i.test(w.message),
+            w.name === "MaxListenersExceededWarning" ||
+            /drain listeners added to \[Gzip\]/i.test(w.message),
         ),
       ).toBe(false);
     } finally {

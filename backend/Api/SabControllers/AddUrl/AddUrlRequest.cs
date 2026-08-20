@@ -242,7 +242,10 @@ public class AddUrlRequest() : AddFileRequest
 #pragma warning restore CA5359
             };
         }
-        return new HttpClient(handler);
+        return new HttpClient(handler)
+        {
+            Timeout = FetchTimeout,
+        };
     }
 
     private static async Task EnsurePublicHostAsync(

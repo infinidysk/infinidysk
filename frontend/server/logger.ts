@@ -23,14 +23,15 @@ const levelAliases: Record<string, LogLevel> = {
   fatal: "error",
 };
 const configuredLevel = levelAliases[process.env["LOG_LEVEL"]?.toLowerCase() ?? ""];
-const minimumLevel: LogLevel =
-  configuredLevel
-    ? configuredLevel
-    : process.env["NODE_ENV"] === "development" ? "debug" : "info";
+const minimumLevel: LogLevel = configuredLevel
+  ? configuredLevel
+  : process.env["NODE_ENV"] === "development"
+    ? "debug"
+    : "info";
 
 const colorEnabled =
-  process.env["NO_COLOR"] === undefined
-  && (process.env["FORCE_COLOR"] !== undefined || process.stdout.isTTY);
+  process.env["NO_COLOR"] === undefined &&
+  (process.env["FORCE_COLOR"] !== undefined || process.stdout.isTTY);
 const color = createColors(colorEnabled);
 
 const levelLabels: Record<LogLevel, string> = {
@@ -69,9 +70,7 @@ function write(level: LogLevel, message: string, details: unknown[]): void {
   }
 
   const prefix = `${color.dim(timestamp())} ${levelLabels[level]}`;
-  const suffix = details.length > 0
-    ? ` ${details.map(formatDetail).join(" ")}`
-    : "";
+  const suffix = details.length > 0 ? ` ${details.map(formatDetail).join(" ")}` : "";
   const line = `[${prefix}] ${message}${suffix}\n`;
   (level === "error" ? process.stderr : process.stdout).write(line);
 }
@@ -130,9 +129,9 @@ export const requestLogger: RequestHandler = (req, res, next) => {
       return color.dim(`${via} "${userAgent}"`);
     };
     const message =
-      `${colorMethod(req.method)} ${req.originalUrl} `
-      + `${colorStatus(res.statusCode)} ${color.dim(`${elapsedMs.toFixed(1)} ms`)}`
-      + (res.statusCode >= 400 ? ` ${clientInfo()}` : "");
+      `${colorMethod(req.method)} ${req.originalUrl} ` +
+      `${colorStatus(res.statusCode)} ${color.dim(`${elapsedMs.toFixed(1)} ms`)}` +
+      (res.statusCode >= 400 ? ` ${clientInfo()}` : "");
 
     // During Docker's frontend-first startup window, proxied 502s are expected
     // while the backend is still binding. Downgrade so they are not double-logged
@@ -146,7 +145,11 @@ export const requestLogger: RequestHandler = (req, res, next) => {
       // an rclone mount retrying MKCOL/PUT) would otherwise emit a warn per attempt
       // and bury every other line. Keep the first, collapse the rest to debug.
       const key = clientErrorKey(
-        req.method, res.statusCode, req.path ?? req.originalUrl, `${ip} ${userAgent}`);
+        req.method,
+        res.statusCode,
+        req.path ?? req.originalUrl,
+        `${ip} ${userAgent}`,
+      );
       const { log, suppressed } = shouldLogClientError(key);
       if (!log) {
         logger.debug(message);
