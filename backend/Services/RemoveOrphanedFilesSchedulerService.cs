@@ -148,6 +148,4 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
     // Returned so Interlocked.Exchange is not a local allocation; swapped sources
     // must stay undisposed while ExecuteAsync may still read .Token.
     private static CancellationTokenSource CreateRescheduleSource() => new();
-    }
-
 }
