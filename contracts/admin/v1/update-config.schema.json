@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/update-config.schema.json",
+  "title": "Admin update-config success",
+  "type": "object",
+  "required": ["status"],
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] }
+  }
+}

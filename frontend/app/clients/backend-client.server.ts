@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { adminApi } from "~/clients/admin-operations";
 import { toStreamTracingStatus, type StreamTracingStatus } from "~/utils/stream-tracing-status";
 
 export type { StreamTracingStatus };
@@ -45,6 +47,145 @@ export class BackendUnavailableError extends Error {
   }
 }
 
+/** Structured failure from RFC 7807 ProblemDetails, SAB nested problems, or legacy JSON. */
+export class BackendApiError extends Error {
+  public constructor(
+    message: string,
+    public readonly status: number,
+    public readonly title: string,
+    public readonly detail: string,
+    public readonly traceId?: string,
+    public readonly fieldErrors?: Record<string, string[]>,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "BackendApiError";
+  }
+}
+
+/** Thrown when a 2xx backend body does not match the expected runtime schema. */
+export class BackendContractError extends Error {
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "BackendContractError";
+  }
+}
+
+const backendObject: z.ZodType<Record<string, unknown>> = z.looseObject({});
+
+export function parseBackendSuccess<T>(
+  errorPrefix: string,
+  json: unknown,
+  schema: z.ZodType<T>,
+): T {
+  const result = schema.safeParse(json);
+  if (!result.success) {
+    throw new BackendContractError(
+      `${errorPrefix}: backend response did not match the expected contract`,
+    );
+  }
+  return result.data;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function asFieldErrors(value: unknown): Record<string, string[]> | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const errors: Record<string, string[]> = {};
+  for (const [key, raw] of Object.entries(record)) {
+    if (!Array.isArray(raw) || !raw.every((item) => typeof item === "string")) continue;
+    errors[key] = raw;
+  }
+  return Object.keys(errors).length > 0 ? errors : undefined;
+}
+
+function stripMarkup(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function parseBackendFailure(
+  errorPrefix: string,
+  status: number,
+  body: unknown,
+  correlationHeader?: string | null,
+): BackendApiError {
+  const record = asRecord(body);
+  const nested = record ? asRecord(record["problem"]) : null;
+  const problem = nested ?? (record && typeof record["status"] === "number" ? record : null);
+
+  if (problem) {
+    const detail =
+      asString(problem["detail"]) ??
+      asString(record?.["error"]) ??
+      asString(problem["title"]) ??
+      `HTTP ${status}`;
+    const title = asString(problem["title"]) ?? "Request failed";
+    const traceId = asString(problem["traceId"]) ?? correlationHeader ?? undefined;
+    const fieldErrors = asFieldErrors(problem["errors"]);
+    const suffix = traceId ? `${detail} (trace ${traceId})` : detail;
+    return new BackendApiError(
+      `${errorPrefix}: ${suffix}`,
+      typeof problem["status"] === "number" ? problem["status"] : status,
+      title,
+      detail,
+      traceId,
+      fieldErrors,
+    );
+  }
+
+  if (record && asString(record["error"])) {
+    const detail = asString(record["error"])!;
+    return new BackendApiError(
+      `${errorPrefix}: ${detail}`,
+      status,
+      "Request failed",
+      detail,
+      correlationHeader ?? undefined,
+    );
+  }
+
+  if (typeof body === "string" && body.trim().length > 0) {
+    const detail = stripMarkup(body) || `HTTP ${status}`;
+    return new BackendApiError(
+      `${errorPrefix}: ${detail}`,
+      status,
+      "Request failed",
+      detail,
+      correlationHeader ?? undefined,
+    );
+  }
+
+  return new BackendApiError(
+    `${errorPrefix}: HTTP ${status}`,
+    status,
+    "Request failed",
+    `HTTP ${status}`,
+    correlationHeader ?? undefined,
+  );
+}
+
+async function readFailureBody(response: Response): Promise<unknown> {
+  const raw = await response.text();
+  if (raw.length === 0) return null;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return raw;
+  }
+}
+
 /** Walks cause/AggregateError chains for undici / Node network failure codes. */
 function extractNetworkErrorCode(error: unknown): string | undefined {
   const candidates: unknown[] = [error];
@@ -83,10 +224,11 @@ function form(...entries: [string, string | Blob, string?][]): FormData {
  * shared api key, and converts a non-2xx response into an Error whose message is
  * prefixed with `errorPrefix` and suffixed with the backend's reported error.
  */
-async function call<T = unknown>(
+async function call<T = Record<string, unknown>>(
   path: string,
   errorPrefix: string,
   init?: RequestInit,
+  schema: z.ZodType<T> = backendObject as z.ZodType<T>,
 ): Promise<T> {
   let response: Response;
   try {
@@ -108,33 +250,31 @@ async function call<T = unknown>(
   }
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      error?: string;
-      status?: string;
-    } | null;
-    if (response.status === 503 || body?.status === "migrating") {
+    const body = await readFailureBody(response);
+    const migrating = asRecord(body)?.["status"] === "migrating";
+    if (response.status === 503 || migrating) {
       throw new BackendUnavailableError(
         `${errorPrefix}: backend is starting or migrating`,
         "MIGRATING",
       );
     }
 
-    const backendError =
-      body && typeof body === "object" && "error" in body
-        ? (body.error ?? "unknown error")
-        : `HTTP ${response.status}`;
-    throw new Error(`${errorPrefix}: ${backendError}`);
+    throw parseBackendFailure(
+      errorPrefix,
+      response.status,
+      body,
+      response.headers.get("x-correlation-id"),
+    );
   }
 
-  // The type parameter is the caller's declared contract for the backend
-  // response shape; the assertion is centralized here.
-  return (await response.json()) as T;
+  const json: unknown = await response.json();
+  return parseBackendSuccess(errorPrefix, json, schema);
 }
 
 class BackendClient {
   public async isOnboarding(): Promise<boolean> {
     const data = await call<{ isOnboarding: boolean }>(
-      "/api/is-onboarding",
+      adminApi.isOnboarding,
       "Failed to fetch onboarding status",
       {
         method: "GET",
@@ -146,7 +286,7 @@ class BackendClient {
 
   public async createAccount(username: string, password: string): Promise<boolean> {
     const data = await call<{ status: boolean }>(
-      "/api/create-account",
+      adminApi.createAccount,
       "Failed to create account",
       {
         method: "POST",
@@ -158,7 +298,7 @@ class BackendClient {
 
   public async authenticate(username: string, password: string): Promise<boolean> {
     const data = await call<{ authenticated: boolean }>(
-      "/api/authenticate",
+      adminApi.authenticate,
       "Failed to authenticate",
       {
         method: "POST",
@@ -217,10 +357,14 @@ class BackendClient {
   }
 
   public async searchIndexers(q: string, limit: number = 100): Promise<SearchIndexersResponse> {
-    return await call<SearchIndexersResponse>("/api/search-indexers", "Failed to search indexers", {
-      method: "POST",
-      body: form(["q", q], ["limit", String(limit)]),
-    });
+    return await call<SearchIndexersResponse>(
+      adminApi.searchIndexers,
+      "Failed to search indexers",
+      {
+        method: "POST",
+        body: form(["q", q], ["limit", String(limit)]),
+      },
+    );
   }
 
   public async addNzbFromUrl(nzbUrl: string, nzbName: string): Promise<string> {
@@ -252,7 +396,7 @@ class BackendClient {
   public async listWebdavDirectory(directory: string): Promise<DirectoryItem[]> {
     try {
       const data = await call<{ items: DirectoryItem[] }>(
-        "/api/list-webdav-directory",
+        adminApi.listWebdavDirectory,
         "Failed to list webdav directory",
         {
           method: "POST",
@@ -270,7 +414,7 @@ class BackendClient {
 
   public async getConfig(keys: string[]): Promise<ConfigItem[]> {
     const data = await call<{ configItems?: ConfigItem[] }>(
-      "/api/get-config",
+      adminApi.getConfig,
       "Failed to get config items",
       {
         method: "POST",
@@ -282,7 +426,7 @@ class BackendClient {
 
   public async updateConfig(configItems: ConfigItem[]): Promise<boolean> {
     const data = await call<{ status: boolean }>(
-      "/api/update-config",
+      adminApi.updateConfig,
       "Failed to update config items",
       {
         method: "POST",
@@ -297,7 +441,7 @@ class BackendClient {
   public async getHealthCheckQueue(pageSize?: number): Promise<HealthCheckQueueResponse> {
     const query = pageSize !== undefined ? `?pageSize=${pageSize}` : "";
     return await call<HealthCheckQueueResponse>(
-      `/api/get-health-check-queue${query}`,
+      `${adminApi.getHealthCheckQueue}${query}`,
       "Failed to get health check queue",
       {
         method: "GET",
@@ -307,7 +451,7 @@ class BackendClient {
 
   public async getWatchdogEntries(limit: number = 200): Promise<WatchdogEntry[]> {
     const data = await call<{ entries?: WatchdogEntry[] }>(
-      `/api/get-watchdog-entries?limit=${limit}`,
+      `${adminApi.getWatchdogEntries}?limit=${limit}`,
       "Failed to get watchdog entries",
       {
         method: "GET",
@@ -318,7 +462,7 @@ class BackendClient {
 
   public async getExcludeSyncStatus(): Promise<ExcludeSyncUrlStatus[]> {
     const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>(
-      "/api/exclude-sync",
+      adminApi.excludeSync,
       "Failed to get exclude-sync status",
       {
         method: "GET",
@@ -329,7 +473,7 @@ class BackendClient {
 
   public async refreshExcludeSync(): Promise<ExcludeSyncUrlStatus[]> {
     const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>(
-      "/api/exclude-sync",
+      adminApi.excludeSync,
       "Failed to refresh exclude-sync",
       {
         method: "POST",
@@ -340,7 +484,7 @@ class BackendClient {
 
   public async clearWatchdogEntries(): Promise<number> {
     const data = await call<{ deleted?: number }>(
-      `/api/clear-watchdog-entries`,
+      adminApi.clearWatchdogEntries,
       "Failed to clear watchdog entries",
       {
         method: "POST",
@@ -354,7 +498,7 @@ class BackendClient {
     deletedStats: number;
   }> {
     const data = await call<{ deletedResults?: number; deletedStats?: number }>(
-      `/api/clear-health-check-history`,
+      adminApi.clearHealthCheckHistory,
       "Failed to clear health-check history",
       {
         method: "POST",
@@ -369,7 +513,7 @@ class BackendClient {
   public async clearOverviewStats(providerId?: string): Promise<number> {
     const query = providerId ? `?provider=${encodeURIComponent(providerId)}` : "";
     const data = await call<{ deletedRows?: number }>(
-      `/api/clear-overview-stats${query}`,
+      `${adminApi.clearOverviewStats}${query}`,
       "Failed to clear overview statistics",
       {
         method: "POST",
@@ -388,7 +532,7 @@ class BackendClient {
     if (params.result) qs.set("result", params.result);
     const query = qs.toString();
     return await call<HealthCheckHistoryResponse>(
-      `/api/get-health-check-history${query ? `?${query}` : ""}`,
+      `${adminApi.getHealthCheckHistory}${query ? `?${query}` : ""}`,
       "Failed to get health check history",
       {
         method: "GET",
@@ -401,7 +545,7 @@ class BackendClient {
     sections: OverviewSections = "all",
   ): Promise<OverviewStatsResponse> {
     return await call<OverviewStatsResponse>(
-      `/api/get-overview-stats?window=${window}&sections=${sections}`,
+      `${adminApi.getOverviewStats}?window=${window}&sections=${sections}`,
       "Failed to get overview stats",
       { method: "GET" },
     );
@@ -417,7 +561,7 @@ class BackendClient {
       qs.set("beforeSequence", String(params.beforeSequence));
     const query = qs.toString();
     return await call<GetLogsResponse>(
-      `/api/get-logs${query ? `?${query}` : ""}`,
+      `${adminApi.getLogs}${query ? `?${query}` : ""}`,
       "Failed to get logs",
       {
         method: "GET",
@@ -427,7 +571,7 @@ class BackendClient {
 
   public async getStreamTracingStatus(): Promise<StreamTracingStatus> {
     const data = await call<Record<string, unknown>>(
-      "/api/get-stream-traces?limit=1",
+      `${adminApi.getStreamTraces}?limit=1`,
       "Failed to get stream tracing status",
       {
         method: "GET",
@@ -442,7 +586,7 @@ class BackendClient {
     capacity: number = 100_000,
   ): Promise<StreamTracingStatus> {
     const data = await call<Record<string, unknown>>(
-      "/api/set-stream-tracing",
+      adminApi.setStreamTracing,
       "Failed to update stream tracing",
       {
         method: "POST",
@@ -458,7 +602,7 @@ class BackendClient {
 
   public async discardStreamTraces(): Promise<StreamTracingStatus> {
     const data = await call<Record<string, unknown>>(
-      "/api/discard-stream-traces",
+      adminApi.discardStreamTraces,
       "Failed to discard stream traces",
       {
         method: "POST",
@@ -478,7 +622,7 @@ class BackendClient {
     if (params.statsOnly) qs.set("statsOnly", "1");
     const query = qs.toString();
     return await call<WatchtowerData>(
-      `/api/get-watchtower${query ? `?${query}` : ""}`,
+      `${adminApi.getWatchtower}${query ? `?${query}` : ""}`,
       "Failed to get watchtower",
       {
         method: "GET",
@@ -488,7 +632,7 @@ class BackendClient {
 
   public async watchtowerMutate(fields: Record<string, string>): Promise<boolean> {
     const data = await call<{ status: boolean }>(
-      "/api/watchtower-mutate",
+      adminApi.watchtowerMutate,
       "Watchtower action failed",
       {
         method: "POST",
@@ -500,7 +644,7 @@ class BackendClient {
 
   public async discoverStremioCatalogs(manifestUrl: string): Promise<DiscoverCatalogsResponse> {
     return await call<DiscoverCatalogsResponse>(
-      "/api/watchtower-discover-catalogs",
+      adminApi.discoverStremioCatalogs,
       "Failed to discover catalogs",
       {
         method: "POST",
@@ -1055,6 +1199,7 @@ export type LogEntry = {
   msg: string;
   source: string | null;
   exception: string | null;
+  traceId?: string | null;
 };
 
 export type GetLogsParams = {

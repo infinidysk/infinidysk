@@ -1,4 +1,3 @@
-using NzbWebDAV.Api.Controllers.GetOverviewStats;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.Metrics;
@@ -13,7 +12,7 @@ public class ProviderCircuitOverviewEnricherTests
     [Fact]
     public void EnrichProviders_MergesBreakerFieldsAndAddsConfiguredProvidersWithoutMetrics()
     {
-        var providers = new List<GetOverviewStatsResponse.ProviderRow>
+        var providers = new List<ProviderOverviewRow>
         {
             new()
             {

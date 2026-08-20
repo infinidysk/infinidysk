@@ -1,6 +1,5 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 
@@ -16,13 +15,16 @@ public class MoveInQueueRequest
     {
         var cancellationToken = SigtermUtil.GetCancellationToken();
         var queryIds = ParseNzoIds(httpContext);
-        var bodyIds = await NzoIdsFromRequestBody(httpContext, cancellationToken).ConfigureAwait(false);
-        var position = httpContext.GetRequestParam("value2");
+        var bodyIds = await SabJsonNzoIds.ReadAsync(httpContext, cancellationToken).ConfigureAwait(false);
+        var errors = new ValidationErrors();
+        var moveToTop = TryIsMoveToTop(httpContext.GetRequestParam("value2"), errors);
+
+        errors.ThrowIfAny();
 
         return new MoveInQueueRequest
         {
             NzoIds = queryIds.Concat(bodyIds).Distinct().ToList(),
-            MoveToTop = IsMoveToTop(position),
+            MoveToTop = moveToTop,
             CancellationToken = cancellationToken
         };
     }
@@ -33,6 +35,14 @@ public class MoveInQueueRequest
     /// </summary>
     internal static bool IsMoveToTop(string? position)
     {
+        var errors = new ValidationErrors();
+        var result = TryIsMoveToTop(position, errors);
+        errors.ThrowIfAny();
+        return result;
+    }
+
+    private static bool TryIsMoveToTop(string? position, ValidationErrors errors)
+    {
         if (string.IsNullOrWhiteSpace(position))
             return true;
 
@@ -42,8 +52,8 @@ public class MoveInQueueRequest
         if (int.TryParse(position, out var index) && index == 0)
             return true;
 
-        throw new BadHttpRequestException(
-            "Only move-to-top is supported (value2=0 or value2=top).");
+        errors.Add("value2", "Only move-to-top is supported (value2=0 or value2=top).");
+        return false;
     }
 
     private static List<Guid> ParseNzoIds(HttpContext httpContext)
@@ -59,26 +69,5 @@ public class MoveInQueueRequest
         }
 
         return ids;
-    }
-
-    private static async Task<List<Guid>> NzoIdsFromRequestBody(HttpContext httpContext, CancellationToken ct)
-    {
-        try
-        {
-            await using var stream = httpContext.Request.Body;
-            var deserialized = await JsonSerializer.DeserializeAsync<RequestBody>(stream, cancellationToken: ct)
-                .ConfigureAwait(false);
-            return deserialized?.NzoIds ?? [];
-        }
-        catch
-        {
-            return [];
-        }
-    }
-
-    private class RequestBody
-    {
-        [JsonPropertyName("nzo_ids")]
-        public List<Guid> NzoIds { get; set; } = [];
     }
 }

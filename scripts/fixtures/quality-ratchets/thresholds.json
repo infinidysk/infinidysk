@@ -1,12 +1,13 @@
 {
   "global": {
-    "branches": 21,
-    "functions": 20,
-    "lines": 25,
-    "statements": 24
+    "branches": 50,
+    "functions": 47,
+    "lines": 56,
+    "statements": 54
   },
   "globs": {
-    "app/clients/**": { "lines": 78 },
-    "app/auth/**": { "lines": 72 }
+    "app/clients/**": {
+      "lines": 70
+    }
   }
 }

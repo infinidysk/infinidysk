@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/get-config.schema.json",
+  "title": "Admin get-config success",
+  "type": "object",
+  "required": ["status", "configItems"],
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "configItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["configName", "configValue"],
+        "properties": {
+          "configName": { "type": "string", "minLength": 1 },
+          "configValue": { "type": "string" },
+          "environmentVariableName": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

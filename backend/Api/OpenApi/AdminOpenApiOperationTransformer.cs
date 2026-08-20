@@ -29,8 +29,31 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
         operation.Responses ??= [];
         if (!operation.Responses.ContainsKey("200"))
             operation.Responses["200"] = new OpenApiResponse { Description = "Success." };
+        AddProblemResponse(operation, "400", "Bad request.");
+        AddProblemResponse(operation, "401", "Unauthorized.");
+        AddProblemResponse(operation, "403", "Forbidden.");
+        AddProblemResponse(operation, "404", "Not found.");
+        AddProblemResponse(operation, "409", "Conflict.");
+        AddProblemResponse(operation, "500", "Unexpected server error. Detail is sanitized; use traceId.");
 
         return Task.CompletedTask;
+    }
+
+    private static void AddProblemResponse(OpenApiOperation operation, string status, string description)
+    {
+        operation.Responses ??= [];
+        if (operation.Responses.ContainsKey(status)) return;
+        operation.Responses[status] = new OpenApiResponse
+        {
+            Description = description,
+            Content = new Dictionary<string, OpenApiMediaType>
+            {
+                ["application/problem+json"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchemaReference("ProblemDetails"),
+                },
+            },
+        };
     }
 
     private static string HumanizeControllerName(string controllerName)
@@ -58,15 +81,41 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 ["url", "apiKey", "userAgent", "proxyUrl", "timeoutSeconds", "skipTlsVerification"],
             "api/test-prowlarr-connection" => ["url", "apiKey"],
             "api/test-rclone-connection" => ["host", "user", "pass"],
+            "api/set-stream-tracing" => ["enabled", "minutes", "capacity"],
+            "api/watchtower-discover-catalogs" => ["url"],
             _ => null,
         };
 
-        if (fields is null) return;
+        if (fields is null)
+        {
+            if (route is "api/update-config" or "api/watchtower-mutate")
+            {
+                operation.RequestBody = FormBody(
+                    "Submit setting names and values as multipart form fields.",
+                    properties: null,
+                    additionalProperties: true);
+            }
 
-        operation.RequestBody = new OpenApiRequestBody
+            return;
+        }
+
+        operation.RequestBody = FormBody(
+            "Submit the fields as multipart form data.",
+            fields.ToDictionary(
+                field => field,
+                _ => (IOpenApiSchema)new OpenApiSchema { Type = JsonSchemaType.String }),
+            additionalProperties: false);
+    }
+
+    private static OpenApiRequestBody FormBody(
+        string description,
+        Dictionary<string, IOpenApiSchema>? properties,
+        bool additionalProperties)
+    {
+        return new OpenApiRequestBody
         {
             Required = true,
-            Description = "Submit the fields as multipart form data.",
+            Description = description,
             Content = new Dictionary<string, OpenApiMediaType>
             {
                 ["multipart/form-data"] = new OpenApiMediaType
@@ -74,9 +123,10 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                     Schema = new OpenApiSchema
                     {
                         Type = JsonSchemaType.Object,
-                        Properties = fields.ToDictionary(
-                            field => field,
-                            _ => (IOpenApiSchema)new OpenApiSchema { Type = JsonSchemaType.String }),
+                        Properties = properties ?? new Dictionary<string, IOpenApiSchema>(),
+                        AdditionalProperties = additionalProperties
+                            ? new OpenApiSchema { Type = JsonSchemaType.String }
+                            : null,
                     },
                 },
             },

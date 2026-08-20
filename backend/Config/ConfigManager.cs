@@ -13,7 +13,7 @@ using Serilog;
 
 namespace NzbWebDAV.Config;
 
-public class ConfigManager
+public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 {
     public static readonly string AppVersion = EnvironmentUtil.GetEnvironmentVariable("NZBDAV_VERSION") ?? "0.0.0";
 
@@ -41,6 +41,24 @@ public class ConfigManager
     private IReadOnlyList<Regex>? _compiledExcludeCache;
     private ConfigEnvironmentOverlay _environmentOverlay = ConfigEnvironmentOverlay.Empty;
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
+
+    public IDisposable Subscribe(EventHandler<ConfigEventArgs> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        OnConfigChanged += handler;
+        return new ConfigChangeSubscription(() => OnConfigChanged -= handler);
+    }
+
+    private sealed class ConfigChangeSubscription(Action unsubscribe) : IDisposable
+    {
+        private Action? _unsubscribe = unsubscribe;
+
+        public void Dispose()
+        {
+            var action = Interlocked.Exchange(ref _unsubscribe, null);
+            action?.Invoke();
+        }
+    }
 
     public async Task LoadConfig()
     {

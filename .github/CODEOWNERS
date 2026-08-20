@@ -1,0 +1,9 @@
+# Floor and CI-policy files cannot silently loosen. GitHub only enforces this
+# when the main ruleset requires a code-owner review (see CONTRIBUTING.md).
+
+/.github/workflows/ @hoivikaj
+/.github/CODEOWNERS @hoivikaj
+/frontend/coverage-thresholds.json @hoivikaj
+/quality/ @hoivikaj
+/scripts/check-quality-ratchets.py @hoivikaj
+/scripts/test-quality-ratchets.sh @hoivikaj

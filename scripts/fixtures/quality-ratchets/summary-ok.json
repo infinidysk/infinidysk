@@ -1,14 +1,11 @@
 {
   "total": {
-    "lines": { "total": 100, "covered": 27, "skipped": 0, "pct": 27.0 },
-    "statements": { "total": 100, "covered": 26, "skipped": 0, "pct": 26.0 },
-    "functions": { "total": 100, "covered": 22, "skipped": 0, "pct": 22.0 },
-    "branches": { "total": 100, "covered": 23, "skipped": 0, "pct": 23.0 }
+    "lines": { "pct": 56.4, "covered": 564, "total": 1000 },
+    "statements": { "pct": 54.1, "covered": 541, "total": 1000 },
+    "functions": { "pct": 47.2, "covered": 472, "total": 1000 },
+    "branches": { "pct": 50.3, "covered": 503, "total": 1000 }
   },
   "/repo/frontend/app/clients/backend-client.server.ts": {
-    "lines": { "total": 100, "covered": 80, "skipped": 0, "pct": 80.0 }
-  },
-  "/repo/frontend/app/auth/authentication.server.ts": {
-    "lines": { "total": 100, "covered": 74, "skipped": 0, "pct": 74.0 }
+    "lines": { "covered": 72, "total": 100 }
   }
 }

@@ -11,6 +11,7 @@ using Microsoft.Extensions.Hosting;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
 using Scalar.AspNetCore;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.OpenApi;
 using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Auth;
@@ -76,6 +77,7 @@ public partial class Program
             : new StreamTraceBuffer(StreamTraceBuffer.DefaultUiCapacity, enabled: false);
         StreamTrace.Configure(streamTraceBuffer);
         Log.Logger = new LoggerConfiguration()
+            .Enrich.FromLogContext()
             .MinimumLevel.Is(level)
             .MinimumLevel.Override("NWebDAV", AtLeast(level, LogEventLevel.Warning))
             .MinimumLevel.Override("Microsoft", AtLeast(level, LogEventLevel.Information))
@@ -232,7 +234,8 @@ public partial class Program
             builder.Host.UseSerilog();
             builder.Services.Configure<HostOptions>(options =>
                 options.ShutdownTimeout = TimeSpan.FromSeconds(5));
-            builder.Services.AddControllers();
+            builder.Services.AddControllers(options =>
+                options.Filters.Add<ApiErrorContractFilter>());
             builder.Services.AddHttpContextAccessor();
             if (apiDocsEnabled)
                 builder.Services.AddOpenApi(AdminOpenApiExtensions.DocumentName, AdminOpenApiExtensions.Configure);
@@ -256,6 +259,12 @@ public partial class Program
             builder.Services
                 .AddWebdavBasicAuthentication(configManager)
                 .AddSingleton(configManager)
+                .AddSingleton<IConfigReader>(configManager)
+                .AddSingleton<IConfigUpdater>(configManager)
+                .AddSingleton<IConfigChangeSource>(configManager)
+                .AddSingleton<IBlobStore, FileBlobStore>()
+                .AddSingleton<IRcloneClient>(_ => RcloneClient.Current!)
+                .AddSingleton<IWebsocketPublisher>(websocketManager)
                 .AddSingleton(_ =>
                 {
                     var registry = new CollectorRegistry();
@@ -315,6 +324,7 @@ public partial class Program
                     sp.GetRequiredService<UsenetStreamingClient>(),
                     sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<QueueManager>()
+                .AddSingleton<IQueueCoordinator>(sp => sp.GetRequiredService<QueueManager>())
                 .AddSingleton(sp => new NzbResolutionCache(
                     () => sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext()))
                 .AddSingleton<PreferredOrderStore>()
@@ -427,8 +437,10 @@ public partial class Program
 
             // run
             var app = builder.Build();
+            BlobStore.Use(app.Services.GetRequiredService<IBlobStore>());
             // Must run before anything that reads Scheme/Host/RemoteIpAddress.
             app.UseForwardedHeaders();
+            app.UseMiddleware<RequestCorrelationMiddleware>();
             app.UseMiddleware<ExceptionMiddleware>();
             app.UseMiddleware<MetricsAuthenticationMiddleware>();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });

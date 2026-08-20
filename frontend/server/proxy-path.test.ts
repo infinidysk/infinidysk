@@ -89,6 +89,7 @@ describe("shouldProxyToBackend", () => {
     "/completed-symlinks/movie",
     "/adapters/addon/profile-token/manifest.json",
     "/adapters/newznab/profile-token/api",
+    "/README",
   ])("proxies backend path %s", (path) => {
     expect(shouldProxyToBackend("GET", path)).toBe(true);
   });
@@ -101,7 +102,7 @@ describe("shouldProxyToBackend", () => {
     expect(shouldProxyToBackend("GET", path)).toBe(false);
   });
 
-  it.each(["/apifoo", "/viewport.css", "/contents-page"])(
+  it.each(["/apifoo", "/viewport.css", "/contents-page", "/READMEfoo"])(
     "does not proxy bare-prefix false positive %s",
     (path) => {
       expect(shouldProxyToBackend("GET", path)).toBe(false);

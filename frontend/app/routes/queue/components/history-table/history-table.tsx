@@ -7,9 +7,9 @@ import type { PresentationHistorySlot } from "../../route";
 import { getExploreContentLink } from "~/utils/path";
 import { PageRow, PageTable } from "../page-table/page-table";
 import { PageSection } from "../page-section/page-section";
-import { Pagination } from "../pagination/pagination";
-import { DropdownOptions } from "~/routes/explore/dropdown-options/dropdown-options";
-import { ExportNzb, Remove } from "~/routes/explore/item-menu/item-menu";
+import { Pagination } from "~/components/pagination/pagination";
+import { DropdownOptions } from "~/components/dropdown-options/dropdown-options";
+import { ExportNzb, Remove } from "~/components/item-action-labels";
 import {
   canRetryHistorySlot,
   retryHistoryItem,

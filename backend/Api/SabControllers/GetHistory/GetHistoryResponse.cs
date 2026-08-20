@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Queue;
 
 namespace NzbWebDAV.Api.SabControllers.GetHistory;
 
@@ -69,42 +70,30 @@ public class GetHistoryResponse : SabBaseResponse
             IReadOnlyDictionary<string, (string Host, string? Nickname)>? displayByMetricsKey = null
         )
         {
-            return new HistorySlot()
+            var payload = HistoryItemAddedPayload.FromHistoryItem(
+                historyItem, downloadFolder, configManager, providerUsage, displayByMetricsKey);
+            return new HistorySlot
             {
-                NzoId = historyItem.Id.ToString(),
-                NzbName = historyItem.FileName,
-                JobName = historyItem.JobName,
-                Category = historyItem.Category,
-                Status = historyItem.DownloadStatus,
-                SizeInBytes = historyItem.TotalSegmentBytes,
-                DownloadPath = GetDownloadPath(historyItem, downloadFolder, configManager),
-                DownloadTimeSeconds = historyItem.DownloadTimeSeconds,
-                Completed = new DateTimeOffset(historyItem.CreatedAt).ToUnixTimeSeconds(),
-                FailMessage = historyItem.FailMessage ?? "",
-                NzbBlobId = historyItem.NzbBlobId?.ToString(),
-                Indexer = historyItem.IndexerName,
-                Providers = providerUsage is { Count: > 0 }
-                    ? providerUsage
-                        .OrderByDescending(kv => kv.Value)
-                        .Select(kv =>
-                        {
-                            var host = kv.Key;
-                            string? nickname = null;
-                            if (displayByMetricsKey is not null &&
-                                displayByMetricsKey.TryGetValue(kv.Key, out var display))
-                            {
-                                host = display.Host;
-                                nickname = display.Nickname;
-                            }
-                            return new ProviderUsage
-                            {
-                                Host = host,
-                                Nickname = nickname,
-                                Segments = kv.Value,
-                            };
-                        })
-                        .ToList()
-                    : null,
+                NzoId = payload.NzoId,
+                NzbName = payload.NzbName,
+                JobName = payload.JobName,
+                Category = payload.Category,
+                Status = payload.Status,
+                SizeInBytes = payload.SizeInBytes,
+                DownloadPath = payload.DownloadPath,
+                DownloadTimeSeconds = payload.DownloadTimeSeconds,
+                Completed = payload.Completed,
+                FailMessage = payload.FailMessage,
+                NzbBlobId = payload.NzbBlobId,
+                Indexer = payload.Indexer,
+                Providers = payload.Providers?
+                    .Select(p => new ProviderUsage
+                    {
+                        Host = p.Host,
+                        Nickname = p.Nickname,
+                        Segments = p.Segments,
+                    })
+                    .ToList(),
             };
         }
 
@@ -113,43 +102,6 @@ public class GetHistoryResponse : SabBaseResponse
             [JsonPropertyName("host")] public required string Host { get; init; }
             [JsonPropertyName("nickname")] public string? Nickname { get; init; }
             [JsonPropertyName("segments")] public required long Segments { get; init; }
-        }
-
-        private static string? GetDownloadPath
-        (
-            HistoryItem historyItem,
-            DavItem? downloadFolder,
-            ConfigManager configManager
-        )
-        {
-            // return null for null download folder
-            if (downloadFolder == null) return null;
-            var importStrategy = configManager.GetImportStrategy();
-
-            // return completed-downloads path
-            if (importStrategy == "strm")
-            {
-                return Path.Join(new[]
-                {
-                    configManager.GetStrmCompletedDownloadDir(),
-                    historyItem.Category,
-                    downloadFolder.Name
-                });
-            }
-
-            // return completed-symlinks path
-            if (importStrategy == "symlinks")
-            {
-                return Path.Join(new[]
-                {
-                    configManager.GetRcloneMountDir(),
-                    DavItem.SymlinkFolder.Name,
-                    historyItem.Category,
-                    downloadFolder.Name
-                });
-            }
-
-            throw new InvalidOperationException("Unknown import strategy");
         }
     }
 }

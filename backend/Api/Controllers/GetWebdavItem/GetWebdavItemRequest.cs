@@ -1,6 +1,7 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
@@ -61,49 +62,7 @@ public class GetWebdavItemRequest
         out long? rangeStart,
         out long? rangeEnd,
         out long? suffixLength)
-    {
-        rangeStart = null;
-        rangeEnd = null;
-        suffixLength = null;
-
-        if (string.IsNullOrEmpty(rangeHeader) || !rangeHeader.StartsWith("bytes=", StringComparison.Ordinal))
-            return false;
-
-        var spec = rangeHeader["bytes=".Length..];
-        // Multi-range or garbage with commas is unparseable for our single-range path.
-        if (spec.Contains(',', StringComparison.Ordinal))
-            return false;
-
-        if (spec.StartsWith('-'))
-        {
-            if (!long.TryParse(spec[1..], out var suffix) || suffix < 0)
-                return false;
-            suffixLength = suffix;
-            return true;
-        }
-
-        var dash = spec.IndexOf('-', StringComparison.Ordinal);
-        if (dash < 0)
-            return false;
-
-        var startPart = spec[..dash];
-        var endPart = spec[(dash + 1)..];
-
-        if (!long.TryParse(startPart, out var start) || start < 0)
-            return false;
-
-        long? parsedEnd = null;
-        if (endPart.Length > 0)
-        {
-            if (!long.TryParse(endPart, out var end) || end < 0)
-                return false;
-            parsedEnd = end;
-        }
-
-        rangeStart = start;
-        rangeEnd = parsedEnd;
-        return true;
-    }
+        => HttpByteRange.TryParse(rangeHeader, out rangeStart, out rangeEnd, out suffixLength);
 
     /// <summary>
     /// Keep only short, URL-safe opaque tokens. The value flows into the
@@ -140,12 +99,7 @@ public class GetWebdavItemRequest
     }
 
     public static string GenerateDownloadKey(string apiKey, string path)
-    {
-        var keyBytes = Encoding.UTF8.GetBytes(apiKey);
-        var pathBytes = Encoding.UTF8.GetBytes(path);
-        var hashBytes = HMACSHA256.HashData(keyBytes, pathBytes);
-        return Convert.ToHexStringLower(hashBytes);
-    }
+        => DownloadKey.Generate(apiKey, path);
 
     private static string GenerateLegacyDownloadKey(string apiKey, string path)
     {

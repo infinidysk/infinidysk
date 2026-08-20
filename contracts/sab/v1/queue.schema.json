@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/sab/v1/queue.schema.json",
+  "title": "SAB queue success",
+  "type": "object",
+  "required": ["status", "queue"],
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "queue": {
+      "type": "object",
+      "required": [
+        "paused",
+        "slots",
+        "noofslots",
+        "speedlimit",
+        "speedlimit_abs",
+        "pause_int",
+        "speed",
+        "kbpersec",
+        "timeleft"
+      ],
+      "properties": {
+        "paused": { "type": "boolean" },
+        "slots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/queueSlot" }
+        },
+        "noofslots": { "type": "integer" },
+        "speedlimit": { "type": "string" },
+        "speedlimit_abs": { "type": "string" },
+        "pause_int": { "type": "string" },
+        "speed": { "type": "string" },
+        "kbpersec": { "type": "string" },
+        "timeleft": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "queueSlot": {
+      "type": "object",
+      "required": [
+        "index",
+        "nzo_id",
+        "priority",
+        "filename",
+        "cat",
+        "percentage",
+        "true_percentage",
+        "status",
+        "timeleft",
+        "mb",
+        "mbleft"
+      ],
+      "properties": {
+        "index": { "type": "integer" },
+        "nzo_id": { "type": "string", "minLength": 1 },
+        "priority": { "type": "string" },
+        "filename": { "type": "string" },
+        "cat": { "type": "string" },
+        "percentage": { "type": "string" },
+        "true_percentage": { "type": "string" },
+        "status": { "type": "string" },
+        "timeleft": { "type": "string" },
+        "mb": { "type": "string" },
+        "mbleft": { "type": "string" },
+        "indexer": { "type": ["string", "null"] },
+        "providers": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["host", "segments"],
+            "properties": {
+              "host": { "type": "string" },
+              "nickname": { "type": ["string", "null"] },
+              "segments": { "type": "integer" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

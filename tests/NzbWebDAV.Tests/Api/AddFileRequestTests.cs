@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers.AddFile;
+using NzbWebDAV.Queue;
 
 namespace NzbWebDAV.Tests.Api;
 
@@ -36,10 +38,10 @@ public class AddFileRequestTests
     [Fact]
     public void ResolveFileName_ThrowsWhenNeitherNameIsUsable()
     {
-        var ex = Assert.Throws<BadHttpRequestException>(() => AddFileRequest.ResolveFileName(null, null));
+        var ex = Assert.Throws<ApiValidationException>(() => AddFileRequest.ResolveFileName(null, null));
         Assert.Contains("filename", ex.Message, StringComparison.OrdinalIgnoreCase);
 
-        ex = Assert.Throws<BadHttpRequestException>(() => AddFileRequest.ResolveFileName("  ", ""));
+        ex = Assert.Throws<ApiValidationException>(() => AddFileRequest.ResolveFileName("  ", ""));
         Assert.Contains("filename", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -63,5 +65,16 @@ public class AddFileRequestTests
     {
         Assert.Throws<ArgumentException>(() =>
             AddFileController.GetSafeBackupFileName(Guid.NewGuid(), input));
+    }
+
+    [Fact]
+    public void CombineUnderDirectory_KeepsResultInsideRoot()
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetTempPath());
+        var prefix = root + Path.DirectorySeparatorChar;
+        var combined = NzbSubmissionService.CombineUnderDirectory(prefix, "release.nzb");
+        Assert.Equal(Path.Join(root, "release.nzb"), combined);
+        Assert.Throws<ArgumentException>(() =>
+            NzbSubmissionService.CombineUnderDirectory(prefix, "../outside.nzb"));
     }
 }

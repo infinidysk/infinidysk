@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/reset-health-check-queue.schema.json",
+  "title": "Admin reset-health-check-queue success",
+  "type": "object",
+  "required": ["status", "resetCount"],
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "resetCount": { "type": "integer", "minimum": 0 }
+  }
+}

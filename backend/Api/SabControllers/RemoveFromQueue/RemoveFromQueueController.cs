@@ -22,13 +22,8 @@ public class RemoveFromQueueController(
         var ids = request.DeleteAll
             ? await GetQueueItemIdsToRemoveAsync(request).ConfigureAwait(false)
             : request.NzoIds;
-        if (ids.Count > 0)
-        {
-            await queueManager.RemoveQueueItemsAsync(ids, dbClient, request.CancellationToken)
-                .ConfigureAwait(false);
-        }
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", ids));
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], request.CancellationToken);
+        var service = new QueueRemovalService(dbClient, queueManager, websocketManager);
+        await service.RemoveAsync(ids, request.CancellationToken).ConfigureAwait(false);
         return new RemoveFromQueueResponse() { Status = true };
     }
 

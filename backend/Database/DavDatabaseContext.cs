@@ -935,27 +935,30 @@ public class DavDatabaseContext : DbContext
         List<DavItem> addedOrRemovedDavItems,
         CancellationToken cancellationToken = default)
     {
-        if (!RcloneClient.IsRemoteControlEnabled) return;
-        if (RcloneClient.Host == null) return;
+        var rclone = RcloneClient.Current;
+        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return;
         if (addedOrRemovedDavItems.Count == 0) return;
         var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
         if (vfsForgetPaths.Count == 0) return;
-        await ForgetVfsPathsQuietly(vfsForgetPaths, cancellationToken).ConfigureAwait(false);
+        await ForgetVfsPathsQuietly(rclone, vfsForgetPaths, cancellationToken).ConfigureAwait(false);
     }
 
     public static async Task RcloneVfsForget(List<string> paths, CancellationToken cancellationToken = default)
     {
-        if (!RcloneClient.IsRemoteControlEnabled) return;
-        if (RcloneClient.Host == null) return;
+        var rclone = RcloneClient.Current;
+        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return;
         if (paths.Count == 0) return;
-        await ForgetVfsPathsQuietly(paths, cancellationToken).ConfigureAwait(false);
+        await ForgetVfsPathsQuietly(rclone, paths, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task ForgetVfsPathsQuietly(List<string> paths, CancellationToken cancellationToken)
+    private static async Task ForgetVfsPathsQuietly(
+        RcloneClient rclone,
+        List<string> paths,
+        CancellationToken cancellationToken)
     {
         try
         {
-            await RcloneClient.ForgetVfsPaths(paths, cancellationToken).ConfigureAwait(false);
+            await rclone.ForgetVfsPaths(paths, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

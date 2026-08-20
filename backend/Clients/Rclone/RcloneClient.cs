@@ -14,16 +14,21 @@ namespace NzbWebDAV.Clients.Rclone;
 /// Client for interacting with rclone's remote control (RC) API.
 /// See https://rclone.org/rc/ for API documentation.
 /// </summary>
-public static class RcloneClient
+public sealed class RcloneClient : IRcloneClient, IDisposable
 {
     internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
     private static readonly HttpClient HttpClient = CreateHttpClient();
-    private static ForgetErrorEntry? _lastForgetError;
+    private ForgetErrorEntry? _lastForgetError;
+    private readonly ConfigManager _configManager;
+    private readonly EventHandler<ConfigManager.ConfigEventArgs> _onConfigChanged;
+    private IDisposable? _subscription;
 
     internal static HttpMessageHandler? TestHandler { get; set; }
     internal static Func<int, TimeSpan>? BackoffOverride { get; set; }
 
-    public static (string Message, DateTimeOffset At)? LastForgetError
+    internal static RcloneClient? Current { get; private set; }
+
+    public (string Message, DateTimeOffset At)? LastForgetError
     {
         get
         {
@@ -38,29 +43,49 @@ public static class RcloneClient
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public static string? Host { get; private set; }
-    private static string? User { get; set; }
-    private static string? Pass { get; set; }
-    public static bool IsRemoteControlEnabled { get; private set; }
+    public string? Host { get; private set; }
+    private string? User { get; set; }
+    private string? Pass { get; set; }
+    public bool IsRemoteControlEnabled { get; private set; }
 
     private static HttpClient CreateHttpClient() => new() { Timeout = RequestTimeout };
 
-    public static void Initialize(ConfigManager configManager)
+    public RcloneClient(ConfigManager configManager)
     {
+        ArgumentNullException.ThrowIfNull(configManager);
+        _configManager = configManager;
         Host = configManager.GetRcloneHost();
         User = configManager.GetRcloneUser();
         Pass = configManager.GetRclonePass();
         IsRemoteControlEnabled = configManager.IsRcloneRemoteControlEnabled();
+        _onConfigChanged = OnConfigChanged;
+        _subscription = configManager.Subscribe(_onConfigChanged);
+    }
 
-        configManager.OnConfigChanged += (_, configEventArgs) =>
-        {
-            var changedConfig = configEventArgs.ChangedConfig;
-            if (changedConfig.TryGetValue(ConfigKeys.RcloneHost, out var host)) Host = host;
-            if (changedConfig.TryGetValue(ConfigKeys.RcloneUser, out var user)) User = user;
-            if (changedConfig.TryGetValue(ConfigKeys.RclonePass, out var pass)) Pass = pass;
-            if (changedConfig.ContainsKey(ConfigKeys.RcloneRcEnabled))
-                IsRemoteControlEnabled = configManager.IsRcloneRemoteControlEnabled();
-        };
+    /// <summary>
+    /// Process-wide instance used by remaining static call sites and tests.
+    /// Production also registers this instance as <see cref="IRcloneClient"/>.
+    /// </summary>
+    public static void Initialize(ConfigManager configManager)
+    {
+        Current?.Dispose();
+        Current = new RcloneClient(configManager);
+    }
+
+    public void Dispose()
+    {
+        _subscription?.Dispose();
+        _subscription = null;
+    }
+
+    private void OnConfigChanged(object? sender, ConfigManager.ConfigEventArgs configEventArgs)
+    {
+        var changedConfig = configEventArgs.ChangedConfig;
+        if (changedConfig.TryGetValue(ConfigKeys.RcloneHost, out var host)) Host = host;
+        if (changedConfig.TryGetValue(ConfigKeys.RcloneUser, out var user)) User = user;
+        if (changedConfig.TryGetValue(ConfigKeys.RclonePass, out var pass)) Pass = pass;
+        if (changedConfig.ContainsKey(ConfigKeys.RcloneRcEnabled))
+            IsRemoteControlEnabled = _configManager.IsRcloneRemoteControlEnabled();
     }
 
     /// <summary>
@@ -69,7 +94,7 @@ public static class RcloneClient
     /// <param name="paths">The paths to refresh</param>
     /// <param name="recursive">Whether to refresh recursively</param>
     /// <param name="fs">Optional VFS name if multiple VFS instances exist</param>
-    public static async Task<RcloneResponse> RefreshVfsPaths(
+    public async Task<RcloneResponse> RefreshVfsPaths(
         IEnumerable<string> paths,
         bool recursive = false,
         CancellationToken cancellationToken = default)
@@ -99,7 +124,7 @@ public static class RcloneClient
     /// </summary>
     /// <param name="paths">The paths to forget</param>
     /// <param name="fs">Optional VFS name if multiple VFS instances exist</param>
-    public static async Task<VfsForgetResponse> ForgetVfsPaths(
+    public async Task<VfsForgetResponse> ForgetVfsPaths(
         IEnumerable<string> paths,
         CancellationToken cancellationToken = default)
     {
@@ -163,7 +188,7 @@ public static class RcloneClient
     /// Get VFS statistics including cache information.
     /// </summary>
     /// <param name="fs">Optional VFS name if multiple VFS instances exist</param>
-    public static async Task<VfsStatsResponse> GetVfsStats(
+    public async Task<VfsStatsResponse> GetVfsStats(
         string? fs = null,
         CancellationToken cancellationToken = default)
     {
@@ -174,7 +199,7 @@ public static class RcloneClient
     /// <summary>
     /// Get rclone version information.
     /// </summary>
-    public static async Task<CoreVersionResponse> GetVersion(CancellationToken cancellationToken = default)
+    public async Task<CoreVersionResponse> GetVersion(CancellationToken cancellationToken = default)
     {
         return await Post<CoreVersionResponse>("core/version", null, cancellationToken).ConfigureAwait(false);
     }
@@ -182,7 +207,7 @@ public static class RcloneClient
     /// <summary>
     /// Test connectivity - a no-operation call.
     /// </summary>
-    public static async Task<RcloneResponse> NoOp(CancellationToken cancellationToken = default)
+    public async Task<RcloneResponse> NoOp(CancellationToken cancellationToken = default)
     {
         return await Post<RcloneResponse>("rc/noop", null, cancellationToken).ConfigureAwait(false);
     }
@@ -190,7 +215,7 @@ public static class RcloneClient
     /// <summary>
     /// Check if the rclone RC server is reachable and authenticated.
     /// </summary>
-    public static async Task<bool> IsAvailable(CancellationToken cancellationToken = default)
+    public async Task<bool> IsAvailable(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -302,7 +327,7 @@ public static class RcloneClient
         }
     }
 
-    private static Task<T> Post<T>(string endpoint, object? body, CancellationToken cancellationToken)
+    private Task<T> Post<T>(string endpoint, object? body, CancellationToken cancellationToken)
         where T : RcloneResponse, new()
         => Post<T>(Host!, User, Pass, endpoint, body, cancellationToken);
 

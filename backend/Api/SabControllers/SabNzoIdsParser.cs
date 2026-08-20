@@ -1,5 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Extensions;
 
@@ -27,28 +25,7 @@ internal static class SabNzoIdsParser
     internal static async Task<Result> ParseAsync(HttpContext context, CancellationToken ct)
     {
         var queryIds = ParseQuery(context);
-        var bodyIds = await ParseBodyAsync(context, ct).ConfigureAwait(false);
+        var bodyIds = await SabJsonNzoIds.ReadAsync(context, ct).ConfigureAwait(false);
         return new Result(queryIds.Concat(bodyIds).Distinct().ToList());
-    }
-
-    private static async Task<List<Guid>> ParseBodyAsync(HttpContext context, CancellationToken ct)
-    {
-        try
-        {
-            var deserialized = await JsonSerializer.DeserializeAsync<RequestBody>(
-                    context.Request.Body, cancellationToken: ct)
-                .ConfigureAwait(false);
-            return deserialized?.NzoIds ?? [];
-        }
-        catch (JsonException)
-        {
-            return [];
-        }
-    }
-
-    private class RequestBody
-    {
-        [JsonPropertyName("nzo_ids")]
-        public List<Guid> NzoIds { get; set; } = [];
     }
 }
