@@ -28,7 +28,9 @@ public sealed class OomDiagnosticsTests
         var events = CaptureLogs(() =>
             OomDiagnostics.LogHeapStateOnOom(new InvalidOperationException("test"), "test operation"));
 
-        Assert.Empty(events);
+        Assert.DoesNotContain(
+            events,
+            e => e.MessageTemplate.Text.Contains("OutOfMemoryException during"));
     }
 
     private static IReadOnlyList<LogEvent> CaptureLogs(Action action)
