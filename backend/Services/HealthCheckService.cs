@@ -763,29 +763,27 @@ public class HealthCheckService : BackgroundService
     /// the same transaction as the health row. The TR_DavItems_Update_AddBlobCleanup
     /// trigger queues the old blob for deferred cleanup and in-flight readers keep their
     /// open handle. The instance handed in is the shared MetadataCache entry — never
-    /// mutate it; write a fresh copy.
+    /// mutate it; write a fresh copy. Delegates to
+    /// <see cref="DavNzbFileBlobUpdater"/> so a concurrent corruption persist cannot
+    /// drop Missing/Container fields (and vice versa).
     /// </summary>
-    private static async Task SwapNzbFileBlobAsync(
+    private static Task SwapNzbFileBlobAsync(
         DavItem davItem,
         DavNzbFile nzbFile,
         int[]? missingSegmentIndices,
         byte? probedContainerClass,
-        long? probedCriticalHeadEndExclusive = null)
-    {
-        var updated = new DavNzbFile
-        {
-            Id = nzbFile.Id,
-            SegmentIds = nzbFile.SegmentIds,
-            SegmentByteRanges = nzbFile.SegmentByteRanges,
-            SegmentFallbackIds = nzbFile.SegmentFallbackIds,
-            MissingSegmentIndices = missingSegmentIndices,
-            ContainerClass = probedContainerClass ?? nzbFile.ContainerClass,
-            CriticalHeadEndExclusive = probedCriticalHeadEndExclusive ?? nzbFile.CriticalHeadEndExclusive,
-        };
-        var newBlobId = Guid.NewGuid();
-        await BlobStore.WriteBlob(newBlobId, updated).ConfigureAwait(false);
-        davItem.FileBlobId = newBlobId;
-    }
+        long? probedCriticalHeadEndExclusive = null) =>
+        DavNzbFileBlobUpdater.MutateAsync(
+            davItem,
+            current =>
+            {
+                current.MissingSegmentIndices = missingSegmentIndices;
+                current.ContainerClass = probedContainerClass ?? current.ContainerClass;
+                current.CriticalHeadEndExclusive =
+                    probedCriticalHeadEndExclusive ?? current.CriticalHeadEndExclusive;
+                return current;
+            },
+            fallback: nzbFile);
 
     private void CompleteHealthProgress(Guid davItemId)
     {

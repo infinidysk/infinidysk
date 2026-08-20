@@ -980,7 +980,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 fill, _fileName, segmentId);
         }
 
-        Par2RepairTriggerSink.Current?.ReportZeroFill(_fileName, segmentId, segmentIndex, fill);
+        if (exception.TryGetCausingException(out UsenetCorruptArticleException? _))
+            Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
+        else
+            Par2RepairTriggerSink.Current?.ReportZeroFill(_fileName, segmentId, segmentIndex, fill);
 
 #pragma warning disable CA2000 // gap-fill stream ownership transfers to the returned SegmentDownloadResult
         return SegmentDownloadResult.ZeroFill(

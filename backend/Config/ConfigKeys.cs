@@ -100,6 +100,7 @@ public static class ConfigKeys
     public const string RepairDegradedMaxConsecutiveMissing = "repair.degraded-max-consecutive-missing";
     public const string RepairDegradedMaxTotalMissing = "repair.degraded-max-total-missing";
     public const string RepairDegradedMaxMissingBytePercent = "repair.degraded-max-missing-byte-percent";
+    public const string RepairCorruptionTrackingEnabled = "repair.corruption-tracking-enabled";
     public const string ArrInstances = "arr.instances";
 
     // rclone

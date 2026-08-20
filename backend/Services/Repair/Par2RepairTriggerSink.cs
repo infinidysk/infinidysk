@@ -45,7 +45,6 @@ public sealed class Par2RepairTriggerSink
 
     private void OnCorruptionReported(string path, string segmentId)
     {
-        // Persistence and PAR2 enqueue are wired by the health-recording follow-up.
-        _ = (path, segmentId);
+        _service.ReportCorruption(path, segmentId);
     }
 }
