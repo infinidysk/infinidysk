@@ -30,20 +30,24 @@ public class GetArrHealthController(ConfigManager configManager, ArrHealthServic
         DateTimeOffset now,
         CancellationToken ct)
     {
-        if (!IsStoreQueryEnabled(configManager))
+        var enabled = configManager.GetArrConfig().GetEnabledInstances().ToList();
+        if (!configManager.IsArrHealthEnabled() || enabled.Count == 0)
             return new GetArrHealthResponse { Configured = false };
 
         var nowMs = now.ToUnixTimeMilliseconds();
         var windowStartMs = WindowStartMs(window, nowMs);
+        var enabledKeys = enabled
+            .Select(instance => ArrConfig.MakeInstanceKey(instance.AppType, instance.Details.Host))
+            .ToHashSet(StringComparer.Ordinal);
         await using var db = MetricsContextFactory();
         var events = await db.ArrImportEvents.AsNoTracking()
-            .Where(e => e.ImportedAtMs >= windowStartMs)
+            .Where(e => e.ImportedAtMs >= windowStartMs && enabledKeys.Contains(e.InstanceKey))
             .ToListAsync(ct).ConfigureAwait(false);
 
         return Build(
             events,
             arrHealthService.GetSnapshots(),
-            configManager.GetArrConfig().GetEnabledInstances().ToList(),
+            enabled,
             now);
     }
 

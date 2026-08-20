@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasConfiguredArrs } from "./has-configured-arrs";
+import { hasConfiguredArrs, isArrHealthEnabled } from "./has-configured-arrs";
 
 describe("hasConfiguredArrs", () => {
     it.each([
@@ -16,5 +16,17 @@ describe("hasConfiguredArrs", () => {
         ['{"RadarrInstances":[{"Enabled":false}],"SonarrInstances":[{"Host":"http://sonarr","Enabled":true}]}', true],
     ])("returns %s for %j", (configValue, expected) => {
         expect(hasConfiguredArrs(configValue)).toBe(expected);
+    });
+});
+
+describe("isArrHealthEnabled", () => {
+    it.each([
+        [undefined, true],
+        ["", true],
+        ["true", true],
+        ["false", false],
+        ["FALSE", false],
+    ])("returns %s for %j", (configValue, expected) => {
+        expect(isArrHealthEnabled(configValue)).toBe(expected);
     });
 });

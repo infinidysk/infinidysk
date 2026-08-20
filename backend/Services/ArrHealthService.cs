@@ -296,14 +296,12 @@ public sealed class ArrHealthService : BackgroundService
         MetricsDbContext metrics,
         CancellationToken ct)
     {
-        var downloadIds = new List<Guid>();
-        var candidates = new List<(ArrHistoryRecord Record, Guid DownloadId)>();
-        foreach (var record in records)
-        {
-            if (!Guid.TryParse(record.DownloadId, out var downloadId)) continue;
-            candidates.Add((record, downloadId));
-            downloadIds.Add(downloadId);
-        }
+        var candidates = records
+            .Select(record => (Record: record, DownloadId: Guid.TryParse(record.DownloadId, out var id) ? id : (Guid?)null))
+            .Where(candidate => candidate.DownloadId is not null)
+            .Select(candidate => (Record: candidate.Record, DownloadId: candidate.DownloadId!.Value))
+            .ToList();
+        var downloadIds = candidates.Select(candidate => candidate.DownloadId).ToList();
 
         if (candidates.Count == 0) return;
 
@@ -366,12 +364,11 @@ public sealed class ArrHealthService : BackgroundService
         var awaitingRecords = records.Where(r => r.IsAwaitingImport).Take(MaxAwaitingPerInstance).ToList();
         if (awaitingRecords.Count == 0) return [];
 
-        var downloadIds = new List<Guid>();
-        foreach (var record in awaitingRecords)
-        {
-            if (Guid.TryParse(record.DownloadId, out var id))
-                downloadIds.Add(id);
-        }
+        var downloadIds = awaitingRecords
+            .Select(record => Guid.TryParse(record.DownloadId, out var id) ? id : (Guid?)null)
+            .Where(id => id is not null)
+            .Select(id => id!.Value)
+            .ToList();
 
         Dictionary<Guid, DateTime> createdAtById = [];
         if (downloadIds.Count > 0)

@@ -18,3 +18,7 @@ export function hasConfiguredArrs(configValue?: string): boolean {
         return false;
     }
 }
+
+export function isArrHealthEnabled(configValue?: string): boolean {
+    return configValue?.toLowerCase() !== "false";
+}

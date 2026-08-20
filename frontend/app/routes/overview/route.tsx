@@ -23,7 +23,7 @@ import { SortableRow } from "./components/sortable-row/sortable-row";
 import { backendClient, type ArrHealthResponse } from "~/clients/backend-client.server";
 import { useRowOrder } from "./utils/use-row-order";
 import { hasConfiguredIndexers } from "./utils/has-configured-indexers";
-import { hasConfiguredArrs } from "./utils/has-configured-arrs";
+import { hasConfiguredArrs, isArrHealthEnabled } from "./utils/has-configured-arrs";
 import {
     EMPTY_OVERVIEW_STATS,
     mergeOverviewStats,
@@ -65,15 +65,15 @@ const DEFAULT_ROW_ORDER = [
 
 /** Shell-only loader — stats load client-side in sections so first paint is instant. */
 export async function loader() {
-    const config = await backendClient.getConfig(["indexers.instances", "arr.instances"]);
+    const config = await backendClient.getConfig(["indexers.instances", "arr.instances", "arr.health-enabled"]);
     return {
         stats: null as OverviewStatsResponse | null,
         hasConfiguredIndexers: hasConfiguredIndexers(
             config.find(item => item.configName === "indexers.instances")?.configValue,
         ),
-        hasConfiguredArrs: hasConfiguredArrs(
-            config.find(item => item.configName === "arr.instances")?.configValue,
-        ),
+        hasConfiguredArrs: isArrHealthEnabled(
+            config.find(item => item.configName === "arr.health-enabled")?.configValue,
+        ) && hasConfiguredArrs(config.find(item => item.configName === "arr.instances")?.configValue),
     };
 }
 
