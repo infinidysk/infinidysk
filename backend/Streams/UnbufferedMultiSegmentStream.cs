@@ -22,6 +22,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly bool _useContainerAwareFill;
     private readonly long? _firstSegmentFileOffset;
     private readonly bool _failFastOnFirstSegment;
+    private readonly HashSet<string>? _knownCorruptSegmentIds;
     private readonly byte[] _scratch = new byte[16];
     private Stream? _stream;
     private int _currentIndex;
@@ -44,7 +45,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         ReadOnlyMemory<long> exactSegmentSizes = default,
         bool useContainerAwareFill = false,
         long? firstSegmentFileOffset = null,
-        bool failFastOnFirstSegment = false)
+        bool failFastOnFirstSegment = false,
+        HashSet<string>? knownCorruptSegmentIds = null)
     {
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
@@ -54,6 +56,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _useContainerAwareFill = useContainerAwareFill;
         _firstSegmentFileOffset = firstSegmentFileOffset;
         _failFastOnFirstSegment = failFastOnFirstSegment;
+        _knownCorruptSegmentIds = knownCorruptSegmentIds;
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
@@ -305,7 +308,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _hasProbedByte = false;
 
         var failure = initialFailure;
-        for (var attempt = 1; attempt <= MaxCorruptionRetries; attempt++)
+        for (var attempt = 1; attempt <= GetCorruptionRetryLimit(segmentId); attempt++)
         {
             Log.Debug(
                 failure,
@@ -362,6 +365,11 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
 
         ApplyZeroFill(segmentIndex, segmentId, fill, failure, isCorruption: true);
     }
+
+    private int GetCorruptionRetryLimit(string segmentId) =>
+        _knownCorruptSegmentIds is not null && _knownCorruptSegmentIds.Contains(segmentId)
+            ? 0
+            : MaxCorruptionRetries;
 
     private async Task HandlePostEmissionCorruptionAsync(
         int segmentIndex,

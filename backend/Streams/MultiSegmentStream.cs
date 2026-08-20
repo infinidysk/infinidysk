@@ -53,6 +53,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     // the producer; DisposeCoreAsync must join them so DisposeAsync does not return
     // while their BudgetedStream leases are still held (#840 scrub wedge).
     private readonly ConcurrentQueue<Task> _orphanedDisposals = new();
+    private readonly HashSet<string>? _knownCorruptSegmentIds;
+
+    private int GetCorruptionRetryLimit(string segmentId) =>
+        _knownCorruptSegmentIds is not null && _knownCorruptSegmentIds.Contains(segmentId)
+            ? 0
+            : MaxCorruptionRetries;
 
     /// <summary>
     /// Optional per-instance test hook invoked with the segment-boundary readiness sample,
@@ -83,7 +89,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
         long? firstSegmentFileOffset = null,
-        int bodyPipelineBatchWidth = BodyPipelineBatchSize)
+        int bodyPipelineBatchWidth = BodyPipelineBatchSize,
+        HashSet<string>? knownCorruptSegmentIds = null)
     {
         return Create(
             segmentIds,
@@ -99,7 +106,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             inFlightArticleBudget: inFlightArticleBudget,
             useContainerAwareFill: useContainerAwareFill,
             firstSegmentFileOffset: firstSegmentFileOffset,
-            bodyPipelineBatchWidth: bodyPipelineBatchWidth);
+            bodyPipelineBatchWidth: bodyPipelineBatchWidth,
+            knownCorruptSegmentIds: knownCorruptSegmentIds);
     }
 
     /// <param name="estimatedSegmentSize">
@@ -128,14 +136,15 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
         long? firstSegmentFileOffset = null,
-        int bodyPipelineBatchWidth = BodyPipelineBatchSize
+        int bodyPipelineBatchWidth = BodyPipelineBatchSize,
+        HashSet<string>? knownCorruptSegmentIds = null
     )
     {
         return articleBufferSize == 0
             ? new UnbufferedMultiSegmentStream(
                 segmentIds, usenetClient, estimatedSegmentSize, fileName, segmentFallbacks,
                 exactSegmentSizes, useContainerAwareFill, firstSegmentFileOffset,
-                failFastOnFirstSegment)
+                failFastOnFirstSegment, knownCorruptSegmentIds)
             : new MultiSegmentStream(
                 segmentIds,
                 usenetClient,
@@ -151,6 +160,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 useContainerAwareFill,
                 firstSegmentFileOffset,
                 bodyPipelineBatchWidth,
+                knownCorruptSegmentIds,
                 cancellationToken);
     }
 
@@ -175,7 +185,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
         long? firstSegmentFileOffset = null,
-        int bodyPipelineBatchWidth = BodyPipelineBatchSize)
+        int bodyPipelineBatchWidth = BodyPipelineBatchSize,
+        HashSet<string>? knownCorruptSegmentIds = null)
     {
         if (articleBufferSize == 0 || segmentIds.Length <= 1)
         {
@@ -183,7 +194,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 segmentIds, usenetClient, articleBufferSize, estimatedSegmentSize,
                 failFastOnFirstSegment, usePipelinedBodyRequests, cancellationToken, fileName,
                 readBudget, segmentFallbacks, exactSegmentSizes, inFlightArticleBudget,
-                useContainerAwareFill, firstSegmentFileOffset, bodyPipelineBatchWidth);
+                useContainerAwareFill, firstSegmentFileOffset, bodyPipelineBatchWidth,
+                knownCorruptSegmentIds);
         }
 
         var effectiveReadBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
@@ -214,14 +226,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             yield return Task.FromResult<Stream>(new UnbufferedMultiSegmentStream(
                 segmentIds[..1], usenetClient, estimatedSegmentSize, fileName, firstFallbacks,
                 firstExactSizes, useContainerAwareFill, firstSegmentFileOffset,
-                failFastOnFirstSegment));
+                failFastOnFirstSegment, knownCorruptSegmentIds));
 #pragma warning restore CA2000
             yield return Task.FromResult(Create(
                 segmentIds[1..], usenetClient, articleBufferSize, estimatedSegmentSize,
                 failFastOnFirstSegment: false, usePipelinedBodyRequests, cancellationToken,
                 fileName, remainingBudget, remainingFallbacks, remainingExactSizes,
                 inFlightArticleBudget, useContainerAwareFill, remainingOffset,
-                bodyPipelineBatchWidth));
+                bodyPipelineBatchWidth, knownCorruptSegmentIds));
         }
     }
 
@@ -241,6 +253,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         bool useContainerAwareFill,
         long? firstSegmentFileOffset,
         int bodyPipelineBatchWidth,
+        HashSet<string>? knownCorruptSegmentIds,
         CancellationToken cancellationToken
     )
     {
@@ -252,6 +265,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _failFastOnFirstSegment = failFastOnFirstSegment;
         _useContainerAwareFill = useContainerAwareFill;
         _firstSegmentFileOffset = firstSegmentFileOffset;
+        _knownCorruptSegmentIds = knownCorruptSegmentIds;
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
         _readBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
         _budget = inFlightArticleBudget ?? InFlightArticleBudget.Current;
@@ -567,7 +581,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 lease?.Dispose();
                 lease = null;
-                if (attempt >= MaxCorruptionRetries)
+                if (attempt >= GetCorruptionRetryLimit(segmentId))
                 {
                     var fallback = await TryFallbackSegmentsAsync(segmentIndex, cancellationToken)
                         .ConfigureAwait(false);
@@ -819,7 +833,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         CancellationToken cancellationToken)
     {
         var failure = initialFailure;
-        for (var attempt = 1; attempt <= MaxCorruptionRetries; attempt++)
+        for (var attempt = 1; attempt <= GetCorruptionRetryLimit(segmentId); attempt++)
         {
             Log.Debug(
                 failure,
