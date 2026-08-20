@@ -401,6 +401,7 @@ jobs:
             nuget.config \
             Directory.Packages.props \
             Directory.Build.props \
+            .editorconfig \
             libs/ \
             .gitmodules \
             frontend/package.json \
