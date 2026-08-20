@@ -383,4 +383,43 @@ describe("BackendClient", () => {
     expect(body.get("capacity")).toBe("200000");
     expect(body.get("minutes")).toBe("30");
   });
+
+  it("uses the HTTP status when the error body is empty", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 500 }));
+
+    await expect(backendClient.getQueue(1)).rejects.toThrow("Failed to get queue: HTTP 500");
+  });
+
+  it("uses the HTTP status for ProblemDetails bodies without error", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      type: "https://httpstatuses.com/400",
+      title: "Bad Request",
+      detail: "nzo_ids invalid",
+      status: 400,
+    }, 400));
+
+    await expect(backendClient.getQueue(1)).rejects.toThrow("Failed to get queue: HTTP 400");
+  });
+
+  it("uses the HTTP status for plain-text error bodies", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("nope", {
+      status: 502,
+      headers: { "Content-Type": "text/plain" },
+    }));
+
+    await expect(backendClient.getQueue(1)).rejects.toThrow("Failed to get queue: HTTP 502");
+  });
+
+  it("wraps aborted fetches as BackendUnavailableError", async () => {
+    fetchMock.mockRejectedValueOnce(new DOMException("The operation was aborted.", "AbortError"));
+
+    const error = await backendClient.isOnboarding().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(BackendUnavailableError);
+    expect(error).toMatchObject({
+      message: expect.stringContaining("Failed to fetch onboarding status"),
+    });
+  });
 });

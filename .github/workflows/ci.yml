@@ -93,13 +93,36 @@ jobs:
         working-directory: frontend
         run: npm run test:coverage
 
+      - name: Verify coverage ratchet fixtures
+        run: sh scripts/test-quality-ratchets.sh
+
+      - name: Enforce frontend coverage ratchets
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          extra=()
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            if git cat-file -e "origin/$BASE_REF:frontend/coverage-thresholds.json" 2>/dev/null; then
+              git show "origin/$BASE_REF:frontend/coverage-thresholds.json" > /tmp/base-coverage-thresholds.json
+              extra+=(--base-thresholds /tmp/base-coverage-thresholds.json)
+            fi
+          fi
+          python3 scripts/check-quality-ratchets.py \
+            --thresholds frontend/coverage-thresholds.json \
+            --summary frontend/coverage/coverage-summary.json \
+            "${extra[@]}"
+
       - name: Upload frontend coverage artifact
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
-          path: frontend/coverage/cobertura-coverage.xml
-          if-no-files-found: ignore
+          path: |
+            frontend/coverage/cobertura-coverage.xml
+            frontend/coverage/lcov.info
+            frontend/coverage/coverage-summary.json
+          if-no-files-found: error
 
   backend:
     runs-on: ubuntu-latest
