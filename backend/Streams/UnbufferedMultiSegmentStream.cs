@@ -23,6 +23,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly long? _firstSegmentFileOffset;
     private readonly bool _failFastOnFirstSegment;
     private readonly HashSet<string>? _knownCorruptSegmentIds;
+    private readonly IReadOnlySet<int>? _knownMissingSegmentIndices;
     private readonly byte[] _scratch = new byte[16];
     private Stream? _stream;
     private int _currentIndex;
@@ -46,7 +47,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         bool useContainerAwareFill = false,
         long? firstSegmentFileOffset = null,
         bool failFastOnFirstSegment = false,
-        HashSet<string>? knownCorruptSegmentIds = null)
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null)
     {
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
@@ -57,6 +59,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _firstSegmentFileOffset = firstSegmentFileOffset;
         _failFastOnFirstSegment = failFastOnFirstSegment;
         _knownCorruptSegmentIds = knownCorruptSegmentIds;
+        _knownMissingSegmentIndices = knownMissingSegmentIndices;
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
@@ -106,6 +109,13 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 var segmentId = _segmentIds.Span[_currentIndex++];
                 _openSegmentIndex = -1;
                 _openSegmentBytes = 0;
+                if (_knownMissingSegmentIndices?.Contains(segmentIndex) == true)
+                {
+                    await OpenKnownMissingSegmentAsync(segmentIndex, segmentId, cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
                 Stream? fetched = null;
                 try
                 {
@@ -262,6 +272,71 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         }
 
         return ContainerAwareFillStream.Create(_fileName, fill, fileOffset);
+    }
+
+    private async Task OpenKnownMissingSegmentAsync(
+        int segmentIndex,
+        string segmentId,
+        CancellationToken cancellationToken)
+    {
+        var local = await TryGetLocalSegmentAsync(segmentId, segmentIndex, cancellationToken)
+            .ConfigureAwait(false)
+            ?? await TryGetLocalFallbackAsync(segmentIndex, cancellationToken).ConfigureAwait(false);
+        if (local is not null)
+        {
+            _stream = local;
+            _openSegmentIndex = segmentIndex;
+            _openSegmentFromLiveFetch = false;
+            _consecutiveZeroFills = 0;
+            return;
+        }
+
+        var missing = new UsenetArticleNotFoundException(segmentId);
+        if (!_segmentSizes.TryGetFillLength(segmentIndex, out var fill, out _))
+            throw CreateUnknownLengthFailure(segmentIndex, missing);
+        ApplyZeroFill(segmentIndex, segmentId, fill, missing, isCorruption: false);
+    }
+
+    private async Task<Stream?> TryGetLocalSegmentAsync(
+        string segmentId,
+        int segmentIndex,
+        CancellationToken cancellationToken)
+    {
+        var body = await _usenetClient.TryGetLocalDecodedBodyAsync(segmentId, cancellationToken)
+            .ConfigureAwait(false);
+        if (body?.Stream is not { } stream) return null;
+
+        try
+        {
+            await SegmentResponseValidator.ThrowOnSegmentIdMismatchAsync(segmentId, body).ConfigureAwait(false);
+            if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
+                    stream, _segmentSizes, segmentIndex, cancellationToken).ConfigureAwait(false))
+            {
+                await DisposeBodyStreamAsync(stream).ConfigureAwait(false);
+                return null;
+            }
+
+            return stream;
+        }
+        catch
+        {
+            await DisposeBodyStreamAsync(stream).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task<Stream?> TryGetLocalFallbackAsync(int segmentIndex, CancellationToken cancellationToken)
+    {
+        if (_segmentFallbacks is null || segmentIndex >= _segmentFallbacks.Length) return null;
+
+        foreach (var fallbackId in _segmentFallbacks[segmentIndex] ?? [])
+        {
+            var local = await TryGetLocalSegmentAsync(fallbackId, segmentIndex, cancellationToken)
+                .ConfigureAwait(false);
+            if (local is not null) return local;
+        }
+
+        return null;
     }
 
     private bool TryGetRemainingExactBytes(out long remaining)

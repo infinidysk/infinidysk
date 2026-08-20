@@ -61,6 +61,10 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
         SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken) =>
         _usenetClient.DecodedBodyAsync(segmentId, onConnectionReadyAgain, cancellationToken);
 
+    public override Task<UsenetDecodedBodyResponse?> TryGetLocalDecodedBodyAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        _usenetClient.TryGetLocalDecodedBodyAsync(segmentId, cancellationToken);
+
     public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken) =>

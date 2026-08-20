@@ -86,6 +86,19 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         return await WrapForCachingAsync(id, response, ct).ConfigureAwait(false);
     }
 
+    public override async Task<UsenetDecodedBodyResponse?> TryGetLocalDecodedBodyAsync(
+        SegmentId segmentId, CancellationToken ct)
+    {
+        if (MultiProviderNntpClient.AttributionContext.Value == null
+            && TryServeFromCache(segmentId.ToString(), out var cached))
+        {
+            RecordCacheHit();
+            return cached;
+        }
+
+        return await base.TryGetLocalDecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
+    }
+
     public override async Task<UsenetExclusiveConnection> AcquireExclusiveConnectionAsync(
         string segmentId, CancellationToken ct)
     {

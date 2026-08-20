@@ -49,7 +49,8 @@ public class DatabaseStoreNzbFile(
             inFlightArticleBudget,
             useContainerAwareFill: Config.IsContainerAwareFillEnabled(),
             streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth(),
-            knownCorruptSegmentIds: ResolveKnownCorruptSegmentIds(nzbFile));
+            knownCorruptSegmentIds: ResolveKnownCorruptSegmentIds(nzbFile),
+            knownMissingSegmentIndices: ResolveKnownMissingSegmentIndices(nzbFile));
     }
 
     private HashSet<string>? ResolveKnownCorruptSegmentIds(DavNzbFile nzbFile)
@@ -62,5 +63,18 @@ public class DatabaseStoreNzbFile(
             ids.Add(nzbFile.SegmentIds[index]);
 
         return ids.Count == 0 ? null : ids;
+    }
+
+    private HashSet<int>? ResolveKnownMissingSegmentIndices(DavNzbFile nzbFile)
+    {
+        if (!Config.IsDegradedToleranceEnabled()) return null;
+        if (nzbFile.SegmentByteRanges is not { } ranges || ranges.Length != nzbFile.SegmentIds.Length)
+            return null;
+        if (nzbFile.MissingSegmentIndices is not { Length: > 0 } indices) return null;
+
+        var validIndices = indices
+            .Where(index => index > 0 && (uint)index < (uint)nzbFile.SegmentIds.Length)
+            .ToHashSet();
+        return validIndices.Count == 0 ? null : validIndices;
     }
 }

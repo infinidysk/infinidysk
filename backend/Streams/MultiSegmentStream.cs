@@ -54,6 +54,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     // while their BudgetedStream leases are still held (#840 scrub wedge).
     private readonly ConcurrentQueue<Task> _orphanedDisposals = new();
     private readonly HashSet<string>? _knownCorruptSegmentIds;
+    private readonly IReadOnlySet<int>? _knownMissingSegmentIndices;
 
     private int GetCorruptionRetryLimit(string segmentId) =>
         _knownCorruptSegmentIds is not null && _knownCorruptSegmentIds.Contains(segmentId)
@@ -90,7 +91,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         bool useContainerAwareFill = false,
         long? firstSegmentFileOffset = null,
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
-        HashSet<string>? knownCorruptSegmentIds = null)
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null)
     {
         return Create(
             segmentIds,
@@ -107,7 +109,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             useContainerAwareFill: useContainerAwareFill,
             firstSegmentFileOffset: firstSegmentFileOffset,
             bodyPipelineBatchWidth: bodyPipelineBatchWidth,
-            knownCorruptSegmentIds: knownCorruptSegmentIds);
+            knownCorruptSegmentIds: knownCorruptSegmentIds,
+            knownMissingSegmentIndices: knownMissingSegmentIndices);
     }
 
     /// <param name="estimatedSegmentSize">
@@ -137,14 +140,15 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         bool useContainerAwareFill = false,
         long? firstSegmentFileOffset = null,
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
-        HashSet<string>? knownCorruptSegmentIds = null
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null
     )
     {
         return articleBufferSize == 0
             ? new UnbufferedMultiSegmentStream(
                 segmentIds, usenetClient, estimatedSegmentSize, fileName, segmentFallbacks,
                 exactSegmentSizes, useContainerAwareFill, firstSegmentFileOffset,
-                failFastOnFirstSegment, knownCorruptSegmentIds)
+                failFastOnFirstSegment, knownCorruptSegmentIds, knownMissingSegmentIndices)
             : new MultiSegmentStream(
                 segmentIds,
                 usenetClient,
@@ -161,6 +165,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 firstSegmentFileOffset,
                 bodyPipelineBatchWidth,
                 knownCorruptSegmentIds,
+                knownMissingSegmentIndices,
                 cancellationToken);
     }
 
@@ -186,7 +191,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         bool useContainerAwareFill = false,
         long? firstSegmentFileOffset = null,
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
-        HashSet<string>? knownCorruptSegmentIds = null)
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null)
     {
         if (articleBufferSize == 0 || segmentIds.Length <= 1)
         {
@@ -195,7 +201,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 failFastOnFirstSegment, usePipelinedBodyRequests, cancellationToken, fileName,
                 readBudget, segmentFallbacks, exactSegmentSizes, inFlightArticleBudget,
                 useContainerAwareFill, firstSegmentFileOffset, bodyPipelineBatchWidth,
-                knownCorruptSegmentIds);
+                knownCorruptSegmentIds, knownMissingSegmentIndices);
         }
 
         var effectiveReadBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
@@ -207,6 +213,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             : default;
         var firstFallbacks = segmentFallbacks is { Length: > 0 } ? segmentFallbacks[..1] : null;
         var remainingFallbacks = segmentFallbacks is { Length: > 1 } ? segmentFallbacks[1..] : null;
+        var firstKnownMissing = knownMissingSegmentIndices?.Where(index => index == 0).ToHashSet();
+        var remainingKnownMissing = knownMissingSegmentIndices?
+            .Where(index => index > 0)
+            .Select(index => index - 1)
+            .ToHashSet();
         var remainingOffset = firstSegmentFileOffset;
         if (remainingOffset is not null && firstExactSizes.Length == 1)
         {
@@ -226,14 +237,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             yield return Task.FromResult<Stream>(new UnbufferedMultiSegmentStream(
                 segmentIds[..1], usenetClient, estimatedSegmentSize, fileName, firstFallbacks,
                 firstExactSizes, useContainerAwareFill, firstSegmentFileOffset,
-                failFastOnFirstSegment, knownCorruptSegmentIds));
+                failFastOnFirstSegment, knownCorruptSegmentIds, firstKnownMissing));
 #pragma warning restore CA2000
             yield return Task.FromResult(Create(
                 segmentIds[1..], usenetClient, articleBufferSize, estimatedSegmentSize,
                 failFastOnFirstSegment: false, usePipelinedBodyRequests, cancellationToken,
                 fileName, remainingBudget, remainingFallbacks, remainingExactSizes,
                 inFlightArticleBudget, useContainerAwareFill, remainingOffset,
-                bodyPipelineBatchWidth, knownCorruptSegmentIds));
+                bodyPipelineBatchWidth, knownCorruptSegmentIds, remainingKnownMissing));
         }
     }
 
@@ -254,6 +265,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         long? firstSegmentFileOffset,
         int bodyPipelineBatchWidth,
         HashSet<string>? knownCorruptSegmentIds,
+        IReadOnlySet<int>? knownMissingSegmentIndices,
         CancellationToken cancellationToken
     )
     {
@@ -266,6 +278,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _useContainerAwareFill = useContainerAwareFill;
         _firstSegmentFileOffset = firstSegmentFileOffset;
         _knownCorruptSegmentIds = knownCorruptSegmentIds;
+        _knownMissingSegmentIndices = knownMissingSegmentIndices;
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
         _readBudget = readBudget ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
         _budget = inFlightArticleBudget ?? InFlightArticleBudget.Current;
@@ -380,27 +393,42 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                         GetPlannedSegmentBytes(batchStart + index), cancellationToken).ConfigureAwait(false);
                 }
 
-                // Use the normal client path so cache hits still bypass admission.
-                var batch = await _usenetClient.DecodedBodiesAsync(
-                    segmentIds, onConnectionReadyAgain: null, cancellationToken).ConfigureAwait(false);
-                if (batch.Responses.Count != batchCount)
-                    throw new InvalidOperationException(
-                        $"Pipelined BODY returned {batch.Responses.Count} responses for {batchCount} requests.");
+                // Known degraded holes never enter a provider batch. They still ask local
+                // patch/cache layers first, and their tasks stay in file order with live
+                // results so the consumer's segment-boundary contract is unchanged.
+                var liveIndexes = Enumerable.Range(0, batchCount)
+                    .Where(index => _knownMissingSegmentIndices?.Contains(batchStart + index) != true)
+                    .ToArray();
+                Task<UsenetDecodedBodyResponse>[] liveResponses = [];
+                if (liveIndexes.Length > 0)
+                {
+                    var liveIds = liveIndexes.Select(index => segmentIds[index]).ToArray();
+                    var batch = await _usenetClient.DecodedBodiesAsync(
+                        liveIds, onConnectionReadyAgain: null, cancellationToken).ConfigureAwait(false);
+                    if (batch.Responses.Count != liveIndexes.Length)
+                        throw new InvalidOperationException(
+                            $"Pipelined BODY returned {batch.Responses.Count} responses for {liveIndexes.Length} requests.");
+                    liveResponses = batch.Responses.ToArray();
+                }
 
-                streamTasks = batch.Responses
-                    .Select((response, index) =>
-                    {
-                        var lease = leases[index]!;
-                        leases[index] = null;
-                        return DownloadBatchSegment(
-                            response,
+                streamTasks = new Task<SegmentDownloadResult>[batchCount];
+                var liveResponseIndex = 0;
+                for (var index = 0; index < batchCount; index++)
+                {
+                    var lease = leases[index]!;
+                    leases[index] = null;
+                    var segmentIndex = batchStart + index;
+                    streamTasks[index] = _knownMissingSegmentIndices?.Contains(segmentIndex) == true
+                        ? DownloadKnownMissingSegment(
+                            segmentIds[index], segmentIndex, lease, isFirstSegment: segmentIndex == 0, cancellationToken)
+                        : DownloadBatchSegment(
+                            liveResponses[liveResponseIndex++],
                             segmentIds[index],
-                            segmentIndex: batchStart + index,
-                            isFirstSegment: batchStart + index == 0,
+                            segmentIndex,
+                            isFirstSegment: segmentIndex == 0,
                             lease,
                             cancellationToken);
-                    })
-                    .ToArray();
+                }
             }
             catch
             {
@@ -536,6 +564,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         var lease = initialLease;
         try
         {
+            if (_knownMissingSegmentIndices?.Contains(segmentIndex) == true)
+            {
+                var result = await DownloadKnownMissingSegment(
+                    segmentId, segmentIndex, lease, isFirstSegment, cancellationToken).ConfigureAwait(false);
+                lease = null;
+                return result;
+            }
+
             for (var attempt = 0; ; attempt++)
             {
                 try
@@ -653,6 +689,89 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             lease?.Dispose();
         }
+    }
+
+    private async Task<SegmentDownloadResult> DownloadKnownMissingSegment(
+        string segmentId,
+        int segmentIndex,
+        ArticleByteLease initialLease,
+        bool isFirstSegment,
+        CancellationToken cancellationToken)
+    {
+        var estimate = GetPlannedSegmentBytes(segmentIndex);
+        var lease = initialLease;
+        try
+        {
+            var local = await TryGetLocalSegmentAsync(segmentId, segmentIndex, lease, cancellationToken)
+                .ConfigureAwait(false);
+            if (local is null)
+                local = await TryGetLocalFallbackSegmentsAsync(segmentIndex, lease, cancellationToken)
+                    .ConfigureAwait(false);
+            if (local is not null)
+            {
+                lease = null;
+                return SegmentDownloadResult.Success(local, estimate);
+            }
+
+            var missing = new UsenetArticleNotFoundException(segmentId);
+            if (_failFastOnFirstSegment && isFirstSegment)
+                throw missing;
+            return ZeroFillSegment(
+                "Article {SegmentId} is a health-confirmed missing segment of {FileName}. Filling the {Bytes}-byte gap without a provider request.",
+                segmentId,
+                segmentIndex,
+                missing);
+        }
+        finally
+        {
+            lease?.Dispose();
+        }
+    }
+
+    private async Task<Stream?> TryGetLocalSegmentAsync(
+        string segmentId,
+        int segmentIndex,
+        ArticleByteLease? lease,
+        CancellationToken cancellationToken)
+    {
+        var body = await _usenetClient.TryGetLocalDecodedBodyAsync(segmentId, cancellationToken)
+            .ConfigureAwait(false);
+        if (body?.Stream is not { } stream) return null;
+
+        try
+        {
+            await ThrowOnSegmentIdMismatchAsync(segmentId, body).ConfigureAwait(false);
+            if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
+                    stream, _segmentSizes, segmentIndex, cancellationToken).ConfigureAwait(false))
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+                return null;
+            }
+
+            return await DrainSegmentAsync(
+                    stream, segmentIndex, cancellationToken, lease, GetPlannedSegmentBytes(segmentIndex))
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            await stream.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task<Stream?> TryGetLocalFallbackSegmentsAsync(
+        int segmentIndex,
+        ArticleByteLease? lease,
+        CancellationToken cancellationToken)
+    {
+        foreach (var fallbackId in GetFallbacks(segmentIndex))
+        {
+            var local = await TryGetLocalSegmentAsync(fallbackId, segmentIndex, lease, cancellationToken)
+                .ConfigureAwait(false);
+            if (local is not null) return local;
+        }
+
+        return null;
     }
 
     private async Task<SegmentDownloadResult> DownloadBatchSegment(

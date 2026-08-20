@@ -13,11 +13,14 @@ internal sealed class FakeNntpClient(
     IReadOnlyDictionary<string, byte[]> segments,
     bool useCachedYencStreams = false,
     IReadOnlyDictionary<string, LongRange>? segmentRanges = null,
-    Func<string, byte[], Stream>? decodedStreamFactory = null) : NntpClient
+    Func<string, byte[], Stream>? decodedStreamFactory = null,
+    IReadOnlyDictionary<string, byte[]>? localSegments = null) : NntpClient
 {
     // Copied at construction so tests can add/restore articles via Serve() without
     // mutating the caller's dictionary.
     private readonly Dictionary<string, byte[]> _segments = new(segments, StringComparer.Ordinal);
+    private readonly IReadOnlyDictionary<string, byte[]> _localSegments =
+        localSegments ?? new Dictionary<string, byte[]>(StringComparer.Ordinal);
 
     public int BatchRequestCount { get; private set; }
     public int BodyRequestCount { get; private set; }
@@ -93,6 +96,17 @@ internal sealed class FakeNntpClient(
         }
     }
 
+    public override Task<UsenetDecodedBodyResponse?> TryGetLocalDecodedBodyAsync(
+        SegmentId segmentId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var key = segmentId.ToString();
+        return _localSegments.ContainsKey(key)
+            ? Task.FromResult<UsenetDecodedBodyResponse?>(CreateBodyResponse(segmentId, _localSegments))
+            : Task.FromResult<UsenetDecodedBodyResponse?>(null);
+    }
+
     public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
@@ -150,10 +164,15 @@ internal sealed class FakeNntpClient(
     {
     }
 
-    private UsenetDecodedBodyResponse CreateBodyResponse(SegmentId segmentId)
+    private UsenetDecodedBodyResponse CreateBodyResponse(SegmentId segmentId) =>
+        CreateBodyResponse(segmentId, _segments);
+
+    private UsenetDecodedBodyResponse CreateBodyResponse(
+        SegmentId segmentId,
+        IReadOnlyDictionary<string, byte[]> segments)
     {
         var key = segmentId.ToString();
-        if (!_segments.TryGetValue(key, out var bytes))
+        if (!segments.TryGetValue(key, out var bytes))
             throw new UsenetArticleNotFoundException(key, "430 No such article");
 
         YencStream stream = useCachedYencStreams
@@ -166,7 +185,7 @@ internal sealed class FakeNntpClient(
                         : bytes.Length,
                     LineLength = 128,
                     PartNumber = 1,
-                    TotalParts = _segments.Count,
+                    TotalParts = segments.Count,
                     PartOffset = segmentRanges?[key].StartInclusive ?? 0,
                     PartSize = segmentRanges?[key].Count ?? bytes.Length,
                 },

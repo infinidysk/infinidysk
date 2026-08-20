@@ -25,8 +25,7 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
         if (MultiProviderNntpClient.AttributionContext.Value != null)
             return await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, ct).ConfigureAwait(false);
 
-        string id = segmentId;
-        if (_patchStore.TryGet(id, out var patched))
+        if (TryGetPatchedResponse(segmentId, out var patched))
         {
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
             PrometheusMetrics.Current?.RecordPar2PatchHit();
@@ -34,6 +33,21 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
         }
 
         return await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, ct).ConfigureAwait(false);
+    }
+
+    public override async Task<UsenetDecodedBodyResponse?> TryGetLocalDecodedBodyAsync(
+        SegmentId segmentId, CancellationToken ct)
+    {
+        if (MultiProviderNntpClient.AttributionContext.Value != null)
+            return await base.TryGetLocalDecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
+
+        if (TryGetPatchedResponse(segmentId, out var patched))
+        {
+            PrometheusMetrics.Current?.RecordPar2PatchHit();
+            return patched;
+        }
+
+        return await base.TryGetLocalDecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
     }
 
     public override async Task<UsenetExclusiveConnection> AcquireExclusiveConnectionAsync(
@@ -51,8 +65,7 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
         if (MultiProviderNntpClient.AttributionContext.Value != null)
             return await base.DecodedBodyAsync(segmentId, exclusiveConnection, ct).ConfigureAwait(false);
 
-        string id = segmentId;
-        if (_patchStore.TryGet(id, out var patched))
+        if (TryGetPatchedResponse(segmentId, out var patched))
         {
             exclusiveConnection.OnConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
             PrometheusMetrics.Current?.RecordPar2PatchHit();
@@ -60,5 +73,11 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
         }
 
         return await base.DecodedBodyAsync(segmentId, exclusiveConnection, ct).ConfigureAwait(false);
+    }
+
+    private bool TryGetPatchedResponse(SegmentId segmentId, out UsenetDecodedBodyResponse? response)
+    {
+        string id = segmentId;
+        return _patchStore.TryGet(id, out response);
     }
 }

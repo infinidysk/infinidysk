@@ -27,6 +27,13 @@ public interface INntpClient : IDisposable
     Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Returns an already-local decoded body (for example a PAR2 patch or segment-cache
+    /// entry) without opening an NNTP connection, or null when no local copy exists.
+    /// </summary>
+    Task<UsenetDecodedBodyResponse?> TryGetLocalDecodedBodyAsync(
+        SegmentId segmentId, CancellationToken cancellationToken);
+
     Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken);
@@ -83,7 +90,8 @@ public interface INntpClient : IDisposable
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
         int streamingBodyBatchWidth = 4,
-        HashSet<string>? knownCorruptSegmentIds = null);
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null);
 
     NzbFileStream GetFileStream(
         NzbFile nzbFile,
@@ -94,7 +102,8 @@ public interface INntpClient : IDisposable
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
         int streamingBodyBatchWidth = 4,
-        HashSet<string>? knownCorruptSegmentIds = null);
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null);
 
     NzbFileStream GetFileStream(
         string[] segmentIds,
@@ -107,7 +116,8 @@ public interface INntpClient : IDisposable
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
         int streamingBodyBatchWidth = 4,
-        HashSet<string>? knownCorruptSegmentIds = null);
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null);
 
     Task CheckAllSegmentsAsync(
         IEnumerable<string> segmentIds, int concurrency, IProgress<int>? progress, CancellationToken cancellationToken);

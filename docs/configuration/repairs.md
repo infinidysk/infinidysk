@@ -63,7 +63,9 @@ enabled, releases old enough to be sampled are not classified.
 - **Degraded** — holes within all three caps (longest consecutive run, total count, and share
   of the file's bytes) in a container that tolerant decoders can resync past. The file stays
   mounted, playback zero-fills the gaps, and **no Arr repair is triggered**. The confirmed
-  holes are recorded on the item so the status survives restarts.
+  holes are recorded on the item so the status survives restarts; later playback fills them
+  without sending a provider BODY request. A local PAR2 patch or segment-cache entry still wins
+  over a gap fill, and the next full health sweep detects a provider-side recovery.
 - **Failed** — over any cap, any hole in an unsafe layout, or an unrecognized container.
   These take the normal repair path (PAR2 reconstruction first when enabled, then Arr
   remove-and-replace), exactly as before.

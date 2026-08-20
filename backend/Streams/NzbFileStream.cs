@@ -26,7 +26,8 @@ public class NzbFileStream(
     InFlightArticleBudget? inFlightArticleBudget = null,
     bool useContainerAwareFill = false,
     int streamingBodyBatchWidth = 4,
-    HashSet<string>? knownCorruptSegmentIds = null
+    HashSet<string>? knownCorruptSegmentIds = null,
+    IReadOnlySet<int>? knownMissingSegmentIndices = null
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
@@ -48,6 +49,10 @@ public class NzbFileStream(
         AreSegmentByteRangesValid(segmentByteRanges, fileSegmentIds.Length, fileSize)
             ? segmentByteRanges
             : LogInvalidAndDiscard(segmentByteRanges, fileSegmentIds.Length, fileSize, fileName);
+    private readonly HashSet<int>? _knownMissingSegmentIndices =
+        knownMissingSegmentIndices is { Count: > 0 }
+            ? new HashSet<int>(knownMissingSegmentIndices.Where(index => (uint)index < (uint)fileSegmentIds.Length))
+            : null;
 
     private long[]? _exactSegmentSizes;
 
@@ -291,7 +296,7 @@ public class NzbFileStream(
     private async Task<Stream> GetFileStream(long rangeStart, CancellationToken cancellationToken)
     {
         if (rangeStart == 0) return GetMultiSegmentStream(0, failFastOnFirstSegment: true, cancellationToken);
-        if (!ShouldUseDirectRangePath())
+        if (!IsKnownMissingSegment(foundSegment: null, rangeStart) && !ShouldUseDirectRangePath())
         {
             var fast = await TryGetSeekStreamFast(rangeStart, cancellationToken).ConfigureAwait(false);
             if (fast != null) return fast;
@@ -330,6 +335,17 @@ public class NzbFileStream(
     {
         var budget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
         return budget is > 0 and <= MaximumDirectRangeBytes;
+    }
+
+    private bool IsKnownMissingSegment(InterpolationSearch.Result? foundSegment, long rangeStart)
+    {
+        if (_knownMissingSegmentIndices is null || _segmentByteRanges is null) return false;
+        var segment = foundSegment ?? InterpolationSearch.Find(
+            rangeStart,
+            new LongRange(0, _segmentByteRanges.Length),
+            new LongRange(0, fileSize),
+            guess => _segmentByteRanges[guess]);
+        return _knownMissingSegmentIndices.Contains(segment.FoundIndex);
     }
 
     private const int MaxSeekGuessCorrection = 3;
@@ -536,6 +552,10 @@ public class NzbFileStream(
             ? sizes.AsMemory(firstSegmentIndex)
             : default;
         var firstSegmentFileOffset = _segmentByteRanges?[firstSegmentIndex].StartInclusive;
+        var knownMissing = _knownMissingSegmentIndices?
+            .Where(index => index >= firstSegmentIndex)
+            .Select(index => index - firstSegmentIndex)
+            .ToHashSet();
 
         return MultiSegmentStream.CreateFirstSegmentHybrid(
             segmentIds,
@@ -552,7 +572,8 @@ public class NzbFileStream(
             useContainerAwareFill: useContainerAwareFill,
             firstSegmentFileOffset: firstSegmentFileOffset,
             bodyPipelineBatchWidth: streamingBodyBatchWidth,
-            knownCorruptSegmentIds: knownCorruptSegmentIds);
+            knownCorruptSegmentIds: knownCorruptSegmentIds,
+            knownMissingSegmentIndices: knownMissing);
     }
 
     protected override void Dispose(bool disposing)

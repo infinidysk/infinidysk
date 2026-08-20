@@ -44,6 +44,10 @@ public abstract class NntpClient : INntpClient
     public abstract Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken);
 
+    public virtual Task<UsenetDecodedBodyResponse?> TryGetLocalDecodedBodyAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        Task.FromResult<UsenetDecodedBodyResponse?>(null);
+
     public abstract Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken);
@@ -143,7 +147,8 @@ public abstract class NntpClient : INntpClient
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
         int streamingBodyBatchWidth = 4,
-        HashSet<string>? knownCorruptSegmentIds = null)
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null)
     {
         var segmentIds = nzbFile.GetSegmentIds();
         var fileSize = await GetFileSizeAsync(nzbFile, ct).ConfigureAwait(false);
@@ -159,7 +164,8 @@ public abstract class NntpClient : INntpClient
             inFlightArticleBudget,
             useContainerAwareFill,
             streamingBodyBatchWidth,
-            knownCorruptSegmentIds);
+            knownCorruptSegmentIds,
+            knownMissingSegmentIndices);
     }
 
     public virtual NzbFileStream GetFileStream(
@@ -171,7 +177,8 @@ public abstract class NntpClient : INntpClient
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
         int streamingBodyBatchWidth = 4,
-        HashSet<string>? knownCorruptSegmentIds = null)
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null)
     {
         return new NzbFileStream(
             nzbFile.GetSegmentIds(),
@@ -185,7 +192,8 @@ public abstract class NntpClient : INntpClient
             inFlightArticleBudget,
             useContainerAwareFill,
             streamingBodyBatchWidth,
-            knownCorruptSegmentIds
+            knownCorruptSegmentIds,
+            knownMissingSegmentIndices
         );
     }
 
@@ -200,7 +208,8 @@ public abstract class NntpClient : INntpClient
         InFlightArticleBudget? inFlightArticleBudget = null,
         bool useContainerAwareFill = false,
         int streamingBodyBatchWidth = 4,
-        HashSet<string>? knownCorruptSegmentIds = null)
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null)
     {
         return new NzbFileStream(
             segmentIds,
@@ -214,7 +223,8 @@ public abstract class NntpClient : INntpClient
             inFlightArticleBudget,
             useContainerAwareFill,
             streamingBodyBatchWidth,
-            knownCorruptSegmentIds);
+            knownCorruptSegmentIds,
+            knownMissingSegmentIndices);
     }
 
     private static string? ResolveFileName(string? fileName, NzbFile nzbFile)
