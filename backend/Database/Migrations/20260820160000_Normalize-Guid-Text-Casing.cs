@@ -24,10 +24,10 @@ namespace NzbWebDAV.Database.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // PRAGMA foreign_keys cannot change inside a transaction. Child tables
-            // (DavNzbFiles, DavRarFiles, DavMultipartFiles, QueueNzbContents) use the
-            // parent Id as PK/FK, so the rewrite must run with enforcement off.
-            migrationBuilder.Sql("PRAGMA foreign_keys = OFF;", suppressTransaction: true);
+            // PRAGMA foreign_keys cannot change inside a transaction. Defer checks
+            // until COMMIT instead so the PK/FK rewrite stays in the migration
+            // transaction with __EFMigrationsHistory (crash-safe retry).
+            migrationBuilder.Sql("PRAGMA defer_foreign_keys = ON;");
 
             // Updating FileBlobId from lower to upper would otherwise fire this
             // trigger and enqueue the old (lowercase) blob Id for deletion.
@@ -56,7 +56,7 @@ namespace NzbWebDAV.Database.Migrations
                 END;
                 """);
 
-            migrationBuilder.Sql("PRAGMA foreign_keys = ON;", suppressTransaction: true);
+            // Deferred FK checks run at COMMIT; no extra PRAGMA is required.
         }
 
         /// <inheritdoc />

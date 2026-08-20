@@ -273,6 +273,29 @@ public sealed class NormalizeGuidTextCasingMigrationTests
     }
 
     [Fact]
+    public async Task NormalizeGuidTextCasing_ORsHistoryCleanupDeleteMountedFilesWhenDeduping()
+    {
+        await using var harness = await MigrationHarness.CreateAsync();
+        var ctx = harness.Context;
+        var historyId = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeee0701");
+
+        await ExecAsync(ctx, $"""
+            INSERT INTO HistoryCleanupItems (Id, DeleteMountedFiles) VALUES
+              ('{Lower(historyId)}', 0),
+              ('{Upper(historyId)}', 1);
+            """);
+        ctx.ChangeTracker.Clear();
+
+        await ctx.Database.MigrateAsync();
+        ctx.ChangeTracker.Clear();
+
+        var remaining = await ctx.HistoryCleanupItems.AsNoTracking().SingleAsync();
+        Assert.Equal(historyId, remaining.Id);
+        Assert.True(remaining.DeleteMountedFiles);
+        Assert.Equal(Upper(historyId), await ReadTextAsync(ctx, "SELECT Id FROM HistoryCleanupItems LIMIT 1"));
+    }
+
+    [Fact]
     public async Task NormalizeGuidTextCasing_DoesNotEnqueueBlobCleanupWhenRewritingFileBlobId()
     {
         await using var harness = await MigrationHarness.CreateAsync();
@@ -435,8 +458,23 @@ public sealed class NormalizeGuidTextCasingMigrationTests
         {
             await Context.DisposeAsync();
             File.Delete(_databasePath);
-            try { File.Delete(_databasePath + "-wal"); } catch (IOException) { }
-            try { File.Delete(_databasePath + "-shm"); } catch (IOException) { }
+            try
+            {
+                File.Delete(_databasePath + "-wal");
+            }
+            catch (IOException)
+            {
+                // Best-effort: the pooled SQLite WAL file may already be gone.
+            }
+
+            try
+            {
+                File.Delete(_databasePath + "-shm");
+            }
+            catch (IOException)
+            {
+                // Best-effort: the pooled SQLite SHM file may already be gone.
+            }
         }
     }
 }

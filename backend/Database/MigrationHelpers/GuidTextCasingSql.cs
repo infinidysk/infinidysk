@@ -72,6 +72,24 @@ internal static class GuidTextCasingSql
             )
         );
 
+        UPDATE HistoryCleanupItems
+        SET DeleteMountedFiles = 1
+        WHERE rowid IN (
+            SELECT keep.rowid
+            FROM HistoryCleanupItems AS keep
+            WHERE keep.rowid = (
+                SELECT MIN(m.rowid)
+                FROM HistoryCleanupItems AS m
+                WHERE upper(m.Id) = upper(keep.Id)
+            )
+            AND EXISTS (
+                SELECT 1
+                FROM HistoryCleanupItems AS other
+                WHERE upper(other.Id) = upper(keep.Id)
+                  AND other.DeleteMountedFiles != 0
+            )
+        );
+
         DELETE FROM HistoryCleanupItems
         WHERE rowid IN (
             SELECT rowid FROM (
