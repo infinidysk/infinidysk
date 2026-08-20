@@ -8,7 +8,7 @@ public enum ArrInstanceHealthStatus
     Offline,
 }
 
-public sealed class ArrHealthSnapshot
+public sealed record ArrHealthSnapshot
 {
     public required string InstanceKey { get; init; }
     public required string DisplayName { get; init; }
@@ -27,7 +27,7 @@ public sealed class ArrHealthSnapshot
     public IReadOnlyList<ArrAwaitingSnapshot> Awaiting { get; init; } = [];
 }
 
-public sealed class ArrAwaitingSnapshot
+public sealed record ArrAwaitingSnapshot
 {
     public string? Title { get; init; }
     public Guid? DownloadId { get; init; }
