@@ -208,6 +208,19 @@ Build and run container:
 docker compose up
 ```
 
+## NuGet packages
+
+This repo uses [NuGet Central Package Management](https://learn.microsoft.com/en-us/nuget/consume-packages/central-package-management). Package versions live in the root `Directory.Packages.props`. Project files list `<PackageReference Include="..." />` without a `Version` attribute (asset metadata such as `PrivateAssets` still belongs on the project reference).
+
+To add a package:
+
+1. Add `<PackageVersion Include="The.Package" Version="x.y.z" />` to `Directory.Packages.props` if that package is not already listed.
+2. Add `<PackageReference Include="The.Package" />` to each project that needs it.
+
+To bump a version, change only `Directory.Packages.props`. Dependabot updates that file (the `nuget` ecosystem is rooted at `/`).
+
+Restore uses the repo-root `nuget.config`, which pins [nuget.org](https://www.nuget.org/) as the only package source. Central package management requires a single source or [package source mapping](https://learn.microsoft.com/en-us/nuget/consume-packages/package-source-mapping); do not add extra sources without mapping them.
+
 ## Static analysis policy
 
 All first-party C# projects build with the full .NET analyzer set
