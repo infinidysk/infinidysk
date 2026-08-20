@@ -79,6 +79,12 @@ if [ -z "${CONFIG_PATH}" ]; then
     export CONFIG_PATH="/config"
 fi
 
+# Fail before frontend start or migrations when the config path is missing
+# or not writable by the runtime user. Ownership repair is best-effort.
+# shellcheck disable=SC1091
+. /preflight-config-path.sh
+preflight_config_path || exit 1
+
 # Recursively update permissions when either database or its WAL files were
 # created by a different container user.
 chown "$PUID:$PGID" "$CONFIG_PATH"

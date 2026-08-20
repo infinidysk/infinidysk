@@ -12,7 +12,7 @@ Advanced reference for **process / container** wiring and **legacy Settings fall
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `CONFIG_PATH` | `/config` | SQLite, blobs, backups, session key |
+| `CONFIG_PATH` | `/config` | SQLite, blobs, backups, session key. Must already exist as a writable directory before startup; the backend does not create a missing path. |
 | `PUID` / `PGID` | `1000` | Container user/group for `/config` ownership |
 | `TZ` | unset | Schedules and log timestamps |
 | `BACKEND_URL` | `http://localhost:8080` | Frontend → backend (set by entrypoint if empty) |

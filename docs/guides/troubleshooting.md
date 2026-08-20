@@ -3,7 +3,8 @@
 ## Container unhealthy / won't start
 
 - Check `docker logs nzbdav` for migration or backend health failures.
-- Ensure `CONFIG_PATH` (`/config`) is writable by `PUID`/`PGID`.
+- Ensure `CONFIG_PATH` (`/config`) exists as a directory and is writable by `PUID`/`PGID`. Startup now fails before migrations with a message that names the path and expected `PUID`/`PGID` instead of a later SQLite/EF error.
+- A `/config` path inside the image is not proof a persistent volume is mounted. Confirm the Compose `volumes:` mapping on the host.
 - Frontend `/healthz` should pass during long migrations; backend `/health` must eventually succeed.
 
 ## Locked out of the web UI

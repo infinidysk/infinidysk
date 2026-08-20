@@ -171,6 +171,9 @@ jobs:
             --deterministic-only \
             --summary "${GITHUB_STEP_SUMMARY}"
 
+      - name: Verify CONFIG_PATH preflight fixtures
+        run: sh scripts/test-entrypoint-config-preflight.sh
+
       - name: Verify NuGet vulnerability gate fixtures
         run: bash scripts/test-nuget-vulnerability-gate.sh
 
@@ -393,6 +396,7 @@ jobs:
             Dockerfile \
             .dockerignore \
             entrypoint.sh \
+            scripts/preflight-config-path.sh \
             backend/NzbWebDAV.csproj \
             backend/nuget.config \
             libs/ \

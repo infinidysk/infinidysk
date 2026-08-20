@@ -47,6 +47,8 @@ docker compose up -d
 
 Set `PUID`/`PGID` from `id` on the host. Map `/mnt` (or your media paths) so completed downloads and library folders share paths with *Arr and media servers.
 
+The container fails startup before migrations if `/config` is missing, is a file, or is not writable by `PUID`/`PGID`. Ownership repair is best-effort; ACLs and group-writable mounts are accepted when the runtime user can create and delete a probe file. The image already contains an empty `/config` directory, so a path existing inside the container is not proof a host volume is mounted.
+
 !!! tip "Headless Settings [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }"
 
     Prefer infrastructure-as-code for Usenet, WebDAV, *Arr, and other Settings? Use authoritative

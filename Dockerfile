@@ -84,8 +84,9 @@ COPY --from=frontend-build /frontend/build ./frontend/build
 COPY --from=backend-build /src/backend/publish ./backend
 
 # Entry and runtime setup
+COPY scripts/preflight-config-path.sh /preflight-config-path.sh
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh /preflight-config-path.sh
 
 # Set env variables
 EXPOSE 3000
