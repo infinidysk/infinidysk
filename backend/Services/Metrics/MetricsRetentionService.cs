@@ -24,6 +24,7 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
     private static readonly TimeSpan MinuteRollupTtl = TimeSpan.FromDays(7);
     private static readonly TimeSpan SessionTtl = TimeSpan.FromDays(90);
     private static readonly TimeSpan HourlyRollupTtl = TimeSpan.FromDays(365);
+    private static readonly TimeSpan ArrImportEventTtl = TimeSpan.FromDays(90);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -77,6 +78,9 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
             "DELETE FROM FailoverMisses WHERE At < {0}", Cutoff(nowMs, fetchTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM FailoverHourly WHERE Hour < {0}", Cutoff(nowMs, HourlyRollupTtl)).ConfigureAwait(false);
+        await db.Database.ExecuteSqlRawAsync(
+            "DELETE FROM ArrImportEvents WHERE ImportedAtMs < {0}", Cutoff(nowMs, ArrImportEventTtl))
+            .ConfigureAwait(false);
 
         await db.Database.ExecuteSqlRawAsync("PRAGMA incremental_vacuum;").ConfigureAwait(false);
     }

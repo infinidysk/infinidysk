@@ -115,6 +115,39 @@ public sealed class MetricsRetentionServiceTests
     }
 
     [Fact]
+    public async Task SweepAsync_PrunesArrImportEventsOlderThanNinetyDays()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var db = harness.Context;
+        var nowMs = 200L * OneDayMs;
+        var cutoff = MetricsRetentionService.Cutoff(nowMs, TimeSpan.FromDays(90));
+
+        db.ArrImportEvents.AddRange(
+            new ArrImportEvent
+            {
+                InstanceKey = "sonarr|http://sonarr:8989",
+                ArrRecordId = 1,
+                DownloadId = Guid.NewGuid(),
+                ImportedAtMs = cutoff - OneDayMs,
+                Title = "old",
+            },
+            new ArrImportEvent
+            {
+                InstanceKey = "sonarr|http://sonarr:8989",
+                ArrRecordId = 2,
+                DownloadId = Guid.NewGuid(),
+                ImportedAtMs = cutoff + OneDayMs,
+                Title = "fresh",
+            });
+        await db.SaveChangesAsync();
+
+        await MetricsRetentionService.SweepAsync(db, nowMs, TimeSpan.FromHours(24));
+
+        Assert.Equal(1, await db.ArrImportEvents.CountAsync());
+        Assert.Equal("fresh", await db.ArrImportEvents.Select(x => x.Title).SingleAsync());
+    }
+
+    [Fact]
     public async Task SweepAsync_UsesOneHourFloorWhenConfiguredRetentionIsZero()
     {
         await using var harness = await MetricsHarness.CreateAsync();

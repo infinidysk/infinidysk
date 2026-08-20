@@ -381,6 +381,8 @@ public partial class Program
                 .AddHostedService<HealthCheckService>()
                 .AddHostedService<HealthCheckRetentionService>()
                 .AddHostedService<ArrMonitoringService>()
+                .AddSingleton<ArrHealthService>()
+                .AddHostedService(sp => sp.GetRequiredService<ArrHealthService>())
                 .AddHostedService<BlobCleanupService>()
                 .AddHostedService<NzbBlobCleanupService>()
                 .AddHostedService<NzbBackupRetentionService>()
