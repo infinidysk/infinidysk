@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { LiveReadsPanel } from "./live-reads-panel";
 
 describe("LiveReadsPanel", () => {
-    it("keeps the dashboard rail visible when there are no active reads", () => {
-        const markup = renderToStaticMarkup(<LiveReadsPanel />);
+  it("keeps the dashboard rail visible when there are no active reads", () => {
+    const markup = renderToStaticMarkup(<LiveReadsPanel />);
 
-        expect(markup).toContain("Right now");
-        expect(markup).toContain("No active reads.");
-    });
+    expect(markup).toContain("Right now");
+    expect(markup).toContain("No active reads.");
+  });
 });

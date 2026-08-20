@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  omitManagedConfigKeys,
-  pinManagedConfigKeys,
-  type ManagedEnvMap,
-} from "./managed-setting";
+import { omitManagedConfigKeys, pinManagedConfigKeys, type ManagedEnvMap } from "./managed-setting";
 
 describe("omitManagedConfigKeys", () => {
   it("returns the payload unchanged when nothing is managed", () => {

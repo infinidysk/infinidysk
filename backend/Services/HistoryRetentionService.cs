@@ -13,7 +13,9 @@ namespace NzbWebDAV.Services;
 /// clears HistoryItemId links instead of removing DavItems.
 /// Inspired by elfhosted/nzbdav database maintenance (PR #199 retention idea).
 /// </summary>
-public class HistoryRetentionService(ConfigManager configManager) : BackgroundService
+public class HistoryRetentionService(
+    ConfigManager configManager,
+    IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     private const int BatchSize = 100;
 
@@ -79,7 +81,7 @@ public class HistoryRetentionService(ConfigManager configManager) : BackgroundSe
             var retentionDays = configManager.GetHistoryRetentionDays();
             if (retentionDays <= 0) return;
 
-            await using var dbContext = new DavDatabaseContext();
+            await using var dbContext = dbContextFactory.CreateDbContext();
             var dbClient = new DavDatabaseClient(dbContext);
             var removed = await SweepAsync(dbClient, retentionDays, stoppingToken).ConfigureAwait(false);
             if (removed > 0)

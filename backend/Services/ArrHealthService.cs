@@ -40,13 +40,18 @@ public sealed class ArrHealthService : BackgroundService
     internal TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(60);
     internal Func<string, ArrConfig.ConnectionDetails, ArrClient> ClientFactory { get; set; } = CreateClient;
     internal Func<MetricsDbContext> MetricsContextFactory { get; set; } = static () => new MetricsDbContext();
-    internal Func<DavDatabaseContext> DavContextFactory { get; set; } = static () => new DavDatabaseContext();
+    internal Func<DavDatabaseContext> DavContextFactory { get; set; }
     internal int CycleAttempts => _cycleAttempts;
     private int _cycleAttempts;
 
-    public ArrHealthService(ConfigManager configManager)
+    public ArrHealthService(
+        ConfigManager configManager,
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
     {
         _configManager = configManager;
+        DavContextFactory = dbContextFactory is null
+            ? static () => new DavDatabaseContext()
+            : dbContextFactory.CreateDbContext;
         _configManager.OnConfigChanged += OnConfigChanged;
     }
 

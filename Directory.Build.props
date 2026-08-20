@@ -26,10 +26,12 @@
     <!-- Every warning in first-party code fails the build. Suppression policy:
          CONTRIBUTING.md "Static analysis policy". -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Explicit so CA2016/CA1001 stay errors if the blanket gate is ever narrowed (#849). -->
+    <WarningsAsErrors>$(WarningsAsErrors);CA2016;CA1001</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="10.0.302">
+    <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>

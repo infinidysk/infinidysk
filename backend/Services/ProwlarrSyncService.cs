@@ -26,13 +26,19 @@ public sealed class ProwlarrSyncService : BackgroundService
     private readonly IndexerConfigWriteLock _writeLock;
     private readonly SemaphoreSlim _syncGate = new(1, 1);
 
-    internal Func<DavDatabaseContext> FreshContextFactory { get; set; } = static () => new DavDatabaseContext();
+    internal Func<DavDatabaseContext> FreshContextFactory { get; set; }
     internal IProwlarrClientFactory ClientFactory { get; set; } = new ProwlarrClientFactory();
 
-    public ProwlarrSyncService(ConfigManager configManager, IndexerConfigWriteLock writeLock)
+    public ProwlarrSyncService(
+        ConfigManager configManager,
+        IndexerConfigWriteLock writeLock,
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
     {
         _configManager = configManager;
         _writeLock = writeLock;
+        FreshContextFactory = dbContextFactory is null
+            ? static () => new DavDatabaseContext()
+            : dbContextFactory.CreateDbContext;
         _configManager.OnConfigChanged += OnConfigChanged;
     }
 

@@ -11,7 +11,7 @@ namespace NzbWebDAV.Services;
 /// Cascade-cleanup on queue/history removal handles "this content went away";
 /// this handles "this content was never queued / never played and is now stale."
 /// </summary>
-public class WatchdogPurgeService : BackgroundService
+public class WatchdogPurgeService(IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     private static readonly TimeSpan RetentionWindow = TimeSpan.FromDays(30);
     private static readonly TimeSpan PurgeInterval = TimeSpan.FromHours(1);
@@ -22,7 +22,7 @@ public class WatchdogPurgeService : BackgroundService
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = dbContextFactory.CreateDbContext();
 
                 var cutoff = DateTimeOffset.UtcNow - RetentionWindow;
                 var deleted = await dbContext.WatchdogEntries

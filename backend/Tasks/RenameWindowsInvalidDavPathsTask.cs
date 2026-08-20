@@ -180,7 +180,7 @@ public class RenameWindowsInvalidDavPathsTask(
         }
 
         await dbContext.SaveChangesAsync(CancellationToken).ConfigureAwait(false);
-        _ = DavDatabaseContext.RcloneVfsForget(forgetItems);
+        _ = DavDatabaseContext.RcloneVfsForget(forgetItems, CancellationToken);
         Report($"Applying renames...\nRenamed {plan.Renames.Count}...");
     }
 

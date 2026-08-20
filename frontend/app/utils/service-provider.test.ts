@@ -7,7 +7,9 @@ import {
   type ServiceProviderConfig,
 } from "./service-provider";
 
-function configWith(disabledFeatures: ServiceProviderConfig["disabledFeatures"]): ServiceProviderConfig {
+function configWith(
+  disabledFeatures: ServiceProviderConfig["disabledFeatures"],
+): ServiceProviderConfig {
   return { name: "ElfHosted", url: "https://elfhosted.com", disabledFeatures };
 }
 
@@ -20,12 +22,9 @@ describe("isNavFeatureId", () => {
     "settings.queue",
     "settings.streaming",
     "settings.migration",
-  ])(
-    "accepts known identifier %s",
-    (value) => {
-      expect(isNavFeatureId(value)).toBe(true);
-    },
-  );
+  ])("accepts known identifier %s", (value) => {
+    expect(isNavFeatureId(value)).toBe(true);
+  });
 
   it.each(["", "watchtower ", "Watchtower", "unknown-feature"])(
     "rejects unknown identifier %s",

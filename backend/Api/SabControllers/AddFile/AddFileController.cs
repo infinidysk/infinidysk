@@ -201,7 +201,7 @@ public class AddFileController(
                     ex);
             }
 
-            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], request.CancellationToken);
         }
         catch
         {
@@ -252,7 +252,7 @@ public class AddFileController(
 
         await queueManager.RemoveQueueItemsAsync([existingId.Value], dbClient, ct).ConfigureAwait(false);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, existingId.Value.ToString());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
     }
 
     private async Task RemoveConflictingQueueItemViaFreshContextAsync(
@@ -279,7 +279,7 @@ public class AddFileController(
 
         await queueManager.RemoveQueueItemsAsync([conflictingId.Value], freshClient, ct).ConfigureAwait(false);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, conflictingId.Value.ToString());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
     }
 
     internal static bool IsCategoryFileNameUniqueViolation(DbUpdateException ex)

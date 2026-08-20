@@ -41,6 +41,12 @@ export function Tabs<T extends string>({
   );
 }
 
-export function TabPanel({ children, className = "" }: { children: ReactNode; className?: string }) {
+export function TabPanel({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return <div className={`pt-4 ${className}`}>{children}</div>;
 }

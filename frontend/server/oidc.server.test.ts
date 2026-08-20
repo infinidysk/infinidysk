@@ -74,12 +74,11 @@ describe("OIDC configuration", () => {
     enableOidc();
     vi.stubEnv("OIDC_USERNAME_CLAIM", "nickname");
 
-    expect(resolveOidcUsername({ nickname: "alice", email: "alice@example.com" }))
-      .toBe("alice");
-    expect(resolveOidcUsername({ email: "alice@example.com" }))
-      .toBe("alice@example.com");
-    expect(() => resolveOidcUsername({ name: "Alice" }))
-      .toThrow("does not contain a usable username claim");
+    expect(resolveOidcUsername({ nickname: "alice", email: "alice@example.com" })).toBe("alice");
+    expect(resolveOidcUsername({ email: "alice@example.com" })).toBe("alice@example.com");
+    expect(() => resolveOidcUsername({ name: "Alice" })).toThrow(
+      "does not contain a usable username claim",
+    );
   });
 
   it("maps matching string and array claims to admin", () => {

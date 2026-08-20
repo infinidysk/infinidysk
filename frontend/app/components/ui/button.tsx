@@ -1,7 +1,8 @@
 import { forwardRef } from "react";
 import type { ButtonHTMLAttributes } from "react";
 
-type ButtonVariant = "primary" | "success" | "danger" | "warning" | "secondary" | "outline" | "ghost";
+type ButtonVariant =
+  "primary" | "success" | "danger" | "warning" | "secondary" | "outline" | "ghost";
 type ButtonSize = "xsmall" | "small" | "medium" | "large" | "rounded";
 
 const variants: Record<ButtonVariant, string> = {
