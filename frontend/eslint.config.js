@@ -10,6 +10,7 @@ export default tseslint.config(
       ".react-router/**",
       "node_modules/**",
       "coverage/**",
+      "app/generated/**",
       // Build/compile outputs that may exist locally but are gitignored.
       "server.js",
       "server.d.ts",
@@ -106,7 +107,7 @@ export default tseslint.config(
   {
     // Root config files are not part of any tsconfig project; lint them
     // without type information.
-    files: ["*.js", "*.ts", "*.mjs"],
+    files: ["*.js", "*.ts", "*.mjs", "scripts/**/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
   },
 );

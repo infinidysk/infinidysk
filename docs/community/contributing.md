@@ -28,7 +28,11 @@ cd frontend && npm install && npm run dev
 
 UI: `http://localhost:5173` → proxies to backend `:5000`.
 
-`run-backend.sh` defaults `LOG_LEVEL=Debug` and `LOG_BUFFER_SIZE=2000` for local debugging. Docker leaves these unset. The script also enables the contributor-only admin API reference locally: sign in and use `http://localhost:5173/scalar/` through the frontend. The backend's `/openapi/admin.json` endpoint requires `x-api-key` when accessed directly. Set `ENABLE_API_DOCS=false` to disable it; Docker keeps the reference disabled unless explicitly enabled. Stream tracing is off by default — toggle it from Settings → Support, or export `STREAM_TRACE_EVENTS=20000` for an always-on capture.
+`run-backend.sh` defaults `LOG_LEVEL=Debug` and `LOG_BUFFER_SIZE=2000` for local debugging. Docker leaves these unset. The script also enables the contributor-only admin API reference locally: sign in and use `http://localhost:5173/scalar/` through the frontend. The backend's `/openapi/admin.json` endpoint requires `x-api-key` when accessed directly. Set `ENABLE_API_DOCS=false` to disable it; Docker keeps the reference disabled unless explicitly enabled.
+
+After changing a frontend-used admin endpoint, refresh the committed contract with `./scripts/export-admin-openapi.sh` and regenerate types with `cd frontend && npm run generate:api`.
+
+Stream tracing is off by default — toggle it from Settings → Support, or export `STREAM_TRACE_EVENTS=20000` for an always-on capture.
 
 ## Real-provider playback
 

@@ -18,6 +18,8 @@ ENV NZBDAV_URL_BASE=${NZBDAV_URL_BASE}
 
 COPY ./frontend/package.json ./frontend/package-lock.json ./
 RUN npm ci
+COPY ./contracts/openapi/admin-v1.json /contracts/openapi/admin-v1.json
+ENV ADMIN_OPENAPI_CONTRACT=/contracts/openapi/admin-v1.json
 COPY ./frontend ./
 RUN npm run build
 RUN npm run build:server

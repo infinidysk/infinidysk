@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.AspNetCore.Http;
 using Microsoft.OpenApi;
-using NzbWebDAV.Config;
 
 namespace NzbWebDAV.Api.OpenApi;
 
@@ -20,7 +19,7 @@ internal sealed class AdminOpenApiDocumentTransformer : IOpenApiDocumentTransfor
         CancellationToken cancellationToken)
     {
         document.Info.Title = "InfiniDysk Admin API";
-        document.Info.Version = ConfigManager.AppVersion;
+        document.Info.Version = AdminApiContractCatalog.ContractVersion;
         document.Info.Description =
             "Contributor-facing reference for the InfiniDysk admin REST API. "
             + "SABnzbd compatibility, WebDAV, streaming, adapters, and file-transfer routes are intentionally excluded.";
@@ -83,6 +82,24 @@ internal sealed class AdminOpenApiDocumentTransformer : IOpenApiDocumentTransfor
                     : forwardedPrefix.TrimEnd('/') + "/",
             },
         ];
+        CollapseNonCanonicalVerbs(document);
         return Task.CompletedTask;
+    }
+
+    private static void CollapseNonCanonicalVerbs(OpenApiDocument document)
+    {
+        if (document.Paths is null) return;
+        foreach (var (path, item) in document.Paths)
+        {
+            var canonical = AdminApiContractCatalog.CanonicalMethods(path);
+            if (canonical.Count == 0 || item.Operations is null || item.Operations.Count <= 1)
+                continue;
+
+            foreach (var method in item.Operations.Keys.ToList())
+            {
+                if (!canonical.Contains(method.Method))
+                    item.Operations.Remove(method);
+            }
+        }
     }
 }

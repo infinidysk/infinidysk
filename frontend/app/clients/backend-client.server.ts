@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { adminApi } from "~/clients/admin-operations";
 import {
     toStreamTracingStatus,
     type StreamTracingStatus,
@@ -272,7 +273,7 @@ async function call<T = Record<string, unknown>>(
 
 class BackendClient {
     public async isOnboarding(): Promise<boolean> {
-        const data = await call<{ isOnboarding: boolean }>("/api/is-onboarding", "Failed to fetch onboarding status", {
+        const data = await call<{ isOnboarding: boolean }>(adminApi.isOnboarding, "Failed to fetch onboarding status", {
             method: "GET",
             headers: { "Content-Type": "application/json" },
         });
@@ -280,7 +281,7 @@ class BackendClient {
     }
 
     public async createAccount(username: string, password: string): Promise<boolean> {
-        const data = await call<{ status: boolean }>("/api/create-account", "Failed to create account", {
+        const data = await call<{ status: boolean }>(adminApi.createAccount, "Failed to create account", {
             method: "POST",
             body: form(["username", username], ["password", password], ["type", "admin"]),
         });
@@ -288,7 +289,7 @@ class BackendClient {
     }
 
     public async authenticate(username: string, password: string): Promise<boolean> {
-        const data = await call<{ authenticated: boolean }>("/api/authenticate", "Failed to authenticate", {
+        const data = await call<{ authenticated: boolean }>(adminApi.authenticate, "Failed to authenticate", {
             method: "POST",
             body: form(["username", username], ["password", password], ["type", "admin"]),
         });
@@ -327,7 +328,7 @@ class BackendClient {
     }
 
     public async searchIndexers(q: string, limit: number = 100): Promise<SearchIndexersResponse> {
-        return await call<SearchIndexersResponse>("/api/search-indexers", "Failed to search indexers", {
+        return await call<SearchIndexersResponse>(adminApi.searchIndexers, "Failed to search indexers", {
             method: "POST",
             body: form(["q", q], ["limit", String(limit)]),
         });
@@ -355,7 +356,7 @@ class BackendClient {
 
     public async listWebdavDirectory(directory: string): Promise<DirectoryItem[]> {
         try {
-            const data = await call<{ items: DirectoryItem[] }>("/api/list-webdav-directory", "Failed to list webdav directory", {
+            const data = await call<{ items: DirectoryItem[] }>(adminApi.listWebdavDirectory, "Failed to list webdav directory", {
                 method: "POST",
                 body: form(["directory", directory]),
             });
@@ -369,7 +370,7 @@ class BackendClient {
     }
 
     public async getConfig(keys: string[]): Promise<ConfigItem[]> {
-        const data = await call<{ configItems?: ConfigItem[] }>("/api/get-config", "Failed to get config items", {
+        const data = await call<{ configItems?: ConfigItem[] }>(adminApi.getConfig, "Failed to get config items", {
             method: "POST",
             body: form(...keys.map(key => ["config-keys", key] as [string, string])),
         });
@@ -377,7 +378,7 @@ class BackendClient {
     }
 
     public async updateConfig(configItems: ConfigItem[]): Promise<boolean> {
-        const data = await call<{ status: boolean }>("/api/update-config", "Failed to update config items", {
+        const data = await call<{ status: boolean }>(adminApi.updateConfig, "Failed to update config items", {
             method: "POST",
             body: form(...configItems.map(item => [item.configName, item.configValue] as [string, string])),
         });
@@ -386,41 +387,41 @@ class BackendClient {
 
     public async getHealthCheckQueue(pageSize?: number): Promise<HealthCheckQueueResponse> {
         const query = pageSize !== undefined ? `?pageSize=${pageSize}` : "";
-        return await call<HealthCheckQueueResponse>(`/api/get-health-check-queue${query}`, "Failed to get health check queue", {
+        return await call<HealthCheckQueueResponse>(`${adminApi.getHealthCheckQueue}${query}`, "Failed to get health check queue", {
             method: "GET",
         });
     }
 
     public async getWatchdogEntries(limit: number = 200): Promise<WatchdogEntry[]> {
-        const data = await call<{ entries?: WatchdogEntry[] }>(`/api/get-watchdog-entries?limit=${limit}`, "Failed to get watchdog entries", {
+        const data = await call<{ entries?: WatchdogEntry[] }>(`${adminApi.getWatchdogEntries}?limit=${limit}`, "Failed to get watchdog entries", {
             method: "GET",
         });
         return data.entries ?? [];
     }
 
     public async getExcludeSyncStatus(): Promise<ExcludeSyncUrlStatus[]> {
-        const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>("/api/exclude-sync", "Failed to get exclude-sync status", {
+        const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>(adminApi.excludeSync, "Failed to get exclude-sync status", {
             method: "GET",
         });
         return data.urls || [];
     }
 
     public async refreshExcludeSync(): Promise<ExcludeSyncUrlStatus[]> {
-        const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>("/api/exclude-sync", "Failed to refresh exclude-sync", {
+        const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>(adminApi.excludeSync, "Failed to refresh exclude-sync", {
             method: "POST",
         });
         return data.urls || [];
     }
 
     public async clearWatchdogEntries(): Promise<number> {
-        const data = await call<{ deleted?: number }>(`/api/clear-watchdog-entries`, "Failed to clear watchdog entries", {
+        const data = await call<{ deleted?: number }>(adminApi.clearWatchdogEntries, "Failed to clear watchdog entries", {
             method: "POST",
         });
         return data.deleted ?? 0;
     }
 
     public async clearHealthCheckHistory(): Promise<{ deletedResults: number; deletedStats: number }> {
-        const data = await call<{ deletedResults?: number; deletedStats?: number }>(`/api/clear-health-check-history`, "Failed to clear health-check history", {
+        const data = await call<{ deletedResults?: number; deletedStats?: number }>(adminApi.clearHealthCheckHistory, "Failed to clear health-check history", {
             method: "POST",
         });
         return {
@@ -431,7 +432,7 @@ class BackendClient {
 
     public async clearOverviewStats(providerId?: string): Promise<number> {
         const query = providerId ? `?provider=${encodeURIComponent(providerId)}` : "";
-        const data = await call<{ deletedRows?: number }>(`/api/clear-overview-stats${query}`, "Failed to clear overview statistics", {
+        const data = await call<{ deletedRows?: number }>(`${adminApi.clearOverviewStats}${query}`, "Failed to clear overview statistics", {
             method: "POST",
         });
         return data.deletedRows ?? 0;
@@ -444,7 +445,7 @@ class BackendClient {
         if (params.repairStatus) qs.set("repairStatus", params.repairStatus);
         if (params.result) qs.set("result", params.result);
         const query = qs.toString();
-        return await call<HealthCheckHistoryResponse>(`/api/get-health-check-history${query ? `?${query}` : ""}`, "Failed to get health check history", {
+        return await call<HealthCheckHistoryResponse>(`${adminApi.getHealthCheckHistory}${query ? `?${query}` : ""}`, "Failed to get health check history", {
             method: "GET",
         });
     }
@@ -454,7 +455,7 @@ class BackendClient {
         sections: OverviewSections = "all",
     ): Promise<OverviewStatsResponse> {
         return await call<OverviewStatsResponse>(
-            `/api/get-overview-stats?window=${window}&sections=${sections}`,
+            `${adminApi.getOverviewStats}?window=${window}&sections=${sections}`,
             "Failed to get overview stats",
             { method: "GET" },
         );
@@ -468,13 +469,13 @@ class BackendClient {
         if (params.search) qs.set("search", params.search);
         if (params.beforeSequence !== undefined) qs.set("beforeSequence", String(params.beforeSequence));
         const query = qs.toString();
-        return await call<GetLogsResponse>(`/api/get-logs${query ? `?${query}` : ""}`, "Failed to get logs", {
+        return await call<GetLogsResponse>(`${adminApi.getLogs}${query ? `?${query}` : ""}`, "Failed to get logs", {
             method: "GET",
         });
     }
 
     public async getStreamTracingStatus(): Promise<StreamTracingStatus> {
-        const data = await call<Record<string, unknown>>("/api/get-stream-traces?limit=1", "Failed to get stream tracing status", {
+        const data = await call<Record<string, unknown>>(`${adminApi.getStreamTraces}?limit=1`, "Failed to get stream tracing status", {
             method: "GET",
         });
         return toStreamTracingStatus(data);
@@ -485,7 +486,7 @@ class BackendClient {
         minutes: number = 30,
         capacity: number = 100_000,
     ): Promise<StreamTracingStatus> {
-        const data = await call<Record<string, unknown>>("/api/set-stream-tracing", "Failed to update stream tracing", {
+        const data = await call<Record<string, unknown>>(adminApi.setStreamTracing, "Failed to update stream tracing", {
             method: "POST",
             body: form(
                 ["enabled", enabled ? "true" : "false"],
@@ -497,7 +498,7 @@ class BackendClient {
     }
 
     public async discardStreamTraces(): Promise<StreamTracingStatus> {
-        const data = await call<Record<string, unknown>>("/api/discard-stream-traces", "Failed to discard stream traces", {
+        const data = await call<Record<string, unknown>>(adminApi.discardStreamTraces, "Failed to discard stream traces", {
             method: "POST",
         });
         return toStreamTracingStatus(data);
@@ -513,13 +514,13 @@ class BackendClient {
         if (params.expander) qs.set("expander", params.expander);
         if (params.statsOnly) qs.set("statsOnly", "1");
         const query = qs.toString();
-        return await call<WatchtowerData>(`/api/get-watchtower${query ? `?${query}` : ""}`, "Failed to get watchtower", {
+        return await call<WatchtowerData>(`${adminApi.getWatchtower}${query ? `?${query}` : ""}`, "Failed to get watchtower", {
             method: "GET",
         });
     }
 
     public async watchtowerMutate(fields: Record<string, string>): Promise<boolean> {
-        const data = await call<{ status: boolean }>("/api/watchtower-mutate", "Watchtower action failed", {
+        const data = await call<{ status: boolean }>(adminApi.watchtowerMutate, "Watchtower action failed", {
             method: "POST",
             body: form(...Object.entries(fields).map(([k, v]) => [k, v] as [string, string])),
         });
@@ -527,7 +528,7 @@ class BackendClient {
     }
 
     public async discoverStremioCatalogs(manifestUrl: string): Promise<DiscoverCatalogsResponse> {
-        return await call<DiscoverCatalogsResponse>("/api/watchtower-discover-catalogs", "Failed to discover catalogs", {
+        return await call<DiscoverCatalogsResponse>(adminApi.discoverStremioCatalogs, "Failed to discover catalogs", {
             method: "POST",
             body: form(["url", manifestUrl]),
         });
