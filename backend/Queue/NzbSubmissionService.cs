@@ -333,6 +333,9 @@ public class NzbSubmissionService(
                 counter++;
             }
 
+            if (!destPath.StartsWith(destDirPrefix, StringComparison.Ordinal))
+                throw new ArgumentException("The NZB backup file must stay within its category directory.");
+
             await using var src = BlobStore.ReadBlob(id);
             await using var dst = System.IO.File.Create(destPath);
             await src!.CopyToAsync(dst).ConfigureAwait(false);
