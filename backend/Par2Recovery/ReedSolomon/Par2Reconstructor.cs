@@ -225,7 +225,7 @@ public sealed class Par2Reconstructor
         throw new ArgumentOutOfRangeException(nameof(globalSlice));
     }
 
-    private static bool VerifySliceChecksum(byte[] slice, IfscPacket.SliceChecksum checksum)
+    internal static bool VerifySliceChecksum(byte[] slice, IfscPacket.SliceChecksum checksum)
     {
         var md5 = MD5.HashData(slice);
         if (!md5.AsSpan().SequenceEqual(checksum.Md5)) return false;

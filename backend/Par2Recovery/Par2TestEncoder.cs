@@ -21,22 +21,58 @@ public static class Par2TestEncoder
         string fileName,
         byte[] fileData,
         ulong sliceSize,
-        IReadOnlyList<uint> recoveryExponents)
+        IReadOnlyList<uint> recoveryExponents,
+        byte[]? fileHashOverride = null)
+        => EncodeSet(
+            [(fileName, fileData)],
+            sliceSize,
+            recoveryExponents,
+            fileHashOverride is null
+                ? null
+                : new Dictionary<string, byte[]>(StringComparer.Ordinal) { [fileName] = fileHashOverride });
+
+    public static (byte[] indexBytes, byte[] volumeBytes) EncodeSet(
+        IReadOnlyList<(string FileName, byte[] FileData)> files,
+        ulong sliceSize,
+        IReadOnlyList<uint> recoveryExponents,
+        IReadOnlyDictionary<string, byte[]>? fileHashOverrides = null)
     {
+        ArgumentOutOfRangeException.ThrowIfEqual(files.Count, 0);
+
         var recoverySetId = RandomNumberGenerator.GetBytes(16);
-        var fileId = MD5.HashData(fileData.Length >= 16 ? fileData.AsSpan(0, 16) : fileData);
-        var fileHash = MD5.HashData(fileData);
-        var file16k = MD5.HashData(fileData.AsSpan(0, Math.Min(16 * 1024, fileData.Length)));
-        var slices = BuildSlices(fileData, sliceSize);
-        var ifscBody = BuildIfscBody(fileId, slices);
-
+        var fileIds = new byte[files.Count][];
+        var perFileSlices = new byte[files.Count][][];
         using var index = new MemoryStream();
-        WritePacket(index, FileDesc.PacketType, BuildFileDescBody(fileId, fileHash, file16k, fileData.Length, fileName), recoverySetId);
-        WritePacket(index, MainPacket.PacketType, BuildMainBody(sliceSize, 1, [fileId]), recoverySetId);
-        WritePacket(index, IfscPacket.PacketType, ifscBody, recoverySetId);
 
+        for (var i = 0; i < files.Count; i++)
+        {
+            var (fileName, fileData) = files[i];
+            fileIds[i] = files.Count == 1
+                ? MD5.HashData(fileData.Length >= 16 ? fileData.AsSpan(0, 16) : fileData)
+                : MD5.HashData(
+                    Encoding.UTF8.GetBytes($"{i}:{fileName}")
+                        .Concat(fileData.Length >= 16 ? fileData.AsSpan(0, 16).ToArray() : fileData)
+                        .ToArray());
+            var fileHash = fileHashOverrides is not null
+                           && fileHashOverrides.TryGetValue(fileName, out var overrideHash)
+                ? overrideHash
+                : MD5.HashData(fileData);
+            var file16k = MD5.HashData(fileData.AsSpan(0, Math.Min(16 * 1024, fileData.Length)));
+            perFileSlices[i] = BuildSlices(fileData, sliceSize);
+            WritePacket(
+                index,
+                FileDesc.PacketType,
+                BuildFileDescBody(fileIds[i], fileHash, file16k, fileData.Length, fileName),
+                recoverySetId);
+        }
+
+        WritePacket(index, MainPacket.PacketType, BuildMainBody(sliceSize, (uint)files.Count, fileIds), recoverySetId);
+        for (var i = 0; i < files.Count; i++)
+            WritePacket(index, IfscPacket.PacketType, BuildIfscBody(fileIds[i], perFileSlices[i]), recoverySetId);
+
+        var allSlices = perFileSlices.SelectMany(slices => slices).ToArray();
         var recoveryPayloads = recoveryExponents
-            .Select(exp => (exp, ComputeRecoverySlice(exp, sliceSize, slices)))
+            .Select(exp => (exp, ComputeRecoverySlice(exp, sliceSize, allSlices)))
             .ToList();
 
         using var volume = new MemoryStream();

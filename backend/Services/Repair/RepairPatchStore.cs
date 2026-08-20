@@ -122,24 +122,49 @@ public sealed class RepairPatchStore
 
     public void CommitPatch(string segmentId, byte[] bytes, UsenetYencHeader header)
     {
-        if (bytes.Length != header.PartSize)
-            throw new ArgumentException("Patch bytes length does not match yEnc header PartSize.");
+        CommitPatches([(segmentId, bytes, header)]);
+    }
 
-        var hash = Hash(segmentId);
-        var blobPath = BlobPath(hash);
-        var tempPath = blobPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
+    /// <summary>
+    /// Writes every patch to a temp file first, then publishes them together so a
+    /// verification failure before this call cannot leave a partial catalog.
+    /// </summary>
+    public void CommitPatches(IReadOnlyList<(string SegmentId, byte[] Bytes, UsenetYencHeader Header)> patches)
+    {
+        var staged = new List<(string Hash, string TempPath, string HeaderPath, long Size)>(patches.Count);
         try
         {
-            File.WriteAllBytes(tempPath, bytes);
-            File.WriteAllText(blobPath + ".h", JsonSerializer.Serialize(header, HeaderJsonOptions));
-            File.Move(tempPath, blobPath, overwrite: true);
-            OnFinalized(hash, bytes.Length);
+            foreach (var (segmentId, bytes, header) in patches)
+            {
+                if (bytes.Length != header.PartSize)
+                    throw new ArgumentException("Patch bytes length does not match yEnc header PartSize.");
+
+                var hash = Hash(segmentId);
+                var blobPath = BlobPath(hash);
+                Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
+                var tempPath = blobPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                var headerPath = blobPath + ".h." + Guid.NewGuid().ToString("N") + ".tmp";
+                File.WriteAllBytes(tempPath, bytes);
+                File.WriteAllText(headerPath, JsonSerializer.Serialize(header, HeaderJsonOptions));
+                staged.Add((hash, tempPath, headerPath, bytes.Length));
+            }
+
+            foreach (var (hash, tempPath, headerPath, size) in staged)
+            {
+                var blobPath = BlobPath(hash);
+                File.Move(headerPath, blobPath + ".h", overwrite: true);
+                File.Move(tempPath, blobPath, overwrite: true);
+                OnFinalized(hash, size);
+            }
         }
         catch
         {
-            SafeDelete(tempPath);
-            SafeDelete(blobPath + ".h");
+            foreach (var (_, tempPath, headerPath, _) in staged)
+            {
+                SafeDelete(tempPath);
+                SafeDelete(headerPath);
+            }
+
             throw;
         }
     }

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -395,45 +396,160 @@ public class Par2RepairService : BackgroundService
         if (par2Context == null)
             return RepairExecutionResult.NotFeasible("No matching PAR2 recovery set found in the NZB.");
 
-        var missingSegments = ResolveMissingSegments(job.MissingSegmentIds, segmentIds);
-        if (missingSegments.Count == 0 && job.MissingSegmentIds.Length == 0)
+        var sliceSize = (int)par2Context.Main.SliceSize;
+        var targetKey = Convert.ToHexString(par2Context.Main.FileIds[par2Context.TargetFileIndex]);
+        var targetDesc = par2Context.FileDescsById[targetKey];
+        var targetIfsc = par2Context.IfscsByFileId[targetKey];
+        var fileLength = davItem.FileSize ?? (long)targetDesc.FileLength;
+        var globalSliceBase = GlobalSliceOffset(
+            par2Context.TargetFileIndex, par2Context.Main, par2Context.IfscsByFileId);
+
+        LongRange[] segmentRanges;
+        try
         {
-            missingSegments = segmentIds
-                .Select((id, index) => new MissingSegment(id, index))
-                .ToList();
+            segmentRanges = BuildSegmentRanges(nzbFile, segmentIds.Length, fileLength);
+        }
+        catch (InvalidOperationException e)
+        {
+            return RepairExecutionResult.NotFeasible(e.Message);
         }
 
-        if (missingSegments.Count == 0)
-            return RepairExecutionResult.NotFeasible("No missing segments to repair.");
+        if (!Par2FileSliceMap.TryCreate(
+                fileLength,
+                globalSliceBase,
+                sliceSize,
+                targetIfsc.Slices.Count,
+                segmentRanges,
+                out var sliceMap,
+                out var mapError)
+            || sliceMap is null)
+        {
+            return RepairExecutionResult.NotFeasible(mapError ?? "Could not map segments onto PAR2 slices.");
+        }
 
-        var sliceSize = (int)par2Context.Main.SliceSize;
-        var maxMissingSlices = _configManager.GetPar2MaxMissingSlices();
-        var maxMemoryBytes = _configManager.GetPar2MaxMemoryMb() * 1024L * 1024L;
-        var workingSetBytes = (long)(missingSegments.Count + 2) * sliceSize;
-        if (workingSetBytes > maxMemoryBytes)
-            return RepairExecutionResult.NotFeasible(
-                $"PAR2 working set {workingSetBytes} bytes exceeds memory cap.");
+        var requested = ResolveMissingSegments(job.MissingSegmentIds, segmentIds);
+        var persistedMissing = ValidIndices(nzbFile.MissingSegmentIndices, segmentIds.Length);
+        var persistedCorrupt = ValidIndices(nzbFile.CorruptSegmentIndices, segmentIds.Length);
+        var unavailableSegments = new HashSet<int>();
+        foreach (var item in requested)
+            unavailableSegments.Add(item.Index);
+        unavailableSegments.UnionWith(persistedMissing);
+        unavailableSegments.UnionWith(persistedCorrupt);
 
-        var releaseBytesCap = _configManager.GetPar2MaxReleaseGb() * 1024L * 1024L * 1024L;
-        var releaseBytes = EstimateReleaseBytes(par2Context.Main, par2Context.FileDescsById);
-        if (releaseBytes > releaseBytesCap)
-            return RepairExecutionResult.NotFeasible(
-                $"Recovery set size {releaseBytes} bytes exceeds release cap.");
+        if (unavailableSegments.Count == 0 && job.MissingSegmentIds.Length == 0
+            && persistedMissing.Count == 0 && persistedCorrupt.Count == 0)
+        {
+            unavailableSegments.UnionWith(Enumerable.Range(0, segmentIds.Length));
+        }
 
-        var segmentRanges = BuildSegmentRanges(nzbFile, segmentIds.Length, davItem.FileSize);
-        var missingSliceIndices = MapMissingSegmentsToSlices(
-            missingSegments, segmentRanges, sliceSize, par2Context.TargetFileIndex, par2Context.Main, par2Context.IfscsByFileId);
-        if (missingSliceIndices.Count == 0)
-            return RepairExecutionResult.NotFeasible("Missing segments do not map to PAR2 slices.");
+        if (unavailableSegments.Count == 0)
+            return RepairExecutionResult.NotFeasible("No missing or corrupt segments to repair.");
 
-        if (missingSliceIndices.Count > maxMissingSlices)
-            return RepairExecutionResult.NotFeasible(
-                $"Missing slice count {missingSliceIndices.Count} exceeds cap {maxMissingSlices}.");
+        var unavailableSlices = new HashSet<int>();
+        try
+        {
+            foreach (var index in unavailableSegments)
+            {
+                foreach (var slice in sliceMap.GlobalSlicesForSegment(index))
+                    unavailableSlices.Add(slice);
+            }
+        }
+        catch (OverflowException)
+        {
+            return RepairExecutionResult.NotFeasible("Segment-to-slice mapping overflowed.");
+        }
+
+        if (unavailableSlices.Count == 0)
+            return RepairExecutionResult.NotFeasible("Missing or corrupt segments do not map to PAR2 slices.");
 
         var fetchConcurrency = _configManager.GetPar2FetchConcurrency();
         using var fetchGate = new SemaphoreSlim(fetchConcurrency, fetchConcurrency);
         var bytesRead = 0L;
+        var accessor = new SliceSegmentAccessor(
+            segmentIds,
+            sliceMap,
+            nzbDocument,
+            par2Context,
+            _usenetClient,
+            fetchGate,
+            unavailableSlices,
+            onBytesRead: n => bytesRead += n);
+        foreach (var index in persistedMissing)
+            accessor.NoteMissing(index);
+        foreach (var index in persistedCorrupt)
+            accessor.NoteCorrupt(index);
 
+        try
+        {
+            await DiscoverUnavailableSourcesAsync(
+                    accessor, sliceMap, targetIfsc, unavailableSegments, unavailableSlices, ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+
+        var discoveredMissing = accessor.MissingSegmentIndices.Except(persistedMissing).Except(requested.Select(x => x.Index)).Count();
+        var discoveredCorrupt = accessor.CorruptSegmentIndices.Except(persistedCorrupt).Except(requested.Select(x => x.Index)).Count();
+        Log.Information(
+            "PAR2 repair targeting {Path}: requested={Requested} persistedMissing={PersistedMissing} "
+            + "persistedCorrupt={PersistedCorrupt} discoveredMissing={DiscoveredMissing} "
+            + "discoveredCorrupt={DiscoveredCorrupt} slices={Slices}",
+            davItem.Path,
+            requested.Count,
+            persistedMissing.Count,
+            persistedCorrupt.Count,
+            discoveredMissing,
+            discoveredCorrupt,
+            unavailableSlices.Count);
+
+        var maxMissingSlices = _configManager.GetPar2MaxMissingSlices();
+        if (unavailableSlices.Count > maxMissingSlices)
+        {
+            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
+            return RepairExecutionResult.NotFeasible(
+                $"Missing slice count {unavailableSlices.Count} exceeds cap {maxMissingSlices}.");
+        }
+
+        var patchTargets = SegmentsOverlappingSlices(sliceMap, unavailableSlices, segmentIds);
+        var stagedPatchBytes = patchTargets.Sum(target => segmentRanges[target.Index].Count);
+        var presentSliceCount = Math.Max(0, sliceMap.SliceCount - unavailableSlices.Count);
+        long workingSetBytes;
+        try
+        {
+            workingSetBytes = EstimateWorkingSetBytes(
+                accessor.CachedBodyBytes,
+                presentSliceCount,
+                unavailableSlices.Count,
+                unavailableSlices.Count,
+                stagedPatchBytes,
+                sliceSize);
+        }
+        catch (OverflowException)
+        {
+            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
+            return RepairExecutionResult.NotFeasible("PAR2 working-set estimate overflowed.");
+        }
+
+        var maxMemoryBytes = _configManager.GetPar2MaxMemoryMb() * 1024L * 1024L;
+        if (workingSetBytes > maxMemoryBytes)
+        {
+            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
+            return RepairExecutionResult.NotFeasible(
+                $"PAR2 working set {workingSetBytes} bytes exceeds memory cap.");
+        }
+
+        var releaseBytesCap = _configManager.GetPar2MaxReleaseGb() * 1024L * 1024L * 1024L;
+        var releaseBytes = EstimateReleaseBytes(par2Context.Main, par2Context.FileDescsById);
+        if (releaseBytes > releaseBytesCap)
+        {
+            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
+            return RepairExecutionResult.NotFeasible(
+                $"Recovery set size {releaseBytes} bytes exceeds release cap.");
+        }
+
+        var missingSliceIndices = unavailableSlices.OrderBy(x => x).ToList();
         var recoverySlices = await CollectRecoverySlicesAsync(
             par2Context.VolumeFiles,
             missingSliceIndices.Count,
@@ -442,16 +558,11 @@ public class Par2RepairService : BackgroundService
             ct,
             onBytesRead: n => bytesRead += n).ConfigureAwait(false);
         if (recoverySlices.Count < missingSliceIndices.Count)
+        {
+            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
             return RepairExecutionResult.NotFeasible(
                 $"Need {missingSliceIndices.Count} recovery slices but only collected {recoverySlices.Count}.");
-
-        var accessor = new SliceSegmentAccessor(
-            segmentIds,
-            segmentRanges,
-            contentNzb,
-            _usenetClient,
-            fetchGate,
-            onBytesRead: n => bytesRead += n);
+        }
 
         var reconstructor = new Par2Reconstructor();
         var reconstruction = await reconstructor.ReconstructAsync(
@@ -466,30 +577,37 @@ public class Par2RepairService : BackgroundService
         if (!reconstruction.Success)
         {
             PrometheusMetrics.Current?.RecordPar2ValidationFailure("slice");
+            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
             return RepairExecutionResult.Failed(reconstruction.FailureReason ?? "Reconstruction failed.");
         }
 
-        var patchTargets = job.MissingSegmentIds.Length > 0
-            ? missingSegments
-            : accessor.GetMissingSegments();
         if (patchTargets.Count == 0)
-            return RepairExecutionResult.NotFeasible("No missing segments were confirmed during PAR2 repair.");
+        {
+            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
+            return RepairExecutionResult.NotFeasible("No missing or corrupt segments were confirmed during PAR2 repair.");
+        }
 
-        var commits = ExtractSegmentPatches(
+        var commits = await ExtractSegmentPatchesAsync(
             patchTargets,
-            segmentRanges,
+            sliceMap,
             reconstruction.ReconstructedSlices,
-            sliceSize,
-            par2Context.TargetFileIndex,
-            par2Context.Main,
-            par2Context.IfscsByFileId,
+            accessor,
             davItem.Name,
-            davItem.FileSize ?? 0,
-            segmentIds.Length);
+            fileLength,
+            segmentIds.Length,
+            ct).ConfigureAwait(false);
 
-        foreach (var patch in commits)
-            _patchStore.CommitPatch(patch.SegmentId, patch.Bytes, patch.Header);
+        if (!TryVerifyWholeFileMd5(targetDesc, sliceMap, reconstruction.ReconstructedSlices, accessor, out var md5Reason))
+        {
+            PrometheusMetrics.Current?.RecordPar2ValidationFailure("file");
+            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
+            return RepairExecutionResult.Failed(md5Reason ?? "Whole-file MD5 mismatch.");
+        }
 
+        _patchStore.CommitPatches(
+            commits.Select(patch => (patch.SegmentId, patch.Bytes, patch.Header)).ToList());
+
+        await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
         PrometheusMetrics.Current?.AddPar2RepairBytesRead(bytesRead);
         PrometheusMetrics.Current?.AddPar2SlicesReconstructed(reconstruction.ReconstructedSlices.Count);
         PrometheusMetrics.Current?.AddPar2SegmentsCommitted(commits.Count);
@@ -497,39 +615,247 @@ public class Par2RepairService : BackgroundService
         return RepairExecutionResult.Succeeded(bytesRead, reconstruction.ReconstructedSlices.Count, commits.Count);
     }
 
-    private static List<SegmentPatch> ExtractSegmentPatches(
-        IReadOnlyList<MissingSegment> missingSegments,
-        LongRange[] segmentRanges,
+    private static async Task DiscoverUnavailableSourcesAsync(
+        SliceSegmentAccessor accessor,
+        Par2FileSliceMap sliceMap,
+        IfscPacket targetIfsc,
+        HashSet<int> unavailableSegments,
+        HashSet<int> unavailableSlices,
+        CancellationToken ct)
+    {
+        var expanded = true;
+        while (expanded)
+        {
+            ct.ThrowIfCancellationRequested();
+            expanded = false;
+            AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
+
+            for (var local = 0; local < sliceMap.SliceCount; local++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var globalSlice = checked(sliceMap.GlobalSliceBase + local);
+                if (unavailableSlices.Contains(globalSlice))
+                    continue;
+
+                var assembled = await accessor.FetchSliceBytesAsync(globalSlice, sliceMap.SliceSize, ct)
+                    .ConfigureAwait(false);
+                AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
+                if (assembled is null)
+                {
+                    if (unavailableSlices.Add(globalSlice))
+                        expanded = true;
+                    continue;
+                }
+
+                if (!Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
+                {
+                    if (unavailableSlices.Add(globalSlice))
+                        expanded = true;
+                }
+            }
+        }
+    }
+
+    private static void AbsorbAccessorDiscoveries(
+        SliceSegmentAccessor accessor,
+        Par2FileSliceMap sliceMap,
+        HashSet<int> unavailableSegments,
+        HashSet<int> unavailableSlices,
+        ref bool expanded)
+    {
+        foreach (var index in accessor.MissingSegmentIndices.Concat(accessor.CorruptSegmentIndices))
+        {
+            if (!unavailableSegments.Add(index))
+                continue;
+            foreach (var slice in sliceMap.GlobalSlicesForSegment(index))
+            {
+                if (unavailableSlices.Add(slice))
+                    expanded = true;
+            }
+        }
+    }
+
+    private static List<MissingSegment> SegmentsOverlappingSlices(
+        Par2FileSliceMap sliceMap,
+        HashSet<int> unavailableSlices,
+        string[] segmentIds)
+    {
+        var targets = new List<MissingSegment>();
+        for (var i = 0; i < segmentIds.Length; i++)
+        {
+            if (sliceMap.GlobalSlicesForSegment(i).Any(unavailableSlices.Contains))
+                targets.Add(new MissingSegment(segmentIds[i], i));
+        }
+
+        return targets;
+    }
+
+    internal static long EstimateWorkingSetBytes(
+        long cachedSourceBodyBytes,
+        int assembledPresentSliceCount,
+        int recoverySliceCount,
+        int reconstructedSliceCount,
+        long stagedPatchBytes,
+        int sliceSize)
+    {
+        checked
+        {
+            var assembled = (long)assembledPresentSliceCount * sliceSize;
+            var recovery = (long)recoverySliceCount * sliceSize;
+            var accumulators = (long)recoverySliceCount * sliceSize;
+            var reconstructed = (long)reconstructedSliceCount * sliceSize;
+            var memoryStreamDup = cachedSourceBodyBytes;
+            return cachedSourceBodyBytes
+                   + assembled
+                   + recovery
+                   + accumulators
+                   + reconstructed
+                   + stagedPatchBytes
+                   + memoryStreamDup;
+        }
+    }
+
+    private static HashSet<int> ValidIndices(int[]? indices, int segmentCount)
+    {
+        if (indices is not { Length: > 0 })
+            return [];
+        return indices.Where(index => (uint)index < (uint)segmentCount).ToHashSet();
+    }
+
+    private static async Task PersistDiscoveredDamageAsync(
+        DavItem davItem,
+        DavNzbFile nzbFile,
+        SliceSegmentAccessor accessor,
+        CancellationToken ct)
+    {
+        var missing = accessor.MissingSegmentIndices.OrderBy(i => i).ToArray();
+        var corrupt = accessor.CorruptSegmentIndices.OrderBy(i => i).ToArray();
+        if (missing.Length == 0 && corrupt.Length == 0)
+            return;
+
+        await DavNzbFileBlobUpdater.MutateAsync(
+            davItem,
+            current =>
+            {
+                if (missing.Length > 0)
+                {
+                    current.MissingSegmentIndices = UnionIndices(current.MissingSegmentIndices, missing);
+                }
+
+                if (corrupt.Length > 0)
+                {
+                    current.CorruptSegmentIndices = UnionIndices(current.CorruptSegmentIndices, corrupt);
+                }
+
+                return current;
+            },
+            fallback: nzbFile).ConfigureAwait(false);
+
+        await using var dbContext = new DavDatabaseContext();
+        var tracked = await dbContext.Items.FirstOrDefaultAsync(x => x.Id == davItem.Id, ct).ConfigureAwait(false);
+        if (tracked is not null && davItem.FileBlobId is { } blobId)
+        {
+            tracked.FileBlobId = blobId;
+            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    private static int[] UnionIndices(int[]? existing, int[] discovered)
+    {
+        return (existing ?? [])
+            .Concat(discovered)
+            .Distinct()
+            .OrderBy(i => i)
+            .ToArray();
+    }
+
+#pragma warning disable CA5351 // PAR 2.0 whole-file hashes use MD5 per spec
+    private static bool TryVerifyWholeFileMd5(
+        FileDesc desc,
+        Par2FileSliceMap sliceMap,
         Dictionary<int, byte[]> reconstructedSlices,
-        int sliceSize,
-        int targetFileIndex,
-        MainPacket main,
-        IReadOnlyDictionary<string, IfscPacket> ifscsByFileId,
+        SliceSegmentAccessor accessor,
+        out string? reason)
+    {
+        reason = null;
+        if (desc.FileHash is not { Length: 16 })
+            return true;
+
+        using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+        long offset = 0;
+        while (offset < sliceMap.FileLength)
+        {
+            var globalSlice = sliceMap.GlobalSliceBase + (int)(offset / sliceMap.SliceSize);
+            var sliceRange = sliceMap.SliceFileRange(globalSlice);
+            byte[] sliceBytes;
+            if (reconstructedSlices.TryGetValue(globalSlice, out var reconstructed))
+            {
+                sliceBytes = reconstructed;
+            }
+            else
+            {
+                var fetched = accessor.TryGetCachedSlice(globalSlice, sliceMap.SliceSize);
+                if (fetched is null)
+                {
+                    reason = $"Whole-file MD5 coverage gap at slice {globalSlice}.";
+                    return false;
+                }
+
+                sliceBytes = fetched;
+            }
+
+            var validLen = (int)Math.Min(sliceRange.Count, sliceMap.FileLength - offset);
+            if (validLen > 0)
+                hasher.AppendData(sliceBytes.AsSpan(0, validLen));
+            offset += validLen;
+        }
+
+        var computed = hasher.GetHashAndReset();
+        if (computed.AsSpan().SequenceEqual(desc.FileHash))
+            return true;
+
+        reason = $"Whole-file MD5 mismatch for {desc.FileName}.";
+        return false;
+    }
+#pragma warning restore CA5351
+
+    private static async Task<List<SegmentPatch>> ExtractSegmentPatchesAsync(
+        IReadOnlyList<MissingSegment> missingSegments,
+        Par2FileSliceMap sliceMap,
+        Dictionary<int, byte[]> reconstructedSlices,
+        SliceSegmentAccessor accessor,
         string fileName,
         long fileSize,
-        int segmentCount)
+        int segmentCount,
+        CancellationToken ct)
     {
-        var globalSliceOffset = GlobalSliceOffset(targetFileIndex, main, ifscsByFileId);
         var patches = new List<SegmentPatch>();
-
         foreach (var missing in missingSegments)
         {
-            var range = segmentRanges[missing.Index];
+            var range = sliceMap.SegmentRanges[missing.Index];
             var bytes = new byte[range.Count];
+            var cached = await accessor.TryGetCachedBodyAsync(missing.Index, ct).ConfigureAwait(false);
+            if (cached is not null)
+            {
+                var copy = (int)Math.Min(cached.Length, bytes.Length);
+                Buffer.BlockCopy(cached, 0, bytes, 0, copy);
+            }
+
             var copied = 0L;
             var fileOffset = range.StartInclusive;
-
             while (copied < range.Count)
             {
-                var localSlice = (int)((fileOffset + copied) / sliceSize);
-                var globalSlice = globalSliceOffset + localSlice;
-                if (!reconstructedSlices.TryGetValue(globalSlice, out var slice))
-                    throw new InvalidOperationException($"Reconstructed slice {globalSlice} missing for segment patch.");
+                var globalSlice = sliceMap.GlobalSliceBase + (int)((fileOffset + copied) / sliceMap.SliceSize);
+                if (reconstructedSlices.TryGetValue(globalSlice, out var slice))
+                {
+                    var offsetInSlice = (int)((fileOffset + copied) % sliceMap.SliceSize);
+                    var toCopy = (int)Math.Min(range.Count - copied, sliceMap.SliceSize - offsetInSlice);
+                    Buffer.BlockCopy(slice, offsetInSlice, bytes, (int)copied, toCopy);
+                    copied += toCopy;
+                    continue;
+                }
 
-                var offsetInSlice = (int)((fileOffset + copied) % sliceSize);
-                var toCopy = (int)Math.Min(range.Count - copied, sliceSize - offsetInSlice);
-                Buffer.BlockCopy(slice, offsetInSlice, bytes, (int)copied, toCopy);
-                copied += toCopy;
+                copied += Math.Min(range.Count - copied, sliceMap.SliceSize - ((fileOffset + copied) % sliceMap.SliceSize));
             }
 
             patches.Add(new SegmentPatch(
@@ -553,7 +879,7 @@ public class Par2RepairService : BackgroundService
     private static int GlobalSliceOffset(
         int targetFileIndex,
         MainPacket main,
-        IReadOnlyDictionary<string, IfscPacket> ifscsByFileId)
+        Dictionary<string, IfscPacket> ifscsByFileId)
     {
         var offset = 0;
         for (var i = 0; i < targetFileIndex; i++)
@@ -563,30 +889,6 @@ public class Par2RepairService : BackgroundService
         }
 
         return offset;
-    }
-
-    private static List<int> MapMissingSegmentsToSlices(
-        IReadOnlyList<MissingSegment> missingSegments,
-        LongRange[] segmentRanges,
-        int sliceSize,
-        int targetFileIndex,
-        MainPacket main,
-        IReadOnlyDictionary<string, IfscPacket> ifscsByFileId)
-    {
-        var globalOffset = GlobalSliceOffset(targetFileIndex, main, ifscsByFileId);
-        var slices = new HashSet<int>();
-        foreach (var missing in missingSegments)
-        {
-            var start = segmentRanges[missing.Index].StartInclusive;
-            var end = segmentRanges[missing.Index].EndExclusive;
-            for (var offset = start; offset < end; offset += sliceSize)
-            {
-                var localSlice = (int)(offset / sliceSize);
-                slices.Add(globalOffset + localSlice);
-            }
-        }
-
-        return slices.OrderBy(x => x).ToList();
     }
 
     private static LongRange[] BuildSegmentRanges(DavNzbFile nzbFile, int segmentCount, long? fileSize)
@@ -1046,68 +1348,127 @@ public class Par2RepairService : BackgroundService
     private sealed class SliceSegmentAccessor
     {
         private readonly string[] _segmentIds;
-        private readonly LongRange[] _ranges;
-        private readonly NzbFile _contentNzb;
+        private readonly Par2FileSliceMap _map;
+        private readonly NzbDocument _nzbDocument;
+        private readonly Par2SetContext _par2;
         private readonly UsenetStreamingClient _client;
         private readonly SemaphoreSlim _fetchGate;
+        private readonly HashSet<int> _targetSlices;
         private readonly Action<long>? _onBytesRead;
         private readonly Dictionary<int, byte[]> _segmentBodies = new();
+        private readonly Dictionary<int, byte[]> _siblingFileBytes = new();
         private readonly HashSet<int> _missingSegmentIndices = new();
+        private readonly HashSet<int> _corruptSegmentIndices = new();
+        private long _cachedBodyBytes;
 
         public SliceSegmentAccessor(
             string[] segmentIds,
-            LongRange[] ranges,
-            NzbFile contentNzb,
+            Par2FileSliceMap map,
+            NzbDocument nzbDocument,
+            Par2SetContext par2,
             UsenetStreamingClient client,
             SemaphoreSlim fetchGate,
+            HashSet<int> targetSlices,
             Action<long>? onBytesRead)
         {
             _segmentIds = segmentIds;
-            _ranges = ranges;
-            _contentNzb = contentNzb;
+            _map = map;
+            _nzbDocument = nzbDocument;
+            _par2 = par2;
             _client = client;
             _fetchGate = fetchGate;
+            _targetSlices = targetSlices;
             _onBytesRead = onBytesRead;
         }
 
+        public IReadOnlyCollection<int> MissingSegmentIndices => _missingSegmentIndices;
+        public IReadOnlyCollection<int> CorruptSegmentIndices => _corruptSegmentIndices;
+        public long CachedBodyBytes => Interlocked.Read(ref _cachedBodyBytes);
+
+        public void NoteMissing(int segmentIndex) => _missingSegmentIndices.Add(segmentIndex);
+
+        public void NoteCorrupt(int segmentIndex) => _corruptSegmentIndices.Add(segmentIndex);
+
         public async Task<byte[]?> FetchSliceBytesAsync(int globalSliceIndex, int sliceSize, CancellationToken ct)
         {
-            var fileOffset = (long)globalSliceIndex * sliceSize;
-            var segmentIndex = FindSegmentIndex(fileOffset);
-            if (segmentIndex < 0) return null;
+            var local = globalSliceIndex - _map.GlobalSliceBase;
+            if ((uint)local >= (uint)_map.SliceCount)
+                return await FetchForeignSliceAsync(globalSliceIndex, sliceSize, ct).ConfigureAwait(false);
 
-            var body = await GetSegmentBodyAsync(segmentIndex, ct).ConfigureAwait(false);
-            if (body == null) return null;
+            if (_targetSlices.Contains(globalSliceIndex))
+                return null;
 
-            var segmentStart = _ranges[segmentIndex].StartInclusive;
-            var offsetInSegment = (int)(fileOffset - segmentStart);
-            if (offsetInSegment < 0 || offsetInSegment + sliceSize > body.Length)
+            var sliceRange = _map.SliceFileRange(globalSliceIndex);
+            var buffer = new byte[sliceSize];
+            var copied = 0;
+            foreach (var segmentIndex in _map.SegmentIndicesForGlobalSlice(globalSliceIndex))
             {
-                var slice = new byte[sliceSize];
-                var available = Math.Min(sliceSize, body.Length - offsetInSegment);
-                if (available > 0)
-                    Buffer.BlockCopy(body, offsetInSegment, slice, 0, available);
-                return slice;
+                var body = await GetSegmentBodyAsync(segmentIndex, ct).ConfigureAwait(false);
+                if (body is null)
+                {
+                    if (sliceRange.EndExclusive < _map.FileLength)
+                        return null;
+                    break;
+                }
+
+                var segmentRange = _map.SegmentRanges[segmentIndex];
+                var intersectStart = Math.Max(sliceRange.StartInclusive, segmentRange.StartInclusive);
+                var intersectEnd = Math.Min(sliceRange.EndExclusive, segmentRange.EndExclusive);
+                if (intersectEnd <= intersectStart)
+                    continue;
+
+                var destOffset = (int)(intersectStart - sliceRange.StartInclusive);
+                var srcOffset = (int)(intersectStart - segmentRange.StartInclusive);
+                var count = (int)(intersectEnd - intersectStart);
+                if (srcOffset < 0 || srcOffset + count > body.Length)
+                    return null;
+                Buffer.BlockCopy(body, srcOffset, buffer, destOffset, count);
+                copied += count;
             }
 
-            var exact = new byte[sliceSize];
-            Buffer.BlockCopy(body, offsetInSegment, exact, 0, sliceSize);
-            return exact;
+            if (copied < sliceRange.Count && sliceRange.EndExclusive < _map.FileLength)
+                return null;
+            return buffer;
         }
 
-        private int FindSegmentIndex(long fileOffset)
+        public byte[]? TryGetCachedSlice(int globalSliceIndex, int sliceSize)
         {
-            for (var i = 0; i < _ranges.Length; i++)
+            if (_targetSlices.Contains(globalSliceIndex))
+                return null;
+
+            var sliceRange = _map.SliceFileRange(globalSliceIndex);
+            var buffer = new byte[sliceSize];
+            var copied = 0;
+            foreach (var segmentIndex in _map.SegmentIndicesForGlobalSlice(globalSliceIndex))
             {
-                if (fileOffset >= _ranges[i].StartInclusive && fileOffset < _ranges[i].EndExclusive)
-                    return i;
+                if (!_segmentBodies.TryGetValue(segmentIndex, out var body))
+                    return null;
+                var segmentRange = _map.SegmentRanges[segmentIndex];
+                var intersectStart = Math.Max(sliceRange.StartInclusive, segmentRange.StartInclusive);
+                var intersectEnd = Math.Min(sliceRange.EndExclusive, segmentRange.EndExclusive);
+                if (intersectEnd <= intersectStart)
+                    continue;
+                var destOffset = (int)(intersectStart - sliceRange.StartInclusive);
+                var srcOffset = (int)(intersectStart - segmentRange.StartInclusive);
+                var count = (int)(intersectEnd - intersectStart);
+                Buffer.BlockCopy(body, srcOffset, buffer, destOffset, count);
+                copied += count;
             }
 
-            return -1;
+            return copied < sliceRange.Count && sliceRange.EndExclusive < _map.FileLength ? null : buffer;
+        }
+
+        public Task<byte[]?> TryGetCachedBodyAsync(int segmentIndex, CancellationToken ct)
+        {
+            _ = ct;
+            return Task.FromResult(
+                _segmentBodies.TryGetValue(segmentIndex, out var body) ? body : null);
         }
 
         private async Task<byte[]?> GetSegmentBodyAsync(int segmentIndex, CancellationToken ct)
         {
+            if (_missingSegmentIndices.Contains(segmentIndex) || _corruptSegmentIndices.Contains(segmentIndex))
+                return null;
             if (_segmentBodies.TryGetValue(segmentIndex, out var cached))
                 return cached;
 
@@ -1116,26 +1477,41 @@ public class Par2RepairService : BackgroundService
             {
                 if (_segmentBodies.TryGetValue(segmentIndex, out cached))
                     return cached;
+                if (_missingSegmentIndices.Contains(segmentIndex) || _corruptSegmentIndices.Contains(segmentIndex))
+                    return null;
 
                 var segmentId = _segmentIds[segmentIndex];
-                UsenetDecodedBodyResponse response;
                 try
                 {
-                    response = await _client.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
+                    var response = await _client.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
+                    await using var stream = response.Stream!;
+                    await using var ms = new MemoryStream();
+                    await stream.CopyToAsync(ms, ct).ConfigureAwait(false);
+                    var bytes = ms.ToArray();
+                    _onBytesRead?.Invoke(bytes.Length);
+                    _segmentBodies[segmentIndex] = bytes;
+                    Interlocked.Add(ref _cachedBodyBytes, bytes.Length);
+                    return bytes;
                 }
-                catch (UsenetArticleNotFoundException)
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
-                    _missingSegmentIndices.Add(segmentIndex);
-                    return null;
-                }
+                    if (e.IsCancellationException(ct))
+                        throw;
 
-                await using var stream = response.Stream!;
-                await using var ms = new MemoryStream();
-                await stream.CopyToAsync(ms, ct).ConfigureAwait(false);
-                var bytes = ms.ToArray();
-                _onBytesRead?.Invoke(bytes.Length);
-                _segmentBodies[segmentIndex] = bytes;
-                return bytes;
+                    if (e.TryGetCausingException<UsenetArticleNotFoundException>(out _))
+                    {
+                        _missingSegmentIndices.Add(segmentIndex);
+                        return null;
+                    }
+
+                    if (e.TryGetCausingException<UsenetCorruptArticleException>(out _))
+                    {
+                        _corruptSegmentIndices.Add(segmentIndex);
+                        return null;
+                    }
+
+                    throw;
+                }
             }
             finally
             {
@@ -1143,10 +1519,76 @@ public class Par2RepairService : BackgroundService
             }
         }
 
-        public List<MissingSegment> GetMissingSegments()
-            => _missingSegmentIndices
-                .OrderBy(i => i)
-                .Select(i => new MissingSegment(_segmentIds[i], i))
-                .ToList();
+        private async Task<byte[]?> FetchForeignSliceAsync(int globalSliceIndex, int sliceSize, CancellationToken ct)
+        {
+            var offset = 0;
+            for (var fileIndex = 0; fileIndex < _par2.Main.FileIds.Count; fileIndex++)
+            {
+                var key = Convert.ToHexString(_par2.Main.FileIds[fileIndex]);
+                if (!_par2.IfscsByFileId.TryGetValue(key, out var ifsc))
+                    return null;
+
+                var count = ifsc.Slices.Count;
+                if (globalSliceIndex >= offset + count)
+                {
+                    offset += count;
+                    continue;
+                }
+
+                if (fileIndex == _par2.TargetFileIndex)
+                    return null;
+
+                var fileBytes = await GetSiblingFileBytesAsync(fileIndex, ct).ConfigureAwait(false);
+                if (fileBytes is null)
+                    return null;
+
+                var local = globalSliceIndex - offset;
+                var start = checked(local * sliceSize);
+                var slice = new byte[sliceSize];
+                if (start >= fileBytes.Length)
+                    return slice;
+
+                var copy = Math.Min(sliceSize, fileBytes.Length - start);
+                Buffer.BlockCopy(fileBytes, start, slice, 0, copy);
+                return slice;
+            }
+
+            return null;
+        }
+
+        private async Task<byte[]?> GetSiblingFileBytesAsync(int fileIndex, CancellationToken ct)
+        {
+            if (_siblingFileBytes.TryGetValue(fileIndex, out var cached))
+                return cached;
+
+            var key = Convert.ToHexString(_par2.Main.FileIds[fileIndex]);
+            if (!_par2.FileDescsById.TryGetValue(key, out var desc))
+                return null;
+
+            var nzbFile = FindContentNzbFile(_nzbDocument, desc.FileName);
+            if (nzbFile is null || nzbFile.Segments.Count == 0)
+                return null;
+
+            await _fetchGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                if (_siblingFileBytes.TryGetValue(fileIndex, out cached))
+                    return cached;
+
+                var segmentIds = nzbFile.GetSegmentIds();
+                var fileSize = nzbFile.Segments.Sum(segment => segment.Bytes);
+                await using var stream = _client.GetFileStream(segmentIds, fileSize, articleBufferSize: 0);
+                await using var destination = new MemoryStream();
+                await stream.CopyToAsync(destination, ct).ConfigureAwait(false);
+                var bytes = destination.ToArray();
+                _onBytesRead?.Invoke(bytes.Length);
+                _siblingFileBytes[fileIndex] = bytes;
+                return bytes;
+            }
+            finally
+            {
+                _fetchGate.Release();
+            }
+        }
     }
 }

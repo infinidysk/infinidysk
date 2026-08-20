@@ -82,6 +82,15 @@ public class UsenetStreamingClient : WrappingNntpClient
         };
     }
 
+    /// <summary>
+    /// Test hook: wrap a scripted inner client without building provider pools.
+    /// </summary>
+    internal UsenetStreamingClient(INntpClient inner, RepairPatchStore? repairPatchStore = null)
+        : base(inner)
+    {
+        _repairPatchStore = repairPatchStore;
+    }
+
     private static HeaderCachingNntpClient CreateDownloadingNntpClient
     (
         ConfigManager configManager,
