@@ -32,9 +32,8 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         return Path.Join(ConfigPath, "blobs", firstTwo, nextTwo, fileName);
     }
 
-    private FileStream OpenBlobWrite(Guid id)
+    private FileStream OpenBlobWrite(string blobPath)
     {
-        var blobPath = GetBlobPath(id);
         var directory = Path.GetDirectoryName(blobPath);
 
         FileStream fileStream;
@@ -53,17 +52,49 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         Stream stream,
         CancellationToken cancellationToken = default)
     {
-        await using var fileStream = OpenBlobWrite(id);
-        await stream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
-        _metadataCache.Remove(id);
+        var blobPath = GetBlobPath(id);
+        var tempPath = blobPath + ".tmp";
+        var committed = false;
+        try
+        {
+            await using (var fileStream = OpenBlobWrite(tempPath))
+            {
+                await stream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
+            }
+
+            CommitBlobWrite(blobPath, tempPath);
+            committed = true;
+            _metadataCache.Remove(id);
+        }
+        finally
+        {
+            if (!committed)
+                TryDeleteIncompleteWrite(tempPath);
+        }
     }
 
     public async Task WriteBlob<T>(Guid id, T blob)
     {
-        await using var fileStream = OpenBlobWrite(id);
-        await using var compressionStream = new CompressionStream(fileStream, CompressionLevel);
-        await MemoryPackSerializer.SerializeAsync(compressionStream, blob).ConfigureAwait(false);
-        _metadataCache.Remove(id);
+        var blobPath = GetBlobPath(id);
+        var tempPath = blobPath + ".tmp";
+        var committed = false;
+        try
+        {
+            await using (var fileStream = OpenBlobWrite(tempPath))
+            await using (var compressionStream = new CompressionStream(fileStream, CompressionLevel))
+            {
+                await MemoryPackSerializer.SerializeAsync(compressionStream, blob).ConfigureAwait(false);
+            }
+
+            CommitBlobWrite(blobPath, tempPath);
+            committed = true;
+            _metadataCache.Remove(id);
+        }
+        finally
+        {
+            if (!committed)
+                TryDeleteIncompleteWrite(tempPath);
+        }
     }
 
     public Stream? ReadBlob(Guid id)
@@ -89,6 +120,36 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         }
 
         return blob;
+    }
+
+    private void CommitBlobWrite(string blobPath, string tempPath)
+    {
+        lock (_lockObj)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
+            File.Move(tempPath, blobPath, overwrite: true);
+        }
+    }
+
+    private void TryDeleteIncompleteWrite(string tempPath)
+    {
+        try
+        {
+            if (File.Exists(tempPath))
+                File.Delete(tempPath);
+        }
+        catch (IOException)
+        {
+            // Best-effort: a cancelled/failed write must not leave a readable blob.
+        }
+
+        lock (_lockObj)
+        {
+            var nextTwoDir = Path.GetDirectoryName(tempPath);
+            var firstTwoDir = Path.GetDirectoryName(nextTwoDir);
+            TryDeleteEmptyDirectory(nextTwoDir);
+            TryDeleteEmptyDirectory(firstTwoDir);
+        }
     }
 
     public void Delete(Guid id)

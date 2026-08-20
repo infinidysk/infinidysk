@@ -45,13 +45,21 @@ public sealed class FileBlobStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteBlob_HonorsCancellation()
+    public async Task WriteBlob_HonorsCancellation_DoesNotLeavePartialFile()
     {
+        var id = Guid.NewGuid();
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
         await using var input = new MemoryStream(new byte[1024]);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => _store.WriteBlob(Guid.NewGuid(), input, cts.Token));
+            () => _store.WriteBlob(id, input, cts.Token));
+
+        Assert.Null(_store.ReadBlob(id));
+        var blobsRoot = Path.Join(_configRoot, "blobs");
+        if (Directory.Exists(blobsRoot))
+        {
+            Assert.Empty(Directory.EnumerateFiles(blobsRoot, "*", SearchOption.AllDirectories));
+        }
     }
 }
