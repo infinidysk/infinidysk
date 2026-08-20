@@ -11,10 +11,17 @@ public interface IRcloneClient
     bool IsRemoteControlEnabled { get; }
     (string Message, DateTimeOffset At)? LastForgetError { get; }
 
-    Task<RcloneResponse> RefreshVfsPaths(IEnumerable<string> paths, bool recursive = false);
-    Task<VfsForgetResponse> ForgetVfsPaths(IEnumerable<string> paths);
-    Task<VfsStatsResponse> GetVfsStats(string? fs = null);
-    Task<CoreVersionResponse> GetVersion();
-    Task<RcloneResponse> NoOp();
-    Task<bool> IsAvailable();
+    Task<RcloneResponse> RefreshVfsPaths(
+        IEnumerable<string> paths,
+        bool recursive = false,
+        CancellationToken cancellationToken = default);
+    Task<VfsForgetResponse> ForgetVfsPaths(
+        IEnumerable<string> paths,
+        CancellationToken cancellationToken = default);
+    Task<VfsStatsResponse> GetVfsStats(
+        string? fs = null,
+        CancellationToken cancellationToken = default);
+    Task<CoreVersionResponse> GetVersion(CancellationToken cancellationToken = default);
+    Task<RcloneResponse> NoOp(CancellationToken cancellationToken = default);
+    Task<bool> IsAvailable(CancellationToken cancellationToken = default);
 }

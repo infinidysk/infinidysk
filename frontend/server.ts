@@ -47,10 +47,10 @@ const URL_BASE = normalizeUrlBase(process.env["NZBDAV_URL_BASE"] ?? process.env[
 function assertUrlBaseMatchesBuild(bakedUrlBase: unknown): void {
   if (typeof bakedUrlBase !== "string" || bakedUrlBase === URL_BASE) return;
   logger.error(
-    `NZBDAV_URL_BASE mismatch: this build was compiled with ${JSON.stringify(bakedUrlBase)} `
-    + `but the runtime environment says ${JSON.stringify(URL_BASE)}. The two halves of the `
-    + `setting must match — rebuild with --build-arg NZBDAV_URL_BASE=${URL_BASE || '""'} or `
-    + `set NZBDAV_URL_BASE=${bakedUrlBase || '""'} at runtime. See docs/configuration/url-base.md.`,
+    `NZBDAV_URL_BASE mismatch: this build was compiled with ${JSON.stringify(bakedUrlBase)} ` +
+      `but the runtime environment says ${JSON.stringify(URL_BASE)}. The two halves of the ` +
+      `setting must match — rebuild with --build-arg NZBDAV_URL_BASE=${URL_BASE || '""'} or ` +
+      `set NZBDAV_URL_BASE=${bakedUrlBase || '""'} at runtime. See docs/configuration/url-base.md.`,
   );
   process.exit(1);
 }
@@ -119,9 +119,9 @@ router.all("/ws", websocketUpgradeGuard);
 
 // Initialize the websocket server as soon as both it and the server-module are ready
 interface ServerBuildModule {
-    app: express.Express;
-    bakedUrlBase?: string;
-    initializeWebsocketServer(websocketServer: WebSocketServer): void;
+  app: express.Express;
+  bakedUrlBase?: string;
+  initializeWebsocketServer(websocketServer: WebSocketServer): void;
 }
 
 let _serverModule: ServerBuildModule | null = null;
@@ -151,7 +151,9 @@ if (DEVELOPMENT) {
   router.use(async (req, res, next) => {
     try {
       // The dev SSR module fulfills the same contract as the production build.
-      const serverModule = (await viteDevServer.ssrLoadModule("./server/app.ts")) as ServerBuildModule;
+      const serverModule = (await viteDevServer.ssrLoadModule(
+        "./server/app.ts",
+      )) as ServerBuildModule;
       assertUrlBaseMatchesBuild(serverModule.bakedUrlBase);
       setServerModule(serverModule);
       return await serverModule["app"](req, res, next);
@@ -164,10 +166,7 @@ if (DEVELOPMENT) {
   });
 } else {
   logger.info("Starting frontend production server");
-  router.use(
-    "/assets",
-    express.static("build/client/assets", { immutable: true, maxAge: "1y" }),
-  );
+  router.use("/assets", express.static("build/client/assets", { immutable: true, maxAge: "1y" }));
   router.use(express.static("build/client", { maxAge: "1h" }));
   const serverModule = await import(BUILD_PATH);
   assertUrlBaseMatchesBuild(serverModule.bakedUrlBase);

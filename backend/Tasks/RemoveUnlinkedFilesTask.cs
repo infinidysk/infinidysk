@@ -480,7 +480,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 Id = Guid.Parse(x.Id),
                 Type = (DavItem.ItemType)x.Type,
                 Path = x.Path
-            }).ToList());
+            }).ToList(), CancellationToken);
 
             // Track removed paths
             _allRemovedPaths.AddRange(itemsToDelete.Select(x => x.Path));
@@ -500,7 +500,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
             dbContext,
             createdBefore,
             removedSoFar => UpdatePhase($"Removing empty directories...\nRemoved {removedSoFar}..."),
-            dirs => DavDatabaseContext.RcloneVfsForget(dirs),
+            dirs => DavDatabaseContext.RcloneVfsForget(dirs, CancellationToken),
             CancellationToken).ConfigureAwait(false);
     }
 

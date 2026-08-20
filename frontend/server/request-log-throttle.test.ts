@@ -28,12 +28,16 @@ describe("request-log-throttle", () => {
     shouldLogClientError("key", now + 1);
     shouldLogClientError("key", now + 2);
 
-    expect(shouldLogClientError("key", now + CLIENT_ERROR_LOG_THROTTLE_MS))
-      .toEqual({ log: true, suppressed: 2 });
+    expect(shouldLogClientError("key", now + CLIENT_ERROR_LOG_THROTTLE_MS)).toEqual({
+      log: true,
+      suppressed: 2,
+    });
 
     // The count resets once reported.
-    expect(shouldLogClientError("key", now + CLIENT_ERROR_LOG_THROTTLE_MS * 2))
-      .toEqual({ log: true, suppressed: 0 });
+    expect(shouldLogClientError("key", now + CLIENT_ERROR_LOG_THROTTLE_MS * 2)).toEqual({
+      log: true,
+      suppressed: 0,
+    });
   });
 
   it("tracks keys independently", () => {
@@ -48,8 +52,9 @@ describe("request-log-throttle", () => {
   it("collapses a per-release path storm onto one mount key", () => {
     const client = "10.0.0.5 Emby/4.8";
 
-    expect(clientErrorKey("MKCOL", 403, "/completed-symlinks/tv-unmatched/release-1", client))
-      .toEqual(clientErrorKey("MKCOL", 403, "/completed-symlinks/tv-unmatched/release-2", client));
+    expect(
+      clientErrorKey("MKCOL", 403, "/completed-symlinks/tv-unmatched/release-1", client),
+    ).toEqual(clientErrorKey("MKCOL", 403, "/completed-symlinks/tv-unmatched/release-2", client));
   });
 
   it("keeps different clients, methods, statuses and mounts distinct", () => {
@@ -58,7 +63,9 @@ describe("request-log-throttle", () => {
 
     expect(clientErrorKey("PUT", 403, path, "10.0.0.5 Emby/4.8")).not.toEqual(base);
     expect(clientErrorKey("MKCOL", 404, path, "10.0.0.5 Emby/4.8")).not.toEqual(base);
-    expect(clientErrorKey("MKCOL", 403, "/content/release-1", "10.0.0.5 Emby/4.8")).not.toEqual(base);
+    expect(clientErrorKey("MKCOL", 403, "/content/release-1", "10.0.0.5 Emby/4.8")).not.toEqual(
+      base,
+    );
     expect(clientErrorKey("MKCOL", 403, path, "10.0.0.9 Emby/4.8")).not.toEqual(base);
   });
 

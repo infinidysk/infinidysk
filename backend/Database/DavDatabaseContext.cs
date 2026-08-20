@@ -875,7 +875,7 @@ public class DavDatabaseContext : DbContext
             // save db changes
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
             var result = await base.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            _ = RcloneVfsForget(addedOrRemovedDavItems);
+            _ = RcloneVfsForget(addedOrRemovedDavItems, cancellationToken);
 
             // clear pending blob writes
             ClearBlobs();
@@ -931,22 +931,39 @@ public class DavDatabaseContext : DbContext
             .ToList();
     }
 
-    public static Task RcloneVfsForget(List<DavItem> addedOrRemovedDavItems)
+    public static async Task RcloneVfsForget(
+        List<DavItem> addedOrRemovedDavItems,
+        CancellationToken cancellationToken = default)
     {
         var rclone = RcloneClient.Current;
-        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return Task.CompletedTask;
-        if (addedOrRemovedDavItems.Count == 0) return Task.CompletedTask;
+        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return;
+        if (addedOrRemovedDavItems.Count == 0) return;
         var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
-        if (vfsForgetPaths.Count == 0) return Task.CompletedTask;
-        return rclone.ForgetVfsPaths(vfsForgetPaths);
+        if (vfsForgetPaths.Count == 0) return;
+        await ForgetVfsPathsQuietly(rclone, vfsForgetPaths, cancellationToken).ConfigureAwait(false);
     }
 
-    public static Task RcloneVfsForget(List<string> paths)
+    public static async Task RcloneVfsForget(List<string> paths, CancellationToken cancellationToken = default)
     {
         var rclone = RcloneClient.Current;
-        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return Task.CompletedTask;
-        if (paths.Count == 0) return Task.CompletedTask;
-        return rclone.ForgetVfsPaths(paths);
+        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return;
+        if (paths.Count == 0) return;
+        await ForgetVfsPathsQuietly(rclone, paths, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task ForgetVfsPathsQuietly(
+        RcloneClient rclone,
+        List<string> paths,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await rclone.ForgetVfsPaths(paths, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Call sites are fire-and-forget; do not surface cancellation as UnobservedTaskException.
+        }
     }
 
     public void ClearChangeTracker()

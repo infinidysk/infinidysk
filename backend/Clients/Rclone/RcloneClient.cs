@@ -16,7 +16,8 @@ namespace NzbWebDAV.Clients.Rclone;
 /// </summary>
 public sealed class RcloneClient : IRcloneClient, IDisposable
 {
-    private static readonly HttpClient HttpClient = new();
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+    private static readonly HttpClient HttpClient = CreateHttpClient();
     private ForgetErrorEntry? _lastForgetError;
     private readonly ConfigManager _configManager;
     private readonly EventHandler<ConfigManager.ConfigEventArgs> _onConfigChanged;
@@ -46,6 +47,8 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
     private string? User { get; set; }
     private string? Pass { get; set; }
     public bool IsRemoteControlEnabled { get; private set; }
+
+    private static HttpClient CreateHttpClient() => new() { Timeout = RequestTimeout };
 
     public RcloneClient(ConfigManager configManager)
     {
@@ -91,7 +94,10 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
     /// <param name="paths">The paths to refresh</param>
     /// <param name="recursive">Whether to refresh recursively</param>
     /// <param name="fs">Optional VFS name if multiple VFS instances exist</param>
-    public async Task<RcloneResponse> RefreshVfsPaths(IEnumerable<string> paths, bool recursive = false)
+    public async Task<RcloneResponse> RefreshVfsPaths(
+        IEnumerable<string> paths,
+        bool recursive = false,
+        CancellationToken cancellationToken = default)
     {
         var pathList = paths.ToList();
         if (pathList.Count == 0)
@@ -110,7 +116,7 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
             request["recursive"] = true;
 
         Log.Debug("Rclone vfs/refresh: {0}", paths.ToIndentedJson());
-        return await Post<RcloneResponse>("vfs/refresh", request).ConfigureAwait(false);
+        return await Post<RcloneResponse>("vfs/refresh", request, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -118,7 +124,9 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
     /// </summary>
     /// <param name="paths">The paths to forget</param>
     /// <param name="fs">Optional VFS name if multiple VFS instances exist</param>
-    public async Task<VfsForgetResponse> ForgetVfsPaths(IEnumerable<string> paths)
+    public async Task<VfsForgetResponse> ForgetVfsPaths(
+        IEnumerable<string> paths,
+        CancellationToken cancellationToken = default)
     {
         var pathList = paths.ToList();
         if (pathList.Count == 0)
@@ -141,7 +149,7 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            lastResponse = await Post<VfsForgetResponse>("vfs/forget", request).ConfigureAwait(false);
+            lastResponse = await Post<VfsForgetResponse>("vfs/forget", request, cancellationToken).ConfigureAwait(false);
 
             if (lastResponse.Success)
             {
@@ -156,7 +164,7 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
             }
 
             if (attempt < maxAttempts)
-                await Task.Delay(GetBackoff(attempt)).ConfigureAwait(false);
+                await Task.Delay(GetBackoff(attempt), cancellationToken).ConfigureAwait(false);
         }
 
         var reason = lastResponse?.Error ?? "Unknown error";
@@ -180,37 +188,43 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
     /// Get VFS statistics including cache information.
     /// </summary>
     /// <param name="fs">Optional VFS name if multiple VFS instances exist</param>
-    public async Task<VfsStatsResponse> GetVfsStats(string? fs = null)
+    public async Task<VfsStatsResponse> GetVfsStats(
+        string? fs = null,
+        CancellationToken cancellationToken = default)
     {
         var request = fs != null ? new { fs } : null;
-        return await Post<VfsStatsResponse>("vfs/stats", request).ConfigureAwait(false);
+        return await Post<VfsStatsResponse>("vfs/stats", request, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Get rclone version information.
     /// </summary>
-    public async Task<CoreVersionResponse> GetVersion()
+    public async Task<CoreVersionResponse> GetVersion(CancellationToken cancellationToken = default)
     {
-        return await Post<CoreVersionResponse>("core/version", null).ConfigureAwait(false);
+        return await Post<CoreVersionResponse>("core/version", null, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Test connectivity - a no-operation call.
     /// </summary>
-    public async Task<RcloneResponse> NoOp()
+    public async Task<RcloneResponse> NoOp(CancellationToken cancellationToken = default)
     {
-        return await Post<RcloneResponse>("rc/noop", null).ConfigureAwait(false);
+        return await Post<RcloneResponse>("rc/noop", null, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Check if the rclone RC server is reachable and authenticated.
     /// </summary>
-    public async Task<bool> IsAvailable()
+    public async Task<bool> IsAvailable(CancellationToken cancellationToken = default)
     {
         try
         {
-            await NoOp().ConfigureAwait(false);
+            await NoOp(cancellationToken).ConfigureAwait(false);
             return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch
         {
@@ -221,9 +235,14 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
     /// <summary>
     /// Test connectivity to a rclone RC server with the given credentials.
     /// </summary>
-    public static async Task<RcloneResponse> TestConnection(string host, string? user, string? pass)
+    public static async Task<RcloneResponse> TestConnection(
+        string host,
+        string? user,
+        string? pass,
+        CancellationToken cancellationToken = default)
     {
-        var result = await Post<CoreVersionResponse>(host, user, pass, "core/version", null).ConfigureAwait(false);
+        var result = await Post<CoreVersionResponse>(host, user, pass, "core/version", null, cancellationToken)
+            .ConfigureAwait(false);
         if (result.Success && string.IsNullOrEmpty(result.Version))
             return new RcloneResponse { Success = false, Error = "Connected but received empty version" };
         return result;
@@ -235,7 +254,8 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
         string? user,
         string? pass,
         string endpoint,
-        object? body
+        object? body,
+        CancellationToken cancellationToken
     ) where T : RcloneResponse, new()
     {
         var url = $"{host}/{endpoint}";
@@ -255,8 +275,8 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
 
         try
         {
-            using var response = await SendRequest(request).ConfigureAwait(false);
-            var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            using var response = await SendRequest(request, cancellationToken).ConfigureAwait(false);
+            var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -288,6 +308,10 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
             result.Success = true;
             return result;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (HttpRequestException ex)
         {
             Log.Warning("Rclone RC request to {Endpoint} failed. Reason: {Reason}", endpoint, ex.Message);
@@ -303,18 +327,24 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
         }
     }
 
-    private Task<T> Post<T>(string endpoint, object? body) where T : RcloneResponse, new()
-        => Post<T>(Host!, User, Pass, endpoint, body);
+    private Task<T> Post<T>(string endpoint, object? body, CancellationToken cancellationToken)
+        where T : RcloneResponse, new()
+        => Post<T>(Host!, User, Pass, endpoint, body, cancellationToken);
 
-    private static async Task<HttpResponseMessage> SendRequest(HttpRequestMessage request)
+    private static async Task<HttpResponseMessage> SendRequest(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
     {
         if (TestHandler != null)
         {
-            using var client = new HttpClient(TestHandler, disposeHandler: false);
-            return await client.SendAsync(request).ConfigureAwait(false);
+            using var client = new HttpClient(TestHandler, disposeHandler: false)
+            {
+                Timeout = RequestTimeout,
+            };
+            return await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         }
 
-        return await HttpClient.SendAsync(request).ConfigureAwait(false);
+        return await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     private static void AddAuthHeader(HttpRequestMessage request, string? user, string? pass)

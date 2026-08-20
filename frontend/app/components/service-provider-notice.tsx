@@ -18,11 +18,7 @@ export function ServiceProviderNotice({
       title="Feature Not Available"
       onClose={onClose}
       className="max-w-lg"
-      footer={
-        <Button onClick={onClose}>
-          Close
-        </Button>
-      }
+      footer={<Button onClick={onClose}>Close</Button>}
     >
       <div className="flex flex-col items-center gap-4 text-center">
         <Icon name="info" className="!text-[52px] text-base-content/60" />

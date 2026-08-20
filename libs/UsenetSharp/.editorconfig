@@ -83,3 +83,7 @@ dotnet_diagnostic.CA1508.severity = none
 dotnet_diagnostic.CA1852.severity = none
 dotnet_diagnostic.CA2100.severity = none
 dotnet_diagnostic.CA3003.severity = none
+# Cancellation and disposal conventions (#849). Mirror the root .editorconfig
+# explicit errors — this file is root = true and does not inherit them.
+dotnet_diagnostic.CA2016.severity = error
+dotnet_diagnostic.CA1001.severity = error

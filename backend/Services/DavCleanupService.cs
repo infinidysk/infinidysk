@@ -7,7 +7,7 @@ using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Services;
 
-public class DavCleanupService : BackgroundService
+public class DavCleanupService(IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -15,7 +15,7 @@ public class DavCleanupService : BackgroundService
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var dbContext = dbContextFactory.CreateDbContext();
 
                 // If no items in queue, wait 10 seconds before checking again
                 if (!await ProcessNextItemAsync(dbContext, stoppingToken).ConfigureAwait(false))
@@ -76,7 +76,7 @@ public class DavCleanupService : BackgroundService
                 .Where(x => x.ParentId == cleanupItemIdPg)
                 .ExecuteDeleteAsync(cancellationToken)
                 .ConfigureAwait(false);
-            _ = DavDatabaseContext.RcloneVfsForget(deletedItemsPg);
+            _ = DavDatabaseContext.RcloneVfsForget(deletedItemsPg, cancellationToken);
 
             await dbContext.DavCleanupItems
                 .Where(x => x.Id == cleanupItemIdPg)
@@ -129,7 +129,7 @@ public class DavCleanupService : BackgroundService
             CreateParentIdParameters(cleanupItemId),
             cancellationToken).ConfigureAwait(false);
 
-        _ = DavDatabaseContext.RcloneVfsForget(deletedItems);
+        _ = DavDatabaseContext.RcloneVfsForget(deletedItems, cancellationToken);
 
         // Delete by the exact text selected above. A concurrent or repeated delete
         // affects zero rows without raising an optimistic-concurrency exception.

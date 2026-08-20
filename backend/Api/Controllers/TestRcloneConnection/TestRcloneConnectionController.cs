@@ -15,7 +15,7 @@ public class TestRcloneConnectionController(
         try
         {
             var result = await RcloneClient
-                .TestConnection(request.Host, request.User, request.Pass)
+                .TestConnection(request.Host, request.User, request.Pass, HttpContext.RequestAborted)
                 .ConfigureAwait(false);
 
             return new TestRcloneConnectionResponse

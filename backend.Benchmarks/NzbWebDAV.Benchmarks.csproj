@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+    <PackageReference Include="BenchmarkDotNet" />
     <ProjectReference Include="..\backend\NzbWebDAV.csproj" />
   </ItemGroup>
 
@@ -10,7 +10,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RestoreConfigFile>$(MSBuildThisFileDirectory)..\backend\nuget.config</RestoreConfigFile>
   </PropertyGroup>
 
 </Project>

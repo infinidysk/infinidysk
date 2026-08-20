@@ -94,6 +94,23 @@ public class RcloneClientTests : IDisposable
         Assert.Empty(result.Forgotten ?? []);
     }
 
+    [Fact]
+    public async Task TestConnection_PropagatesCancellation()
+    {
+        RcloneClient.TestHandler = new HangUntilCancelledHandler();
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => RcloneClient.TestConnection("http://rclone.test", null, null, cts.Token));
+    }
+
+    [Fact]
+    public void SharedHttpClient_HasExplicitTimeout()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(30), RcloneClient.RequestTimeout);
+    }
+
     public void Dispose()
     {
         RcloneClient.TestHandler = null;
@@ -136,6 +153,17 @@ public class RcloneClientTests : IDisposable
                 throw new InvalidOperationException($"Unexpected request: {key}");
 
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class HangUntilCancelledHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Expected cancellation before a response.");
         }
     }
 }

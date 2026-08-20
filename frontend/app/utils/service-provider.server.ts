@@ -40,8 +40,8 @@ function parseConfig(rawValue: string): ParsedServiceProvider {
     throw new Error('"name" must be a non-empty string');
   }
   if (
-    !Array.isArray(candidate["disabledFeatures"])
-    || !candidate["disabledFeatures"].every((feature) => typeof feature === "string")
+    !Array.isArray(candidate["disabledFeatures"]) ||
+    !candidate["disabledFeatures"].every((feature) => typeof feature === "string")
   ) {
     throw new Error('"disabledFeatures" must be an array of strings');
   }

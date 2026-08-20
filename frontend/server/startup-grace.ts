@@ -22,9 +22,9 @@ const backendUnavailableLogState = process as typeof process & {
 };
 
 function getBackendUnavailableLogState(): { lastLogAt: number } {
-  return backendUnavailableLogState.__nzbdavBackendUnavailableLogState ??= {
+  return (backendUnavailableLogState.__nzbdavBackendUnavailableLogState ??= {
     lastLogAt: 0,
-  };
+  });
 }
 
 /** Uses process uptime so Express and SSR bundles agree even if this module is duplicated. */

@@ -20,16 +20,10 @@ export function LegacyImageBanner({ isLegacyImage }: { isLegacyImage: boolean })
       <div className="min-w-0">
         <p className="font-semibold">This image path is deprecated</p>
         <p className="mt-0.5 text-warning-content/80">
-          You are running InfiniDysk from the old <code>ghcr.io/nzbdav/nzbdav</code> image.
-          Switch to <code>ghcr.io/infinidysk/infinidysk</code> — same <code>/config</code>,
-          same tags, no other changes. Updates on the old path will stop after the
-          transition period.{" "}
-          <a
-            href={RENAME_FAQ_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="link font-semibold"
-          >
+          You are running InfiniDysk from the old <code>ghcr.io/nzbdav/nzbdav</code> image. Switch
+          to <code>ghcr.io/infinidysk/infinidysk</code> — same <code>/config</code>, same tags, no
+          other changes. Updates on the old path will stop after the transition period.{" "}
+          <a href={RENAME_FAQ_URL} target="_blank" rel="noreferrer" className="link font-semibold">
             Read the rename FAQ
           </a>
         </p>
