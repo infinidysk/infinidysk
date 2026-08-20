@@ -64,6 +64,66 @@ public class InFlightArticleBudgetTests
     }
 
     [Fact]
+    public async Task LeaseAsync_QueuedHead_NewcomerDoesNotBargeReleasedCapacity()
+    {
+        const long cap = 1_000;
+        var budget = new InFlightArticleBudget(cap);
+        var held = await budget.LeaseAsync(cap, CancellationToken.None);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var head = budget.LeaseAsync(600, cts.Token).AsTask();
+        await WaitUntil(() => budget.HasWaiters);
+
+        var newcomer = budget.LeaseAsync(400, cts.Token).AsTask();
+        await WaitUntil(() => budget.ThrottleEvents >= 2);
+
+        // 400 bytes would fit the newcomer, but the FIFO head needs 600.
+        held.Adjust(-400);
+        await Task.Delay(50);
+        Assert.False(head.IsCompleted);
+        Assert.False(newcomer.IsCompleted);
+        Assert.True(budget.HasWaiters);
+
+        held.Adjust(-200);
+        using var headLease = await head.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(newcomer.IsCompleted);
+        Assert.Equal(1_000, budget.LeasedBytes);
+
+        headLease.Dispose();
+        using var newcomerLease = await newcomer.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(800, budget.LeasedBytes);
+
+        newcomerLease.Dispose();
+        held.Dispose();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task LeaseAsync_MultipleSmallReleases_WakeHeadNeedingLargerAmount()
+    {
+        // Issue 1041 claimed a lost wake when Release ran between the head's wake
+        // and Waiter.Reset(). TryLease and Reset share _gate with SignalWaiters'
+        // TCS read, so that interleaving cannot drop a signal: a Release either
+        // frees bytes the in-lock TryLease already saw or observes the reset TCS.
+        // This hammers the many-small-releases path that would hang if a wake were
+        // lost; a generation counter is not required.
+        var budget = new InFlightArticleBudget(100);
+        var held = await budget.LeaseAsync(100, CancellationToken.None);
+        var waiter = budget.LeaseAsync(50, CancellationToken.None).AsTask();
+        await WaitUntil(() => budget.HasWaiters);
+
+        for (var i = 0; i < 50; i++)
+            held.Adjust(-1);
+
+        using var lease = await waiter.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(100, budget.LeasedBytes);
+
+        held.Dispose();
+        lease.Dispose();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
     public async Task AccountBufferedPipeBytes_PositiveDeltaDoesNotWakeWaiter()
     {
         var budget = new InFlightArticleBudget(1_000);
@@ -147,5 +207,12 @@ public class InFlightArticleBudgetTests
 
         lease.Dispose();
         Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    private static async Task WaitUntil(Func<bool> condition, int maxAttempts = 50)
+    {
+        for (var i = 0; i < maxAttempts && !condition(); i++)
+            await Task.Delay(10);
+        Assert.True(condition());
     }
 }

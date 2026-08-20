@@ -6,6 +6,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav.Base;
 
 namespace NzbWebDAV.Tests.WebDav;
@@ -234,7 +235,7 @@ public class GetAndHeadHandlerRangeTests
         using var readCts = new CancellationTokenSource();
         using var dest = new MemoryStream();
 
-        await GetAndHeadHandlerPatch.WriteWithProgressTimeoutAsync(
+        await StreamingResponseWriteWatchdog.WriteWithProgressTimeoutAsync(
             dest, new byte[1024], TimeSpan.FromSeconds(5), readCts, CancellationToken.None);
 
         Assert.Equal(1024, dest.Length);
@@ -248,7 +249,7 @@ public class GetAndHeadHandlerRangeTests
         using var dest = new NeverCompletingWriteStream();
 
         var ex = await Assert.ThrowsAsync<NzbWebDAV.Exceptions.StreamingWriteTimeoutException>(async () =>
-            await GetAndHeadHandlerPatch.WriteWithProgressTimeoutAsync(
+            await StreamingResponseWriteWatchdog.WriteWithProgressTimeoutAsync(
                 dest, new byte[1024], TimeSpan.FromMilliseconds(50), readCts, CancellationToken.None));
 
         Assert.True(readCts.IsCancellationRequested);
@@ -261,7 +262,7 @@ public class GetAndHeadHandlerRangeTests
         using var readCts = new CancellationTokenSource();
         using var dest = new MemoryStream();
 
-        await GetAndHeadHandlerPatch.WriteWithProgressTimeoutAsync(
+        await StreamingResponseWriteWatchdog.WriteWithProgressTimeoutAsync(
             dest, new byte[512], TimeSpan.Zero, readCts, CancellationToken.None);
 
         Assert.Equal(512, dest.Length);
