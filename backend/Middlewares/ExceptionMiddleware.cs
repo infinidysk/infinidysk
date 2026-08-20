@@ -66,19 +66,22 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             }
 
             var filePath = GetRequestFilePath(context);
-            LogWithDedup(RecentStreamingWriteTimeouts, filePath, suppressed =>
+            var reason = string.IsNullOrEmpty(e.Reason)
+                ? StreamingWriteTimeoutException.PerWriteStallReason
+                : e.Reason;
+            var isReclaim = reason == StreamingWriteTimeoutException.AggregateReclaimReason;
+            var warning = isReclaim
+                ? "WebDAV write reclaimed; stream cancelled to release Article RAM. Path={Path} Reason: {Reason}"
+                : "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason}";
+            var warningWithSuppressed = isReclaim
+                ? "WebDAV write reclaimed; stream cancelled to release Article RAM. Path={Path} Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)"
+                : "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)";
+            LogWithDedup(RecentStreamingWriteTimeouts, $"{filePath}|{reason}", suppressed =>
             {
                 if (suppressed > 0)
-                    Log.Warning(
-                        "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)",
-                        filePath,
-                        "streaming-write-timeout",
-                        suppressed);
+                    Log.Warning(warningWithSuppressed, filePath, reason, suppressed);
                 else
-                    Log.Warning(
-                        "WebDAV write stalled; stream cancelled to release Article RAM. Path={Path} Reason: {Reason}",
-                        filePath,
-                        "streaming-write-timeout");
+                    Log.Warning(warning, filePath, reason);
             });
             Log.Debug(e, "WebDAV streaming-write-timeout stack");
         }

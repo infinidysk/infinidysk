@@ -514,6 +514,34 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task StreamingWriteTimeout_AggregateReclaim_LogsDistinctReason()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: true, lifetimeFeature);
+        context.Request.Path = $"/content/write-reclaim-{Guid.NewGuid():N}.mkv";
+        var middleware = CreateMiddleware(
+            _ => throw new StreamingWriteTimeoutException(
+                "Client transferred under 64 KB per timeout window while other streams waited on Article RAM.")
+            {
+                Reason = StreamingWriteTimeoutException.AggregateReclaimReason,
+            });
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        Assert.True(lifetimeFeature.Aborted);
+        var logged = Assert.Single(
+            events,
+            e => e.RenderMessage().Contains("streaming-write-reclaim", StringComparison.Ordinal)
+                 && e.Level == LogEventLevel.Warning
+                 && e.Exception is null);
+        Assert.Contains("write reclaimed", logged.RenderMessage(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            "write stalled",
+            logged.RenderMessage(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task StreamingWriteTimeout_BeforeResponseStarted_Returns499WithoutAborting()
     {
         var lifetimeFeature = new TestHttpRequestLifetimeFeature();
