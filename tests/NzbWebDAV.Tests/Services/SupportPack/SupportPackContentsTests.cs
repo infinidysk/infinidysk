@@ -115,9 +115,9 @@ public sealed class SupportPackContentsTests : IDisposable
 
         using var environment = JsonDocument.Parse(entries["environment.json"]);
         var tracking = environment.RootElement.GetProperty("par2Repair").GetProperty("corruptionTracking");
-        Assert.True(tracking.TryGetProperty("enabled", out _));
-        Assert.True(tracking.GetProperty("filesWithCorruptRecords").GetInt32() >= 0);
-        Assert.True(tracking.GetProperty("recordedCorruptSegments").GetInt32() >= 0);
+        Assert.False(tracking.GetProperty("enabled").GetBoolean());
+        Assert.Equal(0, tracking.GetProperty("filesWithCorruptRecords").GetInt32());
+        Assert.Equal(0, tracking.GetProperty("recordedCorruptSegments").GetInt32());
     }
 
     [Fact]

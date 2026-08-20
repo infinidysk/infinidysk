@@ -381,8 +381,6 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         UsenetCorruptArticleException corrupt,
         CancellationToken cancellationToken)
     {
-        Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
-
         await DisposeOpenBodyAsync().ConfigureAwait(false);
         _hasProbedByte = false;
 
@@ -417,6 +415,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         }
         catch (UsenetCorruptArticleException)
         {
+            Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
             ExceptionDispatchInfo.Capture(corrupt).Throw();
             throw;
         }
@@ -427,6 +426,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 "Confirmation re-fetch of corrupt segment {SegmentId} of {FileName} failed",
                 segmentId,
                 _fileName);
+            Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
             ExceptionDispatchInfo.Capture(corrupt).Throw();
             throw;
         }

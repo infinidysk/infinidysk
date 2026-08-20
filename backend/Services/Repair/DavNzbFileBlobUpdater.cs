@@ -17,18 +17,43 @@ namespace NzbWebDAV.Services.Repair;
 /// background loops, the window is small, and a lost corrupt record is recreated
 /// on the next corrupt read. Do not move the health SaveChanges into this lock —
 /// that would break health-row atomicity.
+/// <para>
+/// Item locks are striped (fixed SemaphoreSlim count) so a long-running server
+/// cannot retain one semaphore per mutated file. <see cref="LatestBlobIds"/> still
+/// maps item id → uncommitted blob id: the two writer loops can mutate different
+/// in-memory <see cref="DavItem"/> instances of the same row before SaveChanges,
+/// and the latest blob id is the only way the second writer sees the first swap.
+/// Entries are one Guid per item that has ever been mutated — far cheaper than a
+/// leaked SemaphoreSlim — and must outlive the lock or sequential unions on stale
+/// instances would drop fields.
+/// </para>
 /// </remarks>
 internal static class DavNzbFileBlobUpdater
 {
-    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> Locks = new();
+    private const int StripeCount = 32;
+    private static readonly SemaphoreSlim[] Stripes = CreateStripes();
     private static readonly ConcurrentDictionary<Guid, Guid> LatestBlobIds = new();
+
+    private static SemaphoreSlim[] CreateStripes()
+    {
+        var stripes = new SemaphoreSlim[StripeCount];
+        for (var i = 0; i < stripes.Length; i++)
+            stripes[i] = new SemaphoreSlim(1, 1);
+        return stripes;
+    }
+
+    private static SemaphoreSlim StripeFor(Guid itemId)
+    {
+        var hash = (uint)itemId.GetHashCode();
+        return Stripes[hash % StripeCount];
+    }
 
     public static async Task MutateAsync(
         DavItem davItem,
         Func<DavNzbFile, DavNzbFile> mutate,
         DavNzbFile? fallback = null)
     {
-        var gate = Locks.GetOrAdd(davItem.Id, static _ => new SemaphoreSlim(1, 1));
+        var gate = StripeFor(davItem.Id);
         await gate.WaitAsync().ConfigureAwait(false);
         try
         {

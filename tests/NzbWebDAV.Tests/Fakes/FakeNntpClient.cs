@@ -28,6 +28,12 @@ internal sealed class FakeNntpClient(
     /// <summary>Adds or restores an article (e.g. provider-side recovery between checks).</summary>
     public void Serve(string segmentId, byte[] content) => _segments[segmentId] = content;
 
+    /// <summary>
+    /// When set, BODY responses claim this SegmentId instead of the requested one
+    /// so tests can exercise mismatch rejection without a live NNTP scramble.
+    /// </summary>
+    public string? ForcedResponseSegmentId { get; set; }
+
     public override Task ConnectAsync(
         string host, int port, bool useSsl, CancellationToken cancellationToken) =>
         Task.CompletedTask;
@@ -169,7 +175,7 @@ internal sealed class FakeNntpClient(
             : new YencStream(new MemoryStream(EncodeYenc(bytes), writable: false));
         return new UsenetDecodedBodyResponse
         {
-            SegmentId = key,
+            SegmentId = ForcedResponseSegmentId ?? key,
             ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
             ResponseMessage = "222 fake body",
             Stream = stream,

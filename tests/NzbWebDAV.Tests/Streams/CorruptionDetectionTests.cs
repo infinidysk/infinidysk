@@ -109,24 +109,27 @@ public class CorruptionDetectionTests
     }
 
     [Fact]
-    public async Task UnbufferedStream_PostEmissionCleanConfirmation_ThrowsTransientWithoutCorruptInner()
+    public async Task UnbufferedStream_PostEmissionCleanConfirmation_ThrowsTransientWithoutReporting()
     {
         var payload = "hello"u8.ToArray();
+        var segmentId = $"segment-{Guid.NewGuid():N}@example";
+        var reports = Par2RepairTriggerSink.TestReports ??= new();
         using var client = new ScriptedNntpClient((id, n) => n == 1
             ? new PayloadThenCorruptYencStream(payload, id)
             : new BytesYencStream(payload));
         await using var stream = CreateUnbuffered(
-            client, ["segment@example"], exactSizes: [payload.Length]);
+            client, [segmentId], exactSizes: [payload.Length]);
         using var output = new MemoryStream();
 
         var exception = await Assert.ThrowsAsync<TransientSegmentExhaustionException>(
             () => stream.CopyToAsync(output));
 
         Assert.Contains("transient/provider-specific", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("segment@example", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(segmentId, exception.Message, StringComparison.Ordinal);
         Assert.Null(exception.InnerException);
         Assert.False(exception.TryGetCausingException(out UsenetCorruptArticleException? _));
         Assert.Equal(2, client.BodyRequestCount);
+        Assert.DoesNotContain(reports, e => e.SegmentId == segmentId);
     }
 
     [Fact]
@@ -306,7 +309,7 @@ public class CorruptionDetectionTests
             {
                 inner = factory(key, BodyRequestCounts[key]);
             }
-            catch
+            catch (Exception)
             {
                 return Task.FromException<UsenetDecodedBodyResponse>(
                     new UsenetCorruptArticleException(key, "provider-a",

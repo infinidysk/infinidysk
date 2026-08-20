@@ -14,6 +14,7 @@ using NzbWebDAV.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services.Repair;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -403,9 +404,10 @@ public class HealthCheckService : BackgroundService
 
             var statHoles = confirmedHoles ?? [];
             List<int> remainingCorrupt = [];
+            // canClassify is only true when SegmentByteRanges materialized from this nzbFile.
             if (canClassify
                 && _configManager.IsCorruptionTrackingEnabled()
-                && nzbFile?.CorruptSegmentIndices is { Length: > 0 } recorded)
+                && nzbFile!.CorruptSegmentIndices is { Length: > 0 } recorded)
             {
                 remainingCorrupt = await FilterRecordedCorruptIndicesAsync(nzbFile, recorded, ct)
                     .ConfigureAwait(false);
@@ -433,8 +435,8 @@ public class HealthCheckService : BackgroundService
             // A previously degraded file that now sweeps clean has recovered (provider-side
             // restoration): drop the stale hole and corrupt records. The probed container
             // class is a permanent property of the file and survives the clear.
-            if (canClassify && nzbFile is not null
-                && (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
+            if (canClassify
+                && (nzbFile!.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
                 await SwapNzbFileBlobAsync(davItem, nzbFile, null, null, replaceCorruptRecord: true)
                     .ConfigureAwait(false);
 
@@ -828,11 +830,9 @@ public class HealthCheckService : BackgroundService
         var cap = _configManager.GetDegradedMaxTotalMissing();
         var probed = 0;
         var ranges = nzbFile.SegmentByteRanges;
-        foreach (var index in recorded.Distinct().OrderBy(i => i))
+        foreach (var index in recorded.Distinct().OrderBy(i => i)
+                     .Where(i => (uint)i < (uint)nzbFile.SegmentIds.Length))
         {
-            if (index < 0 || index >= nzbFile.SegmentIds.Length)
-                continue;
-
             var segmentId = nzbFile.SegmentIds[index];
             var expectedSize = ranges is not null && index < ranges.Length ? ranges[index].Count : 0;
             if (expectedSize > 0 && _repairPatchStore.IsRepaired(segmentId, expectedSize))
@@ -858,6 +858,9 @@ public class HealthCheckService : BackgroundService
         try
         {
             var body = await _usenetClient.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
+            await SegmentResponseValidator
+                .ThrowOnSegmentIdMismatchAsync(segmentId, body)
+                .ConfigureAwait(false);
             var stream = body.Stream;
             if (stream is null) return false;
             var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(8192);
@@ -883,7 +886,10 @@ public class HealthCheckService : BackgroundService
         {
             throw;
         }
-        catch (Exception e) when (e is UsenetCorruptArticleException or UsenetArticleNotFoundException)
+        catch (Exception e) when (
+            e is UsenetCorruptArticleException
+                or UsenetArticleNotFoundException
+                or UsenetUnexpectedResponseException)
         {
             return false;
         }

@@ -607,6 +607,26 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ReconfirmationProbe_MismatchedSegmentId_KeepsCorruptRecord()
+    {
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [2]);
+        var fake = NewFakeClient(segments, missing: []);
+        fake.ForcedResponseSegmentId = "wrong@example.com";
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Degraded, row.Result);
+        Assert.Equal([segments[2]], Assert.Single(par2.Requests));
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
+        Assert.Equal([2], blob!.CorruptSegmentIndices!);
+    }
+
+    [Fact]
     public async Task HealthyBranchDetour_ClearsStaleCorruptRecordWhenProbesPass()
     {
         var segments = NewSegmentIds(4);

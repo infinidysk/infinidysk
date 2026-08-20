@@ -58,11 +58,8 @@ public class DatabaseStoreNzbFile(
         if (nzbFile.CorruptSegmentIndices is not { Length: > 0 } indices) return null;
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var index in indices)
-        {
-            if ((uint)index < (uint)nzbFile.SegmentIds.Length)
-                ids.Add(nzbFile.SegmentIds[index]);
-        }
+        foreach (var index in indices.Where(i => (uint)i < (uint)nzbFile.SegmentIds.Length))
+            ids.Add(nzbFile.SegmentIds[index]);
 
         return ids.Count == 0 ? null : ids;
     }

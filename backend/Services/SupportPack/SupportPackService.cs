@@ -656,14 +656,15 @@ public sealed class SupportPackService(
         try
         {
             var snapshot = par2RepairService.GetDiagnosticSnapshot();
-            var corruptRecords = CountCorruptRecords();
+            var trackingEnabled = configManager.IsCorruptionTrackingEnabled();
+            var corruptRecords = trackingEnabled ? CountCorruptRecords() : (Files: 0, Segments: 0);
             return new
             {
                 enabled = configManager.IsPar2RepairEnabled(),
                 preferredOverArr = configManager.IsPar2PreferredOverArr(),
                 corruptionTracking = new
                 {
-                    enabled = configManager.IsCorruptionTrackingEnabled(),
+                    enabled = trackingEnabled,
                     filesWithCorruptRecords = corruptRecords.Files,
                     recordedCorruptSegments = corruptRecords.Segments,
                 },
