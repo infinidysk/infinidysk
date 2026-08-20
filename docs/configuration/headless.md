@@ -143,6 +143,10 @@ services:
 
       NZBDAV_CONFIG__ARR__INSTANCES: >-
         {"RadarrInstances":[{"Host":"http://radarr:7878","ApiKey":"${RADARR_API_KEY:?set RADARR_API_KEY}"}],"SonarrInstances":[{"Host":"http://sonarr:8989","ApiKey":"${SONARR_API_KEY:?set SONARR_API_KEY}"}],"QueueRules":[]}
+      # Optional. Default on. Set false to keep Arr queue rules without Overview health polling.
+      # NZBDAV_CONFIG__ARR__HEALTH_ENABLED: "true"
+      # Optional Name/Enabled on each instance (since 1.2.0) are not forward compatible
+      # with older images — see Validation and restart.
 
       NZBDAV_CONFIG__INDEXERS__INSTANCES: >-
         {"Indexers":[{"Name":"Example","Url":"https://indexer.example/api","ApiKey":"${INDEXER_API_KEY:?set INDEXER_API_KEY}","Enabled":true}]}

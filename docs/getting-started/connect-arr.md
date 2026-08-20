@@ -24,7 +24,7 @@ Test the connection. Prefer `addfile` when clients can upload NZB bytes; `addurl
 2. Add Sonarr host (`http://sonarr:8989`) + API key.
 3. Configure **Automatic Queue Management** for stuck import messages (remove / blocklist / search).
 
-Only Usenet queue items are acted on. See [Radarr/Sonarr settings](../configuration/arrs.md).
+Registered and enabled instances light up the Overview **Arr Health** widget [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }. See [Radarr/Sonarr settings](../configuration/arrs.md).
 
 ## Align import paths
 
