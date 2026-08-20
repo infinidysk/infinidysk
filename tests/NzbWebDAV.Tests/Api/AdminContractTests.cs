@@ -153,11 +153,11 @@ public sealed class AdminContractTests
             serverError.Content.Headers.ContentType?.MediaType);
     }
 
-    private static Task<HttpResponseMessage> PostConfigKeysAsync(HttpClient client, params string[] keys)
+    private static async Task<HttpResponseMessage> PostConfigKeysAsync(HttpClient client, params string[] keys)
     {
-        var form = new MultipartFormDataContent();
+        using var form = new MultipartFormDataContent();
         foreach (var key in keys)
             form.Add(new StringContent(key), "config-keys");
-        return client.PostAsync("/api/get-config", form);
+        return await client.PostAsync("/api/get-config", form);
     }
 }

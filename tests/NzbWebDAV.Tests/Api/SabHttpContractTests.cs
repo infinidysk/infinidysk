@@ -131,9 +131,11 @@ public sealed class SabHttpContractTests
         await SabContractAssertions.AssertFailureAsync(
             malformedHistory, HttpStatusCode.BadRequest, "Invalid nzo_ids");
 
+        using var serverErrorBody = new StringContent(
+            "{}", new MediaTypeHeaderValue("application/json"));
         using var serverError = await client.PostAsync(
             "/api?mode=addfile&output=json",
-            new StringContent("{}", new MediaTypeHeaderValue("application/json")));
+            serverErrorBody);
         await SabContractAssertions.AssertFailureAsync(
             serverError, HttpStatusCode.InternalServerError, "internal server error");
     }

@@ -8,6 +8,7 @@ internal static class SabContractAssertions
     public static async Task<JsonDocument> AssertSuccessAsync(HttpResponseMessage response)
     {
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         var json = await ParseJsonAsync(response);
         Assert.True(json.RootElement.GetProperty("status").GetBoolean());
         if (json.RootElement.TryGetProperty("error", out var error) &&
