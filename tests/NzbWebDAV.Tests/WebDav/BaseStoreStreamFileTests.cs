@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.WebDav.Base;
 
 namespace NzbWebDAV.Tests.WebDav;
@@ -146,9 +147,7 @@ public class BaseStoreStreamFileTests
         {
             if (davItem is not null)
                 Context.Items["DavItem"] = davItem;
-#pragma warning disable CA2000 // returned stream is owned by the caller
-            return Task.FromResult<Stream>(new MemoryStream(payload, writable: false));
-#pragma warning restore CA2000
+            return Task.FromResult(TestStreams.Create(payload));
         }
     }
 

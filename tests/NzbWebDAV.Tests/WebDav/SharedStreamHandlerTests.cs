@@ -200,22 +200,18 @@ public class SharedStreamHandlerTests
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref PrivateOpenCount);
-#pragma warning disable CA2000 // returned stream is owned by the caller
-            return Task.FromResult<Stream>(new MemoryStream(payload, writable: false));
-#pragma warning restore CA2000
+            return Task.FromResult(TestStreams.Create(payload));
         }
 
         public Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref DetachedOpenCount);
-#pragma warning disable CA2000 // lease.Stream is owned by the shared-stream entry
             return Task.FromResult(new DetachedStreamLease
             {
-                Stream = new MemoryStream(payload, writable: false),
+                Stream = TestStreams.Create(payload),
                 Ownership = NullAsyncDisposable.Instance,
                 DavItem = davItem,
             });
-#pragma warning restore CA2000
         }
     }
 
@@ -230,9 +226,7 @@ public class SharedStreamHandlerTests
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref PrivateOpenCount);
-#pragma warning disable CA2000 // returned stream is owned by the caller
-            return Task.FromResult<Stream>(new MemoryStream([7, 8, 9], writable: false));
-#pragma warning restore CA2000
+            return Task.FromResult(TestStreams.Create([7, 8, 9]));
         }
     }
 

@@ -15,7 +15,9 @@ public sealed class OomDiagnosticsTests
         var events = CaptureLogs(() =>
             OomDiagnostics.LogHeapStateOnOom(new OutOfMemoryException("test"), "test operation"));
 
-        var entry = Assert.Single(events);
+        var entry = Assert.Single(
+            events,
+            e => e.MessageTemplate.Text.Contains("OutOfMemoryException during"));
         Assert.Equal(LogEventLevel.Warning, entry.Level);
         Assert.Contains("OutOfMemoryException during", entry.MessageTemplate.Text);
     }

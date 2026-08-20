@@ -3,6 +3,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.WebDav.Base;
+using Serilog;
 
 namespace NzbWebDAV.Services;
 
@@ -162,7 +163,10 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
             entry.OnRingRetainedBytes = null;
             entry.OnForceEvictions = null;
             try { await entry.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OutOfMemoryException) { }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                Log.Debug(ex, "Shared stream entry dispose failed during registry shutdown");
+            }
         }
 
         _rootCts.Dispose();
