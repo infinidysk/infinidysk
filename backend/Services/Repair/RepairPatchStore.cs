@@ -152,8 +152,10 @@ public sealed class RepairPatchStore
             foreach (var (hash, tempPath, headerPath, size) in staged)
             {
                 var blobPath = BlobPath(hash);
-                File.Move(headerPath, blobPath + ".h", overwrite: true);
+                // Publish bytes before the header so readers never observe a header
+                // whose blob is still missing or from a previous generation.
                 File.Move(tempPath, blobPath, overwrite: true);
+                File.Move(headerPath, blobPath + ".h", overwrite: true);
                 OnFinalized(hash, size);
             }
         }

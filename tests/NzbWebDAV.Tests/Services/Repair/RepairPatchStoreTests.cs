@@ -34,9 +34,20 @@ public sealed class RepairPatchStoreTests
             Assert.True(store.TryGet(segmentId, out var response));
             response!.Stream!.Dispose();
 
+            var replacement = "patch-data-v2"u8.ToArray();
+            store.CommitPatch(segmentId, replacement, Header(replacement.Length));
+            Assert.True(store.IsRepaired(segmentId, replacement.Length));
+            Assert.True(store.TryGet(segmentId, out var replaced));
+            using (replaced!.Stream)
+            {
+                using var copy = new MemoryStream();
+                replaced.Stream!.CopyTo(copy);
+                Assert.Equal(replacement, copy.ToArray());
+            }
+
             var reloaded = new RepairPatchStore(dir, 1024 * 1024);
             await reloaded.CatalogLoadTask;
-            Assert.True(reloaded.IsRepaired(segmentId, content.Length));
+            Assert.True(reloaded.IsRepaired(segmentId, replacement.Length));
         }
         finally
         {

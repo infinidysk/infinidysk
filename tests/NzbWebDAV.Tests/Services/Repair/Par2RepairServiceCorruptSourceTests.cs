@@ -164,6 +164,11 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         Assert.Equal(
             target.AsSpan(0, SliceSize).ToArray(),
             await ReadPatchAsync(release.Store, release.ContentSegmentIds[0]));
+        var siblingBodies = release.Fake.BodyRequestCounts.Keys
+            .Where(id => id.Contains("extra-", StringComparison.Ordinal))
+            .ToList();
+        Assert.Equal(2, siblingBodies.Count);
+        Assert.All(siblingBodies, id => Assert.Equal(1, release.Fake.BodyRequestCounts[id]));
     }
 
     [Fact]

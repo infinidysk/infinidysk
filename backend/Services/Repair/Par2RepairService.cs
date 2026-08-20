@@ -519,7 +519,8 @@ public class Par2RepairService : BackgroundService
         try
         {
             workingSetBytes = EstimateWorkingSetBytes(
-                accessor.CachedBodyBytes,
+                checked(accessor.CachedBodyBytes + EstimateSiblingSegmentPeakBytes(
+                    par2Context, nzbDocument, par2Context.TargetFileIndex)),
                 presentSliceCount,
                 unavailableSlices.Count,
                 unavailableSlices.Count,
@@ -640,14 +641,8 @@ public class Par2RepairService : BackgroundService
                 var assembled = await accessor.FetchSliceBytesAsync(globalSlice, sliceMap.SliceSize, ct)
                     .ConfigureAwait(false);
                 AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
-                if (assembled is null)
-                {
-                    if (unavailableSlices.Add(globalSlice))
-                        expanded = true;
-                    continue;
-                }
-
-                if (!Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
+                if (assembled is null ||
+                    !Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
                 {
                     if (unavailableSlices.Add(globalSlice))
                         expanded = true;
@@ -663,15 +658,12 @@ public class Par2RepairService : BackgroundService
         HashSet<int> unavailableSlices,
         ref bool expanded)
     {
-        foreach (var index in accessor.MissingSegmentIndices.Concat(accessor.CorruptSegmentIndices))
+        foreach (var index in accessor.MissingSegmentIndices
+                     .Concat(accessor.CorruptSegmentIndices)
+                     .Where(unavailableSegments.Add))
         {
-            if (!unavailableSegments.Add(index))
-                continue;
-            foreach (var slice in sliceMap.GlobalSlicesForSegment(index))
-            {
-                if (unavailableSlices.Add(slice))
-                    expanded = true;
-            }
+            foreach (var slice in sliceMap.GlobalSlicesForSegment(index).Where(unavailableSlices.Add))
+                expanded = true;
         }
     }
 
@@ -713,6 +705,35 @@ public class Par2RepairService : BackgroundService
                    + stagedPatchBytes
                    + memoryStreamDup;
         }
+    }
+
+    /// <summary>
+    /// Peak sibling-file cache with sequential slice walks: at most two overlapping
+    /// NZB segments of the largest sibling, not the whole foreign file.
+    /// </summary>
+    private static long EstimateSiblingSegmentPeakBytes(
+        Par2SetContext par2,
+        NzbDocument nzbDocument,
+        int targetFileIndex)
+    {
+        long peak = 0;
+        for (var i = 0; i < par2.Main.FileIds.Count; i++)
+        {
+            if (i == targetFileIndex)
+                continue;
+            var key = Convert.ToHexString(par2.Main.FileIds[i]);
+            if (!par2.FileDescsById.TryGetValue(key, out var desc))
+                continue;
+            var nzbFile = FindContentNzbFile(nzbDocument, desc.FileName);
+            if (nzbFile is null || nzbFile.Segments.Count == 0)
+                continue;
+            var maxSegment = nzbFile.Segments.Max(segment => segment.Bytes);
+            var filePeak = Math.Min((long)desc.FileLength, checked(2 * maxSegment));
+            if (filePeak > peak)
+                peak = filePeak;
+        }
+
+        return peak;
     }
 
     private static HashSet<int> ValidIndices(int[]? indices, int segmentCount)
@@ -1356,7 +1377,9 @@ public class Par2RepairService : BackgroundService
         private readonly HashSet<int> _targetSlices;
         private readonly Action<long>? _onBytesRead;
         private readonly Dictionary<int, byte[]> _segmentBodies = new();
-        private readonly Dictionary<int, byte[]> _siblingFileBytes = new();
+        private readonly Dictionary<int, SiblingLayout> _siblingLayouts = new();
+        private readonly Dictionary<(int FileIndex, int SegmentIndex), byte[]> _siblingSegmentBodies = new();
+        private int _activeSiblingFileIndex = -1;
         private readonly HashSet<int> _missingSegmentIndices = new();
         private readonly HashSet<int> _corruptSegmentIndices = new();
         private long _cachedBodyBytes;
@@ -1519,6 +1542,8 @@ public class Par2RepairService : BackgroundService
             }
         }
 
+        private sealed record SiblingLayout(Par2FileSliceMap Map, string[] SegmentIds);
+
         private async Task<byte[]?> FetchForeignSliceAsync(int globalSliceIndex, int sliceSize, CancellationToken ct)
         {
             var offset = 0;
@@ -1538,57 +1563,208 @@ public class Par2RepairService : BackgroundService
                 if (fileIndex == _par2.TargetFileIndex)
                     return null;
 
-                var fileBytes = await GetSiblingFileBytesAsync(fileIndex, ct).ConfigureAwait(false);
-                if (fileBytes is null)
+                if (!TryGetSiblingLayout(fileIndex, out var layout) || layout is null)
                     return null;
 
-                var local = globalSliceIndex - offset;
-                var start = checked(local * sliceSize);
-                var slice = new byte[sliceSize];
-                if (start >= fileBytes.Length)
-                    return slice;
-
-                var copy = Math.Min(sliceSize, fileBytes.Length - start);
-                Buffer.BlockCopy(fileBytes, start, slice, 0, copy);
-                return slice;
+                return await AssembleSiblingSliceAsync(fileIndex, layout, globalSliceIndex, sliceSize, ct)
+                    .ConfigureAwait(false);
             }
 
             return null;
         }
 
-        private async Task<byte[]?> GetSiblingFileBytesAsync(int fileIndex, CancellationToken ct)
+        private bool TryGetSiblingLayout(int fileIndex, out SiblingLayout? layout)
         {
-            if (_siblingFileBytes.TryGetValue(fileIndex, out var cached))
-                return cached;
+            if (_siblingLayouts.TryGetValue(fileIndex, out layout))
+                return true;
 
+            layout = null;
             var key = Convert.ToHexString(_par2.Main.FileIds[fileIndex]);
-            if (!_par2.FileDescsById.TryGetValue(key, out var desc))
-                return null;
+            if (!_par2.FileDescsById.TryGetValue(key, out var desc)
+                || !_par2.IfscsByFileId.TryGetValue(key, out var ifsc))
+                return false;
 
             var nzbFile = FindContentNzbFile(_nzbDocument, desc.FileName);
             if (nzbFile is null || nzbFile.Segments.Count == 0)
+                return false;
+
+            var fileLength = (long)desc.FileLength;
+            var ranges = nzbFile.GetSegmentByteRanges()
+                         ?? TryInferSiblingSegmentRanges(nzbFile, fileLength);
+            if (ranges is null)
+                return false;
+
+            var globalBase = GlobalSliceOffset(fileIndex, _par2.Main, _par2.IfscsByFileId);
+            if (!Par2FileSliceMap.TryCreate(
+                    fileLength,
+                    globalBase,
+                    (int)_par2.Main.SliceSize,
+                    ifsc.Slices.Count,
+                    ranges,
+                    out var map,
+                    out _)
+                || map is null)
+                return false;
+
+            layout = new SiblingLayout(map, nzbFile.GetSegmentIds());
+            _siblingLayouts[fileIndex] = layout;
+            return true;
+        }
+
+        private static LongRange[]? TryInferSiblingSegmentRanges(NzbFile nzbFile, long fileLength)
+        {
+            var count = nzbFile.Segments.Count;
+            if (count == 0 || fileLength <= 0)
                 return null;
+
+            var ranges = new LongRange[count];
+            long start = 0;
+            for (var i = 0; i < count; i++)
+            {
+                var remaining = fileLength - start;
+                if (remaining <= 0)
+                    return null;
+                var size = i == count - 1 ? remaining : nzbFile.Segments[i].Bytes;
+                if (size <= 0 || size > remaining)
+                    return null;
+                ranges[i] = LongRange.FromStartAndSize(start, size);
+                start += size;
+            }
+
+            return start == fileLength ? ranges : null;
+        }
+
+        private async Task<byte[]?> AssembleSiblingSliceAsync(
+            int fileIndex,
+            SiblingLayout layout,
+            int globalSliceIndex,
+            int sliceSize,
+            CancellationToken ct)
+        {
+            NoteActiveSiblingFile(fileIndex);
+            var sliceRange = layout.Map.SliceFileRange(globalSliceIndex);
+            EvictPassedSiblingSegments(fileIndex, layout, sliceRange.StartInclusive);
+
+            var buffer = new byte[sliceSize];
+            var copied = 0;
+            foreach (var segmentIndex in layout.Map.SegmentIndicesForGlobalSlice(globalSliceIndex))
+            {
+                var body = await GetSiblingSegmentBodyAsync(fileIndex, layout, segmentIndex, ct)
+                    .ConfigureAwait(false);
+                if (body is null)
+                {
+                    if (sliceRange.EndExclusive < layout.Map.FileLength)
+                        return null;
+                    break;
+                }
+
+                var segmentRange = layout.Map.SegmentRanges[segmentIndex];
+                var intersectStart = Math.Max(sliceRange.StartInclusive, segmentRange.StartInclusive);
+                var intersectEnd = Math.Min(sliceRange.EndExclusive, segmentRange.EndExclusive);
+                if (intersectEnd <= intersectStart)
+                    continue;
+
+                var destOffset = (int)(intersectStart - sliceRange.StartInclusive);
+                var srcOffset = (int)(intersectStart - segmentRange.StartInclusive);
+                var count = (int)(intersectEnd - intersectStart);
+                if (srcOffset < 0 || srcOffset + count > body.Length)
+                    return null;
+                Buffer.BlockCopy(body, srcOffset, buffer, destOffset, count);
+                copied += count;
+            }
+
+            if (copied < sliceRange.Count && sliceRange.EndExclusive < layout.Map.FileLength)
+                return null;
+            return buffer;
+        }
+
+        private async Task<byte[]?> GetSiblingSegmentBodyAsync(
+            int fileIndex,
+            SiblingLayout layout,
+            int segmentIndex,
+            CancellationToken ct)
+        {
+            var cacheKey = (fileIndex, segmentIndex);
+            if (_siblingSegmentBodies.TryGetValue(cacheKey, out var cached))
+                return cached;
 
             await _fetchGate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                if (_siblingFileBytes.TryGetValue(fileIndex, out cached))
+                if (_siblingSegmentBodies.TryGetValue(cacheKey, out cached))
                     return cached;
 
-                var segmentIds = nzbFile.GetSegmentIds();
-                var fileSize = nzbFile.Segments.Sum(segment => segment.Bytes);
-                await using var stream = _client.GetFileStream(segmentIds, fileSize, articleBufferSize: 0);
-                await using var destination = new MemoryStream();
-                await stream.CopyToAsync(destination, ct).ConfigureAwait(false);
-                var bytes = destination.ToArray();
-                _onBytesRead?.Invoke(bytes.Length);
-                _siblingFileBytes[fileIndex] = bytes;
-                return bytes;
+                var segmentId = layout.SegmentIds[segmentIndex];
+                try
+                {
+                    var response = await _client.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
+                    await using var stream = response.Stream!;
+                    await using var ms = new MemoryStream();
+                    await stream.CopyToAsync(ms, ct).ConfigureAwait(false);
+                    var bytes = ms.ToArray();
+                    _onBytesRead?.Invoke(bytes.Length);
+                    _siblingSegmentBodies[cacheKey] = bytes;
+                    Interlocked.Add(ref _cachedBodyBytes, bytes.Length);
+                    return bytes;
+                }
+                catch (Exception e) when (e is not OutOfMemoryException)
+                {
+                    if (e.IsCancellationException(ct))
+                        throw;
+
+                    if (e.TryGetCausingException<UsenetArticleNotFoundException>(out _)
+                        || e.TryGetCausingException<UsenetCorruptArticleException>(out _))
+                        return null;
+
+                    throw;
+                }
             }
             finally
             {
                 _fetchGate.Release();
             }
+        }
+
+        private void NoteActiveSiblingFile(int fileIndex)
+        {
+            if (_activeSiblingFileIndex == fileIndex)
+                return;
+            if (_activeSiblingFileIndex >= 0)
+                EvictSiblingFile(_activeSiblingFileIndex);
+            _activeSiblingFileIndex = fileIndex;
+        }
+
+        private void EvictPassedSiblingSegments(int fileIndex, SiblingLayout layout, long sliceStart)
+        {
+            for (var i = 0; i < layout.Map.SegmentRanges.Count; i++)
+            {
+                if (layout.Map.SegmentRanges[i].EndExclusive > sliceStart)
+                    continue;
+                EvictSiblingSegment(fileIndex, i);
+            }
+        }
+
+        private void EvictSiblingFile(int fileIndex)
+        {
+            List<int>? indices = null;
+            foreach (var key in _siblingSegmentBodies.Keys)
+            {
+                if (key.FileIndex != fileIndex)
+                    continue;
+                indices ??= [];
+                indices.Add(key.SegmentIndex);
+            }
+
+            if (indices is null)
+                return;
+            foreach (var segmentIndex in indices)
+                EvictSiblingSegment(fileIndex, segmentIndex);
+        }
+
+        private void EvictSiblingSegment(int fileIndex, int segmentIndex)
+        {
+            if (_siblingSegmentBodies.Remove((fileIndex, segmentIndex), out var body))
+                Interlocked.Add(ref _cachedBodyBytes, -body.Length);
         }
     }
 }
