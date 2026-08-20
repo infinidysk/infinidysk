@@ -249,14 +249,38 @@ Notes:
   code fix twice. Restore the package afterwards (builds are unaffected either
   way; only the format tool is).
 
+## Architecture boundaries
+
+Inbound adapters (API, WebDAV HTTP, middleware) call Queue and other application
+services. Those services talk to external clients and the database. `Program` is
+the composition root. `Services` is currently mixed — do not treat it as one
+clean layer. Details and exceptions: [Code boundaries](docs/decisions/0001-code-boundaries.md).
+
+```mermaid
+flowchart LR
+    API[API and middleware] --> Domain[Queue and application services]
+    WebDAV[WebDAV handlers] --> Domain
+    Domain --> Clients[External clients]
+    Domain --> Database[Database and blob contracts]
+    Clients --> DatabaseModels[Database models where explicitly allowed]
+    Program[Program composition root] --> API
+    Program --> Domain
+    Program --> Clients
+    Program --> Database
+```
+
+Frontend route features may use shared `app/components`, `app/navigation`,
+`app/clients`, `app/auth`, and `app/utils`, plus files inside the same feature.
+They must not import another route feature. Shared code must not import
+`app/routes`. ArchUnitNET (`tests/NzbWebDAV.ArchitectureTests`) and the
+`import-boundaries/no-cross-feature-imports` ESLint rule enforce this.
+
 ## Contributing
 
 Before creating a PR:
 
 ```bash
-cd frontend
-npm run lint
-npm run typecheck
-npm run build
-npm test
+cd frontend && npm run lint && npm run typecheck && npm run build && npm test
+dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
+dotnet test tests/NzbWebDAV.ArchitectureTests/NzbWebDAV.ArchitectureTests.csproj -c Debug
 ```

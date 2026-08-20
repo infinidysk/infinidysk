@@ -41,6 +41,7 @@ UI: `http://localhost:5173` → proxies to backend `:5000`.
 ```bash
 cd frontend && npm run lint && npm run typecheck && npm run build && npm test
 dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
+dotnet test tests/NzbWebDAV.ArchitectureTests/NzbWebDAV.ArchitectureTests.csproj -c Debug
 ```
 
 Full details: repository [CONTRIBUTING.md](https://github.com/infinidysk/infinidysk/blob/main/CONTRIBUTING.md) and [AGENTS.md](https://github.com/infinidysk/infinidysk/blob/main/AGENTS.md).
