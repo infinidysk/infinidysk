@@ -29,30 +29,30 @@ internal static class AdminOpenApiNormalizer
         switch (node)
         {
             case JsonObject obj:
-            {
-                var sorted = new JsonObject();
-                foreach (var pair in obj.OrderBy(p => p.Key, StringComparer.Ordinal))
                 {
-                    sorted[pair.Key] = pair.Value is null ? null : Sort(pair.Value);
-                }
+                    var sorted = new JsonObject();
+                    foreach (var pair in obj.OrderBy(p => p.Key, StringComparer.Ordinal))
+                    {
+                        sorted[pair.Key] = pair.Value is null ? null : Sort(pair.Value);
+                    }
 
-                return sorted;
-            }
+                    return sorted;
+                }
             case JsonArray array:
-            {
-                var items = array.Select(item => item is null ? null : Sort(item)).ToList();
-                if (items.All(item => item is null or JsonValue))
                 {
-                    items = items
-                        .OrderBy(item => item?.ToJsonString() ?? "", StringComparer.Ordinal)
-                        .ToList();
-                }
+                    var items = array.Select(item => item is null ? null : Sort(item)).ToList();
+                    if (items.All(item => item is null or JsonValue))
+                    {
+                        items = items
+                            .OrderBy(item => item?.ToJsonString() ?? "", StringComparer.Ordinal)
+                            .ToList();
+                    }
 
-                var sorted = new JsonArray();
-                foreach (var item in items)
-                    sorted.Add(item);
-                return sorted;
-            }
+                    var sorted = new JsonArray();
+                    foreach (var item in items)
+                        sorted.Add(item);
+                    return sorted;
+                }
             default:
                 return node.DeepClone();
         }
