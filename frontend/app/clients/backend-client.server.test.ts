@@ -254,28 +254,12 @@ describe("BackendClient", () => {
   });
 
   it("rejects malformed success bodies without echoing the payload", async () => {
-    fetchMock.mockResolvedValueOnce(new Response("[1, 2, 3]", {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }));
-
-    const error = await backendClient.isOnboarding().then(
-      () => null,
-      (e: unknown) => e,
+    fetchMock.mockResolvedValueOnce(
+      new Response("[1, 2, 3]", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     );
-    expect(error).toBeInstanceOf(BackendContractError);
-    expect(String(error)).toContain("backend response did not match the expected contract");
-    expect(String(error)).not.toContain("[1, 2, 3]");
-    expect(() => parseBackendSuccess("Failed", [1, 2, 3], z.looseObject({}))).toThrow(
-      BackendContractError,
-    );
-  });
-
-  it("rejects malformed success bodies without echoing the payload", async () => {
-    fetchMock.mockResolvedValueOnce(new Response("[1, 2, 3]", {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }));
 
     const error = await backendClient.isOnboarding().then(
       () => null,
@@ -290,19 +274,24 @@ describe("BackendClient", () => {
   });
 
   it("parses RFC 7807 ProblemDetails including the trace id", async () => {
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
-      type: "https://www.infinidysk.com/problems/unauthorized",
-      title: "Unauthorized",
-      status: 401,
-      detail: "API Key Required",
-      traceId: "abc123",
-    }), {
-      status: 401,
-      headers: {
-        "Content-Type": "application/problem+json",
-        "X-Correlation-ID": "abc123",
-      },
-    }));
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          type: "https://www.infinidysk.com/problems/unauthorized",
+          title: "Unauthorized",
+          status: 401,
+          detail: "API Key Required",
+          traceId: "abc123",
+        }),
+        {
+          status: 401,
+          headers: {
+            "Content-Type": "application/problem+json",
+            "X-Correlation-ID": "abc123",
+          },
+        },
+      ),
+    );
 
     const error = await backendClient.isOnboarding().then(
       () => null,
@@ -516,24 +505,31 @@ describe("BackendClient", () => {
     await expect(backendClient.getQueue(1)).rejects.toThrow("Failed to get queue: HTTP 500");
   });
 
-  it("uses the HTTP status for ProblemDetails bodies without error", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      type: "https://httpstatuses.com/400",
-      title: "Bad Request",
-      detail: "nzo_ids invalid",
-      status: 400,
-    }, 400));
+  it("uses ProblemDetails detail when the error field is absent", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          type: "https://httpstatuses.com/400",
+          title: "Bad Request",
+          detail: "nzo_ids invalid",
+          status: 400,
+        },
+        400,
+      ),
+    );
 
-    await expect(backendClient.getQueue(1)).rejects.toThrow("Failed to get queue: HTTP 400");
+    await expect(backendClient.getQueue(1)).rejects.toThrow("Failed to get queue: nzo_ids invalid");
   });
 
-  it("uses the HTTP status for plain-text error bodies", async () => {
-    fetchMock.mockResolvedValueOnce(new Response("nope", {
-      status: 502,
-      headers: { "Content-Type": "text/plain" },
-    }));
+  it("uses the plain-text error body", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response("nope", {
+        status: 502,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    );
 
-    await expect(backendClient.getQueue(1)).rejects.toThrow("Failed to get queue: HTTP 502");
+    await expect(backendClient.getQueue(1)).rejects.toThrow("Failed to get queue: nope");
   });
 
   it("wraps aborted fetches as BackendUnavailableError", async () => {

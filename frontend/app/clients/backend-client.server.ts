@@ -1,9 +1,6 @@
 import { z } from "zod";
 import { adminApi } from "~/clients/admin-operations";
-import {
-    toStreamTracingStatus,
-    type StreamTracingStatus,
-} from "~/utils/stream-tracing-status";
+import { toStreamTracingStatus, type StreamTracingStatus } from "~/utils/stream-tracing-status";
 
 export type { StreamTracingStatus };
 
@@ -52,138 +49,141 @@ export class BackendUnavailableError extends Error {
 
 /** Structured failure from RFC 7807 ProblemDetails, SAB nested problems, or legacy JSON. */
 export class BackendApiError extends Error {
-    public constructor(
-        message: string,
-        public readonly status: number,
-        public readonly title: string,
-        public readonly detail: string,
-        public readonly traceId?: string,
-        public readonly fieldErrors?: Record<string, string[]>,
-        options?: ErrorOptions,
-    ) {
-        super(message, options);
-        this.name = "BackendApiError";
-    }
+  public constructor(
+    message: string,
+    public readonly status: number,
+    public readonly title: string,
+    public readonly detail: string,
+    public readonly traceId?: string,
+    public readonly fieldErrors?: Record<string, string[]>,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "BackendApiError";
+  }
 }
 
 /** Thrown when a 2xx backend body does not match the expected runtime schema. */
 export class BackendContractError extends Error {
-    public constructor(message: string, options?: ErrorOptions) {
-        super(message, options);
-        this.name = "BackendContractError";
-    }
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "BackendContractError";
+  }
 }
 
 const backendObject: z.ZodType<Record<string, unknown>> = z.looseObject({});
 
 export function parseBackendSuccess<T>(
-    errorPrefix: string,
-    json: unknown,
-    schema: z.ZodType<T>,
+  errorPrefix: string,
+  json: unknown,
+  schema: z.ZodType<T>,
 ): T {
-    const result = schema.safeParse(json);
-    if (!result.success) {
-        throw new BackendContractError(
-            `${errorPrefix}: backend response did not match the expected contract`,
-        );
-    }
-    return result.data;
+  const result = schema.safeParse(json);
+  if (!result.success) {
+    throw new BackendContractError(
+      `${errorPrefix}: backend response did not match the expected contract`,
+    );
+  }
+  return result.data;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function asString(value: unknown): string | undefined {
-    return typeof value === "string" && value.length > 0 ? value : undefined;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function asFieldErrors(value: unknown): Record<string, string[]> | undefined {
-    const record = asRecord(value);
-    if (!record) return undefined;
-    const errors: Record<string, string[]> = {};
-    for (const [key, raw] of Object.entries(record)) {
-        if (!Array.isArray(raw) || !raw.every((item) => typeof item === "string")) continue;
-        errors[key] = raw;
-    }
-    return Object.keys(errors).length > 0 ? errors : undefined;
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const errors: Record<string, string[]> = {};
+  for (const [key, raw] of Object.entries(record)) {
+    if (!Array.isArray(raw) || !raw.every((item) => typeof item === "string")) continue;
+    errors[key] = raw;
+  }
+  return Object.keys(errors).length > 0 ? errors : undefined;
 }
 
 function stripMarkup(value: string): string {
-    return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function parseBackendFailure(
-    errorPrefix: string,
-    status: number,
-    body: unknown,
-    correlationHeader?: string | null,
+  errorPrefix: string,
+  status: number,
+  body: unknown,
+  correlationHeader?: string | null,
 ): BackendApiError {
-    const record = asRecord(body);
-    const nested = record ? asRecord(record["problem"]) : null;
-    const problem = nested
-        ?? (record && typeof record["status"] === "number" ? record : null);
+  const record = asRecord(body);
+  const nested = record ? asRecord(record["problem"]) : null;
+  const problem = nested ?? (record && typeof record["status"] === "number" ? record : null);
 
-    if (problem) {
-        const detail = asString(problem["detail"])
-            ?? asString(record?.["error"])
-            ?? asString(problem["title"])
-            ?? `HTTP ${status}`;
-        const title = asString(problem["title"]) ?? "Request failed";
-        const traceId = asString(problem["traceId"]) ?? correlationHeader ?? undefined;
-        const fieldErrors = asFieldErrors(problem["errors"]);
-        const suffix = traceId ? `${detail} (trace ${traceId})` : detail;
-        return new BackendApiError(
-            `${errorPrefix}: ${suffix}`,
-            typeof problem["status"] === "number" ? problem["status"] : status,
-            title,
-            detail,
-            traceId,
-            fieldErrors,
-        );
-    }
-
-    if (record && asString(record["error"])) {
-        const detail = asString(record["error"])!;
-        return new BackendApiError(
-            `${errorPrefix}: ${detail}`,
-            status,
-            "Request failed",
-            detail,
-            correlationHeader ?? undefined,
-        );
-    }
-
-    if (typeof body === "string" && body.trim().length > 0) {
-        const detail = stripMarkup(body) || `HTTP ${status}`;
-        return new BackendApiError(
-            `${errorPrefix}: ${detail}`,
-            status,
-            "Request failed",
-            detail,
-            correlationHeader ?? undefined,
-        );
-    }
-
+  if (problem) {
+    const detail =
+      asString(problem["detail"]) ??
+      asString(record?.["error"]) ??
+      asString(problem["title"]) ??
+      `HTTP ${status}`;
+    const title = asString(problem["title"]) ?? "Request failed";
+    const traceId = asString(problem["traceId"]) ?? correlationHeader ?? undefined;
+    const fieldErrors = asFieldErrors(problem["errors"]);
+    const suffix = traceId ? `${detail} (trace ${traceId})` : detail;
     return new BackendApiError(
-        `${errorPrefix}: HTTP ${status}`,
-        status,
-        "Request failed",
-        `HTTP ${status}`,
-        correlationHeader ?? undefined,
+      `${errorPrefix}: ${suffix}`,
+      typeof problem["status"] === "number" ? problem["status"] : status,
+      title,
+      detail,
+      traceId,
+      fieldErrors,
     );
+  }
+
+  if (record && asString(record["error"])) {
+    const detail = asString(record["error"])!;
+    return new BackendApiError(
+      `${errorPrefix}: ${detail}`,
+      status,
+      "Request failed",
+      detail,
+      correlationHeader ?? undefined,
+    );
+  }
+
+  if (typeof body === "string" && body.trim().length > 0) {
+    const detail = stripMarkup(body) || `HTTP ${status}`;
+    return new BackendApiError(
+      `${errorPrefix}: ${detail}`,
+      status,
+      "Request failed",
+      detail,
+      correlationHeader ?? undefined,
+    );
+  }
+
+  return new BackendApiError(
+    `${errorPrefix}: HTTP ${status}`,
+    status,
+    "Request failed",
+    `HTTP ${status}`,
+    correlationHeader ?? undefined,
+  );
 }
 
 async function readFailureBody(response: Response): Promise<unknown> {
-    const raw = await response.text();
-    if (raw.length === 0) return null;
-    try {
-        return JSON.parse(raw) as unknown;
-    } catch {
-        return raw;
-    }
+  const raw = await response.text();
+  if (raw.length === 0) return null;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return raw;
+  }
 }
 
 /** Walks cause/AggregateError chains for undici / Node network failure codes. */
@@ -225,76 +225,88 @@ function form(...entries: [string, string | Blob, string?][]): FormData {
  * prefixed with `errorPrefix` and suffixed with the backend's reported error.
  */
 async function call<T = Record<string, unknown>>(
-    path: string,
-    errorPrefix: string,
-    init?: RequestInit,
-    schema: z.ZodType<T> = backendObject as z.ZodType<T>,
+  path: string,
+  errorPrefix: string,
+  init?: RequestInit,
+  schema: z.ZodType<T> = backendObject as z.ZodType<T>,
 ): Promise<T> {
-    let response: Response;
-    try {
-        response = await fetch(process.env["BACKEND_URL"] + path, {
-            ...init,
-            headers: {
-                "x-api-key": process.env["FRONTEND_BACKEND_API_KEY"] || "",
-                ...(init?.headers ?? {}),
-            },
-        });
-    } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        const code = extractNetworkErrorCode(error);
-        throw new BackendUnavailableError(
-            `${errorPrefix}: ${detail}${code ? ` (${code})` : ""}`,
-            code,
-            { cause: error },
-        );
+  let response: Response;
+  try {
+    response = await fetch(process.env["BACKEND_URL"] + path, {
+      ...init,
+      headers: {
+        "x-api-key": process.env["FRONTEND_BACKEND_API_KEY"] || "",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const code = extractNetworkErrorCode(error);
+    throw new BackendUnavailableError(
+      `${errorPrefix}: ${detail}${code ? ` (${code})` : ""}`,
+      code,
+      { cause: error },
+    );
+  }
+
+  if (!response.ok) {
+    const body = await readFailureBody(response);
+    const migrating = asRecord(body)?.["status"] === "migrating";
+    if (response.status === 503 || migrating) {
+      throw new BackendUnavailableError(
+        `${errorPrefix}: backend is starting or migrating`,
+        "MIGRATING",
+      );
     }
 
-    if (!response.ok) {
-        const body = await readFailureBody(response);
-        const migrating = asRecord(body)?.["status"] === "migrating";
-        if (response.status === 503 || migrating) {
-            throw new BackendUnavailableError(
-                `${errorPrefix}: backend is starting or migrating`,
-                "MIGRATING",
-            );
-        }
+    throw parseBackendFailure(
+      errorPrefix,
+      response.status,
+      body,
+      response.headers.get("x-correlation-id"),
+    );
+  }
 
-        throw parseBackendFailure(
-            errorPrefix,
-            response.status,
-            body,
-            response.headers.get("x-correlation-id"),
-        );
-    }
-
-    const json: unknown = await response.json();
-    return parseBackendSuccess(errorPrefix, json, schema);
+  const json: unknown = await response.json();
+  return parseBackendSuccess(errorPrefix, json, schema);
 }
 
 class BackendClient {
-    public async isOnboarding(): Promise<boolean> {
-        const data = await call<{ isOnboarding: boolean }>(adminApi.isOnboarding, "Failed to fetch onboarding status", {
-            method: "GET",
-            headers: { "Content-Type": "application/json" },
-        });
-        return data.isOnboarding;
-    }
+  public async isOnboarding(): Promise<boolean> {
+    const data = await call<{ isOnboarding: boolean }>(
+      adminApi.isOnboarding,
+      "Failed to fetch onboarding status",
+      {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    return data.isOnboarding;
+  }
 
-    public async createAccount(username: string, password: string): Promise<boolean> {
-        const data = await call<{ status: boolean }>(adminApi.createAccount, "Failed to create account", {
-            method: "POST",
-            body: form(["username", username], ["password", password], ["type", "admin"]),
-        });
-        return data.status;
-    }
+  public async createAccount(username: string, password: string): Promise<boolean> {
+    const data = await call<{ status: boolean }>(
+      adminApi.createAccount,
+      "Failed to create account",
+      {
+        method: "POST",
+        body: form(["username", username], ["password", password], ["type", "admin"]),
+      },
+    );
+    return data.status;
+  }
 
-    public async authenticate(username: string, password: string): Promise<boolean> {
-        const data = await call<{ authenticated: boolean }>(adminApi.authenticate, "Failed to authenticate", {
-            method: "POST",
-            body: form(["username", username], ["password", password], ["type", "admin"]),
-        });
-        return data.authenticated;
-    }
+  public async authenticate(username: string, password: string): Promise<boolean> {
+    const data = await call<{ authenticated: boolean }>(
+      adminApi.authenticate,
+      "Failed to authenticate",
+      {
+        method: "POST",
+        body: form(["username", username], ["password", password], ["type", "admin"]),
+      },
+    );
+    return data.authenticated;
+  }
 
   public async getQueue(
     limit: number,
@@ -344,12 +356,16 @@ class BackendClient {
     return data.nzo_ids[0]!;
   }
 
-    public async searchIndexers(q: string, limit: number = 100): Promise<SearchIndexersResponse> {
-        return await call<SearchIndexersResponse>(adminApi.searchIndexers, "Failed to search indexers", {
-            method: "POST",
-            body: form(["q", q], ["limit", String(limit)]),
-        });
-    }
+  public async searchIndexers(q: string, limit: number = 100): Promise<SearchIndexersResponse> {
+    return await call<SearchIndexersResponse>(
+      adminApi.searchIndexers,
+      "Failed to search indexers",
+      {
+        method: "POST",
+        body: form(["q", q], ["limit", String(limit)]),
+      },
+    );
+  }
 
   public async addNzbFromUrl(nzbUrl: string, nzbName: string): Promise<string> {
     const config = await this.getConfig(["api.manual-category"]);
@@ -377,185 +393,265 @@ class BackendClient {
     return data.nzo_ids[0]!;
   }
 
-    public async listWebdavDirectory(directory: string): Promise<DirectoryItem[]> {
-        try {
-            const data = await call<{ items: DirectoryItem[] }>(adminApi.listWebdavDirectory, "Failed to list webdav directory", {
-                method: "POST",
-                body: form(["directory", directory]),
-            });
-            return data.items;
-        } catch (error) {
-            if (error instanceof Error && error.message.endsWith(": The directory does not exist.")) {
-                throw new WebdavDirectoryNotFoundError(directory);
-            }
-            throw error;
-        }
+  public async listWebdavDirectory(directory: string): Promise<DirectoryItem[]> {
+    try {
+      const data = await call<{ items: DirectoryItem[] }>(
+        adminApi.listWebdavDirectory,
+        "Failed to list webdav directory",
+        {
+          method: "POST",
+          body: form(["directory", directory]),
+        },
+      );
+      return data.items;
+    } catch (error) {
+      if (error instanceof Error && error.message.endsWith(": The directory does not exist.")) {
+        throw new WebdavDirectoryNotFoundError(directory);
+      }
+      throw error;
     }
+  }
 
-    public async getConfig(keys: string[]): Promise<ConfigItem[]> {
-        const data = await call<{ configItems?: ConfigItem[] }>(adminApi.getConfig, "Failed to get config items", {
-            method: "POST",
-            body: form(...keys.map(key => ["config-keys", key] as [string, string])),
-        });
-        return data.configItems || [];
-    }
+  public async getConfig(keys: string[]): Promise<ConfigItem[]> {
+    const data = await call<{ configItems?: ConfigItem[] }>(
+      adminApi.getConfig,
+      "Failed to get config items",
+      {
+        method: "POST",
+        body: form(...keys.map((key) => ["config-keys", key] as [string, string])),
+      },
+    );
+    return data.configItems || [];
+  }
 
-    public async updateConfig(configItems: ConfigItem[]): Promise<boolean> {
-        const data = await call<{ status: boolean }>(adminApi.updateConfig, "Failed to update config items", {
-            method: "POST",
-            body: form(...configItems.map(item => [item.configName, item.configValue] as [string, string])),
-        });
-        return data.status;
-    }
+  public async updateConfig(configItems: ConfigItem[]): Promise<boolean> {
+    const data = await call<{ status: boolean }>(
+      adminApi.updateConfig,
+      "Failed to update config items",
+      {
+        method: "POST",
+        body: form(
+          ...configItems.map((item) => [item.configName, item.configValue] as [string, string]),
+        ),
+      },
+    );
+    return data.status;
+  }
 
-    public async getHealthCheckQueue(pageSize?: number): Promise<HealthCheckQueueResponse> {
-        const query = pageSize !== undefined ? `?pageSize=${pageSize}` : "";
-        return await call<HealthCheckQueueResponse>(`${adminApi.getHealthCheckQueue}${query}`, "Failed to get health check queue", {
-            method: "GET",
-        });
-    }
+  public async getHealthCheckQueue(pageSize?: number): Promise<HealthCheckQueueResponse> {
+    const query = pageSize !== undefined ? `?pageSize=${pageSize}` : "";
+    return await call<HealthCheckQueueResponse>(
+      `${adminApi.getHealthCheckQueue}${query}`,
+      "Failed to get health check queue",
+      {
+        method: "GET",
+      },
+    );
+  }
 
-    public async getWatchdogEntries(limit: number = 200): Promise<WatchdogEntry[]> {
-        const data = await call<{ entries?: WatchdogEntry[] }>(`${adminApi.getWatchdogEntries}?limit=${limit}`, "Failed to get watchdog entries", {
-            method: "GET",
-        });
-        return data.entries ?? [];
-    }
+  public async getWatchdogEntries(limit: number = 200): Promise<WatchdogEntry[]> {
+    const data = await call<{ entries?: WatchdogEntry[] }>(
+      `${adminApi.getWatchdogEntries}?limit=${limit}`,
+      "Failed to get watchdog entries",
+      {
+        method: "GET",
+      },
+    );
+    return data.entries ?? [];
+  }
 
-    public async getExcludeSyncStatus(): Promise<ExcludeSyncUrlStatus[]> {
-        const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>(adminApi.excludeSync, "Failed to get exclude-sync status", {
-            method: "GET",
-        });
-        return data.urls || [];
-    }
+  public async getExcludeSyncStatus(): Promise<ExcludeSyncUrlStatus[]> {
+    const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>(
+      adminApi.excludeSync,
+      "Failed to get exclude-sync status",
+      {
+        method: "GET",
+      },
+    );
+    return data.urls || [];
+  }
 
-    public async refreshExcludeSync(): Promise<ExcludeSyncUrlStatus[]> {
-        const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>(adminApi.excludeSync, "Failed to refresh exclude-sync", {
-            method: "POST",
-        });
-        return data.urls || [];
-    }
+  public async refreshExcludeSync(): Promise<ExcludeSyncUrlStatus[]> {
+    const data = await call<{ urls?: ExcludeSyncUrlStatus[] }>(
+      adminApi.excludeSync,
+      "Failed to refresh exclude-sync",
+      {
+        method: "POST",
+      },
+    );
+    return data.urls || [];
+  }
 
-    public async clearWatchdogEntries(): Promise<number> {
-        const data = await call<{ deleted?: number }>(adminApi.clearWatchdogEntries, "Failed to clear watchdog entries", {
-            method: "POST",
-        });
-        return data.deleted ?? 0;
-    }
+  public async clearWatchdogEntries(): Promise<number> {
+    const data = await call<{ deleted?: number }>(
+      adminApi.clearWatchdogEntries,
+      "Failed to clear watchdog entries",
+      {
+        method: "POST",
+      },
+    );
+    return data.deleted ?? 0;
+  }
 
-    public async clearHealthCheckHistory(): Promise<{ deletedResults: number; deletedStats: number }> {
-        const data = await call<{ deletedResults?: number; deletedStats?: number }>(adminApi.clearHealthCheckHistory, "Failed to clear health-check history", {
-            method: "POST",
-        });
-        return {
-            deletedResults: data.deletedResults ?? 0,
-            deletedStats: data.deletedStats ?? 0,
-        };
-    }
+  public async clearHealthCheckHistory(): Promise<{
+    deletedResults: number;
+    deletedStats: number;
+  }> {
+    const data = await call<{ deletedResults?: number; deletedStats?: number }>(
+      adminApi.clearHealthCheckHistory,
+      "Failed to clear health-check history",
+      {
+        method: "POST",
+      },
+    );
+    return {
+      deletedResults: data.deletedResults ?? 0,
+      deletedStats: data.deletedStats ?? 0,
+    };
+  }
 
-    public async clearOverviewStats(providerId?: string): Promise<number> {
-        const query = providerId ? `?provider=${encodeURIComponent(providerId)}` : "";
-        const data = await call<{ deletedRows?: number }>(`${adminApi.clearOverviewStats}${query}`, "Failed to clear overview statistics", {
-            method: "POST",
-        });
-        return data.deletedRows ?? 0;
-    }
+  public async clearOverviewStats(providerId?: string): Promise<number> {
+    const query = providerId ? `?provider=${encodeURIComponent(providerId)}` : "";
+    const data = await call<{ deletedRows?: number }>(
+      `${adminApi.clearOverviewStats}${query}`,
+      "Failed to clear overview statistics",
+      {
+        method: "POST",
+      },
+    );
+    return data.deletedRows ?? 0;
+  }
 
-    public async getHealthCheckHistory(params: GetHealthCheckHistoryParams = {}): Promise<HealthCheckHistoryResponse> {
-        const qs = new URLSearchParams();
-        if (params.page !== undefined) qs.set("page", String(params.page));
-        if (params.pageSize !== undefined) qs.set("pageSize", String(params.pageSize));
-        if (params.repairStatus) qs.set("repairStatus", params.repairStatus);
-        if (params.result) qs.set("result", params.result);
-        const query = qs.toString();
-        return await call<HealthCheckHistoryResponse>(`${adminApi.getHealthCheckHistory}${query ? `?${query}` : ""}`, "Failed to get health check history", {
-            method: "GET",
-        });
-    }
+  public async getHealthCheckHistory(
+    params: GetHealthCheckHistoryParams = {},
+  ): Promise<HealthCheckHistoryResponse> {
+    const qs = new URLSearchParams();
+    if (params.page !== undefined) qs.set("page", String(params.page));
+    if (params.pageSize !== undefined) qs.set("pageSize", String(params.pageSize));
+    if (params.repairStatus) qs.set("repairStatus", params.repairStatus);
+    if (params.result) qs.set("result", params.result);
+    const query = qs.toString();
+    return await call<HealthCheckHistoryResponse>(
+      `${adminApi.getHealthCheckHistory}${query ? `?${query}` : ""}`,
+      "Failed to get health check history",
+      {
+        method: "GET",
+      },
+    );
+  }
 
-    public async getOverviewStats(
-        window: OverviewWindow = "24h",
-        sections: OverviewSections = "all",
-    ): Promise<OverviewStatsResponse> {
-        return await call<OverviewStatsResponse>(
-            `${adminApi.getOverviewStats}?window=${window}&sections=${sections}`,
-            "Failed to get overview stats",
-            { method: "GET" },
-        );
-    }
+  public async getOverviewStats(
+    window: OverviewWindow = "24h",
+    sections: OverviewSections = "all",
+  ): Promise<OverviewStatsResponse> {
+    return await call<OverviewStatsResponse>(
+      `${adminApi.getOverviewStats}?window=${window}&sections=${sections}`,
+      "Failed to get overview stats",
+      { method: "GET" },
+    );
+  }
 
-    public async getLogs(params: GetLogsParams = {}): Promise<GetLogsResponse> {
-        const qs = new URLSearchParams();
-        if (params.limit !== undefined) qs.set("limit", String(params.limit));
-        if (params.levels && params.levels.length > 0) qs.set("levels", params.levels.join(","));
-        if (params.source) qs.set("source", params.source);
-        if (params.search) qs.set("search", params.search);
-        if (params.beforeSequence !== undefined) qs.set("beforeSequence", String(params.beforeSequence));
-        const query = qs.toString();
-        return await call<GetLogsResponse>(`${adminApi.getLogs}${query ? `?${query}` : ""}`, "Failed to get logs", {
-            method: "GET",
-        });
-    }
+  public async getLogs(params: GetLogsParams = {}): Promise<GetLogsResponse> {
+    const qs = new URLSearchParams();
+    if (params.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params.levels && params.levels.length > 0) qs.set("levels", params.levels.join(","));
+    if (params.source) qs.set("source", params.source);
+    if (params.search) qs.set("search", params.search);
+    if (params.beforeSequence !== undefined)
+      qs.set("beforeSequence", String(params.beforeSequence));
+    const query = qs.toString();
+    return await call<GetLogsResponse>(
+      `${adminApi.getLogs}${query ? `?${query}` : ""}`,
+      "Failed to get logs",
+      {
+        method: "GET",
+      },
+    );
+  }
 
-    public async getStreamTracingStatus(): Promise<StreamTracingStatus> {
-        const data = await call<Record<string, unknown>>(`${adminApi.getStreamTraces}?limit=1`, "Failed to get stream tracing status", {
-            method: "GET",
-        });
-        return toStreamTracingStatus(data);
-    }
+  public async getStreamTracingStatus(): Promise<StreamTracingStatus> {
+    const data = await call<Record<string, unknown>>(
+      `${adminApi.getStreamTraces}?limit=1`,
+      "Failed to get stream tracing status",
+      {
+        method: "GET",
+      },
+    );
+    return toStreamTracingStatus(data);
+  }
 
-    public async setStreamTracing(
-        enabled: boolean,
-        minutes: number = 30,
-        capacity: number = 100_000,
-    ): Promise<StreamTracingStatus> {
-        const data = await call<Record<string, unknown>>(adminApi.setStreamTracing, "Failed to update stream tracing", {
-            method: "POST",
-            body: form(
-                ["enabled", enabled ? "true" : "false"],
-                ["minutes", String(minutes)],
-                ["capacity", String(capacity)],
-            ),
-        });
-        return toStreamTracingStatus(data);
-    }
+  public async setStreamTracing(
+    enabled: boolean,
+    minutes: number = 30,
+    capacity: number = 100_000,
+  ): Promise<StreamTracingStatus> {
+    const data = await call<Record<string, unknown>>(
+      adminApi.setStreamTracing,
+      "Failed to update stream tracing",
+      {
+        method: "POST",
+        body: form(
+          ["enabled", enabled ? "true" : "false"],
+          ["minutes", String(minutes)],
+          ["capacity", String(capacity)],
+        ),
+      },
+    );
+    return toStreamTracingStatus(data);
+  }
 
-    public async discardStreamTraces(): Promise<StreamTracingStatus> {
-        const data = await call<Record<string, unknown>>(adminApi.discardStreamTraces, "Failed to discard stream traces", {
-            method: "POST",
-        });
-        return toStreamTracingStatus(data);
-    }
+  public async discardStreamTraces(): Promise<StreamTracingStatus> {
+    const data = await call<Record<string, unknown>>(
+      adminApi.discardStreamTraces,
+      "Failed to discard stream traces",
+      {
+        method: "POST",
+      },
+    );
+    return toStreamTracingStatus(data);
+  }
 
-    public async getWatchtower(params: WatchtowerQuery = {}): Promise<WatchtowerData> {
-        const qs = new URLSearchParams();
-        if (params.state) qs.set("state", params.state);
-        if (params.q) qs.set("q", params.q);
-        if (params.sort) qs.set("sort", params.sort);
-        if (params.offset) qs.set("offset", String(params.offset));
-        if (params.limit) qs.set("limit", String(params.limit));
-        if (params.expander) qs.set("expander", params.expander);
-        if (params.statsOnly) qs.set("statsOnly", "1");
-        const query = qs.toString();
-        return await call<WatchtowerData>(`${adminApi.getWatchtower}${query ? `?${query}` : ""}`, "Failed to get watchtower", {
-            method: "GET",
-        });
-    }
+  public async getWatchtower(params: WatchtowerQuery = {}): Promise<WatchtowerData> {
+    const qs = new URLSearchParams();
+    if (params.state) qs.set("state", params.state);
+    if (params.q) qs.set("q", params.q);
+    if (params.sort) qs.set("sort", params.sort);
+    if (params.offset) qs.set("offset", String(params.offset));
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.expander) qs.set("expander", params.expander);
+    if (params.statsOnly) qs.set("statsOnly", "1");
+    const query = qs.toString();
+    return await call<WatchtowerData>(
+      `${adminApi.getWatchtower}${query ? `?${query}` : ""}`,
+      "Failed to get watchtower",
+      {
+        method: "GET",
+      },
+    );
+  }
 
-    public async watchtowerMutate(fields: Record<string, string>): Promise<boolean> {
-        const data = await call<{ status: boolean }>(adminApi.watchtowerMutate, "Watchtower action failed", {
-            method: "POST",
-            body: form(...Object.entries(fields).map(([k, v]) => [k, v] as [string, string])),
-        });
-        return data.status;
-    }
+  public async watchtowerMutate(fields: Record<string, string>): Promise<boolean> {
+    const data = await call<{ status: boolean }>(
+      adminApi.watchtowerMutate,
+      "Watchtower action failed",
+      {
+        method: "POST",
+        body: form(...Object.entries(fields).map(([k, v]) => [k, v] as [string, string])),
+      },
+    );
+    return data.status;
+  }
 
-    public async discoverStremioCatalogs(manifestUrl: string): Promise<DiscoverCatalogsResponse> {
-        return await call<DiscoverCatalogsResponse>(adminApi.discoverStremioCatalogs, "Failed to discover catalogs", {
-            method: "POST",
-            body: form(["url", manifestUrl]),
-        });
-    }
+  public async discoverStremioCatalogs(manifestUrl: string): Promise<DiscoverCatalogsResponse> {
+    return await call<DiscoverCatalogsResponse>(
+      adminApi.discoverStremioCatalogs,
+      "Failed to discover catalogs",
+      {
+        method: "POST",
+        body: form(["url", manifestUrl]),
+      },
+    );
+  }
 }
 
 export const backendClient = new BackendClient();
@@ -1097,13 +1193,13 @@ export type LiveStatsMessage = {
 export type LogLevel = "Verbose" | "Debug" | "Information" | "Warning" | "Error" | "Fatal";
 
 export type LogEntry = {
-    seq: number;
-    ts: number;
-    level: LogLevel;
-    msg: string;
-    source: string | null;
-    exception: string | null;
-    traceId?: string | null;
+  seq: number;
+  ts: number;
+  level: LogLevel;
+  msg: string;
+  source: string | null;
+  exception: string | null;
+  traceId?: string | null;
 };
 
 export type GetLogsParams = {
