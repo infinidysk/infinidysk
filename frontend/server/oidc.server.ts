@@ -15,11 +15,7 @@ export type OidcSettings = {
   adminClaimValue?: string;
 };
 
-const REQUIRED_ENV_VARS = [
-  "OIDC_ISSUER",
-  "OIDC_CLIENT_ID",
-  "OIDC_CLIENT_SECRET",
-] as const;
+const REQUIRED_ENV_VARS = ["OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"] as const;
 
 let discoveryPromise: Promise<oidc.Configuration> | undefined;
 let partialConfigWarningLogged = false;
@@ -70,16 +66,14 @@ export function getOidcSettings(): OidcSettings {
 
 export async function getOidcConfiguration(): Promise<oidc.Configuration> {
   const settings = getOidcSettings();
-  discoveryPromise ??= oidc.discovery(
-    new URL(settings.issuer),
-    settings.clientId,
-    settings.clientSecret,
-    undefined,
-    { execute: [oidc.enableNonRepudiationChecks] },
-  ).catch((error: unknown) => {
-    discoveryPromise = undefined;
-    throw error;
-  });
+  discoveryPromise ??= oidc
+    .discovery(new URL(settings.issuer), settings.clientId, settings.clientSecret, undefined, {
+      execute: [oidc.enableNonRepudiationChecks],
+    })
+    .catch((error: unknown) => {
+      discoveryPromise = undefined;
+      throw error;
+    });
   return discoveryPromise;
 }
 

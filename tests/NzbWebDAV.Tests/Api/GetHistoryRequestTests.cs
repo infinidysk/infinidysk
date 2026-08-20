@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers.GetHistory;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
@@ -111,7 +112,7 @@ public class GetHistoryRequestTests
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?limit=abc");
 
-        var ex = Assert.Throws<BadHttpRequestException>(() => new GetHistoryRequest(context, config));
+        var ex = Assert.Throws<ApiValidationException>(() => new GetHistoryRequest(context, config));
         Assert.Equal("Invalid limit parameter", ex.Message);
     }
 
@@ -122,7 +123,7 @@ public class GetHistoryRequestTests
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?pageSize=abc");
 
-        var ex = Assert.Throws<BadHttpRequestException>(() => new GetHistoryRequest(context, config));
+        var ex = Assert.Throws<ApiValidationException>(() => new GetHistoryRequest(context, config));
         Assert.Equal("Invalid pageSize parameter", ex.Message);
     }
 
@@ -149,7 +150,7 @@ public class GetHistoryRequestTests
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?nzo_ids=not-a-guid");
 
-        var ex = Assert.Throws<BadHttpRequestException>(() => new GetHistoryRequest(context, config));
+        var ex = Assert.Throws<ApiValidationException>(() => new GetHistoryRequest(context, config));
         Assert.Contains("not-a-guid", ex.Message);
     }
 
@@ -161,7 +162,7 @@ public class GetHistoryRequestTests
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString($"?nzo_ids={validId},bad-one,also-bad");
 
-        var ex = Assert.Throws<BadHttpRequestException>(() => new GetHistoryRequest(context, config));
+        var ex = Assert.Throws<ApiValidationException>(() => new GetHistoryRequest(context, config));
         Assert.Contains("bad-one", ex.Message);
         Assert.Contains("also-bad", ex.Message);
         Assert.DoesNotContain(validId.ToString(), ex.Message);

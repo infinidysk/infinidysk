@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 
@@ -14,6 +15,7 @@ public class GetHealthCheckHistoryRequest
 
     public GetHealthCheckHistoryRequest(HttpContext context)
     {
+        var errors = new ValidationErrors();
         var pageParam = context.GetQueryParam("page");
         var pageSizeParam = context.GetQueryParam("pageSize");
         var repairStatusParam = context.GetQueryParam("repairStatus");
@@ -23,15 +25,17 @@ public class GetHealthCheckHistoryRequest
         if (pageParam is not null)
         {
             if (!int.TryParse(pageParam, out var page) || page < 1)
-                throw new BadHttpRequestException("Invalid page parameter");
-            Page = page;
+                errors.Add("page", "Invalid page parameter");
+            else
+                Page = page;
         }
 
         if (pageSizeParam is not null)
         {
             if (!int.TryParse(pageSizeParam, out var pageSize) || pageSize is < 1 or > 250)
-                throw new BadHttpRequestException("Invalid pageSize parameter");
-            PageSize = pageSize;
+                errors.Add("pageSize", "Invalid pageSize parameter");
+            else
+                PageSize = pageSize;
         }
 
         if (repairStatusParam is not null)
@@ -57,8 +61,10 @@ public class GetHealthCheckHistoryRequest
                         repairStatuses.Add(HealthCheckResult.RepairAction.ActionNeeded);
                         break;
                     default:
-                        throw new BadHttpRequestException(
+                        errors.Add(
+                            "repairStatus",
                             "Invalid repairStatus parameter (use none, repaired, deleted, or action-needed)");
+                        break;
                 }
             }
             // An empty or comma-only repairStatus value (e.g. "?repairStatus=") means "no filter"
@@ -71,17 +77,22 @@ public class GetHealthCheckHistoryRequest
             var results = new HashSet<HealthCheckResult.HealthResult>();
             foreach (var result in resultParam.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                results.Add(result.ToLowerInvariant() switch
+                var parsed = result.ToLowerInvariant() switch
                 {
                     "healthy" => HealthCheckResult.HealthResult.Healthy,
                     "unhealthy" => HealthCheckResult.HealthResult.Unhealthy,
                     "degraded" => HealthCheckResult.HealthResult.Degraded,
-                    _ => throw new BadHttpRequestException(
-                        "Invalid result parameter (use healthy, unhealthy, or degraded)")
-                });
+                    _ => (HealthCheckResult.HealthResult?)null,
+                };
+                if (parsed is null)
+                    errors.Add("result", "Invalid result parameter (use healthy, unhealthy, or degraded)");
+                else
+                    results.Add(parsed.Value);
             }
             // Same convention as repairStatus: an empty or comma-only value means "no filter".
             Results = results.Count > 0 ? results : null;
         }
+
+        errors.ThrowIfAny();
     }
 }

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
@@ -15,7 +16,11 @@ public class RetryHistoryRequest
         var parsed = await SabNzoIdsParser.ParseAsync(httpContext, SigtermUtil.GetCancellationToken())
             .ConfigureAwait(false);
         if (parsed.NzoIds.Count == 0)
-            throw new BadHttpRequestException("Missing or invalid value (nzo_id).");
+        {
+            var errors = new ValidationErrors();
+            errors.Add("value", "Missing or invalid value (nzo_id).");
+            errors.ThrowIfAny();
+        }
 
         return new RetryHistoryRequest
         {

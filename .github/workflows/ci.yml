@@ -38,6 +38,10 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      - name: Check formatting
+        working-directory: frontend
+        run: npm run format:check
+
       - name: Typecheck
         working-directory: frontend
         run: npm run typecheck
@@ -93,13 +97,36 @@ jobs:
         working-directory: frontend
         run: npm run test:coverage
 
+      - name: Verify coverage ratchet fixtures
+        run: sh scripts/test-quality-ratchets.sh
+
+      - name: Enforce frontend coverage ratchets
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          extra=()
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            if git cat-file -e "origin/$BASE_REF:frontend/coverage-thresholds.json" 2>/dev/null; then
+              git show "origin/$BASE_REF:frontend/coverage-thresholds.json" > /tmp/base-coverage-thresholds.json
+              extra+=(--base-thresholds /tmp/base-coverage-thresholds.json)
+            fi
+          fi
+          python3 scripts/check-quality-ratchets.py \
+            --thresholds frontend/coverage-thresholds.json \
+            --summary frontend/coverage/coverage-summary.json \
+            "${extra[@]}"
+
       - name: Upload frontend coverage artifact
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
-          path: frontend/coverage/cobertura-coverage.xml
-          if-no-files-found: ignore
+          path: |
+            frontend/coverage/cobertura-coverage.xml
+            frontend/coverage/lcov.info
+            frontend/coverage/coverage-summary.json
+          if-no-files-found: error
 
   backend:
     runs-on: ubuntu-latest
@@ -181,6 +208,24 @@ jobs:
       - name: Verify performance baseline gate fixtures
         run: bash scripts/test-performance-baseline-gate.sh
 
+      - name: Verify admin OpenAPI compatibility fixtures
+        run: bash scripts/test-admin-openapi-compat.sh
+
+      - name: Check admin OpenAPI compatibility
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          if git cat-file -e "origin/${{ github.base_ref }}:contracts/openapi/admin-v1.json" 2>/dev/null; then
+            git show "origin/${{ github.base_ref }}:contracts/openapi/admin-v1.json" > /tmp/base-admin-openapi.json
+            python3 scripts/check-admin-openapi-compat.py \
+              --current contracts/openapi/admin-v1.json \
+              --base /tmp/base-admin-openapi.json
+          else
+            python3 scripts/check-admin-openapi-compat.py \
+              --current contracts/openapi/admin-v1.json
+          fi
+
       - name: Audit NuGet production dependencies
         run: |
           report="$(mktemp)"
@@ -200,6 +245,14 @@ jobs:
 
       - name: Test architecture boundaries
         run: dotnet test tests/NzbWebDAV.ArchitectureTests/NzbWebDAV.ArchitectureTests.csproj -c Release --no-restore
+
+      - name: Upload admin OpenAPI contract
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@v7
+        with:
+          name: admin-openapi-v1
+          path: contracts/openapi/admin-v1.json
+          if-no-files-found: error
 
       - name: Test SharpCompress
         timeout-minutes: 10
@@ -402,7 +455,10 @@ jobs:
             entrypoint.sh \
             scripts/preflight-config-path.sh \
             backend/NzbWebDAV.csproj \
-            backend/nuget.config \
+            nuget.config \
+            Directory.Packages.props \
+            Directory.Build.props \
+            .editorconfig \
             libs/ \
             .gitmodules \
             frontend/package.json \

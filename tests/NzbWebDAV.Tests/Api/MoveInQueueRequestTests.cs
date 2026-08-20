@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers.MoveInQueue;
 
 namespace NzbWebDAV.Tests.Api;
@@ -22,7 +23,7 @@ public class MoveInQueueRequestTests
     [InlineData("-1")]
     public void IsMoveToTop_RejectsOtherPositions(string position)
     {
-        Assert.Throws<BadHttpRequestException>(() => MoveInQueueRequest.IsMoveToTop(position));
+        Assert.Throws<ApiValidationException>(() => MoveInQueueRequest.IsMoveToTop(position));
     }
 
     [Fact]

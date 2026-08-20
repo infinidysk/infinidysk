@@ -11,6 +11,7 @@ using Microsoft.Extensions.Hosting;
 using NWebDav.Server;
 using NWebDav.Server.Stores;
 using Scalar.AspNetCore;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.OpenApi;
 using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Auth;
@@ -76,6 +77,7 @@ public partial class Program
             : new StreamTraceBuffer(StreamTraceBuffer.DefaultUiCapacity, enabled: false);
         StreamTrace.Configure(streamTraceBuffer);
         Log.Logger = new LoggerConfiguration()
+            .Enrich.FromLogContext()
             .MinimumLevel.Is(level)
             .MinimumLevel.Override("NWebDAV", AtLeast(level, LogEventLevel.Warning))
             .MinimumLevel.Override("Microsoft", AtLeast(level, LogEventLevel.Information))
@@ -230,7 +232,10 @@ public partial class Program
             var maxRequestBodySize = EnvironmentUtil.GetLongVariable("MAX_REQUEST_BODY_SIZE") ?? 100 * 1024 * 1024;
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
-            builder.Services.AddControllers();
+            builder.Services.Configure<HostOptions>(options =>
+                options.ShutdownTimeout = TimeSpan.FromSeconds(5));
+            builder.Services.AddControllers(options =>
+                options.Filters.Add<ApiErrorContractFilter>());
             builder.Services.AddHttpContextAccessor();
             if (apiDocsEnabled)
                 builder.Services.AddOpenApi(AdminOpenApiExtensions.DocumentName, AdminOpenApiExtensions.Configure);
@@ -313,7 +318,8 @@ public partial class Program
                     sp.GetRequiredService<UsenetStreamingClient>(),
                     sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<QueueManager>()
-                .AddSingleton(_ => new NzbResolutionCache(() => new DavDatabaseContext()))
+                .AddSingleton(sp => new NzbResolutionCache(
+                    () => sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext()))
                 .AddSingleton<PreferredOrderStore>()
                 .AddSingleton<NzbFetchCoalescer>()
                 .AddSingleton<PlayResolutionCoalescer>()
@@ -322,7 +328,7 @@ public partial class Program
                 // NNTP client never depends on scoped database services.
                 .AddSingleton(sp => new ArticleMissNegativeCache(
                     sp.GetRequiredService<ConfigManager>(),
-                    () => new DavDatabaseContext()))
+                    () => sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext()))
                 .AddHostedService(sp => sp.GetRequiredService<ArticleMissNegativeCache>())
                 .AddSingleton(sp =>
                 {
@@ -400,7 +406,10 @@ public partial class Program
                 .AddSingleton<ListSourceEnumerator>()
                 .AddSingleton<EpisodeEnumerator>()
                 .AddHostedService<WatchtowerService>()
-                .AddScoped<DavDatabaseContext>()
+                .AddDbContextFactory<DavDatabaseContext>(options =>
+                    DavDatabaseContext.ConfigureOptions(options))
+                .AddScoped(sp =>
+                    sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext())
                 .AddScoped<DavDatabaseClient>()
                 .AddScoped<NzbWebDAV.Services.Benchmark.BenchmarkCorpusProvider>()
                 .AddScoped<NzbWebDAV.Services.Benchmark.UsenetBenchmarkService>()
@@ -423,6 +432,7 @@ public partial class Program
             var app = builder.Build();
             // Must run before anything that reads Scheme/Host/RemoteIpAddress.
             app.UseForwardedHeaders();
+            app.UseMiddleware<RequestCorrelationMiddleware>();
             app.UseMiddleware<ExceptionMiddleware>();
             app.UseMiddleware<MetricsAuthenticationMiddleware>();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });

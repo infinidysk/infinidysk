@@ -1,10 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  describeImportViolation,
-  resolveImportedPath,
-} from "./import-boundaries.mjs";
+import { describeImportViolation, resolveImportedPath } from "./import-boundaries.mjs";
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appRoot = path.join(frontendRoot, "app");
@@ -19,16 +16,16 @@ function check(fromRel, source) {
 describe("import-boundaries", () => {
   it("resolves ~/ aliases against app/", () => {
     const from = path.join(appRoot, "routes/health/route.tsx");
-    expect(
-      resolveImportedPath(from, "~/routes/queue/components/truncate/truncate", appRoot),
-    ).toBe(path.join(appRoot, "routes/queue/components/truncate/truncate"));
+    expect(resolveImportedPath(from, "~/routes/queue/components/truncate/truncate", appRoot)).toBe(
+      path.join(appRoot, "routes/queue/components/truncate/truncate"),
+    );
   });
 
   it("resolves relative imports against the importer", () => {
     const from = path.join(appRoot, "routes/health/components/health-table.tsx");
-    expect(
-      resolveImportedPath(from, "../../queue/components/truncate/truncate", appRoot),
-    ).toBe(path.join(appRoot, "routes/queue/components/truncate/truncate"));
+    expect(resolveImportedPath(from, "../../queue/components/truncate/truncate", appRoot)).toBe(
+      path.join(appRoot, "routes/queue/components/truncate/truncate"),
+    );
   });
 
   it("rejects health importing queue via alias", () => {
@@ -49,18 +46,12 @@ describe("import-boundaries", () => {
   });
 
   it("rejects shared utils importing routes via alias", () => {
-    const violation = check(
-      "app/utils/service-provider.ts",
-      "~/routes/settings/settings-tabs",
-    );
+    const violation = check("app/utils/service-provider.ts", "~/routes/settings/settings-tabs");
     expect(violation?.message).toContain("must not import route module");
   });
 
   it("rejects shared navigation importing routes via alias", () => {
-    const violation = check(
-      "app/navigation/settings-tabs.ts",
-      "~/routes/settings/settings-tabs",
-    );
+    const violation = check("app/navigation/settings-tabs.ts", "~/routes/settings/settings-tabs");
     expect(violation?.message).toContain("must not import route module");
   });
 
@@ -73,9 +64,7 @@ describe("import-boundaries", () => {
   });
 
   it("allows a route to import files under its own directory", () => {
-    expect(
-      check("app/routes/queue/route.tsx", "./components/queue-table/queue-table"),
-    ).toBeNull();
+    expect(check("app/routes/queue/route.tsx", "./components/queue-table/queue-table")).toBeNull();
     expect(
       check(
         "app/routes/queue/components/queue-table/queue-table.tsx",

@@ -5,13 +5,13 @@ using Serilog;
 
 namespace NzbWebDAV.Services;
 
-public class WatchtowerStore(PreflightCache preflightCache)
+public class WatchtowerStore(PreflightCache preflightCache, IDbContextFactory<DavDatabaseContext> dbContextFactory)
 {
     public async Task TryWarmCacheAsync(string type, string contentId, CancellationToken ct)
     {
         try
         {
-            await using var ctx = new DavDatabaseContext();
+            await using var ctx = dbContextFactory.CreateDbContext();
             if (await TryWarmKeyAsync(ctx, $"{type}:{contentId}", ct).ConfigureAwait(false)) return;
 
             if (type == "series")

@@ -90,6 +90,15 @@ cd frontend && npm install && npm run dev
 
 `scripts/run-backend.sh` defaults `LOG_LEVEL=Debug` (and `LOG_BUFFER_SIZE=2000`) when unset so local playback debugging is verbose. Docker/production leave these unset and keep Information-level logging. It also enables the contributor-only admin API reference locally; sign in through the frontend and open `http://localhost:5173/scalar/`. The backend's `/openapi/admin.json` endpoint requires `x-api-key` when accessed directly. Set `ENABLE_API_DOCS=false` to disable it; released Docker images keep it disabled unless explicitly enabled.
 
+The committed admin OpenAPI contract lives at `contracts/openapi/admin-v1.json` (versioned independently of the product release). After adding or changing an admin endpoint used by the frontend, refresh it and regenerate TypeScript types:
+
+```bash
+./scripts/export-admin-openapi.sh
+cd frontend && npm run generate:api
+```
+
+The export command starts the test host, normalizes the document (stable key order, empty `servers`, contract version `1.0.0`), and fails if the result does not match the committed file unless you are rewriting it. Frontend `lint` / `typecheck` / `test` / `build` regenerate `app/generated/admin-api.ts` automatically (gitignored).
+
 Stream tracing is **opt-in** and off by default. Toggle it from **Settings → Support** for 15/30/60 minutes (no restart; it auto-expires and never survives a restart), or set `STREAM_TRACE_EVENTS` to a positive value for an always-on capture from startup. When tracing is off, no trace events are recorded and the trace APIs report `enabled: false`.
 
 `scripts/run-backend.sh` builds the host rapidyenc native (via `scripts/build-rapidyenc.sh`) when missing and exports `RAPIDYENC_LIBRARY_PATH`. With that in place, yEnc-decoding tests run on macOS and Linux; without a native library they are skipped.
@@ -208,6 +217,19 @@ Build and run container:
 docker compose up
 ```
 
+## NuGet packages
+
+This repo uses [NuGet Central Package Management](https://learn.microsoft.com/en-us/nuget/consume-packages/central-package-management). Package versions live in the root `Directory.Packages.props`. Project files list `<PackageReference Include="..." />` without a `Version` attribute (asset metadata such as `PrivateAssets` still belongs on the project reference).
+
+To add a package:
+
+1. Add `<PackageVersion Include="The.Package" Version="x.y.z" />` to `Directory.Packages.props` if that package is not already listed.
+2. Add `<PackageReference Include="The.Package" />` to each project that needs it.
+
+To bump a version, change only `Directory.Packages.props`. Dependabot updates that file (the `nuget` ecosystem is rooted at `/`).
+
+Restore uses the repo-root `nuget.config`, which pins [nuget.org](https://www.nuget.org/) as the only package source. Central package management requires a single source or [package source mapping](https://learn.microsoft.com/en-us/nuget/consume-packages/package-source-mapping); do not add extra sources without mapping them.
+
 ## Static analysis policy
 
 All first-party C# projects build with the full .NET analyzer set
@@ -234,6 +256,12 @@ When a rule fires, resolve it in this order:
 
 Rules that must **never** be disabled rule-wide: the security rules (CA53xx) —
 use per-site justification suppressions so each instance stays auditable.
+`CA2016` (forward CancellationToken) and `CA1001` (types that own disposables
+implement IDisposable) are listed explicitly in `Directory.Build.props`
+`<WarningsAsErrors>` so they stay errors even if the blanket gate is narrowed.
+
+Hosted services must honor `stoppingToken`. The generic host `ShutdownTimeout`
+is 5 seconds (see `backend/Program.cs`).
 
 Notes:
 
@@ -280,7 +308,13 @@ They must not import another route feature. Shared code must not import
 Before creating a PR:
 
 ```bash
-cd frontend && npm run lint && npm run typecheck && npm run build && npm test
+cd frontend
+npm run lint
+npm run format:check
+npm run typecheck
+npm run build
+npm test
+cd ..
 dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
 dotnet test tests/NzbWebDAV.ArchitectureTests/NzbWebDAV.ArchitectureTests.csproj -c Debug
 ```

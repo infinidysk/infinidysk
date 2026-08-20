@@ -102,8 +102,7 @@ export const importBoundariesPlugin = {
       meta: {
         type: "problem",
         docs: {
-          description:
-            "Prevent cross-route and shared-to-route imports, including ~/ aliases.",
+          description: "Prevent cross-route and shared-to-route imports, including ~/ aliases.",
         },
         schema: [],
         messages: {

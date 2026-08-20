@@ -1,10 +1,11 @@
-﻿using System.Xml;
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -20,12 +21,6 @@ public class NzbSubmissionService(
     ConfigManager configManager,
     WebsocketManager websocketManager)
 {
-    private static readonly XmlReaderSettings XmlSettings = new()
-    {
-        Async = true,
-        DtdProcessing = DtdProcessing.Ignore
-    };
-
     /// <summary>
     /// Creates a short-lived context for conflict removal without flushing
     /// pending Added entities on the request-scoped context. Tests can override
@@ -123,17 +118,8 @@ public class NzbSubmissionService(
 
             // compute the total segment bytes
             await using var nzbFileStream = BlobStore.ReadBlob(id)!;
-            long totalSegmentBytes;
-            try
-            {
-                totalSegmentBytes = ComputeTotalSegmentBytes(nzbFileStream);
-            }
-            catch (XmlException exception) when (prepared.IsGzip)
-            {
-                throw new BadHttpRequestException(
-                    "The uploaded gzip file does not contain a valid NZB document.",
-                    exception);
-            }
+            var totalSegmentBytes = NzbInputValidator.ValidateAndSumSegmentBytes(
+                nzbFileStream, NzbInputLimits.Default);
 
             // Keep enqueues after any manually moved item in their priority band.
             // CreatedAt remains the immutable enqueue timestamp; SortOrder owns
@@ -199,7 +185,7 @@ public class NzbSubmissionService(
                     ex);
             }
 
-            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], request.CancellationToken);
         }
         catch
         {
@@ -250,7 +236,7 @@ public class NzbSubmissionService(
 
         await queueManager.RemoveQueueItemsAsync([existingId.Value], dbClient, ct).ConfigureAwait(false);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, existingId.Value.ToString());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
     }
 
     private async Task RemoveConflictingQueueItemViaFreshContextAsync(
@@ -277,7 +263,7 @@ public class NzbSubmissionService(
 
         await queueManager.RemoveQueueItemsAsync([conflictingId.Value], freshClient, ct).ConfigureAwait(false);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, conflictingId.Value.ToString());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
     }
 
     internal static bool IsCategoryFileNameUniqueViolation(DbUpdateException ex)
@@ -395,22 +381,5 @@ public class NzbSubmissionService(
         {
             throw new ArgumentException(message, paramName);
         }
-    }
-
-    private static long ComputeTotalSegmentBytes(Stream stream)
-    {
-        long totalBytes = 0;
-        using var reader = XmlReader.Create(stream, XmlSettings);
-        while (reader.Read())
-        {
-            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "segment") continue;
-            var bytesAttr = reader.GetAttribute("bytes");
-            if (bytesAttr != null && long.TryParse(bytesAttr, out var bytes))
-            {
-                totalBytes += bytes;
-            }
-        }
-
-        return totalBytes;
     }
 }

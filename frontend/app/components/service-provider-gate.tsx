@@ -13,10 +13,7 @@ export type ServiceProviderGateProps = {
   serviceProvider: ServiceProviderConfig | null | undefined;
 };
 
-export function ServiceProviderGate({
-  children,
-  serviceProvider,
-}: ServiceProviderGateProps) {
+export function ServiceProviderGate({ children, serviceProvider }: ServiceProviderGateProps) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -25,9 +22,7 @@ export function ServiceProviderGate({
   }
 
   const isSettingsRoute = location.pathname.startsWith("/settings");
-  const activeSettingsTab = parseSettingsTab(
-    new URLSearchParams(location.search).get("tab"),
-  );
+  const activeSettingsTab = parseSettingsTab(new URLSearchParams(location.search).get("tab"));
   const isDisabled = isSettingsRoute
     ? isSettingsTabDisabled(serviceProvider, activeSettingsTab)
     : isNavRouteDisabled(serviceProvider, location.pathname);
@@ -40,7 +35,9 @@ export function ServiceProviderGate({
     <ServiceProviderNotice
       open
       serviceProvider={serviceProvider}
-      onClose={() => { void navigate("/overview", { replace: true }); }}
+      onClose={() => {
+        void navigate("/overview", { replace: true });
+      }}
     />
   );
 }

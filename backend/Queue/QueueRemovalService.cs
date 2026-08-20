@@ -20,6 +20,6 @@ public sealed class QueueRemovalService(
         }
 
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", ids));
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
+        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], cancellationToken);
     }
 }

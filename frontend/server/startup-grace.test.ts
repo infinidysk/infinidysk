@@ -47,10 +47,10 @@ describe("startup-grace helpers", () => {
   });
 
   it("treats BackendUnavailableError with a network code as expected", () => {
-    const error = Object.assign(
-      new Error("Failed to get history: fetch failed (ECONNREFUSED)"),
-      { name: "BackendUnavailableError", code: "ECONNREFUSED" },
-    );
+    const error = Object.assign(new Error("Failed to get history: fetch failed (ECONNREFUSED)"), {
+      name: "BackendUnavailableError",
+      code: "ECONNREFUSED",
+    });
 
     expect(isExpectedBackendUnavailableError(error)).toBe(true);
   });
@@ -65,22 +65,18 @@ describe("startup-grace helpers", () => {
   });
 
   it("does not treat BackendUnavailableError without a network code as expected", () => {
-    const error = Object.assign(
-      new Error("Failed to get config items: Invalid URL"),
-      { name: "BackendUnavailableError" },
-    );
+    const error = Object.assign(new Error("Failed to get config items: Invalid URL"), {
+      name: "BackendUnavailableError",
+    });
 
     expect(isExpectedBackendUnavailableError(error)).toBe(false);
   });
 
   it("treats BackendUnavailableError with a network cause chain as expected", () => {
-    const error = Object.assign(
-      new Error("Failed to get history: fetch failed"),
-      {
-        name: "BackendUnavailableError",
-        cause: Object.assign(new Error("connect failed"), { code: "ECONNRESET" }),
-      },
-    );
+    const error = Object.assign(new Error("Failed to get history: fetch failed"), {
+      name: "BackendUnavailableError",
+      cause: Object.assign(new Error("connect failed"), { code: "ECONNRESET" }),
+    });
 
     expect(isExpectedBackendUnavailableError(error)).toBe(true);
   });
@@ -105,12 +101,12 @@ describe("startup-grace helpers", () => {
     const t0 = 1_000_000;
     expect(shouldEmitThrottledBackendUnavailableLog(t0)).toBe(true);
     expect(shouldEmitThrottledBackendUnavailableLog(t0 + 1)).toBe(false);
-    expect(
-      shouldEmitThrottledBackendUnavailableLog(t0 + BACKEND_FAILURE_LOG_THROTTLE_MS - 1),
-    ).toBe(false);
-    expect(
-      shouldEmitThrottledBackendUnavailableLog(t0 + BACKEND_FAILURE_LOG_THROTTLE_MS),
-    ).toBe(true);
+    expect(shouldEmitThrottledBackendUnavailableLog(t0 + BACKEND_FAILURE_LOG_THROTTLE_MS - 1)).toBe(
+      false,
+    );
+    expect(shouldEmitThrottledBackendUnavailableLog(t0 + BACKEND_FAILURE_LOG_THROTTLE_MS)).toBe(
+      true,
+    );
   });
 
   it("shares throttle state across separately loaded server bundles", async () => {

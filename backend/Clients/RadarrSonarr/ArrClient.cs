@@ -9,7 +9,8 @@ namespace NzbWebDAV.Clients.RadarrSonarr;
 
 public class ArrClient(string host, string apiKey)
 {
-    protected static readonly HttpClient HttpClient = new();
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+    protected static readonly HttpClient HttpClient = new() { Timeout = RequestTimeout };
     protected virtual HttpClient Client => HttpClient;
 
     public string Host { get; } = host;
@@ -28,10 +29,7 @@ public class ArrClient(string host, string apiKey)
         CancellationToken ct = default) =>
         throw new InvalidOperationException();
 
-    public virtual Task<List<ArrRootFolder>> GetRootFolders() =>
-        GetRootFolders(CancellationToken.None);
-
-    public virtual Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct) =>
+    public virtual Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct = default) =>
         Get<List<ArrRootFolder>>($"/rootfolder", ct);
 
     public Task<List<ArrDownloadClient>> GetDownloadClientsAsync(CancellationToken ct = default) =>
@@ -49,15 +47,21 @@ public class ArrClient(string host, string apiKey)
     public virtual Task<ArrHistory> GetImportHistoryAsync(int page, int pageSize, CancellationToken ct = default) =>
         Get<ArrHistory>($"/history?eventType=3&page={page}&pageSize={pageSize}&sortKey=date&sortDirection=descending", ct);
 
-    public async Task<int> GetQueueCountAsync() =>
-        (await Get<ArrQueue<ArrQueueRecord>>($"/queue?pageSize=1").ConfigureAwait(false)).TotalRecords;
+    public async Task<int> GetQueueCountAsync(CancellationToken ct = default) =>
+        (await Get<ArrQueue<ArrQueueRecord>>($"/queue?pageSize=1", ct).ConfigureAwait(false)).TotalRecords;
 
-    public Task<HttpStatusCode> DeleteQueueRecord(int id, DeleteQueueRecordRequest request) =>
-        Delete($"/queue/{id}", request.GetQueryParams());
+    public Task<HttpStatusCode> DeleteQueueRecord(
+        int id,
+        DeleteQueueRecordRequest request,
+        CancellationToken ct = default) =>
+        Delete($"/queue/{id}", request.GetQueryParams(), ct);
 
-    public Task<HttpStatusCode> DeleteQueueRecord(int id, ArrConfig.QueueAction request) =>
+    public Task<HttpStatusCode> DeleteQueueRecord(
+        int id,
+        ArrConfig.QueueAction request,
+        CancellationToken ct = default) =>
         request is not ArrConfig.QueueAction.DoNothing
-            ? Delete($"/queue/{id}", new DeleteQueueRecordRequest(request).GetQueryParams())
+            ? Delete($"/queue/{id}", new DeleteQueueRecordRequest(request).GetQueryParams(), ct)
             : Task.FromResult(HttpStatusCode.OK);
 
     public Task<ArrCommand> CommandAsync(object command, CancellationToken ct = default) =>
@@ -170,9 +174,9 @@ public class ArrClient(string host, string apiKey)
         return resource;
     }
 
-    private Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         request.Headers.Add("X-Api-Key", ApiKey);
-        return Client.SendAsync(request, ct);
+        return await Client.SendAsync(request, ct).ConfigureAwait(false);
     }
 }

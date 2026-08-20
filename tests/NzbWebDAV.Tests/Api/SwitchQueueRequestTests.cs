@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers.SwitchQueue;
 
 namespace NzbWebDAV.Tests.Api;
@@ -28,6 +29,6 @@ public class SwitchQueueRequestTests
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString(query);
 
-        Assert.Throws<BadHttpRequestException>(() => SwitchQueueRequest.New(context));
+        Assert.Throws<ApiValidationException>(() => SwitchQueueRequest.New(context));
     }
 }
