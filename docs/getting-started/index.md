@@ -77,8 +77,8 @@ Docker images and [prebuilt Linux archives](prebuilt-archives.md) follow the sam
 |-----|------------|
 | `latest` | The current stable release — the same definition as any project. Recommended for most deployments. |
 | `lts` | A curated stable pointer that generally trails `latest` by a few minor/patch releases, for operators who prefer the front lines to do the testing. Docker image tag only; promoted manually, not on every release. |
-| `rc` | Release candidate for the upcoming version, promoted from `dev` builds after basic regression testing. Preferred for all but the most daring testers. |
-| `dev` | Work-in-progress snapshots deployed to the maintainer’s non-production instance to validate basic functionality. Expect a noisy tag: frequent, sometimes non-functional builds, with no per-build version numbers. Testing only. |
+| `rc` | Release candidate for the upcoming version, promoted from `dev` builds after basic regression testing. Preferred for all but the most daring testers. Published only to `ghcr.io/infinidysk/infinidysk`. |
+| `dev` | Work-in-progress snapshots deployed to the maintainer’s non-production instance to validate basic functionality. Expect a noisy tag: frequent, sometimes non-functional builds, with no per-build version numbers. Testing only. Published only to `ghcr.io/infinidysk/infinidysk`. |
 
 For reproducible deployments, pin an exact version tag (`v1.2.3`) or a rolling minor/major alias (`v1.2`, `v1`). Versioned `v*-rc.*` pre-releases and image tags are removed when the stable release ships; the rolling `rc` and `dev` tags persist.
 
