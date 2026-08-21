@@ -57,9 +57,8 @@ public class NntpLineReaderTests
         await using var stream = new MemoryStream(input);
         using var reader = new NntpLineReader(stream, bufferSize: 32);
 
-        var first = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(first.HasValue, Is.True);
-        Assert.That(Encoding.ASCII.GetString(first!.Value.Memory.Span), Is.EqualTo("one\r\ntwo\r\n"));
+        var first = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        Assert.That(Encoding.ASCII.GetString(first.Memory.Span), Is.EqualTo("one\r\ntwo\r\n"));
 
         Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await reader.ReadCompleteLinesAsync(CancellationToken.None));
@@ -67,8 +66,8 @@ public class NntpLineReaderTests
             await reader.ReadLineBytesAsync(CancellationToken.None));
 
         reader.Advance("one\r\n".Length);
-        var second = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(Encoding.ASCII.GetString(second!.Value.Memory.Span), Is.EqualTo("two\r\n"));
+        var second = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        Assert.That(Encoding.ASCII.GetString(second.Memory.Span), Is.EqualTo("two\r\n"));
 
         reader.Advance("two\r\n".Length);
         Assert.ThrowsAsync<UsenetProtocolException>(async () =>
@@ -82,9 +81,9 @@ public class NntpLineReaderTests
         await using var stream = new MemoryStream(input);
         using var reader = new NntpLineReader(stream, bufferSize: 2);
 
-        var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(Encoding.ASCII.GetString(batch!.Value.Memory.Span), Is.EqualTo("x\r\n"));
-        reader.Advance(batch.Value.Memory.Length);
+        var batch = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        Assert.That(Encoding.ASCII.GetString(batch.Memory.Span), Is.EqualTo("x\r\n"));
+        reader.Advance(batch.Memory.Length);
         Assert.That(await reader.ReadCompleteLinesAsync(CancellationToken.None), Is.Null);
     }
 
@@ -98,12 +97,12 @@ public class NntpLineReaderTests
         {
             await using var stream = new FragmentedReadStream(bytes, [split, int.MaxValue]);
             using var reader = new NntpLineReader(stream, bufferSize: Math.Max(split, 1));
-            var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
+            var batch = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
             Assert.That(
-                Encoding.ASCII.GetString(batch!.Value.Memory.Span),
+                Encoding.ASCII.GetString(batch.Memory.Span),
                 Is.EqualTo(line),
                 $"split={split}");
-            reader.Advance(batch.Value.Memory.Length);
+            reader.Advance(batch.Memory.Length);
         }
     }
 
@@ -116,12 +115,12 @@ public class NntpLineReaderTests
         {
             await using var stream = new FragmentedReadStream(bytes, [split, int.MaxValue]);
             using var reader = new NntpLineReader(stream, bufferSize: 1);
-            var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
+            var batch = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
             Assert.That(
-                Encoding.ASCII.GetString(batch!.Value.Memory.Span),
+                Encoding.ASCII.GetString(batch.Memory.Span),
                 Is.EqualTo(terminator),
                 $"split={split}");
-            reader.Advance(batch.Value.Memory.Length);
+            reader.Advance(batch.Memory.Length);
         }
     }
 
@@ -132,13 +131,13 @@ public class NntpLineReaderTests
         await using var stream = new FragmentedReadStream(bytes, [1]);
         using var reader = new NntpLineReader(stream, bufferSize: 1);
 
-        var first = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(Encoding.ASCII.GetString(first!.Value.Memory.Span), Is.EqualTo("payload\r\n"));
-        reader.Advance(first.Value.Memory.Length);
+        var first = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        Assert.That(Encoding.ASCII.GetString(first.Memory.Span), Is.EqualTo("payload\r\n"));
+        reader.Advance(first.Memory.Length);
 
-        var second = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(Encoding.ASCII.GetString(second!.Value.Memory.Span), Is.EqualTo(".\r\n"));
-        reader.Advance(second.Value.Memory.Length);
+        var second = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        Assert.That(Encoding.ASCII.GetString(second.Memory.Span), Is.EqualTo(".\r\n"));
+        reader.Advance(second.Memory.Length);
     }
 
     [Test]
@@ -148,15 +147,14 @@ public class NntpLineReaderTests
         await using var stream = new MemoryStream(input);
         using var reader = new NntpLineReader(stream);
 
-        var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(batch.HasValue, Is.True);
+        var batch = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
 
         Assert.Throws<ArgumentOutOfRangeException>(() => reader.Advance(0));
         Assert.Throws<ArgumentOutOfRangeException>(() => reader.Advance(-1));
-        Assert.Throws<ArgumentOutOfRangeException>(() => reader.Advance(batch!.Value.Memory.Length + 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => reader.Advance(batch.Memory.Length + 1));
         Assert.Throws<ArgumentException>(() => reader.Advance(1));
 
-        reader.Advance(batch!.Value.Memory.Length);
+        reader.Advance(batch.Memory.Length);
         Assert.Throws<InvalidOperationException>(() => reader.Advance(1));
     }
 
@@ -167,8 +165,8 @@ public class NntpLineReaderTests
         await using var stream = new MemoryStream(input);
         using var reader = new NntpLineReader(stream);
 
-        var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        var span = batch!.Value.Memory.Span;
+        var batch = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        var span = batch.Memory.Span;
         var terminatorAt = span.LastIndexOf(".\r\n"u8);
         Assert.That(terminatorAt, Is.GreaterThanOrEqualTo(0));
         reader.Advance(terminatorAt + 3);
@@ -184,11 +182,11 @@ public class NntpLineReaderTests
         await using var stream = new MemoryStream(input);
         using var reader = new NntpLineReader(stream);
 
-        var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
+        var batch = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
         reader.Advance("alpha\r\n".Length);
         var line = await reader.ReadLineAsync(CancellationToken.None);
         Assert.That(line, Is.EqualTo("beta"));
-        Assert.That(batch!.Value.Memory.Length, Is.EqualTo("alpha\r\nbeta\r\n".Length));
+        Assert.That(batch.Memory.Length, Is.EqualTo("alpha\r\nbeta\r\n".Length));
     }
 
     [Test]
@@ -199,9 +197,9 @@ public class NntpLineReaderTests
         using var reader = new NntpLineReader(stream);
 
         Assert.That(await reader.ReadLineAsync(CancellationToken.None), Is.EqualTo("alpha"));
-        var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(Encoding.ASCII.GetString(batch!.Value.Memory.Span), Is.EqualTo("beta\r\ngamma\r\n"));
-        reader.Advance(batch.Value.Memory.Length);
+        var batch = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        Assert.That(Encoding.ASCII.GetString(batch.Memory.Span), Is.EqualTo("beta\r\ngamma\r\n"));
+        reader.Advance(batch.Memory.Length);
     }
 
     [Test]
@@ -219,9 +217,9 @@ public class NntpLineReaderTests
             cancelOnRead: 2);
         using var reader = new NntpLineReader(stream, bufferSize: first.Length);
 
-        var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(Encoding.ASCII.GetString(batch!.Value.Memory.Span), Is.EqualTo("first\r\n"));
-        reader.Advance(batch.Value.Memory.Length);
+        var batch = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        Assert.That(Encoding.ASCII.GetString(batch.Memory.Span), Is.EqualTo("first\r\n"));
+        reader.Advance(batch.Memory.Length);
 
         using var cancellation = new CancellationTokenSource();
         var cancelledRead = reader.ReadCompleteLinesAsync(cancellation.Token).AsTask();
@@ -250,9 +248,9 @@ public class NntpLineReaderTests
         await using var stream = new MemoryStream(Encoding.ASCII.GetBytes("205 Goodbye\r\n"));
         using var reader = new NntpLineReader(stream);
 
-        var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(Encoding.ASCII.GetString(batch!.Value.Memory.Span), Is.EqualTo("205 Goodbye\r\n"));
-        reader.Advance(batch.Value.Memory.Length);
+        var batch = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        Assert.That(Encoding.ASCII.GetString(batch.Memory.Span), Is.EqualTo("205 Goodbye\r\n"));
+        reader.Advance(batch.Memory.Length);
         Assert.That(await reader.ReadCompleteLinesAsync(CancellationToken.None), Is.Null);
     }
 
@@ -268,18 +266,41 @@ public class NntpLineReaderTests
         Assert.That(exception!.Message, Does.Contain("8-byte limit"));
     }
 
+    [TestCase("aaaaaaaaaa\r\n")]
+    [TestCase("ok\r\naaaaaaaaaa\r\n")]
+    public async Task ReadCompleteLinesAsync_OverlongCompleteLineInOneBuffer_Throws(string input)
+    {
+        var bytes = Encoding.ASCII.GetBytes(input);
+        await using var stream = new MemoryStream(bytes);
+        using var reader = new NntpLineReader(stream, maximumLineLength: 8, bufferSize: 64);
+
+        var exception = Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+            await reader.ReadCompleteLinesAsync(CancellationToken.None));
+        Assert.That(exception!.Message, Does.Contain("8-byte limit"));
+    }
+
     [Test]
     public async Task Dispose_WithOutstandingExposure_ReturnsEachPooledArrayOnce()
     {
         await using var stream = new MemoryStream(Encoding.ASCII.GetBytes("one\r\ntwo\r\n"));
         var reader = new NntpLineReader(stream, bufferSize: 4);
-        var batch = await reader.ReadCompleteLinesAsync(CancellationToken.None);
-        Assert.That(batch.HasValue, Is.True);
+        RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
 
         reader.Dispose();
         reader.Dispose();
         Assert.ThrowsAsync<ObjectDisposedException>(async () =>
             await reader.ReadCompleteLinesAsync(CancellationToken.None));
+    }
+
+    private static NntpReadBuffer RequireBatch(NntpReadBuffer? batch)
+    {
+        if (!batch.HasValue)
+        {
+            Assert.Fail("Expected a complete NNTP line batch.");
+            throw new InvalidOperationException("Expected a complete NNTP line batch.");
+        }
+
+        return batch.Value;
     }
 
     private sealed class CancelledRefillStream(

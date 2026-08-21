@@ -174,6 +174,11 @@ internal sealed class NntpLineReader : IDisposable
             if (lastNewline >= 0)
             {
                 var count = lastNewline + 1;
+                if (lastNewline > _maximumLineLength)
+                {
+                    ThrowIfAnyCompleteLineExceedsLimit(availableSpan[..count]);
+                }
+
                 _exposedLength = count;
                 _exposedFromLineBuffer = false;
                 return new NntpReadBuffer(available[..count]);
@@ -265,6 +270,26 @@ internal sealed class NntpLineReader : IDisposable
         {
             throw new InvalidOperationException(
                 "An NNTP read buffer is already active.");
+        }
+    }
+
+    private void ThrowIfAnyCompleteLineExceedsLimit(ReadOnlySpan<byte> completeLines)
+    {
+        var start = 0;
+        while (start < completeLines.Length)
+        {
+            var newlineIndex = completeLines[start..].IndexOf((byte)'\n');
+            if (newlineIndex < 0)
+            {
+                return;
+            }
+
+            if (newlineIndex > _maximumLineLength)
+            {
+                throw CreateMaximumLineLengthException();
+            }
+
+            start += newlineIndex + 1;
         }
     }
 
