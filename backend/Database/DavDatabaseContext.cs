@@ -19,18 +19,113 @@ namespace NzbWebDAV.Database;
 public class DavDatabaseContext : DbContext
 {
     private static readonly ValueComparer<string[]> StringArrayComparer = new(
-        (left, right) => left.SequenceEqual(right),
-        value => value.Aggregate(0, (hash, item) => HashCode.Combine(hash, item)),
-        value => value.ToArray());
+        (left, right) => StringArraysEqual(left, right),
+        value => StringArrayHashCode(value),
+        value => CloneStringArray(value));
 
     private static readonly ValueComparer<DavRarFile.RarPart[]> RarPartsComparer = new(
-        (left, right) => JsonSerializer.Serialize(left, (JsonSerializerOptions?)null) ==
-                         JsonSerializer.Serialize(right, (JsonSerializerOptions?)null),
-        value => JsonSerializer.Serialize(value, (JsonSerializerOptions?)null).GetHashCode(),
-        value => JsonSerializer.Deserialize<DavRarFile.RarPart[]>(
-                     JsonSerializer.Serialize(value, (JsonSerializerOptions?)null),
-                     (JsonSerializerOptions?)null) ??
-                 Array.Empty<DavRarFile.RarPart>());
+        (left, right) => RarPartsEqual(left, right),
+        value => RarPartsHashCode(value),
+        value => CloneRarParts(value));
+
+    private static bool StringArraysEqual(string[]? left, string[]? right) =>
+        ReferenceEquals(left, right) ||
+        (left is not null && right is not null && left.SequenceEqual(right));
+
+    private static int StringArrayHashCode(string[]? value)
+    {
+        if (value is null) return 0;
+
+        var hash = new HashCode();
+        foreach (var item in value)
+            hash.Add(item, StringComparer.Ordinal);
+        return hash.ToHashCode();
+    }
+
+    private static string[] CloneStringArray(string[]? value) =>
+        value?.ToArray()!;
+
+    private static bool RarPartsEqual(DavRarFile.RarPart[]? left, DavRarFile.RarPart[]? right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left is null || right is null || left.Length != right.Length) return false;
+
+        for (var index = 0; index < left.Length; index++)
+        {
+            var leftPart = left[index];
+            var rightPart = right[index];
+            if (!StringArraysEqual(leftPart.SegmentIds, rightPart.SegmentIds) ||
+                leftPart.PartSize != rightPart.PartSize ||
+                leftPart.Offset != rightPart.Offset ||
+                leftPart.ByteCount != rightPart.ByteCount ||
+                !NullableArraysEqual(leftPart.SegmentByteRanges, rightPart.SegmentByteRanges) ||
+                !NestedStringArraysEqual(leftPart.SegmentFallbackIds, rightPart.SegmentFallbackIds))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool NullableArraysEqual<T>(T[]? left, T[]? right) =>
+        ReferenceEquals(left, right) ||
+        (left is not null && right is not null && left.SequenceEqual(right));
+
+    private static bool NestedStringArraysEqual(string[][]? left, string[][]? right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left is null || right is null || left.Length != right.Length) return false;
+
+        for (var index = 0; index < left.Length; index++)
+        {
+            if (!StringArraysEqual(left[index], right[index]))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static int RarPartsHashCode(DavRarFile.RarPart[]? value)
+    {
+        if (value is null) return 0;
+
+        var hash = new HashCode();
+        foreach (var part in value)
+        {
+            hash.Add(StringArrayHashCode(part.SegmentIds));
+            hash.Add(part.PartSize);
+            hash.Add(part.Offset);
+            hash.Add(part.ByteCount);
+
+            if (part.SegmentByteRanges is not null)
+            {
+                foreach (var range in part.SegmentByteRanges)
+                    hash.Add(range);
+            }
+
+            if (part.SegmentFallbackIds is not null)
+            {
+                foreach (var fallbackIds in part.SegmentFallbackIds)
+                    hash.Add(StringArrayHashCode(fallbackIds));
+            }
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static DavRarFile.RarPart[] CloneRarParts(DavRarFile.RarPart[]? value) =>
+        value?.Select(part => new DavRarFile.RarPart
+        {
+            SegmentIds = CloneStringArray(part.SegmentIds),
+            PartSize = part.PartSize,
+            Offset = part.Offset,
+            ByteCount = part.ByteCount,
+            SegmentByteRanges = part.SegmentByteRanges?.Select(range => range with { }).ToArray(),
+            SegmentFallbackIds = part.SegmentFallbackIds?
+                .Select(CloneStringArray)
+                .ToArray()
+        }).ToArray()!;
 
     public DavDatabaseContext() : base(Options.Value)
     {
