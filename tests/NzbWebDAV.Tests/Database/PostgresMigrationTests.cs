@@ -173,7 +173,7 @@ public sealed class PostgresMigrationTests
                 context.QueueItems.Add(new QueueItem
                 {
                     Id = Guid.NewGuid(),
-                    CreatedAt = DateTime.UtcNow,
+                    CreatedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
                     FileName = "queue.nzb",
                     JobName = "queue",
                     Priority = QueueItem.PriorityOption.Normal,
@@ -181,7 +181,7 @@ public sealed class PostgresMigrationTests
                 context.HistoryItems.Add(new HistoryItem
                 {
                     Id = Guid.NewGuid(),
-                    CreatedAt = DateTime.UtcNow,
+                    CreatedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
                     FileName = "history.nzb",
                     JobName = "history",
                     DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
