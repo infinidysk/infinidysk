@@ -301,8 +301,10 @@ public class WebsocketManagerTests
         try
         {
             await Task.Delay(100);
-            Assert.Empty(socket.Messages);
-            Assert.Null(manager.PeekLastMessage(WebsocketTopic.UsenetConnections));
+            Assert.Equal(
+                ["reset"],
+                socket.Messages.Select(Parse).Select(message => message.Message));
+            Assert.Equal("reset", manager.PeekLastMessage(WebsocketTopic.UsenetConnections));
         }
         finally
         {

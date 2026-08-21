@@ -34,7 +34,7 @@ public class ConnectionPoolStatsReplayTests
             },
             websocketManager);
 
-        Assert.Null(websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));
+        Assert.Equal("reset", websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));
     }
 
     [Fact]
@@ -68,7 +68,8 @@ public class ConnectionPoolStatsReplayTests
             this,
             new ConnectionPoolStats.ConnectionPoolChangedEventArgs(3, 1, 10));
 
-        await WaitUntil(() => websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections) is not null);
+        await WaitUntil(() =>
+            websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections) == "0|3|1|3|10|1");
         Assert.Equal(
             "0|3|1|3|10|1",
             websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));
@@ -103,7 +104,8 @@ public class ConnectionPoolStatsReplayTests
             this,
             new ConnectionPoolStats.ConnectionPoolChangedEventArgs(5, 2, 135));
 
-        await WaitUntil(() => websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections) is not null);
+        await WaitUntil(() =>
+            websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections) == "0|5|2|5|135|2");
         Assert.Equal(
             "0|5|2|5|135|2",
             websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));

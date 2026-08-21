@@ -89,6 +89,7 @@ public class WebsocketManager : IWebsocketPublisher
                     _lastKeyedMessages[topic] = messages = new Dictionary<string, KeyedState>();
 
                 messages[key] = new KeyedState(message, ++_stateSequence);
+                _lastMessage.Remove(topic);
             }
             else
             {
@@ -132,6 +133,10 @@ public class WebsocketManager : IWebsocketPublisher
 
         lock (_lastMessage)
             _lastKeyedMessages.Remove(topic);
+
+        // The frontend relay retains state independently, so tell it to discard
+        // provider snapshots from the replaced generation as well.
+        _ = SendMessage(topic, "reset");
     }
 
     internal Func<Task> AttachAuthenticatedSocketForTests(WebSocket socket, bool replayState = false)
@@ -294,9 +299,11 @@ public class WebsocketManager : IWebsocketPublisher
             lock (_sessions)
                 _sessions.Add(socket, session);
 
-            foreach (var topic in _lastMessage.Keys.Concat(_lastKeyedMessages.Keys).Distinct())
-                if (topic.Type == WebsocketTopic.TopicType.State)
-                    EnqueueReplayState(session, topic);
+            foreach (var topic in _lastMessage.Keys
+                         .Concat(_lastKeyedMessages.Keys)
+                         .Distinct()
+                         .Where(topic => topic.Type == WebsocketTopic.TopicType.State))
+                EnqueueReplayState(session, topic);
         }
 
         return session;

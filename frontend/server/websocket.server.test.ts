@@ -85,6 +85,22 @@ describe("connection state replay", () => {
 
     expect(replayStateMessages(lastMessage, "ls")).toEqual([message]);
   });
+
+  it("drops retired provider state when the backend resets connection replay", () => {
+    const lastMessage = new Map<string, string>();
+    const providerZero = JSON.stringify({ Topic: "cxs", Message: "0|8|8|8|60|8" });
+
+    cacheStateMessage(lastMessage, "cxs", "0|8|8|8|60|8", providerZero);
+    const shouldRelay = cacheStateMessage(
+      lastMessage,
+      "cxs",
+      "reset",
+      JSON.stringify({ Topic: "cxs", Message: "reset" }),
+    );
+
+    expect(shouldRelay).toBe(false);
+    expect(replayStateMessages(lastMessage, "cxs")).toEqual([]);
+  });
 });
 
 describe("nextBackendReconnectDelayMs", () => {

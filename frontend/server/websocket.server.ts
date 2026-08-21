@@ -26,6 +26,7 @@ export type TopicKind = "state" | "stream" | "event";
 
 const TOPIC_KINDS = new Set<TopicKind>(["state", "stream", "event"]);
 export const KEYED_REPLAY_TOPICS = new Set(["cxs"]);
+export const KEYED_REPLAY_RESET_MESSAGE = "reset";
 const KEYED_REPLAY_SEPARATOR = "\0";
 
 type TrackedSocket = WebSocket & { isAlive?: boolean };
@@ -67,16 +68,22 @@ export function cacheStateMessage(
   topic: string,
   message: string,
   rawMessage: string,
-): void {
+): boolean {
+  if (KEYED_REPLAY_TOPICS.has(topic) && message === KEYED_REPLAY_RESET_MESSAGE) {
+    clearKeyedReplayState(lastMessage, topic);
+    return false;
+  }
+
   const keyedCacheKey = keyedReplayCacheKey(topic, message);
   if (!keyedCacheKey) {
     lastMessage.set(topic, rawMessage);
-    return;
+    return true;
   }
 
   // Reinsert updates so replay delivers the latest aggregate totals last.
   lastMessage.delete(keyedCacheKey);
   lastMessage.set(keyedCacheKey, rawMessage);
+  return true;
 }
 
 export function replayStateMessages(lastMessage: Map<string, string>, topic: string): string[] {
@@ -89,6 +96,13 @@ export function replayStateMessages(lastMessage: Map<string, string>, topic: str
   return [...lastMessage.entries()]
     .filter(([key]) => key.startsWith(prefix))
     .map(([, message]) => message);
+}
+
+export function clearKeyedReplayState(lastMessage: Map<string, string>, topic: string): void {
+  const prefix = `${topic}${KEYED_REPLAY_SEPARATOR}`;
+  for (const key of lastMessage.keys()) {
+    if (key.startsWith(prefix)) lastMessage.delete(key);
+  }
 }
 
 /**
@@ -301,7 +315,7 @@ export function initializeWebsocketClient(
         const { Topic: topic, Message: message } = topicMessage as Record<string, unknown>;
         if (typeof topic !== "string" || typeof message !== "string") return;
 
-        cacheStateMessage(lastMessage, topic, message, rawMessage);
+        if (!cacheStateMessage(lastMessage, topic, message, rawMessage)) return;
         const subscribed = subscriptions.get(topic) || [];
         subscribed.forEach((client) => {
           sendToBrowserClient(client, rawMessage);
