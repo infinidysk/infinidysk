@@ -86,9 +86,15 @@ export function LiveUsenetConnections({ hasUsenetProviders }: LiveUsenetConnecti
           {hasUsenetProviders && connections && `${live}/${max}`}
           {showConnecting && <span className="loading loading-spinner loading-xs" />}
         </div>
-        <div className="stat-desc text-[10px] leading-none whitespace-nowrap text-base-content/50">
+        <div
+          className="stat-desc tooltip tooltip-bottom text-[10px] leading-none whitespace-nowrap text-base-content/50"
+          data-tip="Warm connections are pre-connected to your Usenet providers so playback can start faster."
+        >
           {!hasUsenetProviders && "No providers"}
-          {hasUsenetProviders && connections && !transportDown && `${active} active`}
+          {hasUsenetProviders &&
+            connections &&
+            !transportDown &&
+            `${active} active${idle > 0 ? ` · ${idle} warm` : ""}`}
           {showReconnecting && "Reconnecting"}
           {showConnecting && "Connecting"}
         </div>
