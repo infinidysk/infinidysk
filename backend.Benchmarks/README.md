@@ -15,6 +15,30 @@ dotnet run --project backend.Benchmarks -c Release
 Use the same machine and runtime when comparing BenchmarkDotNet results across
 UsenetSharp or streaming changes.
 
+## NNTP decoded BODY (`NntpDecodedBodyBenchmarks`)
+
+This measures the playback decode path in
+`UsenetSharp.Clients.NntpYencBodyDecoder`: `NntpLineReader` buffering, NNTP/yEnc
+framing, rapidyenc, optional CRC, `PipeWriter` backpressure, and a concurrent
+consumer. It does **not** include TLS, providers, archives, or WebDAV.
+
+`YencDecodeBenchmarks.DecodeYencSegment` only exercises `YencStream` and is not
+evidence for decoded BODY changes.
+
+```bash
+dotnet run --project backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release -- \
+  --filter "*NntpDecodedBodyBenchmarks*"
+```
+
+The corpus is a fixed-seed payload encoded with yEnc line size 128, NNTP
+dot-stuffed, with a single-part `=ybegin` / `=yend` / `.` wrapper. Parameters
+are decoded size (4 MiB and 32 MiB) and `YencCrcValidationMode` (`Off` or
+`Require`). Compare mean time, decoded MiB/s, and allocations only on the same
+machine and runtime. Timing stays manual and is not a PR gate.
+
+On macOS, set `RAPIDYENC_LIBRARY_PATH` to the host `librapidyenc.dylib` (see
+`scripts/run-backend.sh`).
+
 ## Tool decision
 
 Issue [#854](https://github.com/infinidysk/infinidysk/issues/854) asked to

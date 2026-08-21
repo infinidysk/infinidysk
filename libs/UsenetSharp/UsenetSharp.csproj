@@ -18,6 +18,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="UsenetSharpTest" />
     <InternalsVisibleTo Include="UsenetSharp.Benchmarks" />
+    <InternalsVisibleTo Include="NzbWebDAV.Benchmarks" />
   </ItemGroup>
 
 </Project>

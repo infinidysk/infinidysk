@@ -3,6 +3,8 @@
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />
     <ProjectReference Include="..\backend\NzbWebDAV.csproj" />
+    <ProjectReference Include="..\libs\UsenetSharp\UsenetSharp.csproj" />
+    <ProjectReference Include="..\libs\RapidYencSharp\RapidYencSharp.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

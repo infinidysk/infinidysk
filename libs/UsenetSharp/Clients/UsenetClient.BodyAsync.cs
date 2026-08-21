@@ -1,9 +1,5 @@
-using System.Buffers;
-using System.Buffers.Text;
 using System.IO.Pipelines;
 using System.Runtime.ExceptionServices;
-using System.Text;
-using RapidYencSharp;
 using UsenetSharp.Exceptions;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
@@ -213,7 +209,6 @@ public partial class UsenetClient
     {
         Exception? failure = null;
         var connectionReusable = true;
-        byte[]? ybeginBuffer = null;
         CoalescedReadTimeout? ownedReadTimeout = null;
         try
         {
@@ -223,16 +218,6 @@ public partial class UsenetClient
                     "The NNTP connection closed before the article body was read.");
             }
 
-            var unflushedDecodedBytes = 0;
-            var shouldWrite = true;
-            var dataEnded = false;
-            var headersRead = false;
-            var isMultipart = false;
-            long drainedBytes = 0;
-            long skippedBytes = 0;
-            var ybeginLength = 0;
-            RapidYencDecoderState? decoderState = RapidYencDecoderState.RYDEC_STATE_CRLF;
-            uint decodedCrc32 = 0;
             var cancellationToken = operationCts.Token;
             if (sharedReadTimeout == null)
             {
@@ -240,166 +225,15 @@ public partial class UsenetClient
             }
 
             var readTimeout = sharedReadTimeout ?? ownedReadTimeout!;
+            var decoder = new NntpYencBodyDecoder(
+                _reader,
+                writer,
+                headersCompletion,
+                decodedStream,
+                _options,
+                DecodedBodyChunkSize);
 
-            while (true)
-            {
-                ReadOnlyMemory<byte>? lineMemory;
-                try
-                {
-                    lineMemory = await ReadLineBytesAsync(readTimeout)
-                        .ConfigureAwait(false);
-                }
-                catch (IOException)
-                {
-                    throw new UsenetProtocolException(
-                        "The NNTP connection closed before the article body terminator was received.");
-                }
-
-                if (!lineMemory.HasValue)
-                {
-                    throw new UsenetProtocolException(
-                        "The NNTP connection closed before the article body terminator was received.");
-                }
-
-                var lineBytes = lineMemory.Value;
-                if (lineBytes.Length == 1 && lineBytes.Span[0] == (byte)'.')
-                {
-                    if (!headersRead)
-                    {
-                        if (ybeginBuffer == null)
-                        {
-                            throw new InvalidDataException(
-                                "Reached end of NNTP body without finding =ybegin header.");
-                        }
-
-                        headersCompletion.TrySetResult(
-                            YencStream.ParseYencHeaders(ybeginBuffer.AsSpan(0, ybeginLength)));
-                    }
-
-                    if (shouldWrite && unflushedDecodedBytes > 0)
-                    {
-                        var result = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-                        shouldWrite = !result.IsCompleted && !result.IsCanceled;
-                    }
-
-                    if (_options.CrcValidation == YencCrcValidationMode.Require && !dataEnded)
-                    {
-                        throw new InvalidDataException(
-                            "Reached end of NNTP body without finding a yEnc trailer.");
-                    }
-
-                    break;
-                }
-
-                if (!shouldWrite)
-                {
-                    drainedBytes += lineBytes.Length + 2;
-                    if (drainedBytes > _options.AbandonedBodyDrainLimit)
-                    {
-                        throw new UsenetProtocolException(
-                            "The abandoned NNTP body exceeded the configured drain limit.");
-                    }
-
-                    continue;
-                }
-
-                if (dataEnded)
-                {
-                    skippedBytes += lineBytes.Length + 2;
-                    if (skippedBytes > _options.AbandonedBodyDrainLimit)
-                    {
-                        throw new UsenetProtocolException(
-                            "The NNTP body contained more non-yEnc data than the configured drain limit.");
-                    }
-
-                    continue;
-                }
-
-                if (!headersRead)
-                {
-                    if (ybeginBuffer == null)
-                    {
-                        if (YencStream.StartsWithYBegin(lineBytes.Span))
-                        {
-                            ybeginBuffer = ArrayPool<byte>.Shared.Rent(lineBytes.Length);
-                            lineBytes.Span.CopyTo(ybeginBuffer);
-                            ybeginLength = lineBytes.Length;
-                        }
-                        else
-                        {
-                            skippedBytes += lineBytes.Length + 2;
-                            if (skippedBytes > _options.AbandonedBodyDrainLimit)
-                            {
-                                throw new UsenetProtocolException(
-                                    "The NNTP body contained more non-yEnc data than the configured drain limit.");
-                            }
-                        }
-
-                        continue;
-                    }
-
-                    if (YencStream.StartsWithYPart(lineBytes.Span))
-                    {
-                        headersRead = true;
-                        isMultipart = true;
-                        headersCompletion.TrySetResult(
-                            YencStream.ParseYencHeaders(
-                                ybeginBuffer.AsSpan(0, ybeginLength), lineBytes.Span));
-                        continue;
-                    }
-
-                    headersRead = true;
-                    headersCompletion.TrySetResult(
-                        YencStream.ParseYencHeaders(ybeginBuffer.AsSpan(0, ybeginLength)));
-                }
-
-                if (YencStream.StartsWithYEnd(lineBytes.Span))
-                {
-                    dataEnded = true;
-                    if (unflushedDecodedBytes > 0)
-                    {
-                        var result = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-                        shouldWrite = !result.IsCompleted && !result.IsCanceled;
-                    }
-
-                    if (_options.CrcValidation != YencCrcValidationMode.Off && shouldWrite)
-                    {
-                        ValidateDecodedBodyCrc32(
-                            lineBytes.Span, isMultipart, decodedCrc32, _options.CrcValidation);
-                    }
-
-                    continue;
-                }
-
-                var encodedLine = lineBytes.Span;
-                if (encodedLine.Length >= 2 &&
-                    encodedLine[0] == (byte)'.' &&
-                    encodedLine[1] == (byte)'.')
-                {
-                    encodedLine = encodedLine[1..];
-                }
-
-                // NntpLineReader already obtains 64 KiB raw chunks and returns line views into
-                // that buffer. Decode those views directly into the pipe instead of copying every
-                // line into a second encoded staging buffer solely to reconstruct CRLF framing.
-                var destination = writer.GetSpan(encodedLine.Length);
-                var decodedLength = YencDecoder.DecodeEx(
-                    encodedLine, destination, ref decoderState, isRaw: false);
-                if (_options.CrcValidation != YencCrcValidationMode.Off)
-                {
-                    decodedCrc32 = Crc32.Compute(destination[..decodedLength], decodedCrc32);
-                }
-                decodedStream.AddBufferedBytes(decodedLength);
-                writer.Advance(decodedLength);
-                unflushedDecodedBytes += decodedLength;
-
-                if (unflushedDecodedBytes >= DecodedBodyChunkSize)
-                {
-                    var result = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-                    unflushedDecodedBytes = 0;
-                    shouldWrite = !result.IsCompleted && !result.IsCanceled;
-                }
-            }
+            await decoder.ReadAsync(readTimeout, operationCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException e) when (callerCancellationToken.IsCancellationRequested)
         {
@@ -427,11 +261,6 @@ public partial class UsenetClient
         }
         finally
         {
-            if (ybeginBuffer != null)
-            {
-                ArrayPool<byte>.Shared.Return(ybeginBuffer);
-            }
-
             if (failure != null)
             {
                 headersCompletion.TrySetException(failure);
@@ -490,102 +319,6 @@ public partial class UsenetClient
             // (completion callbacks must fire exactly once regardless).
         }
     }
-
-    private static void ValidateDecodedBodyCrc32(
-        ReadOnlySpan<byte> yendLine,
-        bool isMultipart,
-        uint actualCrc32,
-        YencCrcValidationMode mode)
-    {
-        var fieldName = isMultipart ? "pcrc32"u8 : "crc32"u8;
-        if (!TryParseYencTrailerCrc32(yendLine, fieldName, out var expectedCrc32))
-        {
-            if (mode == YencCrcValidationMode.WhenPresent)
-            {
-                return;
-            }
-
-            throw new InvalidDataException(
-                $"The yEnc trailer does not contain a valid {Encoding.ASCII.GetString(fieldName)} value.");
-        }
-
-        if (actualCrc32 != expectedCrc32)
-        {
-            throw new InvalidDataException(
-                $"The decoded yEnc CRC32 was {actualCrc32:x8}, but the trailer expected {expectedCrc32:x8}.");
-        }
-    }
-
-    private static bool TryParseYencTrailerCrc32(
-        ReadOnlySpan<byte> trailer,
-        ReadOnlySpan<byte> fieldName,
-        out uint crc32)
-    {
-        var position = 0;
-        while (position < trailer.Length)
-        {
-            while (position < trailer.Length && IsAsciiWhitespace(trailer[position]))
-            {
-                position++;
-            }
-
-            var tokenStart = position;
-            while (position < trailer.Length && !IsAsciiWhitespace(trailer[position]))
-            {
-                position++;
-            }
-
-            var token = trailer[tokenStart..position];
-            var separator = token.IndexOf((byte)'=');
-            if (separator <= 0 ||
-                !AsciiEqualsIgnoreCase(token[..separator], fieldName))
-            {
-                continue;
-            }
-
-            var value = token[(separator + 1)..];
-            return Utf8Parser.TryParse(value, out crc32, out var consumed, 'X') &&
-                consumed == value.Length;
-        }
-
-        crc32 = 0;
-        return false;
-    }
-
-    private static bool AsciiEqualsIgnoreCase(
-        ReadOnlySpan<byte> left,
-        ReadOnlySpan<byte> right)
-    {
-        if (left.Length != right.Length)
-        {
-            return false;
-        }
-
-        for (var index = 0; index < left.Length; index++)
-        {
-            var leftValue = left[index];
-            var rightValue = right[index];
-            if (leftValue is >= (byte)'A' and <= (byte)'Z')
-            {
-                leftValue += (byte)('a' - 'A');
-            }
-
-            if (rightValue is >= (byte)'A' and <= (byte)'Z')
-            {
-                rightValue += (byte)('a' - 'A');
-            }
-
-            if (leftValue != rightValue)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsAsciiWhitespace(byte value) =>
-        value is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n';
 
     private async Task ReadBodyToPipeAsync(
         PipeWriter writer,

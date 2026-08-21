@@ -369,6 +369,41 @@ public class UsenetClientDeterministicTests
     }
 
     [Test]
+    public async Task DecodedBodyAsync_TerminatorAndNextResponseShareSocketWrite_ThenDateAsyncSucceeds()
+    {
+        var expected = Encoding.ASCII.GetBytes("shared-write");
+        int? column = 0;
+        var encoded = RapidYencSharp.YencEncoder.EncodeEx(expected, ref column, 128, true);
+        var wireEncoded = DotStuff(encoded);
+        await using var server = ScriptedNntpServer.StartConnectionScript(
+            async (reader, writer, cancellationToken) =>
+            {
+                Assert.That(
+                    await reader.ReadLineAsync(cancellationToken),
+                    Is.EqualTo("BODY <article@example.com>"));
+                await writer.WriteAsync(
+                    "222 body follows\r\n" +
+                    $"=ybegin line=128 size={expected.Length} name=shared.bin\r\n");
+                await writer.WriteAsync(Encoding.Latin1.GetString(wireEncoded));
+                await writer.WriteAsync(
+                    $"\r\n=yend size={expected.Length}\r\n.\r\n111 20260709213000\r\n");
+                Assert.That(await reader.ReadLineAsync(cancellationToken), Is.EqualTo("DATE"));
+            });
+        await using var client = new UsenetClient();
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+
+        var response = await client.DecodedBodyAsync(
+            "article@example.com", CancellationToken.None);
+        using var decoded = new MemoryStream();
+        await response.Stream!.CopyToAsync(decoded);
+        Assert.That(decoded.ToArray(), Is.EqualTo(expected));
+
+        var date = await client.DateAsync(CancellationToken.None);
+        Assert.That(date.ResponseCode, Is.EqualTo((int)UsenetResponseType.DateAndTime));
+        Assert.That(client.IsHealthy, Is.True);
+    }
+
+    [Test]
     public async Task DecodedBodyAsync_RawModeDotUnstuffsPayload()
     {
         await using var server = new ScriptedNntpServer(async (_, writer, _) =>
