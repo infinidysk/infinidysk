@@ -251,9 +251,9 @@ public sealed class PostgresMigrationTests
         {
             if (_releaseCommand is { } releaseCommand)
             {
-                _releaseCommand = null;
                 _commandStarted?.TrySetResult();
                 await releaseCommand.Task.ConfigureAwait(false);
+                _releaseCommand = null;
             }
 
             return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken)
