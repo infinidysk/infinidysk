@@ -160,7 +160,8 @@ public sealed class PostgresMigrationTests
             try
             {
                 var connectionString = new NpgsqlConnectionStringBuilder(
-                    DatabaseProviderConfig.PostgresConnectionString) { SearchPath = schema }.ConnectionString;
+                    DatabaseProviderConfig.PostgresConnectionString)
+                { SearchPath = schema }.ConnectionString;
                 var interceptor = new DelayingDbCommandInterceptor();
                 var options = new DbContextOptionsBuilder<PostgresDavDatabaseContext>()
                     .UseNpgsql(connectionString)
