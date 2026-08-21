@@ -56,7 +56,9 @@ public static class NzbInputValidator
                     fileCount++;
                     if (fileCount > limits.MaxFiles)
                     {
-                        errors.Add("nzb", "The NZB document contains too many files.");
+                        errors.Add(
+                            "nzb",
+                            $"The NZB document contains too many files ({fileCount}; limit {limits.MaxFiles}).");
                         errors.ThrowIfAny();
                     }
 
@@ -86,7 +88,6 @@ public static class NzbInputValidator
         ref int totalSegments)
     {
         long fileBytes = 0;
-        var segmentsInFile = 0;
         var seenNumbers = new HashSet<int>();
         if (reader.IsEmptyElement)
             return 0;
@@ -98,17 +99,12 @@ public static class NzbInputValidator
 
             if (reader is { NodeType: XmlNodeType.Element, LocalName: "segment" })
             {
-                segmentsInFile++;
                 totalSegments++;
-                if (segmentsInFile > limits.MaxSegmentsPerFile)
-                {
-                    errors.Add("nzb", "An NZB file contains too many segments.");
-                    errors.ThrowIfAny();
-                }
-
                 if (totalSegments > limits.MaxTotalSegments)
                 {
-                    errors.Add("nzb", "The NZB document contains too many segments.");
+                    errors.Add(
+                        "nzb",
+                        $"The NZB document contains too many segments ({totalSegments}; limit {limits.MaxTotalSegments}).");
                     errors.ThrowIfAny();
                 }
 

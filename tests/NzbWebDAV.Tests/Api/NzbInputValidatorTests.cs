@@ -11,7 +11,7 @@ public class NzbInputValidatorTests
     {
         var xml = BuildNzb(fileCount: 1, segmentsPerFile: 2);
         using var stream = Bytes(xml);
-        var limits = new NzbInputLimits { MaxFiles = 1, MaxSegmentsPerFile = 2, MaxTotalSegments = 2 };
+        var limits = new NzbInputLimits { MaxFiles = 1, MaxTotalSegments = 2 };
 
         var bytes = NzbInputValidator.ValidateAndSumSegmentBytes(stream, limits);
 
@@ -23,23 +23,40 @@ public class NzbInputValidatorTests
     {
         var xml = BuildNzb(fileCount: 2, segmentsPerFile: 1);
         using var stream = Bytes(xml);
-        var limits = new NzbInputLimits { MaxFiles = 1, MaxSegmentsPerFile = 10, MaxTotalSegments = 10 };
+        var limits = new NzbInputLimits { MaxFiles = 1, MaxTotalSegments = 10 };
 
         var ex = Assert.Throws<ApiValidationException>(
             () => NzbInputValidator.ValidateAndSumSegmentBytes(stream, limits));
         Assert.Contains("too many files", ex.Errors["nzb"][0], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("2; limit 1", ex.Errors["nzb"][0], StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RejectsOneSegmentPastPerFileLimit()
+    public void AcceptsLargeSingleFileRemux()
+    {
+        const int segmentCount = 100_001;
+        const long segmentBytes = 700_000;
+        var xml = BuildNzb(fileCount: 1, segmentsPerFile: segmentCount, segmentBytes);
+        using var stream = Bytes(xml);
+
+        var bytes = NzbInputValidator.ValidateAndSumSegmentBytes(stream, NzbInputLimits.Default);
+
+        Assert.Equal(segmentCount * segmentBytes, bytes);
+        Assert.True(bytes > 70_000_000_000);
+    }
+
+    [Fact]
+    public void RejectsOneSegmentPastTotalLimitWithCountAndLimit()
     {
         var xml = BuildNzb(fileCount: 1, segmentsPerFile: 2);
         using var stream = Bytes(xml);
-        var limits = new NzbInputLimits { MaxFiles = 5, MaxSegmentsPerFile = 1, MaxTotalSegments = 10 };
+        var limits = new NzbInputLimits { MaxTotalSegments = 1 };
 
         var ex = Assert.Throws<ApiValidationException>(
             () => NzbInputValidator.ValidateAndSumSegmentBytes(stream, limits));
+
         Assert.Contains("too many segments", ex.Errors["nzb"][0], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("2; limit 1", ex.Errors["nzb"][0], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -72,7 +89,7 @@ public class NzbInputValidatorTests
         Assert.DoesNotContain("aaaa", ex.Message, StringComparison.Ordinal);
     }
 
-    private static string BuildNzb(int fileCount, int segmentsPerFile)
+    private static string BuildNzb(int fileCount, int segmentsPerFile, long segmentBytes = 15)
     {
         var builder = new StringBuilder("<nzb>");
         for (var file = 1; file <= fileCount; file++)
@@ -81,7 +98,7 @@ public class NzbInputValidatorTests
             for (var segment = 1; segment <= segmentsPerFile; segment++)
             {
                 builder.Append(
-                    $"<segment bytes=\"15\" number=\"{segment}\">id-{file}-{segment}@example</segment>");
+                    $"<segment bytes=\"{segmentBytes}\" number=\"{segment}\">id-{file}-{segment}@example</segment>");
             }
 
             builder.Append("</segments></file>");
