@@ -81,6 +81,7 @@ public partial class Program
             .MinimumLevel.Is(level)
             .MinimumLevel.Override("NWebDAV", AtLeast(level, LogEventLevel.Warning))
             .MinimumLevel.Override("Microsoft", AtLeast(level, LogEventLevel.Information))
+            .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", AtLeast(level, LogEventLevel.Warning))
             .MinimumLevel.Override("Microsoft.AspNetCore.Hosting", AtLeast(level, LogEventLevel.Warning))
             .MinimumLevel.Override("Microsoft.AspNetCore.Mvc", AtLeast(level, LogEventLevel.Warning))
             .MinimumLevel.Override("Microsoft.AspNetCore.Routing", AtLeast(level, LogEventLevel.Warning))
