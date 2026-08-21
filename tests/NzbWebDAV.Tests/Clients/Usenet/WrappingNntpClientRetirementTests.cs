@@ -120,7 +120,9 @@ public class WrappingNntpClientRetirementTests
             new ConnectionPoolStats.ConnectionPoolChangedEventArgs(1, 0, 50));
         await Task.Delay(500);
 
-        Assert.Null(websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));
+        // Constructing the replacement generation clears stale provider snapshots.
+        // Deactivation must not overwrite that reset with a retired pool update.
+        Assert.Equal("reset", websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));
     }
 
     private sealed class TestWrappingClient(INntpClient inner) : WrappingNntpClient(inner);
