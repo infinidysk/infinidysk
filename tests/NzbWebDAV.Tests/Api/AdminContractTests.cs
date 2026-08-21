@@ -86,6 +86,41 @@ public sealed class AdminContractTests
     }
 
     [Fact]
+    public async Task HealthCheckQueue_UncheckedCountExcludesNonMediaFiles()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+
+        // Three health-check candidates and four sidecar files, all never checked.
+        // Only candidates may count toward the Health UI "initial scan pending" banner.
+        await factory.AddDavItemsAsync(
+            NewUncheckedUsenetFile("movie.mkv"),
+            NewUncheckedUsenetFile("track.flac"),
+            NewUncheckedUsenetFile("archive.rar"),
+            NewUncheckedUsenetFile("cover.jpg"),
+            NewUncheckedUsenetFile("subs.srt"),
+            NewUncheckedUsenetFile("info.nfo"),
+            NewUncheckedUsenetFile("checksums.par2"));
+
+        using var response = await client.GetAsync("/api/get-health-check-queue?pageSize=30");
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(3, json.RootElement.GetProperty("uncheckedCount").GetInt32());
+    }
+
+    private static DavItem NewUncheckedUsenetFile(string name) => DavItem.New(
+        Guid.NewGuid(),
+        DavItem.ContentFolder,
+        name,
+        fileSize: 100,
+        DavItem.ItemType.UsenetFile,
+        DavItem.ItemSubType.NzbFile,
+        releaseDate: DateTimeOffset.UtcNow.AddDays(-1),
+        lastHealthCheck: null,
+        historyItemId: null,
+        fileBlobId: null);
+
+    [Fact]
     public async Task WebDavItemList_ReturnsSeededDirectoryChildren()
     {
         await using var factory = new NzbDavWebApplicationFactory();
