@@ -85,9 +85,15 @@ fi
 . /preflight-config-path.sh
 preflight_config_path || exit 1
 
-# Recursively update permissions when either database or its WAL files were
+# Repair the small state files used by the frontend and backend without walking
+# blobs or backup trees. The session key is mode 0600, so it must be owned by
+# the runtime user after an upgrade.
+# shellcheck disable=SC1091
+. /repair-config-path-ownership.sh
+repair_config_path_ownership
+
+# Recursively update permissions when a SQLite database or its WAL files were
 # created by a different container user.
-chown "$PUID:$PGID" "$CONFIG_PATH"
 OWNERSHIP_MISMATCH=""
 for DB_FILE in \
     "$CONFIG_PATH/db.sqlite" \
@@ -95,7 +101,13 @@ for DB_FILE in \
     "$CONFIG_PATH/db.sqlite-shm" \
     "$CONFIG_PATH/metrics.sqlite" \
     "$CONFIG_PATH/metrics.sqlite-wal" \
-    "$CONFIG_PATH/metrics.sqlite-shm"; do
+    "$CONFIG_PATH/metrics.sqlite-shm" \
+    "$CONFIG_PATH/warden.db" \
+    "$CONFIG_PATH/warden.db-wal" \
+    "$CONFIG_PATH/warden.db-shm" \
+    "$CONFIG_PATH/usenet-migration.db" \
+    "$CONFIG_PATH/usenet-migration.db-wal" \
+    "$CONFIG_PATH/usenet-migration.db-shm"; do
     if [ ! -e "$DB_FILE" ]; then
         continue
     fi

@@ -1,4 +1,8 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import crypto from "crypto";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionResponseInit } from "./authentication.server";
 
 const { authenticateMock } = vi.hoisted(() => ({
@@ -24,6 +28,10 @@ beforeEach(() => {
   authenticateMock.mockReset();
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 function formRequest(username?: string, password?: string): Request {
   const body = new URLSearchParams();
   if (username !== undefined) body.set("username", username);
@@ -38,6 +46,40 @@ function getSetCookie(responseInit: SessionResponseInit): string {
 }
 
 describe("authentication sessions", () => {
+  it("persists generated session keys with private permissions", () => {
+    const configPath = fs.mkdtempSync(path.join(os.tmpdir(), "nzbdav-session-key-"));
+    vi.stubEnv("SESSION_KEY", "");
+    vi.stubEnv("CONFIG_PATH", configPath);
+
+    try {
+      const key = authentication.resolveSessionKey();
+      const keyPath = path.join(configPath, "session.key");
+
+      expect(fs.readFileSync(keyPath, "utf8")).toBe(key);
+      expect(fs.statSync(keyPath).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(configPath, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when it cannot persist a session key", () => {
+    const configPath = path.join(os.tmpdir(), `nzbdav-session-key-file-${crypto.randomUUID()}`);
+    fs.writeFileSync(configPath, "not a directory");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubEnv("SESSION_KEY", "");
+    vi.stubEnv("CONFIG_PATH", configPath);
+
+    try {
+      expect(authentication.resolveSessionKey()).toHaveLength(128);
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining("Unable to read or persist frontend session key"),
+      );
+    } finally {
+      warning.mockRestore();
+      fs.rmSync(configPath, { force: true });
+    }
+  });
+
   it("starts unauthenticated without a session cookie", async () => {
     await expect(authentication.isAuthenticated(new Request("http://localhost/"))).resolves.toBe(
       false,

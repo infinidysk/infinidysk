@@ -36,7 +36,6 @@ internal static class ConfigPathPreflight
     private static readonly string[] KnownStateFiles =
     [
         "pending-restore.json",
-        "session.key",
     ];
 
     public static void VerifyAccess()

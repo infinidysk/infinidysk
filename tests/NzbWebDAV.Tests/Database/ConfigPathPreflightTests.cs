@@ -60,12 +60,23 @@ public sealed class ConfigPathPreflightTests : IDisposable
     }
 
     [Fact]
-    public void VerifyAccess_PassesWithExistingBackupAndSessionStateFiles()
+    public void VerifyAccess_PassesWithExistingBackupAndRestoreStateFiles()
     {
         Directory.CreateDirectory(Path.Join(_configRoot, "backups"));
         Directory.CreateDirectory(Path.Join(_configRoot, "restore-staging"));
         File.WriteAllText(Path.Join(_configRoot, "pending-restore.json"), "{}");
-        File.WriteAllText(Path.Join(_configRoot, "session.key"), "test-session-key");
+
+        ConfigPathPreflight.VerifyAccess();
+    }
+
+    [SkippableFact]
+    public void VerifyAccess_PassesWithUnreadableFrontendSessionKey()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "Unix file modes are not enforced on Windows.");
+        var keyPath = Path.Join(_configRoot, "session.key");
+        File.WriteAllText(keyPath, "test-session-key");
+        SetMode(keyPath, UnixFileMode.None);
+        Skip.IfNot(PermissionsEnforced(keyPath), "Test is running as root; file modes are not enforced.");
 
         ConfigPathPreflight.VerifyAccess();
     }

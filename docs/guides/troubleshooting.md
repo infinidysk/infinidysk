@@ -4,6 +4,7 @@
 
 - Check `docker logs nzbdav` for migration or backend health failures.
 - Ensure `CONFIG_PATH` (`/config`) exists as a directory and is writable by `PUID`/`PGID`. Startup now fails before migrations with a message that names the path and expected `PUID`/`PGID` instead of a later SQLite/EF error.
+- `/config/session.key` is the frontend cookie-signing secret and is mode `0600`. It must be owned by `PUID`/`PGID`; supervisors that chown only selected config files must include it. Fix that file directly rather than recursively chowning `blobs/`.
 - A `/config` path inside the image is not proof a persistent volume is mounted. Confirm the Compose `volumes:` mapping on the host.
 - Frontend `/healthz` should pass during long migrations; backend `/health` must eventually succeed.
 

@@ -37,7 +37,7 @@ function resolveSessionMaxAgeSeconds(): number {
   return parsed;
 }
 
-function resolveSessionKey(): string {
+export function resolveSessionKey(): string {
   if (process.env["SESSION_KEY"]) return process.env["SESSION_KEY"];
 
   const configPath = process.env["CONFIG_PATH"];
@@ -56,8 +56,11 @@ function resolveSessionKey(): string {
       fs.writeFileSync(keyPath, generated, { encoding: "utf8", mode: 0o600 });
       process.env["SESSION_KEY"] = generated;
       return generated;
-    } catch {
-      // Fall through to ephemeral key if CONFIG_PATH is unwritable.
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "unknown error";
+      console.warn(
+        `Unable to read or persist frontend session key at ${keyPath}; login sessions will reset after restart. Reason: ${reason}`,
+      );
     }
   }
 
