@@ -3,10 +3,12 @@ import WebSocket from "ws";
 import {
   BACKEND_RECONNECT_INITIAL_MS,
   BACKEND_RECONNECT_MAX_MS,
+  cacheStateMessage,
   MAX_CLIENT_BUFFERED_AMOUNT,
   MAX_TOPICS_PER_SOCKET,
   nextBackendReconnectDelayMs,
   parseSubscriptionTopics,
+  replayStateMessages,
   sendToBrowserClient,
   UpstreamSubscriptionForwarder,
 } from "./websocket.server";
@@ -58,6 +60,30 @@ describe("sendToBrowserClient", () => {
 
     sendToBrowserClient(client, "msg");
     expect(send).toHaveBeenCalledWith("msg");
+  });
+});
+
+describe("connection state replay", () => {
+  it("replays the latest state for every provider with newest totals last", () => {
+    const lastMessage = new Map<string, string>();
+    const providerZero = JSON.stringify({ Topic: "cxs", Message: "0|8|8|13|90|13" });
+    const providerOne = JSON.stringify({ Topic: "cxs", Message: "1|5|5|13|90|13" });
+    const providerZeroUpdated = JSON.stringify({ Topic: "cxs", Message: "0|7|7|12|90|12" });
+
+    cacheStateMessage(lastMessage, "cxs", "0|8|8|13|90|13", providerZero);
+    cacheStateMessage(lastMessage, "cxs", "1|5|5|13|90|13", providerOne);
+    cacheStateMessage(lastMessage, "cxs", "0|7|7|12|90|12", providerZeroUpdated);
+
+    expect(replayStateMessages(lastMessage, "cxs")).toEqual([providerOne, providerZeroUpdated]);
+  });
+
+  it("keeps ordinary state topics as a single latest value", () => {
+    const lastMessage = new Map<string, string>();
+    const message = JSON.stringify({ Topic: "ls", Message: "latest" });
+
+    cacheStateMessage(lastMessage, "ls", "latest", message);
+
+    expect(replayStateMessages(lastMessage, "ls")).toEqual([message]);
   });
 });
 

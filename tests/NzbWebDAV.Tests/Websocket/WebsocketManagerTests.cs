@@ -264,6 +264,53 @@ public class WebsocketManagerTests
     }
 
     [Fact]
+    public async Task UsenetConnectionReplay_ServesLatestStateForEveryProvider()
+    {
+        var manager = new WebsocketManager();
+        await manager.SendMessage(WebsocketTopic.UsenetConnections, "0|8|8|13|90|13");
+        await manager.SendMessage(WebsocketTopic.UsenetConnections, "1|5|5|13|90|13");
+        await manager.SendMessage(WebsocketTopic.UsenetConnections, "0|7|7|12|90|12");
+
+        using var socket = new TestWebSocket();
+        var detach = manager.AttachAuthenticatedSocketForTests(socket, replayState: true);
+
+        try
+        {
+            await WaitUntil(() => socket.Messages.Count == 2);
+
+            Assert.Equal(
+                ["1|5|5|13|90|13", "0|7|7|12|90|12"],
+                socket.Messages.Select(Parse).Select(message => message.Message));
+        }
+        finally
+        {
+            await detach();
+        }
+    }
+
+    [Fact]
+    public async Task ClearKeyedState_RemovesUsenetConnectionReplay()
+    {
+        var manager = new WebsocketManager();
+        await manager.SendMessage(WebsocketTopic.UsenetConnections, "0|8|8|8|60|8");
+        manager.ClearKeyedState(WebsocketTopic.UsenetConnections);
+
+        using var socket = new TestWebSocket();
+        var detach = manager.AttachAuthenticatedSocketForTests(socket, replayState: true);
+
+        try
+        {
+            await Task.Delay(100);
+            Assert.Empty(socket.Messages);
+            Assert.Null(manager.PeekLastMessage(WebsocketTopic.UsenetConnections));
+        }
+        finally
+        {
+            await detach();
+        }
+    }
+
+    [Fact]
     public async Task StreamTraceStatusTransitionWhileIdle_ReplaysToLateSubscriber()
     {
         var manager = new WebsocketManager();

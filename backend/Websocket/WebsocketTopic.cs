@@ -5,7 +5,7 @@ public class WebsocketTopic
     private static readonly Dictionary<string, WebsocketTopic> ByName = new(StringComparer.Ordinal);
 
     // Stateful topics
-    public static readonly WebsocketTopic UsenetConnections = new("cxs", TopicType.State);
+    public static readonly WebsocketTopic UsenetConnections = new("cxs", TopicType.State, isKeyed: true, replayAllKeys: true);
     public static readonly WebsocketTopic ActiveReads = new("ar", TopicType.State);
     public static readonly WebsocketTopic SymlinkTaskProgress = new("stp", TopicType.State);
     public static readonly WebsocketTopic CleanupTaskProgress = new("ctp", TopicType.State);
@@ -41,12 +41,14 @@ public class WebsocketTopic
     public readonly string Name;
     public readonly TopicType Type;
     public readonly bool IsKeyed;
+    public readonly bool ReplayAllKeys;
 
-    private WebsocketTopic(string name, TopicType type, bool isKeyed = false)
+    private WebsocketTopic(string name, TopicType type, bool isKeyed = false, bool replayAllKeys = false)
     {
         Name = name;
         Type = type;
         IsKeyed = isKeyed;
+        ReplayAllKeys = replayAllKeys;
         ByName[name] = this;
     }
 

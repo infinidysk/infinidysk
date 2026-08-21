@@ -8,6 +8,36 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class ConnectionPoolStatsReplayTests
 {
     [Fact]
+    public async Task NewGeneration_ClearsRetiredProviderReplayState()
+    {
+        var websocketManager = new WebsocketManager();
+        await websocketManager.SendMessage(
+            WebsocketTopic.UsenetConnections,
+            "4|8|8|8|60|8");
+
+        _ = new ConnectionPoolStats(
+            new UsenetProviderConfig
+            {
+                Providers =
+                [
+                    new UsenetProviderConfig.ConnectionDetails
+                    {
+                        Type = ProviderType.Pooled,
+                        Host = "news.example.com",
+                        Port = 563,
+                        UseSsl = true,
+                        User = "user",
+                        Pass = "pass",
+                        MaxConnections = 10,
+                    },
+                ],
+            },
+            websocketManager);
+
+        Assert.Null(websocketManager.PeekLastMessage(WebsocketTopic.UsenetConnections));
+    }
+
+    [Fact]
     public async Task Flush_WithoutSubscribers_KeepsReplayStateFresh()
     {
         var websocketManager = new WebsocketManager();

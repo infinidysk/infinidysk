@@ -19,8 +19,10 @@ public class WebsocketManager : IWebsocketPublisher
 
     private readonly Dictionary<WebSocket, SocketSession> _sessions = new();
     private readonly Dictionary<WebsocketTopic, string> _lastMessage = new();
+    private readonly Dictionary<WebsocketTopic, Dictionary<string, KeyedState>> _lastKeyedMessages = new();
     private readonly ConcurrentDictionary<WebsocketTopic, int> _subscriberCounts = new();
     private long _skippedPublishes;
+    private long _stateSequence;
 
     /// <summary>
     /// Whether at least one downstream browser client is subscribed to the given topic.
@@ -79,7 +81,20 @@ public class WebsocketManager : IWebsocketPublisher
     /// <param name="message">The message to send</param>
     public Task SendMessage(WebsocketTopic topic, string message)
     {
-        lock (_lastMessage) _lastMessage[topic] = message;
+        lock (_lastMessage)
+        {
+            if (topic.ReplayAllKeys && GetMessageKey(topic, message) is { } key)
+            {
+                if (!_lastKeyedMessages.TryGetValue(topic, out var messages))
+                    _lastKeyedMessages[topic] = messages = new Dictionary<string, KeyedState>();
+
+                messages[key] = new KeyedState(message, ++_stateSequence);
+            }
+            else
+            {
+                _lastMessage[topic] = message;
+            }
+        }
         List<SocketSession> sessions;
         lock (_sessions) sessions = _sessions.Values.ToList();
         if (sessions.Count == 0) return Task.CompletedTask;
@@ -101,7 +116,22 @@ public class WebsocketManager : IWebsocketPublisher
     internal string? PeekLastMessage(WebsocketTopic topic)
     {
         lock (_lastMessage)
-            return _lastMessage.TryGetValue(topic, out var message) ? message : null;
+        {
+            if (_lastMessage.TryGetValue(topic, out var message))
+                return message;
+            return _lastKeyedMessages.TryGetValue(topic, out var messages)
+                ? messages.Values.MaxBy(entry => entry.Sequence)?.Message
+                : null;
+        }
+    }
+
+    internal void ClearKeyedState(WebsocketTopic topic)
+    {
+        if (!topic.ReplayAllKeys)
+            throw new ArgumentException("Only topics that replay all keys can be cleared.", nameof(topic));
+
+        lock (_lastMessage)
+            _lastKeyedMessages.Remove(topic);
     }
 
     internal Func<Task> AttachAuthenticatedSocketForTests(WebSocket socket, bool replayState = false)
@@ -241,13 +271,10 @@ public class WebsocketManager : IWebsocketPublisher
     {
         if (topic.Type != WebsocketTopic.TopicType.State) return;
 
-        string? lastMsg;
         lock (_lastMessage)
         {
-            if (!_lastMessage.TryGetValue(topic, out lastMsg)) return;
+            EnqueueReplayState(session, topic);
         }
-
-        session.TryEnqueue(topic, GetMessageKey(topic, lastMsg), SerializeMessage(topic, lastMsg));
     }
 
     private SocketSession AddSocket(WebSocket socket, bool replayState = false)
@@ -267,12 +294,9 @@ public class WebsocketManager : IWebsocketPublisher
             lock (_sessions)
                 _sessions.Add(socket, session);
 
-            foreach (var message in _lastMessage)
-                if (message.Key.Type == WebsocketTopic.TopicType.State)
-                    session.TryEnqueue(
-                        message.Key,
-                        GetMessageKey(message.Key, message.Value),
-                        SerializeMessage(message.Key, message.Value));
+            foreach (var topic in _lastMessage.Keys.Concat(_lastKeyedMessages.Keys).Distinct())
+                if (topic.Type == WebsocketTopic.TopicType.State)
+                    EnqueueReplayState(session, topic);
         }
 
         return session;
@@ -408,11 +432,30 @@ public class WebsocketManager : IWebsocketPublisher
         return separator > 0 ? message[..separator] : null;
     }
 
+    private void EnqueueReplayState(SocketSession session, WebsocketTopic topic)
+    {
+        if (topic.ReplayAllKeys &&
+            _lastKeyedMessages.TryGetValue(topic, out var keyedMessages))
+        {
+            foreach (var keyedMessage in keyedMessages.Values.OrderBy(entry => entry.Sequence))
+                session.TryEnqueue(
+                    topic,
+                    GetMessageKey(topic, keyedMessage.Message),
+                    SerializeMessage(topic, keyedMessage.Message));
+            return;
+        }
+
+        if (_lastMessage.TryGetValue(topic, out var message))
+            session.TryEnqueue(topic, GetMessageKey(topic, message), SerializeMessage(topic, message));
+    }
+
     private sealed class TopicMessage(WebsocketTopic topic, string message)
     {
         public string Topic { get; } = topic.Name;
         public string Message { get; } = message;
     }
+
+    private sealed record KeyedState(string Message, long Sequence);
 
     private sealed class SocketSession : IDisposable
     {

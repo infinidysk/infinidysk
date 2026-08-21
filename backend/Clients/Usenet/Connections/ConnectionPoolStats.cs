@@ -31,6 +31,11 @@ public class ConnectionPoolStats
 
     public ConnectionPoolStats(UsenetProviderConfig providerConfig, WebsocketManager websocketManager)
     {
+        // Provider indexes are the cxs replay keys. A replacement configuration may
+        // have fewer or reordered providers, so discard the retired generation's state
+        // before the new pools publish their initial snapshots.
+        websocketManager.ClearKeyedState(WebsocketTopic.UsenetConnections);
+
         var count = providerConfig.Providers.Count;
         _live = new int[count];
         _idle = new int[count];
