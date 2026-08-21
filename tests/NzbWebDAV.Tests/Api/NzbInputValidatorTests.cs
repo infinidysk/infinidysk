@@ -59,6 +59,20 @@ public class NzbInputValidatorTests
         Assert.Contains("2; limit 1", ex.Errors["nzb"][0], StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(1, 2)]
+    [InlineData(2, 1)]
+    public void RejectsSegmentByteTotalOverflow(int fileCount, int segmentsPerFile)
+    {
+        var xml = BuildNzb(fileCount, segmentsPerFile, long.MaxValue);
+        using var stream = Bytes(xml);
+
+        var ex = Assert.Throws<ApiValidationException>(
+            () => NzbInputValidator.ValidateAndSumSegmentBytes(stream, NzbInputLimits.Default));
+
+        Assert.Contains("total segment byte count", ex.Errors["nzb"][0], StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void RejectsInvalidByteCountAndDuplicateNumbers()
     {

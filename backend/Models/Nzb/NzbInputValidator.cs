@@ -66,8 +66,10 @@ public static class NzbInputValidator
                     if (subject.Length > limits.MaxNameLength)
                         errors.Add("nzb", "An NZB file subject exceeds the maximum name length.");
 
-                    totalBytes += ReadFileSegments(
-                        reader, limits, errors, ref totalSegments);
+                    totalBytes = AddSegmentBytesOrThrow(
+                        totalBytes,
+                        ReadFileSegments(reader, limits, errors, ref totalSegments),
+                        errors);
                 }
             }
         }
@@ -112,7 +114,7 @@ public static class NzbInputValidator
                 if (!long.TryParse(bytesAttr, out var bytes) || bytes < 0)
                     errors.Add("nzb", "An NZB segment has an invalid byte count.");
                 else
-                    fileBytes += bytes;
+                    fileBytes = AddSegmentBytesOrThrow(fileBytes, bytes, errors);
 
                 var numberAttr = reader.GetAttribute("number");
                 if (numberAttr is not null)
@@ -137,6 +139,22 @@ public static class NzbInputValidator
         }
 
         return fileBytes;
+    }
+
+    private static long AddSegmentBytesOrThrow(long total, long bytes, ValidationErrors errors)
+    {
+        try
+        {
+            return checked(total + bytes);
+        }
+        catch (OverflowException)
+        {
+            errors.Add(
+                "nzb",
+                "The NZB document's total segment byte count exceeds the maximum supported size.");
+            errors.ThrowIfAny();
+            return 0;
+        }
     }
 
     private static void Throw(string field, string message)
