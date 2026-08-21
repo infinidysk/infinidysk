@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.1](https://github.com/infinidysk/infinidysk/compare/v1.2.0...v1.2.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **api:** suppress EF Core per-query command logs ([#1095](https://github.com/infinidysk/infinidysk/issues/1095)) ([8b63233](https://github.com/infinidysk/infinidysk/commit/8b63233aedabfc18d07558ffab602f019505b12b))
+* **api:** suppress EF Core per-query command logs ([#1095](https://github.com/infinidysk/infinidysk/issues/1095)) ([405a22f](https://github.com/infinidysk/infinidysk/commit/405a22f0b47fa187849fd1f771cd02c14d3eddbb))
+* **auth:** keep UI sessions working after upgrades ([#1092](https://github.com/infinidysk/infinidysk/issues/1092)) ([dae1b29](https://github.com/infinidysk/infinidysk/commit/dae1b2959ac074c660c5476071e852dddd3548f2))
+* **db:** remove EF Core startup warnings ([#1096](https://github.com/infinidysk/infinidysk/issues/1096)) ([616c71d](https://github.com/infinidysk/infinidysk/commit/616c71d5e591501f03d6eaf287088c2fea9cbeee))
+* **ui:** provider cards show warm connection counts ([#1093](https://github.com/infinidysk/infinidysk/issues/1093)) ([79f34d0](https://github.com/infinidysk/infinidysk/commit/79f34d0f5c46bbdbf3b043b13612812f921435b0))
+
 ## [1.2.0](https://github.com/infinidysk/infinidysk/compare/v1.1.2...v1.2.0) (2026-08-21)
 
 
