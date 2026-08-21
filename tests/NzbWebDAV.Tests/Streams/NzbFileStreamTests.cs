@@ -106,6 +106,66 @@ public class NzbFileStreamTests
         }
     }
 
+    [Fact]
+    public async Task Seek_WhenFinalHeaderRangeExtendsPastLogicalFileSize_ReadsTailBytes()
+    {
+        var bytes = Enumerable.Range(0, 16).Select(value => (byte)value).ToArray();
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]> { ["segment"] = bytes },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange> { ["segment"] = new(0, 16) });
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(1);
+        try
+        {
+            await using var stream = new NzbFileStream(
+                ["segment"],
+                fileSize: 12,
+                client,
+                articleBufferSize: 0,
+                segmentByteRanges: null,
+                usePipelinedBodyRequests: false);
+            stream.Seek(10, SeekOrigin.Begin);
+
+            var buffer = new byte[1];
+            Assert.Equal(1, await stream.ReadAsync(buffer));
+            Assert.Equal(10, buffer[0]);
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
+    }
+
+    [Fact]
+    public async Task Seek_WhenHeaderRangeDoesNotCoverLogicalFile_StillThrows()
+    {
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]> { ["segment"] = new byte[4] },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange> { ["segment"] = new(12, 16) });
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(1);
+        try
+        {
+            await using var stream = new NzbFileStream(
+                ["segment"],
+                fileSize: 12,
+                client,
+                articleBufferSize: 0,
+                segmentByteRanges: null,
+                usePipelinedBodyRequests: false);
+            stream.Seek(10, SeekOrigin.Begin);
+
+            await Assert.ThrowsAsync<SeekPositionNotFoundException>(
+                async () => await stream.ReadAsync(new byte[1]));
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

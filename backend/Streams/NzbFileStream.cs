@@ -224,7 +224,22 @@ public class NzbFileStream(
                     try
                     {
                         var header = await usenetClient.GetYencHeadersAsync(fileSegmentIds[guess], ct).ConfigureAwait(false);
-                        return new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
+                        var range = new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
+
+                        // A lazy RAR part's logical length ends with its packed file
+                        // data, while its final yEnc segment can also contain trailing
+                        // archive structure. Keep the generic interpolation search
+                        // strict, but trim this known end-only probe overflow so valid
+                        // tail seeks can still locate the final segment.
+                        if (range.StartInclusive >= 0 &&
+                            range.StartInclusive < fileSize &&
+                            range.EndExclusive > fileSize &&
+                            range.Contains(byteOffset))
+                        {
+                            range = new LongRange(range.StartInclusive, fileSize);
+                        }
+
+                        return range;
                     }
                     catch (UsenetArticleNotFoundException e)
                     {

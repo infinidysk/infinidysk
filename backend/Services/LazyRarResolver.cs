@@ -211,7 +211,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         return new DavMultipartFile.FilePart
         {
             SegmentIds = pending.SegmentIds,
-            SegmentIdByteRange = LongRange.FromStartAndSize(0, dataStart + dataSize),
+            SegmentIdByteRange = LongRange.FromStartAndSize(0, Math.Max(fileSize, dataStart + dataSize)),
             FilePartByteRange = LongRange.FromStartAndSize(dataStart, dataSize),
             SegmentFallbackIds = pending.SegmentFallbackIds,
         };

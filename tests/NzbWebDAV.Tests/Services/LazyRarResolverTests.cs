@@ -96,7 +96,7 @@ public class LazyRarResolverTests
     {
         const string pathInArchive = "movie.mkv";
         const int packedSize = 1000;
-        var volumeBytes = BuildRar4ContinuationVolume(pathInArchive, packedSize);
+        var volumeBytes = BuildRar4ContinuationVolume(pathInArchive, packedSize, trailingBytes: 12);
         const string segmentId = "vol2-seg0";
         var client = new MeasuringNntpClient(segmentId, volumeBytes.Length);
         Guid? reconciledBlobId = null;
@@ -152,6 +152,7 @@ public class LazyRarResolverTests
 
             var meta = await resolver.EnsureResolvedThroughAsync(mpf, long.MaxValue, CancellationToken.None);
             Assert.False(meta.IsLazy);
+            Assert.Equal(volumeBytes.Length, meta.FileParts[1].SegmentIdByteRange.Count);
 
             for (var i = 0; i < 100 && reconciledSize is null; i++)
                 await Task.Delay(20);
@@ -169,7 +170,7 @@ public class LazyRarResolverTests
 
     // Minimal RAR4 multi-volume continuation: mark + archive(VOLUME) +
     // stored file header (HAS_DATA|SPLIT_BEFORE) + packed payload.
-    private static byte[] BuildRar4ContinuationVolume(string fileName, int packedSize)
+    private static byte[] BuildRar4ContinuationVolume(string fileName, int packedSize, int trailingBytes = 0)
     {
         using var ms = new MemoryStream();
         ms.Write([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
@@ -215,6 +216,7 @@ public class LazyRarResolverTests
         }
 
         ms.Write(new byte[packedSize]);
+        ms.Write(new byte[trailingBytes]);
         return ms.ToArray();
     }
 

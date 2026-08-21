@@ -51,6 +51,42 @@ public class DavMultipartFileStreamTests
     }
 
     [Fact]
+    public async Task ReadAsync_TailOfPersistedLazyPartWithTrailingArchiveBytes_Succeeds()
+    {
+        var volumeBytes = Enumerable.Range(0, 16).Select(x => (byte)x).ToArray();
+        using var client = new FakeNntpClient(
+            new Dictionary<string, byte[]> { ["segment"] = volumeBytes },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange> { ["segment"] = new(0, 16) });
+        // Mimic an already-persisted lazy part where the recorded packed-data
+        // end excludes the trailing RAR structure in its final yEnc segment.
+        var multipart = MultipartFile(
+            segmentRange: LongRange.FromStartAndSize(0, 12),
+            fileRange: LongRange.FromStartAndSize(4, 8));
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(1);
+        try
+        {
+            await using var stream = new DavMultipartFileStream(
+                multipart,
+                client,
+                articleBufferSize: 0,
+                resolver: null,
+                usePipelinedBodyRequests: false,
+                fileName: "movie.mkv");
+            stream.Seek(7, SeekOrigin.Begin);
+
+            var buffer = new byte[1];
+            Assert.Equal(1, await stream.ReadAsync(buffer));
+            Assert.Equal(11, buffer[0]);
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
+    }
+
+    [Fact]
     public void Read_PreservesSynchronousArchiveParserCompatibility()
     {
         var volumeBytes = Enumerable.Range(0, 16).Select(x => (byte)x).ToArray();
