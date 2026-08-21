@@ -107,6 +107,33 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UncheckedCount_ExcludesNonMediaFiles()
+    {
+        var videoFile = NewUsenetFile("movie.mkv", null, nextHealthCheck: null);
+        var audioFile = NewUsenetFile("track.flac", null, nextHealthCheck: null);
+        var archiveFile = NewUsenetFile("archive.rar", null, nextHealthCheck: null);
+        var imageFile = NewUsenetFile("cover.jpg", null, nextHealthCheck: null);
+        var subtitleFile = NewUsenetFile("subs.srt", null, nextHealthCheck: null);
+        var nfoFile = NewUsenetFile("info.nfo", null, nextHealthCheck: null);
+        var scheduledMedia = NewUsenetFile("already-checked.mkv", null, DateTimeOffset.UtcNow.AddHours(1));
+
+        _context.Items.AddRange(
+            videoFile, audioFile, archiveFile, imageFile, subtitleFile, nfoFile, scheduledMedia);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        // Mirror GetHealthCheckQueueController uncheckedCount: never-checked files that
+        // HealthCheckService will actually process.
+        var uncheckedCount = (await HealthCheckService.GetHealthCheckQueueItemsQuery(_dbClient)
+            .Where(x => x.NextHealthCheck == null)
+            .Select(x => x.Name)
+            .ToListAsync())
+            .Count(FilenameUtil.IsHealthCheckCandidate);
+
+        Assert.Equal(3, uncheckedCount);
+    }
+
+    [Fact]
     public async Task OrderedQuery_PrioritizesUrgentThenUncheckedThenScheduledItems()
     {
         var historyId = Guid.NewGuid();

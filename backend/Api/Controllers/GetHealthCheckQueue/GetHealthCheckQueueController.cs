@@ -27,9 +27,14 @@ public class GetHealthCheckQueueController(DavDatabaseClient dbClient) : BaseApi
             }
         }
 
-        var uncheckedCount = await HealthCheckService.GetHealthCheckQueueItemsQuery(dbClient)
+        // Match HealthCheckService.ExecuteAsync: only media/archive candidates are ever
+        // processed, so non-media files (nfo/srt/jpg/…) must not inflate this count or
+        // the Health UI "initial scan pending" banner never clears.
+        var uncheckedCount = (await HealthCheckService.GetHealthCheckQueueItemsQuery(dbClient)
             .Where(x => x.NextHealthCheck == null)
-            .CountAsync().ConfigureAwait(false);
+            .Select(x => x.Name)
+            .ToListAsync().ConfigureAwait(false))
+            .Count(FilenameUtil.IsHealthCheckCandidate);
 
         return new GetHealthCheckQueueResponse()
         {
