@@ -5,7 +5,11 @@
     "configFile": "vitest.config.ts",
     "related": false
   },
-  "mutate": ["app/clients/**/*.ts", "app/auth/**/*.ts", "!**/*.test.ts"],
+  "mutate": [
+    "app/clients/**/*.ts",
+    "app/auth/**/*.ts",
+    "!**/*.test.ts"
+  ],
   "reporters": ["clear-text", "progress", "html", "json"],
   "jsonReporter": {
     "fileName": "reports/mutation/mutation.json"
