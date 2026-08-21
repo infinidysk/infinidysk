@@ -62,7 +62,9 @@ public class GetQueueController(
             _ => queuedQuery,
         };
 
-        var queuedCountTask = queuedQuery.CountAsync(ct);
+        // Count before querying the page: DbContext does not support concurrent
+        // operations.
+        var queuedCount = await queuedQuery.CountAsync(ct).ConfigureAwait(false);
         var activeItems = inProgress.Select(x => x.QueueItem).ToList();
         var activePage = activeItems
             .Skip(request.Start)
@@ -72,19 +74,18 @@ public class GetQueueController(
             ? int.MaxValue
             : Math.Max(0, request.Limit - activePage.Count);
         var queuedStart = Math.Max(0, request.Start - activeItems.Count);
-        var queuedItemsTask = remainingLimit == 0
-            ? Task.FromResult(Array.Empty<QueueItem>())
-            : SabListQuery.ApplyQueueSort(
+        var queuedItems = remainingLimit == 0
+            ? Array.Empty<QueueItem>()
+            : await SabListQuery.ApplyQueueSort(
                     queuedQuery,
                     request.Sort,
                     request.Direction,
                     dbClient.Ctx.Database.IsNpgsql())
                 .Skip(queuedStart)
                 .Take(remainingLimit)
-                .ToArrayAsync(ct);
+                .ToArrayAsync(ct)
+                .ConfigureAwait(false);
 
-        var queuedCount = await queuedCountTask.ConfigureAwait(false);
-        var queuedItems = await queuedItemsTask.ConfigureAwait(false);
         var totalCount = checked(activeItems.Count + queuedCount);
         var merged = activePage.Concat(queuedItems).ToList();
 

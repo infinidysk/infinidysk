@@ -31,23 +31,22 @@ public class GetHistoryController(
         else if (request.Status is { } status)
             query = query.Where(q => q.DownloadStatus == status);
 
-        // get total count
-        var totalCountPromise = query
-            .CountAsync(request.CancellationToken);
+        // Get total count before querying the page: DbContext does not support
+        // concurrent operations.
+        var totalCount = await query
+            .CountAsync(request.CancellationToken)
+            .ConfigureAwait(false);
 
         // get history items
-        var historyItemsPromise = SabListQuery.ApplyHistorySort(
+        var historyItems = await SabListQuery.ApplyHistorySort(
                 query,
                 request.Sort,
                 request.Direction,
                 dbClient.Ctx.Database.IsNpgsql())
             .Skip(request.Start)
             .Take(request.Limit)
-            .ToArrayAsync(request.CancellationToken);
-
-        // await results
-        var totalCount = await totalCountPromise.ConfigureAwait(false);
-        var historyItems = await historyItemsPromise.ConfigureAwait(false);
+            .ToArrayAsync(request.CancellationToken)
+            .ConfigureAwait(false);
 
         // get download folders
         var downloadFolderIds = historyItems.Select(x => x.DownloadDirId).Where(x => x.HasValue).Select(x => x!.Value);
