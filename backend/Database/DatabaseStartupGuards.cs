@@ -31,7 +31,7 @@ internal static class DatabaseStartupGuards
             // references s."Value" case-sensitively on PostgreSQL.
             var exists = await databaseContext.Database
                 .SqlQuery<bool>($"SELECT to_regclass(quote_ident({tableName})) IS NOT NULL AS \"Value\"")
-                .FirstAsync(cancellationToken)
+                .SingleAsync(cancellationToken)
                 .ConfigureAwait(false);
             return exists;
         }
@@ -43,7 +43,7 @@ internal static class DatabaseStartupGuards
                 FROM sqlite_master
                 WHERE type = 'table' AND name = {tableName}
                 """)
-            .FirstAsync(cancellationToken)
+            .SingleAsync(cancellationToken)
             .ConfigureAwait(false);
         return count > 0;
     }

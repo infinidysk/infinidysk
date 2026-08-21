@@ -242,7 +242,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         // PostgreSQL returns bigint, which Npgsql will not read as int.
         return await dbContext.Database
             .SqlQueryRaw<int>("SELECT CAST(COUNT(*) AS INT) AS \"Value\" FROM TMP_LINKED_FILES")
-            .FirstAsync()
+            .SingleAsync()
             .ConfigureAwait(false);
     }
 
@@ -389,7 +389,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                    AND i."HistoryItemId" IS NULL
                    AND i."CreatedAt" < {createdBefore}
                  """)
-            .FirstAsync()
+            .SingleAsync()
             .ConfigureAwait(false);
     }
 
@@ -415,7 +415,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                    AND i."CreatedAt" < {createdBefore}
                    AND t.Id IS NULL
                  """)
-            .FirstAsync()
+            .SingleAsync()
             .ConfigureAwait(false);
 
         return count;

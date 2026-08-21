@@ -58,6 +58,7 @@ public class BlobCleanupService(IDbContextFactory<DavDatabaseContext> dbContextF
     {
         // Get the first item from the queue
         var cleanupItem = await dbContext.BlobCleanupItems
+            .OrderBy(item => item.Id)
             .FirstOrDefaultAsync(ct)
             .ConfigureAwait(false);
 

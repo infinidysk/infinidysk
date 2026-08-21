@@ -18,6 +18,7 @@ public class HistoryCleanupService(IDbContextFactory<DavDatabaseContext> dbConte
 
                 // Get the first item from the queue
                 var cleanupItem = await dbContext.HistoryCleanupItems
+                    .OrderBy(item => item.Id)
                     .FirstOrDefaultAsync(stoppingToken)
                     .ConfigureAwait(false);
 

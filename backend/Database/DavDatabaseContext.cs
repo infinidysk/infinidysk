@@ -2,6 +2,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Data.Sqlite;
@@ -17,6 +18,20 @@ namespace NzbWebDAV.Database;
 
 public class DavDatabaseContext : DbContext
 {
+    private static readonly ValueComparer<string[]> StringArrayComparer = new(
+        (left, right) => left.SequenceEqual(right),
+        value => value.Aggregate(0, (hash, item) => HashCode.Combine(hash, item)),
+        value => value.ToArray());
+
+    private static readonly ValueComparer<DavRarFile.RarPart[]> RarPartsComparer = new(
+        (left, right) => JsonSerializer.Serialize(left, (JsonSerializerOptions?)null) ==
+                         JsonSerializer.Serialize(right, (JsonSerializerOptions?)null),
+        value => JsonSerializer.Serialize(value, (JsonSerializerOptions?)null).GetHashCode(),
+        value => JsonSerializer.Deserialize<DavRarFile.RarPart[]>(
+                     JsonSerializer.Serialize(value, (JsonSerializerOptions?)null),
+                     (JsonSerializerOptions?)null) ??
+                 Array.Empty<DavRarFile.RarPart>());
+
     public DavDatabaseContext() : base(Options.Value)
     {
     }
@@ -257,7 +272,7 @@ public class DavDatabaseContext : DbContext
                 (
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
                     v => DeserializeOrFallback<string[]>(v) ?? Array.Empty<string>()
-                ))
+                ), StringArrayComparer)
                 .HasColumnType("TEXT") // store raw JSON
                 .IsRequired();
 
@@ -281,7 +296,7 @@ public class DavDatabaseContext : DbContext
                 (
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
                     v => DeserializeOrFallback<DavRarFile.RarPart[]>(v) ?? Array.Empty<DavRarFile.RarPart>()
-                ))
+                ), RarPartsComparer)
                 .HasColumnType("TEXT") // store raw JSON
                 .IsRequired();
 
@@ -799,7 +814,7 @@ public class DavDatabaseContext : DbContext
                 (
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
                     v => DeserializeOrFallback<string[]>(v) ?? Array.Empty<string>()
-                ))
+                ), StringArrayComparer)
                 .HasColumnType("TEXT")
                 .IsRequired();
 

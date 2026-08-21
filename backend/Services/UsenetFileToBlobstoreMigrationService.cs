@@ -42,7 +42,7 @@ public class UsenetFileToBlobstoreMigrationService(
     private Task<int> MigrateNzbFiles(int totalRemaining, int initialRemaining, CancellationToken ct)
     {
         return MigrateUsenetFiles<DavNzbFile>(
-            (dbContext) => dbContext.NzbFiles.FirstOrDefaultAsync(ct),
+            (dbContext) => dbContext.NzbFiles.OrderBy(file => file.Id).FirstOrDefaultAsync(ct),
             (file) => file.Id,
             (file) => file.Id = Guid.NewGuid(),
             (dbContext, id) => dbContext.NzbFiles.Remove(new DavNzbFile { Id = id }),
@@ -55,7 +55,7 @@ public class UsenetFileToBlobstoreMigrationService(
     private Task<int> MigrateRarFiles(int totalRemaining, int initialRemaining, CancellationToken ct)
     {
         return MigrateUsenetFiles<DavRarFile>(
-            (dbContext) => dbContext.RarFiles.FirstOrDefaultAsync(ct),
+            (dbContext) => dbContext.RarFiles.OrderBy(file => file.Id).FirstOrDefaultAsync(ct),
             (file) => file.Id,
             (file) => file.Id = Guid.NewGuid(),
             (dbContext, id) => dbContext.RarFiles.Remove(new DavRarFile { Id = id }),
@@ -68,7 +68,7 @@ public class UsenetFileToBlobstoreMigrationService(
     private Task<int> MigrateMultipartFiles(int totalRemaining, int initialRemaining, CancellationToken ct)
     {
         return MigrateUsenetFiles<DavMultipartFile>(
-            (dbContext) => dbContext.MultipartFiles.FirstOrDefaultAsync(ct),
+            (dbContext) => dbContext.MultipartFiles.OrderBy(file => file.Id).FirstOrDefaultAsync(ct),
             (file) => file.Id,
             (file) => file.Id = Guid.NewGuid(),
             (dbContext, id) => dbContext.MultipartFiles.Remove(new DavMultipartFile { Id = id }),

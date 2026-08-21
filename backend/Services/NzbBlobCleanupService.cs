@@ -59,6 +59,7 @@ public class NzbBlobCleanupService(IDbContextFactory<DavDatabaseContext> dbConte
     {
         // Get the first item from the queue
         var cleanupItem = await dbContext.NzbBlobCleanupItems
+            .OrderBy(item => item.Id)
             .FirstOrDefaultAsync(ct)
             .ConfigureAwait(false);
 
