@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -9,11 +9,19 @@ type OpenApiDocument = {
 };
 
 function loadContract(): OpenApiDocument {
-  const contractPath = resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "../../../contracts/openapi/admin-v1.json",
-  );
-  return JSON.parse(readFileSync(contractPath, "utf8")) as OpenApiDocument;
+  let directory = dirname(fileURLToPath(import.meta.url));
+  while (true) {
+    const contractPath = resolve(directory, "contracts/openapi/admin-v1.json");
+    if (existsSync(contractPath)) {
+      return JSON.parse(readFileSync(contractPath, "utf8")) as OpenApiDocument;
+    }
+
+    const parent = dirname(directory);
+    if (parent === directory) {
+      throw new Error("Could not find contracts/openapi/admin-v1.json.");
+    }
+    directory = parent;
+  }
 }
 
 describe("adminFrontendOperations", () => {
