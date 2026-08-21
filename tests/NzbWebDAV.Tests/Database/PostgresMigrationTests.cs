@@ -176,6 +176,7 @@ public sealed class PostgresMigrationTests
                     CreatedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
                     FileName = "queue.nzb",
                     JobName = "queue",
+                    Category = "test",
                     Priority = QueueItem.PriorityOption.Normal,
                 });
                 context.HistoryItems.Add(new HistoryItem
@@ -184,6 +185,7 @@ public sealed class PostgresMigrationTests
                     CreatedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
                     FileName = "history.nzb",
                     JobName = "history",
+                    Category = "test",
                     DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
                 });
                 await context.SaveChangesAsync();
