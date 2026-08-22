@@ -69,7 +69,7 @@ re-probing the same provider for the same article until the TTL expires. Transie
 
 The cache clears automatically when Usenet providers are reconfigured.
 
-## Provider circuit-breaker cooldown
+## Provider circuit-breaker cooldown [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
 When a provider's circuit trips, that provider is skipped for a cooldown and traffic goes to
 the remaining providers. Each consecutive trip doubles the cooldown up to a ceiling. A
