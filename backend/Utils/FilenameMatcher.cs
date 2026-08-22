@@ -14,6 +14,12 @@ public static class FilenameMatcher
         @"[^a-z0-9]+",
         RegexOptions.Compiled);
 
+    // Plausible standalone release years in 1900..2199. Resolution tokens such as
+    // 2160p / 1080i and WxH pairs (1920x1080) are excluded by the trailing lookahead.
+    private static readonly Regex ReleaseYearRegex = new(
+        @"(?<!\d)(?<year>(?:19|20|21)\d{2})(?![0-9pPiIxX])",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private static readonly Dictionary<char, string> LatinFolding = new()
     {
         ['ø'] = "o",
@@ -159,5 +165,52 @@ public static class FilenameMatcher
                 return expectedNormalized.Contains(string.Join(' ', head[..^1]));
         }
         return false;
+    }
+
+    public static IReadOnlyList<int> ParseReleaseYears(string? releaseTitle)
+    {
+        if (string.IsNullOrWhiteSpace(releaseTitle)) return [];
+        return ReleaseYearRegex.Matches(releaseTitle)
+            .Select(match => int.TryParse(
+                match.Groups["year"].Value,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out var year)
+                    ? (int?)year
+                    : null)
+            .Where(year => year is >= 1900 and <= 2199)
+            .Select(year => year!.Value)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Movie-year compatibility for strict matching.
+    /// Unknown canonical year, or a candidate with no usable non-title year, stays compatible.
+    /// An explicit remaining year must fall within <paramref name="canonicalYear"/> ± 1.
+    /// Four-digit tokens already present in any canonical title are ignored so numeric
+    /// titles such as 1917 or Blade Runner 2049 are not treated as release years.
+    /// </summary>
+    public static bool YearCompatible(
+        int? canonicalYear,
+        string? releaseTitle,
+        IEnumerable<string>? canonicalNormalizedTitles = null)
+    {
+        if (canonicalYear is not { } expected) return true;
+
+        var titleYears = new HashSet<int>();
+        if (canonicalNormalizedTitles is not null)
+        {
+            foreach (var title in canonicalNormalizedTitles)
+            {
+                foreach (var year in ParseReleaseYears(title))
+                    titleYears.Add(year);
+            }
+        }
+
+        var remaining = ParseReleaseYears(releaseTitle)
+            .Where(year => !titleYears.Contains(year))
+            .ToList();
+        if (remaining.Count == 0) return true;
+        return remaining.Any(year => Math.Abs(year - expected) <= 1);
     }
 }

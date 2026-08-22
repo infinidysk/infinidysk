@@ -27,12 +27,14 @@ type ProfilesSettingsProps = {
 };
 
 type FallbackMode = "Off" | "Title" | "Broad";
+type QualitySortMode = "Off" | "Resolution" | "ResolutionAndSource";
 
 interface Profile {
   Token: string;
   Name: string;
   IndexerNames: string[];
   EnabledAdapters?: string[] | null;
+  QualitySort?: QualitySortMode;
   MovieFallback?: FallbackMode;
   TvFallback?: FallbackMode;
   MovieFallbackMinResults?: number;
@@ -138,6 +140,7 @@ export function ProfilesSettings({ config, setNewConfig }: ProfilesSettingsProps
           Name: "",
           IndexerNames: [],
           EnabledAdapters: [...ALL_ADAPTER_KEYS],
+          QualitySort: "Off",
           MovieFallback: "Off",
           TvFallback: "Off",
           MovieFallbackMinResults: 3,
@@ -420,6 +423,25 @@ function ProfileForm({ profile, index, availableIndexers, onChange, onRemove }: 
               />
             ))}
           </div>
+        </Field>
+        <Field>
+          <Label htmlFor={`profile-quality-sort-${profile.Token}`}>Result ordering</Label>
+          <Select
+            id={`profile-quality-sort-${profile.Token}`}
+            className="mb-2 w-full"
+            value={profile.QualitySort ?? "Off"}
+            onChange={(e) => onChange(index, { QualitySort: e.target.value as QualitySortMode })}
+          >
+            <option value="Off">Off — keep current grabs/size/date order</option>
+            <option value="Resolution">Resolution — prefer 2160p, then 1080p, 720p, SD</option>
+            <option value="ResolutionAndSource">
+              Resolution + source — resolution first, then Remux/BluRay/WEB-DL/...
+            </option>
+          </Select>
+          <p className="mb-0 mt-1 text-[11px] leading-relaxed text-base-content/45">
+            Quality sorting is opt-in. Existing profiles keep grabs, size, and posted-date order
+            until you enable a mode. Resolution always ranks above source.
+          </p>
         </Field>
         <Field>
           <Label>
