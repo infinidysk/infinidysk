@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.4](https://github.com/infinidysk/infinidysk/compare/v1.2.3...v1.2.4) (2026-08-22)
+
+
+### Bug Fixes
+
+* **nntp:** recover providers faster from shared network failures ([#1116](https://github.com/infinidysk/infinidysk/issues/1116)) ([06df9c6](https://github.com/infinidysk/infinidysk/commit/06df9c623c820a612196cf884405a5d932801b90))
+* **ui:** Mount button on Search page now adds releases ([#1112](https://github.com/infinidysk/infinidysk/issues/1112)) ([71500fe](https://github.com/infinidysk/infinidysk/commit/71500fe918b3f815d7cd3fbb5f3aade1eb3d7ee7))
+* **ui:** pin Overview Right now above widgets on stacked layouts ([#1117](https://github.com/infinidysk/infinidysk/issues/1117)) ([ed0dd0a](https://github.com/infinidysk/infinidysk/commit/ed0dd0ac350fdfb44f4ca327187b68156fea3731))
+* **ui:** remove scrollbar from header connection status ([#1115](https://github.com/infinidysk/infinidysk/issues/1115)) ([9879d4b](https://github.com/infinidysk/infinidysk/commit/9879d4bd3ee707532cde5eb1618823559bfeb9fe))
+* **usenet:** retain context for unclassified fetch failures ([#1113](https://github.com/infinidysk/infinidysk/issues/1113)) ([ef76529](https://github.com/infinidysk/infinidysk/commit/ef76529787c8ea630c042064191c2db34404cc22))
+
 ## [1.2.3](https://github.com/infinidysk/infinidysk/compare/v1.2.2...v1.2.3) (2026-08-22)
 
 
