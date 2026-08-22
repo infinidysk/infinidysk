@@ -17,6 +17,8 @@ public sealed class CircuitBreakerCooldownConfigTests
     [InlineData("1", 5)]
     [InlineData("-30", 5)]
     [InlineData("3600", 300)]
+    [InlineData("2147483648", 300)]
+    [InlineData("-2147483649", 5)]
     [InlineData("abc", 60)]
     [InlineData("", 60)]
     public void InitialCooldown_IsParsedAndClamped(string configured, int expectedSeconds)
@@ -38,6 +40,8 @@ public sealed class CircuitBreakerCooldownConfigTests
     [InlineData("3600", 3600)]
     [InlineData("1", 5)]
     [InlineData("7200", 3600)]
+    [InlineData("2147483648", 3600)]
+    [InlineData("-2147483649", 5)]
     [InlineData("abc", 300)]
     [InlineData("", 300)]
     public void MaxCooldown_IsParsedAndClamped(string configured, int expectedSeconds)

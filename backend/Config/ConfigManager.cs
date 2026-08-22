@@ -1051,9 +1051,9 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public TimeSpan GetCircuitBreakerInitialCooldown()
     {
         var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetCircuitBreakerInitialCooldownSeconds));
-        if (configured is null || !int.TryParse(configured, out var seconds))
+        if (configured is null || !long.TryParse(configured, out var seconds))
             return TimeSpan.FromSeconds(60);
-        return TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 5L, 300L));
     }
 
     /// <summary>
@@ -1065,9 +1065,9 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public TimeSpan GetCircuitBreakerMaxCooldown()
     {
         var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetCircuitBreakerMaxCooldownSeconds));
-        if (configured is null || !int.TryParse(configured, out var seconds))
+        if (configured is null || !long.TryParse(configured, out var seconds))
             return TimeSpan.FromSeconds(300);
-        return TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 3600));
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 5L, 3600L));
     }
 
     /// <summary>
