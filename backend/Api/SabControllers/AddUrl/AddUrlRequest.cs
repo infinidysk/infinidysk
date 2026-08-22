@@ -14,11 +14,12 @@ namespace NzbWebDAV.Api.SabControllers.AddUrl;
 
 public class AddUrlRequest() : AddFileRequest
 {
+    // Static fields initialize in declaration order; InitializeHttpClient uses this timeout.
+    private static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(60);
+    private const int MaxAutomaticRedirections = 10;
     private static readonly HttpClient StrictDirectHttpClient = InitializeHttpClient(skipTlsVerification: false);
     private static readonly HttpClient PermissiveDirectHttpClient = InitializeHttpClient(skipTlsVerification: true);
     private static readonly HttpRequestOptionsKey<TrustedHostsMatcher> TrustedHostsOptionKey = new("TrustedHosts");
-    private const int MaxAutomaticRedirections = 10;
-    private static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(60);
 
     public static async Task<AddUrlRequest> New(HttpContext context, ConfigManager configManager, IndexerHitTracker hitTracker)
     {
