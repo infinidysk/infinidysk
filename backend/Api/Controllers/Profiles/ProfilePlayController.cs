@@ -265,7 +265,7 @@ public class ProfilePlayController(
                         providerHost: AllConfiguredProvidersDisplay());
                     continue;
                 }
-                var candidateFileName = $"{SanitizeFileName(c.Title)}.nzb";
+                var candidateFileName = ProfileReleaseName.ToNzbFileName(c.Title);
                 if (negativeCache.IsFileNameBroken(candidateFileName))
                 {
                     var skippedRank = displayRank++;
@@ -891,7 +891,7 @@ public class ProfilePlayController(
         var c = preVerify.Candidate;
         var commitTimer = Stopwatch.StartNew();
         var nzbBytes = preVerify.NzbBytes!;
-        var safeTitle = SanitizeFileName(c.Title);
+        var safeTitle = ProfileReleaseName.SanitizeFileName(c.Title);
         var fileName = $"{safeTitle}.nzb";
 
         var cacheEntry = cache.Get(nzbToken);
@@ -1108,7 +1108,7 @@ public class ProfilePlayController(
     private async Task<Guid?> FindInFlightQueueItemAsync(NzbResolutionCache.Entry entry, CancellationToken ct)
     {
         var fileNames = entry.Candidates
-            .Select(c => $"{SanitizeFileName(c.Title)}.nzb")
+            .Select(c => ProfileReleaseName.ToNzbFileName(c.Title))
             .Distinct()
             .ToList();
         var contentGroupKey = VariantResolver.BuildContentGroupKey(entry);
@@ -1128,7 +1128,7 @@ public class ProfilePlayController(
     private async Task<IActionResult?> TryResolveExistingAsync(NzbResolutionCache.Entry entry, CancellationToken ct)
     {
         var fileNames = entry.Candidates
-            .Select(c => $"{SanitizeFileName(c.Title)}.nzb")
+            .Select(c => ProfileReleaseName.ToNzbFileName(c.Title))
             .Distinct()
             .ToList();
         if (fileNames.Count == 0) return null;
@@ -1240,13 +1240,6 @@ public class ProfilePlayController(
         var parts = id.Split(':');
         if (parts.Length < 3) return false;
         return int.TryParse(parts[^2], out season) && int.TryParse(parts[^1], out episode);
-    }
-
-    private static string SanitizeFileName(string name)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var clean = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
-        return string.IsNullOrEmpty(clean) ? "untitled" : clean;
     }
 
     private async Task<IActionResult> BuildRedirectAsync(Guid davItemId, string extension, CancellationToken ct)

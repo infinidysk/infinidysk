@@ -188,7 +188,7 @@ public class PreflightOrchestrator(
     {
         try
         {
-            var fileName = $"{SanitizeFileName(candidate.Title)}.nzb";
+            var fileName = ProfileReleaseName.ToNzbFileName(candidate.Title);
             await using var ctx = new DavDatabaseContext();
 
             var historyId = await ctx.HistoryItems.AsNoTracking()
@@ -225,10 +225,4 @@ public class PreflightOrchestrator(
         }
     }
 
-    private static string SanitizeFileName(string name)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var clean = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
-        return string.IsNullOrEmpty(clean) ? "untitled" : clean;
-    }
 }

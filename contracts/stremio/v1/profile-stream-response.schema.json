@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/stremio/v1/profile-stream-response.schema.json",
+  "title": "InfiniDysk Stremio profile stream response",
+  "description": "Reviewed against the Stremio stream resource and AIOStreams davex/Custom Addon parsing. Additive meta fields are optional.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["streams"],
+  "properties": {
+    "streams": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "name",
+          "description",
+          "title",
+          "url",
+          "behaviorHints",
+          "meta",
+          "failoverId",
+          "extra"
+        ],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "url": {
+            "type": "string",
+            "pattern": "^https?://.+/play/.+\\.mkv$"
+          },
+          "behaviorHints": {
+            "type": "object",
+            "required": ["filename", "videoSize", "notWebReady"],
+            "properties": {
+              "filename": { "type": "string", "minLength": 1 },
+              "videoSize": { "type": "integer", "minimum": 0 },
+              "bingeGroup": { "type": "string", "minLength": 1 },
+              "notWebReady": { "const": true }
+            }
+          },
+          "meta": {
+            "type": "object",
+            "required": ["indexer"],
+            "properties": {
+              "indexer": { "type": "string", "minLength": 1 },
+              "inLibrary": { "type": "boolean" },
+              "availability": { "const": "available" },
+              "languages": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "subtitleLanguages": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "failoverId": { "type": "string", "minLength": 1 },
+          "extra": {
+            "type": "object",
+            "required": ["failoverId"],
+            "properties": {
+              "failoverId": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

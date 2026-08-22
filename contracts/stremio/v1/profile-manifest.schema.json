@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/stremio/v1/profile-manifest.schema.json",
+  "title": "InfiniDysk Stremio profile manifest",
+  "description": "Reviewed against the Stremio addon manifest contract and AIOStreams Custom Addon / davex preset parsing. Schemas are not fetched during CI.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "id",
+    "version",
+    "name",
+    "description",
+    "logo",
+    "resources",
+    "types",
+    "idPrefixes",
+    "behaviorHints"
+  ],
+  "properties": {
+    "id": { "type": "string", "pattern": "^nzbdav\\.profile\\." },
+    "version": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "logo": { "type": "string", "pattern": "^https?://" },
+    "resources": {
+      "type": "array",
+      "const": ["stream"]
+    },
+    "types": {
+      "type": "array",
+      "const": ["movie", "series"]
+    },
+    "idPrefixes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "behaviorHints": {
+      "type": "object",
+      "required": ["configurable", "configurationRequired"],
+      "properties": {
+        "configurable": { "const": false },
+        "configurationRequired": { "const": false }
+      }
+    }
+  }
+}

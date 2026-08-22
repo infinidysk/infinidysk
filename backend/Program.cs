@@ -419,6 +419,7 @@ public partial class Program
                 .AddScoped(sp =>
                     sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext())
                 .AddScoped<DavDatabaseClient>()
+                .AddScoped<ProfileStreamStateService>()
                 .AddScoped<NzbWebDAV.Services.Benchmark.BenchmarkCorpusProvider>()
                 .AddScoped<NzbWebDAV.Services.Benchmark.UsenetBenchmarkService>()
                 .AddScoped<DatabaseStore>()

@@ -166,6 +166,7 @@ public class NzbResolutionCache(Func<DavDatabaseContext> contextFactory)
         public string? Language { get; init; }
         public string? Subs { get; init; }
         public string? InfoHash { get; init; }
+        public bool VerifiedAvailable { get; set; }
     }
 
     public class Entry

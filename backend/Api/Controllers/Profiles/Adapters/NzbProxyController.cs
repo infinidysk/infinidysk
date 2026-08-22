@@ -89,14 +89,7 @@ public class NzbProxyController(
         }
 
         Response.Headers["Content-Disposition"] =
-            $"attachment; filename=\"{SanitizeFileName(candidate.Title)}.nzb\"";
+            $"attachment; filename=\"{ProfileReleaseName.ToNzbFileName(candidate.Title)}\"";
         return File(bytes, "application/x-nzb");
-    }
-
-    private static string SanitizeFileName(string name)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var clean = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
-        return string.IsNullOrEmpty(clean) ? "untitled" : clean;
     }
 }

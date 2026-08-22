@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using NzbWebDAV.Config;
 using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.Controllers.Profiles;
@@ -24,17 +23,7 @@ public class ProfileManifestController(SearchProfileService searchService) : Con
         if (profile is null) return NotFound();
         if (!searchService.IsAdapterEnabled(token, "addon")) return NotFound();
 
-        return new JsonResult(new
-        {
-            id = $"nzbdav.profile.{token}",
-            version = ConfigManager.AppVersion,
-            name = string.IsNullOrWhiteSpace(profile.Name) ? "NzbDav Search Profile" : profile.Name,
-            description = "Newznab search-API endpoint returning results from the user's configured indexers.",
-            resources = new[] { "stream" },
-            types = new[] { "movie", "series" },
-            idPrefixes = new[] { "tt", "tmdb", "tvdb", "kitsu", "mal", "anilist" },
-            behaviorHints = new { configurable = false, configurationRequired = false },
-        });
+        return new JsonResult(ProfileAddonFactory.CreateManifest(profile, token));
     }
 
     internal static void SetCors(HttpResponse response)

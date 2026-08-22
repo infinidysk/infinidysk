@@ -125,6 +125,34 @@ public sealed class NzbResolutionCachePersistenceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Hydrate_MissingVerifiedAvailable_DefaultsToFalse()
+    {
+        var token = "cafebabedeadbeef";
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            ctx.NzbResolutionGroups.Add(new NzbResolutionGroup
+            {
+                Id = Guid.NewGuid(),
+                Type = "movie",
+                ProfileToken = "p",
+                SearchId = "legacy",
+                CandidatesJson =
+                    """[{"IndexerName":"idx","IndexerUserAgent":"ua","NzbUrl":"https://example.com/nzb/0","Title":"Title 0","Size":1000}]""",
+                TokensJson = System.Text.Json.JsonSerializer.Serialize(new[] { token }),
+                CreatedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
+            await ctx.SaveChangesAsync();
+        }
+
+        var cache = NewCache();
+        await cache.HydrateAsync(TimeSpan.FromDays(7), CancellationToken.None);
+
+        var entry = cache.Get(token);
+        Assert.NotNull(entry);
+        Assert.False(entry.Primary.VerifiedAvailable);
+    }
+
+    [Fact]
     public async Task AddGroupAsync_PersistenceFailure_StillReturnsTokens()
     {
         var cache = new NzbResolutionCache(() => throw new InvalidOperationException("db down"));
