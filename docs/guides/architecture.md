@@ -47,8 +47,18 @@ flowchart TB
 
 ### On-demand (Stremio)
 
-1. AIOStreams finds a release via Newznab.
-2. NZB is mounted through InfiniDysk's API.
+There are two Stremio paths:
+
+**Direct Search Profile preset** [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+
+1. InfiniDysk searches the profile's Newznab indexers and returns playable stream objects.
+2. AIOStreams or Stremio lists those streams. The dedicated InfiniDysk preset can report the final order back to `/failover_order`.
+3. Playback hits `/play/{token}.mkv`, which resolves/queues the NZB and redirects to `/view`.
+
+**AIOStreams-managed search**
+
+1. AIOStreams finds a release via its own Newznab addons.
+2. The NZB is mounted through InfiniDysk's service/API.
 3. Playback URL (often proxied by AIOStreams) streams from WebDAV.
 
 ## Processes and ports
