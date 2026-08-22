@@ -30,6 +30,19 @@ export async function action({ request }: Route.ActionArgs): Promise<SearchActio
   }
 }
 
+export function shouldRevalidate({
+  formData,
+  formMethod,
+  defaultShouldRevalidate,
+}: {
+  formData?: FormData;
+  formMethod?: string;
+  defaultShouldRevalidate: boolean;
+}) {
+  if (formMethod?.toUpperCase() === "POST" && formData?.get("nzbUrl")) return false;
+  return defaultShouldRevalidate;
+}
+
 export default function Search({ loaderData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const isSearching = navigation.state === "loading" && navigation.location?.pathname === "/search";
@@ -84,8 +97,8 @@ export default function Search({ loaderData }: Route.ComponentProps) {
 
       {data && data.results.length > 0 && (
         <ul className="list rounded-box border border-base-content/10 bg-base-200">
-          {data.results.map((r, idx) => (
-            <ResultRow key={`${r.nzbUrl}-${idx}`} result={r} />
+          {data.results.map((r) => (
+            <ResultRow key={r.nzbUrl} result={r} />
           ))}
         </ul>
       )}
@@ -114,20 +127,21 @@ function ResultRow({
         </div>
       </div>
       {!isReadOnly && (
-        <fetcher.Form method="post">
-          <input type="hidden" name="nzbUrl" value={result.nzbUrl} />
-          <input type="hidden" name="nzbName" value={result.title} />
-          <Button
-            type="submit"
-            size="xsmall"
-            variant={done ? "success" : failed ? "danger" : "primary"}
-            disabled={submitting || done}
-            className="whitespace-nowrap"
-            title={fetcher.data && !fetcher.data.ok ? fetcher.data.error : undefined}
-          >
-            {submitting ? <Spinner size="sm" /> : done ? "Mounted" : failed ? "Failed" : "Mount"}
-          </Button>
-        </fetcher.Form>
+        <Button
+          size="xsmall"
+          variant={done ? "success" : failed ? "danger" : "primary"}
+          disabled={submitting || done}
+          className="whitespace-nowrap"
+          title={fetcher.data && !fetcher.data.ok ? fetcher.data.error : undefined}
+          onClick={() => {
+            void fetcher.submit(
+              { nzbUrl: result.nzbUrl, nzbName: result.title },
+              { method: "post" },
+            );
+          }}
+        >
+          {submitting ? <Spinner size="sm" /> : done ? "Mounted" : failed ? "Failed" : "Mount"}
+        </Button>
       )}
     </li>
   );

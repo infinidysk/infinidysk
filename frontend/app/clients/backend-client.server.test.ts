@@ -213,6 +213,29 @@ describe("BackendClient", () => {
     expect(form.get("limit")).toBe("25");
   });
 
+  it("adds an NZB URL using the configured manual category", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          configItems: [{ configName: "api.manual-category", configValue: "movies" }],
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ nzo_ids: ["SABnzbd_nzo_1"] }));
+
+    await expect(
+      backendClient.addNzbFromUrl("https://indexer.example/nzb/123", "Example Release"),
+    ).resolves.toBe("SABnzbd_nzo_1");
+
+    const [url, init] = fetchMock.mock.calls[1]!;
+    expect(url).toBe(
+      "http://backend/api?mode=addurl&cat=movies&priority=0&pp=0&name=https%3A%2F%2Findexer.example%2Fnzb%2F123&nzbname=Example+Release",
+    );
+    expect(init).toEqual({
+      method: "POST",
+      headers: { "x-api-key": "test-api-key" },
+    });
+  });
+
   it("queries and mutates watchtower state", async () => {
     const data = { items: [], total: 0 };
     fetchMock
