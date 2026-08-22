@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.2.3](https://github.com/infinidysk/infinidysk/compare/v1.2.2...v1.2.3) (2026-08-22)
+
+
+### Features
+
+* **search:** reject wrong-year movies and optionally sort profile results by quality ([#1107](https://github.com/infinidysk/infinidysk/issues/1107)) ([15c16dd](https://github.com/infinidysk/infinidysk/commit/15c16dd0f3b4ae4c9423028d37b68e7136511217))
+* **stremio:** make Search Profiles work as a first-class AIOStreams addon ([#1108](https://github.com/infinidysk/infinidysk/issues/1108)) ([9b7780e](https://github.com/infinidysk/infinidysk/commit/9b7780e7c432a73b412a961ab7dcecb809762b70))
+
+
+### Bug Fixes
+
+* **db:** PostgreSQL installs no longer log timestamp errors ([#1102](https://github.com/infinidysk/infinidysk/issues/1102)) ([1142009](https://github.com/infinidysk/infinidysk/commit/11420096b3c0e0c527aab30b55918a61aa5daac5))
+* **db:** upgrades no longer fail on a pre-existing health-check index ([#1106](https://github.com/infinidysk/infinidysk/issues/1106)) ([44749d8](https://github.com/infinidysk/infinidysk/commit/44749d80bf31deb87e2788b5700cc17c73670f8a))
+* **sab:** initialize addurl timeout before HTTP clients ([#1105](https://github.com/infinidysk/infinidysk/issues/1105)) ([8c9940a](https://github.com/infinidysk/infinidysk/commit/8c9940ac42562895a6c6f1534c70ce0fb37c3691))
+* **ui:** show connections warm-pool hint ([#1109](https://github.com/infinidysk/infinidysk/issues/1109)) ([7103fe6](https://github.com/infinidysk/infinidysk/commit/7103fe6e99a268703776babcc4ab8bd4ec7d2c7d))
+
+
+### Chores
+
+* **release:** force v1.2.3 patch release ([#1110](https://github.com/infinidysk/infinidysk/issues/1110)) ([ff8fee7](https://github.com/infinidysk/infinidysk/commit/ff8fee7167ae052e96dcb22da2e192019bcb8a9a))
+
 ## [1.2.2](https://github.com/infinidysk/infinidysk/compare/v1.2.1...v1.2.2) (2026-08-22)
 
 
