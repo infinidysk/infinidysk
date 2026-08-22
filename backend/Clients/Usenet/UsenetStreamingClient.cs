@@ -202,6 +202,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         var connectionPoolStats = new ConnectionPoolStats(providerConfig, websocketManager);
         var idleTimeoutSeconds = configManager.GetIdleConnectionTimeoutSeconds();
         var streamingPriority = configManager.GetStreamingPriority();
+        var circuitInitialCooldown = configManager.GetCircuitBreakerInitialCooldown();
+        var circuitMaxCooldown = configManager.GetCircuitBreakerMaxCooldown();
         var tripDetector = new CorrelatedTripDetector();
         var providerClients = providerConfig.Providers
             .Select((provider, index) => CreateProviderClient(
@@ -212,6 +214,8 @@ public class UsenetStreamingClient : WrappingNntpClient
                     ? configManager.GetWarmConnectionsFloor(provider.MaxConnections)
                     : 0,
                 metricsWriter,
+                circuitInitialCooldown,
+                circuitMaxCooldown,
                 streamingPriority,
                 latencyTracker,
                 tripDetector
@@ -235,6 +239,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         int idleTimeoutSeconds,
         int warmConnectionFloor,
         MetricsWriter metricsWriter,
+        TimeSpan circuitInitialCooldown,
+        TimeSpan circuitMaxCooldown,
         SemaphorePriorityOdds? streamingPriority = null,
         ProviderLatencyTracker? latencyTracker = null,
         CorrelatedTripDetector? tripDetector = null
@@ -318,7 +324,9 @@ public class UsenetStreamingClient : WrappingNntpClient
                 });
                 tripDetector?.OnTransition(metricsKey, transition);
             },
-            coalesceFailureBursts: true);
+            coalesceFailureBursts: true,
+            initialCooldown: circuitInitialCooldown,
+            maxCooldown: circuitMaxCooldown);
         // Only providers that can carry traffic participate in correlation; a Disabled
         // provider never trips and would wedge the "all tripped" condition forever.
         if (connectionDetails.Type != ProviderType.Disabled)
