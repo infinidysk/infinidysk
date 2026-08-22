@@ -73,7 +73,7 @@ export function LiveUsenetConnections({ hasUsenetProviders }: LiveUsenetConnecti
 
   return (
     <div
-      className="stats hidden h-10 overflow-hidden border border-base-content/10 bg-base-200 sm:inline-grid"
+      className="stats hidden h-10 overflow-visible border border-base-content/10 bg-base-200 sm:inline-grid"
       aria-label="Usenet connections"
     >
       <div className="stat flex items-center gap-3 px-3 py-1">
