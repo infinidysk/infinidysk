@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using NzbWebDAV.Api.Controllers.Profiles;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.Utils;
@@ -77,9 +79,10 @@ public sealed class ProfileAddonContractTests
     {
         await using var factory = new NzbDavWebApplicationFactory();
         using var client = factory.CreateClient();
-        using var response = await client.SendAsync(new HttpRequestMessage(
+        using var request = new HttpRequestMessage(
             HttpMethod.Options,
-            $"/adapters/addon/{Token}/manifest.json"));
+            $"/adapters/addon/{Token}/manifest.json");
+        using var response = await client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Equal("*", Assert.Single(response.Headers.GetValues("Access-Control-Allow-Origin")));
@@ -206,6 +209,52 @@ public sealed class ProfileAddonContractTests
     }
 
     [Fact]
+    public async Task Play_ExistingVideoWithForwardedPrefix_RedirectsToPrefixedView()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var admin = factory.CreateAuthenticatedClient();
+        await ConfigureAddonProfileAsync(admin, Token, "Redirect Profile");
+
+        const string title = "Movie.2024.1080p";
+        var historyId = Guid.NewGuid();
+        await factory.SeedHistoryItemAsync(
+            historyId,
+            HistoryItem.DownloadStatusOption.Completed,
+            $"{title}.nzb");
+        await factory.AddDavItemsAsync(UsenetFile($"{title}.mkv", historyId));
+
+        var cache = factory.Services.GetRequiredService<NzbResolutionCache>();
+        var playToken = (await cache.AddGroupAsync(
+            [
+                new NzbResolutionCache.Candidate
+                {
+                    IndexerName = "Primary",
+                    IndexerUserAgent = "test-agent",
+                    NzbUrl = "https://indexer.example/get/123",
+                    Title = title,
+                    Size = 1_500_000_000,
+                },
+            ],
+            "movie",
+            Token,
+            "tt0111161"))[0];
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+        });
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/adapters/addon/{Token}/play/{playToken}.mkv");
+        request.Headers.Add("X-Forwarded-Prefix", "/infinidysk");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Found, response.StatusCode);
+        Assert.NotNull(response.Headers.Location);
+        Assert.StartsWith("/infinidysk/view/", response.Headers.Location.PathAndQuery);
+    }
+
+    [Fact]
     public async Task FailoverOrder_ReportsMatchedTokensForSameProfile()
     {
         await using var factory = new NzbDavWebApplicationFactory();
@@ -296,9 +345,10 @@ public sealed class ProfileAddonContractTests
         Assert.Equal(0, crossJson.RootElement.GetProperty("matched").GetInt32());
         Assert.Equal(1, crossJson.RootElement.GetProperty("unmatched").GetInt32());
 
-        using var options = await client.SendAsync(new HttpRequestMessage(
+        using var optionsRequest = new HttpRequestMessage(
             HttpMethod.Options,
-            $"/adapters/addon/{Token}/failover_order"));
+            $"/adapters/addon/{Token}/failover_order");
+        using var options = await client.SendAsync(optionsRequest);
         Assert.Equal(HttpStatusCode.NoContent, options.StatusCode);
         Assert.Equal("*", Assert.Single(options.Headers.GetValues("Access-Control-Allow-Origin")));
     }
@@ -326,6 +376,18 @@ public sealed class ProfileAddonContractTests
             Name = name,
             EnabledAdapters = enabledAdapters?.ToList() ?? ["addon"],
         });
+
+    private static DavItem UsenetFile(string name, Guid historyItemId) => DavItem.New(
+        Guid.NewGuid(),
+        DavItem.ContentFolder,
+        name,
+        fileSize: 100,
+        DavItem.ItemType.UsenetFile,
+        DavItem.ItemSubType.NzbFile,
+        releaseDate: DateTimeOffset.UtcNow.AddDays(-1),
+        lastHealthCheck: null,
+        historyItemId: historyItemId,
+        fileBlobId: null);
 
     private static async Task ConfigureAddonProfilesAsync(
         HttpClient client,

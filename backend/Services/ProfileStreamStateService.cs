@@ -45,15 +45,12 @@ public class ProfileStreamStateService(
                 .ToListAsync(ct)
                 .ConfigureAwait(false);
 
-            var ready = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var group in rows.GroupBy(row => row.FileName, StringComparer.OrdinalIgnoreCase))
-            {
-                if (group.Any(row => ContentTypeUtil.GetContentType(row.Name)
+            var ready = new HashSet<string>(
+                rows.GroupBy(row => row.FileName, StringComparer.OrdinalIgnoreCase)
+                    .Where(group => group.Any(row => ContentTypeUtil.GetContentType(row.Name)
                         .StartsWith("video/", StringComparison.OrdinalIgnoreCase)))
-                {
-                    ready.Add(group.Key);
-                }
-            }
+                    .Select(group => group.Key),
+                StringComparer.OrdinalIgnoreCase);
 
             return ready;
         }
@@ -61,7 +58,7 @@ public class ProfileStreamStateService(
             e is DbUpdateException
                 or InvalidOperationException
                 or SqliteException
-                or PostgresException)
+                or NpgsqlException)
         {
             Log.Debug(e, "Profile stream ready-state lookup failed");
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);

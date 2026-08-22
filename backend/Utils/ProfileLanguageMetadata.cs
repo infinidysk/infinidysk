@@ -33,15 +33,11 @@ public static class ProfileLanguageMetadata
 
     public static List<string> AudioFlagMarkers(IEnumerable<string> codes)
     {
-        var flags = new List<string>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var code in codes)
-        {
-            if (AudioFlags.TryGetValue(code, out var flag) && seen.Add(flag))
-                flags.Add(flag);
-        }
-
-        return flags;
+        return codes
+            .Where(AudioFlags.ContainsKey)
+            .Select(code => AudioFlags[code])
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
 
     private static List<string> Normalize(string? value)

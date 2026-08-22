@@ -1247,14 +1247,8 @@ public class ProfilePlayController(
         var path = DatabaseStoreSymlinkFile.GetTargetPath(davItemId, "", '/').TrimStart('/');
         var dlKey = GetWebdavItemRequest.GenerateDownloadKey(configManager.GetStrmKey(), path);
         var relativeUrl = $"/view/{path}?downloadKey={dlKey}&extension={extension}";
-        var configuredBaseUrl = configManager.GetBaseUrl().TrimEnd('/');
-        if (!string.IsNullOrWhiteSpace(configuredBaseUrl) &&
-            configuredBaseUrl != "http://localhost:3000")
-        {
-            return Redirect($"{configuredBaseUrl}{relativeUrl}");
-        }
-
-        return LocalRedirect(relativeUrl);
+        var publicBaseUrl = HttpContext.GetPublicBaseUrl(configManager.GetBaseUrl());
+        return Redirect($"{publicBaseUrl}{relativeUrl}");
     }
 
     private readonly record struct PreVerifyResult(
