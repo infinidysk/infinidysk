@@ -21,7 +21,11 @@ const existingProfileConfig = {
 
 afterEach(cleanup);
 
-function ProfilesHarness({ onConfigChange }: { onConfigChange?: (config: Record<string, string>) => void }) {
+function ProfilesHarness({
+  onConfigChange,
+}: {
+  onConfigChange?: (config: Record<string, string>) => void;
+}) {
   const [config, setConfig] = useState<Record<string, string>>(existingProfileConfig);
   const setNewConfig: Dispatch<SetStateAction<Record<string, string>>> = (update) => {
     const next = typeof update === "function" ? update(config) : update;
