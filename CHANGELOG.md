@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.2](https://github.com/infinidysk/infinidysk/compare/v1.2.1...v1.2.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* **deps:** Bump the npm-minor-and-patch group ([#1099](https://github.com/infinidysk/infinidysk/issues/1099)) ([04a52c5](https://github.com/infinidysk/infinidysk/commit/04a52c579c4cf1c25d6a73534700f2493cf25179))
+* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1100](https://github.com/infinidysk/infinidysk/issues/1100)) ([ffd1069](https://github.com/infinidysk/infinidysk/commit/ffd1069fb8e53b9515d4892e4169143f695fd28f))
+* **queue:** large NZBs no longer rejected with too many segments during import ([#1097](https://github.com/infinidysk/infinidysk/issues/1097)) ([43fc6d3](https://github.com/infinidysk/infinidysk/commit/43fc6d3737abd4f853dc48ddc2bb0a3e43b9f1b6))
+
 ## [1.2.1](https://github.com/infinidysk/infinidysk/compare/v1.2.0...v1.2.1) (2026-08-21)
 
 
