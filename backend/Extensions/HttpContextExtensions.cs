@@ -51,12 +51,26 @@ public static class HttpContextExtensions
         return baseUrl + prefix;
     }
 
+    public static string GetPublicPathPrefix(this HttpContext httpContext, string configuredBaseUrl)
+    {
+        var configuredPrefix = Uri.TryCreate(configuredBaseUrl, UriKind.Absolute, out var configuredUri)
+            ? NormalizePathPrefix(configuredUri.AbsolutePath)
+            : null;
+        var forwardedPrefix = NormalizePathPrefix(
+            httpContext.Request.Headers["X-Forwarded-Prefix"].FirstOrDefault());
+
+        if (forwardedPrefix is null || configuredPrefix?.EndsWith(forwardedPrefix, StringComparison.Ordinal) == true)
+            return configuredPrefix ?? string.Empty;
+        return (configuredPrefix ?? string.Empty) + forwardedPrefix;
+    }
+
     private static string? NormalizePathPrefix(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         var trimmed = raw.Trim().TrimEnd('/');
         if (trimmed.Length == 0 || trimmed == "/") return null;
         if (!trimmed.StartsWith('/')
+            || trimmed.Contains("//", StringComparison.Ordinal)
             || trimmed.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '~' or '-' or '/')))
         {
             return null;

@@ -209,6 +209,26 @@ public sealed class ProfileAddonContractTests
     }
 
     [Fact]
+    public void StreamFactory_SanitizesFilenameAndClampsNegativeVideoSize()
+    {
+        var candidate = new NzbResolutionCache.Candidate
+        {
+            IndexerName = "Primary",
+            IndexerUserAgent = "test-agent",
+            NzbUrl = "https://indexer.example/get/123",
+            Title = "",
+            Size = -1,
+        };
+
+        var stream = ProfileAddonFactory.CreateStream(
+            candidate, "movie", Token, "play-token", "https://host.example",
+            inLibrary: false, verifiedAvailable: false);
+
+        Assert.Equal("untitled", stream.BehaviorHints.Filename);
+        Assert.Equal(0, stream.BehaviorHints.VideoSize);
+    }
+
+    [Fact]
     public async Task Play_ExistingVideoWithForwardedPrefix_RedirectsToPrefixedView()
     {
         await using var factory = new NzbDavWebApplicationFactory();
@@ -251,7 +271,7 @@ public sealed class ProfileAddonContractTests
 
         Assert.Equal(HttpStatusCode.Found, response.StatusCode);
         Assert.NotNull(response.Headers.Location);
-        Assert.StartsWith("/infinidysk/view/", response.Headers.Location.PathAndQuery);
+        Assert.StartsWith("/infinidysk/view/", response.Headers.Location.OriginalString);
     }
 
     [Fact]

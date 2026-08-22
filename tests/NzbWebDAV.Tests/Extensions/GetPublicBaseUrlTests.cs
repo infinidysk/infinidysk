@@ -71,6 +71,17 @@ public class GetPublicBaseUrlTests
     }
 
     [Fact]
+    public void BuildsLocalPathPrefixFromConfiguredAndForwardedBases()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Headers["X-Forwarded-Prefix"] = "/infinidysk";
+
+        var result = context.GetPublicPathPrefix("https://nzbdav.example/app");
+
+        Assert.Equal("/app/infinidysk", result);
+    }
+
+    [Fact]
     public void IgnoresUnsafeForwardedPrefix()
     {
         var context = new DefaultHttpContext();

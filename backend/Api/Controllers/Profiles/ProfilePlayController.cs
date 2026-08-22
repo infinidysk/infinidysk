@@ -1247,8 +1247,8 @@ public class ProfilePlayController(
         var path = DatabaseStoreSymlinkFile.GetTargetPath(davItemId, "", '/').TrimStart('/');
         var dlKey = GetWebdavItemRequest.GenerateDownloadKey(configManager.GetStrmKey(), path);
         var relativeUrl = $"/view/{path}?downloadKey={dlKey}&extension={extension}";
-        var publicBaseUrl = HttpContext.GetPublicBaseUrl(configManager.GetBaseUrl());
-        return Redirect($"{publicBaseUrl}{relativeUrl}");
+        var publicPathPrefix = HttpContext.GetPublicPathPrefix(configManager.GetBaseUrl());
+        return LocalRedirect($"{publicPathPrefix}{relativeUrl}");
     }
 
     private readonly record struct PreVerifyResult(

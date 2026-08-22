@@ -198,8 +198,8 @@ public static class ProfileAddonFactory
             Url = $"{publicBaseUrl.TrimEnd('/')}/adapters/addon/{token}/play/{playToken}.mkv",
             BehaviorHints = new ProfileAddonStreamBehaviorHints
             {
-                Filename = candidate.Title,
-                VideoSize = candidate.Size,
+                Filename = ProfileReleaseName.SanitizeFileName(candidate.Title),
+                VideoSize = Math.Max(0, candidate.Size),
                 BingeGroup = $"nzbdav|{indexer}|{type}",
                 NotWebReady = true,
             },
