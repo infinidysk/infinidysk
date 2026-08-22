@@ -1249,8 +1249,11 @@ public class MultiProviderNntpClient(
             var parameterName = argumentException?.ParamName;
             var segmentHash = HashSegmentId(segmentId);
             var innermostException = exception.GetBaseException();
+            var reason = RedactSegmentId(exception.Message, segmentId);
+            var innermostReason = RedactSegmentId(innermostException.Message, segmentId);
             var warningKey = string.Join(
                 '\n',
+                metricsKey,
                 exceptionType,
                 parameterName ?? "",
                 operationName);
@@ -1267,29 +1270,30 @@ public class MultiProviderNntpClient(
                     metricsKey,
                     operationName,
                     exceptionType,
-                    exception.Message,
+                    reason,
                     parameterName,
                     segmentHash,
                     retries,
                     innermostException.GetType().FullName,
-                    innermostException.Message))
+                    innermostReason))
             {
                 Log.Error(
-                    exception,
                     "Unclassified Usenet segment fetch failure stack. " +
                     "ProviderKey={ProviderKey} Operation={Operation} " +
                     "ExceptionType={ExceptionType} Reason={Reason} ParameterName={ParameterName} " +
                     "SegmentHash={SegmentHash} AttemptIndex={AttemptIndex} " +
-                    "InnermostExceptionType={InnermostExceptionType} InnermostReason={InnermostReason}",
+                    "InnermostExceptionType={InnermostExceptionType} InnermostReason={InnermostReason} " +
+                    "Stack={Stack}",
                     metricsKey,
                     operationName,
                     exceptionType,
-                    exception.Message,
+                    reason,
                     parameterName,
                     segmentHash,
                     retries,
                     innermostException.GetType().FullName,
-                    innermostException.Message);
+                    innermostReason,
+                    RedactSegmentId(exception.ToString(), segmentId));
             }
         }
         return status;
@@ -1301,6 +1305,16 @@ public class MultiProviderNntpClient(
         if (string.IsNullOrEmpty(value)) return null;
 
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..12];
+    }
+
+    private static string RedactSegmentId(string value, SegmentId? segmentId)
+    {
+        var segment = segmentId?.ToString();
+        return string.IsNullOrEmpty(segment)
+            ? value
+            : value
+                .Replace($"<{segment}>", "[segment]", StringComparison.Ordinal)
+                .Replace(segment, "[segment]", StringComparison.Ordinal);
     }
 
     /// <summary>

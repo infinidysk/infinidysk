@@ -368,7 +368,8 @@ public class MultiProviderNntpClientTests
             var primary = new ScriptedNntpClient
             {
                 BatchResponseCode = 222,
-                SingularException = _ => new ArgumentException("Segment ID was invalid.", parameterName),
+                SingularException = _ => new ArgumentException(
+                    $"Segment {segmentId} was invalid.", parameterName),
             };
             var backup = new ScriptedNntpClient
             {
@@ -389,7 +390,7 @@ public class MultiProviderNntpClientTests
         Assert.Equal("primary.example", PropertyText(warning, "ProviderKey"));
         Assert.Equal("stat", PropertyText(warning, "Operation"));
         Assert.Equal(typeof(ArgumentException).FullName, PropertyText(warning, "ExceptionType"));
-        Assert.Equal("Segment ID was invalid. (Parameter 'segmentId-context')", PropertyText(warning, "Reason"));
+        Assert.Equal("Segment [segment] was invalid. (Parameter 'segmentId-context')", PropertyText(warning, "Reason"));
         Assert.Equal(parameterName, PropertyText(warning, "ParameterName"));
         Assert.Equal("0", PropertyText(warning, "AttemptIndex"));
         Assert.Matches("^[0-9A-F]{12}$", PropertyText(warning, "SegmentHash"));
@@ -399,8 +400,10 @@ public class MultiProviderNntpClientTests
         var stack = Assert.Single(events, e =>
             e.Level == LogEventLevel.Error &&
             e.MessageTemplate.Text.StartsWith("Unclassified Usenet segment fetch failure stack", StringComparison.Ordinal));
-        Assert.NotNull(stack.Exception);
+        Assert.Null(stack.Exception);
         Assert.Equal("stat", PropertyText(stack, "Operation"));
+        Assert.Contains(typeof(ArgumentException).FullName!, PropertyText(stack, "Stack"), StringComparison.Ordinal);
+        Assert.DoesNotContain(segmentId, PropertyText(stack, "Stack"), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -443,10 +446,14 @@ public class MultiProviderNntpClientTests
             await RunFailingRequestAsync("segmentId-operation", body: false);
             await RunFailingRequestAsync("segmentId-operation", body: true);
             await RunFailingRequestAsync("otherParameter", body: false);
+            await RunFailingRequestAsync(
+                "segmentId-operation",
+                body: false,
+                providerKey: "alternate-primary.example");
         });
 
         var warnings = events.Where(IsUnclassifiedFetchWarning).ToArray();
-        Assert.Equal(3, warnings.Length);
+        Assert.Equal(4, warnings.Length);
         Assert.Contains(warnings, e =>
             PropertyText(e, "Operation") == "stat" &&
             PropertyText(e, "ParameterName") == "segmentId-operation");
@@ -456,8 +463,15 @@ public class MultiProviderNntpClientTests
         Assert.Contains(warnings, e =>
             PropertyText(e, "Operation") == "stat" &&
             PropertyText(e, "ParameterName") == "otherParameter");
+        Assert.Contains(warnings, e =>
+            PropertyText(e, "ProviderKey") == "alternate-primary.example" &&
+            PropertyText(e, "Operation") == "stat" &&
+            PropertyText(e, "ParameterName") == "segmentId-operation");
 
-        static async Task RunFailingRequestAsync(string parameterName, bool body)
+        static async Task RunFailingRequestAsync(
+            string parameterName,
+            bool body,
+            string providerKey = "primary.example")
         {
             var primary = new ScriptedNntpClient
             {
@@ -473,7 +487,7 @@ public class MultiProviderNntpClientTests
             };
             using var client = new MultiProviderNntpClient(
             [
-                CreateProvider(primary, host: "primary.example"),
+                CreateProvider(primary, host: providerKey),
                 CreateProvider(backup, host: "backup.example", providerType: ProviderType.BackupOnly),
             ]);
 
@@ -2082,10 +2096,11 @@ public class MultiProviderNntpClientTests
     {
         var sink = new CollectingSink();
         var previous = Log.Logger;
-        Log.Logger = new LoggerConfiguration()
+        var logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .WriteTo.Sink(sink)
             .CreateLogger();
+        Log.Logger = logger;
         try
         {
             await act().ConfigureAwait(false);
@@ -2093,6 +2108,7 @@ public class MultiProviderNntpClientTests
         finally
         {
             Log.Logger = previous;
+            logger.Dispose();
         }
 
         return sink.Events;
