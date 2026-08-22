@@ -27,9 +27,9 @@ describe("Search route action", () => {
     addNzbFromUrlMock.mockResolvedValueOnce("SABnzbd_nzo_1");
 
     await expect(
-      action({ request: mountRequest("https://indexer.example/nzb/123", "Example Release") } as Parameters<
-        typeof action
-      >[0]),
+      action({
+        request: mountRequest("https://indexer.example/nzb/123", "Example Release"),
+      } as Parameters<typeof action>[0]),
     ).resolves.toEqual({ ok: true, nzoId: "SABnzbd_nzo_1" });
 
     expect(addNzbFromUrlMock).toHaveBeenCalledWith(
@@ -40,7 +40,9 @@ describe("Search route action", () => {
 
   it("rejects a submission without both NZB fields", async () => {
     await expect(
-      action({ request: mountRequest("https://indexer.example/nzb/123") } as Parameters<typeof action>[0]),
+      action({ request: mountRequest("https://indexer.example/nzb/123") } as Parameters<
+        typeof action
+      >[0]),
     ).resolves.toEqual({ ok: false, error: "Missing nzbUrl or nzbName" });
 
     expect(addNzbFromUrlMock).not.toHaveBeenCalled();
@@ -50,9 +52,9 @@ describe("Search route action", () => {
     addNzbFromUrlMock.mockRejectedValueOnce(new Error("provider unavailable"));
 
     await expect(
-      action({ request: mountRequest("https://indexer.example/nzb/123", "Example Release") } as Parameters<
-        typeof action
-      >[0]),
+      action({
+        request: mountRequest("https://indexer.example/nzb/123", "Example Release"),
+      } as Parameters<typeof action>[0]),
     ).resolves.toEqual({ ok: false, error: "provider unavailable" });
   });
 });
