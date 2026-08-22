@@ -143,9 +143,12 @@ public sealed class PostgresMigrationTests
             context.ChangeTracker.Clear();
 
             var utcRoundTrip = await context.HistoryItems.SingleAsync(x => x.JobName == "utc");
+            var expectedUtcRoundTrip = DateTime.SpecifyKind(
+                utcCreatedAt.ToLocalTime(), DateTimeKind.Unspecified);
+            Assert.Equal(DateTimeKind.Unspecified, utcRoundTrip.CreatedAt.Kind);
             Assert.Equal(
-                DateTime.SpecifyKind(utcCreatedAt.ToLocalTime(), DateTimeKind.Unspecified),
-                utcRoundTrip.CreatedAt);
+                expectedUtcRoundTrip.Ticks - (expectedUtcRoundTrip.Ticks % 10),
+                utcRoundTrip.CreatedAt.Ticks);
 
             var matchingUtcRows = await context.HistoryItems
                 .Where(x => x.CreatedAt <= utcCreatedAt)
