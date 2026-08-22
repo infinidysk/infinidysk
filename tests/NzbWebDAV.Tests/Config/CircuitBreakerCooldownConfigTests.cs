@@ -52,6 +52,29 @@ public sealed class CircuitBreakerCooldownConfigTests
         Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), config.GetCircuitBreakerMaxCooldown());
     }
 
+    [Theory]
+    [InlineData("2147483648")]
+    [InlineData("-2147483649")]
+    public void ValidateConfigItems_AcceptsValuesOutsideInt32(string configured)
+    {
+        ConfigManager.ValidateConfigItems(
+        [
+            Item(ConfigKeys.UsenetCircuitBreakerInitialCooldownSeconds, configured),
+            Item(ConfigKeys.UsenetCircuitBreakerMaxCooldownSeconds, configured),
+        ]);
+    }
+
+    [Theory]
+    [InlineData("abc")]
+    [InlineData("1.5")]
+    public void ValidateConfigItems_RejectsValuesThatAreNotWholeNumbers(string configured)
+    {
+        Assert.Throws<ArgumentException>(() => ConfigManager.ValidateConfigItems(
+        [
+            Item(ConfigKeys.UsenetCircuitBreakerInitialCooldownSeconds, configured),
+        ]));
+    }
+
     private static ConfigItem Item(string name, string value) =>
         new() { ConfigName = name, ConfigValue = value };
 }
