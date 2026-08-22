@@ -19,6 +19,7 @@ import {
   Toggle,
   Tooltip,
 } from "~/components/ui";
+import { buildProfileAdapterUrl, type ProfileAdapterKey } from "./profile-adapter-urls";
 
 type ProfilesSettingsProps = {
   config: Record<string, string>;
@@ -50,7 +51,7 @@ interface IndexerSummary {
   Enabled: boolean;
 }
 
-type AdapterKey = "json" | "addon" | "newznab";
+type AdapterKey = ProfileAdapterKey;
 
 const ADAPTERS: {
   key: AdapterKey;
@@ -62,20 +63,20 @@ const ADAPTERS: {
     key: "json",
     name: "JSON Search API",
     description: "Vendor-neutral JSON results. Use from custom clients or scripts.",
-    buildUrl: (origin, token) => `${origin}/api/search/${token}/lookup?type=movie&id=tt0111161`,
+    buildUrl: (origin, token) => buildProfileAdapterUrl(origin, "json", token),
   },
   {
     key: "newznab",
     name: "Newznab",
     description: "Newznab-protocol meta-indexer endpoint. Add to Prowlarr / Sonarr / Radarr.",
-    buildUrl: (origin, token) => `${origin}/adapters/newznab/${token}/api`,
+    buildUrl: (origin, token) => buildProfileAdapterUrl(origin, "newznab", token),
   },
   {
     key: "addon",
     name: "Addon",
     description:
       "Manifest-based addon endpoint. Install the URL in a compatible client to query this Search Profile.",
-    buildUrl: (origin, token) => `${origin}/adapters/addon/${token}/manifest.json`,
+    buildUrl: (origin, token) => buildProfileAdapterUrl(origin, "addon", token),
   },
 ];
 

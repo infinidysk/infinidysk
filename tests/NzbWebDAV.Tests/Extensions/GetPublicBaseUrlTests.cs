@@ -45,4 +45,41 @@ public class GetPublicBaseUrlTests
 
         Assert.Equal("http://localhost:8080", result);
     }
+
+    [Fact]
+    public void AddsFrontendUrlBaseToCopiedPublicUrls()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("nzbdav.example");
+        context.Request.Headers["X-Forwarded-Prefix"] = "/infinidysk";
+
+        var result = context.GetPublicBaseUrl("http://localhost:3000");
+
+        Assert.Equal("https://nzbdav.example/infinidysk", result);
+    }
+
+    [Fact]
+    public void DoesNotDuplicateConfiguredUrlBase()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Headers["X-Forwarded-Prefix"] = "/infinidysk";
+
+        var result = context.GetPublicBaseUrl("https://nzbdav.example/infinidysk");
+
+        Assert.Equal("https://nzbdav.example/infinidysk", result);
+    }
+
+    [Fact]
+    public void IgnoresUnsafeForwardedPrefix()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("nzbdav.example");
+        context.Request.Headers["X-Forwarded-Prefix"] = "https://evil.example";
+
+        var result = context.GetPublicBaseUrl("http://localhost:3000");
+
+        Assert.Equal("https://nzbdav.example", result);
+    }
 }

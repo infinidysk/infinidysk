@@ -39,13 +39,29 @@ public static class HttpContextExtensions
     public static string GetPublicBaseUrl(this HttpContext httpContext, string configuredBaseUrl)
     {
         var trimmed = configuredBaseUrl.TrimEnd('/');
-        if (!string.IsNullOrWhiteSpace(trimmed) && trimmed != "http://localhost:3000")
-            return trimmed;
+        var baseUrl = !string.IsNullOrWhiteSpace(trimmed) && trimmed != "http://localhost:3000"
+            ? trimmed
+            : $"{httpContext.Request.Scheme}://{httpContext.Request.Host.Value}";
 
-        // Prefer Scheme/Host as populated by ForwardedHeadersMiddleware from a
-        // trusted proxy — never read raw X-Forwarded-* (spoofable).
-        var scheme = httpContext.Request.Scheme;
-        var host = httpContext.Request.Host.Value;
-        return $"{scheme}://{host}";
+        // The frontend proxy supplies its validated URL_BASE as this prefix, so URLs copied
+        // from profile adapters remain routable when the application is mounted at a sub-path.
+        var prefix = NormalizePathPrefix(httpContext.Request.Headers["X-Forwarded-Prefix"].FirstOrDefault());
+        if (prefix is null || baseUrl.EndsWith(prefix, StringComparison.Ordinal))
+            return baseUrl;
+        return baseUrl + prefix;
+    }
+
+    private static string? NormalizePathPrefix(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var trimmed = raw.Trim().TrimEnd('/');
+        if (trimmed.Length == 0 || trimmed == "/") return null;
+        if (!trimmed.StartsWith('/')
+            || trimmed.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '~' or '-' or '/')))
+        {
+            return null;
+        }
+
+        return trimmed;
     }
 }
