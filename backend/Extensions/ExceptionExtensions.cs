@@ -58,6 +58,23 @@ public static class ExceptionExtensions
     }
 
     /// <summary>
+    /// True when SQLite reports an existing schema object while applying DDL. The
+    /// generic SQLITE_ERROR code must be paired with the message check because it
+    /// also covers unrelated SQL errors.
+    /// </summary>
+    public static bool IsDuplicateSchemaObjectException(this Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is SqliteException { SqliteErrorCode: 1 } sqlite
+                && sqlite.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// True for write contention that can be retried by the caller's next sweep.
     /// PostgreSQL reports concurrent serialization/deadlock failures by SQLSTATE.
     /// </summary>

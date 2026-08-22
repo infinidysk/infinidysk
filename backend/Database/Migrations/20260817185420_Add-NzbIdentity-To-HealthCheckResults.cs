@@ -22,6 +22,10 @@ namespace NzbWebDAV.Database.Migrations
                 type: "TEXT",
                 nullable: true);
 
+            // Replace the partial/manual index state reported in #1104 with the
+            // canonical filtered index created by this migration.
+            migrationBuilder.Sql("""DROP INDEX IF EXISTS "IX_HealthCheckResults_RepairStatus_CreatedAt";""");
+
             migrationBuilder.CreateIndex(
                 name: "IX_HealthCheckResults_RepairStatus_CreatedAt",
                 table: "HealthCheckResults",

@@ -148,6 +148,36 @@ public class ExceptionExtensionsTests
     }
 
     [Fact]
+    public void IsDuplicateSchemaObjectException_RecognizesExistingSqliteObject()
+    {
+        var ex = new SqliteException(
+            "SQLite Error 1: 'index IX_HealthCheckResults_RepairStatus_CreatedAt already exists'.",
+            1);
+
+        Assert.True(ex.IsDuplicateSchemaObjectException());
+    }
+
+    [Fact]
+    public void IsDuplicateSchemaObjectException_RecognizesWrappedExistingSqliteObject()
+    {
+        var ex = new InvalidOperationException(
+            "Migration failed.",
+            new SqliteException("SQLite Error 1: 'table Foo already exists'.", 1));
+
+        Assert.True(ex.IsDuplicateSchemaObjectException());
+    }
+
+    [Theory]
+    [InlineData(1, "SQLite Error 1: 'near \"BROKEN\": syntax error'.")]
+    [InlineData(5, "SQLite Error 5: 'database is locked'.")]
+    public void IsDuplicateSchemaObjectException_RejectsOtherSqliteErrors(int errorCode, string message)
+    {
+        var ex = new SqliteException(message, errorCode);
+
+        Assert.False(ex.IsDuplicateSchemaObjectException());
+    }
+
+    [Fact]
     public void TryGetKnownErrorMessage_Corruption_ReturnsRecoveryGuidance()
     {
         var ex = new SqliteException("SQLite Error 11: 'database disk image is malformed'.", 11);

@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using Serilog;
 
@@ -101,7 +103,13 @@ internal static class StartupDatabaseMigrator
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            progress.Fail(ex.Message);
+            var migrationConflict = ex.IsDuplicateSchemaObjectException();
+            progress.Fail(migrationConflict
+                ? new DatabaseMigrationConflictException(ex).Message
+                : ex.Message);
+            if (migrationConflict)
+                Log.Debug(ex, "Startup database migration encountered an existing schema object");
+
             if (statusServer is not null)
             {
                 try
@@ -113,6 +121,9 @@ internal static class StartupDatabaseMigrator
                     // Best-effort grace period before the status server is disposed.
                 }
             }
+
+            if (migrationConflict)
+                throw new DatabaseMigrationConflictException(ex);
 
             throw;
         }

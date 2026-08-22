@@ -519,6 +519,14 @@ public partial class Program
             Environment.ExitCode = 1;
             return;
         }
+        catch (DatabaseMigrationConflictException exception)
+        {
+            // Operator-facing migration conflict — the migration boundary has already
+            // retained the original exception at Debug for maintainers.
+            Log.Fatal("{Message}", exception.Message);
+            Environment.ExitCode = 1;
+            return;
+        }
         catch (Exception exception)
         {
             Log.Fatal(exception, "NzbDav terminated unexpectedly");
@@ -789,10 +797,15 @@ public partial class Program
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            progressFull.Fail(ex.Message);
+            var migrationConflict = ex.IsDuplicateSchemaObjectException();
+            progressFull.Fail(migrationConflict
+                ? new DatabaseMigrationConflictException(ex).Message
+                : ex.Message);
             // ConfigPathAccessException is already operator-actionable; Main logs the
             // single fatal line, so skip the stack dump here.
-            if (ex is not ConfigPathAccessException)
+            if (migrationConflict)
+                Log.Debug(ex, "Database migration encountered an existing schema object");
+            else if (ex is not ConfigPathAccessException)
                 Log.Error(ex, "Database migration failed");
 
             // Keep the failure visible on the status page briefly before exiting.
@@ -801,6 +814,9 @@ public partial class Program
                 try { await Task.Delay(TimeSpan.FromSeconds(3), CancellationToken.None).ConfigureAwait(false); }
                 catch (OperationCanceledException) { /* shutting down */ }
             }
+
+            if (migrationConflict)
+                throw new DatabaseMigrationConflictException(ex);
 
             throw;
         }
