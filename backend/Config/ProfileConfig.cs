@@ -36,6 +36,8 @@ public class ProfileConfig
         public List<string> IndexerNames { get; set; } = [];
         public List<string>? EnabledAdapters { get; set; }
 
+        public QualitySortMode QualitySort { get; set; } = QualitySortMode.Off;
+
         public FallbackMode MovieFallback { get; set; } = FallbackMode.Off;
         public FallbackMode TvFallback { get; set; } = FallbackMode.Off;
         public int MovieFallbackMinResults { get; set; } = 3;
@@ -64,5 +66,13 @@ public class ProfileConfig
         Off = 0,
         Title = 1,
         Broad = 2,
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum QualitySortMode
+    {
+        Off = 0,
+        Resolution = 1,
+        ResolutionAndSource = 2,
     }
 }

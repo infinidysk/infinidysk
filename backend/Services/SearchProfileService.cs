@@ -328,42 +328,35 @@ public class SearchProfileService(
         var perIndexer = await RunPerIndexerQueryAsync(indexers, queryParams, indexerConfig, globalProxy, now, ct)
             .ConfigureAwait(false);
 
-        var deduped = DedupeAndSort(perIndexer, excludePatterns, anyPreferDownloaded);
+        var deduped = DedupeAndSort(perIndexer, excludePatterns, profile.QualitySort, anyPreferDownloaded);
 
         var strictIndexers = indexers
             .Where(x => x.EnableStrictMatching)
             .Select(x => x.Name)
             .ToHashSet();
 
-        var strictExpected = strictIndexers.Count > 0
-            ? await BuildExpectedTitlesAsync(type, queryParams, ct).ConfigureAwait(false)
-            : new HashSet<string>(StringComparer.Ordinal);
+        var strictIdentity = strictIndexers.Count > 0
+            ? await BuildExpectedIdentityAsync(type, queryParams, ct).ConfigureAwait(false)
+            : new ProfileIdentityFilter.ExpectedIdentity(new HashSet<string>(StringComparer.Ordinal), null);
 
         List<IndexerHit> ApplyStrictMatching(List<IndexerHit> items)
         {
-            if (strictIndexers.Count == 0 || items.Count < 2) return items;
+            var before = items.Count;
+            var filtered = ProfileIdentityFilter.ApplyStrictMatching(
+                items,
+                x => x.IndexerName,
+                x => x.Item.Title,
+                strictIndexers,
+                strictIdentity,
+                applyMovieYear: type == "movie");
+            if (filtered.Count != before)
+            {
+                Log.Information(
+                    "Strict matching {Type}/{Id}: kept {Kept}/{Before} result(s)",
+                    type, id, filtered.Count, before);
+            }
 
-            if (strictExpected.Count > 0)
-                return items
-                    .Where(x => !strictIndexers.Contains(x.IndexerName)
-                                || FilenameMatcher.TitleMatches(strictExpected, x.Item.Title))
-                    .ToList();
-
-            var withHead = items
-                .Select(x => new { Entry = x, Head = FilenameMatcher.HeadTokens(x.Item.Title) })
-                .ToList();
-            var consensus = withHead
-                .Where(x => x.Head.Length > 0)
-                .GroupBy(x => string.Join(' ', x.Head))
-                .Select(g => new { g.First().Head, Count = g.Count() })
-                .OrderByDescending(x => x.Count)
-                .FirstOrDefault();
-            if (consensus is not { Count: >= 2 }) return items;
-            return withHead
-                .Where(x => !strictIndexers.Contains(x.Entry.IndexerName)
-                            || FilenameMatcher.TokensEqual(x.Head, consensus.Head))
-                .Select(x => x.Entry)
-                .ToList();
+            return filtered;
         }
 
         deduped = ApplyStrictMatching(deduped);
@@ -420,13 +413,7 @@ public class SearchProfileService(
                     .Select(g => g.First())
                     .ToList();
 
-                deduped = (anyPreferDownloaded
-                        ? combined.OrderByDescending(x => x.Item.Grabs ?? -1)
-                                  .ThenByDescending(x => x.Item.Size)
-                                  .ThenByDescending(x => x.Item.Posted ?? DateTimeOffset.MinValue)
-                        : combined.OrderByDescending(x => x.Item.Size)
-                                  .ThenByDescending(x => x.Item.Posted ?? DateTimeOffset.MinValue))
-                    .ToList();
+                deduped = SortHits(combined, profile.QualitySort, anyPreferDownloaded);
 
                 deduped = ApplyStrictMatching(deduped);
             }
@@ -684,6 +671,7 @@ public class SearchProfileService(
     private static List<IndexerHit> DedupeAndSort(
         IEnumerable<IndexerHit>[] perIndexer,
         IReadOnlyList<Regex> excludePatterns,
+        ProfileConfig.QualitySortMode qualitySort,
         bool anyPreferDownloaded)
     {
         var dedupedQuery = perIndexer
@@ -693,14 +681,21 @@ public class SearchProfileService(
             .GroupBy(x => x.Item.NzbUrl)
             .Select(g => g.First());
 
-        return (anyPreferDownloaded
-                ? dedupedQuery.OrderByDescending(x => x.Item.Grabs ?? -1)
-                              .ThenByDescending(x => x.Item.Size)
-                              .ThenByDescending(x => x.Item.Posted ?? DateTimeOffset.MinValue)
-                : dedupedQuery.OrderByDescending(x => x.Item.Size)
-                              .ThenByDescending(x => x.Item.Posted ?? DateTimeOffset.MinValue))
-            .ToList();
+        return SortHits(dedupedQuery, qualitySort, anyPreferDownloaded);
     }
+
+    private static List<IndexerHit> SortHits(
+        IEnumerable<IndexerHit> items,
+        ProfileConfig.QualitySortMode qualitySort,
+        bool anyPreferDownloaded) =>
+        ProfileResultSorter.Sort(
+            items,
+            x => x.Item.Title,
+            x => x.Item.Grabs,
+            x => x.Item.Size,
+            x => x.Item.Posted,
+            qualitySort,
+            anyPreferDownloaded);
 
     private async Task<IReadOnlyList<IReadOnlyDictionary<string, string>>> BuildFallbackQueriesAsync(
         string type,
@@ -771,17 +766,28 @@ public class SearchProfileService(
     private async Task<HashSet<string>> BuildExpectedTitlesAsync(
         string type, IReadOnlyDictionary<string, string> queryParams, CancellationToken ct)
     {
+        var identity = await BuildExpectedIdentityAsync(type, queryParams, ct).ConfigureAwait(false);
+        return identity.NormalizedTitles is HashSet<string> set
+            ? set
+            : new HashSet<string>(identity.NormalizedTitles, StringComparer.Ordinal);
+    }
+
+    private async Task<ProfileIdentityFilter.ExpectedIdentity> BuildExpectedIdentityAsync(
+        string type, IReadOnlyDictionary<string, string> queryParams, CancellationToken ct)
+    {
         var set = new HashSet<string>(StringComparer.Ordinal);
         var imdbDigits = queryParams.TryGetValue("imdbid", out var imdb) ? imdb : null;
         int? tvdbId = null;
         if (queryParams.TryGetValue("tvdbid", out var tvdbStr) && int.TryParse(tvdbStr, out var t)) tvdbId = t;
-        if (imdbDigits is null && tvdbId is null) return set;
+        if (imdbDigits is null && tvdbId is null)
+            return new ProfileIdentityFilter.ExpectedIdentity(set, null);
 
         var titleType = type == "movie" ? "movie" : "series";
-        var title = await titleResolver.GetTitleAsync(titleType, imdbDigits, tvdbId, ct).ConfigureAwait(false);
-        var norm = FilenameMatcher.NormalizeTitle(title);
+        var metadata = await titleResolver.GetMetadataAsync(titleType, imdbDigits, tvdbId, ct).ConfigureAwait(false);
+        var norm = FilenameMatcher.NormalizeTitle(metadata?.Title);
         if (norm.Length > 0) set.Add(norm);
-        return set;
+        var year = type == "movie" ? metadata?.Year : null;
+        return new ProfileIdentityFilter.ExpectedIdentity(set, year);
     }
 
     private static SearchResult Empty(string profileToken, string type, string id) =>
