@@ -359,6 +359,8 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.UsenetInFlightArticleBudgetMb:
                 case ConfigKeys.UsenetIdleConnectionTimeoutSeconds:
                 case ConfigKeys.UsenetWarmConnectionsFloor:
+                case ConfigKeys.UsenetCircuitBreakerInitialCooldownSeconds:
+                case ConfigKeys.UsenetCircuitBreakerMaxCooldownSeconds:
                 case ConfigKeys.UsenetArticleMissCacheTtlSeconds:
                 case ConfigKeys.UsenetArticleMissCacheMaxEntries:
                 case ConfigKeys.UsenetSegmentCacheMaxGb:
@@ -1034,6 +1036,34 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         if (configured is null || !int.TryParse(configured, out var value))
             return Math.Clamp(maxConnections / 6, 1, 8);
         return Math.Clamp(value, 1, maxConnections);
+    }
+
+    /// <summary>
+    /// Cooldown applied the first time a provider's circuit trips. Each consecutive trip
+    /// doubles it up to the ceiling, and a successful body fetch resets it back to this
+    /// value. Defaults to 60s and is clamped to 5 through 300. The connection pools read
+    /// it when they are built, so a change applies on the next restart or provider save.
+    /// </summary>
+    public TimeSpan GetCircuitBreakerInitialCooldown()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetCircuitBreakerInitialCooldownSeconds));
+        if (configured is null || !long.TryParse(configured, out var seconds))
+            return TimeSpan.FromSeconds(60);
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 5L, 300L));
+    }
+
+    /// <summary>
+    /// Ceiling the doubling cooldown stops at, so a provider that stays down is re-probed
+    /// on a bounded interval instead of an ever-growing one. Defaults to 300s and is
+    /// clamped to 5 through 3600. The connection pools read it when they are built, so a
+    /// change applies on the next restart or provider save.
+    /// </summary>
+    public TimeSpan GetCircuitBreakerMaxCooldown()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetCircuitBreakerMaxCooldownSeconds));
+        if (configured is null || !long.TryParse(configured, out var seconds))
+            return TimeSpan.FromSeconds(300);
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 5L, 3600L));
     }
 
     /// <summary>

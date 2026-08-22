@@ -68,3 +68,25 @@ re-probing the same provider for the same article until the TTL expires. Transie
 | Miss-cache max entries | `usenet.article-miss-cache-max-entries` | `10000` | Cap before oldest entries are evicted (clamped 100–1000000) |
 
 The cache clears automatically when Usenet providers are reconfigured.
+
+## Provider circuit-breaker cooldown [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+
+When a provider's circuit trips, that provider is skipped for a cooldown and traffic goes to
+the remaining providers. Each consecutive trip doubles the cooldown up to a ceiling. A
+successful article body resets it to the initial value.
+
+| Control | Config key | Default | Effect |
+|---------|------------|---------|--------|
+| Initial cooldown (seconds) | `usenet.circuit-breaker.initial-cooldown-seconds` | `60` | Cooldown applied on the first trip (clamped 5 to 300) |
+| Maximum cooldown (seconds) | `usenet.circuit-breaker.max-cooldown-seconds` | `300` | Ceiling the doubling stops at (clamped 5 to 3600) |
+
+Lower the initial cooldown when a single pool provider carries the traffic and the backups are
+metered blocks. A brief wobble then spends fewer backup bytes before the primary is re-probed.
+A maximum below the initial value is raised to it. The connection pools read both values when
+they are built, so a change applies on the next restart or provider save. Neither has a
+Settings control. Set them through config or the environment.
+
+Once the cooldown lapses, one request is admitted as a half-open probe. If that request is
+abandoned before it returns an outcome, the probe slot stays claimed for up to 60 seconds
+before another request can retake it. A cooldown shorter than that will not always re-probe as
+quickly as the number suggests.
