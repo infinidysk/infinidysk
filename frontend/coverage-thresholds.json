@@ -7,7 +7,7 @@
   },
   "globs": {
     "app/clients/**": {
-      "lines": 83
+      "lines": 86
     },
     "app/auth/**": {
       "lines": 85
