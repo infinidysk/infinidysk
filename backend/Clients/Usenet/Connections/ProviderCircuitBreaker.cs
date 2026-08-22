@@ -238,7 +238,9 @@ public class ProviderCircuitBreaker
     /// connect is enough to trip because concurrent retries would otherwise consume the
     /// provider's connection capacity while it is unreachable.
     /// </summary>
-    public void RecordConnectionFailure(string? reason = null)
+    public void RecordConnectionFailure(
+        string? reason = null,
+        ProviderCircuitPoolDiagnostics? pool = null)
     {
         lock (_lock)
         {
@@ -259,11 +261,13 @@ public class ProviderCircuitBreaker
                 : "connection failure";
             Trip(now, reason is null
                 ? failureReason
-                : $"{failureReason} ({reason})");
+                : $"{failureReason} ({reason})", pool);
         }
     }
 
-    public void RecordFailure(string? reason = null)
+    public void RecordFailure(
+        string? reason = null,
+        ProviderCircuitPoolDiagnostics? pool = null)
     {
         lock (_lock)
         {
@@ -285,7 +289,7 @@ public class ProviderCircuitBreaker
                 Interlocked.Increment(ref _failureCount);
                 Trip(now, reason is null
                     ? "half-open failure"
-                    : $"half-open failure ({reason})");
+                    : $"half-open failure ({reason})", pool);
                 return;
             }
 
@@ -314,21 +318,31 @@ public class ProviderCircuitBreaker
                 var tripReason = reason is null
                     ? $"{failures} failures in {_window.Count}-sample window"
                     : $"{failures} failures in {_window.Count}-sample window ({reason})";
-                Trip(now, tripReason);
+                Trip(now, tripReason, pool);
             }
         }
     }
 
-    private void Trip(long nowMs, string reason)
+    private void Trip(long nowMs, string reason, ProviderCircuitPoolDiagnostics? pool = null)
     {
         var appliedCooldown = _currentCooldown;
         _lastFailureReason = reason;
         Interlocked.Increment(ref _tripCount);
         _trippedUntilMs = nowMs + (long)appliedCooldown.TotalMilliseconds;
-        Log.Warning(
-            "Provider {Provider} tripped ({Reason}). Skipping for {Cooldown}s.",
-            _providerName, reason, appliedCooldown.TotalSeconds);
-        NotifyTransition(ProviderCircuitTransitionState.Open, appliedCooldown);
+        if (pool is null)
+        {
+            Log.Warning(
+                "Provider {Provider} tripped ({Reason}). Skipping for {Cooldown}s.",
+                _providerName, reason, appliedCooldown.TotalSeconds);
+        }
+        else
+        {
+            Log.Warning(
+                "Provider {Provider} tripped ({Reason}). Pool live={LiveConnections}, idle={IdleConnections}, active={ActiveConnections}. Skipping for {Cooldown}s.",
+                _providerName, reason, pool.LiveConnections, pool.IdleConnections,
+                pool.ActiveConnections, appliedCooldown.TotalSeconds);
+        }
+        NotifyTransition(ProviderCircuitTransitionState.Open, appliedCooldown, reason, pool);
 
         _window.Clear();
         _failureBurstStartedAtMs = long.MinValue;
@@ -338,7 +352,9 @@ public class ProviderCircuitBreaker
 
     private void NotifyTransition(
         ProviderCircuitTransitionState state,
-        TimeSpan? cooldown)
+        TimeSpan? cooldown,
+        string? failureReason = null,
+        ProviderCircuitPoolDiagnostics? pool = null)
     {
         if (_onTransition is null)
             return;
@@ -348,7 +364,9 @@ public class ProviderCircuitBreaker
             _onTransition(new ProviderCircuitTransition(
                 state,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                cooldown));
+                cooldown,
+                failureReason,
+                pool));
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {

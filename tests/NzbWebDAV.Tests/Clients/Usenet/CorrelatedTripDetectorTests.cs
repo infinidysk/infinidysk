@@ -10,7 +10,7 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 [Collection(nameof(GlobalLoggerCollection))]
 public class CorrelatedTripDetectorTests
 {
-    private static readonly TimeSpan Window = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan Window = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan Throttle = TimeSpan.FromMinutes(5);
 
     [Fact]
@@ -55,6 +55,23 @@ public class CorrelatedTripDetectorTests
     }
 
     [Fact]
+    public void DefaultWindow_CorrelatesTripsSeparatedByAConnectDeadline()
+    {
+        var callbacks = 0;
+        var detector = new CorrelatedTripDetector()
+        {
+            Clock = () => 16_000,
+        };
+        detector.Register("a", "a.example.com", () => callbacks++);
+        detector.Register("b", "b.example.com", () => callbacks++);
+
+        detector.OnTransition("a", Open(atMs: 0));
+        detector.OnTransition("b", Open(atMs: 16_000));
+
+        Assert.Equal(2, callbacks);
+    }
+
+    [Fact]
     public void CorrelationsWithinTheWarningThrottle_StillInvokeCallbacks()
     {
         var callbacks = 0;
@@ -73,6 +90,56 @@ public class CorrelatedTripDetectorTests
         detector.OnTransition("b", Open(atMs: 5_000));
 
         Assert.Equal(4, callbacks);
+    }
+
+    [Fact]
+    public void CorrelatedEpisode_DesynchronizedRetripAfterPartialRecovery_StillInvokesCallbacks()
+    {
+        var callbacks = new List<string>();
+        var detector = new CorrelatedTripDetector(window: Window, throttle: Throttle)
+        {
+            Clock = () => 0,
+        };
+        detector.Register("a", "a.example.com", () => callbacks.Add("a"));
+        detector.Register("b", "b.example.com", () => callbacks.Add("b"));
+
+        detector.OnTransition("a", Open(atMs: 0));
+        detector.OnTransition("b", Open(atMs: 15_000));
+        detector.OnTransition("a", Closed(atMs: 20_000));
+
+        // A later re-trip is outside the initial correlation window, but it is
+        // still part of the active correlated episode while b remains latched.
+        detector.OnTransition("a", Open(atMs: 150_000));
+
+        Assert.Equal(["a", "b", "a", "b"], callbacks);
+    }
+
+    [Fact]
+    public void CorrelatedEpisode_ExpiresAfterInactivity()
+    {
+        var callbacks = new List<string>();
+        var clock = 0L;
+        var detector = new CorrelatedTripDetector(
+            window: Window,
+            throttle: Throttle,
+            episodeIdleTimeout: TimeSpan.FromMinutes(1))
+        {
+            Clock = () => clock,
+        };
+        detector.Register("a", "a.example.com", () => callbacks.Add("a"));
+        detector.Register("b", "b.example.com", () => callbacks.Add("b"));
+
+        detector.OnTransition("a", Open(atMs: 0));
+        clock = 1_000;
+        detector.OnTransition("b", Open(atMs: 1_000));
+        detector.OnTransition("a", Closed(atMs: 2_000));
+
+        // The remaining open b must not cause an unrelated a trip after the
+        // idle timeout to inherit the earlier correlated episode.
+        clock = 62_000;
+        detector.OnTransition("a", Open(atMs: 62_000));
+
+        Assert.Equal(["a", "b"], callbacks);
     }
 
     [Fact]

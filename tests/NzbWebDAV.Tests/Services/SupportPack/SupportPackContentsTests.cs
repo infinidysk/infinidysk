@@ -627,6 +627,54 @@ public sealed class SupportPackContentsTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task Pack_IncludesCircuitTransitionDiagnostics()
+    {
+        MetricsDbContext.ResetOptionsForTests();
+        try
+        {
+            await using (var metricsDb = new MetricsDbContext())
+            {
+                await metricsDb.Database.MigrateAsync();
+                metricsDb.MetricEvents.Add(new MetricEvent
+                {
+                    At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    Kind = "circuit",
+                    Tag1 = "provider-a",
+                    Tag2 = "open",
+                    Num = 60_000,
+                    Note = """
+                    {"failureReason":"connection failure (get-connection-CouldNotConnectToUsenetException)","pool":{"liveConnections":25,"idleConnections":23,"activeConnections":2}}
+                    """,
+                });
+                await metricsDb.SaveChangesAsync();
+            }
+
+            var entries = await ReadPackEntriesAsync(
+                new LogBufferSink(10),
+                new WarningLogBuffer(new LogBufferSink(50)));
+
+            using var metrics = JsonDocument.Parse(entries["metrics/recent.json"]);
+            var transition = metrics.RootElement
+                .GetProperty("circuits")
+                .GetProperty("transitions")
+                .EnumerateArray()
+                .Single(item => item.GetProperty("providerKey").GetString() == "provider-a");
+            var diagnostics = transition.GetProperty("diagnostics");
+
+            Assert.Equal(
+                "connection failure (get-connection-CouldNotConnectToUsenetException)",
+                diagnostics.GetProperty("failureReason").GetString());
+            Assert.Equal(25, diagnostics.GetProperty("pool").GetProperty("liveConnections").GetInt32());
+            Assert.Equal(23, diagnostics.GetProperty("pool").GetProperty("idleConnections").GetInt32());
+            Assert.Equal(2, diagnostics.GetProperty("pool").GetProperty("activeConnections").GetInt32());
+        }
+        finally
+        {
+            MetricsDbContext.ResetOptionsForTests();
+        }
+    }
+
     private static void CollectNonCamelCaseNames(JsonElement element, string path, List<string> offenders)
     {
         switch (element.ValueKind)

@@ -1,4 +1,5 @@
-﻿using NzbWebDAV.Clients.Usenet.Concurrency;
+﻿using System.Text.Json;
+using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
@@ -313,6 +314,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                     Num = transition.Cooldown is { } cooldown
                         ? (long)cooldown.TotalMilliseconds
                         : null,
+                    Note = BuildCircuitTransitionNote(transition),
                 });
                 tripDetector?.OnTransition(metricsKey, transition);
             },
@@ -339,6 +341,25 @@ public class UsenetStreamingClient : WrappingNntpClient
             metricsKey,
             latencyTracker
         );
+    }
+
+    private static string? BuildCircuitTransitionNote(ProviderCircuitTransition transition)
+    {
+        if (transition.FailureReason is null && transition.Pool is null)
+            return null;
+
+        return JsonSerializer.Serialize(new
+        {
+            failureReason = transition.FailureReason,
+            pool = transition.Pool is { } pool
+                ? new
+                {
+                    liveConnections = pool.LiveConnections,
+                    idleConnections = pool.IdleConnections,
+                    activeConnections = pool.ActiveConnections,
+                }
+                : null,
+        });
     }
 
     private static ConnectionPool<INntpClient> CreateNewConnectionPool

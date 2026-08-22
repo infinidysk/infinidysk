@@ -844,7 +844,7 @@ public sealed class SupportPackService(
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         var circuitTransitions = await metricsDb.MetricEvents
             .Where(row => row.Kind == "circuit" && row.At >= since7Days)
-            .Select(row => new { row.At, row.Tag1, row.Tag2, row.Num })
+            .Select(row => new { row.At, row.Tag1, row.Tag2, row.Num, row.Note })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         var failover = await metricsDb.FailoverHourly
             .Where(row => row.Hour >= since7Days)
@@ -939,6 +939,7 @@ public sealed class SupportPackService(
                         nickname = nicknames.GetValueOrDefault(row.Tag1!),
                         state = row.Tag2,
                         cooldownMs = row.Num,
+                        diagnostics = TryParseCircuitTransitionDiagnostics(row.Note),
                     }),
             },
             failoverReasons = failover,
@@ -959,6 +960,25 @@ public sealed class SupportPackService(
                 latencyDroppedObservations = latencyTracker.DroppedObservations,
             },
         };
+    }
+
+    private static JsonElement? TryParseCircuitTransitionDiagnostics(string? note)
+    {
+        if (string.IsNullOrWhiteSpace(note))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(note);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                ? document.RootElement.Clone()
+                : null;
+        }
+        catch (JsonException)
+        {
+            // A malformed diagnostic note must not prevent generating the support pack.
+            return null;
+        }
     }
 
     private async Task<object> BuildManifestAsync(

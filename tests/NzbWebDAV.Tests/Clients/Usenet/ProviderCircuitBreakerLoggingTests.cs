@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Tests.TestUtils;
 using Serilog;
 using Serilog.Core;
@@ -55,6 +56,20 @@ public class ProviderCircuitBreakerLoggingTests
         });
 
         Assert.DoesNotContain(events, RecoveryWasAnnounced);
+    }
+
+    [Fact]
+    public void RecordConnectionFailure_WithPoolDiagnostics_IncludesThemInTripWarning()
+    {
+        var events = CaptureLogs(breaker => breaker.RecordConnectionFailure(
+            "connect-timeout",
+            new ProviderCircuitPoolDiagnostics(
+                LiveConnections: 25,
+                IdleConnections: 23,
+                ActiveConnections: 2)));
+
+        Assert.Contains(events, logEvent =>
+            logEvent.MessageTemplate.Text.Contains("Pool live={LiveConnections}", StringComparison.Ordinal));
     }
 
     private static bool RecoveryWasAnnounced(LogEvent logEvent) =>

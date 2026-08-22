@@ -14,13 +14,14 @@ namespace NzbWebDAV.Clients.Usenet.Connections;
 /// rebuild creates a new detector for the new provider set; any in-flight trip state from
 /// the old generation is intentionally lost. This means a trip on provider A under the old
 /// client followed by a trip on provider B under the new client will not correlate — an
-/// acceptable gap since config changes are rare and the correlation window is short (10s).
+/// acceptable gap since config changes are rare and the correlation window is short.
 /// </para>
 /// </summary>
 public sealed class CorrelatedTripDetector
 {
-    private static readonly TimeSpan DefaultWindow = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DefaultWindow = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DefaultThrottle = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DefaultEpisodeIdleTimeout = TimeSpan.FromMinutes(5);
 
     private readonly object _lock = new();
     private readonly Dictionary<string, string> _providers = new(StringComparer.Ordinal); // key -> host
@@ -28,12 +29,19 @@ public sealed class CorrelatedTripDetector
     private readonly Dictionary<string, long> _openSinceMs = new(StringComparer.Ordinal);
     private readonly TimeSpan _window;
     private readonly TimeSpan _throttle;
+    private readonly TimeSpan _episodeIdleTimeout;
     private long? _lastWarningAtMs;
+    private bool _correlatedEpisodeActive;
+    private long _correlatedEpisodeLastActivityAtMs;
 
-    public CorrelatedTripDetector(TimeSpan? window = null, TimeSpan? throttle = null)
+    public CorrelatedTripDetector(
+        TimeSpan? window = null,
+        TimeSpan? throttle = null,
+        TimeSpan? episodeIdleTimeout = null)
     {
         _window = window ?? DefaultWindow;
         _throttle = throttle ?? DefaultThrottle;
+        _episodeIdleTimeout = episodeIdleTimeout ?? DefaultEpisodeIdleTimeout;
     }
 
     /// <summary>Wall clock, injectable for tests.</summary>
@@ -63,6 +71,8 @@ public sealed class CorrelatedTripDetector
             _providers.Remove(providerKey);
             _onCorrelatedTrip.Remove(providerKey);
             _openSinceMs.Remove(providerKey);
+            if (_openSinceMs.Count == 0)
+                _correlatedEpisodeActive = false;
         }
     }
 
@@ -74,29 +84,52 @@ public sealed class CorrelatedTripDetector
         var shouldWarn = false;
         lock (_lock)
         {
+            var now = Clock();
+            ExpireCorrelatedEpisodeIfInactive(now);
+
             if (transition.State == ProviderCircuitTransitionState.Open)
                 _openSinceMs[providerKey] = transition.AtUnixMilliseconds;
             else
                 _openSinceMs.Remove(providerKey);
 
-            if (transition.State != ProviderCircuitTransitionState.Open) return;
-            if (_providers.Count < 2) return;
-            if (!_providers.Keys.All(_openSinceMs.ContainsKey)) return;
+            if (_correlatedEpisodeActive)
+                _correlatedEpisodeLastActivityAtMs = now;
 
-            // All providers are open; only correlated if the trips cluster in time.
-            var opens = _providers.Keys.Select(p => _openSinceMs[p]).ToList();
-            if (opens.Max() - opens.Min() > (long)_window.TotalMilliseconds) return;
-
-            callbacks = _onCorrelatedTrip.Values.ToList();
-            providers = string.Join(", ", _providers.Values);
-            providerCount = _providers.Count;
-            var now = Clock();
-            if (_lastWarningAtMs is not { } lastWarning
-                || now - lastWarning >= (long)_throttle.TotalMilliseconds)
+            if (_openSinceMs.Count == 0)
             {
-                _lastWarningAtMs = now;
-                shouldWarn = true;
+                _correlatedEpisodeActive = false;
+                return;
             }
+
+            if (transition.State != ProviderCircuitTransitionState.Open ||
+                _providers.Count < 2 ||
+                !_providers.Keys.All(_openSinceMs.ContainsKey))
+            {
+                return;
+            }
+
+            var opens = _providers.Keys.Select(p => _openSinceMs[p]).ToList();
+            var clustered = opens.Max() - opens.Min() <= (long)_window.TotalMilliseconds;
+            if (clustered)
+            {
+                _correlatedEpisodeActive = true;
+                _correlatedEpisodeLastActivityAtMs = now;
+                providers = string.Join(", ", _providers.Values);
+                providerCount = _providers.Count;
+                if (_lastWarningAtMs is not { } lastWarning
+                    || now - lastWarning >= (long)_throttle.TotalMilliseconds)
+                {
+                    _lastWarningAtMs = now;
+                    shouldWarn = true;
+                }
+            }
+
+            // The original clustered all-open event starts the episode. While it is
+            // active, later re-trips are still part of the same shared-path outage even
+            // when their independent cooldowns have drifted apart.
+            if (!_correlatedEpisodeActive)
+                return;
+            callbacks = _onCorrelatedTrip.Values.ToList();
         }
 
         if (shouldWarn)
@@ -120,5 +153,16 @@ public sealed class CorrelatedTripDetector
                 Log.Warning(exception, "Correlated NNTP provider trip callback failed");
             }
         }
+    }
+
+    private void ExpireCorrelatedEpisodeIfInactive(long now)
+    {
+        if (!_correlatedEpisodeActive ||
+            now - _correlatedEpisodeLastActivityAtMs < (long)_episodeIdleTimeout.TotalMilliseconds)
+        {
+            return;
+        }
+
+        _correlatedEpisodeActive = false;
     }
 }

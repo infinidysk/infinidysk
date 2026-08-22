@@ -294,12 +294,12 @@ public class MultiConnectionNntpClient(
                             // client cancellation as provider health failure.
                             LogException(connectionLock.Replace);
                             if (!ct.IsCancellationRequested)
-                                circuitBreaker.RecordFailure(failureReason is null
+                                RecordProviderFailure(failureReason is null
                                     ? $"pipeline-callback-{result}"
                                     : $"pipeline-callback-{result} ({failureReason})");
                             break;
                         default:
-                            circuitBreaker.RecordFailure(failureReason is null
+                            RecordProviderFailure(failureReason is null
                                 ? $"pipeline-callback-{result}"
                                 : $"pipeline-callback-{result} ({failureReason})");
                             LogException(connectionLock.Replace);
@@ -332,7 +332,7 @@ public class MultiConnectionNntpClient(
                     continue;
                 }
 
-                circuitBreaker.RecordFailure("streaming-timeout-pipelined-BODY");
+                RecordProviderFailure("streaming-timeout-pipelined-BODY");
                 Log.Warning(
                     "Streaming timeout executing pipelined nntp BODY commands for provider {Provider} after {Timeout}s. No retries left.",
                     Host, streamingTimeout.PerSegmentTimeout.TotalSeconds);
@@ -374,18 +374,11 @@ public class MultiConnectionNntpClient(
                 var wasReused = connectionLock?.WasReused ?? false;
                 if (connectionLock is null)
                 {
-                    // The failure happened while establishing a connection. Trip
-                    // immediately (mirrors RunWithConnection) so an unreachable
-                    // provider hit through streaming fails over without burning
-                    // connect timeouts until the sampling window fills. A client
-                    // abort mid-connect can surface as an IOException rather than
-                    // a cancellation exception, so it is filtered here too.
-                    if (!ct.IsCancellationRequested)
-                        circuitBreaker.RecordConnectionFailure($"pipeline-get-connection-{e.GetType().Name}");
+                    RecordConnectionAcquisitionFailure(e, "pipeline-get-connection", ct);
                 }
                 else if (!wasReused)
                 {
-                    circuitBreaker.RecordFailure($"pipeline-setup-{e.GetType().Name}");
+                    RecordProviderFailure($"pipeline-setup-{e.GetType().Name}");
                 }
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
@@ -475,11 +468,7 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
-                // A client abort (seek/stop) mid-connect can surface as an
-                // IOException/SocketException rather than a cancellation
-                // exception; it must not trip a healthy provider.
-                if (!ct.IsCancellationRequested)
-                    circuitBreaker.RecordConnectionFailure($"get-connection-{e.GetType().Name}");
+                RecordConnectionAcquisitionFailure(e, "get-connection", ct);
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
                 if (retryCount > 0)
@@ -552,7 +541,7 @@ public class MultiConnectionNntpClient(
                 // Exhausted the streaming-timeout retry budget — count toward the
                 // breaker once per segment (not per attempt) so chronically-slow
                 // providers still trip without over-counting a single segment.
-                circuitBreaker.RecordFailure($"streaming-timeout-{name}");
+                RecordProviderFailure($"streaming-timeout-{name}");
                 Log.Warning(
                     "Streaming timeout executing nntp {Command} command for provider {Provider} after {Timeout}s. No retries left.",
                     name, Host, streamingTimeout.PerSegmentTimeout.TotalSeconds);
@@ -585,7 +574,7 @@ public class MultiConnectionNntpClient(
                 // on the wire) and propagate so the outer provider loop moves on.
                 IncrementTimeoutCount(Host);
                 deferredCallback.Discard();
-                circuitBreaker.RecordFailure($"read-timeout-{name}");
+                RecordProviderFailure($"read-timeout-{name}");
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
@@ -598,7 +587,7 @@ public class MultiConnectionNntpClient(
                 // STAT, HEAD, and DATE failures do not feed a closed circuit because their
                 // successes intentionally do not reset its BODY failure sampling window.
                 if (!wasReused && IsBodyCommand(name))
-                    circuitBreaker.RecordFailure($"cmd-setup-{name}-{e.GetType().Name}");
+                    RecordProviderFailure($"cmd-setup-{name}-{e.GetType().Name}");
                 LogException(() => connectionLock?.Replace());
                 LogException(() => connectionLock?.Dispose());
 
@@ -621,7 +610,7 @@ public class MultiConnectionNntpClient(
                 // recovery probe. Once its retries are exhausted, release the probe slot
                 // and reopen the circuit instead of leaving it claimed until timeout.
                 if (!IsBodyCommand(name) && circuitBreaker.IsLatched)
-                    circuitBreaker.RecordFailure($"cmd-{name}-{e.GetType().Name}");
+                    RecordProviderFailure($"cmd-{name}-{e.GetType().Name}");
 
                 e.LogWarningKnownOrStack(
                     "Error executing nntp {Command} command for provider {Provider}.", name, Host);
@@ -670,7 +659,7 @@ public class MultiConnectionNntpClient(
                         LogException(() => connectionLock?.Replace());
                         // Client abort (seek) must not trip the provider circuit breaker.
                         if (!ct.IsCancellationRequested)
-                            circuitBreaker.RecordFailure(failureReason is null
+                            RecordProviderFailure(failureReason is null
                                 ? $"body-callback-{name}-NotRetrieved"
                                 : $"body-callback-{name}-NotRetrieved ({failureReason})");
                     }
@@ -813,7 +802,7 @@ public class MultiConnectionNntpClient(
                 catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
                 {
-                    circuitBreaker.RecordFailure($"pipelined-enum-{e.GetType().Name}");
+                    RecordProviderFailure($"pipelined-enum-{e.GetType().Name}");
                     connectionLock.Replace();
                     throw;
                 }
@@ -889,13 +878,47 @@ public class MultiConnectionNntpClient(
         catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
-            // A client abort mid-connect can surface as an IOException rather than
-            // a cancellation exception; it must not trip a healthy provider.
-            if (!ct.IsCancellationRequested)
-                circuitBreaker.RecordConnectionFailure($"pipelined-get-connection-{e.GetType().Name}");
+            RecordConnectionAcquisitionFailure(e, "pipelined-get-connection", ct);
             throw;
         }
     }
+
+    /// <summary>
+    /// Records a failed pool expansion. A cold pool cannot serve traffic, so it is
+    /// still benched immediately. Once a provider has established sockets, one failed
+    /// replacement does not prove the provider is unreachable; corroborate it through
+    /// the normal failure window instead. A latched breaker always re-trips immediately
+    /// so its half-open probe cannot return a still-failing provider to rotation.
+    /// </summary>
+    private void RecordConnectionAcquisitionFailure(
+        Exception exception,
+        string operation,
+        CancellationToken ct)
+    {
+        // A client abort (seek/stop) mid-connect can surface as an IOException or
+        // SocketException rather than a cancellation exception; it must not affect
+        // provider health.
+        if (ct.IsCancellationRequested)
+            return;
+
+        var reason = $"{operation}-{exception.GetType().Name}";
+        if (exception.TryGetKnownErrorMessage(out var knownReason))
+            reason = $"{reason}: {knownReason}";
+
+        if (circuitBreaker.IsLatched || connectionPool.LiveConnections == 0)
+            RecordProviderConnectionFailure(reason);
+        else
+            RecordProviderFailure(reason);
+    }
+
+    private void RecordProviderConnectionFailure(string reason) =>
+        circuitBreaker.RecordConnectionFailure(reason, GetPoolDiagnostics());
+
+    private void RecordProviderFailure(string reason) =>
+        circuitBreaker.RecordFailure(reason, GetPoolDiagnostics());
+
+    private ProviderCircuitPoolDiagnostics GetPoolDiagnostics() =>
+        new(connectionPool.LiveConnections, connectionPool.IdleConnections, connectionPool.ActiveConnections);
 
     /// <summary>
     /// Pool disposal (client retirement / shutdown) is not a provider-health failure.

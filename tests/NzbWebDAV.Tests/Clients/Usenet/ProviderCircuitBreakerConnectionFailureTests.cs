@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
@@ -75,6 +76,75 @@ public class ProviderCircuitBreakerConnectionFailureTests
 
         Assert.Equal(ProviderCircuitState.Closed, breaker.GetSnapshot().State);
         Assert.Equal(0, breaker.GetSnapshot().TripCount);
+    }
+
+    [Fact]
+    public async Task RunWithConnection_FailedExpansionWithLiveConnections_UsesFailureWindow()
+    {
+        var clock = 0L;
+        var factoryCalls = 0;
+        var breaker = new ProviderCircuitBreaker("partially-healthy", coalesceFailureBursts: true)
+        {
+            Clock = () => clock,
+        };
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 2,
+            _ => Interlocked.Increment(ref factoryCalls) == 1
+                ? ValueTask.FromResult<INntpClient>(new SuccessfulStatClient())
+                : throw new IOException("New connection failed."));
+        using var retainedConnection = await pool.GetConnectionLockAsync(
+            SemaphorePriority.High, CancellationToken.None);
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "partially-healthy");
+
+        await Assert.ThrowsAsync<IOException>(
+            () => client.StatAsync("first", CancellationToken.None));
+
+        Assert.Equal(ProviderCircuitState.Closed, breaker.GetSnapshot().State);
+        Assert.Equal(2, breaker.GetSnapshot().FailureCount);
+
+        clock += 2_000;
+        await Assert.ThrowsAsync<IOException>(
+            () => client.StatAsync("second", CancellationToken.None));
+        Assert.Equal(ProviderCircuitState.Closed, breaker.GetSnapshot().State);
+
+        clock += 2_000;
+        await Assert.ThrowsAsync<IOException>(
+            () => client.StatAsync("third", CancellationToken.None));
+
+        Assert.Equal(ProviderCircuitState.Open, breaker.GetSnapshot().State);
+        Assert.Equal(1, breaker.GetSnapshot().TripCount);
+    }
+
+    [Fact]
+    public async Task RunWithConnection_HalfOpenFailedExpansion_RetripsImmediately()
+    {
+        var clock = 0L;
+        var factoryCalls = 0;
+        var breaker = new ProviderCircuitBreaker("half-open-live")
+        {
+            Clock = () => clock,
+        };
+        breaker.RecordConnectionFailure("initial");
+        clock += 60_000;
+        breaker.ExpireCooldownForTests();
+
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 2,
+            _ => Interlocked.Increment(ref factoryCalls) == 1
+                ? ValueTask.FromResult<INntpClient>(new SuccessfulStatClient())
+                : throw new IOException("Half-open connection failed."));
+        using var retainedConnection = await pool.GetConnectionLockAsync(
+            SemaphorePriority.High, CancellationToken.None);
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "half-open-live");
+
+        await Assert.ThrowsAsync<IOException>(
+            () => client.StatAsync("segment", CancellationToken.None));
+
+        Assert.Equal(ProviderCircuitState.Open, breaker.GetSnapshot().State);
+        Assert.Equal(2, breaker.GetSnapshot().TripCount);
+        Assert.Equal(TimeSpan.FromSeconds(240), breaker.CurrentCooldown);
     }
 
     [Fact]
