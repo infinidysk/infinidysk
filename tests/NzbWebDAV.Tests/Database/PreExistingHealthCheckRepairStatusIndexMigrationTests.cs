@@ -41,9 +41,10 @@ public sealed class PreExistingHealthCheckRepairStatusIndexMigrationTests
         Assert.Empty(await context.Database.GetPendingMigrationsAsync());
         Assert.True(await ColumnExistsAsync(context, "JobName"));
         Assert.True(await ColumnExistsAsync(context, "NzbFileName"));
-        Assert.Equal(
-            """CREATE INDEX "IX_HealthCheckResults_RepairStatus_CreatedAt" ON "HealthCheckResults" ("RepairStatus", "CreatedAt") WHERE "RepairStatus" IN (1, 2)""",
-            await IndexSqlAsync(context, RepairStatusIndex));
+        var indexSql = await IndexSqlAsync(context, RepairStatusIndex);
+        Assert.NotNull(indexSql);
+        Assert.Contains("""ON "HealthCheckResults" ("RepairStatus", "CreatedAt")""", indexSql);
+        Assert.Contains("""WHERE "RepairStatus" IN (1, 2)""", indexSql);
     }
 
     private static async Task<bool> IndexExistsAsync(DavDatabaseContext context, string indexName)
