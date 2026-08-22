@@ -44,6 +44,8 @@ public static class ConfigKeys
     public const string UsenetIdleConnectionTimeoutSeconds = "usenet.idle-connection-timeout-seconds";
     public const string UsenetWarmConnectionsEnabled = "usenet.warm-connections.enabled";
     public const string UsenetWarmConnectionsFloor = "usenet.warm-connections.floor";
+    public const string UsenetCircuitBreakerInitialCooldownSeconds = "usenet.circuit-breaker.initial-cooldown-seconds";
+    public const string UsenetCircuitBreakerMaxCooldownSeconds = "usenet.circuit-breaker.max-cooldown-seconds";
     public const string UsenetMaxDownloadConnections = "usenet.max-download-connections";
     public const string UsenetMaxDownloadConnectionsPerStream = "usenet.max-download-connections-per-stream";
     public const string UsenetMaxDownloadConnectionsPerStreamPreset = "usenet.max-download-connections-per-stream-preset";
