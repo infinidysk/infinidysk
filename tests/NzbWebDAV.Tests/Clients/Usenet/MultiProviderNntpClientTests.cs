@@ -9,12 +9,17 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using UsenetSharp.Exceptions;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public class MultiProviderNntpClientTests
 {
     [Fact]
@@ -351,6 +356,137 @@ public class MultiProviderNntpClientTests
         var response = await client.StatAsync("segment", CancellationToken.None);
         Assert.True(response.ArticleExists);
         Assert.Equal(0, writer.Stats.QueuedFetches);
+    }
+
+    [Fact]
+    public async Task StatAsync_ArgumentException_LogsDiagnosticContextAndFallsBack()
+    {
+        const string segmentId = "<diagnostic-context@example>";
+        const string parameterName = "segmentId-context";
+        var events = await CaptureLogsAsync(async () =>
+        {
+            var primary = new ScriptedNntpClient
+            {
+                BatchResponseCode = 222,
+                SingularException = _ => new ArgumentException("Segment ID was invalid.", parameterName),
+            };
+            var backup = new ScriptedNntpClient
+            {
+                BatchResponseCode = 222,
+                SingularResponseCode = (int)UsenetResponseType.ArticleExists,
+            };
+            using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(primary, host: "primary.example"),
+                CreateProvider(backup, host: "backup.example", providerType: ProviderType.BackupOnly),
+            ]);
+
+            var response = await client.StatAsync(segmentId, CancellationToken.None);
+            Assert.True(response.ArticleExists);
+        });
+
+        var warning = Assert.Single(events, IsUnclassifiedFetchWarning);
+        Assert.Equal("primary.example", PropertyText(warning, "ProviderKey"));
+        Assert.Equal("stat", PropertyText(warning, "Operation"));
+        Assert.Equal(typeof(ArgumentException).FullName, PropertyText(warning, "ExceptionType"));
+        Assert.Equal("Segment ID was invalid. (Parameter 'segmentId-context')", PropertyText(warning, "Reason"));
+        Assert.Equal(parameterName, PropertyText(warning, "ParameterName"));
+        Assert.Equal("0", PropertyText(warning, "AttemptIndex"));
+        Assert.Matches("^[0-9A-F]{12}$", PropertyText(warning, "SegmentHash"));
+        Assert.Equal(typeof(ArgumentException).FullName, PropertyText(warning, "InnermostExceptionType"));
+        Assert.Equal(PropertyText(warning, "Reason"), PropertyText(warning, "InnermostReason"));
+
+        var stack = Assert.Single(events, e =>
+            e.Level == LogEventLevel.Error &&
+            e.MessageTemplate.Text.StartsWith("Unclassified Usenet segment fetch failure stack", StringComparison.Ordinal));
+        Assert.NotNull(stack.Exception);
+        Assert.Equal("stat", PropertyText(stack, "Operation"));
+    }
+
+    [Fact]
+    public async Task StatAsync_RepeatedUnclassifiedFailure_IsThrottled()
+    {
+        const string parameterName = "segmentId-repeat";
+        var events = await CaptureLogsAsync(async () =>
+        {
+            var primary = new ScriptedNntpClient
+            {
+                BatchResponseCode = 222,
+                SingularException = _ => new ArgumentException("Repeated failure.", parameterName),
+            };
+            var backup = new ScriptedNntpClient
+            {
+                BatchResponseCode = 222,
+                SingularResponseCode = (int)UsenetResponseType.ArticleExists,
+            };
+            using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(primary, host: "primary.example"),
+                CreateProvider(backup, host: "backup.example", providerType: ProviderType.BackupOnly),
+            ]);
+
+            await client.StatAsync("<repeat-one@example>", CancellationToken.None);
+            await client.StatAsync("<repeat-two@example>", CancellationToken.None);
+        });
+
+        Assert.Single(events, IsUnclassifiedFetchWarning);
+        Assert.Single(events, e =>
+            e.Level == LogEventLevel.Error &&
+            e.MessageTemplate.Text.StartsWith("Unclassified Usenet segment fetch failure stack", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task UnclassifiedFailures_WithDifferentOperationsOrParameters_AreNotCoalesced()
+    {
+        var events = await CaptureLogsAsync(async () =>
+        {
+            await RunFailingRequestAsync("segmentId-operation", body: false);
+            await RunFailingRequestAsync("segmentId-operation", body: true);
+            await RunFailingRequestAsync("otherParameter", body: false);
+        });
+
+        var warnings = events.Where(IsUnclassifiedFetchWarning).ToArray();
+        Assert.Equal(3, warnings.Length);
+        Assert.Contains(warnings, e =>
+            PropertyText(e, "Operation") == "stat" &&
+            PropertyText(e, "ParameterName") == "segmentId-operation");
+        Assert.Contains(warnings, e =>
+            PropertyText(e, "Operation") == "body" &&
+            PropertyText(e, "ParameterName") == "segmentId-operation");
+        Assert.Contains(warnings, e =>
+            PropertyText(e, "Operation") == "stat" &&
+            PropertyText(e, "ParameterName") == "otherParameter");
+
+        static async Task RunFailingRequestAsync(string parameterName, bool body)
+        {
+            var primary = new ScriptedNntpClient
+            {
+                BatchResponseCode = 222,
+                SingularException = _ => new ArgumentException("Failure for throttling key.", parameterName),
+            };
+            var backup = new ScriptedNntpClient
+            {
+                BatchResponseCode = 222,
+                SingularResponseCode = body
+                    ? (int)UsenetResponseType.ArticleRetrievedBodyFollows
+                    : (int)UsenetResponseType.ArticleExists,
+            };
+            using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(primary, host: "primary.example"),
+                CreateProvider(backup, host: "backup.example", providerType: ProviderType.BackupOnly),
+            ]);
+
+            if (body)
+            {
+                var response = await client.DecodedBodyAsync("<operation@example>", CancellationToken.None);
+                await response.Stream!.DisposeAsync();
+            }
+            else
+            {
+                await client.StatAsync("<parameter@example>", CancellationToken.None);
+            }
+        }
     }
 
     [Fact]
@@ -1926,6 +2062,58 @@ public class MultiProviderNntpClientTests
         var aggregate = new AggregateException("one or more errors", inner);
         var status = MultiProviderNntpClient.ClassifyException(aggregate);
         Assert.Equal(SegmentFetch.FetchStatus.Corrupt, status);
+    }
+
+    private static bool IsUnclassifiedFetchWarning(LogEvent logEvent) =>
+        logEvent.Level == LogEventLevel.Warning
+        && logEvent.MessageTemplate.Text.StartsWith(
+            "Unclassified Usenet segment fetch failure.", StringComparison.Ordinal);
+
+    private static string PropertyText(LogEvent logEvent, string name)
+    {
+        if (!logEvent.Properties.TryGetValue(name, out var value))
+            return "";
+        return value is ScalarValue { Value: { } raw }
+            ? raw.ToString() ?? ""
+            : value.ToString();
+    }
+
+    private static async Task<IReadOnlyList<LogEvent>> CaptureLogsAsync(Func<Task> act)
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        try
+        {
+            await act().ConfigureAwait(false);
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+
+        return sink.Events;
+    }
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+
+        public IReadOnlyList<LogEvent> Events
+        {
+            get
+            {
+                lock (_events) return _events.ToArray();
+            }
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            lock (_events) _events.Add(logEvent);
+        }
     }
 
     internal static MultiConnectionNntpClient CreateProvider(

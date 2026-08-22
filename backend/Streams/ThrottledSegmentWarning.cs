@@ -16,7 +16,7 @@ internal static class ThrottledSegmentWarning
     private static readonly TimeSpan CleanupThreshold = TimeSpan.FromMinutes(5);
     private static int _callCount;
 
-    public static void Write(
+    public static bool Write(
         string key,
         string messageTemplate,
         params object?[] propertyValues)
@@ -42,7 +42,7 @@ internal static class ThrottledSegmentWarning
             }
         }
 
-        if (!shouldLog) return;
+        if (!shouldLog) return false;
 
         if (suppressed > 0)
         {
@@ -56,6 +56,8 @@ internal static class ThrottledSegmentWarning
 
         if (Interlocked.Increment(ref _callCount) % 256 == 0)
             Cleanup(now);
+
+        return true;
     }
 
     private static void Cleanup(DateTime now)

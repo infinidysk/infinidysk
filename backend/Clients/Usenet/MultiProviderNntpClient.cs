@@ -1,6 +1,8 @@
 ﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using System.Security.Cryptography;
+using System.Text;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Contexts;
@@ -504,7 +506,7 @@ public class MultiProviderNntpClient(
                 walk.NoteException(e);
                 var reason = ClassifyAndRecordFailure(
                     primaryProvider.MetricsKey, e, primaryStopwatch.ElapsedMilliseconds, 0,
-                    primaryTraceRange);
+                    primaryTraceRange, NntpOperation.PipelinedBody, segmentId);
                 (priorMisses ??= []).Add((primaryProvider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
             }
@@ -673,7 +675,8 @@ public class MultiProviderNntpClient(
                         walk.NoteException(e);
                         var reason = ClassifyAndRecordFailure(
                             provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
-                            priorMisses?.Count ?? 0, traceRange);
+                            priorMisses?.Count ?? 0, traceRange,
+                            NntpOperation.PipelinedBody, segmentId);
                         (priorMisses ??= []).Add((provider.MetricsKey, reason));
                         deferredCallback.Discard();
                         coordinator.CompleteAttempt();
@@ -904,7 +907,7 @@ public class MultiProviderNntpClient(
                 walk.NoteException(e);
                 var reason = ClassifyAndRecordFailure(
                     provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex,
-                    traceRange);
+                    traceRange, operation, segmentId);
                 (priorMisses ??= []).Add((provider.MetricsKey, reason));
                 deferredCallback.Discard();
                 lastException = ExceptionDispatchInfo.Capture(e);
@@ -1054,7 +1057,7 @@ public class MultiProviderNntpClient(
                 walk.NoteException(e);
                 var reason = ClassifyAndRecordFailure(
                     provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex,
-                    traceRange);
+                    traceRange, operation, articleId);
                 (priorMisses ??= new()).Add((provider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
                 lastOutcomeWasException = ClassifyException(e) != SegmentFetch.FetchStatus.Missing;
@@ -1229,29 +1232,75 @@ public class MultiProviderNntpClient(
 
     /// <summary>
     /// Classifies <paramref name="exception"/>, records the SegmentFetch row, and for residual
-    /// <see cref="SegmentFetch.FetchStatus.Other"/> logs the concrete exception type so support
-    /// packs stay diagnosable without a schema change.
+    /// <see cref="SegmentFetch.FetchStatus.Other"/> records sufficient request context for a
+    /// warning-level support pack to identify the unexpected throw site without exposing article IDs.
     /// </summary>
     private SegmentFetch.FetchStatus ClassifyAndRecordFailure(
         string metricsKey, Exception exception, long durationMs, int retries,
-        StreamTraceRangeContext? traceRange)
+        StreamTraceRangeContext? traceRange, NntpOperation operation, SegmentId? segmentId)
     {
         var status = ClassifyException(exception);
         RecordFetch(metricsKey, status, durationMs, retries, traceRange);
         if (status == SegmentFetch.FetchStatus.Other)
         {
-            // Keyed by exception type so a storm of the same novel failure logs once per
-            // minute and still names the type in support packs; the stack stays at Debug.
-            ThrottledSegmentWarning.Write(
-                exception.GetType().FullName ?? "unknown",
-                "Unclassified Usenet segment fetch failure. Host={Host} ExceptionType={ExceptionType}",
-                metricsKey, exception.GetType().FullName);
-            Log.Debug(
-                exception,
-                "Unclassified Usenet segment fetch failure stack. Host={Host}",
-                metricsKey);
+            exception.TryGetCausingException<ArgumentException>(out var argumentException);
+            var exceptionType = exception.GetType().FullName ?? "unknown";
+            var operationName = operation.ToString().ToLowerInvariant();
+            var parameterName = argumentException?.ParamName;
+            var segmentHash = HashSegmentId(segmentId);
+            var innermostException = exception.GetBaseException();
+            var warningKey = string.Join(
+                '\n',
+                exceptionType,
+                parameterName ?? "",
+                operationName);
+
+            // Coalesce only identical unexpected failures. The first event carries all the
+            // request context and the stack at Error so warning-level support packs retain it.
+            if (ThrottledSegmentWarning.Write(
+                    warningKey,
+                    "Unclassified Usenet segment fetch failure. " +
+                    "ProviderKey={ProviderKey} Operation={Operation} " +
+                    "ExceptionType={ExceptionType} Reason={Reason} ParameterName={ParameterName} " +
+                    "SegmentHash={SegmentHash} AttemptIndex={AttemptIndex} " +
+                    "InnermostExceptionType={InnermostExceptionType} InnermostReason={InnermostReason}",
+                    metricsKey,
+                    operationName,
+                    exceptionType,
+                    exception.Message,
+                    parameterName,
+                    segmentHash,
+                    retries,
+                    innermostException.GetType().FullName,
+                    innermostException.Message))
+            {
+                Log.Error(
+                    exception,
+                    "Unclassified Usenet segment fetch failure stack. " +
+                    "ProviderKey={ProviderKey} Operation={Operation} " +
+                    "ExceptionType={ExceptionType} Reason={Reason} ParameterName={ParameterName} " +
+                    "SegmentHash={SegmentHash} AttemptIndex={AttemptIndex} " +
+                    "InnermostExceptionType={InnermostExceptionType} InnermostReason={InnermostReason}",
+                    metricsKey,
+                    operationName,
+                    exceptionType,
+                    exception.Message,
+                    parameterName,
+                    segmentHash,
+                    retries,
+                    innermostException.GetType().FullName,
+                    innermostException.Message);
+            }
         }
         return status;
+    }
+
+    private static string? HashSegmentId(SegmentId? segmentId)
+    {
+        var value = segmentId?.ToString();
+        if (string.IsNullOrEmpty(value)) return null;
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..12];
     }
 
     /// <summary>
