@@ -504,7 +504,8 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             </SortableContext>
           </DndContext>
         </div>
-        <aside className="flex w-full shrink-0 xl:w-80 xl:self-stretch">
+        {/* Pin above widgets when stacked; restore document order for the xl right rail. */}
+        <aside className="order-first flex w-full shrink-0 xl:order-none xl:w-80 xl:self-stretch">
           <LiveReadsPanel paused={editMode} />
         </aside>
       </div>
