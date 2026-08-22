@@ -1100,9 +1100,9 @@ public class GetOverviewStatsController(
         };
     }
 
-    private static async Task<GetOverviewStatsResponse.CatalogueBlock> BuildCatalogueAsync(DavDatabaseContext ctx)
+    internal static async Task<GetOverviewStatsResponse.CatalogueBlock> BuildCatalogueAsync(DavDatabaseContext ctx)
     {
-        var sevenDaysAgo = DateTime.UtcNow.AddDays(-7);
+        var sevenDaysAgo = DateTime.Now.AddDays(-7);
 
         var files = ctx.Items.Where(i => i.Type == DavItem.ItemType.UsenetFile);
         var fileCount = await files.CountAsync().ConfigureAwait(false);
@@ -1137,9 +1137,9 @@ public class GetOverviewStatsController(
         };
     }
 
-    private static async Task<List<GetOverviewStatsResponse.IndexerRow>> BuildIndexersAsync(DavDatabaseContext ctx)
+    internal static async Task<List<GetOverviewStatsResponse.IndexerRow>> BuildIndexersAsync(DavDatabaseContext ctx)
     {
-        var cutoff = DateTime.UtcNow.AddDays(-30);
+        var cutoff = DateTime.Now.AddDays(-30);
         var rows = await ctx.HistoryItems
             .Where(h => h.CreatedAt >= cutoff && h.IndexerName != null)
             .GroupBy(h => h.IndexerName!)

@@ -45,7 +45,7 @@ public class HistoryRetentionService(
     {
         if (retentionDays <= 0) return 0;
 
-        var cutoff = DateTime.UtcNow.AddDays(-retentionDays);
+        var cutoff = DateTime.Now.AddDays(-retentionDays);
         var totalRemoved = 0;
 
         while (true)

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Npgsql;
+using NzbWebDAV.Api.Controllers.GetOverviewStats;
 using NzbWebDAV.Api.SabControllers.GetHistory;
 using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Clients.Usenet;
@@ -13,6 +14,7 @@ using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Tasks;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Tests.Database;
@@ -104,6 +106,109 @@ public sealed class PostgresMigrationTests
         Assert.Equal(1, response.History.TotalCount);
     }
 
+    [SkippableFact]
+    public async Task WallClockTimestamps_AcceptUtcValuesAndAgeQueries()
+    {
+        Skip.IfNot(DatabaseProviderConfig.IsPostgres,
+            "PostgreSQL tests require DATABASE_PROVIDER=postgres.");
+
+        var schema = $"nzbdav_wall_clock_{Guid.NewGuid():N}";
+        var connectionString = DatabaseProviderConfig.PostgresConnectionString;
+        await using var adminConnection = new NpgsqlConnection(connectionString);
+        await adminConnection.OpenAsync();
+        await ExecuteAsync(adminConnection, $"CREATE SCHEMA \"{schema}\"");
+
+        try
+        {
+            var scopedConnectionString = new NpgsqlConnectionStringBuilder(connectionString)
+            {
+                SearchPath = schema
+            }.ConnectionString;
+            var options = new DbContextOptionsBuilder<PostgresDavDatabaseContext>()
+                .UseNpgsql(scopedConnectionString)
+                .Options;
+            await using var context = new PostgresDavDatabaseContext(options);
+            await context.Database.MigrateAsync();
+
+            var utcCreatedAt = DateTime.UtcNow;
+            var oldHistoryId = Guid.NewGuid();
+            context.HistoryItems.AddRange(
+                CreateHistory(oldHistoryId, "retention", DateTime.Now.AddDays(-100)),
+                CreateHistory(Guid.NewGuid(), "indexer", DateTime.Now.AddDays(-20), indexerName: "Example"),
+                CreateHistory(Guid.NewGuid(), "utc", utcCreatedAt));
+            context.Items.AddRange(
+                CreateItem("old-file", DateTime.Now.AddDays(-8)),
+                CreateItem("recent-file", DateTime.Now.AddDays(-2)));
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
+
+            var utcRoundTrip = await context.HistoryItems.SingleAsync(x => x.JobName == "utc");
+            Assert.Equal(
+                DateTime.SpecifyKind(utcCreatedAt.ToLocalTime(), DateTimeKind.Unspecified),
+                utcRoundTrip.CreatedAt);
+
+            var matchingUtcRows = await context.HistoryItems
+                .Where(x => x.CreatedAt <= utcCreatedAt)
+                .CountAsync();
+            Assert.Equal(3, matchingUtcRows);
+
+            var catalogue = await GetOverviewStatsController.BuildCatalogueAsync(context);
+            Assert.Equal(2, catalogue.FileCount);
+            Assert.Equal(1, catalogue.AddedLast7Days);
+
+            var indexers = await GetOverviewStatsController.BuildIndexersAsync(context);
+            Assert.Equal("Example", Assert.Single(indexers).Name);
+
+            var dbClient = new DavDatabaseClient(context);
+            Assert.Equal(1, await HistoryRetentionService.SweepAsync(dbClient, 90, CancellationToken.None));
+            Assert.Null(await context.HistoryItems.FindAsync(oldHistoryId));
+
+            context.HistoryItems.Add(CreateHistory(Guid.NewGuid(), "prune", DateTime.Now.AddDays(-100),
+                category: "prune"));
+            await context.SaveChangesAsync();
+
+            Assert.Equal(1, await PruneCompletedHistoryTask.BuildFilterQuery(context, "prune", 90)
+                .CountAsync());
+        }
+        finally
+        {
+            await ExecuteAsync(adminConnection, $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+        }
+    }
+
+    private static DavItem CreateItem(string name, DateTime createdAt)
+    {
+        var id = Guid.NewGuid();
+        return new DavItem
+        {
+            Id = id,
+            IdPrefix = id.ToString("N")[..DavItem.IdPrefixLength],
+            CreatedAt = createdAt,
+            ParentId = DavItem.Root.Id,
+            Name = name,
+            FileSize = 42,
+            Type = DavItem.ItemType.UsenetFile,
+            SubType = DavItem.ItemSubType.NzbFile,
+            Path = $"/content/{name}",
+        };
+    }
+
+    private static HistoryItem CreateHistory(
+        Guid id,
+        string jobName,
+        DateTime createdAt,
+        string category = "test",
+        string? indexerName = null) => new()
+        {
+            Id = id,
+            CreatedAt = createdAt,
+            FileName = $"{jobName}.nzb",
+            JobName = jobName,
+            Category = category,
+            IndexerName = indexerName,
+            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+        };
+
     private static async Task ExecuteAsync(NpgsqlConnection connection, string commandText)
     {
         await using var command = new NpgsqlCommand(commandText, connection);
@@ -173,7 +278,7 @@ public sealed class PostgresMigrationTests
                 context.QueueItems.Add(new QueueItem
                 {
                     Id = Guid.NewGuid(),
-                    CreatedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
+                    CreatedAt = DateTime.Now,
                     FileName = "queue.nzb",
                     JobName = "queue",
                     Category = "test",
@@ -182,7 +287,7 @@ public sealed class PostgresMigrationTests
                 context.HistoryItems.Add(new HistoryItem
                 {
                     Id = Guid.NewGuid(),
-                    CreatedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
+                    CreatedAt = DateTime.Now,
                     FileName = "history.nzb",
                     JobName = "history",
                     Category = "test",

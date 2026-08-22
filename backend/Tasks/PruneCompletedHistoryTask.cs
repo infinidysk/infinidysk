@@ -86,7 +86,7 @@ public class PruneCompletedHistoryTask : BaseTask
         if (olderThanDays is > 0)
         {
             var days = olderThanDays.Value;
-            query = query.Where(h => h.CreatedAt < DateTime.UtcNow.AddDays(-days));
+            query = query.Where(h => h.CreatedAt < DateTime.Now.AddDays(-days));
         }
         return query;
     }

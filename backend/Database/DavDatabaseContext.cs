@@ -28,6 +28,22 @@ public class DavDatabaseContext : DbContext
         value => RarPartsHashCode(value),
         value => CloneRarParts(value));
 
+    private static readonly ValueConverter<DateTime, DateTime> PostgresWallClockDateTimeConverter = new(
+        value => value.Kind == DateTimeKind.Utc
+            ? DateTime.SpecifyKind(value.ToLocalTime(), DateTimeKind.Unspecified)
+            : DateTime.SpecifyKind(value, DateTimeKind.Unspecified),
+        value => DateTime.SpecifyKind(value, DateTimeKind.Unspecified));
+
+    private static readonly ValueConverter<DateTime?, DateTime?> PostgresNullableWallClockDateTimeConverter = new(
+        value => value.HasValue
+            ? value.Value.Kind == DateTimeKind.Utc
+                ? DateTime.SpecifyKind(value.Value.ToLocalTime(), DateTimeKind.Unspecified)
+                : DateTime.SpecifyKind(value.Value, DateTimeKind.Unspecified)
+            : null,
+        value => value.HasValue
+            ? DateTime.SpecifyKind(value.Value, DateTimeKind.Unspecified)
+            : null);
+
     private static bool StringArraysEqual(string[]? left, string[]? right) =>
         ReferenceEquals(left, right) ||
         (left is not null && right is not null && left.SequenceEqual(right));
@@ -961,12 +977,20 @@ public class DavDatabaseContext : DbContext
         if (DatabaseProviderConfig.IsPostgres)
         {
             // Existing installs store these values as SQLite date/time text with
-            // wall-clock semantics. Mapping to timestamp without time zone preserves
-            // that behavior and accepts the local DateTime values created by the app.
-            b.Entity<DavItem>().Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
-            b.Entity<QueueItem>().Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
-            b.Entity<QueueItem>().Property(x => x.PauseUntil).HasColumnType("timestamp without time zone");
-            b.Entity<HistoryItem>().Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
+            // wall-clock semantics. Normalize their kind so Npgsql accepts UTC
+            // values supplied by callers without changing their intended time basis.
+            b.Entity<DavItem>().Property(x => x.CreatedAt)
+                .HasColumnType("timestamp without time zone")
+                .HasConversion(PostgresWallClockDateTimeConverter);
+            b.Entity<QueueItem>().Property(x => x.CreatedAt)
+                .HasColumnType("timestamp without time zone")
+                .HasConversion(PostgresWallClockDateTimeConverter);
+            b.Entity<QueueItem>().Property(x => x.PauseUntil)
+                .HasColumnType("timestamp without time zone")
+                .HasConversion(PostgresNullableWallClockDateTimeConverter);
+            b.Entity<HistoryItem>().Property(x => x.CreatedAt)
+                .HasColumnType("timestamp without time zone")
+                .HasConversion(PostgresWallClockDateTimeConverter);
         }
     }
 
