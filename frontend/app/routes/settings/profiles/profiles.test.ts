@@ -33,7 +33,7 @@ function ProfilesHarness({ onConfigChange }: { onConfigChange?: (config: Record<
 
 describe("ProfilesSettings result ordering", () => {
   it("keeps existing profiles on Off until a quality mode is selected", async () => {
-    const onConfigChange = vi.fn();
+    const onConfigChange = vi.fn<(config: Record<string, string>) => void>();
     const user = userEvent.setup();
     render(createElement(ProfilesHarness, { onConfigChange }));
 
@@ -42,10 +42,8 @@ describe("ProfilesSettings result ordering", () => {
 
     await user.selectOptions(ordering, "ResolutionAndSource");
 
-    expect(onConfigChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        "profiles.instances": expect.stringContaining('"QualitySort":"ResolutionAndSource"'),
-      }),
+    expect(onConfigChange.mock.lastCall?.[0]?.["profiles.instances"]).toContain(
+      '"QualitySort":"ResolutionAndSource"',
     );
   });
 });

@@ -170,17 +170,17 @@ public static class FilenameMatcher
     public static IReadOnlyList<int> ParseReleaseYears(string? releaseTitle)
     {
         if (string.IsNullOrWhiteSpace(releaseTitle)) return [];
-        var years = new List<int>();
-        foreach (Match match in ReleaseYearRegex.Matches(releaseTitle))
-        {
-            if (int.TryParse(match.Groups["year"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var year)
-                && year is >= 1900 and <= 2199)
-            {
-                years.Add(year);
-            }
-        }
-
-        return years;
+        return ReleaseYearRegex.Matches(releaseTitle)
+            .Select(match => int.TryParse(
+                match.Groups["year"].Value,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out var year)
+                    ? (int?)year
+                    : null)
+            .Where(year => year is >= 1900 and <= 2199)
+            .Select(year => year!.Value)
+            .ToList();
     }
 
     /// <summary>
