@@ -108,10 +108,13 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
             ) : (
               <span className="btn btn-ghost h-10 min-h-10 shrink-0 gap-2 rounded-[calc(var(--radius-box)-1px)] border-0 bg-base-200 px-4 whitespace-nowrap hover:bg-base-200 pointer-events-none">
                 <span className="inline-flex items-center gap-2 whitespace-nowrap">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-base-content/40">
+                  <span className="hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-base-content/40 sm:inline">
                     {channelLabel}
                   </span>
-                  <span className="h-3 w-px bg-base-content/15" aria-hidden="true" />
+                  <span
+                    className="hidden h-3 w-px bg-base-content/15 sm:block"
+                    aria-hidden="true"
+                  />
                   <span className="font-mono text-sm tracking-tight text-base-content/80">
                     {displayVersion}
                   </span>
