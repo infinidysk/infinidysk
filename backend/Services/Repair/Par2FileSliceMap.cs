@@ -148,11 +148,8 @@ internal sealed class Par2FileSliceMap
         // slice. This works for every range shape accepted by TryCreate, including
         // persisted non-contiguous or overlapping ranges.
         var deltas = new SortedDictionary<int, long>();
-        foreach (var range in SegmentRanges)
+        foreach (var range in SegmentRanges.Where(range => range.Count > 0))
         {
-            if (range.Count == 0)
-                continue;
-
             var first = checked((int)(range.StartInclusive / SliceSize));
             var last = checked((int)((range.EndExclusive - 1) / SliceSize));
             AddDelta(first, range.Count);
