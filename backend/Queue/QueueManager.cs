@@ -521,6 +521,15 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         if (remaining.Length > 0)
         {
             try { await Task.WhenAll(remaining).ConfigureAwait(false); }
+            catch (OperationCanceledException)
+            {
+                // Workers are cancelled deliberately during shutdown.
+            }
+            catch (AggregateException e) when (
+                e.Flatten().InnerExceptions.All(exception => exception.IsCancellationException()))
+            {
+                // Task.WhenAll may retain multiple expected worker cancellations.
+            }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
             catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016

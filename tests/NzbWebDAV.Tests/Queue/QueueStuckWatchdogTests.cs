@@ -174,6 +174,7 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             return (claimed, stall);
         };
 
+        var pauseWindowStarted = DateTime.Now;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var loop = _queueManager.ProcessQueueAsync(cts.Token);
 
@@ -187,9 +188,15 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         }
 
         Assert.NotNull(inProgress);
-        stall.BindWorker(GetWorkerCts(inProgress!));
+        var workerCts = GetWorkerCts(inProgress!);
+        stall.BindWorker(workerCts);
 
         deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && !workerCts.IsCancellationRequested)
+            await Task.Delay(20);
+
+        Assert.True(workerCts.IsCancellationRequested);
+
         DateTime? pauseUntil = null;
         while (DateTime.UtcNow < deadline)
         {
@@ -203,8 +210,10 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         }
 
         Assert.NotNull(pauseUntil);
-        var now = DateTime.Now;
-        Assert.InRange(pauseUntil!.Value, now + TimeSpan.FromMinutes(14), now + TimeSpan.FromMinutes(21));
+        Assert.InRange(
+            pauseUntil!.Value,
+            pauseWindowStarted + TimeSpan.FromMinutes(14),
+            pauseWindowStarted + TimeSpan.FromMinutes(21));
 
         await using (var ctx = new DavDatabaseContext(_options))
         {
@@ -212,10 +221,16 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             Assert.Equal(1, await ctx.QueueItems.CountAsync());
         }
 
-        Assert.True(GetWorkerCts(inProgress!).IsCancellationRequested);
-
         await cts.CancelAsync();
-        await loop.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await loop.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (OperationCanceledException)
+        {
+            // ProcessQueueAsync may still be inside GetTopQueueItem when the loop token
+            // is cancelled; shutdown cancellation is expected once assertions pass.
+        }
     }
 
     [Fact]

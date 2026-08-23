@@ -103,13 +103,22 @@ public class StreamingResponseWriteWatchdogTests
         await WaitUntil(() => budget.HasWaiters);
 
         using var readCts = new CancellationTokenSource();
-        using var dest = new DelayedCompletingWriteStream(TimeSpan.FromMilliseconds(400));
+        using var dest = new BlockingWriteStream(writeCount: 2);
+        var timeProvider = new ManualTimeProvider();
         var watchdog = new StreamingResponseWriteWatchdog(
-            TimeSpan.FromMilliseconds(700), readCts, budget);
+            TimeSpan.FromMilliseconds(700), readCts, budget, timeProvider);
 
-        await watchdog.WriteAsync(dest, new byte[100], CancellationToken.None);
-        var ex = await Assert.ThrowsAsync<StreamingWriteTimeoutException>(async () =>
-            await watchdog.WriteAsync(dest, new byte[100], CancellationToken.None));
+        var firstWrite = watchdog.WriteAsync(dest, new byte[100], CancellationToken.None).AsTask();
+        await dest.WaitForWriteAsync(0);
+        timeProvider.Advance(TimeSpan.FromMilliseconds(400));
+        dest.ReleaseWrite(0);
+        await firstWrite;
+
+        var secondWrite = watchdog.WriteAsync(dest, new byte[100], CancellationToken.None).AsTask();
+        await dest.WaitForWriteAsync(1);
+        timeProvider.Advance(TimeSpan.FromMilliseconds(400));
+        dest.ReleaseWrite(1);
+        var ex = await Assert.ThrowsAsync<StreamingWriteTimeoutException>(() => secondWrite);
 
         Assert.True(readCts.IsCancellationRequested);
         Assert.Equal(StreamingWriteTimeoutException.AggregateReclaimReason, ex.Reason);
@@ -147,8 +156,13 @@ public class StreamingResponseWriteWatchdogTests
         }
     }
 
-    private sealed class DelayedCompletingWriteStream(TimeSpan delay) : Stream
+    private sealed class BlockingWriteStream(int writeCount) : Stream
     {
+        private readonly WriteGate[] _gates = Enumerable.Range(0, writeCount)
+            .Select(_ => new WriteGate())
+            .ToArray();
+        private int _nextWrite;
+
         public override bool CanWrite => true;
         public override bool CanRead => false;
         public override bool CanSeek => false;
@@ -160,10 +174,35 @@ public class StreamingResponseWriteWatchdogTests
         public override void SetLength(long value) { }
         public override void Write(byte[] buffer, int offset, int count) { }
 
+        public Task WaitForWriteAsync(int index) => _gates[index].Started.Task;
+
+        public void ReleaseWrite(int index) => _gates[index].Release.TrySetResult();
+
         public override async ValueTask WriteAsync(
             ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            var gate = _gates[Interlocked.Increment(ref _nextWrite) - 1];
+            gate.Started.TrySetResult();
+            await gate.Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
+
+        private sealed class WriteGate
+        {
+            public TaskCompletionSource Started { get; } =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public TaskCompletionSource Release { get; } =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private long _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
+
+        public void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks);
     }
 }

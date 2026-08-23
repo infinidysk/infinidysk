@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Streams;
 
@@ -15,7 +14,8 @@ namespace NzbWebDAV.Utils;
 internal sealed class StreamingResponseWriteWatchdog(
     TimeSpan timeout,
     CancellationTokenSource readCts,
-    InFlightArticleBudget? budget)
+    InFlightArticleBudget? budget,
+    TimeProvider? timeProvider = null)
 {
     /// <summary>
     /// Size of the WebDAV/`/view` copy buffer. Aggregate reclaim fires when a
@@ -26,16 +26,18 @@ internal sealed class StreamingResponseWriteWatchdog(
 
     private long _windowWriteTicks;
     private long _windowBytes;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async ValueTask WriteAsync(
         Stream dest,
         Memory<byte> chunk,
         CancellationToken cancellationToken)
     {
-        var writeStarted = Stopwatch.GetTimestamp();
+        var writeStarted = _timeProvider.GetTimestamp();
         await WriteWithProgressTimeoutAsync(dest, chunk, timeout, readCts, cancellationToken)
             .ConfigureAwait(false);
-        if (ObserveWrite(chunk.Length, Stopwatch.GetElapsedTime(writeStarted)))
+        if (ObserveWrite(chunk.Length, _timeProvider.GetElapsedTime(
+            writeStarted, _timeProvider.GetTimestamp())))
         {
             await readCts.CancelAsync().ConfigureAwait(false);
             throw new StreamingWriteTimeoutException(
