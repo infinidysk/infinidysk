@@ -14,8 +14,11 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     private static readonly ConcurrentDictionary<(string Host, string Path), int>
         SymlinkOrStrmToEpisodeFileIdCache = new();
 
-    public Task<SonarrQueue> GetSonarrQueueAsync() =>
-        Get<SonarrQueue>($"/queue?protocol=usenet&pageSize=5000");
+    public Task<SonarrQueue> GetSonarrQueueAsync(CancellationToken ct = default) =>
+        Get<SonarrQueue>($"/queue?protocol=usenet&pageSize=5000", ct);
+
+    public override async Task<ArrQueue<ArrQueueRecord>> GetQueueAsync(CancellationToken ct = default) =>
+        (await GetSonarrQueueAsync(ct).ConfigureAwait(false)).ToGeneric();
 
     public Task<List<SonarrSeries>> GetAllSeries(CancellationToken ct = default) =>
         Get<List<SonarrSeries>>($"/series", ct);

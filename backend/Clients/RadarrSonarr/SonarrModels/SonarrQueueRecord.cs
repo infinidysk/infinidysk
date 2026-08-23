@@ -13,4 +13,6 @@ public class SonarrQueueRecord : ArrQueueRecord
 
     [JsonPropertyName("seasonNumber")]
     public int SeasonNumber { get; set; }
+
+    public override string? GetMediaIdentity() => EpisodeId > 0 ? $"episode:{EpisodeId}" : null;
 }

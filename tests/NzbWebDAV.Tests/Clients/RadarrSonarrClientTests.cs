@@ -330,6 +330,32 @@ public class RadarrSonarrClientTests
     }
 
     [Fact]
+    public async Task RadarrQueue_PreservesMovieIdForReplacementSearchBudget()
+    {
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/queue?protocol=usenet&pageSize=5000",
+                JsonResponse("""{"records":[{"id":1,"movieId":42}]}"""))));
+        var client = new TestRadarrClient(httpClient);
+
+        var record = Assert.Single((await client.GetQueueAsync()).Records);
+
+        Assert.Equal("movie:42", record.GetMediaIdentity());
+    }
+
+    [Fact]
+    public async Task SonarrQueue_PreservesEpisodeIdForReplacementSearchBudget()
+    {
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/queue?protocol=usenet&pageSize=5000",
+                JsonResponse("""{"records":[{"id":1,"seriesId":42,"episodeId":99}]}"""))));
+        var client = new TestSonarrClient(httpClient);
+
+        var record = Assert.Single((await client.GetQueueAsync()).Records);
+
+        Assert.Equal("episode:99", record.GetMediaIdentity());
+    }
+
+    [Fact]
     public void SharedHttpClient_HasExplicitTimeout()
     {
         Assert.Equal(TimeSpan.FromSeconds(30), ArrClient.RequestTimeout);

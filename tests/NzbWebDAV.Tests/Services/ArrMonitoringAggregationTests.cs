@@ -1,4 +1,5 @@
 using NzbWebDAV.Config;
+using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestUtils;
 using Serilog;
@@ -105,6 +106,119 @@ public sealed class ArrMonitoringAggregationTests
             Assert.DoesNotContain(
                 sink.Events,
                 e => e.Level == LogEventLevel.Debug && e.Properties.ContainsKey("QueueItemTitle"));
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+    }
+
+    [Fact]
+    public void MatchingStatusMessages_ReturnOriginalArrReason()
+    {
+        var record = new ArrQueueRecord
+        {
+            StatusMessages =
+            [
+                new ArrQueueStatusMessage
+                {
+                    Messages = ["Found archive file, might need to be extracted: release.part01.rar"],
+                },
+            ],
+        };
+
+        var reasons = record.GetMatchingStatusMessages(["Found archive file, might need to be extracted"]);
+
+        Assert.Equal(
+            ["Found archive file, might need to be extracted: release.part01.rar"],
+            reasons);
+    }
+
+    [Fact]
+    public void GetActionableStuckRecords_LeavesDownloadingRecordsAlone()
+    {
+        var queue = new ArrQueue<ArrQueueRecord>
+        {
+            Records =
+            [
+                new ArrQueueRecord
+                {
+                    Id = 1,
+                    Status = "downloading",
+                    StatusMessages =
+                    [
+                        new ArrQueueStatusMessage { Messages = ["Found archive file, might need to be extracted"] },
+                    ],
+                },
+                new ArrQueueRecord
+                {
+                    Id = 2,
+                    Status = "completed",
+                    StatusMessages =
+                    [
+                        new ArrQueueStatusMessage { Messages = ["Found archive file, might need to be extracted"] },
+                    ],
+                },
+            ],
+        };
+
+        var records = ArrMonitoringService.GetActionableStuckRecords(
+            queue,
+            [new ArrConfig.QueueRule
+            {
+                Message = "Found archive file, might need to be extracted",
+                Action = ArrConfig.QueueAction.RemoveAndBlocklistAndSearch,
+            }]);
+
+        Assert.Equal([2], records.Select(x => x.Id));
+    }
+
+    [Fact]
+    public void SummarizeReason_FlattensDeduplicatesAndTruncates()
+    {
+        var reason = ArrMonitoringService.SummarizeReason(
+            [
+                "No files found\nare eligible for import",
+                "No files found\nare eligible for import",
+                new string('x', 600),
+            ],
+            []);
+
+        Assert.StartsWith("No files found are eligible for import; ", reason);
+        Assert.EndsWith("…", reason);
+        Assert.True(reason.Length <= 512);
+    }
+
+    [Fact]
+    public void LogResolutionSummary_EmitsExactArrReason()
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+
+        try
+        {
+            ArrMonitoringService.LogResolutionSummary(
+                [
+                    (
+                        "Release-A",
+                        ArrConfig.QueueAction.RemoveAndBlocklistAndSearch,
+                        "Found archive file, might need to be extracted: release.part01.rar",
+                        "Arr media ID"
+                    ),
+                ],
+                "http://radarr:7878");
+
+            var warning = Assert.Single(
+                sink.Events,
+                e => e.Level == LogEventLevel.Warning && e.Properties.ContainsKey("Reason"));
+            Assert.Equal(
+                "Found archive file, might need to be extracted: release.part01.rar",
+                warning.Properties["Reason"].LiteralValue());
+            Assert.Equal("Arr media ID", warning.Properties["IdentitySource"].LiteralValue());
         }
         finally
         {

@@ -18,7 +18,9 @@ additional Arr apps such as Lidarr in the future. Config key: `arr.instances`
 (`GET /api`). It works with already-saved (masked) API keys — you do not need to re-enter
 the key after reload. Failures show a reason (authentication, HTTP status, or network error).
 
-Only **Usenet** queue items are acted upon. Typical mappings:
+Only **Usenet** queue items that Radarr or Sonarr reports as completed or awaiting import
+are acted upon. Downloads that are still queued or downloading are never removed by these
+rules. Typical mappings:
 
 - **Remove, Blocklist, and Search** — no eligible files, samples, no audio tracks
 - **Remove and Blocklist** — not an upgrade / custom format
@@ -26,6 +28,18 @@ Only **Usenet** queue items are acted upon. Typical mappings:
 - **Do Nothing** — ID mismatches and similar manual-import cases
 
 Any action other than **Do Nothing** tells the Arr to delete the queue record with `removeFromClient=true`. The Arr then removes the download from InfiniDysk History even when its own **Remove Completed** checkbox is off. That is independent of mounted files, which stay.
+
+### Replacement-search safety limit
+
+**Remove, Blocklist, and Search** is bounded to **3 automatic replacement searches in
+30 minutes per Radarr movie or Sonarr episode** by default. Once a media item reaches
+that limit, InfiniDysk still removes and blocklists its rejected release but does not
+start another automatic search. Adjust both values in **Automatic queue management**
+when a library needs a stricter or more permissive policy.
+
+The queue-monitor warning includes the matching Arr import message, so support packs
+show the actual rejection (for example, an archive, an ineligible file, or an import
+path problem) that led to the action.
 
 Disabling an instance opts it out of stuck-queue actions, Arr-linked repairs, and health polling. Use **Arr Health** off when you still want queue rules without Overview polling.
 

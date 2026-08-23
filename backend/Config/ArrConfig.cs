@@ -4,9 +4,14 @@ namespace NzbWebDAV.Config;
 
 public class ArrConfig
 {
+    public const int DefaultQueueReplacementSearchLimit = 3;
+    public const int DefaultQueueReplacementSearchWindowMinutes = 30;
+
     public List<ConnectionDetails> RadarrInstances { get; set; } = [];
     public List<ConnectionDetails> SonarrInstances { get; set; } = [];
     public List<QueueRule> QueueRules { get; set; } = [];
+    public int QueueReplacementSearchLimit { get; set; } = DefaultQueueReplacementSearchLimit;
+    public int QueueReplacementSearchWindowMinutes { get; set; } = DefaultQueueReplacementSearchWindowMinutes;
 
     /// <summary>
     /// Clients for enabled instances only. Disabling an instance opts it out of
@@ -26,6 +31,11 @@ public class ArrConfig
 
     public int GetInstanceCount() =>
         RadarrInstances.Count + SonarrInstances.Count;
+
+    public int EffectiveQueueReplacementSearchLimit() => Math.Clamp(QueueReplacementSearchLimit, 1, 10);
+
+    public TimeSpan EffectiveQueueReplacementSearchWindow() =>
+        TimeSpan.FromMinutes(Math.Clamp(QueueReplacementSearchWindowMinutes, 1, 1440));
 
     public static string MakeInstanceKey(string appType, string host) =>
         $"{appType}|{host.TrimEnd('/').ToLowerInvariant()}";

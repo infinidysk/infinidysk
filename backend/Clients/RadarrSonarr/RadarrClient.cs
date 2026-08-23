@@ -20,8 +20,11 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public Task<List<RadarrMovie>> GetMoviesAsync(CancellationToken ct = default) =>
         Get<List<RadarrMovie>>($"/movie", ct);
 
-    public Task<RadarrQueue> GetRadarrQueueAsync() =>
-        Get<RadarrQueue>($"/queue?protocol=usenet&pageSize=5000");
+    public Task<RadarrQueue> GetRadarrQueueAsync(CancellationToken ct = default) =>
+        Get<RadarrQueue>($"/queue?protocol=usenet&pageSize=5000", ct);
+
+    public override async Task<ArrQueue<ArrQueueRecord>> GetQueueAsync(CancellationToken ct = default) =>
+        (await GetRadarrQueueAsync(ct).ConfigureAwait(false)).ToGeneric();
 
     public Task<HttpStatusCode> DeleteMovieFile(int id, CancellationToken ct = default) =>
         Delete($"/moviefile/{id}", ct: ct);

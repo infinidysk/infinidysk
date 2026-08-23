@@ -34,6 +34,8 @@ interface ArrConfig {
   RadarrInstances: ConnectionDetails[];
   SonarrInstances: ConnectionDetails[];
   QueueRules: QueueRule[];
+  QueueReplacementSearchLimit?: number;
+  QueueReplacementSearchWindowMinutes?: number;
 }
 
 function parseArrConfig(value: string): ArrConfig {
@@ -218,6 +220,22 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
     [arrConfig, updateConfig],
   );
 
+  const updateReplacementSearchBudget = useCallback(
+    (field: "QueueReplacementSearchLimit" | "QueueReplacementSearchWindowMinutes", value: string) => {
+      const fallback =
+        field === "QueueReplacementSearchLimit"
+          ? (arrConfig.QueueReplacementSearchLimit ?? 3)
+          : (arrConfig.QueueReplacementSearchWindowMinutes ?? 30);
+      const limit = field === "QueueReplacementSearchLimit" ? 10 : 1440;
+      const parsed = Number.parseInt(value, 10);
+      updateConfig({
+        ...arrConfig,
+        [field]: Number.isFinite(parsed) ? Math.max(1, Math.min(limit, parsed)) : fallback,
+      });
+    },
+    [arrConfig, updateConfig],
+  );
+
   return (
     <SettingsPage>
       <SettingsIntro>
@@ -322,6 +340,37 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
               Configure what to do for items stuck in Radarr / Sonarr queues. Different actions can
               be configured for different status messages. Only usenet queue items will be acted
               upon.
+            </div>
+            <div className="flex flex-wrap items-end gap-4 rounded-box border border-base-content/10 bg-base-200 p-3">
+              <label className="flex flex-col gap-1 text-sm text-base-content/80">
+                Automatic replacement searches
+                <Input
+                  type="number"
+                  min={1}
+                  max={10}
+                  className="w-24"
+                  value={arrConfig.QueueReplacementSearchLimit ?? 3}
+                  onChange={(e) => updateReplacementSearchBudget("QueueReplacementSearchLimit", e.target.value)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-base-content/80">
+                Per window (minutes)
+                <Input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  className="w-28"
+                  value={arrConfig.QueueReplacementSearchWindowMinutes ?? 30}
+                  onChange={(e) =>
+                    updateReplacementSearchBudget("QueueReplacementSearchWindowMinutes", e.target.value)
+                  }
+                />
+              </label>
+              <p className="max-w-xl text-[11px] leading-relaxed text-base-content/55">
+                “Remove, Blocklist, and Search” is limited per movie or episode. When the limit is
+                reached, InfiniDysk still removes and blocklists the rejected release but does not
+                trigger another automatic search.
+              </p>
             </div>
             <ul className="divide-y divide-base-content/10 rounded-box border border-base-content/10 bg-base-200">
               {queueStatusMessages.map((queueStatusMessage, index) => {

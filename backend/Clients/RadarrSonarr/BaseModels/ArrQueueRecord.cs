@@ -47,8 +47,27 @@ public class ArrQueueRecord
 
     public bool HasStatusMessage(string message)
     {
+        return GetMatchingStatusMessages([message]).Count > 0;
+    }
+
+    /// <summary>
+    /// Returns the original Arr status text, rather than the configured substring
+    /// that matched it, so callers can give operators the actionable import reason.
+    /// </summary>
+    public IReadOnlyList<string> GetMatchingStatusMessages(IEnumerable<string> messages)
+    {
+        var configuredMessages = messages
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+        if (configuredMessages.Length == 0) return [];
+
         return StatusMessages
             .SelectMany(x => x.Messages)
-            .Any(x => x.Contains(message, StringComparison.Ordinal));
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Where(status => configuredMessages.Any(message => status.Contains(message, StringComparison.Ordinal)))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
+
+    public virtual string? GetMediaIdentity() => null;
 }

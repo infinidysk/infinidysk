@@ -18,6 +18,21 @@ public class ArrConfigTests
         Assert.Null(instance.Name);
         Assert.True(instance.Enabled);
         Assert.Equal("http://Radarr:7878/", instance.Host);
+        Assert.Equal(3, parsed.EffectiveQueueReplacementSearchLimit());
+        Assert.Equal(TimeSpan.FromMinutes(30), parsed.EffectiveQueueReplacementSearchWindow());
+    }
+
+    [Fact]
+    public void ReplacementSearchBudget_ClampsInvalidConfiguration()
+    {
+        var config = new ArrConfig
+        {
+            QueueReplacementSearchLimit = 99,
+            QueueReplacementSearchWindowMinutes = 0,
+        };
+
+        Assert.Equal(10, config.EffectiveQueueReplacementSearchLimit());
+        Assert.Equal(TimeSpan.FromMinutes(1), config.EffectiveQueueReplacementSearchWindow());
     }
 
     [Fact]
