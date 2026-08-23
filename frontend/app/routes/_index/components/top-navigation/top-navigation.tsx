@@ -111,7 +111,10 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
                   <span className="hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-base-content/40 sm:inline">
                     {channelLabel}
                   </span>
-                  <span className="hidden h-3 w-px bg-base-content/15 sm:block" aria-hidden="true" />
+                  <span
+                    className="hidden h-3 w-px bg-base-content/15 sm:block"
+                    aria-hidden="true"
+                  />
                   <span className="font-mono text-sm tracking-tight text-base-content/80">
                     {displayVersion}
                   </span>
