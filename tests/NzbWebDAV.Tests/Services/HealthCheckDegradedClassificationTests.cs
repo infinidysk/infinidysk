@@ -742,7 +742,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             _failureTracker,
             _queueManager,
             par2,
-            _patchStore);
+            _patchStore,
+            new ArrReplacementSearchBudget());
         return (service, par2);
     }
 

@@ -17,31 +17,61 @@ public sealed class ArrReplacementSearchBudget
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public bool TryReserve(string mediaKey, int limit, TimeSpan window)
+    public bool TryReserve(string mediaKey, int limit, TimeSpan window) =>
+        TryReserveAll([mediaKey], limit, window);
+
+    /// <summary>
+    /// Reserves every media key or none of them. A season-pack <c>EpisodeSearch</c>
+    /// must not start when any linked episode is already at its limit.
+    /// </summary>
+    public bool TryReserveAll(IReadOnlyList<string> mediaKeys, int limit, TimeSpan window)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(mediaKey);
+        ArgumentNullException.ThrowIfNull(mediaKeys);
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(window, TimeSpan.Zero);
+
+        var uniqueKeys = new List<string>(mediaKeys.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var mediaKey in mediaKeys)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(mediaKey);
+            if (seen.Add(mediaKey)) uniqueKeys.Add(mediaKey);
+        }
+
+        if (uniqueKeys.Count == 0) return true;
 
         lock (_gate)
         {
             var now = _timeProvider.GetUtcNow();
-            var cutoff = now - window;
-            Prune(cutoff);
+            Prune(now - window);
 
-            if (!_searches.TryGetValue(mediaKey, out var reservations))
+            var newKeyCount = 0;
+            foreach (var mediaKey in uniqueKeys)
             {
-                // Fail closed at capacity: evicting an active key would forget its
-                // reservations and let that media item exceed the configured cap.
-                // Denying the new key only withholds a search until entries expire.
-                if (_searches.Count >= MaxTrackedMediaItems) return false;
-                reservations = [];
-                _searches[mediaKey] = reservations;
+                if (_searches.TryGetValue(mediaKey, out var reservations))
+                {
+                    if (reservations.Count >= limit) return false;
+                    continue;
+                }
+
+                newKeyCount++;
             }
 
-            if (reservations.Count >= limit) return false;
+            // Fail closed at capacity: evicting an active key would forget its
+            // reservations and let that media item exceed the configured cap.
+            if (_searches.Count + newKeyCount > MaxTrackedMediaItems) return false;
 
-            reservations.Add(now);
+            foreach (var mediaKey in uniqueKeys)
+            {
+                if (!_searches.TryGetValue(mediaKey, out var reservations))
+                {
+                    reservations = [];
+                    _searches[mediaKey] = reservations;
+                }
+
+                reservations.Add(now);
+            }
+
             return true;
         }
     }

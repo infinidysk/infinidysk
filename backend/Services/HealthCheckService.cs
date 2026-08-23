@@ -64,7 +64,7 @@ public class HealthCheckService : BackgroundService
     private const double MinDepthDays = 3650;
 
     private readonly ConfigManager _configManager;
-    private readonly ArrReplacementSearchBudget _replacementSearchBudget = new();
+    private readonly ArrReplacementSearchBudget _replacementSearchBudget;
     private readonly UsenetStreamingClient _usenetClient;
     private readonly WebsocketManager _websocketManager;
     private readonly BenchmarkGate _benchmarkGate;
@@ -89,10 +89,12 @@ public class HealthCheckService : BackgroundService
         QueueManager queueManager,
         Par2RepairService par2RepairService,
         RepairPatchStore repairPatchStore,
+        ArrReplacementSearchBudget replacementSearchBudget,
         IDbContextFactory<DavDatabaseContext>? dbContextFactory = null
     )
     {
         _configManager = configManager;
+        _replacementSearchBudget = replacementSearchBudget;
         _usenetClient = usenetClient;
         _websocketManager = websocketManager;
         _benchmarkGate = benchmarkGate;
@@ -1473,6 +1475,11 @@ public class HealthCheckService : BackgroundService
         /// <summary>An Arr instance owned the file and remove-and-blocklist succeeded.</summary>
         RemoveAndBlocklistSucceeded,
         /// <summary>
+        /// An Arr instance owned the file and remove-and-blocklist succeeded, but the
+        /// replacement search was withheld by the per-media search budget.
+        /// </summary>
+        RemoveAndBlocklistSucceededSearchWithheld,
+        /// <summary>
         /// At least one Arr instance was unreachable/unusable and no instance completed repair —
         /// leave the DavItem in place.
         /// </summary>
@@ -1496,7 +1503,7 @@ public class HealthCheckService : BackgroundService
         string symlinkOrStrmPath,
         Guid? downloadId,
         CancellationToken ct,
-        Func<ArrClient, string, bool>? shouldRequestSearch = null)
+        Func<ArrClient, IReadOnlyList<string>, bool>? shouldRequestSearch = null)
     {
         // Track whether a no-owner result is authoritative enough to explain to the operator.
         // Neither outcome permits deletion: a successful-but-incomplete library/Arr view is
@@ -1556,6 +1563,9 @@ public class HealthCheckService : BackgroundService
 
             if (repairOutcome == ArrRepairOutcome.RemoveAndBlocklistSucceeded)
                 return ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded;
+
+            if (repairOutcome == ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld)
+                return ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld;
 
             if (repairOutcome == ArrRepairOutcome.DownloadHistoryNotFound)
                 return ArrLinkedRepairDecision.DeferMissingDownloadHistory;
@@ -1786,15 +1796,18 @@ public class HealthCheckService : BackgroundService
                 linkedPath,
                 davItem.HistoryItemId ?? davItem.NzbBlobId,
                 ct,
-                (arrClient, mediaIdentity) => _replacementSearchBudget.TryReserve(
-                    $"{arrClient.Host.TrimEnd('/').ToLowerInvariant()}|{mediaIdentity}",
+                (arrClient, mediaIdentities) => _replacementSearchBudget.TryReserveAll(
+                    mediaIdentities
+                        .Select(identity => $"{arrClient.Host.TrimEnd('/').ToLowerInvariant()}|{identity}")
+                        .ToArray(),
                     arrConfig.EffectiveQueueReplacementSearchLimit(),
                     arrConfig.EffectiveQueueReplacementSearchWindow())).ConfigureAwait(false);
 
             if (arrDecision != ArrLinkedRepairDecision.DeferNoMatchingMediaItem)
                 _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
 
-            if (arrDecision == ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded)
+            if (arrDecision is ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded
+                or ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld)
             {
                 RecordRepairRemoval(linkedPath, DateTimeOffset.UtcNow);
                 await SeedRejectedReleaseSegmentsAsync(davItem, dbClient, ct).ConfigureAwait(false);
@@ -1804,6 +1817,9 @@ public class HealthCheckService : BackgroundService
                     "health validation failed; Arr media removed and original download blocklisted");
                 dbClient.Ctx.Items.Remove(davItem);
                 _failureTracker.ClearFailure(davItem.Id);
+                var searchClause = arrDecision is ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld
+                    ? "The automatic replacement search was withheld because the per-media search limit was reached."
+                    : "Arr was notified to search for a replacement.";
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Unhealthy,
@@ -1812,7 +1828,7 @@ public class HealthCheckService : BackgroundService
                         "File failed health validation.",
                         $"Corresponding {linkType} found within Library Dir.",
                         "Removed the Arr media file and blocklisted its original download.",
-                        "Arr was notified to search for a replacement."
+                        searchClause
                     ]), ct).ConfigureAwait(false);
                 return;
             }

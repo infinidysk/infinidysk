@@ -19,10 +19,10 @@ public class ArrMonitoringService : BackgroundService
     private readonly ConfigManager _configManager;
     private readonly ArrReplacementSearchBudget _replacementSearchBudget;
 
-    public ArrMonitoringService(ConfigManager configManager, TimeProvider? timeProvider = null)
+    public ArrMonitoringService(ConfigManager configManager, ArrReplacementSearchBudget replacementSearchBudget)
     {
         _configManager = configManager;
-        _replacementSearchBudget = new ArrReplacementSearchBudget(timeProvider);
+        _replacementSearchBudget = replacementSearchBudget;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -61,10 +61,10 @@ public class ArrMonitoringService : BackgroundService
         // the buffer support packs are built from, so detail goes to Debug and the pass
         // reports one Warning per release and action.
         var resolutions = new List<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)>();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(20));
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(20));
             var queueStatus = await client.GetQueueStatusAsync(timeout.Token).ConfigureAwait(false);
             if (queueStatus is { Warnings: false, UnknownWarnings: false }) return;
             var queue = await client.GetQueueAsync(timeout.Token).ConfigureAwait(false);
@@ -80,6 +80,10 @@ public class ArrMonitoringService : BackgroundService
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Monitoring pass aborted on shutdown.
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            Log.Warning("Arr queue monitoring timed out after 20 seconds for {Host}", client.Host);
         }
         catch (Exception e) when (e is HttpRequestException { InnerException: System.Net.Sockets.SocketException })
         {

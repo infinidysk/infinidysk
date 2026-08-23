@@ -112,6 +112,29 @@ public class ArrLinkedRepairDecisionTests
     }
 
     [Fact]
+    public async Task RemoveAndBlocklistSucceededSearchWithheld_PreservesWithheldOutcome()
+    {
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) =>
+                    Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld)),
+        };
+
+        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(
+            HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld,
+            decision);
+    }
+
+    [Fact]
     public async Task MissingDownloadIdentity_DefersWithoutCallingArrRepair()
     {
         var clients = new ArrClient[]
@@ -239,7 +262,7 @@ public class ArrLinkedRepairDecisionTests
         public override Task<ArrRepairOutcome> RemoveAndBlocklist(
             string symlinkOrStrmPath,
             Guid downloadId,
-            Func<string, bool>? shouldRequestSearch = null,
+            Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
             CancellationToken ct = default) =>
             removeAndBlocklist(symlinkOrStrmPath, downloadId);
     }

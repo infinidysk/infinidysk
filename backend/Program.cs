@@ -392,6 +392,7 @@ public partial class Program
                 .AddHostedService<SqliteMaintenanceService>()
                 .AddSingleton<LiveStatsBroadcaster>()
                 .AddHostedService(sp => sp.GetRequiredService<LiveStatsBroadcaster>())
+                .AddSingleton<ArrReplacementSearchBudget>()
                 .AddHostedService<HealthCheckService>()
                 .AddHostedService<HealthCheckRetentionService>()
                 .AddHostedService<ArrMonitoringService>()

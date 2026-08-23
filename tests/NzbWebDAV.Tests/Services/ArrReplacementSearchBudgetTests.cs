@@ -89,6 +89,41 @@ public class ArrReplacementSearchBudgetTests
         Assert.Equal(ArrConfig.QueueAction.RemoveAndBlocklist, alternateReleaseAction);
     }
 
+    [Fact]
+    public void TryReserveAll_IsAtomicWhenOneKeyIsExhausted()
+    {
+        var budget = new ArrReplacementSearchBudget(new TestTimeProvider());
+        Assert.True(budget.TryReserve("episode:302", limit: 1, TimeSpan.FromMinutes(30)));
+
+        Assert.False(budget.TryReserveAll(["episode:301", "episode:302"], limit: 1, TimeSpan.FromMinutes(30)));
+
+        // The rejected batch must not consume budget for the episode that still had room.
+        Assert.True(budget.TryReserve("episode:301", limit: 1, TimeSpan.FromMinutes(30)));
+    }
+
+    [Fact]
+    public void SharedBudgetInstance_QueueActionAndHealthRepairShareTheCap()
+    {
+        var budget = new ArrReplacementSearchBudget(new TestTimeProvider());
+        var config = new ArrConfig
+        {
+            QueueReplacementSearchLimit = 1,
+            QueueReplacementSearchWindowMinutes = 30,
+        };
+
+        var queueAction = ArrMonitoringService.ApplyReplacementSearchBudget(
+            ArrConfig.QueueAction.RemoveAndBlocklistAndSearch,
+            "http://radarr|movie:42",
+            config,
+            budget);
+
+        Assert.Equal(ArrConfig.QueueAction.RemoveAndBlocklistAndSearch, queueAction);
+        Assert.False(budget.TryReserveAll(
+            ["http://radarr|movie:42"],
+            config.EffectiveQueueReplacementSearchLimit(),
+            config.EffectiveQueueReplacementSearchWindow()));
+    }
+
     private sealed class TestTimeProvider : TimeProvider
     {
         private DateTimeOffset _utcNow = new(2026, 8, 23, 0, 0, 0, TimeSpan.Zero);

@@ -49,7 +49,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public override async Task<ArrRepairOutcome> RemoveAndBlocklist(
         string symlinkOrStrmPath,
         Guid downloadId,
-        Func<string, bool>? shouldRequestSearch = null,
+        Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
         CancellationToken ct = default)
     {
         var episodeFileId = await GetEpisodeFileId(symlinkOrStrmPath, ct).ConfigureAwait(false);
@@ -90,13 +90,15 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
                     Host,
                     episodeFileId.Value);
             }
-            else if (shouldRequestSearch is not null && !shouldRequestSearch($"episode:{episodeIds[0]}"))
+            else if (shouldRequestSearch is not null &&
+                     !shouldRequestSearch(episodeIds.Select(id => $"episode:{id}").ToArray()))
             {
                 Log.Warning(
                     "Sonarr repair on {Host}: automatic replacement-search limit reached for episode file {EpisodeFileId}; " +
                     "the file was removed and its download blocklisted without starting another search.",
                     Host,
                     episodeFileId.Value);
+                return ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld;
             }
             else
             {
