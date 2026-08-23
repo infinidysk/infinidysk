@@ -89,8 +89,76 @@ public class CreateStrmFilesPostProcessor(
         return Path.Join(configManager.GetStrmCompletedDownloadDir(), relativePath);
     }
 
+    /// <summary>
+    /// Removes a generated STRM sidecar only when its target belongs to <paramref name="davItem"/>.
+    /// </summary>
+    internal static void DeleteStrmFile(ConfigManager configManager, DavItem davItem)
+    {
+        if (!IsStrmCandidate(davItem))
+            return;
+
+        var completedDownloadsRoot = Path.GetFullPath(configManager.GetStrmCompletedDownloadDir());
+        var strmFilePath = Path.GetFullPath(GetStrmFilePath(configManager, davItem));
+        if (!IsPathWithinRoot(strmFilePath, completedDownloadsRoot))
+            return;
+
+        SymlinkAndStrmUtil.ISymlinkOrStrmInfo? strmOrSymlink;
+        try
+        {
+            strmOrSymlink = SymlinkAndStrmUtil.GetSymlinkOrStrmInfo(new FileInfo(strmFilePath));
+        }
+        catch (FileNotFoundException)
+        {
+            return;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return;
+        }
+
+        if (strmOrSymlink is not SymlinkAndStrmUtil.StrmInfo strmInfo)
+            return;
+
+        var link = OrganizedLinksUtil.GetDavItemLink(strmInfo);
+        if (link?.DavItemId != davItem.Id)
+            return;
+
+        File.Delete(strmFilePath);
+        try
+        {
+            DeleteEmptyParentDirectories(Path.GetDirectoryName(strmFilePath), completedDownloadsRoot);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // A concurrent cleanup already pruned the empty parent directory.
+        }
+    }
+
     internal string GetStrmFilePath(DavItem davItem) =>
         GetStrmFilePath(configManager, davItem);
+
+    private static bool IsPathWithinRoot(string path, string root)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var rootWithSeparator = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        return path.StartsWith(rootWithSeparator, comparison);
+    }
+
+    private static void DeleteEmptyParentDirectories(string? directoryPath, string root)
+    {
+        while (directoryPath != null && IsPathWithinRoot(directoryPath, root))
+        {
+            if (Directory.EnumerateFileSystemEntries(directoryPath).Any())
+                return;
+
+            Directory.Delete(directoryPath);
+            directoryPath = Path.GetDirectoryName(directoryPath);
+        }
+    }
 
     internal static string GetPathRelativeToContentRoot(string davPath)
     {

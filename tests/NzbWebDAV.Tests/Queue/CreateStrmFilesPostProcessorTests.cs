@@ -111,6 +111,81 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
         Assert.Equal(mtime1, mtime2);
     }
 
+    [Fact]
+    public async Task DeleteStrmFile_RemovesOwnedSidecarAndEmptyDirectories()
+    {
+        var davItem = new DavItem
+        {
+            Id = Guid.NewGuid(),
+            Name = "episode.mkv",
+            Type = DavItem.ItemType.UsenetFile,
+            Path = "/content/tv/Show/Season 01/episode.mkv",
+        };
+        var strmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, davItem);
+        await CreateStrmFilesPostProcessor.WriteStrmFileAsync(_config, davItem, forceRewrite: false);
+
+        CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
+
+        Assert.False(File.Exists(strmPath));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(strmPath)));
+    }
+
+    [Fact]
+    public async Task DeleteStrmFile_PreservesUnrelatedOrMissingSidecars()
+    {
+        var davItem = new DavItem
+        {
+            Id = Guid.NewGuid(),
+            Name = "movie.mkv",
+            Type = DavItem.ItemType.UsenetFile,
+            Path = "/content/movies/Movie/movie.mkv",
+        };
+        var strmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, davItem);
+        Directory.CreateDirectory(Path.GetDirectoryName(strmPath)!);
+        var otherItem = new DavItem
+        {
+            Id = Guid.NewGuid(),
+            Name = "other.mkv",
+            Type = DavItem.ItemType.UsenetFile,
+            Path = "/content/movies/Other/other.mkv",
+        };
+        await File.WriteAllTextAsync(
+            strmPath,
+            CreateStrmFilesPostProcessor.GetStrmTargetUrl(_config, otherItem));
+
+        CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
+        CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
+
+        Assert.True(File.Exists(strmPath));
+    }
+
+    [Fact]
+    public async Task DeleteStrmFile_PreservesSidecarOutsideCompletedDownloadsDirectory()
+    {
+        var davItem = new DavItem
+        {
+            Id = Guid.NewGuid(),
+            Name = $"escape-{Guid.NewGuid():N}.mkv",
+            Type = DavItem.ItemType.UsenetFile,
+            Path = $"/content/../../escape-{Guid.NewGuid():N}.mkv",
+        };
+        var strmPath = Path.GetFullPath(CreateStrmFilesPostProcessor.GetStrmFilePath(_config, davItem));
+        try
+        {
+            await File.WriteAllTextAsync(
+                strmPath,
+                CreateStrmFilesPostProcessor.GetStrmTargetUrl(_config, davItem));
+
+            CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
+
+            Assert.True(File.Exists(strmPath));
+        }
+        finally
+        {
+            try { File.Delete(strmPath); } catch (IOException) { /* best effort */ }
+        }
+    }
+
     private DavItem SeedDirectory(DavItem parent, string name, Guid? historyItemId = null)
     {
         var item = DavItem.New(
