@@ -38,6 +38,7 @@ public sealed class InFlightArticleBudget
 
     public long LeasedBytes => Interlocked.Read(ref _leased);
     public long CapBytes => Interlocked.Read(ref _capBytes);
+    /// <summary>Number of leases that encountered Article RAM backpressure.</summary>
     public long ThrottleEvents => Interlocked.Read(ref _throttleEvents);
 
     /// <summary>
@@ -93,9 +94,12 @@ public sealed class InFlightArticleBudget
                     return new ArticleByteLease(this, bytes);
                 }
 
-                Interlocked.Increment(ref _throttleEvents);
                 MaybeWarn(bytes);
-                waitTimer ??= Stopwatch.StartNew();
+                if (waitTimer is null)
+                {
+                    waitTimer = Stopwatch.StartNew();
+                    Interlocked.Increment(ref _throttleEvents);
+                }
 
                 waiter ??= new Waiter(bytes);
                 lock (_gate)

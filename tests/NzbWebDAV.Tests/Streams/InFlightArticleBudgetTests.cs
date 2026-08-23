@@ -64,6 +64,35 @@ public class InFlightArticleBudgetTests
     }
 
     [Fact]
+    public async Task LeaseAsync_RepeatedPartialWakes_CountsOneThrottleEvent()
+    {
+        const long cap = 1_000;
+        var budget = new InFlightArticleBudget(cap);
+        budget.AccountBufferedPipeBytes(cap);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var waiter = budget.LeaseAsync(500, cts.Token).AsTask();
+        await WaitUntil(() => budget.ThrottleEvents == 1);
+
+        for (var i = 0; i < 10; i++)
+        {
+            budget.AccountBufferedPipeBytes(-10);
+            await Task.Delay(10);
+            Assert.False(waiter.IsCompleted);
+        }
+
+        Assert.Equal(1, budget.ThrottleEvents);
+
+        budget.AccountBufferedPipeBytes(-500);
+        using var lease = await waiter.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(900, budget.LeasedBytes);
+
+        lease.Dispose();
+        budget.AccountBufferedPipeBytes(-400);
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
     public async Task LeaseAsync_QueuedHead_NewcomerDoesNotBargeReleasedCapacity()
     {
         const long cap = 1_000;

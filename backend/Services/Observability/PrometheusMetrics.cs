@@ -74,7 +74,9 @@ public sealed class PrometheusMetrics
         _inFlightSegmentFetches = metrics.CreateGauge("nzbdav_concurrent_in_flight_segment_fetches", "Current in-flight segment fetches.");
         _articleBudgetBytes = metrics.CreateGauge("nzbdav_inflight_article_bytes", "Article bytes currently leased.");
         _articleBudgetCapBytes = metrics.CreateGauge("nzbdav_inflight_article_budget_bytes", "Configured in-flight article byte budget.");
-        _articleBudgetThrottleEvents = metrics.CreateCounter("nzbdav_inflight_article_throttle_events_total", "Article budget throttle events.");
+        _articleBudgetThrottleEvents = metrics.CreateCounter(
+            "nzbdav_inflight_article_throttle_events_total",
+            "Article RAM lease requests that encountered budget backpressure.");
         _metricsQueueLength = metrics.CreateGauge("nzbdav_metrics_queue_length", "Queued internal metric rows.", new GaugeConfiguration { LabelNames = ["queue"] });
         _metricsDropped = metrics.CreateCounter("nzbdav_metrics_dropped_total", "Dropped internal metric rows.", new CounterConfiguration { LabelNames = ["queue"] });
         _poolConnections = metrics.CreateGauge("nzbdav_nntp_pool_connections", "NNTP pool connection state.", new GaugeConfiguration { LabelNames = ["provider_key", "state"] });
