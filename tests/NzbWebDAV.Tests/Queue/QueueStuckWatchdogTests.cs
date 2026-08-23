@@ -778,7 +778,14 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         {
             gate2.Set();
             await cts.CancelAsync();
-            await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            try
+            {
+                await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                // Expected when shutdown cancels GetTopQueueItem.
+            }
         }
     }
 
