@@ -17,6 +17,7 @@ using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Par2Recovery.Packets;
 using NzbWebDAV.Par2Recovery.ReedSolomon;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Observability;
 using Serilog;
 using UsenetSharp.Models;
@@ -42,6 +43,12 @@ public class Par2RepairService : BackgroundService
     private long _totalBytesRead;
     private long _totalSlicesReconstructed;
     private long _totalSegmentsCommitted;
+    private string? _activeRepairPath;
+    private string? _activeRepairPhase;
+    private SliceSegmentAccessor? _activeSource;
+    private long _activeBytesRead;
+    private long _activeEstimatedWorkingSetBytes;
+    private long _activeMemoryCapBytes;
 
     public Par2RepairService(
         ConfigManager configManager,
@@ -137,11 +144,48 @@ public class Par2RepairService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await _patchStore.CatalogLoadTask.ConfigureAwait(false);
+        await ReconcileInterruptedJobsAsync(stoppingToken).ConfigureAwait(false);
 
         await Task.WhenAll(
             ProcessRepairQueueAsync(stoppingToken),
             ProcessZeroFillQueueAsync(stoppingToken)).ConfigureAwait(false);
     }
+
+    private async Task ReconcileInterruptedJobsAsync(CancellationToken ct)
+    {
+        await using var dbContext = CreateContext();
+        var activeJobs = await dbContext.Par2RepairJobs
+            .Where(job => job.State == Par2RepairJob.RepairJobState.Queued
+                          || job.State == Par2RepairJob.RepairJobState.Running)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        if (activeJobs.Count == 0)
+            return;
+
+        var now = DateTimeOffset.UtcNow;
+        var cooldown = TimeSpan.FromHours(_configManager.GetPar2FailureCooldownHours());
+        foreach (var job in activeJobs)
+        {
+            var wasRunning = job.State == Par2RepairJob.RepairJobState.Running;
+            job.State = Par2RepairJob.RepairJobState.Failed;
+            job.CompletedAt = now;
+            job.FailureReason = wasRunning
+                ? "PAR2 repair was interrupted by a backend restart."
+                : "PAR2 repair was queued when the backend restarted.";
+            // A job that had started may have triggered a cgroup kill. Cool it down
+            // rather than immediately recreating the same failure loop; a queued job
+            // never started and should be eligible for the next trigger immediately.
+            job.NextAttemptAt = wasRunning ? now + cooldown : null;
+        }
+
+        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        Log.Warning(
+            "Reconciled {Count} PAR2 repair job(s) interrupted by backend restart.",
+            activeJobs.Count);
+    }
+
+    internal Task ReconcileInterruptedJobsForTestsAsync(CancellationToken ct) =>
+        ReconcileInterruptedJobsAsync(ct);
 
     private async Task ProcessRepairQueueAsync(CancellationToken stoppingToken)
     {
@@ -160,6 +204,49 @@ public class Par2RepairService : BackgroundService
                 _queuedOrRunning.TryRemove(item.DavItemId, out _);
                 e.LogWarningKnownOrStack("PAR2 background repair worker failed for {Path}", item.Path);
             }
+            catch (OutOfMemoryException oom)
+            {
+                _queuedOrRunning.TryRemove(item.DavItemId, out _);
+                OomDiagnostics.LogHeapStateOnOom(oom, "PAR2 background repair worker");
+                Log.Warning("PAR2 background repair worker deferred after exhausting managed memory. Path: {Path}", item.Path);
+            }
+        }
+    }
+
+    private async Task MarkJobFailureAsync(
+        Par2RepairJob? job,
+        string reason,
+        bool cooldown,
+        CancellationToken ct)
+    {
+        if (job == null)
+            return;
+
+        job.State = Par2RepairJob.RepairJobState.Failed;
+        job.CompletedAt = DateTimeOffset.UtcNow;
+        job.Attempts++;
+        job.FailureReason = reason;
+        job.NextAttemptAt = cooldown
+            ? DateTimeOffset.UtcNow + TimeSpan.FromHours(_configManager.GetPar2FailureCooldownHours())
+            : null;
+        await PersistJobAsync(job, ct).ConfigureAwait(false);
+    }
+
+    private async Task TryMarkJobFailureAfterOomAsync(Par2RepairJob? job, CancellationToken ct)
+    {
+        try
+        {
+            await MarkJobFailureAsync(
+                    job,
+                    "PAR2 repair exceeded the process memory limit.",
+                    cooldown: true,
+                    ct)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // The process may still be unable to allocate while handling an OOM.
+            // The next startup reconciliation will release the persisted Running row.
         }
     }
 
@@ -178,6 +265,11 @@ public class Par2RepairService : BackgroundService
             catch (Exception e) when (e is not OutOfMemoryException)
             {
                 Log.Debug(e, "PAR2 zero-fill trigger failed for {Path}", evt.Path);
+            }
+            catch (OutOfMemoryException oom)
+            {
+                OomDiagnostics.LogHeapStateOnOom(oom, "PAR2 zero-fill trigger");
+                Log.Warning("PAR2 zero-fill trigger deferred after exhausting managed memory. Path: {Path}", evt.Path);
             }
             finally
             {
@@ -294,6 +386,7 @@ public class Par2RepairService : BackgroundService
             using var maintenanceScope = ct.SetContext(MaintenanceDownloadContext.Instance);
             using var fetchAttribution = FetchAttributionContext.Begin(davItem.Name);
 
+            BeginRepairDiagnostics(davItem.Path);
             var result = await ExecuteRepairJobAsync(davItem, job, ct).ConfigureAwait(false);
             stopwatch.Stop();
 
@@ -337,20 +430,32 @@ public class Par2RepairService : BackgroundService
                 result.IsInfeasible ? "infeasible" : "failed", davItem.Path, result.FailureReason);
             return false;
         }
-        catch (Exception e) when (e is not OperationCanceledException and not OutOfMemoryException)
+        catch (Par2MemoryCapExceededException e)
         {
             stopwatch.Stop();
-            if (job != null)
-            {
-                job.State = Par2RepairJob.RepairJobState.Failed;
-                job.CompletedAt = DateTimeOffset.UtcNow;
-                job.Attempts++;
-                e.TryGetKnownErrorMessage(out var reason);
-                job.FailureReason = reason ?? e.Message;
-                job.NextAttemptAt = DateTimeOffset.UtcNow +
-                                    TimeSpan.FromHours(_configManager.GetPar2FailureCooldownHours());
-                await PersistJobAsync(job, ct).ConfigureAwait(false);
-            }
+            await MarkJobFailureAsync(job, e.Message, cooldown: true, ct).ConfigureAwait(false);
+            PrometheusMetrics.Current?.RecordPar2RepairJob("infeasible");
+            PrometheusMetrics.Current?.ObservePar2RepairDuration(stopwatch.Elapsed);
+            Interlocked.Increment(ref _totalInfeasible);
+            Log.Warning("PAR2 repair infeasible for {Path}. Reason: {Reason}", davItem.Path, e.Message);
+            return false;
+        }
+        catch (OutOfMemoryException oom)
+        {
+            stopwatch.Stop();
+            OomDiagnostics.LogHeapStateOnOom(oom, "PAR2 repair");
+            await TryMarkJobFailureAfterOomAsync(job, ct).ConfigureAwait(false);
+            PrometheusMetrics.Current?.RecordPar2RepairJob("failed");
+            PrometheusMetrics.Current?.ObservePar2RepairDuration(stopwatch.Elapsed);
+            Interlocked.Increment(ref _totalFailed);
+            Log.Warning("PAR2 repair deferred after exhausting managed memory. Path: {Path}", davItem.Path);
+            return false;
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            stopwatch.Stop();
+            e.TryGetKnownErrorMessage(out var reason);
+            await MarkJobFailureAsync(job, reason ?? e.Message, cooldown: true, ct).ConfigureAwait(false);
 
             e.LogWarningKnownOrStack("PAR2 repair error for {Path}", davItem.Path);
             PrometheusMetrics.Current?.RecordPar2RepairJob("failed");
@@ -359,6 +464,7 @@ public class Par2RepairService : BackgroundService
         }
         finally
         {
+            EndRepairDiagnostics();
             if (queueGuard) _queuedOrRunning.TryRemove(davItem.Id, out _);
         }
     }
@@ -472,6 +578,23 @@ public class Par2RepairService : BackgroundService
         var fetchConcurrency = _configManager.GetPar2FetchConcurrency();
         using var fetchGate = new SemaphoreSlim(fetchConcurrency, fetchConcurrency);
         var bytesRead = 0L;
+        var maxMemoryBytes = _configManager.GetPar2MaxMemoryMb() * 1024L * 1024L;
+        SetRepairPhase("discovery", maxMemoryBytes);
+        long discoverySourceCap;
+        try
+        {
+            // A pass holds one assembled slice while the source retains the segments that
+            // overlap it. Keep one further slice of headroom for the caller/reconstructor.
+            discoverySourceCap = checked(maxMemoryBytes - (2L * sliceSize));
+        }
+        catch (OverflowException)
+        {
+            return RepairExecutionResult.NotFeasible("PAR2 memory cap is too small for its slice size.");
+        }
+
+        if (discoverySourceCap <= 0)
+            return RepairExecutionResult.NotFeasible("PAR2 memory cap is too small for its slice size.");
+
         var accessor = new SliceSegmentAccessor(
             segmentIds,
             sliceMap,
@@ -480,22 +603,21 @@ public class Par2RepairService : BackgroundService
             _usenetClient,
             fetchGate,
             unavailableSlices,
-            onBytesRead: n => bytesRead += n);
+            discoverySourceCap,
+            onBytesRead: n =>
+            {
+                bytesRead += n;
+                Interlocked.Add(ref _activeBytesRead, n);
+            });
+        _activeSource = accessor;
         foreach (var index in persistedMissing)
             accessor.NoteMissing(index);
         foreach (var index in persistedCorrupt)
             accessor.NoteCorrupt(index);
 
-        try
-        {
-            await DiscoverUnavailableSourcesAsync(
-                    accessor, sliceMap, targetIfsc, unavailableSegments, unavailableSlices, ct)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
+        await DiscoverUnavailableSourcesAsync(
+                accessor, sliceMap, targetIfsc, unavailableSegments, unavailableSlices, ct)
+            .ConfigureAwait(false);
 
         var discoveredMissing = accessor.MissingSegmentIndices.Except(persistedMissing).Except(requested.Select(x => x.Index)).Count();
         var discoveredCorrupt = accessor.CorruptSegmentIndices.Except(persistedCorrupt).Except(requested.Select(x => x.Index)).Count();
@@ -521,14 +643,11 @@ public class Par2RepairService : BackgroundService
 
         var patchTargets = SegmentsOverlappingSlices(sliceMap, unavailableSlices, segmentIds);
         var stagedPatchBytes = patchTargets.Sum(target => segmentRanges[target.Index].Count);
-        var presentSliceCount = Math.Max(0, sliceMap.SliceCount - unavailableSlices.Count);
         long workingSetBytes;
         try
         {
             workingSetBytes = EstimateWorkingSetBytes(
-                checked(accessor.CachedBodyBytes + EstimateSiblingSegmentPeakBytes(
-                    par2Context, nzbDocument, par2Context.TargetFileIndex)),
-                presentSliceCount,
+                EstimateMaxSourceWindowBytes(sliceMap, par2Context, nzbDocument),
                 unavailableSlices.Count,
                 unavailableSlices.Count,
                 stagedPatchBytes,
@@ -540,7 +659,6 @@ public class Par2RepairService : BackgroundService
             return RepairExecutionResult.NotFeasible("PAR2 working-set estimate overflowed.");
         }
 
-        var maxMemoryBytes = _configManager.GetPar2MaxMemoryMb() * 1024L * 1024L;
         if (workingSetBytes > maxMemoryBytes)
         {
             await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
@@ -548,6 +666,7 @@ public class Par2RepairService : BackgroundService
                 $"PAR2 working set {workingSetBytes} bytes exceeds memory cap.");
         }
 
+        Interlocked.Exchange(ref _activeEstimatedWorkingSetBytes, workingSetBytes);
         var releaseBytesCap = _configManager.GetPar2MaxReleaseGb() * 1024L * 1024L * 1024L;
         var releaseBytes = EstimateReleaseBytes(par2Context.Main, par2Context.FileDescsById);
         if (releaseBytes > releaseBytesCap)
@@ -558,6 +677,12 @@ public class Par2RepairService : BackgroundService
         }
 
         var missingSliceIndices = unavailableSlices.OrderBy(x => x).ToList();
+        SetRepairPhase("recovery-volumes", maxMemoryBytes);
+        accessor.SetRetainedByteLimit(checked(maxMemoryBytes - EstimateNonSourceWorkingSetBytes(
+            unavailableSlices.Count,
+            unavailableSlices.Count,
+            stagedPatchBytes,
+            sliceSize)));
         var recoverySlices = await CollectRecoverySlicesAsync(
             par2Context.VolumeFiles,
             missingSliceIndices.Count,
@@ -573,6 +698,8 @@ public class Par2RepairService : BackgroundService
         }
 
         var reconstructor = new Par2Reconstructor();
+        SetRepairPhase("reconstruction", maxMemoryBytes);
+        accessor.BeginSequentialPass();
         var reconstruction = await reconstructor.ReconstructAsync(
             par2Context.Main,
             par2Context.FileDescsById,
@@ -595,6 +722,8 @@ public class Par2RepairService : BackgroundService
             return RepairExecutionResult.NotFeasible("No missing or corrupt segments were confirmed during PAR2 repair.");
         }
 
+        SetRepairPhase("assembling-patches", maxMemoryBytes);
+        accessor.BeginSequentialPass();
         var commits = await ExtractSegmentPatchesAsync(
             patchTargets,
             sliceMap,
@@ -605,16 +734,22 @@ public class Par2RepairService : BackgroundService
             segmentIds.Length,
             ct).ConfigureAwait(false);
 
-        if (!TryVerifyWholeFileMd5(targetDesc, sliceMap, reconstruction.ReconstructedSlices, accessor, out var md5Reason))
+        SetRepairPhase("whole-file-verification", maxMemoryBytes);
+        accessor.BeginSequentialPass();
+        var md5Reason = await TryVerifyWholeFileMd5Async(
+                targetDesc, sliceMap, reconstruction.ReconstructedSlices, accessor, ct)
+            .ConfigureAwait(false);
+        if (md5Reason is not null)
         {
             PrometheusMetrics.Current?.RecordPar2ValidationFailure("file");
             await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-            return RepairExecutionResult.Failed(md5Reason ?? "Whole-file MD5 mismatch.");
+            return RepairExecutionResult.Failed(md5Reason);
         }
 
         _patchStore.CommitPatches(
             commits.Select(patch => (patch.SegmentId, patch.Bytes, patch.Header)).ToList());
 
+        SetRepairPhase("committing-patches", maxMemoryBytes);
         await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
         PrometheusMetrics.Current?.AddPar2RepairBytesRead(bytesRead);
         PrometheusMetrics.Current?.AddPar2SlicesReconstructed(reconstruction.ReconstructedSlices.Count);
@@ -636,6 +771,7 @@ public class Par2RepairService : BackgroundService
         {
             ct.ThrowIfCancellationRequested();
             expanded = false;
+            accessor.BeginSequentialPass();
             AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
 
             for (var local = 0; local < sliceMap.SliceCount; local++)
@@ -687,8 +823,7 @@ public class Par2RepairService : BackgroundService
     }
 
     internal static long EstimateWorkingSetBytes(
-        long cachedSourceBodyBytes,
-        int assembledPresentSliceCount,
+        long peakSourceBodyBytes,
         int recoverySliceCount,
         int reconstructedSliceCount,
         long stagedPatchBytes,
@@ -696,45 +831,72 @@ public class Par2RepairService : BackgroundService
     {
         checked
         {
-            var assembled = (long)assembledPresentSliceCount * sliceSize;
-            var recovery = (long)recoverySliceCount * sliceSize;
-            var accumulators = (long)recoverySliceCount * sliceSize;
-            var reconstructed = (long)reconstructedSliceCount * sliceSize;
-            var memoryStreamDup = cachedSourceBodyBytes;
-            return cachedSourceBodyBytes
-                   + assembled
-                   + recovery
-                   + accumulators
-                   + reconstructed
-                   + stagedPatchBytes
-                   + memoryStreamDup;
+            return peakSourceBodyBytes +
+                   EstimateNonSourceWorkingSetBytes(
+                       recoverySliceCount,
+                       reconstructedSliceCount,
+                       stagedPatchBytes,
+                       sliceSize);
         }
     }
 
     /// <summary>
-    /// Peak sibling-file cache with sequential slice walks: at most two overlapping
-    /// NZB segments of the largest sibling, not the whole foreign file.
+    /// Memory outside the retained source window: the current assembled/fetch slice,
+    /// the Reed-Solomon scratch slice, recovery data, GF accumulators, reconstructed
+    /// output, and the final segment patches.
     /// </summary>
-    private static long EstimateSiblingSegmentPeakBytes(
-        Par2SetContext par2,
-        NzbDocument nzbDocument,
-        int targetFileIndex)
+    private static long EstimateNonSourceWorkingSetBytes(
+        int recoverySliceCount,
+        int reconstructedSliceCount,
+        long stagedPatchBytes,
+        int sliceSize)
     {
-        long peak = 0;
-        for (var i = 0; i < par2.Main.FileIds.Count; i++)
+        checked
         {
-            if (i == targetFileIndex)
+            var assembled = 2L * sliceSize;
+            var recovery = (long)recoverySliceCount * sliceSize;
+            var accumulators = (long)recoverySliceCount * sliceSize;
+            var reconstructed = (long)reconstructedSliceCount * sliceSize;
+            return assembled + recovery + accumulators + reconstructed + stagedPatchBytes;
+        }
+    }
+
+    private static long EstimateMaxSourceWindowBytes(
+        Par2FileSliceMap targetMap,
+        Par2SetContext par2,
+        NzbDocument nzbDocument)
+    {
+        var peak = targetMap.EstimateMaxOverlappingSegmentBytes();
+        for (var fileIndex = 0; fileIndex < par2.Main.FileIds.Count; fileIndex++)
+        {
+            if (fileIndex == par2.TargetFileIndex)
                 continue;
-            var key = Convert.ToHexString(par2.Main.FileIds[i]);
-            if (!par2.FileDescsById.TryGetValue(key, out var desc))
+
+            var key = Convert.ToHexString(par2.Main.FileIds[fileIndex]);
+            if (!par2.FileDescsById.TryGetValue(key, out var desc)
+                || !par2.IfscsByFileId.TryGetValue(key, out var ifsc))
+            {
                 continue;
+            }
+
             var nzbFile = FindContentNzbFile(nzbDocument, desc.FileName);
-            if (nzbFile is null || nzbFile.Segments.Count == 0)
+            var ranges = nzbFile?.GetSegmentByteRanges()
+                         ?? (nzbFile is null ? null : TryInferSegmentRanges(nzbFile, (long)desc.FileLength));
+            if (ranges is null
+                || !Par2FileSliceMap.TryCreate(
+                    (long)desc.FileLength,
+                    GlobalSliceOffset(fileIndex, par2.Main, par2.IfscsByFileId),
+                    (int)par2.Main.SliceSize,
+                    ifsc.Slices.Count,
+                    ranges,
+                    out var map,
+                    out _)
+                || map is null)
+            {
                 continue;
-            var maxSegment = nzbFile.Segments.Max(segment => segment.Bytes);
-            var filePeak = Math.Min((long)desc.FileLength, checked(2 * maxSegment));
-            if (filePeak > peak)
-                peak = filePeak;
+            }
+
+            peak = Math.Max(peak, map.EstimateMaxOverlappingSegmentBytes());
         }
 
         return peak;
@@ -795,21 +957,21 @@ public class Par2RepairService : BackgroundService
     }
 
 #pragma warning disable CA5351 // PAR 2.0 whole-file hashes use MD5 per spec
-    private static bool TryVerifyWholeFileMd5(
+    private static async Task<string?> TryVerifyWholeFileMd5Async(
         FileDesc desc,
         Par2FileSliceMap sliceMap,
         Dictionary<int, byte[]> reconstructedSlices,
         SliceSegmentAccessor accessor,
-        out string? reason)
+        CancellationToken ct)
     {
-        reason = null;
         if (desc.FileHash is not { Length: 16 })
-            return true;
+            return null;
 
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
         long offset = 0;
         while (offset < sliceMap.FileLength)
         {
+            ct.ThrowIfCancellationRequested();
             var globalSlice = sliceMap.GlobalSliceBase + (int)(offset / sliceMap.SliceSize);
             var sliceRange = sliceMap.SliceFileRange(globalSlice);
             byte[] sliceBytes;
@@ -819,11 +981,11 @@ public class Par2RepairService : BackgroundService
             }
             else
             {
-                var fetched = accessor.TryGetCachedSlice(globalSlice, sliceMap.SliceSize);
+                var fetched = await accessor.FetchSliceBytesAsync(globalSlice, sliceMap.SliceSize, ct)
+                    .ConfigureAwait(false);
                 if (fetched is null)
                 {
-                    reason = $"Whole-file MD5 coverage gap at slice {globalSlice}.";
-                    return false;
+                    return $"Whole-file MD5 coverage gap at slice {globalSlice}.";
                 }
 
                 sliceBytes = fetched;
@@ -837,10 +999,9 @@ public class Par2RepairService : BackgroundService
 
         var computed = hasher.GetHashAndReset();
         if (computed.AsSpan().SequenceEqual(desc.FileHash))
-            return true;
+            return null;
 
-        reason = $"Whole-file MD5 mismatch for {desc.FileName}.";
-        return false;
+        return $"Whole-file MD5 mismatch for {desc.FileName}.";
     }
 #pragma warning restore CA5351
 
@@ -859,12 +1020,9 @@ public class Par2RepairService : BackgroundService
         {
             var range = sliceMap.SegmentRanges[missing.Index];
             var bytes = new byte[range.Count];
-            var cached = await accessor.TryGetCachedBodyAsync(missing.Index, ct).ConfigureAwait(false);
-            if (cached is not null)
-            {
-                var copy = (int)Math.Min(cached.Length, bytes.Length);
-                Buffer.BlockCopy(cached, 0, bytes, 0, copy);
-            }
+            var sourceBody = await accessor.GetSegmentBodyForPatchAsync(missing.Index, ct).ConfigureAwait(false);
+            if (sourceBody is not null)
+                Buffer.BlockCopy(sourceBody, 0, bytes, 0, Math.Min(sourceBody.Length, bytes.Length));
 
             var copied = 0L;
             var fileOffset = range.StartInclusive;
@@ -880,7 +1038,16 @@ public class Par2RepairService : BackgroundService
                     continue;
                 }
 
-                copied += Math.Min(range.Count - copied, sliceMap.SliceSize - ((fileOffset + copied) % sliceMap.SliceSize));
+                if (sourceBody is not null)
+                {
+                    copied += Math.Min(
+                        range.Count - copied,
+                        sliceMap.SliceSize - ((fileOffset + copied) % sliceMap.SliceSize));
+                    continue;
+                }
+
+                throw new InvalidOperationException(
+                    $"Neither source nor reconstructed bytes were available for PAR2 patch slice {globalSlice}.");
             }
 
             patches.Add(new SegmentPatch(
@@ -896,6 +1063,7 @@ public class Par2RepairService : BackgroundService
                     PartSize = range.Count,
                     PartOffset = range.StartInclusive,
                 }));
+            accessor.BeginSequentialPass();
         }
 
         return patches;
@@ -940,6 +1108,29 @@ public class Par2RepairService : BackgroundService
         }
 
         throw new InvalidOperationException("Segment byte ranges are unavailable for PAR2 repair.");
+    }
+
+    private static LongRange[]? TryInferSegmentRanges(NzbFile nzbFile, long fileLength)
+    {
+        var count = nzbFile.Segments.Count;
+        if (count == 0 || fileLength <= 0)
+            return null;
+
+        var ranges = new LongRange[count];
+        long start = 0;
+        for (var i = 0; i < count; i++)
+        {
+            var remaining = fileLength - start;
+            if (remaining <= 0)
+                return null;
+            var size = i == count - 1 ? remaining : nzbFile.Segments[i].Bytes;
+            if (size <= 0 || size > remaining)
+                return null;
+            ranges[i] = LongRange.FromStartAndSize(start, size);
+            start += size;
+        }
+
+        return start == fileLength ? ranges : null;
     }
 
     private static List<MissingSegment> ResolveMissingSegments(string[] requestedIds, string[] segmentIds)
@@ -1275,6 +1466,7 @@ public class Par2RepairService : BackgroundService
     public Par2RepairDiagnosticSnapshot GetDiagnosticSnapshot()
     {
         var recentJobs = GetRecentJobsForDiagnostics();
+        var source = _activeSource;
         return new Par2RepairDiagnosticSnapshot
         {
             PatchStoreEntries = _patchStore.EntryCount,
@@ -1288,7 +1480,41 @@ public class Par2RepairService : BackgroundService
             TotalSlicesReconstructed = Interlocked.Read(ref _totalSlicesReconstructed),
             TotalSegmentsCommitted = Interlocked.Read(ref _totalSegmentsCommitted),
             RecentJobs = recentJobs,
+            ActiveRepair = _activeRepairPath is null
+                ? null
+                : new ActivePar2RepairDiagnostic(
+                    _activeRepairPath,
+                    _activeRepairPhase ?? "starting",
+                    Interlocked.Read(ref _activeBytesRead),
+                    Interlocked.Read(ref _activeEstimatedWorkingSetBytes),
+                    Interlocked.Read(ref _activeMemoryCapBytes),
+                    source?.CachedBodyBytes ?? 0,
+                    source?.PeakCachedBodyBytes ?? 0,
+                    source?.RetainedByteLimit ?? 0),
         };
+    }
+
+    private void BeginRepairDiagnostics(string path)
+    {
+        _activeRepairPath = path;
+        _activeRepairPhase = "starting";
+        _activeSource = null;
+        Interlocked.Exchange(ref _activeBytesRead, 0);
+        Interlocked.Exchange(ref _activeEstimatedWorkingSetBytes, 0);
+        Interlocked.Exchange(ref _activeMemoryCapBytes, 0);
+    }
+
+    private void SetRepairPhase(string phase, long memoryCapBytes)
+    {
+        _activeRepairPhase = phase;
+        Interlocked.Exchange(ref _activeMemoryCapBytes, memoryCapBytes);
+    }
+
+    private void EndRepairDiagnostics()
+    {
+        _activeSource = null;
+        _activeRepairPhase = null;
+        _activeRepairPath = null;
     }
 
     private List<object> GetRecentJobsForDiagnostics()
@@ -1335,7 +1561,18 @@ public class Par2RepairService : BackgroundService
         public long TotalSlicesReconstructed { get; init; }
         public long TotalSegmentsCommitted { get; init; }
         public List<object> RecentJobs { get; init; } = [];
+        public ActivePar2RepairDiagnostic? ActiveRepair { get; init; }
     }
+
+    public sealed record ActivePar2RepairDiagnostic(
+        string Path,
+        string Phase,
+        long BytesRead,
+        long EstimatedWorkingSetBytes,
+        long MemoryCapBytes,
+        long RetainedSourceBytes,
+        long PeakRetainedSourceBytes,
+        long RetainedSourceLimitBytes);
 
     private sealed record RepairWorkItem(Guid DavItemId, string Path, string[] MissingSegmentIds);
 
@@ -1387,6 +1624,8 @@ public class Par2RepairService : BackgroundService
         private readonly HashSet<int> _missingSegmentIndices = new();
         private readonly HashSet<int> _corruptSegmentIndices = new();
         private long _cachedBodyBytes;
+        private long _peakCachedBodyBytes;
+        private long _retainedByteLimit;
 
         public SliceSegmentAccessor(
             string[] segmentIds,
@@ -1396,6 +1635,7 @@ public class Par2RepairService : BackgroundService
             UsenetStreamingClient client,
             SemaphoreSlim fetchGate,
             HashSet<int> targetSlices,
+            long retainedByteLimit,
             Action<long>? onBytesRead)
         {
             _segmentIds = segmentIds;
@@ -1405,16 +1645,41 @@ public class Par2RepairService : BackgroundService
             _client = client;
             _fetchGate = fetchGate;
             _targetSlices = targetSlices;
+            _retainedByteLimit = retainedByteLimit;
             _onBytesRead = onBytesRead;
         }
 
         public IReadOnlyCollection<int> MissingSegmentIndices => _missingSegmentIndices;
         public IReadOnlyCollection<int> CorruptSegmentIndices => _corruptSegmentIndices;
         public long CachedBodyBytes => Interlocked.Read(ref _cachedBodyBytes);
+        public long PeakCachedBodyBytes => Interlocked.Read(ref _peakCachedBodyBytes);
+        public long RetainedByteLimit => Interlocked.Read(ref _retainedByteLimit);
 
         public void NoteMissing(int segmentIndex) => _missingSegmentIndices.Add(segmentIndex);
 
         public void NoteCorrupt(int segmentIndex) => _corruptSegmentIndices.Add(segmentIndex);
+
+        /// <summary>
+        /// Starts a sequential pass over source slices. Source bodies are deliberately
+        /// not shared across passes: retaining a target file from discovery through
+        /// reduction and MD5 verification was the unbounded-memory failure mode.
+        /// </summary>
+        public void BeginSequentialPass()
+        {
+            _segmentBodies.Clear();
+            _siblingSegmentBodies.Clear();
+            _activeSiblingFileIndex = -1;
+            Interlocked.Exchange(ref _cachedBodyBytes, 0);
+        }
+
+        public void SetRetainedByteLimit(long limit)
+        {
+            if (limit <= 0)
+                throw new InvalidOperationException("PAR2 repair has no memory available for source segments.");
+            Interlocked.Exchange(ref _retainedByteLimit, limit);
+            if (CachedBodyBytes > limit)
+                BeginSequentialPass();
+        }
 
         public async Task<byte[]?> FetchSliceBytesAsync(int globalSliceIndex, int sliceSize, CancellationToken ct)
         {
@@ -1426,6 +1691,8 @@ public class Par2RepairService : BackgroundService
                 return null;
 
             var sliceRange = _map.SliceFileRange(globalSliceIndex);
+            ClearSiblingBodies();
+            EvictPassedTargetSegments(sliceRange.StartInclusive);
             var buffer = new byte[sliceSize];
             var copied = 0;
             foreach (var segmentIndex in _map.SegmentIndicesForGlobalSlice(globalSliceIndex))
@@ -1458,38 +1725,21 @@ public class Par2RepairService : BackgroundService
             return buffer;
         }
 
-        public byte[]? TryGetCachedSlice(int globalSliceIndex, int sliceSize)
+        /// <summary>
+        /// Fetches a target segment only while assembling a final patch. Most patch
+        /// bytes come from reconstructed slices; this covers the untouched portion
+        /// of a segment that merely overlaps a bad slice. Callers reset the pass
+        /// after each patch so this never becomes a release-sized cache.
+        /// </summary>
+        public Task<byte[]?> GetSegmentBodyForPatchAsync(int segmentIndex, CancellationToken ct)
         {
-            if (_targetSlices.Contains(globalSliceIndex))
-                return null;
-
-            var sliceRange = _map.SliceFileRange(globalSliceIndex);
-            var buffer = new byte[sliceSize];
-            var copied = 0;
-            foreach (var segmentIndex in _map.SegmentIndicesForGlobalSlice(globalSliceIndex))
-            {
-                if (!_segmentBodies.TryGetValue(segmentIndex, out var body))
-                    return null;
-                var segmentRange = _map.SegmentRanges[segmentIndex];
-                var intersectStart = Math.Max(sliceRange.StartInclusive, segmentRange.StartInclusive);
-                var intersectEnd = Math.Min(sliceRange.EndExclusive, segmentRange.EndExclusive);
-                if (intersectEnd <= intersectStart)
-                    continue;
-                var destOffset = (int)(intersectStart - sliceRange.StartInclusive);
-                var srcOffset = (int)(intersectStart - segmentRange.StartInclusive);
-                var count = (int)(intersectEnd - intersectStart);
-                Buffer.BlockCopy(body, srcOffset, buffer, destOffset, count);
-                copied += count;
-            }
-
-            return copied < sliceRange.Count && sliceRange.EndExclusive < _map.FileLength ? null : buffer;
-        }
-
-        public Task<byte[]?> TryGetCachedBodyAsync(int segmentIndex, CancellationToken ct)
-        {
-            _ = ct;
-            return Task.FromResult(
-                _segmentBodies.TryGetValue(segmentIndex, out var body) ? body : null);
+            // A known-bad source segment is completely covered by its unavailable
+            // slices, so reconstructing it must never retry the broken article.
+            // A neighbouring healthy segment can overlap one repaired slice and
+            // still supply the untouched bytes around that slice.
+            if (_map.GlobalSlicesForSegment(segmentIndex).All(_targetSlices.Contains))
+                return Task.FromResult<byte[]?>(null);
+            return GetSegmentBodyAsync(segmentIndex, ct);
         }
 
         private async Task<byte[]?> GetSegmentBodyAsync(int segmentIndex, CancellationToken ct)
@@ -1510,14 +1760,15 @@ public class Par2RepairService : BackgroundService
                 var segmentId = _segmentIds[segmentIndex];
                 try
                 {
+                    EnsureRetainedCapacity(checked((int)_map.SegmentRanges[segmentIndex].Count));
                     var response = await _client.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
                     await using var stream = response.Stream!;
-                    await using var ms = new MemoryStream();
-                    await stream.CopyToAsync(ms, ct).ConfigureAwait(false);
-                    var bytes = ms.ToArray();
+                    var bytes = await ReadExpectedSegmentBodyAsync(
+                            stream, _map.SegmentRanges[segmentIndex].Count, ct)
+                        .ConfigureAwait(false);
                     _onBytesRead?.Invoke(bytes.Length);
                     _segmentBodies[segmentIndex] = bytes;
-                    Interlocked.Add(ref _cachedBodyBytes, bytes.Length);
+                    AddRetainedBytes(bytes.Length);
                     return bytes;
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
@@ -1701,14 +1952,15 @@ public class Par2RepairService : BackgroundService
                 var segmentId = layout.SegmentIds[segmentIndex];
                 try
                 {
+                    EnsureRetainedCapacity(checked((int)layout.Map.SegmentRanges[segmentIndex].Count));
                     var response = await _client.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
                     await using var stream = response.Stream!;
-                    await using var ms = new MemoryStream();
-                    await stream.CopyToAsync(ms, ct).ConfigureAwait(false);
-                    var bytes = ms.ToArray();
+                    var bytes = await ReadExpectedSegmentBodyAsync(
+                            stream, layout.Map.SegmentRanges[segmentIndex].Count, ct)
+                        .ConfigureAwait(false);
                     _onBytesRead?.Invoke(bytes.Length);
                     _siblingSegmentBodies[cacheKey] = bytes;
-                    Interlocked.Add(ref _cachedBodyBytes, bytes.Length);
+                    AddRetainedBytes(bytes.Length);
                     return bytes;
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
@@ -1733,6 +1985,7 @@ public class Par2RepairService : BackgroundService
         {
             if (_activeSiblingFileIndex == fileIndex)
                 return;
+            ClearTargetBodies();
             if (_activeSiblingFileIndex >= 0)
                 EvictSiblingFile(_activeSiblingFileIndex);
             _activeSiblingFileIndex = fileIndex;
@@ -1757,7 +2010,78 @@ public class Par2RepairService : BackgroundService
         private void EvictSiblingSegment(int fileIndex, int segmentIndex)
         {
             if (_siblingSegmentBodies.Remove((fileIndex, segmentIndex), out var body))
-                Interlocked.Add(ref _cachedBodyBytes, -body.Length);
+                AddRetainedBytes(-body.Length);
+        }
+
+        private void EvictPassedTargetSegments(long sliceStart)
+        {
+            foreach (var segmentIndex in _segmentBodies.Keys.ToArray())
+            {
+                if (_map.SegmentRanges[segmentIndex].EndExclusive <= sliceStart
+                    && _segmentBodies.Remove(segmentIndex, out var body))
+                {
+                    AddRetainedBytes(-body.Length);
+                }
+            }
+        }
+
+        private void ClearTargetBodies()
+        {
+            foreach (var body in _segmentBodies.Values)
+                AddRetainedBytes(-body.Length);
+            _segmentBodies.Clear();
+        }
+
+        private void ClearSiblingBodies()
+        {
+            foreach (var body in _siblingSegmentBodies.Values)
+                AddRetainedBytes(-body.Length);
+            _siblingSegmentBodies.Clear();
+            _activeSiblingFileIndex = -1;
+        }
+
+        private void EnsureRetainedCapacity(int incomingBytes)
+        {
+            if (incomingBytes < 0 || incomingBytes > RetainedByteLimit - CachedBodyBytes)
+            {
+                throw new Par2MemoryCapExceededException(
+                    $"PAR2 source window needs {incomingBytes:N0} bytes with {CachedBodyBytes:N0} retained, "
+                    + $"exceeding the repair cap of {RetainedByteLimit:N0} bytes.");
+            }
+        }
+
+        private void AddRetainedBytes(long delta)
+        {
+            var current = Interlocked.Add(ref _cachedBodyBytes, delta);
+            if (delta <= 0)
+                return;
+
+            long peak;
+            while (current > (peak = Interlocked.Read(ref _peakCachedBodyBytes)))
+            {
+                if (Interlocked.CompareExchange(ref _peakCachedBodyBytes, current, peak) == peak)
+                    break;
+            }
+        }
+
+        private static async Task<byte[]> ReadExpectedSegmentBodyAsync(
+            Stream stream,
+            long expectedLength,
+            CancellationToken ct)
+        {
+            if (expectedLength < 0 || expectedLength > int.MaxValue)
+                throw new InvalidDataException("PAR2 source segment has an unsupported length.");
+
+            var bytes = GC.AllocateUninitializedArray<byte>((int)expectedLength);
+            await stream.ReadExactlyAsync(bytes, ct).ConfigureAwait(false);
+
+            var extra = new byte[1];
+            if (await stream.ReadAsync(extra, ct).ConfigureAwait(false) != 0)
+                throw new InvalidDataException("PAR2 source segment exceeded its recorded byte range.");
+
+            return bytes;
         }
     }
+
+    private sealed class Par2MemoryCapExceededException(string message) : InvalidOperationException(message);
 }

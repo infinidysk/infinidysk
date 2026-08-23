@@ -51,6 +51,25 @@ public sealed class Par2FileSliceMapTests
     }
 
     [Fact]
+    public void EstimateMaxOverlappingSegmentBytes_UsesOnlyTheCurrentSliceWindow()
+    {
+        var ranges = new[]
+        {
+            LongRange.FromStartAndSize(0, 40),
+            LongRange.FromStartAndSize(40, 40),
+            LongRange.FromStartAndSize(80, 48),
+        };
+
+        Assert.True(Par2FileSliceMap.TryCreate(
+            128, 0, 64, 2, ranges, out var map, out var error));
+        Assert.Null(error);
+
+        // Slice 0 overlaps segments 0 and 1; slice 1 overlaps 1 and 2.
+        // The source cache must retain the larger 88-byte window, not all 128 bytes.
+        Assert.Equal(88, map!.EstimateMaxOverlappingSegmentBytes());
+    }
+
+    [Fact]
     public void TryCreate_RejectsRangeOutsideTheTargetFile()
     {
         var ranges = new[] { LongRange.FromStartAndSize(0, 200) };
@@ -71,16 +90,15 @@ public sealed class Par2FileSliceMapTests
     }
 
     [Fact]
-    public void EstimateWorkingSetBytes_IncludesCachedSlicesRecoveryAndPatches()
+    public void EstimateWorkingSetBytes_IncludesPeakSourceWindowRecoveryAndPatches()
     {
         var bytes = Par2RepairService.EstimateWorkingSetBytes(
-            cachedSourceBodyBytes: 10,
-            assembledPresentSliceCount: 3,
+            peakSourceBodyBytes: 10,
             recoverySliceCount: 2,
             reconstructedSliceCount: 2,
             stagedPatchBytes: 5,
             sliceSize: 64);
-        Assert.Equal(10 + (3 * 64) + (2 * 64) + (2 * 64) + (2 * 64) + 5 + 10, bytes);
+        Assert.Equal(10 + (2 * 64) + (2 * 64) + (2 * 64) + (2 * 64) + 5, bytes);
     }
 
     [Fact]
@@ -88,8 +106,7 @@ public sealed class Par2FileSliceMapTests
     {
         Assert.Throws<OverflowException>(() =>
             Par2RepairService.EstimateWorkingSetBytes(
-                cachedSourceBodyBytes: long.MaxValue,
-                assembledPresentSliceCount: 1,
+                peakSourceBodyBytes: long.MaxValue,
                 recoverySliceCount: 0,
                 reconstructedSliceCount: 0,
                 stagedPatchBytes: 1,

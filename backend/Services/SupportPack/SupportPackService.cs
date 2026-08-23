@@ -733,6 +733,19 @@ public sealed class SupportPackService(
                     totalSlicesReconstructed = snapshot.TotalSlicesReconstructed,
                     totalSegmentsCommitted = snapshot.TotalSegmentsCommitted,
                 },
+                active = snapshot.ActiveRepair is null
+                    ? null
+                    : new
+                    {
+                        path = snapshot.ActiveRepair.Path,
+                        phase = snapshot.ActiveRepair.Phase,
+                        bytesRead = snapshot.ActiveRepair.BytesRead,
+                        estimatedWorkingSetBytes = snapshot.ActiveRepair.EstimatedWorkingSetBytes,
+                        memoryCapBytes = snapshot.ActiveRepair.MemoryCapBytes,
+                        retainedSourceBytes = snapshot.ActiveRepair.RetainedSourceBytes,
+                        peakRetainedSourceBytes = snapshot.ActiveRepair.PeakRetainedSourceBytes,
+                        retainedSourceLimitBytes = snapshot.ActiveRepair.RetainedSourceLimitBytes,
+                    },
                 recentJobs = snapshot.RecentJobs,
             };
         }

@@ -49,6 +49,57 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ReconcileInterruptedJobs_ReleasesQueuedAndCoolsDownRunningJobs()
+    {
+        var patchDir = Path.Join(_configRoot, "reconcile-patches");
+        var store = new RepairPatchStore(patchDir, 1024 * 1024);
+        await store.CatalogLoadTask;
+        var service = new Par2RepairService(_config, null!, store);
+        var runningId = Guid.NewGuid();
+        var queuedId = Guid.NewGuid();
+
+        await using (var context = new DavDatabaseContext())
+        {
+            context.Par2RepairJobs.AddRange(
+                new Par2RepairJob
+                {
+                    Id = Guid.NewGuid(),
+                    DavItemId = runningId,
+                    Path = "/content/running.mkv",
+                    State = Par2RepairJob.RepairJobState.Running,
+                    CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                    StartedAt = DateTimeOffset.UtcNow.AddMinutes(-4),
+                    Attempts = 1,
+                },
+                new Par2RepairJob
+                {
+                    Id = Guid.NewGuid(),
+                    DavItemId = queuedId,
+                    Path = "/content/queued.mkv",
+                    State = Par2RepairJob.RepairJobState.Queued,
+                    CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                    Attempts = 1,
+                });
+            await context.SaveChangesAsync();
+        }
+
+        await service.ReconcileInterruptedJobsForTestsAsync(CancellationToken.None);
+
+        await using var verify = new DavDatabaseContext();
+        var jobs = await verify.Par2RepairJobs.ToDictionaryAsync(job => job.DavItemId);
+        var running = jobs[runningId];
+        var queued = jobs[queuedId];
+        Assert.Equal(Par2RepairJob.RepairJobState.Failed, running.State);
+        Assert.NotNull(running.CompletedAt);
+        Assert.NotNull(running.NextAttemptAt);
+        Assert.Contains("interrupted by a backend restart", running.FailureReason, StringComparison.Ordinal);
+        Assert.Equal(Par2RepairJob.RepairJobState.Failed, queued.State);
+        Assert.NotNull(queued.CompletedAt);
+        Assert.Null(queued.NextAttemptAt);
+        Assert.Contains("queued when the backend restarted", queued.FailureReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task OneKnownCorruptTarget_ReconstructsAndCommits_WithoutRefetchingTheTarget()
     {
         var fileData = PatternBytes(SliceSize * 3, 0x11);
@@ -64,6 +115,24 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         Assert.Equal(
             fileData.AsSpan(0, SliceSize).ToArray(),
             await ReadPatchAsync(release.Store, release.ContentSegmentIds[0]));
+    }
+
+    [Fact]
+    public async Task SequentialRepairPasses_RefetchPresentSourceInsteadOfRetainingWholeTarget()
+    {
+        var fileData = PatternBytes(SliceSize * 3, 0x12);
+        await using var release = await SeedAsync(fileData, EqualSegments(3), recoveryExponents: [0u],
+            corruptOnRead: [0]);
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
+
+        Assert.True(ok);
+        // Discovery, Reed-Solomon reduction, and whole-file MD5 are independent
+        // sequential passes. The test client has no disk segment cache, proving
+        // source bytes are discarded rather than retained for the lifetime of repair.
+        Assert.True(release.Fake.BodyRequestCounts[release.ContentSegmentIds[1]] >= 3);
+        Assert.True(release.Fake.BodyRequestCounts[release.ContentSegmentIds[2]] >= 3);
     }
 
     [Fact]
