@@ -26,7 +26,7 @@ export function SessionsBlock({ sessions, window }: SessionsBlockProps) {
         {sessions.count === 0 ? (
           <p className="text-sm text-base-content/50">No completed read sessions yet.</p>
         ) : (
-          <div className="stats stats-vertical w-full border border-base-content/10 bg-base-200 shadow sm:stats-horizontal">
+          <div className="stats stats-vertical w-full bg-base-200/40 sm:stats-horizontal">
             <Stat label="Sessions" value={formatNumber(sessions.count)} />
             <Stat label="Bytes served" value={formatBytes(sessions.totalBytesServed)} />
             <Stat label="Avg duration" value={formatDuration(sessions.avgDurationMs)} />

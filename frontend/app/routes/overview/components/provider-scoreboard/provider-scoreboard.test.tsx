@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import type { ProviderRow } from "~/clients/backend-client.server";
 import { OutageBuckets, ProviderScoreboard, Sparkline } from "./provider-scoreboard";
@@ -19,10 +20,14 @@ const provider = (speedMbPerSec: number | null): ProviderRow => ({
 describe("ProviderScoreboard", () => {
   it("shows sustained speed and an em dash when speed is unavailable", () => {
     const active = renderToStaticMarkup(
-      <ProviderScoreboard providers={[provider(12.34)]} window="1h" />,
+      <MemoryRouter>
+        <ProviderScoreboard providers={[provider(12.34)]} window="1h" />
+      </MemoryRouter>,
     );
     const idle = renderToStaticMarkup(
-      <ProviderScoreboard providers={[provider(null)]} window="1h" />,
+      <MemoryRouter>
+        <ProviderScoreboard providers={[provider(null)]} window="1h" />
+      </MemoryRouter>,
     );
 
     expect(active).toContain(">MB/s<");

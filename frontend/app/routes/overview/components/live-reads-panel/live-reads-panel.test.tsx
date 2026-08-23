@@ -7,6 +7,6 @@ describe("LiveReadsPanel", () => {
     const markup = renderToStaticMarkup(<LiveReadsPanel />);
 
     expect(markup).toContain("Right now");
-    expect(markup).toContain("No active reads.");
+    expect(markup).toContain("No files are being read right now.");
   });
 });

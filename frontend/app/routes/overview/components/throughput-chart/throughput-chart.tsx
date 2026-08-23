@@ -92,6 +92,24 @@ export function ThroughputChart({
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) =>
     onMove(e.clientX, e.currentTarget);
   const handleMouseLeave = () => setHoverIdx(null);
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (points.length === 0) return;
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      setHoverIdx((i) => Math.min(points.length - 1, (i ?? -1) + 1));
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      setHoverIdx((i) => Math.max(0, (i ?? points.length) - 1));
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setHoverIdx(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setHoverIdx(points.length - 1);
+    } else if (e.key === "Escape") {
+      setHoverIdx(null);
+    }
+  };
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     const t = e.touches[0];
     if (t) onMove(t.clientX, e.currentTarget);
@@ -149,10 +167,14 @@ export function ThroughputChart({
               </div>
               <div
                 className={styles.chartArea}
+                tabIndex={0}
+                role="img"
+                aria-label={`${formatNumber(totalArticles)} articles, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served. Use arrow keys for bucket details.`}
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
+                onKeyDown={handleKeyDown}
               >
                 <svg
                   viewBox={`0 0 ${VB_W} ${VB_H}`}
@@ -260,7 +282,7 @@ export function ThroughputChart({
                 </span>
               )}
               <span className="ml-auto tabular-nums">
-                Peak {formatNumber(maxArticles)} / {bucketLabel} · hover for details
+                Peak {formatNumber(maxArticles)} / {bucketLabel} · hover or use arrow keys
               </span>
             </div>
           </>

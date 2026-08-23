@@ -15,7 +15,7 @@ export function LifetimeBlock({ lifetime }: LifetimeBlockProps) {
   const isEmpty = lifetime.bytesRead === 0 && lifetime.articles === 0;
 
   return (
-    <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
+    <section className="card w-full border border-base-content/10 bg-base-100">
       <div className="card-body gap-3 p-4">
         <div>
           <h3 className="card-title text-base">All time</h3>
@@ -27,7 +27,7 @@ export function LifetimeBlock({ lifetime }: LifetimeBlockProps) {
             Lifetime totals appear after your first reads.
           </p>
         ) : (
-          <div className="stats stats-vertical w-full border border-base-content/10 bg-base-200 shadow sm:stats-horizontal">
+          <div className="stats stats-vertical w-full bg-base-200/40 sm:stats-horizontal">
             <Stat label="Read" value={formatBytes(lifetime.bytesRead)} />
             <Stat label="Articles" value={formatNumber(lifetime.articles)} />
             <Stat label="Read sessions" value={formatNumber(lifetime.readSessions)} />

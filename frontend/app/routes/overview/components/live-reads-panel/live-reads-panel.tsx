@@ -14,6 +14,7 @@ const TOPIC_ACTIVE_READS = "ar";
  */
 export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
   const [reads, setReads] = useState<ActiveRead[]>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   // Track previous bytesRead per session for live MiB/s computation.
   const prevRef = useRef<Map<string, { bytes: number; at: number; rate: number }>>(new Map());
 
@@ -62,8 +63,14 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
           )}
         </div>
 
+        <div className="sr-only" aria-live="polite">
+          {copiedId ? "Session id copied" : ""}
+        </div>
+
         {reads.length === 0 ? (
-          <p className="m-0 text-sm text-base-content/50">No active reads.</p>
+          <p className="m-0 text-sm text-base-content/50">
+            No files are being read right now. Open a mounted file to see live progress here.
+          </p>
         ) : (
           <div className="flex flex-col gap-2.5">
             {reads.map((r) => {
@@ -97,9 +104,13 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
                     type="button"
                     className="btn btn-ghost btn-xs self-start px-0 font-mono text-base-content/50 hover:underline"
                     title={`Copy session id: ${r.id}`}
-                    onClick={() => void navigator.clipboard.writeText(r.id)}
+                    onClick={() => {
+                      void navigator.clipboard.writeText(r.id);
+                      setCopiedId(r.id);
+                      window.setTimeout(() => setCopiedId((id) => (id === r.id ? null : id)), 1500);
+                    }}
                   >
-                    {shortSessionId(r.id)}
+                    {copiedId === r.id ? "Copied" : shortSessionId(r.id)}
                   </button>
                   {pct !== null ? (
                     <progress

@@ -4,6 +4,8 @@ import type {
   ProviderRow,
 } from "~/clients/backend-client.server";
 import { formatBytes, formatNumber, formatPercent, formatSpeed } from "../../utils/format";
+import { settingsPath } from "~/navigation/settings-tabs";
+import { WidgetLink } from "../widget-link/widget-link";
 
 export type ProviderScoreboardProps = {
   providers: ProviderRow[];
@@ -12,6 +14,9 @@ export type ProviderScoreboardProps = {
 
 export function ProviderScoreboard({ providers, window }: ProviderScoreboardProps) {
   const total = providers.reduce((s, p) => s + p.articles, 0);
+  const hasOpenCircuit = providers.some(
+    (p) => p.circuitState === "open" || p.circuitState === "halfOpen",
+  );
   const outageHelp = `Circuit-open time per ${outageIntervalLabel(window)} interval on a fixed 0–100% scale. Brief trips use a minimum-height tick.`;
   const speedHelp =
     "Historical average: bytes fetched divided by summed successful fetch durations over the selected window. Durations include connection-pool wait and overlap across concurrent fetches, so this is not wall-clock aggregate bandwidth. Use the provider benchmark for line-rate calibration.";
@@ -19,18 +24,27 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
   return (
     <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
       <div className="card-body gap-3 p-4">
-        <div>
-          <h3 className="card-title text-base">Providers</h3>
-          <p className="text-xs text-base-content/50">
-            Per-provider fetches, {window === "all" ? "all time" : `last ${window}`}
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="card-title text-base">Providers</h3>
+            <p className="text-xs text-base-content/50">
+              Per-provider fetches, {window === "all" ? "all time" : `last ${window}`}
+            </p>
+          </div>
+          <WidgetLink to={settingsPath("usenet")}>Usenet settings</WidgetLink>
         </div>
+        {hasOpenCircuit && (
+          <p className="text-xs text-warning">
+            A provider circuit is open.{" "}
+            <WidgetLink to={settingsPath("usenet")}>Review Usenet settings</WidgetLink>
+          </p>
+        )}
 
         {providers.length === 0 ? (
           <p className="py-6 text-center text-xs text-base-content/50">No providers configured.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="table table-sm min-w-[800px]">
+            <table className="table table-pin-cols table-sm min-w-[800px]">
               <thead>
                 <tr>
                   <th>Provider</th>
@@ -57,7 +71,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                   const circuitState = p.circuitState ?? "closed";
                   return (
                     <tr key={p.provider}>
-                      <td>
+                      <th scope="row" className="bg-base-100 font-medium">
                         <div
                           className="flex max-w-[240px] min-w-0 items-center gap-2 font-medium"
                           title={buildProviderTooltip(p, circuitState)}
@@ -74,7 +88,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
                             </span>
                           )}
                         </div>
-                      </td>
+                      </th>
                       <td>
                         <Sparkline values={p.spark} tone="success" />
                       </td>

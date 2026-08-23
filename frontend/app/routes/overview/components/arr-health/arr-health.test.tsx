@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import type { ArrHealthResponse } from "~/clients/backend-client.server";
 import { ArrHealth } from "./arr-health";
@@ -14,7 +15,11 @@ const emptySummary = {
 };
 
 function render(data: ArrHealthResponse, window: "24h" | "all" = "24h") {
-  return renderToStaticMarkup(<ArrHealth data={data} window={window} />);
+  return renderToStaticMarkup(
+    <MemoryRouter>
+      <ArrHealth data={data} window={window} />
+    </MemoryRouter>,
+  );
 }
 
 describe("ArrHealth", () => {

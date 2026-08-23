@@ -30,6 +30,8 @@
 }
 
 .cell {
+  border: 0;
+  padding: 0;
   transition:
     filter 80ms ease,
     box-shadow 80ms ease;
@@ -41,11 +43,13 @@
   pointer-events: none;
 }
 
-.cell:hover {
+.cell:hover,
+.cell:focus-visible {
   filter: brightness(1.4);
   box-shadow: 0 0 0 1px var(--color-base-content);
   z-index: 1;
   position: relative;
+  outline: none;
 }
 
 .grid[data-mode="day"] .cell,

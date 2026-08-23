@@ -123,14 +123,18 @@ export function ActivityHeatmap({
                       }
                       const intensity = maxCell > 0 ? cell.count / maxCell : 0;
                       return (
-                        <div
+                        <button
+                          type="button"
                           key={c}
                           className={styles.cell}
                           style={{ backgroundColor: cellColor(intensity) }}
+                          aria-label={`${formatBucket(cell.bucket, bucketSizeMs)}: ${formatNumber(cell.count)} ${cell.count === 1 ? "article" : "articles"}`}
                           onMouseEnter={() => setHover(cell)}
                           onMouseLeave={() =>
                             setHover((h) => (h && h.bucket === cell.bucket ? null : h))
                           }
+                          onFocus={() => setHover(cell)}
+                          onBlur={() => setHover((h) => (h && h.bucket === cell.bucket ? null : h))}
                         />
                       );
                     })}
@@ -166,7 +170,7 @@ export function ActivityHeatmap({
                     {hover.count === 1 ? "article" : "articles"}
                   </>
                 ) : (
-                  <>Hover a cell for details</>
+                  <>Select a cell for details</>
                 )}
               </div>
               <div className="flex items-center gap-1 text-[10px] text-base-content/50">

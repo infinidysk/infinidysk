@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import styles from "./error-donut.module.css";
 import type { ErrorSlice } from "~/clients/backend-client.server";
 import { formatNumber, formatPercent } from "../../utils/format";
+import { WidgetLink } from "../widget-link/widget-link";
 
 export type ErrorDonutProps = {
   errors: ErrorSlice[];
@@ -65,9 +66,14 @@ export function ErrorBreakdown({ errors }: ErrorDonutProps) {
   return (
     <section className="card w-full min-w-0 overflow-hidden border border-base-content/10 bg-base-100 shadow-sm">
       <div className="card-body gap-3 p-4">
-        <div>
-          <h3 className="card-title text-base">Error breakdown</h3>
-          <p className="text-xs text-base-content/50">Hard failures vs expected provider misses</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="card-title text-base">Error breakdown</h3>
+            <p className="text-xs text-base-content/50">
+              Hard failures vs expected provider misses
+            </p>
+          </div>
+          {hardTotal > 0 && <WidgetLink to="/logs">View logs</WidgetLink>}
         </div>
 
         {allClear ? (

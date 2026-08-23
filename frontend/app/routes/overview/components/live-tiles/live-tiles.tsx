@@ -20,7 +20,11 @@ export function LiveTiles({ tiles }: LiveTilesProps) {
   const throttles = tiles.inFlightArticleThrottleEvents ?? 0;
   const budgetPressure = cap > 0 && leased >= cap * 0.9;
   return (
-    <div className="stats stats-vertical w-full border border-base-content/10 bg-base-200 shadow lg:stats-horizontal">
+    <div
+      role="region"
+      aria-label="Live status"
+      className="stats stats-vertical w-full border border-base-content/10 bg-base-200 shadow lg:stats-horizontal"
+    >
       <Tile
         label="Active reads"
         value={tiles.activeReads.toString()}

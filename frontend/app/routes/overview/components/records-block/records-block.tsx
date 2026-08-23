@@ -13,7 +13,7 @@ export function RecordsBlock({ records }: RecordsBlockProps) {
   const isEmpty = records.bestDayBytes === 0 && records.bestHourBytes === 0;
 
   return (
-    <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
+    <section className="card w-full border border-base-content/10 bg-base-100">
       <div className="card-body gap-3 p-4">
         <div>
           <h3 className="card-title text-base">Records</h3>
@@ -23,7 +23,7 @@ export function RecordsBlock({ records }: RecordsBlockProps) {
         {isEmpty ? (
           <p className="text-sm text-base-content/50">Records appear after some activity.</p>
         ) : (
-          <div className="stats stats-vertical w-full border border-base-content/10 bg-base-200 shadow sm:stats-horizontal">
+          <div className="stats stats-vertical w-full bg-base-200/40 sm:stats-horizontal">
             <Stat
               label="Busiest day"
               value={formatBytes(records.bestDayBytes)}

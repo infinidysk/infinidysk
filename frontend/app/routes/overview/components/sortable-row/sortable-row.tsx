@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { Icon } from "~/components/ui";
 
 type Props = {
   id: string;
@@ -39,14 +40,7 @@ export function SortableRow({ id, editMode, children }: Props) {
           {...attributes}
           {...listeners}
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <circle cx="5" cy="3" r="1.4" />
-            <circle cx="11" cy="3" r="1.4" />
-            <circle cx="5" cy="8" r="1.4" />
-            <circle cx="11" cy="8" r="1.4" />
-            <circle cx="5" cy="13" r="1.4" />
-            <circle cx="11" cy="13" r="1.4" />
-          </svg>
+          <Icon name="drag_indicator" className="!text-[18px]" />
         </button>
       )}
       <div className="min-w-0">{children}</div>

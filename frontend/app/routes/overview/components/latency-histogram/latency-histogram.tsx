@@ -52,11 +52,15 @@ export function LatencyHistogram({ p50Ms, p95Ms, p99Ms, samples, buckets }: Late
                 const h = maxCount > 0 ? (b.count / maxCount) * 100 : 0;
                 const isHover = hover === b;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={i}
                     className={`${styles.barCol} ${isHover ? styles.barHover : ""}`}
+                    aria-label={`${fullBucketLabel(b)}: ${formatNumber(b.count)} ${b.count === 1 ? "fetch" : "fetches"}`}
                     onMouseEnter={() => setHover(b)}
                     onMouseLeave={() => setHover((h) => (h === b ? null : h))}
+                    onFocus={() => setHover(b)}
+                    onBlur={() => setHover((h) => (h === b ? null : h))}
                   >
                     <div className={styles.barWrap}>
                       <div className={styles.bar} style={{ height: `${h.toFixed(1)}%` }} />
@@ -64,7 +68,7 @@ export function LatencyHistogram({ p50Ms, p95Ms, p99Ms, samples, buckets }: Late
                     <div className="max-w-full overflow-hidden text-center text-[10px] leading-none text-base-content/50 tabular-nums">
                       {bucketLabel(b)}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -80,7 +84,7 @@ export function LatencyHistogram({ p50Ms, p95Ms, p99Ms, samples, buckets }: Late
                     {samples > 0 && <> · {formatPercent((hover.count / samples) * 100, 1)}</>}
                   </>
                 ) : (
-                  <>Hover a bar for the exact count</>
+                  <>Select a bar for the exact count</>
                 )}
               </div>
             </div>

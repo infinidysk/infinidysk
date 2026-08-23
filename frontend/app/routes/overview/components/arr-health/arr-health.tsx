@@ -4,6 +4,8 @@ import type {
   OverviewWindow,
 } from "~/clients/backend-client.server";
 import { formatDurationMs, formatNumber, formatTimeAgo } from "../../utils/format";
+import { settingsPath } from "~/navigation/settings-tabs";
+import { WidgetLink } from "../widget-link/widget-link";
 
 export type ArrHealthProps = {
   data: ArrHealthResponse;
@@ -24,11 +26,17 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
   return (
     <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
       <div className="card-body gap-3 p-4">
-        <div>
-          <h3 className="card-title text-base">Arr Health</h3>
-          <p className="text-xs text-base-content/50">
-            InfiniDysk completion → Sonarr/Radarr import, {sinceLabel}
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="card-title text-base">Arr Health</h3>
+            <p className="text-xs text-base-content/50">
+              InfiniDysk completion → Sonarr/Radarr import, {sinceLabel}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <WidgetLink to="/queue">Queue</WidgetLink>
+            <WidgetLink to={settingsPath("arrs")}>Arr settings</WidgetLink>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -110,9 +118,12 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
 
         {awaiting.length > 0 && (
           <div>
-            <h4 className="mb-2 text-xs uppercase tracking-wide text-base-content/50">
-              Awaiting import
-            </h4>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-xs uppercase tracking-wide text-base-content/50">
+                Awaiting import
+              </h4>
+              <WidgetLink to="/queue">Open queue</WidgetLink>
+            </div>
             <ul className="space-y-1">
               {awaiting.map((item, index) => (
                 <li
