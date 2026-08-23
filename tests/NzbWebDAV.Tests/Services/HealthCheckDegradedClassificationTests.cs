@@ -652,7 +652,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     {
         var segments = NewSegmentIds(4);
         var (item, _) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000, 10_000]);
-        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: false);
+        var (service, par2) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: false);
         var previousStore = BlobStore.Current;
         BlobStore.Use(new OutOfMemoryBlobStore());
         try
@@ -668,7 +668,10 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
         Assert.Contains("segment metadata exceeded", row.Message);
-        Assert.True(ReloadItem(item.Id).NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
+        Assert.Empty(par2.Requests);
+        var persisted = ReloadItem(item.Id);
+        Assert.Equal(item.Id, persisted.Id);
+        Assert.True(persisted.NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
     }
 
     private static string[] NewSegmentIds(int count) =>

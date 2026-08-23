@@ -73,6 +73,21 @@ public class HealthCheckSampleSegmentsTests
     }
 
     [Fact]
+    public void ConcatenatedSegmentView_SkipsEmptyPartsWhilePreservingIndexes()
+    {
+        var segments = new HealthCheckService.ConcatenatedSegmentView(
+        [
+            ["first"],
+            [],
+            ["second", "third"],
+        ]);
+
+        Assert.Equal(["first", "second", "third"], segments);
+        Assert.Equal("second", segments[1]);
+        Assert.Equal("third", segments[2]);
+    }
+
+    [Fact]
     public void SampleSegments_CoverageTapersInsteadOfSteppingDown()
     {
         double Coverage(int count) =>

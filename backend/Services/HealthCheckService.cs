@@ -1115,33 +1115,10 @@ public class HealthCheckService : BackgroundService
         HealthCheckDepth depth = ConfigManager.DefaultHealthCheckDepth,
         TimeSpan? age = null)
     {
-        var count = segments.Count;
-        var target = SampleTarget(count, depth, age);
-        if (count <= target) return segments;
+        if (segments.Count <= SampleTarget(segments.Count, depth, age))
+            return segments;
 
-        const int headCount = 100;
-        const int tailCount = 100;
-
-        var result = new HashSet<int>();
-
-        for (var i = 0; i < Math.Min(headCount, count); i++)
-            result.Add(i);
-
-        for (var i = Math.Max(0, count - tailCount); i < count; i++)
-            result.Add(i);
-
-        // Spread `target` picks across the file with a running remainder, so the sample lands
-        // on the target instead of on the nearest whole number stride.
-        var carry = 0L;
-        for (var i = 0; i < count; i++)
-        {
-            carry += target;
-            if (carry < count) continue;
-            carry -= count;
-            result.Add(i);
-        }
-
-        return result.OrderBy(i => i).Select(i => segments[i]).ToList();
+        return SampleSegmentsIndexed(segments, depth, age).ToList();
     }
 
     private static SegmentIndexView SampleSegmentsIndexed(
@@ -1338,19 +1315,19 @@ public class HealthCheckService : BackgroundService
     /// Presents archive parts as one indexable sequence without copying every Message-ID
     /// into a temporary flattened list.
     /// </summary>
-    private sealed class ConcatenatedSegmentView : IReadOnlyList<string>
+    internal sealed class ConcatenatedSegmentView : IReadOnlyList<string>
     {
         private readonly string[][] _parts;
         private readonly int[] _partEnds;
 
         public ConcatenatedSegmentView(string[][] parts)
         {
-            _parts = parts;
-            _partEnds = new int[parts.Length];
+            _parts = parts.Where(part => part.Length > 0).ToArray();
+            _partEnds = new int[_parts.Length];
             var count = 0;
-            for (var index = 0; index < parts.Length; index++)
+            for (var index = 0; index < _parts.Length; index++)
             {
-                count = checked(count + parts[index].Length);
+                count = checked(count + _parts[index].Length);
                 _partEnds[index] = count;
             }
         }
