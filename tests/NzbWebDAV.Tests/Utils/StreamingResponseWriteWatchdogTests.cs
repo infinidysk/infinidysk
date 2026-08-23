@@ -103,11 +103,16 @@ public class StreamingResponseWriteWatchdogTests
         await WaitUntil(() => budget.HasWaiters);
 
         using var readCts = new CancellationTokenSource();
-        using var dest = new DelayedCompletingWriteStream(TimeSpan.FromMilliseconds(400));
+        // Keep individual writes comfortably inside the progress deadline so
+        // runner scheduling contention cannot turn this aggregate-reclaim test
+        // into a per-write-timeout test.
+        using var dest = new DelayedCompletingWriteStream(TimeSpan.FromMilliseconds(200));
         var watchdog = new StreamingResponseWriteWatchdog(
-            TimeSpan.FromMilliseconds(700), readCts, budget);
+            TimeSpan.FromSeconds(1), readCts, budget);
 
-        await watchdog.WriteAsync(dest, new byte[100], CancellationToken.None);
+        for (var i = 0; i < 4; i++)
+            await watchdog.WriteAsync(dest, new byte[100], CancellationToken.None);
+
         var ex = await Assert.ThrowsAsync<StreamingWriteTimeoutException>(async () =>
             await watchdog.WriteAsync(dest, new byte[100], CancellationToken.None));
 
