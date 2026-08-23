@@ -138,6 +138,8 @@ public class ArrMonitoringService : BackgroundService
             mediaKey,
             arrConfig,
             _replacementSearchBudget);
+        var searchReserved = requestedAction is ArrConfig.QueueAction.RemoveAndBlocklistAndSearch &&
+                             action is ArrConfig.QueueAction.RemoveAndBlocklistAndSearch;
         if (requestedAction is ArrConfig.QueueAction.RemoveAndBlocklistAndSearch &&
             action is ArrConfig.QueueAction.RemoveAndBlocklist)
         {
@@ -147,7 +149,22 @@ public class ArrMonitoringService : BackgroundService
                      "the release was removed and blocklisted without starting another search.";
         }
 
-        await client.DeleteQueueRecord(item.Id, action, ct).ConfigureAwait(false);
+        // A transport exception below is ambiguous — Arr may have already processed the
+        // removal and started the search — so the reservation stays consumed and ambiguity
+        // can only under-search, never exceed the cap.
+        var status = await client.DeleteQueueRecord(item.Id, action, ct).ConfigureAwait(false);
+        if ((int)status is < 200 or >= 300)
+        {
+            // Arr definitively rejected the removal (commonly 404 when the record is already
+            // gone), so no replacement search occurred; refund the reservation.
+            if (searchReserved) _replacementSearchBudget.ReleaseLastReservation(mediaKey);
+            Log.Debug(
+                "Arr instance {Host} rejected removal of queue record {QueueRecordId} ({QueueItemTitle}) " +
+                "with status {StatusCode}",
+                client.Host, item.Id, item.Title, status);
+            return null;
+        }
+
         Log.Debug(
             "Resolved stuck queue record {QueueRecordId} ({QueueItemTitle}) from {Host} with action {Action}. " +
             "Reason: {Reason}. Media identity source: {IdentitySource}",

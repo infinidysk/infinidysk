@@ -31,7 +31,10 @@ public sealed class ArrReplacementSearchBudget
 
             if (!_searches.TryGetValue(mediaKey, out var reservations))
             {
-                MakeRoom();
+                // Fail closed at capacity: evicting an active key would forget its
+                // reservations and let that media item exceed the configured cap.
+                // Denying the new key only withholds a search until entries expire.
+                if (_searches.Count >= MaxTrackedMediaItems) return false;
                 reservations = [];
                 _searches[mediaKey] = reservations;
             }
@@ -43,6 +46,20 @@ public sealed class ArrReplacementSearchBudget
         }
     }
 
+    /// <summary>
+    /// Refunds the most recent reservation after the Arr action it was reserved for
+    /// was definitively rejected, so a failed request cannot consume the budget.
+    /// </summary>
+    public void ReleaseLastReservation(string mediaKey)
+    {
+        lock (_gate)
+        {
+            if (!_searches.TryGetValue(mediaKey, out var reservations)) return;
+            if (reservations.Count > 0) reservations.RemoveAt(reservations.Count - 1);
+            if (reservations.Count == 0) _searches.Remove(mediaKey);
+        }
+    }
+
     private void Prune(DateTimeOffset cutoff)
     {
         foreach (var (key, reservations) in _searches.ToArray())
@@ -50,15 +67,5 @@ public sealed class ArrReplacementSearchBudget
             reservations.RemoveAll(x => x < cutoff);
             if (reservations.Count == 0) _searches.Remove(key);
         }
-    }
-
-    private void MakeRoom()
-    {
-        if (_searches.Count < MaxTrackedMediaItems) return;
-
-        var oldest = _searches
-            .OrderBy(x => x.Value[0])
-            .First();
-        _searches.Remove(oldest.Key);
     }
 }

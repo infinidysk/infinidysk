@@ -28,6 +28,31 @@ public class ArrReplacementSearchBudgetTests
     }
 
     [Fact]
+    public void TryReserve_FailsClosedForNewKeysAtCapacity()
+    {
+        var budget = new ArrReplacementSearchBudget(new TestTimeProvider());
+        for (var i = 0; i < 4096; i++)
+            Assert.True(budget.TryReserve($"http://radarr|movie:{i}", limit: 2, TimeSpan.FromMinutes(30)));
+
+        // A brand-new key must not evict an active reservation; it is denied instead.
+        Assert.False(budget.TryReserve("http://radarr|movie:99999", limit: 2, TimeSpan.FromMinutes(30)));
+
+        // Already-tracked keys keep working at capacity.
+        Assert.True(budget.TryReserve("http://radarr|movie:0", limit: 2, TimeSpan.FromMinutes(30)));
+    }
+
+    [Fact]
+    public void ReleaseLastReservation_RefundsBudget()
+    {
+        var budget = new ArrReplacementSearchBudget(new TestTimeProvider());
+
+        Assert.True(budget.TryReserve("http://radarr|movie:42", limit: 1, TimeSpan.FromMinutes(30)));
+        budget.ReleaseLastReservation("http://radarr|movie:42");
+
+        Assert.True(budget.TryReserve("http://radarr|movie:42", limit: 1, TimeSpan.FromMinutes(30)));
+    }
+
+    [Fact]
     public void TryReserve_ExpiresOldReservations()
     {
         var time = new TestTimeProvider();
