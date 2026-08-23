@@ -97,12 +97,13 @@ public sealed class PostgresMigrationTests
                 Path = "/orphaned-directory",
             });
             await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
 
             var removed = await RemoveUnlinkedFilesTask.RemoveEmptyDirectoriesAsync(
                 context, cutoff);
 
             Assert.Equal(1, removed);
-            Assert.Null(await context.Items.FindAsync(id));
+            Assert.False(await context.Items.AsNoTracking().AnyAsync(x => x.Id == id));
         }
         finally
         {
