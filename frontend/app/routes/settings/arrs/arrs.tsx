@@ -221,12 +221,16 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
   );
 
   const updateReplacementSearchBudget = useCallback(
-    (field: "QueueReplacementSearchLimit" | "QueueReplacementSearchWindowMinutes", value: string) => {
-      const fallback =
+    (
+      field: "QueueReplacementSearchLimit" | "QueueReplacementSearchWindowMinutes",
+      value: string,
+    ) => {
+      const limit = field === "QueueReplacementSearchLimit" ? 10 : 1440;
+      const storedValue =
         field === "QueueReplacementSearchLimit"
           ? (arrConfig.QueueReplacementSearchLimit ?? 3)
           : (arrConfig.QueueReplacementSearchWindowMinutes ?? 30);
-      const limit = field === "QueueReplacementSearchLimit" ? 10 : 1440;
+      const fallback = Math.max(1, Math.min(limit, storedValue));
       const parsed = Number.parseInt(value, 10);
       updateConfig({
         ...arrConfig,
@@ -350,7 +354,9 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
                   max={10}
                   className="w-24"
                   value={arrConfig.QueueReplacementSearchLimit ?? 3}
-                  onChange={(e) => updateReplacementSearchBudget("QueueReplacementSearchLimit", e.target.value)}
+                  onChange={(e) =>
+                    updateReplacementSearchBudget("QueueReplacementSearchLimit", e.target.value)
+                  }
                 />
               </label>
               <label className="flex flex-col gap-1 text-sm text-base-content/80">
@@ -362,7 +368,10 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
                   className="w-28"
                   value={arrConfig.QueueReplacementSearchWindowMinutes ?? 30}
                   onChange={(e) =>
-                    updateReplacementSearchBudget("QueueReplacementSearchWindowMinutes", e.target.value)
+                    updateReplacementSearchBudget(
+                      "QueueReplacementSearchWindowMinutes",
+                      e.target.value,
+                    )
                   }
                 />
               </label>
