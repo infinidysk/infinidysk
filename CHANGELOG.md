@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.4](https://github.com/infinidysk/infinidysk/compare/v1.2.3...v1.2.4) (2026-08-23)
+
+
+### Bug Fixes
+
+* **arr:** prevent automatic replacement search loops ([#1132](https://github.com/infinidysk/infinidysk/issues/1132)) ([a5dc24e](https://github.com/infinidysk/infinidysk/commit/a5dc24eeb0d6a3102e020b75dc95f136a06c9e30))
+* **db:** allow orphan cleanup with PostgreSQL ([#1133](https://github.com/infinidysk/infinidysk/issues/1133)) ([c59ba20](https://github.com/infinidysk/infinidysk/commit/c59ba20ee571bfe58195d69aea998bcad3186728))
+* **health:** PAR2 repair no longer exhausts memory or blocks retries after a crash ([#1124](https://github.com/infinidysk/infinidysk/issues/1124)) ([b4804ea](https://github.com/infinidysk/infinidysk/commit/b4804eadebc8e5e64921b067e621a807b27a13a5))
+* **health:** prevent health checks crashing on oversized metadata ([#1123](https://github.com/infinidysk/infinidysk/issues/1123)) ([12cb9a9](https://github.com/infinidysk/infinidysk/commit/12cb9a95e2da24e227abe77dee879ebe0f4593f8))
+* **nntp:** recover providers faster from shared network failures ([#1116](https://github.com/infinidysk/infinidysk/issues/1116)) ([06df9c6](https://github.com/infinidysk/infinidysk/commit/06df9c623c820a612196cf884405a5d932801b90))
+* **queue:** delete STRM files with removed history items ([#1122](https://github.com/infinidysk/infinidysk/issues/1122)) ([12d1172](https://github.com/infinidysk/infinidysk/commit/12d1172696f8718cad57f226c584f60b33cbf3fc))
+* stabilize streaming and queue watchdog cancellation ([#1129](https://github.com/infinidysk/infinidysk/issues/1129)) ([047b34f](https://github.com/infinidysk/infinidysk/commit/047b34fcd284e8dc45d2cf67faae5ac0b94a6a2e))
+* **streams:** Article RAM waits no longer inflate during playback ([#1126](https://github.com/infinidysk/infinidysk/issues/1126)) ([89bccfb](https://github.com/infinidysk/infinidysk/commit/89bccfb6807b0bb219140c9abaf7ac9e8df662c3))
+* **ui:** hide Stable/Dev label in the version dropdown on mobile ([#1125](https://github.com/infinidysk/infinidysk/issues/1125)) ([51c200a](https://github.com/infinidysk/infinidysk/commit/51c200ab437c821baea5f4a300316b1faf4a6441))
+* **ui:** Mount button on Search page now adds releases ([#1112](https://github.com/infinidysk/infinidysk/issues/1112)) ([71500fe](https://github.com/infinidysk/infinidysk/commit/71500fe918b3f815d7cd3fbb5f3aade1eb3d7ee7))
+* **ui:** pin Overview Right now above widgets on stacked layouts ([#1117](https://github.com/infinidysk/infinidysk/issues/1117)) ([ed0dd0a](https://github.com/infinidysk/infinidysk/commit/ed0dd0ac350fdfb44f4ca327187b68156fea3731))
+* **ui:** remove scrollbar from header connection status ([#1115](https://github.com/infinidysk/infinidysk/issues/1115)) ([9879d4b](https://github.com/infinidysk/infinidysk/commit/9879d4bd3ee707532cde5eb1618823559bfeb9fe))
+* **usenet:** retain context for unclassified fetch failures ([#1113](https://github.com/infinidysk/infinidysk/issues/1113)) ([ef76529](https://github.com/infinidysk/infinidysk/commit/ef76529787c8ea630c042064191c2db34404cc22))
+* **usenet:** scale auto article budget beyond 512 MiB ([#1130](https://github.com/infinidysk/infinidysk/issues/1130)) ([c887505](https://github.com/infinidysk/infinidysk/commit/c8875051367c00b48313f395722e391c1542dd26))
+
 ## [1.2.3](https://github.com/infinidysk/infinidysk/compare/v1.2.2...v1.2.3) (2026-08-22)
 
 
