@@ -39,7 +39,7 @@ public class RemoveUnlinkedFilesTaskTests
             .UseNpgsql("Host=localhost;Database=nzbdav")
             .Options;
         using var context = new DavDatabaseContext(options);
-        var value = DateTime.UtcNow;
+        var value = new DateTime(2026, 8, 23, 12, 34, 56, DateTimeKind.Utc);
 
         var parameter = Assert.IsType<NpgsqlParameter>(
             RemoveUnlinkedFilesTask.CreateWallClockParameter(context, value));

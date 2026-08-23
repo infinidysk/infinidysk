@@ -84,11 +84,12 @@ public sealed class PostgresMigrationTests
             await context.Database.MigrateAsync();
 
             var id = Guid.NewGuid();
+            var cutoff = new DateTime(2026, 8, 23, 12, 34, 56, DateTimeKind.Local);
             context.Items.Add(new DavItem
             {
                 Id = id,
                 IdPrefix = id.ToString("N")[..DavItem.IdPrefixLength],
-                CreatedAt = DateTime.Now.AddMinutes(-1),
+                CreatedAt = cutoff.AddMinutes(-1),
                 ParentId = DavItem.Root.Id,
                 Name = "orphaned-directory",
                 Type = DavItem.ItemType.Directory,
@@ -98,7 +99,7 @@ public sealed class PostgresMigrationTests
             await context.SaveChangesAsync();
 
             var removed = await RemoveUnlinkedFilesTask.RemoveEmptyDirectoriesAsync(
-                context, DateTime.Now);
+                context, cutoff);
 
             Assert.Equal(1, removed);
             Assert.Null(await context.Items.FindAsync(id));
