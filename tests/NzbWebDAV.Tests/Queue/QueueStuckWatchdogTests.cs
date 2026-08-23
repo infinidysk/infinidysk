@@ -727,7 +727,7 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         DateTime item1CompleteAt = default;
         DateTime item2ClaimedAt = default;
         using var gate1 = new ManualResetEventSlim(true);
-        using var gate2 = new ManualResetEventSlim(true);
+        using var gate2 = new ManualResetEventSlim(false);
 
         _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
         {
@@ -766,6 +766,11 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         Assert.True(
             gap < TimeSpan.FromMilliseconds(500),
             $"Second item claimed {gap.TotalMilliseconds:F0}ms after first completed; expected prompt claim");
+
+        var item2InProgress = await WaitForInProgress(item2.Id, TimeSpan.FromSeconds(5));
+        Assert.NotNull(item2InProgress);
+        gate2.Set();
+        await GetProcessingTask(item2InProgress!).WaitAsync(TimeSpan.FromSeconds(5));
 
         await cts.CancelAsync();
         await loop.WaitAsync(TimeSpan.FromSeconds(5));
