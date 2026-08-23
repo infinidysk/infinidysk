@@ -97,6 +97,12 @@ or restrict backend capabilities when enforcement is required.
 | `USENET_DISABLE_CRC_VALIDATION` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | unset | `1` skips yEnc CRC checks (emergency) |
 | `THREADPOOL_MIN_THREADS` | `max(2×CPU, 50)` | Override min worker/IOCP threads |
 | `THREADPOOL_MAX_THREADS` | `max(50×CPU, 1000)` | Override max threads |
+| `DOTNET_GCHeapHardLimit` | runtime default | .NET managed-heap ceiling; hexadecimal bytes |
+| `DOTNET_GCHeapHardLimitPercent` | runtime/container default | .NET managed-heap ceiling as a hexadecimal percentage |
+| `DOTNET_GCRegionRange` | runtime default | .NET regions-GC virtual reservation; hexadecimal bytes |
+| `DOTNET_GCRegionSize` | runtime default | .NET SOH region size; hexadecimal bytes |
+| `DOTNET_GCConserveMemory` | `0` | .NET heap-conservation level (0–9) |
+| `DOTNET_gcServer` | image default (`1`) | Enables (`1`) or disables (`0`) server GC |
 | `MAX_REQUEST_BODY_SIZE` | 100 MiB | Max request body bytes |
 | `QUEUE_ITEM_STUCK_MINUTES` [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since } | `5` | Minutes without queue progress before the stuck-item watchdog pauses and cancels the worker |
 | `NZBDAV_VERSION` | `0.0.0` | Reported app version |
@@ -107,6 +113,12 @@ change Docker's published host port. For normal Compose deployments, leave the
 internal ports unchanged and use a `HOST_PORT:CONTAINER_PORT` mapping. See
 [Change the published port](../getting-started/docker.md#change-the-published-port)
 for bridge networking, host networking, healthcheck, and DUMB examples.
+
+`DOTNET_*` variables are .NET runtime settings rather than InfiniDysk
+configuration. Environment-variable numeric values are hexadecimal where the
+.NET runtime requires it. See [Memory-constrained hosts](../operations/memory-constrained-hosts.md)
+before setting heap or region limits, especially on a host that enforces
+`ulimit -v`.
 
 ## Settings fallbacks (when UI empty)
 

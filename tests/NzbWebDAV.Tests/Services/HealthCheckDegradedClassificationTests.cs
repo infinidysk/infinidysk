@@ -647,6 +647,30 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Null(blob.CorruptSegmentIndices);
     }
 
+    [Fact]
+    public async Task PayloadOutOfMemory_IsDeferredWithoutStartingRepair()
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000, 10_000]);
+        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: false);
+        var previousStore = BlobStore.Current;
+        BlobStore.Use(new OutOfMemoryBlobStore());
+        try
+        {
+            await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+        }
+        finally
+        {
+            BlobStore.Use(previousStore);
+        }
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Contains("segment metadata exceeded", row.Message);
+        Assert.True(ReloadItem(item.Id).NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
+    }
+
     private static string[] NewSegmentIds(int count) =>
         Enumerable.Range(0, count).Select(i => $"seg{i}-{Guid.NewGuid():N}@test").ToArray();
 
@@ -683,6 +707,22 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             Memory<byte> buffer,
             CancellationToken cancellationToken = default) =>
             ValueTask.FromException<int>(CreateException());
+    }
+
+    private sealed class OutOfMemoryBlobStore : IBlobStore
+    {
+        public Task WriteBlob(Guid id, Stream stream, CancellationToken cancellationToken = default) =>
+            Task.FromException(new NotSupportedException());
+
+        public Task WriteBlob<T>(Guid id, T blob) =>
+            Task.FromException(new NotSupportedException());
+
+        public Stream? ReadBlob(Guid id) => null;
+
+        public Task<T?> ReadBlob<T>(Guid id) =>
+            Task.FromException<T?>(new OutOfMemoryException("simulated payload allocation failure"));
+
+        public void Delete(Guid id) => throw new NotSupportedException();
     }
 
     private async Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(

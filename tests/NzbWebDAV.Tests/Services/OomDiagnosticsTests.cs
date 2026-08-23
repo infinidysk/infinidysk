@@ -20,6 +20,11 @@ public sealed class OomDiagnosticsTests
             e => e.MessageTemplate.Text.Contains("OutOfMemoryException during"));
         Assert.Equal(LogEventLevel.Warning, entry.Level);
         Assert.Contains("OutOfMemoryException during", entry.MessageTemplate.Text);
+        Assert.Null(entry.Exception);
+        Assert.Contains(events, e =>
+            e.Level == LogEventLevel.Debug &&
+            e.MessageTemplate.Text.Contains("OutOfMemoryException stack") &&
+            e.Exception is OutOfMemoryException);
     }
 
     [Fact]

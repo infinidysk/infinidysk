@@ -82,6 +82,7 @@ nav = [
   { "Operations" = [
     { "Health and repairs" = "operations/health-repairs.md" },
     { "Prometheus metrics" = "operations/prometheus.md" },
+    { "Memory-constrained hosts" = "operations/memory-constrained-hosts.md" },
     { "Retention and cleanup" = "operations/retention-cleanup.md" },
     { "Logs and crash dumps" = "operations/logs-crash-dumps.md" },
     { "Deletion audit" = "operations/deletion-audit.md" },

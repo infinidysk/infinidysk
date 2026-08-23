@@ -13,6 +13,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.PostProcessors;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
@@ -328,29 +329,59 @@ public class HealthCheckService : BackgroundService
                 // Validate the local payload before Repair: missing metadata is
                 // local data loss, not a bad release, and must not reach the
                 // Arr remove-and-blocklist path. Routine checks get the same
-                // guarantee from GetAllSegments below.
-                await EnsurePayloadExistsAsync(davItem, dbClient, ct).ConfigureAwait(false);
+                // guarantee from LoadHealthCheckPayloadAsync below.
+                try
+                {
+                    await EnsurePayloadExistsAsync(davItem, dbClient, ct).ConfigureAwait(false);
+                }
+                catch (OutOfMemoryException oom)
+                {
+                    await DeferPayloadOutOfMemoryAsync(davItem, dbClient, oom, ct).ConfigureAwait(false);
+                    return;
+                }
                 Log.Information("Performing urgent dynamic repair for {FilePath}", davItem.Path);
                 await HandleUrgentRepair(davItem, dbClient, ct).ConfigureAwait(false);
                 return;
             }
 
+            HealthCheckPayload payload;
+            try
+            {
+                payload = await LoadHealthCheckPayloadAsync(davItem, dbClient, ct).ConfigureAwait(false);
+            }
+            catch (OutOfMemoryException oom)
+            {
+                await DeferPayloadOutOfMemoryAsync(davItem, dbClient, oom, ct).ConfigureAwait(false);
+                return;
+            }
+
+            var segments = payload.Segments;
+            var nzbFile = payload.NzbFile;
+
             // update the release date, if null
-            var segments = await GetAllSegments(davItem, dbClient, ct).ConfigureAwait(false);
             if (davItem.ReleaseDate == null) await UpdateReleaseDate(davItem, segments, ct).ConfigureAwait(false);
 
-            // sample large files to reduce NNTP load while keeping head/tail/stride coverage
+            // Sample large files to reduce NNTP load while keeping head/tail/stride coverage.
+            // SegmentIndexView retains source indices, so later repair logic does not need to
+            // build a dictionary over the full payload just to recover an index.
             var totalSegments = segments.Count;
             var age = _configManager.IsHealthCheckAgingEnabled() && davItem.ReleaseDate is { } posted
                 ? DateTimeOffset.UtcNow - posted
                 : (TimeSpan?)null;
-            var sampled = SampleSegments(segments, _configManager.GetHealthCheckDepth(), age);
-            var nzbFile = davItem.SubType == DavItem.ItemSubType.NzbFile
-                ? await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false)
-                : null;
-            var statSegments = nzbFile != null
-                ? FilterSegmentsForStat(sampled, segments, nzbFile, _repairPatchStore)
-                : sampled;
+            SegmentIndexView sampled;
+            SegmentIndexView statSegments;
+            try
+            {
+                sampled = SampleSegmentsIndexed(segments, _configManager.GetHealthCheckDepth(), age);
+                statSegments = nzbFile != null
+                    ? FilterSegmentsForStat(sampled, nzbFile, _repairPatchStore)
+                    : sampled;
+            }
+            catch (OutOfMemoryException oom)
+            {
+                await DeferPayloadOutOfMemoryAsync(davItem, dbClient, oom, ct).ConfigureAwait(false);
+                return;
+            }
 
             // A damaged-but-tolerable video file can only be told apart from a failed one by a
             // full-coverage sweep of an eligible container with recorded segment sizes (#461).
@@ -403,7 +434,7 @@ public class HealthCheckService : BackgroundService
                             statSegments, depth: 0, concurrency, progress, statCts.Token)
                         .ConfigureAwait(false);
                     confirmedHoles = await ConfirmHolesThroughFallbacksAsync(
-                            missingIds, segments, nzbFile!, concurrency, statCts)
+                            missingIds, statSegments, nzbFile!, concurrency, statCts)
                         .ConfigureAwait(false);
                 }
             }
@@ -584,7 +615,7 @@ public class HealthCheckService : BackgroundService
         DavItem davItem,
         DavDatabaseClient dbClient,
         DavNzbFile nzbFile,
-        List<string> segments,
+        IReadOnlyList<string> segments,
         LongRange[] segmentRanges,
         List<int> missingIndices,
         List<int> corruptIndices,
@@ -697,7 +728,7 @@ public class HealthCheckService : BackgroundService
         ResolveContainerClassAsync(
             DavItem davItem,
             DavNzbFile nzbFile,
-            List<string> segments,
+            IReadOnlyList<string> segments,
             List<int> holeIndices,
             CancellationToken ct)
     {
@@ -743,23 +774,25 @@ public class HealthCheckService : BackgroundService
     /// </summary>
     private async Task<List<int>> ConfirmHolesThroughFallbacksAsync(
         IReadOnlyList<string> primaryMissIds,
-        List<string> segments,
+        SegmentIndexView statSegments,
         DavNzbFile nzbFile,
         int concurrency,
         ContextualCancellationTokenSource statCts)
     {
         if (primaryMissIds.Count == 0) return [];
 
-        var indexById = segments
-            .Select((id, index) => (id, index))
-            .ToDictionary(x => x.id, x => x.index, StringComparer.Ordinal);
+        var primaryMisses = new HashSet<string>(primaryMissIds, StringComparer.Ordinal);
+        var missingIndices = new List<int>(primaryMisses.Count);
+        for (var index = 0; index < statSegments.Count; index++)
+        {
+            if (primaryMisses.Contains(statSegments[index]))
+                missingIndices.Add(statSegments.SourceIndexAt(index));
+        }
 
-        var checks = primaryMissIds
-            .Select(missId => (Id: missId, Index: indexById.GetValueOrDefault(missId, -1)))
-            .Where(miss => miss.Index >= 0)
-            .Select(async miss => (
-                miss.Index,
-                IsHole: await IsConfirmedHoleAsync(miss.Index, nzbFile, statCts.Token).ConfigureAwait(false)))
+        var checks = missingIndices
+            .Select(async index => (
+                Index: index,
+                IsHole: await IsConfirmedHoleAsync(index, nzbFile, statCts.Token).ConfigureAwait(false)))
             .WithConcurrencyAsync(concurrency, statCts.Token);
 
         var holes = new List<int>();
@@ -911,6 +944,28 @@ public class HealthCheckService : BackgroundService
     {
         _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItemId}|100");
         _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItemId}|done");
+    }
+
+    private async Task DeferPayloadOutOfMemoryAsync(
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        OutOfMemoryException exception,
+        CancellationToken ct)
+    {
+        CompleteHealthProgress(davItem.Id);
+        OomDiagnostics.LogHeapStateOnOom(exception, $"health-check payload preparation for {davItem.Path}");
+
+        var utcNow = DateTimeOffset.UtcNow;
+        davItem.LastHealthCheck = utcNow;
+        davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
+        await RecordHealthResult(
+            dbClient,
+            davItem,
+            HealthCheckResult.HealthResult.Unhealthy,
+            HealthCheckResult.RepairAction.ActionNeeded,
+            "Health check deferred: the file's segment metadata exceeded the process memory limit. " +
+            "Increase the address-space limit or reduce the release size before retrying.",
+            ct).ConfigureAwait(false);
     }
 
     private async Task DeferHealthCheck(
@@ -1089,6 +1144,37 @@ public class HealthCheckService : BackgroundService
         return result.OrderBy(i => i).Select(i => segments[i]).ToList();
     }
 
+    private static SegmentIndexView SampleSegmentsIndexed(
+        IReadOnlyList<string> segments,
+        HealthCheckDepth depth,
+        TimeSpan? age)
+    {
+        var count = segments.Count;
+        var target = SampleTarget(count, depth, age);
+        if (count <= target) return new SegmentIndexView(segments);
+
+        const int headCount = 100;
+        const int tailCount = 100;
+        var indexes = new HashSet<int>();
+
+        for (var i = 0; i < Math.Min(headCount, count); i++)
+            indexes.Add(i);
+
+        for (var i = Math.Max(0, count - tailCount); i < count; i++)
+            indexes.Add(i);
+
+        var carry = 0L;
+        for (var i = 0; i < count; i++)
+        {
+            carry += target;
+            if (carry < count) continue;
+            carry -= count;
+            indexes.Add(i);
+        }
+
+        return new SegmentIndexView(segments, indexes.OrderBy(i => i).ToArray());
+    }
+
     internal static List<string> FilterSegmentsForStat(
         List<string> sampledSegmentIds,
         List<string> allSegmentIds,
@@ -1097,22 +1183,58 @@ public class HealthCheckService : BackgroundService
     {
         if (!patchStore.IsCatalogReady) return sampledSegmentIds;
 
-        var indexById = allSegmentIds
-            .Select((id, index) => (id, index))
-            .ToDictionary(x => x.id, x => x.index, StringComparer.Ordinal);
         var ranges = nzbFile.SegmentByteRanges;
+        var filtered = new List<string>(sampledSegmentIds.Count);
+        foreach (var segmentId in sampledSegmentIds)
+        {
+            var index = allSegmentIds.IndexOf(segmentId);
+            if (index < 0
+                || ranges == null
+                || index >= ranges.Length
+                || !patchStore.IsRepaired(segmentId, ranges[index].Count))
+                filtered.Add(segmentId);
+        }
 
-        return sampledSegmentIds
-            .Where(segmentId => !indexById.TryGetValue(segmentId, out var index)
-                                || ranges == null
-                                || index >= ranges.Length
-                                || !patchStore.IsRepaired(segmentId, ranges[index].Count))
-            .ToList();
+        return filtered;
     }
 
-    private async Task UpdateReleaseDate(DavItem davItem, List<string> segments, CancellationToken ct)
+    private static SegmentIndexView FilterSegmentsForStat(
+        SegmentIndexView sampledSegments,
+        DavNzbFile nzbFile,
+        RepairPatchStore patchStore)
     {
-        var firstSegmentId = StringUtil.EmptyToNull(segments.FirstOrDefault());
+        if (!patchStore.IsCatalogReady || patchStore.EntryCount == 0) return sampledSegments;
+
+        var ranges = nzbFile.SegmentByteRanges;
+        List<int>? filteredIndexes = null;
+        for (var index = 0; index < sampledSegments.Count; index++)
+        {
+            var sourceIndex = sampledSegments.SourceIndexAt(index);
+            var segmentId = sampledSegments[index];
+            var isRepaired = ranges != null
+                             && sourceIndex < ranges.Length
+                             && patchStore.IsRepaired(segmentId, ranges[sourceIndex].Count);
+            if (!isRepaired)
+            {
+                filteredIndexes?.Add(sourceIndex);
+                continue;
+            }
+
+            if (filteredIndexes != null) continue;
+
+            filteredIndexes = new List<int>(sampledSegments.Count - 1);
+            for (var prior = 0; prior < index; prior++)
+                filteredIndexes.Add(sampledSegments.SourceIndexAt(prior));
+        }
+
+        return filteredIndexes is null
+            ? sampledSegments
+            : new SegmentIndexView(sampledSegments.Source, filteredIndexes.ToArray());
+    }
+
+    private async Task UpdateReleaseDate(DavItem davItem, IReadOnlyList<string> segments, CancellationToken ct)
+    {
+        var firstSegmentId = segments.Count == 0 ? null : StringUtil.EmptyToNull(segments[0]);
         if (firstSegmentId == null) return;
         var articleHeadersResponse = await _usenetClient.HeadAsync(firstSegmentId, ct).ConfigureAwait(false);
         if (articleHeadersResponse.ArticleHeaders is not { } articleHeaders)
@@ -1139,30 +1261,124 @@ public class HealthCheckService : BackgroundService
         if (!exists) throw new MissingFilePayloadException(davItem, davItem.SubType);
     }
 
-    private async Task<List<string>> GetAllSegments(DavItem davItem, DavDatabaseClient dbClient, CancellationToken ct)
+    private async Task<HealthCheckPayload> LoadHealthCheckPayloadAsync(
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        CancellationToken ct)
     {
         if (davItem.SubType == DavItem.ItemSubType.NzbFile)
         {
             var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
-            return nzbFile?.SegmentIds?.ToList()
-                ?? throw new MissingFilePayloadException(davItem, DavItem.ItemSubType.NzbFile);
+            return nzbFile is null
+                ? throw new MissingFilePayloadException(davItem, DavItem.ItemSubType.NzbFile)
+                : new HealthCheckPayload(nzbFile.SegmentIds, nzbFile);
         }
 
         if (davItem.SubType == DavItem.ItemSubType.RarFile)
         {
             var rarFile = await dbClient.GetDavRarFileAsync(davItem, ct).ConfigureAwait(false);
-            return rarFile?.RarParts?.SelectMany(x => x.SegmentIds)?.ToList()
-                ?? throw new MissingFilePayloadException(davItem, DavItem.ItemSubType.RarFile);
+            return rarFile is null
+                ? throw new MissingFilePayloadException(davItem, DavItem.ItemSubType.RarFile)
+                : new HealthCheckPayload(
+                    new ConcatenatedSegmentView(rarFile.RarParts.Select(part => part.SegmentIds).ToArray()),
+                    null);
         }
 
         if (davItem.SubType == DavItem.ItemSubType.MultipartFile)
         {
             var multipartFile = await dbClient.GetDavMultipartFileAsync(davItem, ct).ConfigureAwait(false);
-            return multipartFile?.Metadata?.FileParts?.SelectMany(x => x.SegmentIds)?.ToList()
-                ?? throw new MissingFilePayloadException(davItem, DavItem.ItemSubType.MultipartFile);
+            return multipartFile is null
+                ? throw new MissingFilePayloadException(davItem, DavItem.ItemSubType.MultipartFile)
+                : new HealthCheckPayload(
+                    new ConcatenatedSegmentView(multipartFile.Metadata.FileParts.Select(part => part.SegmentIds).ToArray()),
+                    null);
         }
 
-        return [];
+        return new HealthCheckPayload(Array.Empty<string>(), null);
+    }
+
+    private readonly record struct HealthCheckPayload(
+        IReadOnlyList<string> Segments,
+        DavNzbFile? NzbFile);
+
+    /// <summary>
+    /// A sampled projection that retains its original segment indexes. The projection only
+    /// stores indexes when it is actually sampled; full checks use the source directly.
+    /// </summary>
+    private sealed class SegmentIndexView : IReadOnlyList<string>
+    {
+        private readonly int[]? _sourceIndexes;
+
+        public SegmentIndexView(IReadOnlyList<string> source, int[]? sourceIndexes = null)
+        {
+            Source = source;
+            _sourceIndexes = sourceIndexes;
+        }
+
+        public IReadOnlyList<string> Source { get; }
+        public int Count => _sourceIndexes?.Length ?? Source.Count;
+        public string this[int index] => Source[SourceIndexAt(index)];
+
+        public int SourceIndexAt(int index)
+        {
+            if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+            return _sourceIndexes?[index] ?? index;
+        }
+
+        public IEnumerator<string> GetEnumerator()
+        {
+            for (var index = 0; index < Count; index++)
+                yield return this[index];
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    /// <summary>
+    /// Presents archive parts as one indexable sequence without copying every Message-ID
+    /// into a temporary flattened list.
+    /// </summary>
+    private sealed class ConcatenatedSegmentView : IReadOnlyList<string>
+    {
+        private readonly string[][] _parts;
+        private readonly int[] _partEnds;
+
+        public ConcatenatedSegmentView(string[][] parts)
+        {
+            _parts = parts;
+            _partEnds = new int[parts.Length];
+            var count = 0;
+            for (var index = 0; index < parts.Length; index++)
+            {
+                count = checked(count + parts[index].Length);
+                _partEnds[index] = count;
+            }
+        }
+
+        public int Count => _partEnds.Length == 0 ? 0 : _partEnds[^1];
+
+        public string this[int index]
+        {
+            get
+            {
+                if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+                var partIndex = Array.BinarySearch(_partEnds, index + 1);
+                if (partIndex < 0) partIndex = ~partIndex;
+                var partStart = partIndex == 0 ? 0 : _partEnds[partIndex - 1];
+                return _parts[partIndex][index - partStart];
+            }
+        }
+
+        public IEnumerator<string> GetEnumerator()
+        {
+            foreach (var part in _parts)
+            {
+                foreach (var segmentId in part)
+                    yield return segmentId;
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>
@@ -1804,8 +2020,14 @@ public class HealthCheckService : BackgroundService
     {
         try
         {
-            var segments = await GetAllSegments(davItem, dbClient, ct).ConfigureAwait(false);
-            AddMissingSegmentIds(SelectRejectedReleaseSeedSegments(segments));
+            var payload = await LoadHealthCheckPayloadAsync(davItem, dbClient, ct).ConfigureAwait(false);
+            AddMissingSegmentIds(EnumerateRejectedReleaseSeedSegments(payload.Segments));
+        }
+        catch (OutOfMemoryException oom)
+        {
+            // Cache seeding is an optimization after Arr has already rejected the release.
+            // Do not let a huge payload turn that completed repair into a process-fatal OOM.
+            OomDiagnostics.LogHeapStateOnOom(oom, "rejected-release cache seeding");
         }
         catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
         {
@@ -1826,6 +2048,12 @@ public class HealthCheckService : BackgroundService
         segments.Count <= RejectedReleaseSeedSegments
             ? segments
             : segments.Take(RejectedReleaseSeedSegments).ToList();
+
+    private static IEnumerable<string> EnumerateRejectedReleaseSeedSegments(IReadOnlyList<string> segments)
+    {
+        for (var index = 0; index < Math.Min(segments.Count, RejectedReleaseSeedSegments); index++)
+            yield return segments[index];
+    }
 
     public static void AddMissingSegmentIds(IEnumerable<string> segmentIds)
     {

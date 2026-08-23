@@ -15,6 +15,7 @@ using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Utils;
 using Serilog;
 
 namespace NzbWebDAV.Services.SupportPack;
@@ -322,6 +323,7 @@ public sealed class SupportPackService(
         var concurrentReads = concurrentReadTracker?.Snapshot() ?? default;
         var bufferPool = BufferPoolDiagnostics.Shared.Snapshot();
         var segmentPool = (PooledBufferStream.DefaultPool as SegmentBufferPool)?.Snapshot();
+        var addressSpace = AddressSpaceDiagnostics.Capture();
         var cpu = await BuildCpuDiagnosticsAsync(usage, uptime, cancellationToken).ConfigureAwait(false);
 
         return new
@@ -345,6 +347,8 @@ public sealed class SupportPackService(
                 processorCount = Environment.ProcessorCount,
                 workingSetBytes = Environment.WorkingSet,
                 gcTotalMemoryBytes = GC.GetTotalMemory(forceFullCollection: false),
+                virtualMemoryBytes = addressSpace.VirtualMemoryBytes,
+                addressSpaceLimitBytes = addressSpace.AddressSpaceLimitBytes,
                 inFlightArticleBytes = inFlightArticleBudget.LeasedBytes,
                 inFlightArticleBudgetBytes = inFlightArticleBudget.CapBytes,
                 inFlightArticleThrottleEvents = inFlightArticleBudget.ThrottleEvents,
@@ -425,7 +429,7 @@ public sealed class SupportPackService(
             },
             runtimeSampler = BuildRuntimeSamplerDiagnostics(usage),
             cpu,
-            gc = BuildGcDiagnostics(usage),
+            gc = BuildGcDiagnostics(usage, addressSpace),
             gcDiagnostics = gcDiagnosticsStore.LastResult,
             threadPool = new
             {
@@ -567,7 +571,9 @@ public sealed class SupportPackService(
     /// collection. Pause percentages are of wall clock, not of core time, because a pause
     /// stops the whole process.
     /// </summary>
-    private static object BuildGcDiagnostics(RuntimeUsageSnapshot usage)
+    private static object BuildGcDiagnostics(
+        RuntimeUsageSnapshot usage,
+        AddressSpaceDiagnostics.Snapshot addressSpace)
     {
         var rolling = new
         {
@@ -603,6 +609,11 @@ public sealed class SupportPackService(
                 totalAllocatedBytes = GC.GetTotalAllocatedBytes(precise: false),
                 totalPauseDurationMs = (long)GC.GetTotalPauseDuration().TotalMilliseconds,
                 pauseTimePercentage = info.PauseTimePercentage,
+                heapLimitBytes = MemoryBudget.HeapLimitBytes,
+                heapHardLimitBytes = addressSpace.GcHeapHardLimitBytes,
+                heapHardLimitPercent = addressSpace.GcHeapHardLimitPercent,
+                regionRangeBytes = addressSpace.GcRegionRangeBytes,
+                regionSizeBytes = addressSpace.GcRegionSizeBytes,
                 heapSizeBytes = info.HeapSizeBytes,
                 committedBytes = info.TotalCommittedBytes,
                 generations,

@@ -143,6 +143,9 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.True(gc.GetProperty("totalAllocatedBytes").GetInt64() > 0);
         Assert.True(gc.GetProperty("totalPauseDurationMs").GetInt64() >= 0);
         Assert.True(gc.TryGetProperty("isServerGc", out _));
+        Assert.True(gc.GetProperty("heapLimitBytes").GetInt64() > 0);
+        Assert.True(gc.TryGetProperty("regionRangeBytes", out _));
+        Assert.True(gc.TryGetProperty("regionSizeBytes", out _));
         // Article buffers land on the large-object heap, so its size must be visible.
         var generations = gc.GetProperty("generations").EnumerateArray()
             .Select(entry => entry.GetProperty("name").GetString())
@@ -153,6 +156,10 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.True(threadPool.GetProperty("threadCount").GetInt32() >= 0);
         Assert.True(threadPool.GetProperty("pendingWorkItems").GetInt64() >= 0);
         Assert.True(threadPool.GetProperty("completedWorkItems").GetInt64() >= 0);
+
+        var runtime = root.GetProperty("runtime");
+        Assert.True(runtime.TryGetProperty("virtualMemoryBytes", out _));
+        Assert.True(runtime.TryGetProperty("addressSpaceLimitBytes", out _));
 
         // No providers are configured in this fixture, so the section is present but empty.
         Assert.Equal(JsonValueKind.Array, root.GetProperty("connections").ValueKind);

@@ -88,9 +88,21 @@ public static class MemoryBudget
     /// <summary>One startup line saying what unset defaults the box affords.</summary>
     public static void LogInFlightBudget(int effectiveBudgetMb)
     {
+        var addressSpace = AddressSpaceDiagnostics.Capture();
         Log.Information(
-            "[MemoryBudget] Heap limit {HeapMB}MB -> in-flight article budget {BudgetMB}MB (derived when unset; explicit usenet.in-flight-article-budget-mb still wins).",
+            "[MemoryBudget] Heap limit {HeapMB}MB, GC hard limit {GcHardLimitMB}MB, region range {RegionRangeMB}MB, " +
+            "region size {RegionSizeMB}MB, committed heap {CommittedMB}MB, virtual memory {VirtualMemoryMB}MB, " +
+            "RLIMIT_AS {AddressSpaceLimitMB}MB -> in-flight article budget {BudgetMB}MB " +
+            "(derived when unset; explicit usenet.in-flight-article-budget-mb still wins).",
             HeapLimitBytes / Mb,
+            ToMegabytes(addressSpace.GcHeapHardLimitBytes),
+            ToMegabytes(addressSpace.GcRegionRangeBytes),
+            ToMegabytes(addressSpace.GcRegionSizeBytes),
+            ToMegabytes(addressSpace.GcCommittedBytes),
+            ToMegabytes(addressSpace.VirtualMemoryBytes),
+            ToMegabytes(addressSpace.AddressSpaceLimitBytes),
             effectiveBudgetMb);
     }
+
+    private static long? ToMegabytes(long? bytes) => bytes / Mb;
 }
