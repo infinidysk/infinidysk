@@ -70,6 +70,24 @@ public sealed class Par2FileSliceMapTests
     }
 
     [Fact]
+    public void EstimateMaxOverlappingSegmentBytes_SupportsUnorderedOverlappingRanges()
+    {
+        var ranges = new[]
+        {
+            LongRange.FromStartAndSize(64, 64),
+            LongRange.FromStartAndSize(0, 80),
+        };
+
+        Assert.True(Par2FileSliceMap.TryCreate(
+            128, 0, 64, 2, ranges, out var map, out var error));
+        Assert.Null(error);
+
+        // Both retained bodies overlap slice 1 even though the persisted ranges are
+        // unordered and overlapping.
+        Assert.Equal(144, map!.EstimateMaxOverlappingSegmentBytes());
+    }
+
+    [Fact]
     public void TryCreate_RejectsRangeOutsideTheTargetFile()
     {
         var ranges = new[] { LongRange.FromStartAndSize(0, 200) };
