@@ -759,21 +759,27 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var loop = _queueManager.ProcessQueueAsync(cts.Token);
 
-        await item1CompleteTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await item2ClaimedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await item1CompleteTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await item2ClaimedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        var gap = item2ClaimedAt - item1CompleteAt;
-        Assert.True(
-            gap < TimeSpan.FromMilliseconds(500),
-            $"Second item claimed {gap.TotalMilliseconds:F0}ms after first completed; expected prompt claim");
+            var gap = item2ClaimedAt - item1CompleteAt;
+            Assert.True(
+                gap < TimeSpan.FromMilliseconds(500),
+                $"Second item claimed {gap.TotalMilliseconds:F0}ms after first completed; expected prompt claim");
 
-        var item2InProgress = await WaitForInProgress(item2.Id, TimeSpan.FromSeconds(5));
-        Assert.NotNull(item2InProgress);
-        gate2.Set();
-        await GetProcessingTask(item2InProgress!).WaitAsync(TimeSpan.FromSeconds(5));
-
-        await cts.CancelAsync();
-        await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            var item2InProgress = await WaitForInProgress(item2.Id, TimeSpan.FromSeconds(5));
+            Assert.NotNull(item2InProgress);
+            gate2.Set();
+            await GetProcessingTask(item2InProgress!).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            gate2.Set();
+            await cts.CancelAsync();
+            await loop.WaitAsync(TimeSpan.FromSeconds(5));
+        }
     }
 
     private object? FindInProgressItem(Guid queueItemId, QueueManager? manager = null)
