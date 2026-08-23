@@ -167,7 +167,7 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
             Id = Guid.NewGuid(),
             Name = $"escape-{Guid.NewGuid():N}.mkv",
             Type = DavItem.ItemType.UsenetFile,
-            Path = $"/content/../../escape-{Guid.NewGuid():N}.mkv",
+            Path = $"/content/../escape-{Guid.NewGuid():N}.mkv",
         };
         var strmPath = Path.GetFullPath(CreateStrmFilesPostProcessor.GetStrmFilePath(_config, davItem));
         try
@@ -183,6 +183,37 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
         finally
         {
             try { File.Delete(strmPath); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task DeleteStrmFile_PreservesSidecarBehindSymlinkedDirectory()
+    {
+        var davItem = new DavItem
+        {
+            Id = Guid.NewGuid(),
+            Name = "episode.mkv",
+            Type = DavItem.ItemType.UsenetFile,
+            Path = "/content/tv/Show/episode.mkv",
+        };
+        var outsideDirectory = Path.Join(Path.GetTempPath(), $"strm-outside-{Guid.NewGuid():N}");
+        var symlinkPath = Path.Join(_strmDir, "tv");
+        var strmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, davItem);
+        try
+        {
+            Directory.CreateDirectory(Path.Join(outsideDirectory, "Show"));
+            Directory.CreateSymbolicLink(symlinkPath, outsideDirectory);
+            await File.WriteAllTextAsync(
+                strmPath,
+                CreateStrmFilesPostProcessor.GetStrmTargetUrl(_config, davItem));
+
+            CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
+
+            Assert.True(File.Exists(strmPath));
+        }
+        finally
+        {
+            try { Directory.Delete(outsideDirectory, recursive: true); } catch (IOException) { /* best effort */ }
         }
     }
 

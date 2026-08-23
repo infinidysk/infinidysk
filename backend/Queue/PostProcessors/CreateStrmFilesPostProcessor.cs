@@ -102,6 +102,9 @@ public class CreateStrmFilesPostProcessor(
         if (!IsPathWithinRoot(strmFilePath, completedDownloadsRoot))
             return;
 
+        if (HasSymlinkedAncestor(strmFilePath, completedDownloadsRoot))
+            return;
+
         SymlinkAndStrmUtil.ISymlinkOrStrmInfo? strmOrSymlink;
         try
         {
@@ -146,6 +149,26 @@ public class CreateStrmFilesPostProcessor(
             ? root
             : root + Path.DirectorySeparatorChar;
         return path.StartsWith(rootWithSeparator, comparison);
+    }
+
+    private static bool HasSymlinkedAncestor(string path, string root)
+    {
+        var directoryPath = Path.GetDirectoryName(path);
+        while (directoryPath is not null)
+        {
+            if (new DirectoryInfo(directoryPath).LinkTarget is not null)
+                return true;
+
+            if (string.Equals(
+                    directoryPath.TrimEnd(Path.DirectorySeparatorChar),
+                    root.TrimEnd(Path.DirectorySeparatorChar),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                return false;
+
+            directoryPath = Path.GetDirectoryName(directoryPath);
+        }
+
+        return true;
     }
 
     private static void DeleteEmptyParentDirectories(string? directoryPath, string root)
