@@ -10,6 +10,7 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using Npgsql;
+using NpgsqlTypes;
 using Serilog;
 
 namespace NzbWebDAV.Tasks;
@@ -27,6 +28,17 @@ public class RemoveUnlinkedFilesTask : BaseTask
     private ProgressHeartbeat? _progressHeartbeat;
 
     internal record UnlinkedItemInfo(string Id, int Type, string Path);
+
+    internal static DbParameter CreateWallClockParameter(
+        DavDatabaseContext dbContext,
+        DateTime value) =>
+        dbContext.Database.IsNpgsql()
+            ? new NpgsqlParameter
+            {
+                NpgsqlDbType = NpgsqlDbType.Timestamp,
+                Value = DavDatabaseContext.ToPostgresWallClock(value),
+            }
+            : new SqliteParameter { Value = value };
 
     public RemoveUnlinkedFilesTask(
         ConfigManager configManager,
@@ -387,7 +399,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                  SELECT CAST(COUNT(i."Id") AS INT) AS "Value" FROM "DavItems" i
                  WHERE i."Type" = {usenetFileType}
                    AND i."HistoryItemId" IS NULL
-                   AND i."CreatedAt" < {createdBefore}
+                   AND i."CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
                  """)
             .SingleAsync()
             .ConfigureAwait(false);
@@ -412,7 +424,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                  LEFT JOIN TMP_LINKED_FILES t ON t.Id = i."Id"
                  WHERE i."Type" = {usenetFileType}
                    AND i."HistoryItemId" IS NULL
-                   AND i."CreatedAt" < {createdBefore}
+                   AND i."CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
                    AND t.Id IS NULL
                  """)
             .SingleAsync()
@@ -439,7 +451,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                      SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path" FROM "DavItems"
                      WHERE "Type" = {usenetFileType}
                        AND "HistoryItemId" IS NULL
-                       AND "CreatedAt" < {createdBefore}
+                       AND "CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
                        AND NOT EXISTS (
                            SELECT 1 FROM TMP_LINKED_FILES t
                            WHERE t.Id = "DavItems"."Id"
@@ -537,7 +549,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                      SELECT CAST(d."Id" AS TEXT) AS "Id", d."Type" AS "Type", d."Path" AS "Path" FROM "DavItems" d
                      WHERE d."SubType" = {directorySubType}
                        AND d."HistoryItemId" IS NULL
-                       AND d."CreatedAt" < {createdBefore}
+                       AND d."CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
                        AND d."ParentId" NOT IN ({contentFolderId}, {nzbFolderId})
                        AND NOT EXISTS (
                            SELECT 1 FROM "DavItems" c WHERE c."ParentId" = d."Id"
@@ -619,7 +631,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                      SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path" FROM "DavItems"
                      WHERE "Type" = {usenetFileType}
                        AND "HistoryItemId" IS NULL
-                       AND "CreatedAt" < {createdBefore}
+                       AND "CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
                        AND CAST("Id" AS TEXT) > {lastId}
                        AND NOT EXISTS (
                            SELECT 1 FROM TMP_LINKED_FILES t

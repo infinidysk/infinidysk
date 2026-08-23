@@ -29,20 +29,21 @@ public class DavDatabaseContext : DbContext
         value => CloneRarParts(value));
 
     private static readonly ValueConverter<DateTime, DateTime> PostgresWallClockDateTimeConverter = new(
-        value => value.Kind == DateTimeKind.Utc
-            ? DateTime.SpecifyKind(value.ToLocalTime(), DateTimeKind.Unspecified)
-            : DateTime.SpecifyKind(value, DateTimeKind.Unspecified),
+        value => ToPostgresWallClock(value),
         value => DateTime.SpecifyKind(value, DateTimeKind.Unspecified));
 
     private static readonly ValueConverter<DateTime?, DateTime?> PostgresNullableWallClockDateTimeConverter = new(
         value => value.HasValue
-            ? value.Value.Kind == DateTimeKind.Utc
-                ? DateTime.SpecifyKind(value.Value.ToLocalTime(), DateTimeKind.Unspecified)
-                : DateTime.SpecifyKind(value.Value, DateTimeKind.Unspecified)
+            ? ToPostgresWallClock(value.Value)
             : null,
         value => value.HasValue
             ? DateTime.SpecifyKind(value.Value, DateTimeKind.Unspecified)
             : null);
+
+    internal static DateTime ToPostgresWallClock(DateTime value) =>
+        value.Kind == DateTimeKind.Utc
+            ? DateTime.SpecifyKind(value.ToLocalTime(), DateTimeKind.Unspecified)
+            : DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
 
     private static bool StringArraysEqual(string[]? left, string[]? right) =>
         ReferenceEquals(left, right) ||

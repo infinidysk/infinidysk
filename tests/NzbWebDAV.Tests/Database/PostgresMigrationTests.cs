@@ -59,6 +59,57 @@ public sealed class PostgresMigrationTests
     }
 
     [SkippableFact]
+    public async Task RemoveEmptyDirectoriesAsync_AcceptsLocalTimestampCutoff()
+    {
+        Skip.IfNot(
+            DatabaseProviderConfig.IsPostgres,
+            "PostgreSQL migration tests require DATABASE_PROVIDER=postgres.");
+
+        var schema = $"nzbdav_orphan_cleanup_{Guid.NewGuid():N}";
+        var connectionString = DatabaseProviderConfig.PostgresConnectionString;
+        await using var adminConnection = new NpgsqlConnection(connectionString);
+        await adminConnection.OpenAsync();
+        await ExecuteAsync(adminConnection, $"CREATE SCHEMA \"{schema}\"");
+
+        try
+        {
+            var scopedConnectionString = new NpgsqlConnectionStringBuilder(connectionString)
+            {
+                SearchPath = schema
+            }.ConnectionString;
+            var options = new DbContextOptionsBuilder<PostgresDavDatabaseContext>()
+                .UseNpgsql(scopedConnectionString)
+                .Options;
+            await using var context = new PostgresDavDatabaseContext(options);
+            await context.Database.MigrateAsync();
+
+            var id = Guid.NewGuid();
+            context.Items.Add(new DavItem
+            {
+                Id = id,
+                IdPrefix = id.ToString("N")[..DavItem.IdPrefixLength],
+                CreatedAt = DateTime.Now.AddMinutes(-1),
+                ParentId = DavItem.Root.Id,
+                Name = "orphaned-directory",
+                Type = DavItem.ItemType.Directory,
+                SubType = DavItem.ItemSubType.Directory,
+                Path = "/orphaned-directory",
+            });
+            await context.SaveChangesAsync();
+
+            var removed = await RemoveUnlinkedFilesTask.RemoveEmptyDirectoriesAsync(
+                context, DateTime.Now);
+
+            Assert.Equal(1, removed);
+            Assert.Null(await context.Items.FindAsync(id));
+        }
+        finally
+        {
+            await ExecuteAsync(adminConnection, $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+        }
+    }
+
+    [SkippableFact]
     public async Task SabQueue_CountAndPageQueriesAreSequenced()
     {
         Skip.IfNot(DatabaseProviderConfig.IsPostgres,

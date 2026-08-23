@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Npgsql;
+using NpgsqlTypes;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
@@ -14,6 +16,40 @@ namespace NzbWebDAV.Tests.Tasks;
 [Collection(nameof(BaseTaskCollection))]
 public class RemoveUnlinkedFilesTaskTests
 {
+    [Theory]
+    [InlineData(DateTimeKind.Local)]
+    [InlineData(DateTimeKind.Unspecified)]
+    [InlineData(DateTimeKind.Utc)]
+    public void ToPostgresWallClock_NormalizesDateTimeKind(DateTimeKind kind)
+    {
+        var value = new DateTime(2026, 8, 23, 12, 34, 56, kind);
+
+        var result = DavDatabaseContext.ToPostgresWallClock(value);
+
+        Assert.Equal(DateTimeKind.Unspecified, result.Kind);
+        Assert.Equal(
+            kind == DateTimeKind.Utc ? value.ToLocalTime().Ticks : value.Ticks,
+            result.Ticks);
+    }
+
+    [Fact]
+    public void CreateWallClockParameter_UsesPostgresTimestamp()
+    {
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseNpgsql("Host=localhost;Database=nzbdav")
+            .Options;
+        using var context = new DavDatabaseContext(options);
+        var value = DateTime.UtcNow;
+
+        var parameter = Assert.IsType<NpgsqlParameter>(
+            RemoveUnlinkedFilesTask.CreateWallClockParameter(context, value));
+
+        Assert.Equal(NpgsqlDbType.Timestamp, parameter.NpgsqlDbType);
+        var boundValue = Assert.IsType<DateTime>(parameter.Value);
+        Assert.Equal(DateTimeKind.Unspecified, boundValue.Kind);
+        Assert.Equal(value.ToLocalTime().Ticks, boundValue.Ticks);
+    }
+
     [Fact]
     public async Task ProgressHeartbeat_ReportsElapsedUntilCompleted()
     {
