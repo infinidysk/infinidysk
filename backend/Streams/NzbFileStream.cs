@@ -229,12 +229,12 @@ public class NzbFileStream(
                         // A lazy RAR part's logical length ends with its packed file
                         // data, while its final yEnc segment can also contain trailing
                         // archive structure. Keep the generic interpolation search
-                        // strict, but trim this known end-only probe overflow so valid
-                        // tail seeks can still locate the final segment.
-                        if (range.StartInclusive >= 0 &&
+                        // strict, but trim this known final-probe overflow so valid
+                        // tail seeks can still converge through the preceding segment.
+                        if (guess == fileSegmentIds.Length - 1 &&
+                            range.StartInclusive >= 0 &&
                             range.StartInclusive < fileSize &&
-                            range.EndExclusive > fileSize &&
-                            range.Contains(byteOffset))
+                            range.EndExclusive > fileSize)
                         {
                             range = new LongRange(range.StartInclusive, fileSize);
                         }

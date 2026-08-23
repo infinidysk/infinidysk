@@ -87,6 +87,62 @@ public class DavMultipartFileStreamTests
     }
 
     [Fact]
+    public async Task ReadAsync_PersistedLazyPartFindsPenultimateSegmentBeforeTrailingArchiveBytes()
+    {
+        var segmentIds = new[] { "one", "two", "three" };
+        var segments = segmentIds.ToDictionary(
+            id => id,
+            _ => Enumerable.Range(0, 10).Select(value => (byte)value).ToArray());
+        var ranges = new[]
+        {
+            new LongRange(0, 10),
+            new LongRange(10, 20),
+            new LongRange(20, 30),
+        };
+        using var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: segmentIds.Zip(ranges).ToDictionary(pair => pair.First, pair => pair.Second));
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = segmentIds,
+                        SegmentIdByteRange = new LongRange(0, 24),
+                        FilePartByteRange = new LongRange(0, 24),
+                    }
+                ],
+            },
+        };
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(1024 * 1024 - 1);
+        try
+        {
+            await using var stream = new DavMultipartFileStream(
+                multipart,
+                client,
+                articleBufferSize: 0,
+                resolver: null,
+                usePipelinedBodyRequests: false,
+                fileName: "movie.mkv");
+            stream.Seek(18, SeekOrigin.Begin);
+
+            var buffer = new byte[1];
+            Assert.Equal(1, await stream.ReadAsync(buffer));
+            Assert.Equal(8, buffer[0]);
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
+    }
+
+    [Fact]
     public void Read_PreservesSynchronousArchiveParserCompatibility()
     {
         var volumeBytes = Enumerable.Range(0, 16).Select(x => (byte)x).ToArray();

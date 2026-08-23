@@ -178,6 +178,34 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task SeekFailure_LogsDeduplicatedWarningWithUnderlyingReason()
+    {
+        var reason = $"final segment range exceeded logical file size ({Guid.NewGuid()})";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var middleware = CreateMiddleware(
+            _ => throw new SeekPositionNotFoundException(
+                "Corrupt file. Cannot find byte position 50.",
+                new InvalidDataException(reason)));
+
+        var events = await CaptureLogsAsync(async () =>
+        {
+            await middleware.InvokeAsync(context);
+            await middleware.InvokeAsync(context);
+        });
+
+        var logged = Assert.Single(events, e =>
+            e.Level == LogEventLevel.Warning &&
+            e.RenderMessage().Contains("could not seek", StringComparison.Ordinal));
+        Assert.Contains(reason, logged.RenderMessage(), StringComparison.Ordinal);
+        Assert.Null(logged.Exception);
+        Assert.Contains(events, e =>
+            e.Level == LogEventLevel.Debug &&
+            e.Exception is SeekPositionNotFoundException);
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+    }
+
+    [Fact]
     public async Task CorruptRarAfterResponseStarted_AbortsConnection()
     {
         var lifetimeFeature = new TestHttpRequestLifetimeFeature();

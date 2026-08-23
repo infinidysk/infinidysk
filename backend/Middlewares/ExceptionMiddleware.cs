@@ -169,21 +169,25 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             var filePath = GetRequestFilePath(context);
             var seekPosition = context.Request.GetRange()?.Start?.ToString() ?? "unknown";
-            var dedupeKey = $"{filePath}|{seekPosition}";
+            var reason = e.InnerException?.Message ?? e.Message;
+            var dedupeKey = $"{filePath}|{seekPosition}|{reason}";
             LogWithDedup(RecentSeekErrors, dedupeKey, suppressed =>
             {
                 if (suppressed > 0)
-                    Log.Error(
-                        "File {FilePath} could not seek to byte position {SeekPosition} (suppressed {SuppressedCount} duplicates in last 60s)",
+                    Log.Warning(
+                        "File {FilePath} could not seek to byte position {SeekPosition}. Reason: {Reason} (suppressed {SuppressedCount} duplicates in last 60s)",
                         filePath,
                         seekPosition,
+                        reason,
                         suppressed);
                 else
-                    Log.Error(
-                        "File {FilePath} could not seek to byte position {SeekPosition}",
+                    Log.Warning(
+                        "File {FilePath} could not seek to byte position {SeekPosition}. Reason: {Reason}",
                         filePath,
-                        seekPosition);
+                        seekPosition,
+                        reason);
             });
+            Log.Debug(e, "File {FilePath} seek failure stack", filePath);
 
             // Only a short segment proves the release cannot serve this range. Other seek
             // failures can be transient header-probe errors or corrupt local metadata and
