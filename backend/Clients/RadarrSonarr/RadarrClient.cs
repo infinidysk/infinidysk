@@ -32,6 +32,7 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     public override async Task<ArrRepairOutcome> RemoveAndBlocklist(
         string symlinkOrStrmPath,
         Guid downloadId,
+        Func<string, bool>? shouldRequestSearch = null,
         CancellationToken ct = default)
     {
         var movieIds = await GetMovieFileIds(symlinkOrStrmPath, ct).ConfigureAwait(false);
@@ -44,6 +45,16 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
             throw new InvalidOperationException($"Failed to delete movie file `{symlinkOrStrmPath}` from radarr instance `{Host}`.");
 
         await MarkHistoryFailed(historyId.Value, ct).ConfigureAwait(false);
+
+        if (shouldRequestSearch is not null && !shouldRequestSearch($"movie:{movieIds.MovieId}"))
+        {
+            Log.Warning(
+                "Radarr repair on {Host}: automatic replacement-search limit reached for movie {MovieId}; " +
+                "the file was removed and its download blocklisted without starting another search.",
+                Host,
+                movieIds.MovieId);
+            return ArrRepairOutcome.RemoveAndBlocklistSucceeded;
+        }
 
         try
         {

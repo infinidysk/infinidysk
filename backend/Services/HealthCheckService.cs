@@ -64,6 +64,7 @@ public class HealthCheckService : BackgroundService
     private const double MinDepthDays = 3650;
 
     private readonly ConfigManager _configManager;
+    private readonly ArrReplacementSearchBudget _replacementSearchBudget = new();
     private readonly UsenetStreamingClient _usenetClient;
     private readonly WebsocketManager _websocketManager;
     private readonly BenchmarkGate _benchmarkGate;
@@ -1494,7 +1495,8 @@ public class HealthCheckService : BackgroundService
         IEnumerable<ArrClient> arrClients,
         string symlinkOrStrmPath,
         Guid? downloadId,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<ArrClient, string, bool>? shouldRequestSearch = null)
     {
         // Track whether a no-owner result is authoritative enough to explain to the operator.
         // Neither outcome permits deletion: a successful-but-incomplete library/Arr view is
@@ -1539,6 +1541,7 @@ public class HealthCheckService : BackgroundService
                 repairOutcome = await arrClient.RemoveAndBlocklist(
                     symlinkOrStrmPath,
                     downloadId.Value,
+                    shouldRequestSearch is null ? null : identity => shouldRequestSearch(arrClient, identity),
                     ct).ConfigureAwait(false);
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
@@ -1774,11 +1777,19 @@ public class HealthCheckService : BackgroundService
 
             // if the unhealthy item is linked within the organized media-library
             // then we must find the corresponding arr instance and trigger a new search.
+            // The per-path rate limit above misses alternate releases (each import gets a
+            // new filename), so replacement searches are additionally budgeted by the Arr
+            // media identity, which stays stable across re-grabs of the same movie/episode.
+            var arrConfig = _configManager.GetArrConfig();
             var arrDecision = await DecideArrLinkedRepairAsync(
-                _configManager.GetArrConfig().GetArrClients(),
+                arrConfig.GetArrClients(),
                 linkedPath,
                 davItem.HistoryItemId ?? davItem.NzbBlobId,
-                ct).ConfigureAwait(false);
+                ct,
+                (arrClient, mediaIdentity) => _replacementSearchBudget.TryReserve(
+                    $"{arrClient.Host.TrimEnd('/').ToLowerInvariant()}|{mediaIdentity}",
+                    arrConfig.EffectiveQueueReplacementSearchLimit(),
+                    arrConfig.EffectiveQueueReplacementSearchWindow())).ConfigureAwait(false);
 
             if (arrDecision != ArrLinkedRepairDecision.DeferNoMatchingMediaItem)
                 _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);

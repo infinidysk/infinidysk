@@ -29,13 +29,15 @@ rules. Typical mappings:
 
 Any action other than **Do Nothing** tells the Arr to delete the queue record with `removeFromClient=true`. The Arr then removes the download from InfiniDysk History even when its own **Remove Completed** checkbox is off. That is independent of mounted files, which stay.
 
-### Replacement-search safety limit
+## Replacement-search safety limit [since 1.2.4](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.4){ .nzbdav-since }
 
 **Remove, Blocklist, and Search** is bounded to **3 automatic replacement searches in
 30 minutes per Radarr movie or Sonarr episode** by default. Once a media item reaches
 that limit, InfiniDysk still removes and blocklists its rejected release but does not
 start another automatic search. Adjust both values in **Automatic queue management**
-when a library needs a stricter or more permissive policy.
+when a library needs a stricter or more permissive policy. The same per-media cap also
+bounds replacement searches triggered by health-check repairs, which additionally keep
+their own per-library-file rate limit.
 
 The queue-monitor warning includes the matching Arr import message, so support packs
 show the actual rejection (for example, an archive, an ineligible file, or an import

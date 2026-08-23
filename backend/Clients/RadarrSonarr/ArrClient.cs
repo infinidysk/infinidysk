@@ -23,9 +23,15 @@ public class ArrClient(string host, string apiKey)
     public Task<ArrApiInfoResponse> GetApiInfo(CancellationToken ct = default) =>
         GetRoot<ArrApiInfoResponse>($"/api", ct);
 
+    /// <param name="shouldRequestSearch">
+    /// Consulted with the media identity (e.g. "movie:42") right before the
+    /// replacement-search command. Returning false withholds only the search;
+    /// the file removal, history-failed mark, and blocklist still happen.
+    /// </param>
     public virtual Task<ArrRepairOutcome> RemoveAndBlocklist(
         string symlinkOrStrmPath,
         Guid downloadId,
+        Func<string, bool>? shouldRequestSearch = null,
         CancellationToken ct = default) =>
         throw new InvalidOperationException();
 

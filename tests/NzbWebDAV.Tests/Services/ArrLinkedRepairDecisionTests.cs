@@ -239,6 +239,7 @@ public class ArrLinkedRepairDecisionTests
         public override Task<ArrRepairOutcome> RemoveAndBlocklist(
             string symlinkOrStrmPath,
             Guid downloadId,
+            Func<string, bool>? shouldRequestSearch = null,
             CancellationToken ct = default) =>
             removeAndBlocklist(symlinkOrStrmPath, downloadId);
     }

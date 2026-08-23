@@ -330,6 +330,66 @@ public class RadarrSonarrClientTests
     }
 
     [Fact]
+    public async Task RadarrRepair_WithholdsSearchWhenBudgetDenied()
+    {
+        const string filePath = "/library/movies/Budget Movie/Budget Movie.mkv";
+        var downloadId = Guid.Parse("12121212-1212-1212-1212-121212121212");
+        // No POST /api/v3/command response is queued: an attempted search would throw.
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/movie", JsonResponse($"[{{\"id\":101,\"movieFile\":{{\"id\":201,\"path\":\"{filePath}\"}}}}]")),
+            ($"GET /api/v3/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[{"id":401}]}""")),
+            ("DELETE /api/v3/moviefile/201", Status(HttpStatusCode.OK)),
+            ("POST /api/v3/history/failed/401", JsonResponse("{}"))));
+        var client = new TestRadarrClient("http://radarr-budget.test", httpClient);
+
+        string? mediaIdentity = null;
+        var outcome = await client.RemoveAndBlocklist(
+            filePath,
+            downloadId,
+            identity =>
+            {
+                mediaIdentity = identity;
+                return false;
+            });
+
+        Assert.Equal(ArrRepairOutcome.RemoveAndBlocklistSucceeded, outcome);
+        Assert.Equal("movie:101", mediaIdentity);
+    }
+
+    [Fact]
+    public async Task SonarrRepair_WithholdsSearchWhenBudgetDenied()
+    {
+        const string seriesPath = "/library/tv/Budget Show";
+        const string filePath = seriesPath + "/Budget Show S01E01.mkv";
+        var downloadId = Guid.Parse("34343434-3434-3434-3434-343434343434");
+        // No POST /api/v3/command response is queued: an attempted search would throw.
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/series", JsonResponse($"[{{\"id\":101,\"path\":\"{seriesPath}\"}}]")),
+            ("GET /api/v3/episodefile?seriesId=101",
+                JsonResponse($"[{{\"id\":201,\"seriesId\":101,\"path\":\"{filePath}\"}}]")),
+            ($"GET /api/v3/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[{"id":401}]}""")),
+            ("GET /api/v3/episode?episodeFileId=201", JsonResponse("""[{"id":301,"seriesId":101}]""")),
+            ("DELETE /api/v3/episodefile/201", Status(HttpStatusCode.OK)),
+            ("POST /api/v3/history/failed/401", JsonResponse("{}"))));
+        var client = new TestSonarrClient("http://sonarr-budget.test", httpClient);
+
+        string? mediaIdentity = null;
+        var outcome = await client.RemoveAndBlocklist(
+            filePath,
+            downloadId,
+            identity =>
+            {
+                mediaIdentity = identity;
+                return false;
+            });
+
+        Assert.Equal(ArrRepairOutcome.RemoveAndBlocklistSucceeded, outcome);
+        Assert.Equal("episode:301", mediaIdentity);
+    }
+
+    [Fact]
     public async Task RadarrQueue_PreservesMovieIdForReplacementSearchBudget()
     {
         using var httpClient = new HttpClient(CreateHandler(
