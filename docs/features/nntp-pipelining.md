@@ -47,7 +47,7 @@ During WebDAV playback with batched BODY requests enabled:
 
 - Connections engaged per stream ≈ outstanding segment window ÷ batch width.
 - At stream construction, InfiniDysk sizes the segment task window and prefetch byte ceiling from the configured batch width and article buffer. Those ceilings stay fixed for the life of the stream; adaptive narrowing only shrinks future batch sizes, not the retained window.
-- Decoded bytes retained across all streams are capped host-wide by `usenet.in-flight-article-budget-mb` (≤512 MiB by default when heap-derived). One stream with a wide batch width can consume most of that budget and starve other concurrent viewers.
+- Decoded bytes retained across all streams are capped host-wide by `usenet.in-flight-article-budget-mb` (25% of the detected managed-heap ceiling by default, clamped to 64–8192 MiB). One stream with a wide batch width can consume most of that budget and starve other concurrent viewers.
 
 Provider behavior varies: some throttle per connection (wider batches can help), others per account (more connections / narrower batches). If Auto-tune reports queue pipelining is unsafe for a provider, treat wide streaming batch widths cautiously too — both use the same NNTP pipelining mechanism.
 

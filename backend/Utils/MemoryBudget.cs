@@ -17,7 +17,7 @@ public static class MemoryBudget
     private const double InFlightBudgetShare = 0.25;
 
     private const int MinInFlightArticleBudgetMb = 64;
-    private const int MaxDefaultInFlightArticleBudgetMb = 512;
+    private const int MaxDefaultInFlightArticleBudgetMb = 8192;
 
     private static readonly Lazy<long> LazyHeapLimit = new(DetectHeapLimitBytes);
 
@@ -26,8 +26,8 @@ public static class MemoryBudget
 
     /// <summary>
     /// Default for <c>usenet.in-flight-article-budget-mb</c> when unset: 25% of the
-    /// detected heap limit, clamped to [64, 512] so large hosts keep today's ceiling
-    /// and small hosts do not dedicate half their RAM to decoded articles.
+    /// detected managed-heap ceiling, clamped to [64, 8192]. The budget gates
+    /// decoded-article admission; it does not reserve that memory eagerly.
     /// </summary>
     public static int DefaultInFlightArticleBudgetMb() =>
         DefaultInFlightArticleBudgetMb(HeapLimitBytes);

@@ -986,7 +986,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
     /// <summary>
     /// Host-wide cap on decoded article bytes retained in RAM across concurrent WebDAV
-    /// streams. When unset, derived from the process heap limit (25%, clamped [64, 512]).
+    /// streams. When unset, derived from the process heap limit (25%, clamped [64, 8192]).
     /// Explicit values keep the existing [64, 8192] clamp. Distinct from
     /// <see cref="GetArticleBufferSize"/>, which bounds per-stream segment count.
     /// </summary>
