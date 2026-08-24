@@ -39,8 +39,10 @@ internal static class ZeroFillLogLimiter
         if (string.IsNullOrEmpty(baseName) || baseName == "unknown")
             return true;
 
+        // Key on the complete attributed path: same-named files in different
+        // directories must not share one suppression window.
         var now = DateTime.UtcNow;
-        var key = baseName.Normalize(NormalizationForm.FormC);
+        var key = fileName.Normalize(NormalizationForm.FormC);
         var state = Windows.GetOrAdd(key, static _ => new WindowState());
         var shouldLog = false;
 
