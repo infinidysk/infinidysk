@@ -267,7 +267,9 @@ jobs:
               ANNOUNCEMENT_BODY="${ANNOUNCEMENT_BODY:0:$((MAX_LEN - 3))}..."
             fi
             ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
-            curl --fail-with-body -sS -H "Content-Type: application/json" \
+            if ! curl --fail-with-body -sS -H "Content-Type: application/json" \
               -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
-              "$DISCORD_DEVELOPMENT_WEBHOOK_URL"
+              "$DISCORD_DEVELOPMENT_WEBHOOK_URL"; then
+              echo "Discord re-baseline notification failed; PR is still open at ${PR_URL}."
+            fi
           fi
