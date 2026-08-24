@@ -42,7 +42,7 @@ import { FailoverSaves } from "./components/failover-saves/failover-saves";
 import { ArrHealth } from "./components/arr-health/arr-health";
 import { SortableRow } from "./components/sortable-row/sortable-row";
 import { SectionLoadError } from "./components/section-load-error/section-load-error";
-import { Icon } from "~/components/ui";
+import { Icon, Tooltip } from "~/components/ui";
 import { backendClient, type ArrHealthResponse } from "~/clients/backend-client.server";
 import { useRowOrder } from "./utils/use-row-order";
 import { hasConfiguredIndexers } from "./utils/has-configured-indexers";
@@ -555,9 +555,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-6 px-4 py-4 md:gap-8 md:px-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="m-0 text-2xl font-bold tracking-tight text-base-content md:text-3xl">
-            Overview
-          </h1>
+          <h1 className="m-0 text-4xl font-bold tracking-tight text-base-content">Overview</h1>
           {(window === "7d" || window === "30d" || window === "all") && (
             <p className="mt-1 text-xs text-base-content/50">
               Latency and error breakdown are available for the 1h and 24h windows.
@@ -566,26 +564,29 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         </div>
         <div className="inline-flex flex-wrap items-center gap-2">
           {editMode && (
+            <Tooltip content="Restore default order">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={reset}>
+                Reset
+              </button>
+            </Tooltip>
+          )}
+          <Tooltip content={editMode ? "Done editing layout" : "Reorder widgets"}>
             <button
               type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={reset}
-              title="Restore default order"
+              className={`btn btn-sm ${editMode ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => setEditMode((v) => !v)}
+              aria-pressed={editMode}
             >
-              Reset
+              <Icon name={editMode ? "check" : "tune"} className="!text-[18px]" />
+              {editMode ? "Done" : "Edit layout"}
             </button>
-          )}
-          <button
-            type="button"
-            className={`btn btn-sm ${editMode ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => setEditMode((v) => !v)}
-            aria-pressed={editMode}
-            title={editMode ? "Done editing layout" : "Reorder widgets"}
+          </Tooltip>
+          <div
+            role="tablist"
+            className="tabs tabs-border tabs-sm"
+            aria-label="Time window"
+            onKeyDown={onWindowKeyDown}
           >
-            <Icon name={editMode ? "check" : "tune"} className="!text-[18px]" />
-            {editMode ? "Done" : "Edit layout"}
-          </button>
-          <div className="join" role="tablist" aria-label="Time window" onKeyDown={onWindowKeyDown}>
             {WINDOWS.map((w) => (
               <button
                 key={w.value}
@@ -595,7 +596,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                 aria-selected={window === w.value}
                 aria-controls="overview-dashboard"
                 tabIndex={window === w.value ? 0 : -1}
-                className={`btn btn-sm join-item ${window === w.value ? "btn-primary" : "btn-ghost"}`}
+                className={`tab ${window === w.value ? "tab-active" : ""}`}
                 onClick={() => setWindow(w.value)}
               >
                 {w.label}

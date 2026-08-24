@@ -13,30 +13,28 @@ export function RecordsBlock({ records }: RecordsBlockProps) {
   const isEmpty = records.bestDayBytes === 0 && records.bestHourBytes === 0;
 
   return (
-    <section className="card w-full border border-base-content/10 bg-base-100">
-      <div className="card-body gap-3 p-4">
-        <div>
-          <h3 className="card-title text-base">Records</h3>
-          <p className="text-xs text-base-content/50">Personal bests since you started</p>
-        </div>
+    <section className="w-full min-w-0">
+      <header className="mb-2">
+        <h3 className="text-sm font-semibold text-base-content">Records</h3>
+        <p className="text-xs text-base-content/50">Personal bests since you started</p>
+      </header>
 
-        {isEmpty ? (
-          <p className="text-sm text-base-content/50">Records appear after some activity.</p>
-        ) : (
-          <div className="stats stats-vertical w-full bg-base-200/40 sm:stats-horizontal">
-            <Stat
-              label="Busiest day"
-              value={formatBytes(records.bestDayBytes)}
-              desc={records.bestDayAt ? formatDay(records.bestDayAt) : undefined}
-            />
-            <Stat
-              label="Busiest hour"
-              value={formatBytes(records.bestHourBytes)}
-              desc={records.bestHourAt ? formatHour(records.bestHourAt) : undefined}
-            />
-          </div>
-        )}
-      </div>
+      {isEmpty ? (
+        <p className="text-sm text-base-content/50">Records appear after some activity.</p>
+      ) : (
+        <div className="stats stats-vertical w-full border border-base-content/10 bg-base-100 sm:stats-horizontal">
+          <Stat
+            label="Busiest day"
+            value={formatBytes(records.bestDayBytes)}
+            desc={records.bestDayAt ? formatDay(records.bestDayAt) : undefined}
+          />
+          <Stat
+            label="Busiest hour"
+            value={formatBytes(records.bestHourBytes)}
+            desc={records.bestHourAt ? formatHour(records.bestHourAt) : undefined}
+          />
+        </div>
+      )}
     </section>
   );
 }

@@ -5,6 +5,7 @@ import type {
 } from "~/clients/backend-client.server";
 import { formatDurationMs, formatNumber, formatTimeAgo } from "../../utils/format";
 import { settingsPath } from "~/navigation/settings-tabs";
+import { Tooltip } from "~/components/ui";
 import { WidgetLink } from "../widget-link/widget-link";
 
 export type ArrHealthProps = {
@@ -33,23 +34,20 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
               InfiniDysk completion → Sonarr/Radarr import, {sinceLabel}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="card-actions m-0">
             <WidgetLink to="/queue">Queue</WidgetLink>
             <WidgetLink to={settingsPath("arrs")}>Arr settings</WidgetLink>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Chip
-            label="Instances online"
-            value={`${summary.instancesOnline}/${summary.instancesTotal}`}
-          />
-          <Chip label="Imports" value={formatNumber(summary.importsCompleted)} />
-          <Chip label="Median handoff" value={formatDurationMs(summary.medianHandoffMs)} />
-          <Chip label="P95" value={formatDurationMs(summary.p95HandoffMs)} />
-          <Chip label="Awaiting" value={formatNumber(summary.awaitingImport)} />
+        <div className="stats stats-vertical w-full border border-base-content/10 sm:stats-horizontal">
+          <MiniStat label="Online" value={`${summary.instancesOnline}/${summary.instancesTotal}`} />
+          <MiniStat label="Imports" value={formatNumber(summary.importsCompleted)} />
+          <MiniStat label="Median handoff" value={formatDurationMs(summary.medianHandoffMs)} />
+          <MiniStat label="P95" value={formatDurationMs(summary.p95HandoffMs)} />
+          <MiniStat label="Awaiting" value={formatNumber(summary.awaitingImport)} />
           {summary.degraded > 0 && (
-            <Chip label="Degraded" value={formatNumber(summary.degraded)} warning />
+            <MiniStat label="Degraded" value={formatNumber(summary.degraded)} warning />
           )}
         </div>
 
@@ -74,12 +72,11 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
                 {instances.map((instance) => (
                   <tr key={instance.key}>
                     <td className="max-w-[220px] font-medium">
-                      <span
-                        className="inline-block max-w-full truncate align-middle"
-                        title={instance.host}
-                      >
-                        {instance.name}
-                      </span>
+                      <Tooltip content={instance.host}>
+                        <span className="inline-block max-w-full truncate align-middle">
+                          {instance.name}
+                        </span>
+                      </Tooltip>
                       <span className="mt-0.5 block text-[11px] font-normal capitalize text-base-content/45">
                         {instance.appType}
                       </span>
@@ -124,15 +121,17 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
               </h4>
               <WidgetLink to="/queue">Open queue</WidgetLink>
             </div>
-            <ul className="space-y-1">
+            <ul className="list bg-base-100 p-0">
               {awaiting.map((item, index) => (
                 <li
                   key={`${item.instanceKey}-${item.title ?? "item"}-${index}`}
-                  className={`text-xs ${item.isUnusual ? "text-warning" : "text-base-content/80"}`}
+                  className={`list-row py-2 text-xs ${item.isUnusual ? "text-warning" : "text-base-content/80"}`}
                 >
-                  {item.title ?? "(untitled)"} — {item.instanceName} — waiting{" "}
-                  {formatDurationMs(item.waitingMs)}
-                  {item.isUnusual ? " — unusually long" : ""}
+                  <div className="list-col-grow">
+                    {item.title ?? "(untitled)"} — {item.instanceName} — waiting{" "}
+                    {formatDurationMs(item.waitingMs)}
+                    {item.isUnusual ? " — unusually long" : ""}
+                  </div>
                 </li>
               ))}
             </ul>
@@ -143,7 +142,7 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
   );
 }
 
-function Chip({
+function MiniStat({
   label,
   value,
   warning = false,
@@ -153,9 +152,9 @@ function Chip({
   warning?: boolean;
 }) {
   return (
-    <span className={`badge badge-sm gap-1 ${warning ? "badge-warning" : "badge-ghost"}`}>
-      <span className="text-base-content/60">{label}</span>
-      <span className="font-mono tabular-nums">{value}</span>
-    </span>
+    <div className="stat py-2">
+      <div className="stat-title text-xs">{label}</div>
+      <div className={`stat-value font-mono text-lg ${warning ? "text-warning" : ""}`}>{value}</div>
+    </div>
   );
 }

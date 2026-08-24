@@ -11,23 +11,21 @@ export type CatalogueBlockProps = {
 
 export function CatalogueBlock({ catalogue }: CatalogueBlockProps) {
   return (
-    <section className="card w-full border border-base-content/10 bg-base-100">
-      <div className="card-body gap-3 p-4">
-        <div>
-          <h3 className="card-title text-base">Catalogue</h3>
-          <p className="text-xs text-base-content/50">Your mounted library</p>
-        </div>
+    <section className="w-full min-w-0">
+      <header className="mb-2">
+        <h3 className="text-sm font-semibold text-base-content">Catalogue</h3>
+        <p className="text-xs text-base-content/50">Your mounted library</p>
+      </header>
 
-        <div className="stats stats-vertical w-full bg-base-200/40 sm:stats-horizontal">
-          <Stat label="Files" value={formatNumber(catalogue.fileCount)} />
-          <Stat label="Total size" value={formatBytes(catalogue.totalBytes)} />
-          <Stat label="Largest file" value={formatBytes(catalogue.largestFileBytes)} />
-          <Stat
-            label="Added 7d"
-            value={formatNumber(catalogue.addedLast7Days)}
-            accent={catalogue.addedLast7Days > 0 ? "good" : undefined}
-          />
-        </div>
+      <div className="stats stats-vertical w-full border border-base-content/10 bg-base-100 sm:stats-horizontal">
+        <Stat label="Files" value={formatNumber(catalogue.fileCount)} />
+        <Stat label="Total size" value={formatBytes(catalogue.totalBytes)} />
+        <Stat label="Largest file" value={formatBytes(catalogue.largestFileBytes)} />
+        <Stat
+          label="Added 7d"
+          value={formatNumber(catalogue.addedLast7Days)}
+          accent={catalogue.addedLast7Days > 0 ? "good" : undefined}
+        />
       </div>
     </section>
   );

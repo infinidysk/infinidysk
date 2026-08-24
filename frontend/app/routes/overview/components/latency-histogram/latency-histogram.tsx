@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import styles from "./latency-histogram.module.css";
 import type { LatencyBucket } from "~/clients/backend-client.server";
 import { formatNumber, formatPercent } from "../../utils/format";
+import { Tooltip } from "~/components/ui";
 
 export type LatencyHistogramProps = {
   p50Ms: number;
@@ -55,7 +56,8 @@ export function LatencyHistogram({ p50Ms, p95Ms, p99Ms, samples, buckets }: Late
                   <button
                     type="button"
                     key={i}
-                    className={`${styles.barCol} ${isHover ? styles.barHover : ""}`}
+                    className={`tooltip ${styles.barCol} ${isHover ? styles.barHover : ""}`}
+                    data-tip={`${fullBucketLabel(b)}: ${formatNumber(b.count)} ${b.count === 1 ? "fetch" : "fetches"}`}
                     aria-label={`${fullBucketLabel(b)}: ${formatNumber(b.count)} ${b.count === 1 ? "fetch" : "fetches"}`}
                     onMouseEnter={() => setHover(b)}
                     onMouseLeave={() => setHover((h) => (h === b ? null : h))}
@@ -108,22 +110,21 @@ function Pctile({
 }) {
   const valueClass = kind === "danger" ? "text-error" : kind === "warn" ? "text-warning" : "";
   return (
-    <div
-      className="min-w-[78px] rounded-box border border-base-content/10 bg-base-200 px-3 py-1.5 text-right"
-      title={`${caption} — ${ms} ms`}
-    >
-      <div className="flex items-baseline justify-end gap-1.5">
-        <span className="text-[10px] font-medium tracking-wide text-base-content/50 uppercase">
-          {label}
-        </span>
-        <span className="text-[9px] tracking-wide text-base-content/50 lowercase">{caption}</span>
+    <Tooltip content={`${caption} — ${ms} ms`}>
+      <div className="min-w-[78px] rounded-box border border-base-content/10 bg-base-200 px-3 py-1.5 text-right">
+        <div className="flex items-baseline justify-end gap-1.5">
+          <span className="text-[10px] font-medium tracking-wide text-base-content/50 uppercase">
+            {label}
+          </span>
+          <span className="text-[9px] tracking-wide text-base-content/50 lowercase">{caption}</span>
+        </div>
+        <div
+          className={`mt-px text-[17px] leading-tight font-semibold tracking-tight tabular-nums ${valueClass}`}
+        >
+          {formatMs(ms)}
+        </div>
       </div>
-      <div
-        className={`mt-px text-[17px] leading-tight font-semibold tracking-tight tabular-nums ${valueClass}`}
-      >
-        {formatMs(ms)}
-      </div>
-    </div>
+    </Tooltip>
   );
 }
 

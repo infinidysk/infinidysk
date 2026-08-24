@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import styles from "./indexer-api-usage.module.css";
 import type { IndexerApiUsageRow } from "~/clients/backend-client.server";
 import { formatNumber } from "../../utils/format";
+import { Tooltip } from "~/components/ui";
 
 export type IndexerApiUsageProps = {
   rows: IndexerApiUsageRow[];
@@ -46,12 +46,11 @@ export function IndexerApiUsage({ rows }: IndexerApiUsageProps) {
                 {rows.map((r) => (
                   <tr key={r.name}>
                     <td className="max-w-[220px] font-medium">
-                      <span
-                        className="inline-block max-w-full truncate align-middle"
-                        title={r.name}
-                      >
-                        {r.name}
-                      </span>
+                      <Tooltip content={r.name}>
+                        <span className="inline-block max-w-full truncate align-middle">
+                          {r.name}
+                        </span>
+                      </Tooltip>
                     </td>
                     <td>
                       <UsageBar used={r.apiHits} limit={r.apiHitLimit} />
@@ -77,12 +76,9 @@ function UsageBar({ used, limit }: { used: number; limit: number | null | undefi
   if (!limit || limit <= 0) {
     return (
       <div className="flex items-center gap-2.5">
-        <div
-          className="relative h-2 min-w-20 flex-1 overflow-hidden rounded bg-base-200"
-          title="No limit configured"
-        >
-          <div className={styles.usageFillInfinite} />
-        </div>
+        <Tooltip content="No limit configured">
+          <progress className="progress progress-success h-2 min-w-20 flex-1" value={0} max={100} />
+        </Tooltip>
         <span className="text-xs text-base-content tabular-nums whitespace-nowrap">
           {formatNumber(used)}
           <span className="text-base-content/50"> · unlimited</span>
@@ -93,15 +89,10 @@ function UsageBar({ used, limit }: { used: number; limit: number | null | undefi
   const pct = Math.min(100, (used / limit) * 100);
   const near = pct >= 80 && pct < 100;
   const over = pct >= 100;
-  const fillClass = over ? "bg-error/80" : near ? "bg-warning/70" : "bg-success/55";
+  const tone = over ? "progress-error" : near ? "progress-warning" : "progress-success";
   return (
     <div className="flex items-center gap-2.5">
-      <div className="relative h-2 min-w-20 flex-1 overflow-hidden rounded bg-base-200">
-        <div
-          className={`absolute inset-y-0 left-0 rounded transition-[width] duration-200 ${fillClass}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <progress className={`progress h-2 min-w-20 flex-1 ${tone}`} value={pct} max={100} />
       <span className="text-xs text-base-content tabular-nums whitespace-nowrap">
         {formatNumber(used)}
         <span className="text-base-content/50"> / {formatNumber(limit)}</span>

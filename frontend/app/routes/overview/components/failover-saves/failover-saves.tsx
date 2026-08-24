@@ -88,10 +88,10 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
               </div>
               {momentum && (
                 <div
-                  className={`badge badge-lg h-auto flex-col gap-0.5 border border-base-content/10 bg-base-200 px-3 py-2 ${
+                  className={`tooltip badge badge-lg h-auto flex-col gap-0.5 border border-base-content/10 bg-base-200 px-3 py-2 ${
                     momentum.neutral ? "" : momentum.good ? "text-success" : "text-error"
                   }`}
-                  title={`Failover load ${momentum.label} vs the previous ${window}`}
+                  data-tip={`Failover load ${momentum.label} vs the previous ${window}`}
                 >
                   <span className="text-sm font-bold leading-none">{momentum.arrow}</span>
                   <span className="font-mono text-sm font-bold tabular-nums leading-none">
@@ -123,8 +123,8 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
                       Most saves
                     </div>
                     <div
-                      className="truncate text-sm font-semibold text-base-content"
-                      title={topHero.provider}
+                      className="tooltip truncate text-sm font-semibold text-base-content"
+                      data-tip={topHero.provider}
                     >
                       {topHero.nickname?.trim() || topHero.provider}
                     </div>
@@ -140,8 +140,8 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
                       Most misses
                     </div>
                     <div
-                      className="truncate text-sm font-semibold text-base-content"
-                      title={topVillain.provider}
+                      className="tooltip truncate text-sm font-semibold text-base-content"
+                      data-tip={topVillain.provider}
                     >
                       {topVillain.nickname?.trim() || topVillain.provider}
                     </div>
@@ -166,9 +166,9 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
                     return (
                       <span
                         key={r.status}
-                        className={`${styles.reasonSeg} ${meta.cls}`}
+                        className={`tooltip ${styles.reasonSeg} ${meta.cls}`}
                         style={{ width: `${width.toFixed(1)}%` }}
-                        title={`${meta.label}: ${formatNumber(r.count)} (${width.toFixed(0)}%)`}
+                        data-tip={`${meta.label}: ${formatNumber(r.count)} (${width.toFixed(0)}%)`}
                       />
                     );
                   })}
@@ -178,7 +178,7 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
                     const meta = reasonMeta(r.status);
                     return (
                       <span key={r.status} className="badge badge-ghost badge-sm gap-1.5">
-                        <span className={`h-1.5 w-1.5 rounded-full ${meta.cls}`} />
+                        <span className={`status status-xs ${reasonStatus(r.status)}`} />
                         {meta.label} <strong className="font-mono">{formatNumber(r.count)}</strong>
                       </span>
                     );
@@ -200,8 +200,8 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
                     return (
                       <div
                         key={p.provider}
-                        className="flex items-center gap-3 border-b border-base-content/10 py-2 last:border-b-0"
-                        title={p.nickname?.trim() || p.provider}
+                        className="tooltip flex items-center gap-3 border-b border-base-content/10 py-2 last:border-b-0"
+                        data-tip={p.nickname?.trim() || p.provider}
                       >
                         <span className="w-[130px] shrink-0 truncate text-[13px] font-medium text-base-content">
                           {p.nickname?.trim() || p.provider}
@@ -238,8 +238,8 @@ export function FailoverSaves({ failover, window }: FailoverSavesProps) {
                     return (
                       <div
                         key={p.provider}
-                        className="flex items-center gap-3 border-b border-base-content/10 py-2 last:border-b-0"
-                        title={p.nickname?.trim() || p.provider}
+                        className="tooltip flex items-center gap-3 border-b border-base-content/10 py-2 last:border-b-0"
+                        data-tip={p.nickname?.trim() || p.provider}
                       >
                         <span className="w-[130px] shrink-0 truncate text-[13px] font-medium text-base-content">
                           {p.nickname?.trim() || p.provider}
@@ -481,6 +481,20 @@ function computeMomentum(current: number, previous: number | null): Momentum | n
   const up = delta > 0;
   const pct = `${Math.abs(delta).toFixed(0)}%`;
   return { arrow: up ? "↑" : "↓", text: pct, label: `${up ? "up" : "down"} ${pct}`, good: !up };
+}
+
+function reasonStatus(status: string): string {
+  switch (status) {
+    case "Timeout":
+      return "status-warning";
+    case "Auth":
+      return "status-info";
+    case "Network":
+    case "Corrupt":
+      return "status-error";
+    default:
+      return "status-neutral";
+  }
 }
 
 function reasonMeta(status: string): { label: string; cls: string } {

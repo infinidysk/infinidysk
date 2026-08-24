@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import styles from "./activity-heatmap.module.css";
 import type { HeatmapCell, HeatmapMode } from "~/clients/backend-client.server";
 import { formatNumber } from "../../utils/format";
+import { Tooltip } from "~/components/ui";
 
 export type ActivityHeatmapProps = {
   maxCell: number;
@@ -107,12 +108,11 @@ export function ActivityHeatmap({
             <div className={styles.grid} data-mode={mode}>
               {grid.rows.map((row, r) => (
                 <div key={r} className={styles.row}>
-                  <div
-                    className="w-[30px] shrink-0 text-right text-[11px] font-medium text-base-content/50 select-none"
-                    title={row.title}
-                  >
-                    {row.label}
-                  </div>
+                  <Tooltip content={row.title ?? row.label}>
+                    <div className="w-[30px] shrink-0 text-right text-[11px] font-medium text-base-content/50 select-none">
+                      {row.label}
+                    </div>
+                  </Tooltip>
                   <div
                     className={styles.cellRow}
                     style={{ gridTemplateColumns: `repeat(${grid.cols}, minmax(0, 1fr))` }}
@@ -126,9 +126,10 @@ export function ActivityHeatmap({
                         <button
                           type="button"
                           key={c}
-                          className={styles.cell}
-                          style={{ backgroundColor: cellColor(intensity) }}
                           aria-label={`${formatBucket(cell.bucket, bucketSizeMs)}: ${formatNumber(cell.count)} ${cell.count === 1 ? "article" : "articles"}`}
+                          data-tip={`${formatBucket(cell.bucket, bucketSizeMs)}: ${formatNumber(cell.count)} ${cell.count === 1 ? "article" : "articles"}`}
+                          className={`tooltip ${styles.cell}`}
+                          style={{ backgroundColor: cellColor(intensity) }}
                           onMouseEnter={() => setHover(cell)}
                           onMouseLeave={() =>
                             setHover((h) => (h && h.bucket === cell.bucket ? null : h))

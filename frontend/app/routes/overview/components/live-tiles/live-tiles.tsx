@@ -74,6 +74,11 @@ function Tile({
   const valueClass = accent === "live" ? "text-success" : accent === "danger" ? "text-error" : "";
   return (
     <div className="stat">
+      {accent && (
+        <div className="stat-figure">
+          <span className={`status ${accent === "live" ? "status-success" : "status-error"}`} />
+        </div>
+      )}
       <div className="stat-title">{label}</div>
       <div className={`stat-value font-mono text-2xl md:text-3xl ${valueClass}`}>{value}</div>
       {sub && <div className="stat-desc">{sub}</div>}

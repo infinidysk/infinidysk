@@ -14,27 +14,25 @@ export type SessionsBlockProps = {
 
 export function SessionsBlock({ sessions, window }: SessionsBlockProps) {
   return (
-    <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
-      <div className="card-body gap-3 p-4">
-        <div>
-          <h3 className="card-title text-base">Read sessions</h3>
-          <p className="text-xs text-base-content/50">
-            {window === "all" ? "All time" : `Last ${window}`}
-          </p>
-        </div>
+    <section className="w-full min-w-0">
+      <header className="mb-2">
+        <h3 className="text-sm font-semibold text-base-content">Read sessions</h3>
+        <p className="text-xs text-base-content/50">
+          {window === "all" ? "All time" : `Last ${window}`}
+        </p>
+      </header>
 
-        {sessions.count === 0 ? (
-          <p className="text-sm text-base-content/50">No completed read sessions yet.</p>
-        ) : (
-          <div className="stats stats-vertical w-full bg-base-200/40 sm:stats-horizontal">
-            <Stat label="Sessions" value={formatNumber(sessions.count)} />
-            <Stat label="Bytes served" value={formatBytes(sessions.totalBytesServed)} />
-            <Stat label="Avg duration" value={formatDuration(sessions.avgDurationMs)} />
-            <Stat label="Longest read" value={formatDuration(sessions.longestDurationMs)} />
-            <Stat label="Biggest single read" value={formatBytes(sessions.biggestReadBytes)} />
-          </div>
-        )}
-      </div>
+      {sessions.count === 0 ? (
+        <p className="text-sm text-base-content/50">No completed read sessions yet.</p>
+      ) : (
+        <div className="stats stats-vertical w-full border border-base-content/10 bg-base-100 sm:stats-horizontal">
+          <Stat label="Sessions" value={formatNumber(sessions.count)} />
+          <Stat label="Bytes served" value={formatBytes(sessions.totalBytesServed)} />
+          <Stat label="Avg duration" value={formatDuration(sessions.avgDurationMs)} />
+          <Stat label="Longest read" value={formatDuration(sessions.longestDurationMs)} />
+          <Stat label="Biggest single read" value={formatBytes(sessions.biggestReadBytes)} />
+        </div>
+      )}
     </section>
   );
 }

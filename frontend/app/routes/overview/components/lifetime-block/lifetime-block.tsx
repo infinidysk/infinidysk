@@ -15,26 +15,24 @@ export function LifetimeBlock({ lifetime }: LifetimeBlockProps) {
   const isEmpty = lifetime.bytesRead === 0 && lifetime.articles === 0;
 
   return (
-    <section className="card w-full border border-base-content/10 bg-base-100">
-      <div className="card-body gap-3 p-4">
-        <div>
-          <h3 className="card-title text-base">All time</h3>
-          <p className="text-xs text-base-content/50">{since(lifetime.firstSeenAt)}</p>
-        </div>
+    <section className="w-full min-w-0">
+      <header className="mb-2">
+        <h3 className="text-sm font-semibold text-base-content">All time</h3>
+        <p className="text-xs text-base-content/50">{since(lifetime.firstSeenAt)}</p>
+      </header>
 
-        {isEmpty ? (
-          <p className="text-sm text-base-content/50">
-            Lifetime totals appear after your first reads.
-          </p>
-        ) : (
-          <div className="stats stats-vertical w-full bg-base-200/40 sm:stats-horizontal">
-            <Stat label="Read" value={formatBytes(lifetime.bytesRead)} />
-            <Stat label="Articles" value={formatNumber(lifetime.articles)} />
-            <Stat label="Read sessions" value={formatNumber(lifetime.readSessions)} />
-            <Stat label="Active-reads time" value={formatHours(lifetime.readSeconds)} />
-          </div>
-        )}
-      </div>
+      {isEmpty ? (
+        <p className="text-sm text-base-content/50">
+          Lifetime totals appear after your first reads.
+        </p>
+      ) : (
+        <div className="stats stats-vertical w-full border border-base-content/10 bg-base-100 sm:stats-horizontal">
+          <Stat label="Read" value={formatBytes(lifetime.bytesRead)} />
+          <Stat label="Articles" value={formatNumber(lifetime.articles)} />
+          <Stat label="Read sessions" value={formatNumber(lifetime.readSessions)} />
+          <Stat label="Active-reads time" value={formatHours(lifetime.readSeconds)} />
+        </div>
+      )}
     </section>
   );
 }
