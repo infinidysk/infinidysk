@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./throughput-chart.module.css";
 import type { OverviewWindow, ThroughputPoint } from "~/clients/backend-client.server";
 import { formatBytes, formatNumber } from "../../utils/format";
@@ -28,9 +28,14 @@ export function ThroughputChart({
   window,
 }: ThroughputChartProps) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const [keyboardStatus, setKeyboardStatus] = useState("");
+  const [keyboardBucket, setKeyboardBucket] = useState<number | null>(null);
 
   const bucketSeconds = Math.max(1, (bucketSizeMs || 60_000) / 1000);
+
+  useEffect(() => {
+    setHoverIdx(null);
+    setKeyboardBucket(null);
+  }, [window]);
 
   const { articlesPath, errorsPath, maxArticles, maxNetworkRate, xPercent, yPercent } =
     useMemo(() => {
@@ -110,14 +115,13 @@ export function ThroughputChart({
       next = points.length - 1;
     } else if (e.key === "Escape") {
       setHoverIdx(null);
-      setKeyboardStatus("");
+      setKeyboardBucket(null);
       return;
     } else {
       return;
     }
     setHoverIdx(next);
-    const point = points[next];
-    setKeyboardStatus(point ? describeThroughputBucket(point, window, bucketSeconds) : "");
+    setKeyboardBucket(points[next]?.bucket ?? null);
   };
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     const t = e.touches[0];
@@ -133,6 +137,11 @@ export function ThroughputChart({
   const bucketLabel =
     window === "1h" || window === "24h" ? "min" : window === "all" ? "day" : "hour";
   const hover = hoverIdx !== null ? points[hoverIdx] : null;
+  const keyboardPoint =
+    keyboardBucket === null ? undefined : points.find((p) => p.bucket === keyboardBucket);
+  const keyboardStatus = keyboardPoint
+    ? describeThroughputBucket(keyboardPoint, window, bucketSeconds)
+    : "";
   const hoverNetworkRate = hover ? (hover.bytesFetched ?? 0) / bucketSeconds : 0;
   const tooltipPlacement =
     hoverIdx === null || points.length < 2

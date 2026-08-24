@@ -58,14 +58,25 @@ export function ActivityHeatmap({
   bucketSizeMs,
   cells,
 }: ActivityHeatmapProps) {
-  const [hover, setHover] = useState<GridCell | null>(null);
-  const [selected, setSelected] = useState<GridCell | null>(null);
-  const shown = hover ?? selected;
+  const [hoverBucket, setHoverBucket] = useState<number | null>(null);
+  const [selectedBucket, setSelectedBucket] = useState<number | null>(null);
 
   const grid = useMemo(
     () => buildGrid(mode, windowStartMs, windowEndMs, cells),
     [mode, windowStartMs, windowEndMs, cells],
   );
+  const cellByBucket = useMemo(() => {
+    const map = new Map<number, GridCell>();
+    for (const row of grid.rows) {
+      for (const cell of row.cells) {
+        if (cell.inRange) map.set(cell.bucket, cell);
+      }
+    }
+    return map;
+  }, [grid]);
+  const hover = hoverBucket === null ? null : (cellByBucket.get(hoverBucket) ?? null);
+  const selected = selectedBucket === null ? null : (cellByBucket.get(selectedBucket) ?? null);
+  const shown = hover ?? selected;
 
   const total = useMemo(() => cells.reduce((s, c) => s + c.count, 0), [cells]);
   const empty = total === 0;
@@ -132,13 +143,11 @@ export function ActivityHeatmap({
                           data-tip={`${formatBucket(cell.bucket, bucketSizeMs)}: ${formatNumber(cell.count)} ${cell.count === 1 ? "article" : "articles"}`}
                           className={`tooltip ${styles.cell}`}
                           style={{ backgroundColor: cellColor(intensity) }}
-                          onMouseEnter={() => setHover(cell)}
-                          onMouseLeave={() =>
-                            setHover((h) => (h && h.bucket === cell.bucket ? null : h))
-                          }
-                          onFocus={() => setHover(cell)}
-                          onBlur={() => setHover((h) => (h && h.bucket === cell.bucket ? null : h))}
-                          onClick={() => setSelected(cell)}
+                          onMouseEnter={() => setHoverBucket(cell.bucket)}
+                          onMouseLeave={() => setHoverBucket((h) => (h === cell.bucket ? null : h))}
+                          onFocus={() => setHoverBucket(cell.bucket)}
+                          onBlur={() => setHoverBucket((h) => (h === cell.bucket ? null : h))}
+                          onClick={() => setSelectedBucket(cell.bucket)}
                         />
                       );
                     })}

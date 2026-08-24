@@ -69,10 +69,17 @@ describe("ThroughputChart", () => {
 
   it("announces keyboard-selected bucket details to assistive tech", () => {
     const points = [
-      point(3),
-      { ...point(8), misses: 1, errors: 2, bytesServed: 100, bytesFetched: 50 },
+      { ...point(3), bucket: 1 },
+      {
+        ...point(8),
+        bucket: 2,
+        misses: 1,
+        errors: 2,
+        bytesServed: 100,
+        bytesFetched: 50,
+      },
     ];
-    const { container } = render(
+    const { container, rerender } = render(
       <ThroughputChart
         points={points}
         totalArticles={11}
@@ -85,12 +92,30 @@ describe("ThroughputChart", () => {
     );
 
     const chart = container.querySelector('[role="img"]');
-    expect(chart).not.toBeNull();
+    expect(chart).toBeInstanceOf(HTMLElement);
+    (chart as HTMLElement).focus();
+    expect(document.activeElement).toBe(chart);
+
     fireEvent.keyDown(chart!, { key: "ArrowRight" });
     fireEvent.keyDown(chart!, { key: "ArrowRight" });
 
     const status = container.querySelector("#overview-throughput-keyboard-status");
     expect(status?.textContent).toMatch(/8 articles/);
     expect(status?.textContent).toMatch(/2 errors/);
+
+    const updated = [points[0]!, { ...points[1]!, articles: 12, errors: 4 }];
+    rerender(
+      <ThroughputChart
+        points={updated}
+        totalArticles={15}
+        totalMisses={1}
+        totalErrors={4}
+        totalBytesServed={100}
+        bucketSizeMs={60_000}
+        window="24h"
+      />,
+    );
+    expect(status?.textContent).toMatch(/12 articles/);
+    expect(status?.textContent).toMatch(/4 errors/);
   });
 });
