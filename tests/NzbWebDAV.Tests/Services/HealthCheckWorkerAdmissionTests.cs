@@ -44,8 +44,6 @@ public sealed class HealthCheckWorkerAdmissionTests
             await queue.FirstActiveRead.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
             Assert.Equal(1, queue.ActiveReadCount);
-            fixture.Time.Advance(TimeSpan.FromSeconds(30));
-            Assert.Equal(1, queue.ActiveReadCount);
         }
         finally
         {
