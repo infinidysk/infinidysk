@@ -31,11 +31,11 @@ export function PageLayout(props: PageLayoutProps) {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-base-300 text-base-content">
       <div className="navbar z-40 h-16 min-h-16 shrink-0 border-b border-base-content/10 bg-base-200/70 px-0 backdrop-blur">
-        <props.topNavComponent
-          isHamburgerMenuOpen={isHamburgerMenuOpen}
-          onHamburgerMenuClick={onHamburgerMenuClick}
-          drawerToggleId={drawerToggleId}
-        />
+        {props.topNavComponent({
+          isHamburgerMenuOpen,
+          onHamburgerMenuClick,
+          drawerToggleId,
+        })}
       </div>
 
       {/* Override daisyUI drawer-side 100dvh when sticky under the navbar. */}

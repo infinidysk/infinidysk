@@ -8,7 +8,6 @@ import {
   useLocation,
   useNavigation,
   useRouteError,
-  type ShouldRevalidateFunctionArgs,
 } from "react-router";
 
 import "./app.css";
@@ -30,6 +29,8 @@ import { isOidcEnabled } from "../server/oidc.server";
 import { getServiceProvider } from "./utils/service-provider.server";
 import { isResetAdminPasswordSet } from "./utils/reset-admin-password.server";
 import { withUrlBase } from "~/utils/url-base";
+
+export { shouldRevalidate } from "./root-revalidation";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const resetAdminPasswordSet = isResetAdminPasswordSet();
@@ -70,37 +71,6 @@ export async function loader({ request }: Route.LoaderArgs) {
         ?.configValue?.toLowerCase() !== "false",
     serviceProvider,
   };
-}
-
-/** True for pages the root loader renders without the app layout. */
-function isLayoutlessPath(pathname: string): boolean {
-  const path = pathname.replace(/\.data$/, "");
-  return path === "/login" || path === "/onboarding";
-}
-
-/**
- * Skip root config re-fetches for routine mutations (queue deletes, toggles),
- * but always revalidate when crossing the login/onboarding layout boundary
- * (login/logout redirects change `useLayout`) and after settings/onboarding
- * saves (which can change providers/watchdog config).
- */
-export function shouldRevalidate({
-  currentUrl,
-  nextUrl,
-  formMethod,
-  defaultShouldRevalidate,
-}: ShouldRevalidateFunctionArgs) {
-  if (isLayoutlessPath(currentUrl.pathname) !== isLayoutlessPath(nextUrl.pathname)) {
-    return true;
-  }
-  if (formMethod && formMethod !== "GET") {
-    const fromSettingsOrOnboarding =
-      currentUrl.pathname.startsWith("/settings") || currentUrl.pathname.startsWith("/onboarding");
-    const toSettingsOrOnboarding =
-      nextUrl.pathname.startsWith("/settings") || nextUrl.pathname.startsWith("/onboarding");
-    return fromSettingsOrOnboarding || toSettingsOrOnboarding;
-  }
-  return defaultShouldRevalidate;
 }
 
 function hasConfiguredUsenetProviders(configValue?: string): boolean {
