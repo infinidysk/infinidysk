@@ -82,7 +82,12 @@ public static class PathSanitizer
         }
 
         var sanitized = sb.ToString();
-        return string.IsNullOrEmpty(sanitized) ? "untitled" : TruncateToMaxComponentLength(sanitized);
+        if (string.IsNullOrEmpty(sanitized))
+            return "untitled";
+
+        // Truncation trims trailing dots/spaces, which can empty an over-long component.
+        sanitized = TruncateToMaxComponentLength(sanitized);
+        return string.IsNullOrEmpty(sanitized) ? "untitled" : sanitized;
     }
 
     // DavItem.Name is HasMaxLength(255); 240 leaves headroom for " (xxxxx)" duplicate suffixes.

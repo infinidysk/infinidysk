@@ -97,6 +97,20 @@ public class PathSanitizerTests
     }
 
     [Fact]
+    public void SanitizeComponent_WhenDisabled_TruncationToEmptyBecomesUntitled()
+    {
+        PathSanitizer.SetWindowsSafePathsEnabled(false);
+        try
+        {
+            Assert.Equal("untitled", PathSanitizer.SanitizeComponent(new string(' ', 241)));
+        }
+        finally
+        {
+            PathSanitizer.SetWindowsSafePathsEnabled(true);
+        }
+    }
+
+    [Fact]
     public void GetJobName_SanitizesWindowsInvalidCharacters()
     {
         Assert.Equal("Show_ Title_", FilenameUtil.GetJobName("Show: Title?.nzb"));
