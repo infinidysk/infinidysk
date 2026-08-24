@@ -54,7 +54,7 @@ container headers and short reads before Sonarr or Radarr begin import. It does
 not replace streaming corruption detection or PAR2 repair: damage limited to
 the middle of a release can only be detected when that part is read.
 
-## API-key rotation
+## API-key rotation [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since }
 
 After rotating `api.key`, update the API key in every configured Sonarr/Radarr
 download-client entry and use its test action before resuming a bulk search.

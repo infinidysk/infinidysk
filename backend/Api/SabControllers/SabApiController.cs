@@ -112,7 +112,10 @@ public class SabApiController(
                 string.Equals(configured, requestedCategory, StringComparison.OrdinalIgnoreCase))
             ?? "unknown";
         var source = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        var key = $"{mode}|{category}|{source}";
+        // Source remains useful event context, but it must not be part of the
+        // process-lifetime throttle key: unauthenticated clients can generate
+        // an unbounded number of distinct remote addresses.
+        var key = $"{mode}|{category}";
         if (!AuthenticationFailureThrottle.ShouldLog(key, AuthenticationFailureLogInterval, out var suppressed))
             return;
 

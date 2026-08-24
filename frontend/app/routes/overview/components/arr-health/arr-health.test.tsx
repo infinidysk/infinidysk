@@ -171,7 +171,7 @@ describe("ArrHealth", () => {
           statusReason: "Invalid data found when processing input",
         },
         {
-          title: "Unknown release",
+          title: "Example Show S04E06",
           downloadId: null,
           instanceKey: "sonarr|http://sonarr:8989",
           instanceName: "Sonarr Main",
