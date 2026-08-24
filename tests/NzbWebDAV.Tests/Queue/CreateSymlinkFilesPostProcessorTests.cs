@@ -65,10 +65,12 @@ public sealed class CreateSymlinkFilesPostProcessorTests : IDisposable
         var category = SeedDirectory(DavItem.ContentFolder, "movies");
         var firstShow = SeedDirectory(category, "First", _historyItemId);
         var secondShow = SeedDirectory(category, "Second", _historyItemId);
-        var first = SeedVideo(firstShow, "movie.mkv");
         var second = SeedVideo(secondShow, "movie.mkv");
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
+        // Added items are collected before persisted rows, so this write always
+        // succeeds first and must be rolled back when the later destination fails.
+        var first = SeedVideo(firstShow, "movie.mkv");
 
         var secondPath = CreateSymlinkFilesPostProcessor.GetSymlinkFilePath(_outputDirectory, second);
         Directory.CreateDirectory(secondPath);

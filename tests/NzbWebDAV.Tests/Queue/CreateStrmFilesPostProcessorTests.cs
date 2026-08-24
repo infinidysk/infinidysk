@@ -116,10 +116,12 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
     {
         var category = SeedDirectory(DavItem.ContentFolder, "tv");
         var job = SeedDirectory(category, "Show", _historyItemId);
-        var first = SeedVideo(job, "first.mkv", _historyItemId);
         var second = SeedVideo(job, "second.mkv", _historyItemId);
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
+        // Added items are collected before persisted rows, so this write always
+        // succeeds first and must be rolled back when the later destination fails.
+        var first = SeedVideo(job, "first.mkv", _historyItemId);
 
         var secondPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, second);
         Directory.CreateDirectory(secondPath);
