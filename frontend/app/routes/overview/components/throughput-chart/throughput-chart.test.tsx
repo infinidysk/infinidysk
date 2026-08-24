@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ThroughputPoint } from "~/clients/backend-client.server";
 import { ThroughputChart } from "./throughput-chart";
 
@@ -12,7 +14,7 @@ const point = (articles: number, errors = 0): ThroughputPoint => ({
   bytesFetched: 0,
 });
 
-function render(points: ThroughputPoint[], totalErrors = 0) {
+function renderMarkup(points: ThroughputPoint[], totalErrors = 0) {
   return renderToStaticMarkup(
     <ThroughputChart
       points={points}
@@ -34,21 +36,24 @@ function articlesPathD(markup: string): string {
 }
 
 describe("ThroughputChart", () => {
+  afterEach(() => {
+    cleanup();
+  });
   it("does not draw the green series when every article bucket is zero", () => {
-    const markup = render([point(0, 1), point(0)], 1);
+    const markup = renderMarkup([point(0, 1), point(0)], 1);
 
     expect(markup).not.toContain('data-series="articles"');
     expect(markup).toContain('data-series="errors"');
   });
 
   it("draws the green series when an article bucket has activity", () => {
-    const markup = render([point(0), point(2)]);
+    const markup = renderMarkup([point(0), point(2)]);
 
     expect(markup).toContain('data-series="articles"');
   });
 
   it("skips idle stretches but anchors each run to leading and trailing zeros", () => {
-    const markup = render([point(0), point(5), point(0), point(0), point(3), point(0)]);
+    const markup = renderMarkup([point(0), point(5), point(0), point(0), point(3), point(0)]);
     const d = articlesPathD(markup);
 
     expect(d).not.toBe("");
@@ -60,5 +65,32 @@ describe("ThroughputChart", () => {
     expect(d.startsWith("M0.0,156.0")).toBe(true);
     expect(d).toContain("L160.0,6.0");
     expect(d).toContain("L320.0,156.0");
+  });
+
+  it("announces keyboard-selected bucket details to assistive tech", () => {
+    const points = [
+      point(3),
+      { ...point(8), misses: 1, errors: 2, bytesServed: 100, bytesFetched: 50 },
+    ];
+    const { container } = render(
+      <ThroughputChart
+        points={points}
+        totalArticles={11}
+        totalMisses={1}
+        totalErrors={2}
+        totalBytesServed={100}
+        bucketSizeMs={60_000}
+        window="24h"
+      />,
+    );
+
+    const chart = container.querySelector('[role="img"]');
+    expect(chart).not.toBeNull();
+    fireEvent.keyDown(chart!, { key: "ArrowRight" });
+    fireEvent.keyDown(chart!, { key: "ArrowRight" });
+
+    const status = container.querySelector("#overview-throughput-keyboard-status");
+    expect(status?.textContent).toMatch(/8 articles/);
+    expect(status?.textContent).toMatch(/2 errors/);
   });
 });

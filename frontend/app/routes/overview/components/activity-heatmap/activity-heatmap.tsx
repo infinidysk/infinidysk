@@ -59,6 +59,8 @@ export function ActivityHeatmap({
   cells,
 }: ActivityHeatmapProps) {
   const [hover, setHover] = useState<GridCell | null>(null);
+  const [selected, setSelected] = useState<GridCell | null>(null);
+  const shown = hover ?? selected;
 
   const grid = useMemo(
     () => buildGrid(mode, windowStartMs, windowEndMs, cells),
@@ -136,6 +138,7 @@ export function ActivityHeatmap({
                           }
                           onFocus={() => setHover(cell)}
                           onBlur={() => setHover((h) => (h && h.bucket === cell.bucket ? null : h))}
+                          onClick={() => setSelected(cell)}
                         />
                       );
                     })}
@@ -165,10 +168,10 @@ export function ActivityHeatmap({
 
             <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
               <div className="text-[11px] text-base-content/50 tabular-nums">
-                {hover ? (
+                {shown ? (
                   <>
-                    {formatBucket(hover.bucket, bucketSizeMs)} &mdash; {formatNumber(hover.count)}{" "}
-                    {hover.count === 1 ? "article" : "articles"}
+                    {formatBucket(shown.bucket, bucketSizeMs)} &mdash; {formatNumber(shown.count)}{" "}
+                    {shown.count === 1 ? "article" : "articles"}
                   </>
                 ) : (
                   <>Select a cell for details</>

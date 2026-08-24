@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ActiveRead, ActiveReadsMessage } from "~/clients/backend-client.server";
 import { formatBytes } from "../../utils/format";
 import { clientIdentityTooltip, clientLabelFromUserAgent } from "~/utils/client-label";
@@ -15,8 +15,33 @@ const TOPIC_ACTIVE_READS = "ar";
 export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
   const [reads, setReads] = useState<ActiveRead[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState<{ seq: number; text: string } | null>(null);
+  const copySeqRef = useRef(0);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track previous bytesRead per session for live MiB/s computation.
   const prevRef = useRef<Map<string, { bytes: number; at: number; rate: number }>>(new Map());
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
+  const copySessionId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+    } catch {
+      return;
+    }
+    copySeqRef.current += 1;
+    setCopiedId(id);
+    setCopyNotice({ seq: copySeqRef.current, text: "Session id copied" });
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => {
+      setCopiedId((current) => (current === id ? null : current));
+      copyTimerRef.current = null;
+    }, 1500);
+  };
 
   useWebsocketTopic(
     TOPIC_ACTIVE_READS,
@@ -63,8 +88,8 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
           )}
         </div>
 
-        <div className="sr-only" aria-live="polite">
-          {copiedId ? "Session id copied" : ""}
+        <div key={copyNotice?.seq ?? 0} className="sr-only" aria-live="polite">
+          {copyNotice?.text ?? ""}
         </div>
 
         {reads.length === 0 ? (
@@ -104,12 +129,7 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
                         type="button"
                         className="btn btn-link btn-xs h-auto min-h-0 px-0 font-mono"
                         onClick={() => {
-                          void navigator.clipboard.writeText(r.id);
-                          setCopiedId(r.id);
-                          window.setTimeout(
-                            () => setCopiedId((id) => (id === r.id ? null : id)),
-                            1500,
-                          );
+                          void copySessionId(r.id);
                         }}
                       >
                         {copiedId === r.id ? "Copied" : shortSessionId(r.id)}

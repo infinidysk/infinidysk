@@ -53,10 +53,18 @@ export function IndexerApiUsage({ rows }: IndexerApiUsageProps) {
                       </Tooltip>
                     </td>
                     <td>
-                      <UsageBar used={r.apiHits} limit={r.apiHitLimit} />
+                      <UsageBar
+                        used={r.apiHits}
+                        limit={r.apiHitLimit}
+                        label={`${r.name} API hits`}
+                      />
                     </td>
                     <td>
-                      <UsageBar used={r.downloadHits} limit={r.downloadHitLimit} />
+                      <UsageBar
+                        used={r.downloadHits}
+                        limit={r.downloadHitLimit}
+                        label={`${r.name} downloads`}
+                      />
                     </td>
                     <td className="whitespace-nowrap font-mono text-xs tabular-nums text-base-content/50">
                       {formatReset(r.resetAtMs, r.resetHourUtc, now)}
@@ -72,12 +80,25 @@ export function IndexerApiUsage({ rows }: IndexerApiUsageProps) {
   );
 }
 
-function UsageBar({ used, limit }: { used: number; limit: number | null | undefined }) {
+function UsageBar({
+  used,
+  limit,
+  label,
+}: {
+  used: number;
+  limit: number | null | undefined;
+  label: string;
+}) {
   if (!limit || limit <= 0) {
     return (
       <div className="flex items-center gap-2.5">
         <Tooltip content="No limit configured">
-          <progress className="progress progress-success h-2 min-w-20 flex-1" value={0} max={100} />
+          <progress
+            aria-label={`${label}: ${formatNumber(used)}, unlimited`}
+            className="progress progress-success h-2 min-w-20 flex-1"
+            value={0}
+            max={100}
+          />
         </Tooltip>
         <span className="text-xs text-base-content tabular-nums whitespace-nowrap">
           {formatNumber(used)}
@@ -92,7 +113,12 @@ function UsageBar({ used, limit }: { used: number; limit: number | null | undefi
   const tone = over ? "progress-error" : near ? "progress-warning" : "progress-success";
   return (
     <div className="flex items-center gap-2.5">
-      <progress className={`progress h-2 min-w-20 flex-1 ${tone}`} value={pct} max={100} />
+      <progress
+        aria-label={`${label}: ${formatNumber(used)} of ${formatNumber(limit)}`}
+        className={`progress h-2 min-w-20 flex-1 ${tone}`}
+        value={pct}
+        max={100}
+      />
       <span className="text-xs text-base-content tabular-nums whitespace-nowrap">
         {formatNumber(used)}
         <span className="text-base-content/50"> / {formatNumber(limit)}</span>

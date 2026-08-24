@@ -38,7 +38,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
         </div>
         {hasOpenCircuit && (
           <p className="text-xs text-warning">
-            A provider circuit is open.{" "}
+            A provider circuit is open or recovering.{" "}
             <WidgetLink to={settingsPath("usenet")}>Review Usenet settings</WidgetLink>
           </p>
         )}

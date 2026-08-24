@@ -152,6 +152,21 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   const liveTiles = stats.tiles;
   const isLongWindow = window === "7d" || window === "30d" || window === "all";
 
+  const applyWindow = (next: OverviewWindow) => {
+    if (next === window) return;
+    const nextLong = next === "7d" || next === "30d" || next === "all";
+    setWindow(next);
+    if (nextLong) {
+      setDetailLoaded(true);
+      setDetailError(false);
+      detailLoadedRef.current = true;
+    } else {
+      setDetailLoaded(false);
+      setDetailError(false);
+      detailLoadedRef.current = false;
+    }
+  };
+
   // Window section: load on mount / window change, poll every 30s while visible.
   useEffect(() => {
     let cancelled = false;
@@ -248,6 +263,9 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   useEffect(() => {
     if (isLongWindow) return;
     let cancelled = false;
+    detailLoadedRef.current = false;
+    setDetailLoaded(false);
+    setDetailError(false);
     void (async () => {
       try {
         const res = await fetch(
@@ -547,7 +565,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     else if (event.key === "End") next = last;
     const selected = WINDOWS[next];
     if (!selected) return;
-    setWindow(selected.value);
+    applyWindow(selected.value);
     document.getElementById(`overview-window-${selected.value}`)?.focus();
   };
 
@@ -597,7 +615,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
                 aria-controls="overview-dashboard"
                 tabIndex={window === w.value ? 0 : -1}
                 className={`tab ${window === w.value ? "tab-active" : ""}`}
-                onClick={() => setWindow(w.value)}
+                onClick={() => applyWindow(w.value)}
               >
                 {w.label}
               </button>
@@ -621,9 +639,12 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
 
       <div
         id="overview-dashboard"
-        className="flex min-w-0 flex-col items-stretch gap-4 xl:flex-row"
+        className="grid min-w-0 grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]"
       >
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
+        <aside className="flex w-full min-w-0 xl:col-start-2 xl:row-start-1 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)]">
+          <LiveReadsPanel paused={editMode} />
+        </aside>
+        <div className="flex min-w-0 flex-col gap-4 xl:col-start-1 xl:row-start-1">
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
               {visibleOrder.map((id) => {
@@ -638,10 +659,6 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             </SortableContext>
           </DndContext>
         </div>
-        {/* Pin above widgets when stacked; restore document order for the xl right rail. */}
-        <aside className="order-first flex w-full shrink-0 xl:sticky xl:top-4 xl:order-none xl:max-h-[calc(100vh-2rem)] xl:w-80 xl:self-start">
-          <LiveReadsPanel paused={editMode} />
-        </aside>
       </div>
     </div>
   );

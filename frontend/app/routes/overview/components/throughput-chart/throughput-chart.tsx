@@ -28,6 +28,7 @@ export function ThroughputChart({
   window,
 }: ThroughputChartProps) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [keyboardStatus, setKeyboardStatus] = useState("");
 
   const bucketSeconds = Math.max(1, (bucketSizeMs || 60_000) / 1000);
 
@@ -94,21 +95,29 @@ export function ThroughputChart({
   const handleMouseLeave = () => setHoverIdx(null);
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (points.length === 0) return;
+    let next: number | null;
     if (e.key === "ArrowRight") {
       e.preventDefault();
-      setHoverIdx((i) => Math.min(points.length - 1, (i ?? -1) + 1));
+      next = Math.min(points.length - 1, (hoverIdx ?? -1) + 1);
     } else if (e.key === "ArrowLeft") {
       e.preventDefault();
-      setHoverIdx((i) => Math.max(0, (i ?? points.length) - 1));
+      next = Math.max(0, (hoverIdx ?? points.length) - 1);
     } else if (e.key === "Home") {
       e.preventDefault();
-      setHoverIdx(0);
+      next = 0;
     } else if (e.key === "End") {
       e.preventDefault();
-      setHoverIdx(points.length - 1);
+      next = points.length - 1;
     } else if (e.key === "Escape") {
       setHoverIdx(null);
+      setKeyboardStatus("");
+      return;
+    } else {
+      return;
     }
+    setHoverIdx(next);
+    const point = points[next];
+    setKeyboardStatus(point ? describeThroughputBucket(point, window, bucketSeconds) : "");
   };
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     const t = e.touches[0];
@@ -170,6 +179,7 @@ export function ThroughputChart({
                 tabIndex={0}
                 role="img"
                 aria-label={`${formatNumber(totalArticles)} articles, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served. Use arrow keys for bucket details.`}
+                aria-describedby="overview-throughput-keyboard-status"
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
                 onTouchStart={handleTouchStart}
@@ -255,6 +265,15 @@ export function ThroughputChart({
                   </>
                 )}
               </div>
+            </div>
+            <div
+              id="overview-throughput-keyboard-status"
+              className="sr-only"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {keyboardStatus}
             </div>
 
             <div className="relative mt-1.5 ml-[46px] h-4 text-[10px] text-base-content/50 tabular-nums select-none">
@@ -404,6 +423,23 @@ function Total({
       </div>
     </div>
   );
+}
+
+function describeThroughputBucket(
+  point: ThroughputPoint,
+  window: OverviewWindow,
+  bucketSeconds: number,
+): string {
+  const parts = [
+    formatBucketTime(point.bucket, window),
+    `${formatNumber(point.articles)} articles`,
+  ];
+  const rate = (point.bytesFetched ?? 0) / bucketSeconds;
+  if (rate > 0) parts.push(`${formatBytes(rate)}/s downloaded`);
+  if ((point.misses ?? 0) > 0) parts.push(`${formatNumber(point.misses)} misses`);
+  if (point.errors > 0) parts.push(`${formatNumber(point.errors)} errors`);
+  if (point.bytesServed > 0) parts.push(`${formatBytes(point.bytesServed)} served`);
+  return parts.join(", ");
 }
 
 function formatBucketTime(ms: number, window: OverviewWindow): string {

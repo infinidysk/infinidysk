@@ -26,13 +26,15 @@ export function IndexerScoreboard({ indexers }: IndexerScoreboardProps) {
         </div>
         {failedTotal > 0 && (
           <p className="text-xs text-error">
-            {failedTotal} failed import{failedTotal === 1 ? "" : "s"}.{" "}
+            {failedTotal} failed download{failedTotal === 1 ? "" : "s"}.{" "}
             <WidgetLink to={settingsPath("indexers")}>Review indexer settings</WidgetLink>
           </p>
         )}
 
         {indexers.length === 0 ? (
-          <p className="py-6 text-center text-xs text-base-content/50">No imports recorded yet.</p>
+          <p className="py-6 text-center text-xs text-base-content/50">
+            No downloads recorded yet.
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="table table-pin-cols table-sm min-w-[560px]">
