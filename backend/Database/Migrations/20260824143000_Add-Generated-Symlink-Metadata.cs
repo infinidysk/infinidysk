@@ -1,4 +1,6 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Database;
 
 #nullable disable
 
@@ -8,6 +10,8 @@ namespace NzbWebDAV.Database.Migrations;
 /// Retains the filesystem location and target chosen when an optional symlink
 /// output is created, allowing ownership-safe cleanup after settings change.
 /// </summary>
+[DbContext(typeof(DavDatabaseContext))]
+[Migration("20260824143000_Add-Generated-Symlink-Metadata")]
 public partial class AddGeneratedSymlinkMetadata : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
