@@ -79,6 +79,22 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     }
 
     [Fact]
+    public void StaleEntries_ExpireOnReadWithoutFurtherHoles()
+    {
+        var path = $"/view/stale-read-{Guid.NewGuid():N}.mkv";
+        var clock = new ManualTimeProvider();
+        PlaybackHoleTracker.Clock = clock;
+        var miss = new UsenetArticleNotFoundException("stale@test");
+        PlaybackHoleTracker.RecordHole(path, "stale@test", miss);
+        Assert.True(PlaybackHoleTracker.IsKnownMissingSegment(path, "stale@test"));
+
+        clock.Advance(PlaybackHoleTracker.CleanupThreshold + TimeSpan.FromSeconds(1));
+
+        Assert.False(PlaybackHoleTracker.IsKnownMissingSegment(path, "stale@test"));
+        Assert.Null(PlaybackHoleTracker.SnapshotMissingSegmentIds(path));
+    }
+
+    [Fact]
     public void BasenameFileNames_AreNotTracked()
     {
         var miss = new UsenetArticleNotFoundException("movie@test");

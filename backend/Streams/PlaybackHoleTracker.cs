@@ -76,22 +76,44 @@ internal static class PlaybackHoleTracker
 
     public static bool IsKnownMissingSegment(string? path, string segmentId)
     {
-        if (!IsTrackablePath(path) || string.IsNullOrEmpty(segmentId))
-            return false;
-        if (!Files.TryGetValue(path!, out var state))
-            return false;
+        var known = false;
+        var now = Clock.GetUtcNow();
+        if (IsTrackablePath(path) && !string.IsNullOrEmpty(segmentId)
+            && Files.TryGetValue(path!, out var state))
+        {
+            lock (state)
+            {
+                // Missing-segment memory must not outlive provider recovery: after a
+                // PAR2 repair or backfill the same path would otherwise keep being
+                // served zero bytes until an unrelated 256th RecordHole sweeps.
+                if (IsStale(state, now))
+                    Files.TryRemove(path!, out _);
+                else
+                    known = state.MissingSegmentIds.Contains(segmentId);
+            }
+        }
 
-        lock (state)
-            return state.MissingSegmentIds.Contains(segmentId);
+        MaybeCleanup(now);
+        return known;
     }
 
     public static HashSet<string>? SnapshotMissingSegmentIds(string? path)
     {
-        if (!IsTrackablePath(path) || !Files.TryGetValue(path!, out var state))
-            return null;
+        HashSet<string>? snapshot = null;
+        var now = Clock.GetUtcNow();
+        if (IsTrackablePath(path) && Files.TryGetValue(path!, out var state))
+        {
+            lock (state)
+            {
+                if (IsStale(state, now))
+                    Files.TryRemove(path!, out _);
+                else if (state.MissingSegmentIds.Count > 0)
+                    snapshot = [.. state.MissingSegmentIds];
+            }
+        }
 
-        lock (state)
-            return state.MissingSegmentIds.Count == 0 ? null : [..state.MissingSegmentIds];
+        MaybeCleanup(now);
+        return snapshot;
     }
 
     /// <summary>
@@ -101,6 +123,10 @@ internal static class PlaybackHoleTracker
     /// </summary>
     private static bool IsTrackablePath(string? path) =>
         !string.IsNullOrEmpty(path) && path[0] == '/';
+
+    // Caller must hold the state lock.
+    private static bool IsStale(FileState state, DateTimeOffset now) =>
+        now - state.LastEventUtc >= CleanupThreshold;
 
     private static void Prune(FileState state, DateTimeOffset now)
     {
