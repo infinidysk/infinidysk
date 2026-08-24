@@ -27,13 +27,16 @@ export function ThroughputChart({
   bucketSizeMs,
   window,
 }: ThroughputChartProps) {
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [hoverBucket, setHoverBucket] = useState<number | null>(null);
   const [keyboardBucket, setKeyboardBucket] = useState<number | null>(null);
 
   const bucketSeconds = Math.max(1, (bucketSizeMs || 60_000) / 1000);
+  const hoverIdx = indexOfBucket(points, hoverBucket);
+  const keyboardIdx = indexOfBucket(points, keyboardBucket);
+  const cursorIdx = hoverIdx ?? keyboardIdx;
 
   useEffect(() => {
-    setHoverIdx(null);
+    setHoverBucket(null);
     setKeyboardBucket(null);
   }, [window]);
 
@@ -90,23 +93,25 @@ export function ThroughputChart({
       const rect = target.getBoundingClientRect();
       const rel = (clientX - rect.left) / rect.width;
       const idx = Math.round(rel * (points.length - 1));
-      setHoverIdx(Math.max(0, Math.min(points.length - 1, idx)));
+      const clamped = Math.max(0, Math.min(points.length - 1, idx));
+      setHoverBucket(points[clamped]?.bucket ?? null);
     },
-    [points.length],
+    [points],
   );
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) =>
     onMove(e.clientX, e.currentTarget);
-  const handleMouseLeave = () => setHoverIdx(null);
+  const handleMouseLeave = () => setHoverBucket(null);
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (points.length === 0) return;
+    const from = keyboardIdx ?? hoverIdx;
     let next: number | null;
     if (e.key === "ArrowRight") {
       e.preventDefault();
-      next = Math.min(points.length - 1, (hoverIdx ?? -1) + 1);
+      next = Math.min(points.length - 1, (from ?? -1) + 1);
     } else if (e.key === "ArrowLeft") {
       e.preventDefault();
-      next = Math.max(0, (hoverIdx ?? points.length) - 1);
+      next = Math.max(0, (from ?? points.length) - 1);
     } else if (e.key === "Home") {
       e.preventDefault();
       next = 0;
@@ -114,13 +119,13 @@ export function ThroughputChart({
       e.preventDefault();
       next = points.length - 1;
     } else if (e.key === "Escape") {
-      setHoverIdx(null);
+      setHoverBucket(null);
       setKeyboardBucket(null);
       return;
     } else {
       return;
     }
-    setHoverIdx(next);
+    setHoverBucket(null);
     setKeyboardBucket(points[next]?.bucket ?? null);
   };
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
@@ -136,18 +141,17 @@ export function ThroughputChart({
   const hasArticleActivity = maxArticles > 0;
   const bucketLabel =
     window === "1h" || window === "24h" ? "min" : window === "all" ? "day" : "hour";
-  const hover = hoverIdx !== null ? points[hoverIdx] : null;
-  const keyboardPoint =
-    keyboardBucket === null ? undefined : points.find((p) => p.bucket === keyboardBucket);
+  const hover = cursorIdx !== null ? (points[cursorIdx] ?? null) : null;
+  const keyboardPoint = keyboardIdx !== null ? points[keyboardIdx] : undefined;
   const keyboardStatus = keyboardPoint
     ? describeThroughputBucket(keyboardPoint, window, bucketSeconds)
     : "";
   const hoverNetworkRate = hover ? (hover.bytesFetched ?? 0) / bucketSeconds : 0;
   const tooltipPlacement =
-    hoverIdx === null || points.length < 2
+    cursorIdx === null || points.length < 2
       ? "tooltip-top"
       : (() => {
-          const rel = hoverIdx / (points.length - 1);
+          const rel = cursorIdx / (points.length - 1);
           if (rel < 0.2) return "tooltip-right";
           if (rel > 0.8) return "tooltip-left";
           return "tooltip-top";
@@ -230,13 +234,13 @@ export function ThroughputChart({
                   )}
                 </svg>
 
-                {hover && hoverIdx !== null && (
+                {hover && cursorIdx !== null && (
                   <>
-                    <div className={styles.crosshair} style={{ left: `${xPercent(hoverIdx)}%` }} />
+                    <div className={styles.crosshair} style={{ left: `${xPercent(cursorIdx)}%` }} />
                     <div
                       className={`tooltip tooltip-open ${tooltipPlacement} ${styles.hoverTooltip}`}
                       style={{
-                        left: `${xPercent(hoverIdx)}%`,
+                        left: `${xPercent(cursorIdx)}%`,
                         top: `${yPercent(hover.articles)}%`,
                       }}
                     >
@@ -266,7 +270,7 @@ export function ThroughputChart({
                       <div
                         className={`${styles.hoverDot} ${styles.hoverDotErr}`}
                         style={{
-                          left: `${xPercent(hoverIdx)}%`,
+                          left: `${xPercent(cursorIdx)}%`,
                           top: `${yPercent(hover.errors)}%`,
                         }}
                       />
@@ -432,6 +436,12 @@ function Total({
       </div>
     </div>
   );
+}
+
+function indexOfBucket(points: ThroughputPoint[], bucket: number | null): number | null {
+  if (bucket === null) return null;
+  const idx = points.findIndex((p) => p.bucket === bucket);
+  return idx >= 0 ? idx : null;
 }
 
 function describeThroughputBucket(

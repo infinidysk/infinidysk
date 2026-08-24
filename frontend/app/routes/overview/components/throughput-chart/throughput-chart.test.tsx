@@ -118,4 +118,51 @@ describe("ThroughputChart", () => {
     expect(status?.textContent).toMatch(/12 articles/);
     expect(status?.textContent).toMatch(/4 errors/);
   });
+
+  it("keeps hover and keyboard cursors on the same bucket after polling prepends a point", () => {
+    const points = [
+      { ...point(3), bucket: 1 },
+      { ...point(8), bucket: 2, errors: 2 },
+    ];
+    const { container, rerender } = render(
+      <ThroughputChart
+        points={points}
+        totalArticles={11}
+        totalMisses={0}
+        totalErrors={2}
+        totalBytesServed={0}
+        bucketSizeMs={60_000}
+        window="24h"
+      />,
+    );
+
+    const chart = container.querySelector('[role="img"]');
+    expect(chart).toBeInstanceOf(HTMLElement);
+    (chart as HTMLElement).focus();
+    fireEvent.keyDown(chart!, { key: "ArrowRight" });
+    fireEvent.keyDown(chart!, { key: "ArrowRight" });
+
+    const status = container.querySelector("#overview-throughput-keyboard-status");
+    expect(status?.textContent).toMatch(/8 articles/);
+
+    const shifted = [{ ...point(1), bucket: 0 }, points[0]!, points[1]!];
+    rerender(
+      <ThroughputChart
+        points={shifted}
+        totalArticles={12}
+        totalMisses={0}
+        totalErrors={2}
+        totalBytesServed={0}
+        bucketSizeMs={60_000}
+        window="24h"
+      />,
+    );
+
+    expect(status?.textContent).toMatch(/8 articles/);
+    expect(status?.textContent).toMatch(/2 errors/);
+
+    fireEvent.keyDown(chart!, { key: "ArrowLeft" });
+    expect(status?.textContent).toMatch(/3 articles/);
+    expect(status?.textContent).not.toMatch(/8 articles/);
+  });
 });
