@@ -78,7 +78,7 @@ public sealed class NormalizeGuidTextCasingMigrationTests
             releaseDate: null, lastHealthCheck: null,
             historyItemId: null, fileBlobId: null);
 
-        ctx.Items.AddRange(dir, nzbItem, rarItem, multiItem);
+        await HistoricalDavItemSeeder.SeedAsync(ctx, [dir, nzbItem, rarItem, multiItem]);
         ctx.NzbFiles.Add(new DavNzbFile { Id = nzbId, SegmentIds = ["seg"] });
         ctx.RarFiles.Add(new DavRarFile { Id = rarId, RarParts = [] });
         ctx.MultipartFiles.Add(new DavMultipartFile { Id = multiId, Metadata = new DavMultipartFile.Meta() });
@@ -308,7 +308,7 @@ public sealed class NormalizeGuidTextCasingMigrationTests
             DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
             releaseDate: null, lastHealthCheck: null,
             historyItemId: null, fileBlobId: blobId);
-        ctx.Items.Add(file);
+        await HistoricalDavItemSeeder.SeedAsync(ctx, [file]);
         await ctx.SaveChangesAsync();
         ctx.ChangeTracker.Clear();
 
@@ -338,7 +338,7 @@ public sealed class NormalizeGuidTextCasingMigrationTests
         var ctx = harness.Context;
 
         var dirId = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeee0501");
-        ctx.Items.Add(NewDirectory(dirId, DavItem.ContentFolder, "to-delete"));
+        await HistoricalDavItemSeeder.SeedAsync(ctx, [NewDirectory(dirId, DavItem.ContentFolder, "to-delete")]);
         await ctx.SaveChangesAsync();
         ctx.ChangeTracker.Clear();
 
@@ -359,7 +359,7 @@ public sealed class NormalizeGuidTextCasingMigrationTests
         var ctx = harness.Context;
 
         var dirId = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeee0601");
-        ctx.Items.Add(NewDirectory(dirId, DavItem.ContentFolder, "already-upper"));
+        await HistoricalDavItemSeeder.SeedAsync(ctx, [NewDirectory(dirId, DavItem.ContentFolder, "already-upper")]);
         await ctx.SaveChangesAsync();
         ctx.ChangeTracker.Clear();
 

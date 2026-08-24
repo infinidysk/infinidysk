@@ -73,8 +73,7 @@ public sealed class PreExistingPathIndexMigrationTests
             historyItemId: null,
             fileBlobId: null);
 
-        ctx.Items.AddRange(category, release, file);
-        await ctx.SaveChangesAsync();
+        await HistoricalDavItemSeeder.SeedAsync(ctx, [category, release, file]);
         ctx.ChangeTracker.Clear();
     }
 

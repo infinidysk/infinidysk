@@ -44,7 +44,9 @@ public sealed class FixEmptyCategoriesMigrationTests
         collisionMount.Path = "/content//Shared Release";
         var existingMount = NewDirectory(existingUncategorizedMountId, uncategorizedFolder, "Shared Release");
 
-        ctx.Items.AddRange(uncategorizedFolder, emptyFolder, mount, collisionMount, existingMount);
+        await HistoricalDavItemSeeder.SeedAsync(
+            ctx,
+            [uncategorizedFolder, emptyFolder, mount, collisionMount, existingMount]);
 
         ctx.HistoryItems.AddRange(
             new HistoryItem
@@ -145,7 +147,7 @@ public sealed class FixEmptyCategoriesMigrationTests
         var mount = NewDirectory(mountId, emptyFolder, "Orphan Release");
         mount.Path = "/content//Orphan Release";
 
-        ctx.Items.AddRange(emptyFolder, mount);
+        await HistoricalDavItemSeeder.SeedAsync(ctx, [emptyFolder, mount]);
         ctx.HistoryItems.Add(new HistoryItem
         {
             Id = Guid.NewGuid(),

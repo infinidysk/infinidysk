@@ -7,8 +7,9 @@ using NzbWebDAV.Database;
 namespace NzbWebDAV.Database.Migrations;
 
 /// <summary>
-/// Retains the filesystem location and target chosen when an optional symlink
-/// output is created, allowing ownership-safe cleanup after settings change.
+/// Retains the filesystem location and target chosen when optional STRM or
+/// symlink outputs are created, allowing ownership-safe cleanup after settings
+/// change.
 /// </summary>
 [DbContext(typeof(DavDatabaseContext))]
 [Migration("20260824143000_Add-Generated-Symlink-Metadata")]

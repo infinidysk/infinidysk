@@ -112,6 +112,24 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     b.Property<long?>("FileSize")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("GeneratedStrmOutputRoot")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GeneratedStrmPath")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GeneratedStrmTarget")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GeneratedSymlinkOutputRoot")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GeneratedSymlinkPath")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GeneratedSymlinkTarget")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("HistoryItemId")
                         .HasColumnType("uuid");
 

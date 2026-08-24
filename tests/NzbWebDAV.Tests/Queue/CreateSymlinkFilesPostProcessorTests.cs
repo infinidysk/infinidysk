@@ -60,6 +60,47 @@ public sealed class CreateSymlinkFilesPostProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateSymlinkFilesAsync_RollsBackEarlierLinksWhenLaterWriteFails()
+    {
+        var category = SeedDirectory(DavItem.ContentFolder, "movies");
+        var firstShow = SeedDirectory(category, "First", _historyItemId);
+        var secondShow = SeedDirectory(category, "Second", _historyItemId);
+        var first = SeedVideo(firstShow, "movie.mkv");
+        var second = SeedVideo(secondShow, "movie.mkv");
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var secondPath = CreateSymlinkFilesPostProcessor.GetSymlinkFilePath(_outputDirectory, second);
+        Directory.CreateDirectory(secondPath);
+
+        var processor = new CreateSymlinkFilesPostProcessor(_config, _dbClient, _historyItemId);
+        await Assert.ThrowsAnyAsync<Exception>(() => processor.CreateSymlinkFilesAsync());
+
+        Assert.False(File.Exists(CreateSymlinkFilesPostProcessor.GetSymlinkFilePath(_outputDirectory, first)));
+        Assert.True(Directory.Exists(secondPath));
+    }
+
+    [Fact]
+    public void DeleteSymlinkFile_UsesPersistedPathAfterOutputDirectoryChanges()
+    {
+        var item = NewVideo("/content/movies/Movie/movie.mkv");
+        var path = CreateSymlinkFilesPostProcessor.GetSymlinkFilePath(_outputDirectory, item);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.CreateSymbolicLink(path, DatabaseStoreSymlinkFile.GetTargetPath(item.Id, "/mnt/nzbdav"));
+        item.GeneratedSymlinkOutputRoot = _outputDirectory;
+        item.GeneratedSymlinkPath = path;
+        item.GeneratedSymlinkTarget = DatabaseStoreSymlinkFile.GetTargetPath(item.Id, "/mnt/nzbdav");
+
+        _config.UpdateValues(
+        [
+            new() { ConfigName = ConfigKeys.ApiSymlinkOutputDir, ConfigValue = Path.Join(Path.GetTempPath(), "other") },
+        ]);
+        CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(item);
+
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
     public void DeleteSymlinkFile_PreservesForeignSymlink()
     {
         var item = NewVideo("/content/movies/Movie/movie.mkv");

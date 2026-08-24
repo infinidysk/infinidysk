@@ -82,8 +82,7 @@ public sealed class HealthyTreePathMigrationTests
         }
 
         // 5 categories * 20 releases * 50 files = 5000 files + 100 dirs + 5 cats = 5105
-        ctx.Items.AddRange(batch);
-        await ctx.SaveChangesAsync();
+        await HistoricalDavItemSeeder.SeedAsync(ctx, batch);
         ctx.ChangeTracker.Clear();
         return expected;
     }

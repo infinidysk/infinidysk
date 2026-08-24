@@ -166,7 +166,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
               className="w-full"
               id="import-strategy-input"
               aria-describedby="import-strategy-help"
-              value={config["api.import-strategy"]}
+              value={primaryOutput}
               onChange={(e) => setNewConfig({ ...config, "api.import-strategy": e.target.value })}
             >
               <option value="symlinks">Symlinks — Plex</option>
