@@ -521,16 +521,50 @@ public class QueueItemProcessor(
                         .ValidateAsync(ct)).ConfigureAwait(false);
             }
 
-            // create strm files, if necessary
-            if (configManager.GetImportStrategy() == "strm")
-                await new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
-                    .CreateStrmFilesAsync()
+            // Generate every enabled import output. A secondary destination must not
+            // prevent the primary SAB/*Arr handoff from completing.
+            if (configManager.IsStrmOutputEnabled())
+            {
+                await CreateOutputAsync(
+                        "STRM",
+                        configManager.GetImportStrategy() == "strm",
+                        () => new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
+                            .CreateStrmFilesAsync())
                     .ConfigureAwait(false);
+            }
+
+            if (configManager.IsSymlinkOutputEnabled()
+                && configManager.GetSymlinkOutputDirectory() is not null)
+            {
+                await CreateOutputAsync(
+                        "symlink",
+                        configManager.GetImportStrategy() == "symlinks",
+                        () => new CreateSymlinkFilesPostProcessor(configManager, dbClient, queueItem.Id)
+                            .CreateSymlinkFilesAsync())
+                    .ConfigureAwait(false);
+            }
 
             await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
                 dbClient, queueItem, nzb, configManager, ct).ConfigureAwait(false);
 
             return mountFolder;
+
+            async Task CreateOutputAsync(string outputName, bool isPrimary, Func<Task> createOutput)
+            {
+                try
+                {
+                    await createOutput().ConfigureAwait(false);
+                }
+                catch (Exception e) when (!isPrimary && e is not OutOfMemoryException)
+                {
+                    Log.Warning(
+                        "Could not create secondary {OutputName} import output for {JobName}. Reason: {Reason}",
+                        outputName,
+                        queueItem.JobName,
+                        e.Message);
+                    Log.Debug(e, "Secondary {OutputName} import output failure stack", outputName);
+                }
+            }
         }).ConfigureAwait(false);
     }
 

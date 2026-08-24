@@ -75,6 +75,7 @@ public class HistoryCleanupService(
                     "history-cleanup",
                     deletedItem,
                     $"DeleteMountedFiles=true historyItemId={cleanupItem.Id}");
+                CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(configManager, deletedItem);
                 CreateStrmFilesPostProcessor.DeleteStrmFile(configManager, deletedItem);
             }
 

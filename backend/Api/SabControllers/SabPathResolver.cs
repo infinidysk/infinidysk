@@ -9,6 +9,12 @@ internal static class SabPathResolver
     {
         return configManager.GetImportStrategy() == "strm"
             ? configManager.GetStrmCompletedDownloadDir()
-            : Path.Join(configManager.GetRcloneMountDir(), DavItem.SymlinkFolder.Name);
+            : GetSymlinkCompletedDir(configManager);
+    }
+
+    internal static string GetSymlinkCompletedDir(ConfigManager configManager)
+    {
+        return configManager.GetSymlinkOutputDirectory()
+               ?? Path.Join(configManager.GetRcloneMountDir(), DavItem.SymlinkFolder.Name);
     }
 }

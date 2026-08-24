@@ -24,6 +24,10 @@ type SabnzbdSettingsProps = {
 
 export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
   const ensureArticleExistence = useEnsureArticleExistenceSetting(config, setNewConfig);
+  const primaryOutput = config["api.import-strategy"] === "strm" ? "strm" : "symlinks";
+  const isSymlinkOutputEnabled =
+    primaryOutput === "symlinks" || config["api.symlink-output-enabled"] === "true";
+  const isStrmOutputEnabled = primaryOutput === "strm" || config["api.strm-output-enabled"] === "true";
 
   const refreshApiKey = useCallback(() => {
     setNewConfig({ ...config, "api.key": generateNewApiKey() });
@@ -147,7 +151,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
       <SettingsCard
         icon="download"
         title="Import behavior"
-        description="Choose how completed imports are exposed and which files are retained."
+        description="Choose the primary *Arr import path, then optionally emit an additional media-server output."
       >
         <ManagedSetting configKey="api.import-strategy">
           <div className="space-y-2">
@@ -155,7 +159,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
               className="block text-sm font-medium text-base-content"
               htmlFor="import-strategy-input"
             >
-              Import Strategy
+              Primary *Arr import output
             </label>
             <Select
               className="w-full"
@@ -171,40 +175,119 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
               className="text-[11px] leading-relaxed text-base-content/45"
               id="import-strategy-help"
             >
-              Use symlinks for Plex with an rclone WebDAV mount. Use STRM files for Emby or Jellyfin
-              when those servers can stream directly from InfiniDysk.
+              SAB can report one completed-downloads path. Radarr or Sonarr imports from this output;
+              any other enabled output is for a separate media-server library.
             </p>
           </div>
         </ManagedSetting>
 
-        {config["api.import-strategy"] === "symlinks" && (
-          <ManagedSetting configKey="rclone.mount-dir">
-            <div className="ml-4 space-y-2 border-l border-base-content/10 pl-4">
-              <label
-                className="block text-sm font-medium text-base-content"
-                htmlFor="mount-dir-input"
-              >
-                Rclone Mount Directory
-              </label>
-              <Input
-                className="w-full"
-                type="text"
-                id="mount-dir-input"
-                aria-describedby="mount-dir-help"
-                placeholder="/mnt/nzbdav"
-                value={config["rclone.mount-dir"]}
-                onChange={(e) => setNewConfig({ ...config, "rclone.mount-dir": e.target.value })}
-              />
-              <p className="text-[11px] leading-relaxed text-base-content/45" id="mount-dir-help">
-                Path where the WebDAV root is mounted through rclone and where Radarr or Sonarr
-                should look for completed downloads.
-              </p>
+        <div className="ml-4 space-y-4 border-l border-base-content/10 pl-4">
+          <ManagedSetting configKey="api.symlink-output-enabled">
+            <div className="space-y-3">
+              <div>
+                <Toggle
+                  id="symlink-output-enabled"
+                  className="cursor-pointer"
+                  checked={isSymlinkOutputEnabled}
+                  disabled={primaryOutput === "symlinks"}
+                  label={
+                    <span>
+                      <span className="block text-sm font-medium text-base-content">
+                        Symlink output — Plex
+                      </span>
+                      <span className="block text-[11px] leading-relaxed text-base-content/45">
+                        {primaryOutput === "symlinks"
+                          ? "Required because this is the primary *Arr import output."
+                          : "Create an additional Plex-compatible output."}
+                      </span>
+                    </span>
+                  }
+                  onChange={(e) =>
+                    setNewConfig({
+                      ...config,
+                      "api.symlink-output-enabled": String(e.target.checked),
+                    })
+                  }
+                />
+              </div>
+              {isSymlinkOutputEnabled && (
+                <>
+                  <ManagedSetting configKey="rclone.mount-dir">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-base-content" htmlFor="mount-dir-input">
+                        Rclone Mount Directory
+                      </label>
+                      <Input
+                        className="w-full"
+                        type="text"
+                        id="mount-dir-input"
+                        aria-describedby="mount-dir-help"
+                        placeholder="/mnt/nzbdav"
+                        value={config["rclone.mount-dir"]}
+                        onChange={(e) => setNewConfig({ ...config, "rclone.mount-dir": e.target.value })}
+                      />
+                      <p className="text-[11px] leading-relaxed text-base-content/45" id="mount-dir-help">
+                        The WebDAV mount containing <code>.ids</code>. Generated symlinks target this path.
+                      </p>
+                    </div>
+                  </ManagedSetting>
+                  <ManagedSetting configKey="api.symlink-output-dir">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-base-content" htmlFor="symlink-output-dir-input">
+                        Symlink Output Directory
+                      </label>
+                      <Input
+                        className="w-full"
+                        type="text"
+                        id="symlink-output-dir-input"
+                        aria-describedby="symlink-output-dir-help"
+                        placeholder="/mnt/Plex"
+                        value={config["api.symlink-output-dir"]}
+                        onChange={(e) =>
+                          setNewConfig({ ...config, "api.symlink-output-dir": e.target.value })
+                        }
+                      />
+                      <p className="text-[11px] leading-relaxed text-base-content/45" id="symlink-output-dir-help">
+                        Optional. Leave blank to use the virtual <code>completed-symlinks</code> rclone tree.
+                        Set a directory to create real symlinks at queue completion.
+                      </p>
+                    </div>
+                  </ManagedSetting>
+                </>
+              )}
             </div>
           </ManagedSetting>
-        )}
 
-        {config["api.import-strategy"] === "strm" && (
-          <div className="ml-4 space-y-4 border-l border-base-content/10 pl-4">
+          <ManagedSetting configKey="api.strm-output-enabled">
+            <div className="space-y-3">
+              <div>
+                <Toggle
+                  id="strm-output-enabled"
+                  className="cursor-pointer"
+                  checked={isStrmOutputEnabled}
+                  disabled={primaryOutput === "strm"}
+                  label={
+                    <span>
+                      <span className="block text-sm font-medium text-base-content">
+                        STRM output — Emby/Jellyfin
+                      </span>
+                      <span className="block text-[11px] leading-relaxed text-base-content/45">
+                        {primaryOutput === "strm"
+                          ? "Required because this is the primary *Arr import output."
+                          : "Create authenticated streaming sidecars for another media-server library."}
+                      </span>
+                    </span>
+                  }
+                  onChange={(e) =>
+                    setNewConfig({
+                      ...config,
+                      "api.strm-output-enabled": String(e.target.checked),
+                    })
+                  }
+                />
+              </div>
+              {isStrmOutputEnabled && (
+                <div className="space-y-4">
             <ManagedSetting configKey="api.completed-downloads-dir">
               <div className="space-y-2">
                 <label
@@ -257,8 +340,11 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                 </p>
               </div>
             </ManagedSetting>
-          </div>
-        )}
+                </div>
+              )}
+            </div>
+          </ManagedSetting>
+        </div>
 
         <ManagedSetting configKey="api.download-file-blocklist">
           <div className="space-y-2">
@@ -655,6 +741,9 @@ export function isSabnzbdSettingsUpdated(
     config["api.download-file-blocklist"] !== newConfig["api.download-file-blocklist"] ||
     config["api.import-strategy"] !== newConfig["api.import-strategy"] ||
     config["api.completed-downloads-dir"] !== newConfig["api.completed-downloads-dir"] ||
+    config["api.symlink-output-enabled"] !== newConfig["api.symlink-output-enabled"] ||
+    config["api.symlink-output-dir"] !== newConfig["api.symlink-output-dir"] ||
+    config["api.strm-output-enabled"] !== newConfig["api.strm-output-enabled"] ||
     config["general.base-url"] !== newConfig["general.base-url"] ||
     config["api.addurl-trusted-hosts"] !== newConfig["api.addurl-trusted-hosts"] ||
     config["api.nzb-backup-enabled"] !== newConfig["api.nzb-backup-enabled"] ||
@@ -664,7 +753,11 @@ export function isSabnzbdSettingsUpdated(
 }
 
 export function isSabnzbdSettingsValid(config: Record<string, string>): boolean {
-  return isValidCategories(config["api.categories"] ?? "") && isValidNzbBackupLocation(config);
+  return (
+    isValidCategories(config["api.categories"] ?? "") &&
+    isValidNzbBackupLocation(config) &&
+    isValidStrmOutput(config)
+  );
 }
 
 export function generateNewApiKey(): string {
@@ -683,5 +776,14 @@ function isValidNzbBackupLocation(config: Record<string, string>): boolean {
   return (
     config["api.nzb-backup-enabled"] !== "true" ||
     Boolean(config["api.nzb-backup-location"]?.trim())
+  );
+}
+
+function isValidStrmOutput(config: Record<string, string>): boolean {
+  const strmEnabled =
+    config["api.import-strategy"] === "strm" || config["api.strm-output-enabled"] === "true";
+  return (
+    !strmEnabled ||
+    (Boolean(config["api.completed-downloads-dir"]?.trim()) && Boolean(config["general.base-url"]?.trim()))
   );
 }

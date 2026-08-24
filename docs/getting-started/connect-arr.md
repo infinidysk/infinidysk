@@ -26,12 +26,16 @@ Test the connection. Prefer `addfile` when clients can upload NZB bytes; `addurl
 
 Registered and enabled instances light up the Overview **Arr Health** widget [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }. See [Radarr/Sonarr settings](../configuration/arrs.md).
 
-## Align import paths
+## Align import paths [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
-| Strategy | InfiniDysk setting | *Arr / media server |
+| Primary output | InfiniDysk setting | *Arr / media server |
 |----------|----------------|---------------------|
 | Symlinks | Rclone mount dir e.g. `/mnt/remote/nzbdav` | Same path must exist inside *Arr |
 | STRM | Completed dir e.g. `/mnt/completed-downloads` + Base URL | Media server must reach Base URL |
+
+When both outputs are enabled, choose exactly one as the primary *Arr import
+output. Keep the secondary media-server directory outside the *Arr completed
+downloads and root-folder paths so the release is imported once.
 
 Enable **Repairs** with a **Library Directory** once paths and *Arr instances exist — [Repairs](../configuration/repairs.md).
 

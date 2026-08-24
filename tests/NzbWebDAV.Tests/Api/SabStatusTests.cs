@@ -91,4 +91,25 @@ public class SabStatusTests
             Path.Join("/mnt/nzbdav", DavItem.SymlinkFolder.Name),
             SabPathResolver.GetCompletedDir(config));
     }
+
+    [Fact]
+    public void CompletedDir_UsesCustomSymlinkDirectoryForPrimarySymlinkImports()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.ApiSymlinkOutputDir,
+                ConfigValue = "/mnt/plex",
+            },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.ApiStrmOutputEnabled,
+                ConfigValue = "true",
+            },
+        ]);
+
+        Assert.Equal("/mnt/plex", SabPathResolver.GetCompletedDir(config));
+    }
 }

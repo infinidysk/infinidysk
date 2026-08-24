@@ -30,6 +30,9 @@ public static class ConfigKeys
     public const string ApiSearchUserAgent = "api.search-user-agent";
     public const string ApiSkipNonVideoOnMissingArticles = "api.skip-non-video-on-missing-articles";
     public const string ApiStrmKey = "api.strm-key";
+    public const string ApiStrmOutputEnabled = "api.strm-output-enabled";
+    public const string ApiSymlinkOutputDir = "api.symlink-output-dir";
+    public const string ApiSymlinkOutputEnabled = "api.symlink-output-enabled";
     public const string ApiUserAgent = "api.user-agent";
     public const string ApiAddUrlTrustedHosts = "api.addurl-trusted-hosts";
 

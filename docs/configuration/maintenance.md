@@ -28,7 +28,7 @@ Database housekeeping, scheduled orphan cleanup, and one-off tools.
 | Prune Completed History | Remove completed SAB history rows | History-only; mounts stay; unlinked mounts become eligible for orphan cleanup |
 | Rename Windows-Invalid Paths | Sanitize existing names | Needs Windows-safe paths; backup + dry run |
 | Convert STRM → Symlinks | Strategy migration | Needs library dir + rclone mount |
-| Recreate STRM Files | Refresh sidecars | Needs STRM strategy + completed dir + base URL |
+| Recreate STRM Files [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | Refresh sidecars | Needs STRM output enabled + completed dir + base URL |
 | Migrate blobs to blobstore | Background optimization | Usually automatic |
 | Reset Health-Check Statistics | Clear HC history | Cannot undo |
 | Reset Overview Statistics [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | Clear overview metrics | Cannot undo |

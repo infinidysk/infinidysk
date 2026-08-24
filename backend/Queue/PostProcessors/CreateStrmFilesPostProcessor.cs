@@ -47,7 +47,7 @@ public class CreateStrmFilesPostProcessor(
         return byId.Values.ToList();
     }
 
-    private static bool IsStrmCandidate(DavItem item) =>
+    internal static bool IsStrmCandidate(DavItem item) =>
         FilenameUtil.IsVideoFile(item.Name)
         && !item.Name.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
 
@@ -65,9 +65,14 @@ public class CreateStrmFilesPostProcessor(
             return;
 
         var strmFilePath = GetStrmFilePath(configManager, davItem);
+        var completedDownloadsRoot = Path.GetFullPath(configManager.GetStrmCompletedDownloadDir());
+        if (!IsPathWithinRoot(Path.GetFullPath(strmFilePath), completedDownloadsRoot))
+            throw new IOException($"Generated STRM path '{strmFilePath}' escapes its configured output directory.");
         var directoryName = Path.GetDirectoryName(strmFilePath);
         if (directoryName != null)
             await Task.Run(() => Directory.CreateDirectory(directoryName), cancellationToken).ConfigureAwait(false);
+        if (HasSymlinkedAncestor(strmFilePath, completedDownloadsRoot))
+            throw new IOException($"Generated STRM path '{strmFilePath}' is beneath a symbolic-link directory.");
 
         var targetUrl = GetStrmTargetUrl(configManager, davItem);
         if (!forceRewrite && File.Exists(strmFilePath))
@@ -140,7 +145,7 @@ public class CreateStrmFilesPostProcessor(
     internal string GetStrmFilePath(DavItem davItem) =>
         GetStrmFilePath(configManager, davItem);
 
-    private static bool IsPathWithinRoot(string path, string root)
+    internal static bool IsPathWithinRoot(string path, string root)
     {
         var comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
@@ -151,7 +156,7 @@ public class CreateStrmFilesPostProcessor(
         return path.StartsWith(rootWithSeparator, comparison);
     }
 
-    private static bool HasSymlinkedAncestor(string path, string root)
+    internal static bool HasSymlinkedAncestor(string path, string root)
     {
         var directoryPath = Path.GetDirectoryName(path);
         while (directoryPath is not null)
@@ -171,7 +176,7 @@ public class CreateStrmFilesPostProcessor(
         return true;
     }
 
-    private static void DeleteEmptyParentDirectories(string? directoryPath, string root)
+    internal static void DeleteEmptyParentDirectories(string? directoryPath, string root)
     {
         while (directoryPath != null && IsPathWithinRoot(directoryPath, root))
         {

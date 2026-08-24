@@ -122,6 +122,10 @@ services:
       NZBDAV_CONFIG__API__CATEGORIES: "tv,movies"
       NZBDAV_CONFIG__API__MANUAL_CATEGORY: "uncategorized"
       NZBDAV_CONFIG__API__IMPORT_STRATEGY: "symlinks"
+      # Optional secondary output (since 1.3.0):
+      # NZBDAV_CONFIG__API__STRM_OUTPUT_ENABLED: "true"
+      # NZBDAV_CONFIG__API__SYMLINK_OUTPUT_ENABLED: "true"
+      # NZBDAV_CONFIG__API__SYMLINK_OUTPUT_DIR: "/mnt/Plex"
       NZBDAV_CONFIG__API__ENSURE_IMPORTABLE_VIDEO: "true"
       NZBDAV_CONFIG__API__IGNORE_HISTORY_LIMIT: "true"
       # NZBDAV_CONFIG__API__ADDURL_TRUSTED_HOSTS: "prowlarr,indexer"
