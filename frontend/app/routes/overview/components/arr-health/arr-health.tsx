@@ -3,7 +3,6 @@ import type {
   ArrInstanceStatus,
   OverviewWindow,
 } from "~/clients/backend-client.server";
-import { Tooltip } from "~/components/ui";
 import { formatDurationMs, formatNumber, formatTimeAgo } from "../../utils/format";
 import { settingsPath } from "~/navigation/settings-tabs";
 import { Tooltip } from "~/components/ui";

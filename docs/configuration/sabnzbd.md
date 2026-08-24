@@ -58,7 +58,7 @@ the middle of a release can only be detected when that part is read.
 
 After rotating `api.key`, update the API key in every configured Sonarr/Radarr
 download-client entry and use its test action before resuming a bulk search.
-Rejected SAB API requests are logged without exposing the key, with repeated
-identical failures throttled.
+Rejected SAB API requests are logged without exposing the key, with failures
+for the same mode and category throttled.
 
 [Import strategies](../guides/import-strategies.md) · [Queue settings](queue.md)
