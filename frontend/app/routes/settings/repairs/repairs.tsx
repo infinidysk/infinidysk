@@ -22,7 +22,8 @@ function isNonNegativeInteger(value: string) {
 export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) {
   const libraryDirConfig = config["media.library-dir"];
   // `arr.instances` config value shape (backend contract)
-  const arrConfig = (JSON.parse(config["arr.instances"] ?? "{}") ?? {}) as {
+  const rawArrConfig = config["arr.instances"]?.trim();
+  const arrConfig = (JSON.parse(rawArrConfig || "{}") ?? {}) as {
     RadarrInstances?: { Enabled?: boolean }[];
     SonarrInstances?: { Enabled?: boolean }[];
   };
