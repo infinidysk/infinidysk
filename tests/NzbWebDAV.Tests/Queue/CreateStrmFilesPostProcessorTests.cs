@@ -124,7 +124,7 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
         var strmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, davItem);
         await CreateStrmFilesPostProcessor.WriteStrmFileAsync(_config, davItem, forceRewrite: false);
 
-        CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
+        CreateStrmFilesPostProcessor.DeleteStrmFile(davItem);
 
         Assert.False(File.Exists(strmPath));
         Assert.False(Directory.Exists(Path.GetDirectoryName(strmPath)));
@@ -153,8 +153,8 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
             strmPath,
             CreateStrmFilesPostProcessor.GetStrmTargetUrl(_config, otherItem));
 
-        CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
-        CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
+        CreateStrmFilesPostProcessor.DeleteStrmFile(davItem);
+        CreateStrmFilesPostProcessor.DeleteStrmFile(davItem);
 
         Assert.True(File.Exists(strmPath));
     }
@@ -176,7 +176,7 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
                 strmPath,
                 CreateStrmFilesPostProcessor.GetStrmTargetUrl(_config, davItem));
 
-            CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
+            CreateStrmFilesPostProcessor.DeleteStrmFile(davItem);
 
             Assert.True(File.Exists(strmPath));
         }
@@ -207,7 +207,7 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
                 strmPath,
                 CreateStrmFilesPostProcessor.GetStrmTargetUrl(_config, davItem));
 
-            CreateStrmFilesPostProcessor.DeleteStrmFile(_config, davItem);
+            CreateStrmFilesPostProcessor.DeleteStrmFile(davItem);
 
             Assert.True(File.Exists(strmPath));
         }

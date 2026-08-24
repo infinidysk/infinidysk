@@ -24,11 +24,11 @@ type SabnzbdSettingsProps = {
 
 export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
   const ensureArticleExistence = useEnsureArticleExistenceSetting(config, setNewConfig);
-  const primaryOutput = config["api.import-strategy"] === "strm" ? "strm" : "symlinks";
+  const primaryOutput = normalizeImportStrategy(config["api.import-strategy"]);
   const isSymlinkOutputEnabled =
-    primaryOutput === "symlinks" || config["api.symlink-output-enabled"] === "true";
+    primaryOutput === "symlinks" || isOutputEnabled(config["api.symlink-output-enabled"]);
   const isStrmOutputEnabled =
-    primaryOutput === "strm" || config["api.strm-output-enabled"] === "true";
+    primaryOutput === "strm" || isOutputEnabled(config["api.strm-output-enabled"]);
 
   const refreshApiKey = useCallback(() => {
     setNewConfig({ ...config, "api.key": generateNewApiKey() });
@@ -803,10 +803,19 @@ function isValidNzbBackupLocation(config: Record<string, string>): boolean {
 
 function isValidStrmOutput(config: Record<string, string>): boolean {
   const strmEnabled =
-    config["api.import-strategy"] === "strm" || config["api.strm-output-enabled"] === "true";
+    normalizeImportStrategy(config["api.import-strategy"]) === "strm" ||
+    isOutputEnabled(config["api.strm-output-enabled"]);
   return (
     !strmEnabled ||
     (Boolean(config["api.completed-downloads-dir"]?.trim()) &&
       Boolean(config["general.base-url"]?.trim()))
   );
+}
+
+function normalizeImportStrategy(value: string | undefined): "symlinks" | "strm" {
+  return value?.trim().toLowerCase() === "strm" ? "strm" : "symlinks";
+}
+
+function isOutputEnabled(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === "true";
 }

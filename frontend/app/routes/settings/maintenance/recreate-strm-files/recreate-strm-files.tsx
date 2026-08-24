@@ -19,10 +19,11 @@ export function RecreateStrmFiles({ savedConfig }: RecreateStrmFilesProps) {
   const [error, setError] = useState<string | null>(null);
 
   const completedDir = savedConfig["api.completed-downloads-dir"]?.trim();
-  const importStrategy = savedConfig["api.import-strategy"] ?? "symlinks";
+  const importStrategy = savedConfig["api.import-strategy"]?.trim().toLowerCase() ?? "symlinks";
   const baseUrl = savedConfig["general.base-url"]?.trim();
   const isStrmOutputEnabled =
-    importStrategy === "strm" || savedConfig["api.strm-output-enabled"] === "true";
+    importStrategy === "strm" ||
+    savedConfig["api.strm-output-enabled"]?.trim().toLowerCase() === "true";
   const canRun = !!completedDir && !!baseUrl && isStrmOutputEnabled;
 
   const isFinished =

@@ -56,6 +56,7 @@ public sealed class HistoryCleanupServiceTests : IDisposable
 
         await CreateStrmFilesPostProcessor.WriteStrmFileAsync(_config, firstVideo, forceRewrite: false);
         await CreateStrmFilesPostProcessor.WriteStrmFileAsync(_config, secondVideo, forceRewrite: false);
+        await _context.SaveChangesAsync();
         var firstStrmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, firstVideo);
         var secondStrmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, secondVideo);
 
@@ -82,6 +83,7 @@ public sealed class HistoryCleanupServiceTests : IDisposable
         await _context.SaveChangesAsync();
 
         await CreateStrmFilesPostProcessor.WriteStrmFileAsync(_config, video, forceRewrite: false);
+        await _context.SaveChangesAsync();
         var strmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, video);
 
         var processed = await HistoryCleanupService.ProcessNextItemAsync(_context, _config);

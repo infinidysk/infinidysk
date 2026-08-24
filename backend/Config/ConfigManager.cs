@@ -2006,8 +2006,10 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
     public string GetSymlinkCompletedDownloadDir()
     {
-        return GetSymlinkOutputDirectory()
-               ?? Path.Join(GetRcloneMountDir(), "completed-symlinks");
+        var outputDirectory = GetSymlinkOutputDirectory();
+        return outputDirectory is not null
+            ? Path.GetFullPath(outputDirectory)
+            : Path.Join(GetRcloneMountDir(), "completed-symlinks");
     }
 
     private bool GetConfiguredOutputEnabled(string configKey)

@@ -19,8 +19,21 @@ public class CreateStrmFilesPostProcessor(
     public async Task CreateStrmFilesAsync()
     {
         var candidates = CollectVideoItems();
-        foreach (var videoItem in candidates)
-            await CreateStrmFileAsync(videoItem).ConfigureAwait(false);
+        var created = new List<DavItem>();
+        try
+        {
+            foreach (var videoItem in candidates)
+            {
+                if (await CreateStrmFileAsync(videoItem).ConfigureAwait(false))
+                    created.Add(videoItem);
+            }
+        }
+        catch
+        {
+            foreach (var createdItem in created)
+                DeleteStrmFile(createdItem);
+            throw;
+        }
     }
 
     internal List<DavItem> CollectVideoItems()
@@ -55,14 +68,14 @@ public class CreateStrmFilesPostProcessor(
     /// Writes (or updates) the STRM sidecar for a DavItem. Shared by queue post-processing
     /// and the Recreate STRM maintenance task.
     /// </summary>
-    internal static async Task WriteStrmFileAsync(
+    internal static async Task<bool> WriteStrmFileAsync(
         ConfigManager configManager,
         DavItem davItem,
         bool forceRewrite,
         CancellationToken cancellationToken = default)
     {
         if (!IsStrmCandidate(davItem))
-            return;
+            return false;
 
         var strmFilePath = Path.GetFullPath(GetStrmFilePath(configManager, davItem));
         var completedDownloadsRoot = Path.GetFullPath(configManager.GetStrmCompletedDownloadDir());
@@ -82,13 +95,18 @@ public class CreateStrmFilesPostProcessor(
         {
             var existing = await File.ReadAllTextAsync(strmFilePath, cancellationToken).ConfigureAwait(false);
             if (existing == targetUrl)
-                return;
+                return false;
         }
 
+        var wasCreated = !File.Exists(strmFilePath);
         await File.WriteAllTextAsync(strmFilePath, targetUrl, cancellationToken).ConfigureAwait(false);
+        davItem.GeneratedStrmOutputRoot = completedDownloadsRoot;
+        davItem.GeneratedStrmPath = strmFilePath;
+        davItem.GeneratedStrmTarget = targetUrl;
+        return wasCreated;
     }
 
-    private async Task CreateStrmFileAsync(DavItem davItem) =>
+    private async Task<bool> CreateStrmFileAsync(DavItem davItem) =>
         await WriteStrmFileAsync(configManager, davItem, forceRewrite: false).ConfigureAwait(false);
 
     internal static string GetStrmFilePath(ConfigManager configManager, DavItem davItem)
@@ -100,13 +118,16 @@ public class CreateStrmFilesPostProcessor(
     /// <summary>
     /// Removes a generated STRM sidecar only when its target belongs to <paramref name="davItem"/>.
     /// </summary>
-    internal static void DeleteStrmFile(ConfigManager configManager, DavItem davItem)
+    internal static void DeleteStrmFile(DavItem davItem)
     {
-        if (!IsStrmCandidate(davItem))
+        if (!IsStrmCandidate(davItem)
+            || string.IsNullOrWhiteSpace(davItem.GeneratedStrmOutputRoot)
+            || string.IsNullOrWhiteSpace(davItem.GeneratedStrmPath)
+            || string.IsNullOrWhiteSpace(davItem.GeneratedStrmTarget))
             return;
 
-        var completedDownloadsRoot = Path.GetFullPath(configManager.GetStrmCompletedDownloadDir());
-        var strmFilePath = Path.GetFullPath(GetStrmFilePath(configManager, davItem));
+        var completedDownloadsRoot = Path.GetFullPath(davItem.GeneratedStrmOutputRoot);
+        var strmFilePath = Path.GetFullPath(davItem.GeneratedStrmPath);
         if (!IsPathWithinRoot(strmFilePath, completedDownloadsRoot))
             return;
 
@@ -130,8 +151,7 @@ public class CreateStrmFilesPostProcessor(
         if (strmOrSymlink is not SymlinkAndStrmUtil.StrmInfo strmInfo)
             return;
 
-        var link = OrganizedLinksUtil.GetDavItemLink(strmInfo);
-        if (link?.DavItemId != davItem.Id)
+        if (!string.Equals(strmInfo.TargetUrl, davItem.GeneratedStrmTarget, StringComparison.Ordinal))
             return;
 
         File.Delete(strmFilePath);

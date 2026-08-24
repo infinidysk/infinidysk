@@ -36,6 +36,25 @@ describe("SABnzbd dual import outputs", () => {
     ).toBe(true);
   });
 
+  it("normalizes output values returned by environment-managed settings", () => {
+    expect(
+      isSabnzbdSettingsValid({
+        ...config,
+        "api.import-strategy": " STRM ",
+        "api.completed-downloads-dir": "/mnt/jellyfin",
+        "general.base-url": "https://infinidysk.example",
+      }),
+    ).toBe(true);
+    expect(
+      isSabnzbdSettingsValid({
+        ...config,
+        "api.strm-output-enabled": " TRUE ",
+        "api.completed-downloads-dir": "/mnt/jellyfin",
+        "general.base-url": "https://infinidysk.example",
+      }),
+    ).toBe(true);
+  });
+
   it("tracks every dual-output setting as a saveable change", () => {
     for (const key of [
       "api.symlink-output-enabled",

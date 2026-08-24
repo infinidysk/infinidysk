@@ -22,8 +22,21 @@ public class CreateSymlinkFilesPostProcessor(
         if (outputDirectory is null)
             return;
 
-        foreach (var videoItem in CollectVideoItems())
-            await CreateSymlinkAsync(outputDirectory, videoItem).ConfigureAwait(false);
+        var created = new List<DavItem>();
+        try
+        {
+            foreach (var videoItem in CollectVideoItems())
+            {
+                if (await CreateSymlinkAsync(outputDirectory, videoItem).ConfigureAwait(false))
+                    created.Add(videoItem);
+            }
+        }
+        catch
+        {
+            foreach (var createdItem in created)
+                DeleteSymlinkFile(createdItem);
+            throw;
+        }
     }
 
     internal List<DavItem> CollectVideoItems()
@@ -50,7 +63,7 @@ public class CreateSymlinkFilesPostProcessor(
         return byId.Values.ToList();
     }
 
-    private async Task CreateSymlinkAsync(string outputDirectory, DavItem davItem)
+    private async Task<bool> CreateSymlinkAsync(string outputDirectory, DavItem davItem)
     {
         var symlinkPath = GetSymlinkFilePath(outputDirectory, davItem);
         var outputRoot = Path.GetFullPath(outputDirectory);
@@ -67,10 +80,11 @@ public class CreateSymlinkFilesPostProcessor(
             throw new IOException($"Generated symlink path '{symlinkPath}' is beneath a symbolic-link directory.");
 
         var target = DatabaseStoreSymlinkFile.GetTargetPath(davItem.Id, configManager.GetRcloneMountDir());
-        await Task.Run(() => CreateOwnedSymlink(fullPath, target)).ConfigureAwait(false);
+        var wasCreated = await Task.Run(() => CreateOwnedSymlink(fullPath, target)).ConfigureAwait(false);
         davItem.GeneratedSymlinkOutputRoot = outputRoot;
         davItem.GeneratedSymlinkPath = fullPath;
         davItem.GeneratedSymlinkTarget = target;
+        return wasCreated;
     }
 
     internal static string GetSymlinkFilePath(string outputDirectory, DavItem davItem)
@@ -111,13 +125,13 @@ public class CreateSymlinkFilesPostProcessor(
         }
     }
 
-    private static void CreateOwnedSymlink(string path, string target)
+    private static bool CreateOwnedSymlink(string path, string target)
     {
         var file = new FileInfo(path);
         if (file.LinkTarget is not null)
         {
             if (string.Equals(file.LinkTarget, target, GetPathComparison()))
-                return;
+                return false;
 
             throw new IOException(
                 $"Refusing to replace existing symlink '{path}' because it targets a different location.");
@@ -127,6 +141,7 @@ public class CreateSymlinkFilesPostProcessor(
             throw new IOException($"Refusing to replace existing filesystem entry '{path}'.");
 
         File.CreateSymbolicLink(path, target);
+        return true;
     }
 
     private static StringComparison GetPathComparison() =>

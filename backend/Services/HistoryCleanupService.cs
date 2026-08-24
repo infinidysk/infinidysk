@@ -66,6 +66,9 @@ public class HistoryCleanupService(
                     Name = x.Name,
                     Type = x.Type,
                     Path = x.Path,
+                    GeneratedStrmOutputRoot = x.GeneratedStrmOutputRoot,
+                    GeneratedStrmPath = x.GeneratedStrmPath,
+                    GeneratedStrmTarget = x.GeneratedStrmTarget,
                     GeneratedSymlinkOutputRoot = x.GeneratedSymlinkOutputRoot,
                     GeneratedSymlinkPath = x.GeneratedSymlinkPath,
                     GeneratedSymlinkTarget = x.GeneratedSymlinkTarget,
@@ -85,7 +88,7 @@ public class HistoryCleanupService(
                     deletedItem,
                     $"DeleteMountedFiles=true historyItemId={cleanupItem.Id}");
                 CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(deletedItem);
-                CreateStrmFilesPostProcessor.DeleteStrmFile(configManager, deletedItem);
+                CreateStrmFilesPostProcessor.DeleteStrmFile(deletedItem);
             }
 
             // Delete the corresponding dav-items.

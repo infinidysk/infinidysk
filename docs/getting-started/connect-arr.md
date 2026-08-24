@@ -30,7 +30,7 @@ Registered and enabled instances light up the Overview **Arr Health** widget [si
 
 | Primary output | InfiniDysk setting | \*Arr / media server |
 |----------|----------------|---------------------|
-| Symlinks | Rclone mount dir e.g. `/mnt/remote/nzbdav` | Same path must exist inside \*Arr |
+| Symlinks | Virtual: `<rclone.mount-dir>/completed-symlinks`; custom: `api.symlink-output-dir` | The effective completed path must exist inside \*Arr |
 | STRM | Completed dir e.g. `/mnt/completed-downloads` + Base URL | Media server must reach Base URL |
 
 When both outputs are enabled, choose exactly one as the primary \*Arr import

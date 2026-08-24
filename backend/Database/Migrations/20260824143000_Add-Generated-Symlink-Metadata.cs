@@ -13,6 +13,24 @@ public partial class AddGeneratedSymlinkMetadata : Migration
     protected override void Up(MigrationBuilder migrationBuilder)
     {
         migrationBuilder.AddColumn<string>(
+            name: "GeneratedStrmOutputRoot",
+            table: "DavItems",
+            type: "TEXT",
+            nullable: true);
+
+        migrationBuilder.AddColumn<string>(
+            name: "GeneratedStrmPath",
+            table: "DavItems",
+            type: "TEXT",
+            nullable: true);
+
+        migrationBuilder.AddColumn<string>(
+            name: "GeneratedStrmTarget",
+            table: "DavItems",
+            type: "TEXT",
+            nullable: true);
+
+        migrationBuilder.AddColumn<string>(
             name: "GeneratedSymlinkOutputRoot",
             table: "DavItems",
             type: "TEXT",
@@ -33,6 +51,9 @@ public partial class AddGeneratedSymlinkMetadata : Migration
 
     protected override void Down(MigrationBuilder migrationBuilder)
     {
+        migrationBuilder.DropColumn(name: "GeneratedStrmOutputRoot", table: "DavItems");
+        migrationBuilder.DropColumn(name: "GeneratedStrmPath", table: "DavItems");
+        migrationBuilder.DropColumn(name: "GeneratedStrmTarget", table: "DavItems");
         migrationBuilder.DropColumn(name: "GeneratedSymlinkOutputRoot", table: "DavItems");
         migrationBuilder.DropColumn(name: "GeneratedSymlinkPath", table: "DavItems");
         migrationBuilder.DropColumn(name: "GeneratedSymlinkTarget", table: "DavItems");
