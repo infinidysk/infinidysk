@@ -216,7 +216,7 @@ public sealed class ArrHealthService : BackgroundService
                 .MaxAsync(ct).ConfigureAwait(false);
 
             var now = DateTimeOffset.UtcNow;
-            var unusual = awaiting.Any(item =>
+            var unusual = awaiting.Items.Any(item =>
                 ArrHealthMath.IsUnusual(
                     ArrHealthMath.ComputeWaitingMs(item.CreatedAt, now),
                     median,
@@ -236,7 +236,7 @@ public sealed class ArrHealthService : BackgroundService
                 Host = details.Host,
                 Status = status,
                 QueueCount = queueStatus.TotalCount,
-                AwaitingCount = awaiting.Count,
+                AwaitingCount = awaiting.TotalCount,
                 HasWarnings = hasWarnings,
                 HasErrors = hasErrors,
                 LastImportAtMs = lastImport,
@@ -244,7 +244,7 @@ public sealed class ArrHealthService : BackgroundService
                 LastError = null,
                 MedianHandoffMs30d = median,
                 MedianSampleCount30d = handoffs.Count,
-                Awaiting = awaiting,
+                Awaiting = awaiting.Items,
             });
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -361,13 +361,18 @@ public sealed class ArrHealthService : BackgroundService
         }
     }
 
-    private static async Task<List<ArrAwaitingSnapshot>> BuildAwaitingAsync(
+    private static async Task<AwaitingBuildResult> BuildAwaitingAsync(
         IReadOnlyList<ArrQueueRecord> records,
         DavDatabaseContext dav,
         CancellationToken ct)
     {
-        var awaitingRecords = records.Where(r => r.IsAwaitingImport).Take(MaxAwaitingPerInstance).ToList();
-        if (awaitingRecords.Count == 0) return [];
+        var allAwaitingRecords = records.Where(r => r.IsAwaitingImport).ToList();
+        if (allAwaitingRecords.Count == 0) return new AwaitingBuildResult(0, []);
+
+        // Correlate the full import-pending population first: Arr does not
+        // guarantee queue ordering, so truncating before we know CreatedAt can
+        // hide the oldest stuck imports.
+        var awaitingRecords = allAwaitingRecords;
 
         var downloadIds = awaitingRecords
             .Select(record => Guid.TryParse(record.DownloadId, out var id) ? id : (Guid?)null)
@@ -385,7 +390,7 @@ public sealed class ArrHealthService : BackgroundService
                 .ToDictionaryAsync(h => h.Id, h => h.CreatedAt, ct).ConfigureAwait(false);
         }
 
-        return awaitingRecords.Select(record =>
+        var items = awaitingRecords.Select(record =>
         {
             Guid? downloadId = Guid.TryParse(record.DownloadId, out var parsed) ? parsed : null;
             DateTime? createdAt = downloadId is { } id && createdAtById.TryGetValue(id, out var at) ? at : null;
@@ -394,9 +399,20 @@ public sealed class ArrHealthService : BackgroundService
                 Title = record.Title,
                 DownloadId = downloadId,
                 CreatedAt = createdAt,
+                TrackedDownloadState = record.TrackedDownloadState,
+                StatusReason = record.StatusMessages
+                    .SelectMany(message => message.Messages)
+                    .FirstOrDefault(message => !string.IsNullOrWhiteSpace(message)),
             };
-        }).ToList();
+        })
+        .OrderBy(item => item.CreatedAt ?? DateTime.MaxValue)
+        .Take(MaxAwaitingPerInstance)
+        .ToList();
+
+        return new AwaitingBuildResult(allAwaitingRecords.Count, items);
     }
+
+    private sealed record AwaitingBuildResult(int TotalCount, List<ArrAwaitingSnapshot> Items);
 
     private void RecordSuccess(ArrHealthSnapshot snapshot)
     {

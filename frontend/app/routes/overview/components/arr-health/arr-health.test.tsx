@@ -11,6 +11,7 @@ const emptySummary = {
   medianHandoffMs: null,
   p95HandoffMs: null,
   awaitingImport: 0,
+  awaitingShown: 0,
   degraded: 0,
 };
 
@@ -33,6 +34,7 @@ describe("ArrHealth", () => {
         medianHandoffMs: 7800,
         p95HandoffMs: 21000,
         awaitingImport: 3,
+        awaitingShown: 0,
         degraded: 1,
       },
       instances: [
@@ -47,6 +49,8 @@ describe("ArrHealth", () => {
           p95HandoffMs: 21000,
           queueCount: 0,
           awaitingCount: 0,
+          hasWarnings: false,
+          hasErrors: false,
           lastImportAtMs: Date.now() - 180_000,
           lastError: null,
         },
@@ -61,6 +65,8 @@ describe("ArrHealth", () => {
           p95HandoffMs: 138000,
           queueCount: 3,
           awaitingCount: 3,
+          hasWarnings: false,
+          hasErrors: false,
           lastImportAtMs: Date.now() - 19 * 60_000,
           lastError: null,
         },
@@ -75,6 +81,8 @@ describe("ArrHealth", () => {
           p95HandoffMs: null,
           queueCount: 0,
           awaitingCount: 0,
+          hasWarnings: false,
+          hasErrors: false,
           lastImportAtMs: null,
           lastError: "Unreachable",
         },
@@ -89,6 +97,8 @@ describe("ArrHealth", () => {
           p95HandoffMs: null,
           queueCount: 0,
           awaitingCount: 0,
+          hasWarnings: false,
+          hasErrors: false,
           lastImportAtMs: null,
           lastError: null,
         },
@@ -129,6 +139,7 @@ describe("ArrHealth", () => {
         instancesOnline: 1,
         instancesTotal: 1,
         awaitingImport: 2,
+        awaitingShown: 2,
       },
       instances: [
         {
@@ -142,6 +153,8 @@ describe("ArrHealth", () => {
           p95HandoffMs: 20000,
           queueCount: 2,
           awaitingCount: 2,
+          hasWarnings: false,
+          hasErrors: false,
           lastImportAtMs: null,
           lastError: null,
         },
@@ -149,17 +162,23 @@ describe("ArrHealth", () => {
       awaiting: [
         {
           title: "Example Show S04E06",
+          downloadId: null,
           instanceKey: "sonarr|http://sonarr:8989",
           instanceName: "Sonarr Main",
           waitingMs: 47 * 60_000,
           isUnusual: true,
+          trackedDownloadState: "importPending",
+          statusReason: "Invalid data found when processing input",
         },
         {
           title: "Unknown release",
+          downloadId: null,
           instanceKey: "sonarr|http://sonarr:8989",
           instanceName: "Sonarr Main",
           waitingMs: null,
           isUnusual: false,
+          trackedDownloadState: null,
+          statusReason: null,
         },
       ],
     });
@@ -168,6 +187,8 @@ describe("ArrHealth", () => {
     expect(markup).toContain("unusually long");
     expect(markup).toContain("text-warning");
     expect(markup).toContain("waiting —");
+    expect(markup).toContain("2 of 2 longest waits");
+    expect(markup).toContain("Invalid data found when processing input");
   });
 
   it("notes the 90-day retention on the All window", () => {

@@ -15,6 +15,7 @@ public class GetArrHealthResponse : BaseApiResponse
         public long? MedianHandoffMs { get; init; }
         public long? P95HandoffMs { get; init; }
         public int AwaitingImport { get; init; }
+        public int AwaitingShown { get; init; }
         public int Degraded { get; init; }
     }
 
@@ -30,6 +31,8 @@ public class GetArrHealthResponse : BaseApiResponse
         public long? P95HandoffMs { get; init; }
         public int QueueCount { get; init; }
         public int AwaitingCount { get; init; }
+        public bool HasWarnings { get; init; }
+        public bool HasErrors { get; init; }
         public long? LastImportAtMs { get; init; }
         public string? LastError { get; init; }
     }
@@ -37,9 +40,12 @@ public class GetArrHealthResponse : BaseApiResponse
     public class ArrAwaitingItem
     {
         public string? Title { get; init; }
+        public Guid? DownloadId { get; init; }
         public string InstanceKey { get; init; } = "";
         public string InstanceName { get; init; } = "";
         public long? WaitingMs { get; init; }
         public bool IsUnusual { get; init; }
+        public string? TrackedDownloadState { get; init; }
+        public string? StatusReason { get; init; }
     }
 }

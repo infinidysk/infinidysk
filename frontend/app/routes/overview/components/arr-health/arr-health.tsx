@@ -23,6 +23,18 @@ const STATUS_BADGE: Record<ArrInstanceStatus, string> = {
 export function ArrHealth({ data, window }: ArrHealthProps) {
   const { summary, instances, awaiting } = data;
   const sinceLabel = window === "all" ? "all time (~90 days of stored events)" : `last ${window}`;
+  const groupedAwaiting = Array.from(
+    awaiting.reduce((groups, item) => {
+      const key = `${item.instanceKey}:${item.downloadId ?? item.title ?? "item"}`;
+      const group = groups.get(key);
+      if (group) {
+        group.items.push(item);
+      } else {
+        groups.set(key, { ...item, items: [item] });
+      }
+      return groups;
+    }, new Map<string, (typeof awaiting)[number] & { items: (typeof awaiting)[number][] }>()),
+  ).map(([, group]) => group);
 
   return (
     <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
@@ -63,8 +75,16 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
                   <th>Imports</th>
                   <th>Median</th>
                   <th>P95</th>
-                  <th>Queue</th>
-                  <th>Awaiting</th>
+                  <th>
+                    <Tooltip content="All items currently in this Arr instance's queue.">
+                      <span className="cursor-help">Queue</span>
+                    </Tooltip>
+                  </th>
+                  <th>
+                    <Tooltip content="Completed downloads that Arr is still importing or has marked import pending.">
+                      <span className="cursor-help">Awaiting</span>
+                    </Tooltip>
+                  </th>
                   <th>Last import</th>
                 </tr>
               </thead>
@@ -113,16 +133,16 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
           <p className="text-xs text-base-content/50">No imports recorded yet.</p>
         )}
 
-        {awaiting.length > 0 && (
+        {groupedAwaiting.length > 0 && (
           <div>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-xs uppercase tracking-wide text-base-content/50">
-                Awaiting import
+                Awaiting import — {summary.awaitingShown} of {summary.awaitingImport} longest waits
               </h4>
               <WidgetLink to="/queue">Open queue</WidgetLink>
             </div>
             <ul className="list bg-base-100 p-0">
-              {awaiting.map((item, index) => (
+              {groupedAwaiting.map((item, index) => (
                 <li
                   key={`${item.instanceKey}-${item.title ?? "item"}-${index}`}
                   className={`list-row py-2 text-xs ${item.isUnusual ? "text-warning" : "text-base-content/80"}`}
@@ -131,6 +151,11 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
                     {item.title ?? "(untitled)"} — {item.instanceName} — waiting{" "}
                     {formatDurationMs(item.waitingMs)}
                     {item.isUnusual ? " — unusually long" : ""}
+                    {item.statusReason ? ` — ${item.statusReason}` : ""}
+                    {!item.statusReason && item.trackedDownloadState
+                      ? ` — ${item.trackedDownloadState}`
+                      : ""}
+                    {item.items.length > 1 ? ` — ${item.items.length} affected items` : ""}
                   </div>
                 </li>
               ))}

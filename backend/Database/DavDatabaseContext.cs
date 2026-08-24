@@ -225,6 +225,7 @@ public class DavDatabaseContext : DbContext
     public IReadOnlyList<DavNzbFile> BlobNzbFiles => _blobNzbFiles;
     public IReadOnlyList<DavRarFile> BlobRarFiles => _blobRarFiles;
     public IReadOnlyList<DavMultipartFile> BlobMultipartFiles => _blobMultipartFiles;
+    internal bool SuppressAutomaticRcloneVfsForget { get; set; }
 
     public void AddBlob(DavNzbFile file) => _blobNzbFiles.Add(file);
     public void AddBlob(DavRarFile file) => _blobRarFiles.Add(file);
@@ -1010,7 +1011,8 @@ public class DavDatabaseContext : DbContext
             // save db changes
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
             var result = await base.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            _ = RcloneVfsForget(addedOrRemovedDavItems, cancellationToken);
+            if (!SuppressAutomaticRcloneVfsForget)
+                _ = RcloneVfsForget(addedOrRemovedDavItems, cancellationToken);
 
             // clear pending blob writes
             ClearBlobs();
@@ -1041,7 +1043,7 @@ public class DavDatabaseContext : DbContext
             .ToList();
     }
 
-    private static List<string> GetRcloneVfsForgetDirectories(List<DavItem> addedOrRemoved)
+    internal static List<string> GetRcloneVfsForgetDirectories(List<DavItem> addedOrRemoved)
     {
         var contentDirs = addedOrRemoved
             .Select(x => x.Path)

@@ -513,6 +513,14 @@ public class QueueItemProcessor(
             if (configManager.IsEnsureImportableMediaEnabled())
                 new EnsureImportableMediaValidator(dbClient).ThrowIfValidationFails();
 
+            if (healthCheckCategories.Contains(queueItem.Category.ToLowerInvariant()))
+            {
+                await RunStageAsync(
+                    "import-readiness",
+                    () => new FinalMediaReadinessValidator(dbClient, usenetClient, configManager)
+                        .ValidateAsync(ct)).ConfigureAwait(false);
+            }
+
             // create strm files, if necessary
             if (configManager.GetImportStrategy() == "strm")
                 await new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
@@ -804,6 +812,7 @@ public class QueueItemProcessor(
         HistoryItem? historyItem = null;
         string? historyJson = null;
         IReadOnlyDictionary<string, long>? providerUsage = null;
+        List<string>? vfsForgetPaths = null;
 
         await WithFinalizeLockAsync(async () =>
         {
@@ -819,7 +828,20 @@ public class QueueItemProcessor(
                 historyItem, mountFolder, configManager, providerUsage, displayByMetricsKey).ToJson();
             dbClient.Ctx.QueueItems.Remove(queueItem);
             dbClient.Ctx.HistoryItems.Add(historyItem);
-            await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
+            vfsForgetPaths = DavDatabaseContext.GetRcloneVfsForgetDirectories(
+                dbClient.Ctx.ChangeTracker.Entries<DavItem>()
+                    .Where(entry => entry.State is EntityState.Added or EntityState.Deleted)
+                    .Select(entry => entry.Entity)
+                    .ToList());
+            dbClient.Ctx.SuppressAutomaticRcloneVfsForget = true;
+            try
+            {
+                await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
+            }
+            finally
+            {
+                dbClient.Ctx.SuppressAutomaticRcloneVfsForget = false;
+            }
         }, finalizeCt).ConfigureAwait(false);
 
         try
@@ -827,7 +849,8 @@ public class QueueItemProcessor(
             _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
             _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historyJson!);
             _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
-            _ = RefreshMonitoredDownloads();
+            await ForgetVfsBeforeArrRefreshAsync(vfsForgetPaths).ConfigureAwait(false);
+            await RefreshMonitoredDownloads().ConfigureAwait(false);
             if (error is null)
             {
                 Log.Information(
@@ -940,6 +963,22 @@ public class QueueItemProcessor(
             .GetArrClients()
             .Select(RefreshMonitoredDownloads);
         await Task.WhenAll(tasks).ConfigureAwait(false);
+    }
+
+    private async Task ForgetVfsBeforeArrRefreshAsync(List<string>? paths)
+    {
+        if (paths is not { Count: > 0 }) return;
+
+        using var forgetCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        forgetCts.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            await DavDatabaseContext.RcloneVfsForget(paths, forgetCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            Log.Debug(e, "Could not invalidate rclone VFS before refreshing monitored downloads");
+        }
     }
 
     private async Task RefreshMonitoredDownloads(ArrClient arrClient)

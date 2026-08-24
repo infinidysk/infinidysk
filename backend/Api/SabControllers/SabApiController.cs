@@ -29,6 +29,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Websocket;
+using Serilog;
 
 namespace NzbWebDAV.Api.SabControllers;
 
@@ -44,6 +45,9 @@ public class SabApiController(
     WarningLogBuffer warningLogBuffer
 ) : ControllerBase
 {
+    private static readonly LogThrottle AuthenticationFailureThrottle = new();
+    private static readonly TimeSpan AuthenticationFailureLogInterval = TimeSpan.FromMinutes(5);
+
     [HttpGet]
     [HttpPost]
     public async Task<IActionResult> HandleApiRequests()
@@ -72,6 +76,7 @@ public class SabApiController(
         }
         catch (UnauthorizedAccessException e)
         {
+            LogAuthenticationFailure();
             return Unauthorized(new SabBaseResponse()
             {
                 Status = false,
@@ -87,6 +92,24 @@ public class SabApiController(
                 Error = "An internal server error occurred."
             });
         }
+    }
+
+    private void LogAuthenticationFailure()
+    {
+        var mode = HttpContext.GetRequestParam("mode") ?? "unknown";
+        var category = HttpContext.GetRequestParam("cat") ?? "none";
+        var source = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var key = $"{mode}|{category}|{source}";
+        if (!AuthenticationFailureThrottle.ShouldLog(key, AuthenticationFailureLogInterval, out var suppressed))
+            return;
+
+        Log.Warning(
+            "SAB API authentication rejected for mode {Mode}, category {Category}, source {Source}. " +
+            "Update the configured API key; {SuppressedCount} matching failures were suppressed.",
+            mode,
+            category,
+            source,
+            suppressed);
     }
 
     public BaseController GetController()

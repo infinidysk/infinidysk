@@ -32,4 +32,6 @@ public sealed record ArrAwaitingSnapshot
     public string? Title { get; init; }
     public Guid? DownloadId { get; init; }
     public DateTime? CreatedAt { get; init; }
+    public string? TrackedDownloadState { get; init; }
+    public string? StatusReason { get; init; }
 }

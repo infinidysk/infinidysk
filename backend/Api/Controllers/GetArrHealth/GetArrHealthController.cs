@@ -94,6 +94,8 @@ public class GetArrHealthController(ConfigManager configManager, ArrHealthServic
                 P95HandoffMs = ArrHealthMath.Percentile(handoffs, 0.95),
                 QueueCount = snapshot?.QueueCount ?? 0,
                 AwaitingCount = snapshot?.AwaitingCount ?? 0,
+                HasWarnings = snapshot?.HasWarnings ?? false,
+                HasErrors = snapshot?.HasErrors ?? false,
                 LastImportAtMs = snapshot?.LastImportAtMs,
                 LastError = snapshot?.LastError,
             });
@@ -105,6 +107,7 @@ public class GetArrHealthController(ConfigManager configManager, ArrHealthServic
                 awaiting.Add(new GetArrHealthResponse.ArrAwaitingItem
                 {
                     Title = item.Title,
+                    DownloadId = item.DownloadId,
                     InstanceKey = key,
                     InstanceName = name,
                     WaitingMs = waitingMs,
@@ -112,6 +115,8 @@ public class GetArrHealthController(ConfigManager configManager, ArrHealthServic
                         waitingMs,
                         snapshot.MedianHandoffMs30d,
                         snapshot.MedianSampleCount30d),
+                    TrackedDownloadState = item.TrackedDownloadState,
+                    StatusReason = item.StatusReason,
                 });
             }
         }
@@ -119,6 +124,11 @@ public class GetArrHealthController(ConfigManager configManager, ArrHealthServic
         var enabledKeys = rows.Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
         var includedEvents = events.Where(e => enabledKeys.Contains(e.InstanceKey)).ToList();
         var includedHandoffs = includedEvents.Where(e => e.HandoffMs != null).Select(e => e.HandoffMs!.Value);
+
+        var displayedAwaiting = awaiting
+            .OrderByDescending(a => a.WaitingMs ?? long.MinValue)
+            .Take(AwaitingLimit)
+            .ToList();
 
         return new GetArrHealthResponse
         {
@@ -131,13 +141,11 @@ public class GetArrHealthController(ConfigManager configManager, ArrHealthServic
                 MedianHandoffMs = ArrHealthMath.Percentile(includedHandoffs, 0.50),
                 P95HandoffMs = ArrHealthMath.Percentile(includedHandoffs, 0.95),
                 AwaitingImport = rows.Sum(r => r.AwaitingCount),
+                AwaitingShown = displayedAwaiting.Count,
                 Degraded = rows.Count(r => r.Status == "degraded"),
             },
             Instances = rows,
-            Awaiting = awaiting
-                .OrderByDescending(a => a.WaitingMs ?? long.MinValue)
-                .Take(AwaitingLimit)
-                .ToList(),
+            Awaiting = displayedAwaiting,
         };
     }
 

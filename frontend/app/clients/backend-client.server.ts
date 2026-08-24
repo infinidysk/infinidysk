@@ -1006,6 +1006,7 @@ export type ArrHealthSummary = {
   medianHandoffMs: number | null;
   p95HandoffMs: number | null;
   awaitingImport: number;
+  awaitingShown: number;
   degraded: number;
 };
 
@@ -1020,16 +1021,21 @@ export type ArrHealthInstanceRow = {
   p95HandoffMs: number | null;
   queueCount: number;
   awaitingCount: number;
+  hasWarnings: boolean;
+  hasErrors: boolean;
   lastImportAtMs: number | null;
   lastError: string | null;
 };
 
 export type ArrAwaitingItem = {
   title: string | null;
+  downloadId: string | null;
   instanceKey: string;
   instanceName: string;
   waitingMs: number | null;
   isUnusual: boolean;
+  trackedDownloadState: string | null;
+  statusReason: string | null;
 };
 
 export type ArrHealthResponse = {
