@@ -33,7 +33,7 @@ enabled; urgent repairs already queued from streaming failures keep their priori
 !!! note "Streaming failure repair requires Background Repairs"
 
     **Repair After Streaming Failures** (`repair.auto-remove-after-failures`) only takes effect when
-    **Enable Background Repairs** (`repair.enable`) is on. A Library Directory and *Arr are only
+    **Enable Background Repairs** (`repair.enable`) is on. A Library Directory and \*Arr are only
     needed to replace linked library items. Without them, PAR2 can still reconstruct the file and
     threshold-based removal can delete unlinked items.
 
@@ -41,7 +41,7 @@ enabled; urgent repairs already queued from streaming failures keep their priori
 articles, corrupt archives, and seeks that find missing or truncated article data. With a value
 greater than `0`, InfiniDysk waits for that many consecutive failures before it starts an urgent
 repair. At the threshold, linked library items are removed and their original downloads are marked
-failed in *Arr when **Auto-remove unlinked files only** is enabled. *Arr blocklists those releases
+failed in \*Arr when **Auto-remove unlinked files only** is enabled. \*Arr blocklists those releases
 and applies its configured failed-download redownload policy. Unlinked files are removed. Disable
 that option to force-delete linked items at the threshold. With the default value `0`, failed
 unlinked files are kept and surfaced as **Action needed**; set a value greater than `0` to
