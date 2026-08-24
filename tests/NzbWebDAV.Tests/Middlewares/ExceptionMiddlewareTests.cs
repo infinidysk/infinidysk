@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -625,6 +626,26 @@ public class ExceptionMiddlewareTests
         var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
         var middleware = CreateMiddleware(
             _ => throw new UsenetArticleNotFoundException(segmentId));
+
+        await middleware.InvokeAsync(context);
+
+        var ex = Assert.Throws<UsenetArticleNotFoundException>(
+            () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
+        Assert.Equal(segmentId, ex.SegmentId);
+    }
+
+    [Fact]
+    public async Task CapturedFailFastRethrow_WithDavItem_StillSeedsQueueFailFastCache()
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var captured = new UsenetArticleNotFoundException(segmentId);
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var middleware = CreateMiddleware(_ =>
+        {
+            ExceptionDispatchInfo.Capture(captured).Throw();
+            return Task.CompletedTask;
+        });
 
         await middleware.InvokeAsync(context);
 

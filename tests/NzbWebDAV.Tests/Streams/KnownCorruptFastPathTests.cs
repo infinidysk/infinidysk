@@ -231,7 +231,7 @@ public class KnownCorruptFastPathTests
             Assert.Equal(new byte[fill], outputB.ToArray());
             Assert.Equal(1, clientA.BodyRequestCount);
             Assert.Equal(1, clientB.BodyRequestCount);
-            Assert.Equal(1, service.PendingZeroFillCount);
+            Assert.True(service.HasPendingZeroFillPath(path));
         }
         finally
         {

@@ -7,6 +7,7 @@ using NzbWebDAV.Tests.Fakes;
 
 namespace NzbWebDAV.Tests.Streams;
 
+[Collection(nameof(PlaybackHoleTrackerCollection))]
 public class KnownMissingFastPathTests
 {
     [Theory]
@@ -191,4 +192,54 @@ public class KnownMissingFastPathTests
         Assert.Equal(new byte[3], destination);
         Assert.Equal(0, client.BodyRequestCounts.GetValueOrDefault(ids[1]));
     }
+
+    [Fact]
+    public async Task ThirdConsecutiveMiss_SecondStreamFailsFastWithZeroBodyRequests()
+    {
+        PlaybackHoleTracker.ResetForTests();
+        var path = $"/view/fail-fast-{Guid.NewGuid():N}.mkv";
+        var ids = new[] { "miss-a@test", "miss-b@test", "miss-c@test", "miss-d@test" };
+        var sizes = new long[] { 5, 5, 5, 5 };
+        try
+        {
+            var first = new FakeNntpClient(new Dictionary<string, byte[]>());
+            await using (var stream = CreateGapFillStream(ids, first, path, sizes, articleBufferSize: 4))
+            {
+                await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+                    async () => await stream.CopyToAsync(Stream.Null));
+            }
+
+            Assert.True(first.BodyRequestCount > 0);
+            Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out var stored));
+            Assert.IsType<UsenetArticleNotFoundException>(stored);
+
+            var second = new FakeNntpClient(new Dictionary<string, byte[]>());
+            await using var stream2 = CreateGapFillStream(ids, second, path, sizes, articleBufferSize: 4);
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+                async () => await stream2.CopyToAsync(Stream.Null));
+
+            Assert.Equal(0, second.BodyRequestCount);
+        }
+        finally
+        {
+            PlaybackHoleTracker.ResetForTests();
+        }
+    }
+
+    private static Stream CreateGapFillStream(
+        string[] ids,
+        INntpClient client,
+        string path,
+        long[] sizes,
+        int articleBufferSize) =>
+        MultiSegmentStream.Create(
+            ids.AsMemory(),
+            client,
+            articleBufferSize,
+            estimatedSegmentSize: 5,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: path,
+            exactSegmentSizes: sizes);
 }

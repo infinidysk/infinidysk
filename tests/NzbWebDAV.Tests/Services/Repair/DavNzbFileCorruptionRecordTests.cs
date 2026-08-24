@@ -129,6 +129,63 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Consumer_UnionsZeroFillSegmentIdsAndPersistsMissingIndices()
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddFileAsync(segments, missing: [1]);
+        var service = new RecordingEnqueuePar2RepairService(_config, Path.Join(_configRoot, "patches-zf-union"));
+
+        service.ReportZeroFill(item.Path, segments[2]);
+        service.ReportZeroFill(item.Path, segments[0]);
+        await service.ProcessZeroFillEventForTestsAsync(item.Path, segments[2], CancellationToken.None);
+
+        var blob = await ReadCurrentBlobAsync(item.Id);
+        Assert.Equal([0, 1, 2], blob.MissingSegmentIndices!);
+        var enqueued = Assert.Single(service.Enqueued);
+        Assert.Contains(segments[0], enqueued);
+        Assert.Contains(segments[2], enqueued);
+        Assert.DoesNotContain(segments[1], enqueued);
+    }
+
+    [Fact]
+    public async Task Consumer_UnionsCorruptionSegmentIdsOnOnePath()
+    {
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddFileAsync(segments);
+        var service = new RecordingEnqueuePar2RepairService(_config, Path.Join(_configRoot, "patches-corr-union"));
+
+        service.ReportCorruption(item.Path, segments[0]);
+        service.ReportCorruption(item.Path, segments[2]);
+        await service.ProcessCorruptionEventForTestsAsync(item.Path, segments[0], CancellationToken.None);
+
+        var blob = await ReadCurrentBlobAsync(item.Id);
+        Assert.Equal([0, 2], blob.CorruptSegmentIndices!);
+        var enqueued = Assert.Single(service.Enqueued);
+        Assert.Contains(segments[0], enqueued);
+        Assert.Contains(segments[2], enqueued);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_RetainsIdsWhenAJobIsAlreadyQueuedAndRequeuesAfterRelease()
+    {
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddFileAsync(segments);
+        var service = new Par2RepairService(_config, null!, new RepairPatchStore(Path.Join(_configRoot, "patches-retain"), 1024 * 1024));
+
+        await service.EnqueueAsync(item, [segments[0]], CancellationToken.None);
+        await service.EnqueueAsync(item, [segments[1], segments[2]], CancellationToken.None);
+
+        var retained = service.PeekRetainedSegmentIdsForTests(item.Id);
+        Assert.Contains(segments[1], retained);
+        Assert.Contains(segments[2], retained);
+
+        service.ReleaseQueuedOrRunningForTests(item.Id);
+        await service.RequeueRetainedForTestsAsync(item.Id, CancellationToken.None);
+
+        Assert.Empty(service.PeekRetainedSegmentIdsForTests(item.Id));
+    }
+
+    [Fact]
     public async Task HealthReplaceMutation_PreservesCorruptRecord()
     {
         var segments = NewSegmentIds(3);

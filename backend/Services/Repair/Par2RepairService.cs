@@ -38,6 +38,9 @@ public class Par2RepairService : BackgroundService
     private readonly ConcurrentDictionary<Guid, byte> _queuedOrRunning = new();
     private readonly ConcurrentDictionary<Guid, RepairFlight> _repairFlights = new();
     private readonly ConcurrentDictionary<string, byte> _pendingZeroFillPaths = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ConcurrentQueue<(string Id, bool IsCorruption)>> _pendingSegmentIds =
+        new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<Guid, RetainedRepair> _retainedSegmentIds = new();
     private long _totalSucceeded;
     private long _totalFailed;
     private long _totalInfeasible;
@@ -83,26 +86,58 @@ public class Par2RepairService : BackgroundService
 
     internal int PendingZeroFillCount => _pendingZeroFillPaths.Count;
 
+    internal bool HasPendingZeroFillPath(string path) =>
+        _pendingZeroFillPaths.ContainsKey(path);
+
+    internal string[] PeekRetainedSegmentIdsForTests(Guid davItemId) =>
+        _retainedSegmentIds.TryGetValue(davItemId, out var retained)
+            ? retained.Ids.Keys.ToArray()
+            : [];
+
+    internal void ReleaseQueuedOrRunningForTests(Guid davItemId)
+    {
+        _queuedOrRunning.TryRemove(davItemId, out _);
+        if (_repairFlights.TryRemove(davItemId, out var flight))
+            flight.Completion.TrySetResult(false);
+    }
+
+    internal Task RequeueRetainedForTestsAsync(Guid davItemId, CancellationToken ct) =>
+        TryRequeueRetainedAsync(davItemId, ct);
+
     /// <summary>
     /// Synchronous, allocation-light entry point for streaming zero-fill events.
-    /// Runs on the playback hot path's failure branch: gate on config, dedup by
-    /// path, and hand off to the single background consumer. All DB work happens
-    /// in the consumer.
+    /// Runs on the playback hot path's failure branch: gate on config, accumulate
+    /// segment IDs per path, and arm at most one background item per path.
     /// </summary>
     public void ReportZeroFill(string path, string segmentId)
     {
-        if (!_configManager.IsPar2RepairEnabled()) return;
-        if (!_pendingZeroFillPaths.TryAdd(path, 0)) return;
-        if (!_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId)))
-            _pendingZeroFillPaths.TryRemove(path, out _);
+        if (!_configManager.IsPar2RepairEnabled() && !_configManager.IsDegradedToleranceEnabled())
+            return;
+        AccumulateAndArm(path, segmentId, isCorruption: false);
     }
 
     public void ReportCorruption(string path, string segmentId)
     {
         if (!_configManager.IsCorruptionTrackingEnabled()) return;
-        if (!_pendingZeroFillPaths.TryAdd(path, 0)) return;
-        if (!_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId, IsCorruption: true)))
-            _pendingZeroFillPaths.TryRemove(path, out _);
+        AccumulateAndArm(path, segmentId, isCorruption: true);
+    }
+
+    private void AccumulateAndArm(string path, string segmentId, bool isCorruption)
+    {
+        if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(segmentId))
+            return;
+
+        var ids = _pendingSegmentIds.GetOrAdd(
+            path,
+            static _ => new ConcurrentQueue<(string Id, bool IsCorruption)>());
+        ids.Enqueue((segmentId, isCorruption));
+        if (!_pendingZeroFillPaths.TryAdd(path, 0))
+            return;
+        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId, isCorruption)))
+            return;
+
+        _pendingZeroFillPaths.TryRemove(path, out _);
+        _pendingSegmentIds.TryRemove(path, out _);
     }
 
     public virtual async Task EnqueueAsync(
@@ -111,15 +146,24 @@ public class Par2RepairService : BackgroundService
         CancellationToken ct = default)
     {
         if (!_configManager.IsPar2RepairEnabled()) return;
-        if (missingSegmentIds.Count == 0) return;
-        if (!await ShouldEnqueueAsync(davItem.Id, ct).ConfigureAwait(false)) return;
+        RetainSegmentIds(davItem.Id, davItem.Path, missingSegmentIds);
+        if (!await ShouldEnqueueAsync(davItem.Id, ct).ConfigureAwait(false))
+            return;
 
         if (!_queuedOrRunning.TryAdd(davItem.Id, 0))
             return;
 
+        var ids = DrainRetainedSegmentIds(davItem.Id);
+        if (ids.Length == 0)
+        {
+            _queuedOrRunning.TryRemove(davItem.Id, out _);
+            return;
+        }
+
         var flight = new RepairFlight();
         if (!_repairFlights.TryAdd(davItem.Id, flight))
         {
+            RetainSegmentIds(davItem.Id, davItem.Path, ids);
             _queuedOrRunning.TryRemove(davItem.Id, out _);
             return;
         }
@@ -127,10 +171,11 @@ public class Par2RepairService : BackgroundService
         var item = new RepairWorkItem(
             davItem.Id,
             davItem.Path,
-            missingSegmentIds.Distinct().ToArray(),
+            ids,
             flight);
         if (!_queue.Writer.TryWrite(item))
         {
+            RetainSegmentIds(davItem.Id, davItem.Path, ids);
             _queuedOrRunning.TryRemove(davItem.Id, out _);
             _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItem.Id, flight));
             Log.Warning(
@@ -337,67 +382,103 @@ public class Par2RepairService : BackgroundService
             finally
             {
                 _pendingZeroFillPaths.TryRemove(evt.Path, out _);
+                TryRearmPendingZeroFill(evt.Path);
             }
         }
     }
 
     private async Task ProcessZeroFillEventAsync(ZeroFillEvent evt, CancellationToken ct)
     {
+        var reports = DrainPendingSegmentReports(evt.Path);
+        reports.Add((evt.SegmentId, evt.IsCorruption));
+
         await using var dbContext = CreateContext();
         var dbClient = new DavDatabaseClient(dbContext);
-        if (evt.IsCorruption)
+        var davItem = await dbContext.Items
+            .FirstOrDefaultAsync(x => x.Path == evt.Path, ct)
+            .ConfigureAwait(false);
+        if (davItem is null)
         {
-            await ProcessCorruptionEventAsync(dbContext, dbClient, evt, ct).ConfigureAwait(false);
+            Log.Debug("Playback repair trigger skipped; no DavItem at {Path}", evt.Path);
             return;
         }
 
-        var davItem = await dbClient.GetItemByPathAsync(evt.Path, ct).ConfigureAwait(false);
-        if (davItem != null)
-            await EnqueueAsync(davItem, [evt.SegmentId], ct).ConfigureAwait(false);
+        var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
+        if (nzbFile is null)
+        {
+            Log.Debug("Playback repair trigger skipped; no DavNzbFile payload for {Path}", evt.Path);
+            return;
+        }
+
+        var missingIds = new List<string>();
+        var corruptIds = new List<string>();
+        var missingIndices = new List<int>();
+        var corruptIndices = new List<int>();
+        foreach (var (segmentId, isCorruption) in reports)
+        {
+            var index = Array.IndexOf(nzbFile.SegmentIds, segmentId);
+            if (index < 0)
+            {
+                Log.Debug(
+                    "Playback repair trigger skipped unknown segment {SegmentId} for {Path}",
+                    segmentId,
+                    evt.Path);
+                continue;
+            }
+
+            if (isCorruption)
+            {
+                if (!_configManager.IsCorruptionTrackingEnabled())
+                    continue;
+                corruptIds.Add(segmentId);
+                corruptIndices.Add(index);
+            }
+            else
+            {
+                missingIds.Add(segmentId);
+                missingIndices.Add(index);
+            }
+        }
+
+        if (missingIndices.Count > 0 || corruptIndices.Count > 0)
+        {
+            await DavNzbFileBlobUpdater.MutateAsync(
+                davItem,
+                current =>
+                {
+                    if (missingIndices.Count > 0)
+                    {
+                        current.MissingSegmentIndices = UnionIndices(
+                            current.MissingSegmentIndices,
+                            missingIndices.ToArray());
+                    }
+
+                    if (corruptIndices.Count > 0)
+                    {
+                        current.CorruptSegmentIndices = UnionIndices(
+                            current.CorruptSegmentIndices,
+                            corruptIndices.ToArray());
+                    }
+
+                    return current;
+                },
+                fallback: nzbFile).ConfigureAwait(false);
+            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
+
+        if (!_configManager.IsPar2RepairEnabled())
+            return;
+
+        var enqueueIds = missingIds.Concat(corruptIds).Distinct(StringComparer.Ordinal).ToArray();
+        if (enqueueIds.Length > 0)
+            await EnqueueAsync(davItem, enqueueIds, ct).ConfigureAwait(false);
     }
 
     internal Task ProcessCorruptionEventForTestsAsync(string path, string segmentId, CancellationToken ct) =>
         ProcessZeroFillEventAsync(new ZeroFillEvent(path, segmentId, IsCorruption: true), ct);
 
-    private async Task ProcessCorruptionEventAsync(
-        DavDatabaseContext dbContext,
-        DavDatabaseClient dbClient,
-        ZeroFillEvent evt,
-        CancellationToken ct)
-    {
-        if (!_configManager.IsCorruptionTrackingEnabled()) return;
-
-        var davItem = await dbContext.Items
-            .FirstOrDefaultAsync(x => x.Path == evt.Path, ct)
-            .ConfigureAwait(false);
-        if (davItem is null) return;
-
-        var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
-        if (nzbFile is null) return;
-
-        var index = Array.IndexOf(nzbFile.SegmentIds, evt.SegmentId);
-        if (index < 0) return;
-
-        await DavNzbFileBlobUpdater.MutateAsync(
-            davItem,
-            current =>
-            {
-                var existing = current.CorruptSegmentIndices ?? [];
-                if (existing.Contains(index))
-                    return current;
-                current.CorruptSegmentIndices = existing
-                    .Append(index)
-                    .Distinct()
-                    .OrderBy(i => i)
-                    .ToArray();
-                return current;
-            },
-            fallback: nzbFile).ConfigureAwait(false);
-        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
-
-        if (_configManager.IsPar2RepairEnabled())
-            await EnqueueAsync(davItem, [evt.SegmentId], ct).ConfigureAwait(false);
-    }
+    internal Task ProcessZeroFillEventForTestsAsync(string path, string segmentId, CancellationToken ct) =>
+        ProcessZeroFillEventAsync(new ZeroFillEvent(path, segmentId), ct);
 
     private async Task ProcessQueueItemAsync(RepairWorkItem item, CancellationToken ct)
     {
@@ -409,6 +490,7 @@ public class Par2RepairService : BackgroundService
         if (davItem == null)
         {
             _queuedOrRunning.TryRemove(item.DavItemId, out _);
+            _retainedSegmentIds.TryRemove(item.DavItemId, out _);
             CompleteFlight(item.DavItemId, item.Flight, false);
             return;
         }
@@ -443,6 +525,15 @@ public class Par2RepairService : BackgroundService
         finally
         {
             _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItem.Id, flight));
+            try
+            {
+                if (!ct.IsCancellationRequested)
+                    await TryRequeueRetainedAsync(davItem.Id, ct).ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException and not OperationCanceledException)
+            {
+                Log.Debug(e, "Failed to requeue retained PAR2 segment IDs for {Path}", davItem.Path);
+            }
         }
     }
 
@@ -1685,6 +1776,86 @@ public class Par2RepairService : BackgroundService
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<bool> Task => Completion.Task;
+    }
+
+    private void RetainSegmentIds(Guid davItemId, string path, IEnumerable<string> segmentIds)
+    {
+        var retained = _retainedSegmentIds.GetOrAdd(
+            davItemId,
+            _ => new RetainedRepair { Path = path });
+        foreach (var id in segmentIds)
+        {
+            if (!string.IsNullOrEmpty(id))
+                retained.Ids.TryAdd(id, 0);
+        }
+    }
+
+    private string[] DrainRetainedSegmentIds(Guid davItemId)
+    {
+        if (!_retainedSegmentIds.TryRemove(davItemId, out var retained))
+            return [];
+        return retained.Ids.Keys.ToArray();
+    }
+
+    private async Task TryRequeueRetainedAsync(Guid davItemId, CancellationToken ct)
+    {
+        if (!_retainedSegmentIds.ContainsKey(davItemId))
+            return;
+
+        await using var dbContext = CreateContext();
+        var davItem = await dbContext.Items.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == davItemId, ct)
+            .ConfigureAwait(false);
+        if (davItem is null)
+        {
+            _retainedSegmentIds.TryRemove(davItemId, out _);
+            return;
+        }
+
+        await EnqueueAsync(davItem, [], ct).ConfigureAwait(false);
+    }
+
+    private List<(string Id, bool IsCorruption)> DrainPendingSegmentReports(string path)
+    {
+        var drained = new List<(string Id, bool IsCorruption)>();
+        if (!_pendingSegmentIds.TryGetValue(path, out var queue))
+            return drained;
+
+        while (queue.TryDequeue(out var item))
+            drained.Add(item);
+        return drained;
+    }
+
+    private void TryRearmPendingZeroFill(string path)
+    {
+        if (!_pendingSegmentIds.TryGetValue(path, out var queue) || queue.IsEmpty)
+        {
+            _pendingSegmentIds.TryRemove(path, out _);
+            return;
+        }
+
+        if (!_pendingZeroFillPaths.TryAdd(path, 0))
+            return;
+
+        var segmentId = "";
+        var isCorruption = false;
+        if (queue.TryPeek(out var peek))
+        {
+            segmentId = peek.Id;
+            isCorruption = peek.IsCorruption;
+        }
+
+        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId, isCorruption)))
+            return;
+
+        _pendingZeroFillPaths.TryRemove(path, out _);
+        _pendingSegmentIds.TryRemove(path, out _);
+    }
+
+    private sealed class RetainedRepair
+    {
+        public required string Path { get; init; }
+        public ConcurrentDictionary<string, byte> Ids { get; } = new(StringComparer.Ordinal);
     }
 
     private sealed record RepairWorkItem(

@@ -272,6 +272,7 @@ public sealed class MultiProviderNntpClientTerminalMissLoggingTests
     public async Task SharedPumpMiss_IncludesFileAttribution()
     {
         const string segmentId = "shared-pump@terminal-miss";
+        var fileName = $"shared-pump-{Guid.NewGuid():N}.mkv";
         var events = await CaptureLogsAsync(async () =>
         {
             using var nntp = TwoThrowingProviders();
@@ -283,10 +284,10 @@ public sealed class MultiProviderNntpClientTerminalMissLoggingTests
                 failFastOnFirstSegment: false,
                 usePipelinedBodyRequests: false,
                 CancellationToken.None,
-                fileName: "movie.mkv",
+                fileName: fileName,
                 exactSegmentSizes: new long[] { 8 });
             await using var entry = new SharedStreamEntry(
-                "/content/movie.mkv",
+                $"/content/{fileName}",
                 0,
                 8,
                 64,
@@ -310,13 +311,14 @@ public sealed class MultiProviderNntpClientTerminalMissLoggingTests
         });
 
         var warning = Assert.Single(events, e => IsMissWarningFor(e, segmentId));
-        Assert.Equal("movie.mkv", PropertyText(warning, "FileName"));
+        Assert.Equal(fileName, PropertyText(warning, "FileName"));
     }
 
     [Fact]
     public async Task PlaybackZeroFill_DoesNotDuplicateTheTerminalMissWarning()
     {
         const string segmentId = "zero-fill@terminal-miss";
+        var fileName = $"zero-fill-{Guid.NewGuid():N}.mkv";
         var events = await CaptureLogsAsync(async () =>
         {
             using var nntp = TwoThrowingProviders();
@@ -328,7 +330,7 @@ public sealed class MultiProviderNntpClientTerminalMissLoggingTests
                 failFastOnFirstSegment: false,
                 usePipelinedBodyRequests: false,
                 CancellationToken.None,
-                fileName: "movie.mkv",
+                fileName: fileName,
                 exactSegmentSizes: new long[] { 8 });
             var buffer = new byte[8];
             _ = await stream.ReadAsync(buffer);

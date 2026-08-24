@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
@@ -308,8 +309,17 @@ public class NzbFileStream(
         return null;
     }
 
+    private void ThrowIfPlaybackFailFast()
+    {
+        if (!PlaybackHoleTracker.ShouldFailFast(fileName ?? "", out var exception))
+            return;
+        ExceptionDispatchInfo.Capture(
+            exception ?? new UsenetArticleNotFoundException(fileSegmentIds[0])).Throw();
+    }
+
     private async Task<Stream> GetFileStream(long rangeStart, CancellationToken cancellationToken)
     {
+        ThrowIfPlaybackFailFast();
         if (rangeStart == 0) return GetMultiSegmentStream(0, failFastOnFirstSegment: true, cancellationToken);
         if (!IsKnownMissingSegment(foundSegment: null, rangeStart) && !ShouldUseDirectRangePath())
         {
@@ -354,13 +364,17 @@ public class NzbFileStream(
 
     private bool IsKnownMissingSegment(InterpolationSearch.Result? foundSegment, long rangeStart)
     {
-        if (_knownMissingSegmentIndices is null || _segmentByteRanges is null) return false;
+        if (_segmentByteRanges is null) return false;
         var segment = foundSegment ?? InterpolationSearch.Find(
             rangeStart,
             new LongRange(0, _segmentByteRanges.Length),
             new LongRange(0, fileSize),
             guess => _segmentByteRanges[guess]);
-        return _knownMissingSegmentIndices.Contains(segment.FoundIndex);
+        if (_knownMissingSegmentIndices?.Contains(segment.FoundIndex) == true)
+            return true;
+        if ((uint)segment.FoundIndex >= (uint)fileSegmentIds.Length)
+            return false;
+        return PlaybackHoleTracker.IsKnownMissingSegment(fileName ?? "", fileSegmentIds[segment.FoundIndex]);
     }
 
     private const int MaxSeekGuessCorrection = 3;
@@ -571,6 +585,16 @@ public class NzbFileStream(
             .Where(index => index >= firstSegmentIndex)
             .Select(index => index - firstSegmentIndex)
             .ToHashSet();
+        var trackerIds = PlaybackHoleTracker.SnapshotMissingSegmentIds(fileName ?? "");
+        if (trackerIds is { Count: > 0 })
+        {
+            knownMissing ??= [];
+            for (var i = firstSegmentIndex; i < fileSegmentIds.Length; i++)
+            {
+                if (trackerIds.Contains(fileSegmentIds[i]))
+                    knownMissing.Add(i - firstSegmentIndex);
+            }
+        }
 
         return MultiSegmentStream.CreateFirstSegmentHybrid(
             segmentIds,

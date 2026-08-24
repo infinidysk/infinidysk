@@ -1111,6 +1111,18 @@ public class MultiProviderNntpClient(
 
             if (walk.IsPureDefinitiveMiss)
             {
+                var fileName = FetchAttributionContext.Current?.FileName;
+                if (!ZeroFillLogLimiter.TryLog(fileName, out var suppressed))
+                    return;
+
+                if (suppressed > 0)
+                {
+                    Log.Warning(
+                        "Suppressed {SuppressedCount} additional unavailable-segment warnings for {FileName} in the previous 60 seconds.",
+                        suppressed,
+                        fileName);
+                }
+
                 Log.Warning(
                     "Usenet segment was unavailable from all eligible provider sources. " +
                     "Segment: {SegmentId}; File: {FileName}; Operation: {Operation}; " +
@@ -1118,7 +1130,7 @@ public class MultiProviderNntpClient(
                     "CachedSkips: {CachedSkips}; StorageGroupSkips: {StorageGroupSkips}; " +
                     "DurationMs: {DurationMs}",
                     segmentId,
-                    FetchAttributionContext.Current?.FileName,
+                    fileName,
                     LatencyNames.ToWireName(operation),
                     walk.EligibleProviders,
                     walk.Attempts,
