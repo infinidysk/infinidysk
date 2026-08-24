@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "report": "sab-api",
   "meta": {
-    "commit": "unknown",
-    "generatedAt": "2026-08-19T21:00:49.945346+00:00",
-    "runner": "local"
+    "commit": "07d7ead9318cb03bc543171a55ac632f747565cb",
+    "generatedAt": "2026-08-24T13:51:22.524565+00:00",
+    "runner": "Linux"
   },
   "scenarios": {
     "queue-limit10": {
@@ -15,13 +15,13 @@
       },
       "timing": {
         "elapsedMs": {
-          "baseline": 98.356,
-          "envelope": 295.068,
+          "baseline": 214.802,
+          "envelope": 644.406,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.097,
-          "envelope": 0.347,
+          "baseline": 0.215,
+          "envelope": 0.645,
           "policy": "warn"
         }
       }
@@ -34,13 +34,13 @@
       },
       "timing": {
         "elapsedMs": {
-          "baseline": 1.32,
-          "envelope": 16.32,
+          "baseline": 2.959,
+          "envelope": 17.959,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.001,
-          "envelope": 0.251,
+          "baseline": 0.003,
+          "envelope": 0.253,
           "policy": "warn"
         }
       }
@@ -53,13 +53,13 @@
       },
       "timing": {
         "elapsedMs": {
-          "baseline": 0.292,
-          "envelope": 15.292,
+          "baseline": 0.797,
+          "envelope": 15.797,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.0,
-          "envelope": 0.25,
+          "baseline": 0.001,
+          "envelope": 0.251,
           "policy": "warn"
         }
       }
@@ -72,13 +72,13 @@
       },
       "timing": {
         "elapsedMs": {
-          "baseline": 14.119,
-          "envelope": 42.357,
+          "baseline": 24.468,
+          "envelope": 73.404,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.014,
-          "envelope": 0.264,
+          "baseline": 0.024,
+          "envelope": 0.274,
           "policy": "warn"
         }
       }
@@ -91,8 +91,8 @@
       },
       "timing": {
         "elapsedMs": {
-          "baseline": 0.562,
-          "envelope": 15.562,
+          "baseline": 1.174,
+          "envelope": 16.174,
           "policy": "fail"
         },
         "cpuSeconds": {
@@ -110,13 +110,13 @@
       },
       "timing": {
         "elapsedMs": {
-          "baseline": 2.455,
-          "envelope": 17.455,
+          "baseline": 5.799,
+          "envelope": 20.799,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.002,
-          "envelope": 0.252,
+          "baseline": 0.006,
+          "envelope": 0.256,
           "policy": "warn"
         }
       }
@@ -129,13 +129,13 @@
       },
       "timing": {
         "elapsedMs": {
-          "baseline": 8.448,
-          "envelope": 25.344,
+          "baseline": 18.884,
+          "envelope": 56.652,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.008,
-          "envelope": 0.258,
+          "baseline": 0.019,
+          "envelope": 0.269,
           "policy": "warn"
         }
       }

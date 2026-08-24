@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "report": "streaming",
   "meta": {
-    "commit": "unknown",
-    "generatedAt": "2026-08-19T21:00:49.908358+00:00",
-    "runner": "local"
+    "commit": "07d7ead9318cb03bc543171a55ac632f747565cb",
+    "generatedAt": "2026-08-24T13:51:22.489012+00:00",
+    "runner": "Linux"
   },
   "scenarios": {
     "cold-sequential": {
@@ -15,18 +15,18 @@
       },
       "timing": {
         "firstByteMs": {
-          "baseline": 0.027,
-          "envelope": 15.027,
+          "baseline": 0.034,
+          "envelope": 15.034,
           "policy": "fail"
         },
         "elapsedMs": {
-          "baseline": 0.115,
-          "envelope": 15.115,
+          "baseline": 0.222,
+          "envelope": 15.222,
           "policy": "fail"
         },
         "throughputMiBs": {
-          "baseline": 26691.822,
-          "floor": 8897.274,
+          "baseline": 13513.514,
+          "floor": 4504.505,
           "policy": "fail"
         },
         "cpuSeconds": {
@@ -44,23 +44,23 @@
       },
       "timing": {
         "firstByteMs": {
-          "baseline": 0.198,
-          "envelope": 15.198,
+          "baseline": 0.29,
+          "envelope": 15.29,
           "policy": "fail"
         },
         "elapsedMs": {
-          "baseline": 3.613,
-          "envelope": 18.613,
+          "baseline": 5.958,
+          "envelope": 20.958,
           "policy": "fail"
         },
         "throughputMiBs": {
-          "baseline": 830.719,
-          "floor": 276.907,
+          "baseline": 503.491,
+          "floor": 167.83,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.004,
-          "envelope": 0.254,
+          "baseline": 0.008,
+          "envelope": 0.258,
           "policy": "warn"
         }
       }
@@ -73,23 +73,23 @@
       },
       "timing": {
         "firstByteMs": {
-          "baseline": 0.194,
-          "envelope": 15.194,
+          "baseline": 0.215,
+          "envelope": 15.215,
           "policy": "fail"
         },
         "elapsedMs": {
-          "baseline": 1.047,
-          "envelope": 16.047,
+          "baseline": 1.622,
+          "envelope": 16.622,
           "policy": "fail"
         },
         "throughputMiBs": {
-          "baseline": 2875.46,
-          "floor": 958.487,
+          "baseline": 1849.911,
+          "floor": 616.637,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.002,
-          "envelope": 0.252,
+          "baseline": 0.004,
+          "envelope": 0.254,
           "policy": "warn"
         }
       }
@@ -102,23 +102,23 @@
       },
       "timing": {
         "firstByteMs": {
-          "baseline": 0.103,
-          "envelope": 15.103,
+          "baseline": 0.248,
+          "envelope": 15.248,
           "policy": "fail"
         },
         "elapsedMs": {
-          "baseline": 0.103,
-          "envelope": 15.103,
+          "baseline": 0.248,
+          "envelope": 15.248,
           "policy": "fail"
         },
         "throughputMiBs": {
-          "baseline": 615.096,
-          "floor": 205.032,
+          "baseline": 251.61,
+          "floor": 83.87,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.0,
-          "envelope": 0.25,
+          "baseline": 0.001,
+          "envelope": 0.251,
           "policy": "warn"
         }
       }
@@ -131,23 +131,23 @@
       },
       "timing": {
         "firstByteMs": {
-          "baseline": 0.092,
-          "envelope": 15.092,
+          "baseline": 0.196,
+          "envelope": 15.196,
           "policy": "fail"
         },
         "elapsedMs": {
-          "baseline": 0.092,
-          "envelope": 15.092,
+          "baseline": 0.196,
+          "envelope": 15.196,
           "policy": "fail"
         },
         "throughputMiBs": {
-          "baseline": 687.026,
-          "floor": 229.009,
+          "baseline": 319.203,
+          "floor": 106.401,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.0,
-          "envelope": 0.25,
+          "baseline": 0.001,
+          "envelope": 0.251,
           "policy": "warn"
         }
       }
@@ -160,23 +160,23 @@
       },
       "timing": {
         "firstByteMs": {
-          "baseline": 0.087,
-          "envelope": 15.087,
+          "baseline": 0.199,
+          "envelope": 15.199,
           "policy": "fail"
         },
         "elapsedMs": {
-          "baseline": 0.46,
-          "envelope": 15.46,
+          "baseline": 1.271,
+          "envelope": 16.271,
           "policy": "fail"
         },
         "throughputMiBs": {
-          "baseline": 543.865,
-          "floor": 181.288,
+          "baseline": 196.711,
+          "floor": 65.57,
           "policy": "fail"
         },
         "cpuSeconds": {
-          "baseline": 0.001,
-          "envelope": 0.251,
+          "baseline": 0.002,
+          "envelope": 0.252,
           "policy": "warn"
         }
       }
@@ -189,18 +189,18 @@
       },
       "timing": {
         "firstByteMs": {
-          "baseline": 0.088,
-          "envelope": 15.088,
+          "baseline": 0.247,
+          "envelope": 15.247,
           "policy": "fail"
         },
         "elapsedMs": {
-          "baseline": 0.088,
-          "envelope": 15.088,
+          "baseline": 0.247,
+          "envelope": 15.247,
           "policy": "fail"
         },
         "throughputMiBs": {
-          "baseline": 2850.559,
-          "floor": 950.186,
+          "baseline": 1012.556,
+          "floor": 337.519,
           "policy": "fail"
         },
         "cpuSeconds": {
