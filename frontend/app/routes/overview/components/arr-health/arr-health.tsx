@@ -3,6 +3,7 @@ import type {
   ArrInstanceStatus,
   OverviewWindow,
 } from "~/clients/backend-client.server";
+import { Tooltip } from "~/components/ui";
 import { formatDurationMs, formatNumber, formatTimeAgo } from "../../utils/format";
 import { settingsPath } from "~/navigation/settings-tabs";
 import { Tooltip } from "~/components/ui";
@@ -24,8 +25,10 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
   const { summary, instances, awaiting } = data;
   const sinceLabel = window === "all" ? "all time (~90 days of stored events)" : `last ${window}`;
   const groupedAwaiting = Array.from(
-    awaiting.reduce((groups, item) => {
-      const key = `${item.instanceKey}:${item.downloadId ?? item.title ?? "item"}`;
+    awaiting.reduce((groups, item, index) => {
+      const key = item.downloadId
+        ? `${item.instanceKey}:${item.downloadId}`
+        : `${item.instanceKey}:unidentified:${index}`;
       const group = groups.get(key);
       if (group) {
         group.items.push(item);

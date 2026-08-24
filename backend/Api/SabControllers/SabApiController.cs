@@ -47,6 +47,12 @@ public class SabApiController(
 {
     private static readonly LogThrottle AuthenticationFailureThrottle = new();
     private static readonly TimeSpan AuthenticationFailureLogInterval = TimeSpan.FromMinutes(5);
+    private static readonly HashSet<string> KnownModes =
+    [
+        "version", "status", "get_cats", "get_config", "fullstatus", "server_stats", "warnings",
+        "addfile", "addurl", "pause", "resume", "speedlimit", "queue", "switch", "history",
+        "change_cat", "retry",
+    ];
 
     [HttpGet]
     [HttpPost]
@@ -96,8 +102,15 @@ public class SabApiController(
 
     private void LogAuthenticationFailure()
     {
-        var mode = HttpContext.GetRequestParam("mode") ?? "unknown";
-        var category = HttpContext.GetRequestParam("cat") ?? "none";
+        var requestedMode = HttpContext.GetRequestParam("mode");
+        var mode = requestedMode is not null && KnownModes.Contains(requestedMode)
+            ? requestedMode
+            : "unknown";
+        var requestedCategory = HttpContext.GetRequestParam("cat");
+        var category = configManager.GetApiCategories()
+            .FirstOrDefault(configured =>
+                string.Equals(configured, requestedCategory, StringComparison.OrdinalIgnoreCase))
+            ?? "unknown";
         var source = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var key = $"{mode}|{category}|{source}";
         if (!AuthenticationFailureThrottle.ShouldLog(key, AuthenticationFailureLogInterval, out var suppressed))

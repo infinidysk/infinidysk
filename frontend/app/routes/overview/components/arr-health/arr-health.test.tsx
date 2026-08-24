@@ -189,6 +189,7 @@ describe("ArrHealth", () => {
     expect(markup).toContain("waiting —");
     expect(markup).toContain("2 of 2 longest waits");
     expect(markup).toContain("Invalid data found when processing input");
+    expect(markup).not.toContain("2 affected items");
   });
 
   it("notes the 90-day retention on the All window", () => {

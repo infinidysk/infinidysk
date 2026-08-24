@@ -49,6 +49,8 @@ Disabling an instance opts it out of stuck-queue actions, Arr-linked repairs, an
 
 When at least one Radarr or Sonarr instance is configured **and enabled**, Overview shows a compact **Arr Health** section: instance reachability, imports in the selected dashboard window, median/P95 handoff latency (InfiniDysk download completed → Arr `DownloadFolderImported`), queue depth, and items waiting unusually long for import.
 
+## Awaiting detail [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since }
+
 **Queue** is every item Arr currently tracks. **Awaiting** is the completed or
 `importPending`/`importing` subset, so the two counts intentionally differ.
 The widget reports the true Awaiting total while showing only its longest waits;

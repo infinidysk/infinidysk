@@ -23,7 +23,7 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | Trusted local hosts [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `api.addurl-trusted-hosts` | env `TRUSTED_INTERNAL_HOSTS` | SSRF allowlist for private addurl |
 | Fail downloads without video or audio | `api.ensure-importable-video` | on | Reject NZBs with no media files |
 | Fail when non-media missing articles | inverse of `api.skip-non-video-on-missing-articles` | skip non-media by default | Media files (video/audio) always fail on missing articles; companion files are skipped unless this is enabled |
-| Article health check categories | `api.ensure-article-existence-categories` | empty (off) | Per-category STAT checks plus a final direct-media BODY readiness read; may be slow |
+| Article health check categories [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since } | `api.ensure-article-existence-categories` | empty (off) | Per-category STAT checks plus a final direct-media BODY readiness read; may be slow |
 | Article health check mode | `api.article-existence-check-mode` | `full` | Full or per-file sampled verification |
 | Always send full History | `api.ignore-history-limit` | on | Ignore client history limit |
 | Save backup copies of incoming NZBs | `api.nzb-backup-enabled` | off | On-disk `*.nzb` copies |
@@ -49,7 +49,7 @@ checks. It is a screen rather than a guarantee: urgent repair remains the
 backstop if an article disappears later or STAT succeeds while BODY fails.
 
 For selected categories, InfiniDysk also reads the head and tail of direct media
-outputs before reporting a successful SAB completion. This rejects unreadable
+outputs before reporting a successful SAB completion [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since }. This rejects unreadable
 container headers and short reads before Sonarr or Radarr begin import. It does
 not replace streaming corruption detection or PAR2 repair: damage limited to
 the middle of a release can only be detected when that part is read.
