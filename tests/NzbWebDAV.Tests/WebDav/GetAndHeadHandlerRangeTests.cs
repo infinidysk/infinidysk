@@ -108,6 +108,20 @@ public class GetAndHeadHandlerRangeTests
         Assert.Equal(0, tracker.GetFailureCount(item.Id));
     }
 
+    [Fact]
+    public void CompletedSuffixRange_DoesNotClearStreamingFailures()
+    {
+        var tracker = new StreamingFailureTracker();
+        var item = NewDavItem();
+        tracker.RecordFailure(item.Id);
+
+        var cleared = GetAndHeadHandlerPatch.ClearStreamingFailureAfterCompletedRead(
+            tracker, item, isHeadRequest: false, copySucceeded: true, copyStart: 50, copyEnd: 99, streamLength: 100);
+
+        Assert.False(cleared);
+        Assert.Equal(1, tracker.GetFailureCount(item.Id));
+    }
+
     [Theory]
     [InlineData(true, false, 0, 99, 100)]
     [InlineData(false, false, 1, 99, 100)]

@@ -111,6 +111,27 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UrgentRepair_UsesFullyAttributedStreamingFailureIdsAsPar2Seed()
+    {
+        var segments = NewSegmentIds(3);
+        var sizes = new long[] { 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, sizes);
+        item.NextHealthCheck = DateTimeOffset.UnixEpoch;
+        await _context.SaveChangesAsync();
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+        ]);
+        _failureTracker.RecordAttributedFailure(item.Id, segments[1]);
+        var (service, par2) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: true);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.Equal([segments[1]], Assert.Single(par2.Requests));
+        Assert.Equal(StreamingFailureSnapshot.Empty, _failureTracker.GetSnapshot(item.Id));
+    }
+
+    [Fact]
     public async Task BoundedHole_MarksDegraded_PersistsHoles_AndSkipsRepair()
     {
         var segments = NewSegmentIds(6);

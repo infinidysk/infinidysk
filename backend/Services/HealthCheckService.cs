@@ -69,10 +69,11 @@ public class HealthCheckService : BackgroundService
     private readonly WebsocketManager _websocketManager;
     private readonly BenchmarkGate _benchmarkGate;
     private readonly StreamingFailureTracker _failureTracker;
-    private readonly QueueManager _queueManager;
+    private readonly IQueueCoordinator _queueManager;
     private readonly Par2RepairService _par2RepairService;
     private readonly RepairPatchStore _repairPatchStore;
     private readonly IDbContextFactory<DavDatabaseContext>? _dbContextFactory;
+    private readonly TimeProvider _timeProvider;
 
     private static readonly HashSet<string> _missingSegmentIds = [];
     private static readonly Queue<string> _missingSegmentOrder = [];
@@ -86,11 +87,12 @@ public class HealthCheckService : BackgroundService
         WebsocketManager websocketManager,
         BenchmarkGate benchmarkGate,
         StreamingFailureTracker failureTracker,
-        QueueManager queueManager,
+        IQueueCoordinator queueManager,
         Par2RepairService par2RepairService,
         RepairPatchStore repairPatchStore,
         ArrReplacementSearchBudget replacementSearchBudget,
-        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null,
+        TimeProvider? timeProvider = null
     )
     {
         _configManager = configManager;
@@ -103,6 +105,7 @@ public class HealthCheckService : BackgroundService
         _par2RepairService = par2RepairService;
         _repairPatchStore = repairPatchStore;
         _dbContextFactory = dbContextFactory;
+        _timeProvider = timeProvider ?? TimeProvider.System;
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
@@ -120,7 +123,7 @@ public class HealthCheckService : BackgroundService
     {
         try
         {
-            await Task.Delay(StartupGracePeriod, stoppingToken).ConfigureAwait(false);
+            await Task.Delay(StartupGracePeriod, _timeProvider, stoppingToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -136,14 +139,14 @@ public class HealthCheckService : BackgroundService
                 // pause verification while a connection speed-test is running
                 if (_benchmarkGate.IsPaused)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
                 // if the repair-job is disabled, then don't do anything
                 if (!_configManager.IsRepairJobEnabled())
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -152,7 +155,7 @@ public class HealthCheckService : BackgroundService
                 // queue-item article validation inside QueueItemProcessor is separate.
                 if (_queueManager.HasActiveQueueItems)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -185,7 +188,7 @@ public class HealthCheckService : BackgroundService
                 // if there is no item to health-check, don't do anything
                 if (davItem == null)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(5), cts.Token).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, cts.Token).ConfigureAwait(false);
                     continue;
                 }
 
@@ -209,7 +212,7 @@ public class HealthCheckService : BackgroundService
                     Log.Error(e, "Unexpected error performing background health checks: {Message}", e.Message);
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, stoppingToken).ConfigureAwait(false);
             }
         }
     }
@@ -1373,6 +1376,8 @@ public class HealthCheckService : BackgroundService
         Defer,
         /// <summary>Force the repair-delete path even for library-linked items.</summary>
         ForceDelete,
+        /// <summary>Force deletion only if the fresh repair-boundary lookup finds no library link.</summary>
+        ForceDeleteIfUnlinked,
     }
 
     /// <summary>
@@ -1383,7 +1388,6 @@ public class HealthCheckService : BackgroundService
     public static UrgentRepairDisposition GetUrgentRepairDisposition(
         int threshold,
         int failureCount,
-        bool hasLibraryLink,
         bool autoRemoveUnlinkedOnly)
     {
         if (threshold <= 0)
@@ -1392,10 +1396,9 @@ public class HealthCheckService : BackgroundService
         if (failureCount < threshold)
             return UrgentRepairDisposition.Defer;
 
-        if (hasLibraryLink && autoRemoveUnlinkedOnly)
-            return UrgentRepairDisposition.RepairNormally;
-
-        return UrgentRepairDisposition.ForceDelete;
+        return autoRemoveUnlinkedOnly
+            ? UrgentRepairDisposition.ForceDeleteIfUnlinked
+            : UrgentRepairDisposition.ForceDelete;
     }
 
     /// <summary>
@@ -1608,10 +1611,10 @@ public class HealthCheckService : BackgroundService
     private async Task HandleUrgentRepair(DavItem davItem, DavDatabaseClient dbClient, CancellationToken ct)
     {
         var threshold = _configManager.GetAutoRemoveAfterFailures();
-        var failureCount = _failureTracker.GetFailureCount(davItem.Id);
+        var failureSnapshot = _failureTracker.GetSnapshot(davItem.Id);
+        var failureCount = failureSnapshot.Count;
         var unlinkedOnly = _configManager.IsAutoRemoveUnlinkedOnly();
-        var hasLibraryLink = OrganizedLinksUtil.GetLink(davItem, _configManager) != null;
-        var disposition = GetUrgentRepairDisposition(threshold, failureCount, hasLibraryLink, unlinkedOnly);
+        var disposition = GetUrgentRepairDisposition(threshold, failureCount, unlinkedOnly);
 
         if (disposition == UrgentRepairDisposition.Defer)
         {
@@ -1631,7 +1634,10 @@ public class HealthCheckService : BackgroundService
         }
 
         if (ShouldAttemptPar2Repair()
-            && await _par2RepairService.TryPar2RepairAsync(davItem, null, ct).ConfigureAwait(false))
+            && await _par2RepairService.TryPar2RepairAsync(
+                davItem,
+                failureSnapshot.HasTargetableSegmentIds ? failureSnapshot.SegmentIds : null,
+                ct).ConfigureAwait(false))
         {
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
@@ -1652,6 +1658,7 @@ public class HealthCheckService : BackgroundService
             dbClient,
             ct,
             forceDelete: disposition == UrgentRepairDisposition.ForceDelete,
+            forceDeleteIfUnlinked: disposition == UrgentRepairDisposition.ForceDeleteIfUnlinked,
             streamingFailureCount: failureCount).ConfigureAwait(false);
     }
 
@@ -1669,6 +1676,7 @@ public class HealthCheckService : BackgroundService
         DavDatabaseClient dbClient,
         CancellationToken ct,
         bool forceDelete = false,
+        bool forceDeleteIfUnlinked = false,
         int? streamingFailureCount = null)
     {
         try
@@ -1701,7 +1709,9 @@ public class HealthCheckService : BackgroundService
             // force-delete policy may remove the item from this branch.
             var libraryDir = _configManager.GetLibraryDir();
             var symlinkOrStrmPath = OrganizedLinksUtil.GetLink(davItem, _configManager);
-            var linkDisposition = GetLibraryLinkRepairDisposition(symlinkOrStrmPath, forceDelete);
+            var linkDisposition = GetLibraryLinkRepairDisposition(
+                symlinkOrStrmPath,
+                forceDelete || (forceDeleteIfUnlinked && symlinkOrStrmPath == null));
             if (linkDisposition != LibraryLinkRepairDisposition.RepairLinked)
                 _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
             if (linkDisposition == LibraryLinkRepairDisposition.ForceDelete)

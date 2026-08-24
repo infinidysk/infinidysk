@@ -5,19 +5,18 @@ namespace NzbWebDAV.Tests.Services;
 public class UrgentRepairDispositionTests
 {
     [Theory]
-    [InlineData(0, 0, false, true, HealthCheckService.UrgentRepairDisposition.RepairNormally)]
-    [InlineData(0, 5, false, true, HealthCheckService.UrgentRepairDisposition.RepairNormally)]
-    [InlineData(0, 5, true, true, HealthCheckService.UrgentRepairDisposition.RepairNormally)]
+    [InlineData(0, 0, true, HealthCheckService.UrgentRepairDisposition.RepairNormally)]
+    [InlineData(0, 5, true, HealthCheckService.UrgentRepairDisposition.RepairNormally)]
+    [InlineData(0, 5, false, HealthCheckService.UrgentRepairDisposition.RepairNormally)]
     public void ThresholdZero_AlwaysRepairNormally(
         int threshold,
         int failureCount,
-        bool hasLibraryLink,
         bool unlinkedOnly,
         HealthCheckService.UrgentRepairDisposition expected)
     {
         Assert.Equal(
             expected,
-            HealthCheckService.GetUrgentRepairDisposition(threshold, failureCount, hasLibraryLink, unlinkedOnly));
+            HealthCheckService.GetUrgentRepairDisposition(threshold, failureCount, unlinkedOnly));
     }
 
     [Fact]
@@ -25,26 +24,26 @@ public class UrgentRepairDispositionTests
     {
         Assert.Equal(
             HealthCheckService.UrgentRepairDisposition.Defer,
-            HealthCheckService.GetUrgentRepairDisposition(3, 2, hasLibraryLink: false, autoRemoveUnlinkedOnly: true));
+            HealthCheckService.GetUrgentRepairDisposition(3, 2, autoRemoveUnlinkedOnly: true));
     }
 
     [Fact]
-    public void Unlinked_AtThreshold_ForceDeletes()
+    public void UnlinkedOnly_AtThreshold_DefersLinkDecisionUntilRepair()
     {
         Assert.Equal(
-            HealthCheckService.UrgentRepairDisposition.ForceDelete,
-            HealthCheckService.GetUrgentRepairDisposition(3, 3, hasLibraryLink: false, autoRemoveUnlinkedOnly: true));
+            HealthCheckService.UrgentRepairDisposition.ForceDeleteIfUnlinked,
+            HealthCheckService.GetUrgentRepairDisposition(3, 3, autoRemoveUnlinkedOnly: true));
     }
 
     [Fact]
-    public void Linked_UnlinkedOnly_DefersUntilThresholdThenUsesArrPath()
+    public void UnlinkedOnly_DefersUntilThresholdThenDefersLinkDecision()
     {
         Assert.Equal(
             HealthCheckService.UrgentRepairDisposition.Defer,
-            HealthCheckService.GetUrgentRepairDisposition(3, 1, hasLibraryLink: true, autoRemoveUnlinkedOnly: true));
+            HealthCheckService.GetUrgentRepairDisposition(3, 1, autoRemoveUnlinkedOnly: true));
         Assert.Equal(
-            HealthCheckService.UrgentRepairDisposition.RepairNormally,
-            HealthCheckService.GetUrgentRepairDisposition(3, 3, hasLibraryLink: true, autoRemoveUnlinkedOnly: true));
+            HealthCheckService.UrgentRepairDisposition.ForceDeleteIfUnlinked,
+            HealthCheckService.GetUrgentRepairDisposition(3, 3, autoRemoveUnlinkedOnly: true));
     }
 
     [Fact]
@@ -52,10 +51,10 @@ public class UrgentRepairDispositionTests
     {
         Assert.Equal(
             HealthCheckService.UrgentRepairDisposition.Defer,
-            HealthCheckService.GetUrgentRepairDisposition(3, 2, hasLibraryLink: true, autoRemoveUnlinkedOnly: false));
+            HealthCheckService.GetUrgentRepairDisposition(3, 2, autoRemoveUnlinkedOnly: false));
         Assert.Equal(
             HealthCheckService.UrgentRepairDisposition.ForceDelete,
-            HealthCheckService.GetUrgentRepairDisposition(3, 3, hasLibraryLink: true, autoRemoveUnlinkedOnly: false));
+            HealthCheckService.GetUrgentRepairDisposition(3, 3, autoRemoveUnlinkedOnly: false));
     }
 
     [Fact]

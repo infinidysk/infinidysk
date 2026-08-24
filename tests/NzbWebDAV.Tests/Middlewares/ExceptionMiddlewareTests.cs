@@ -118,6 +118,8 @@ public class ExceptionMiddlewareTests
         await middleware.InvokeAsync(context);
 
         Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
+        Assert.Equal([segmentId], failureTracker.GetSnapshot(davItem.Id).SegmentIds);
+        Assert.True(failureTracker.GetSnapshot(davItem.Id).HasTargetableSegmentIds);
         Assert.Throws<UsenetArticleNotFoundException>(
             () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
     }
@@ -141,6 +143,7 @@ public class ExceptionMiddlewareTests
         Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
         Assert.False(lifetimeFeature.Aborted);
         Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
+        Assert.True(failureTracker.GetSnapshot(davItem.Id).HasUnattributedFailure);
     }
 
     [Fact]
@@ -649,6 +652,8 @@ public class ExceptionMiddlewareTests
         Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
         Assert.False(lifetimeFeature.Aborted);
         Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
+        Assert.Equal([segmentId], failureTracker.GetSnapshot(davItem.Id).SegmentIds);
+        Assert.True(failureTracker.GetSnapshot(davItem.Id).HasTargetableSegmentIds);
         Assert.Throws<UsenetArticleNotFoundException>(
             () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
     }
@@ -861,6 +866,71 @@ public class ExceptionMiddlewareTests
 
         Assert.Null(configManager.GetRepairDisabledReason());
         Assert.True(configManager.IsRepairJobEnabled());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ProviderAvailabilityFailures_DoNotRecordStreamingFailure(bool loginFailure)
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw (loginFailure
+                ? new CouldNotLoginToUsenetException("Authentication rejected.")
+                : new CouldNotConnectToUsenetException("Provider unavailable.")),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ClientOrBackendStalls_DoNotRecordStreamingFailure(bool backendReadTimeout)
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw (backendReadTimeout
+                ? new StreamingReadTimeoutException("Backend read timed out.")
+                : new StreamingWriteTimeoutException("Client stopped reading.")),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(backendReadTimeout ? StatusCodes.Status503ServiceUnavailable : 499, context.Response.StatusCode);
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+    }
+
+    [Fact]
+    public async Task TruncatedCiphertext_RecordsStreamingFailure()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new RetryableDownloadException(
+                "Encrypted stream ended early.",
+                new EndOfStreamException(
+                    NzbWebDAV.Streams.AesDecoderStream.TruncatedCiphertextMessagePrefix + " while reading payload.")),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+        Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
     }
 
     private static ExceptionMiddleware CreateMiddleware(

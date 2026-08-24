@@ -277,6 +277,59 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task BackgroundRepair_UrgentCallJoinsFlight_AndCanceledJoinerDoesNotCancelOwner()
+    {
+        var fileData = PatternBytes(SliceSize * 3, 0x78);
+        var sourceReadStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowSourceRead = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var release = await SeedAsync(
+            fileData,
+            EqualSegments(3),
+            recoveryExponents: [0u],
+            corruptOnRead: [0],
+            sourceReadStarted: sourceReadStarted,
+            allowSourceRead: allowSourceRead.Task);
+
+        await release.Service.StartAsync(CancellationToken.None);
+        try
+        {
+            await release.Service.EnqueueAsync(
+                release.Item,
+                [release.ContentSegmentIds[0]],
+                CancellationToken.None);
+            await sourceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            using var canceledJoinerCts = new CancellationTokenSource();
+            var canceledJoiner = release.Service.TryPar2RepairAsync(
+                release.Item,
+                [release.ContentSegmentIds[0]],
+                canceledJoinerCts.Token);
+            canceledJoinerCts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledJoiner);
+
+            var successfulJoiner = release.Service.TryPar2RepairAsync(
+                release.Item,
+                [release.ContentSegmentIds[0]],
+                CancellationToken.None);
+            Assert.False(successfulJoiner.IsCompleted);
+
+            allowSourceRead.TrySetResult(true);
+            Assert.True(await successfulJoiner.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.True(release.Store.Contains(release.ContentSegmentIds[0]));
+            Assert.Equal(1, release.Service.GetDiagnosticSnapshot().TotalSucceeded);
+
+            var job = await ReadJobAsync(release.Item.Id);
+            Assert.Equal(1, job.Attempts);
+            Assert.Equal(Par2RepairJob.RepairJobState.Succeeded, job.State);
+        }
+        finally
+        {
+            using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await release.Service.StopAsync(stopCts.Token);
+        }
+    }
+
+    [Fact]
     public async Task InsufficientRecoverySlices_IsInfeasibleAndCommitsNothing()
     {
         var fileData = PatternBytes(SliceSize * 3, 0x88);
@@ -360,7 +413,9 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         CancellationTokenSource? cancel = null,
         byte[]? fileHashOverride = null,
         IReadOnlyList<(string FileName, byte[] Data, int[] Sizes)>? extraFiles = null,
-        string? maxMissingSlices = null)
+        string? maxMissingSlices = null,
+        TaskCompletionSource<bool>? sourceReadStarted = null,
+        Task? allowSourceRead = null)
     {
         _config.UpdateValues(
         [
@@ -430,6 +485,10 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
                     return new CancelOnReadStream(cancel ?? throw new InvalidOperationException("cancel CTS required"));
                 if (corruptIds.Contains(id))
                     return new ThrowingReadStream(id);
+                if (sourceReadStarted is not null
+                    && allowSourceRead is not null
+                    && contentIds.Contains(id, StringComparer.Ordinal))
+                    return new GateOnFirstReadStream(bytes, sourceReadStarted, allowSourceRead);
                 return new MemoryStream(bytes, writable: false);
             });
 
@@ -611,6 +670,27 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         {
             cts.Cancel();
             return ValueTask.FromException<int>(new OperationCanceledException(cts.Token));
+        }
+    }
+
+    private sealed class GateOnFirstReadStream(
+        byte[] buffer,
+        TaskCompletionSource<bool> started,
+        Task release) : MemoryStream(buffer, writable: false)
+    {
+        private int _hasWaited;
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Exchange(ref _hasWaited, 1) == 0)
+            {
+                started.TrySetResult(true);
+                await release.WaitAsync(cancellationToken);
+            }
+
+            return await base.ReadAsync(buffer, cancellationToken);
         }
     }
 }

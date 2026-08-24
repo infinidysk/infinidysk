@@ -115,7 +115,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             if (context.Items["DavItem"] is DavItem davItem)
             {
                 RecordMissingArticleForFailFast(davItem, notFound.SegmentId);
-                ScheduleRepair(davItem);
+                ScheduleRepair(davItem, notFound.SegmentId);
             }
 
             AbortStartedResponse(context);
@@ -154,7 +154,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             if (context.Items["DavItem"] is DavItem davItem)
             {
                 RecordMissingArticleForFailFast(davItem, corrupt.SegmentId);
-                ScheduleRepair(davItem);
+                ScheduleRepair(davItem, corrupt.SegmentId);
             }
 
             AbortStartedResponse(context);
@@ -564,7 +564,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             context.Abort();
     }
 
-    private void ScheduleRepair(DavItem davItem)
+    private void ScheduleRepair(DavItem davItem, string? segmentId = null)
     {
         var davItemId = davItem.Id;
         var repairDisabledReason = configManager.GetRepairDisabledReason();
@@ -577,7 +577,9 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         // Count every distinct streaming failure before applying either threshold or deduplication.
         // Repeated failures must still advance the repair threshold while duplicate DB scheduling
         // writes remain suppressed below.
-        var failureCount = failureTracker.RecordFailure(davItemId);
+        var failureCount = segmentId == null
+            ? failureTracker.RecordUnattributedFailure(davItemId).Count
+            : failureTracker.RecordAttributedFailure(davItemId, segmentId).Count;
         var threshold = configManager.GetAutoRemoveAfterFailures();
         if (!ShouldScheduleUrgentRepair(threshold, failureCount))
         {

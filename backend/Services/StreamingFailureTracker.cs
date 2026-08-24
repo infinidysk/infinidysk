@@ -15,23 +15,71 @@ namespace NzbWebDAV.Services;
 /// </summary>
 public class StreamingFailureTracker
 {
-    private readonly ConcurrentDictionary<Guid, int> _failureCounts = new();
+    private const int MaximumAttributedSegmentIds = 64;
+    private readonly ConcurrentDictionary<Guid, StreamingFailureSnapshot> _failures = new();
 
-    /// <summary>Increments and returns the new failure count for the item.</summary>
+    /// <summary>Records a definitive article failure and returns the new immutable snapshot.</summary>
+    public StreamingFailureSnapshot RecordAttributedFailure(Guid davItemId, string segmentId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(segmentId);
+        return _failures.AddOrUpdate(
+            davItemId,
+            _ => new StreamingFailureSnapshot(1, false, [segmentId]),
+            (_, previous) => previous.WithAttributedFailure(segmentId, MaximumAttributedSegmentIds));
+    }
+
+    /// <summary>Records a structural failure whose responsible segment cannot be proven.</summary>
+    public StreamingFailureSnapshot RecordUnattributedFailure(Guid davItemId)
+    {
+        return _failures.AddOrUpdate(
+            davItemId,
+            _ => new StreamingFailureSnapshot(1, true, []),
+            (_, previous) => previous.WithUnattributedFailure());
+    }
+
+    /// <summary>Increments a structural failure for compatibility with existing callers.</summary>
     public int RecordFailure(Guid davItemId)
     {
-        return _failureCounts.AddOrUpdate(davItemId, 1, (_, count) => count + 1);
+        return RecordUnattributedFailure(davItemId).Count;
     }
 
     /// <summary>Returns the current failure count for the item (0 if never recorded).</summary>
     public int GetFailureCount(Guid davItemId)
     {
-        return _failureCounts.GetValueOrDefault(davItemId);
+        return GetSnapshot(davItemId).Count;
+    }
+
+    public StreamingFailureSnapshot GetSnapshot(Guid davItemId)
+    {
+        return _failures.TryGetValue(davItemId, out var snapshot)
+            ? snapshot
+            : StreamingFailureSnapshot.Empty;
     }
 
     /// <summary>Clears the counter after a successful full read, health check, repair, or deletion.</summary>
     public void ClearFailure(Guid davItemId)
     {
-        _failureCounts.TryRemove(davItemId, out _);
+        _failures.TryRemove(davItemId, out _);
     }
+}
+
+public readonly record struct StreamingFailureSnapshot(
+    int Count,
+    bool HasUnattributedFailure,
+    string[] SegmentIds)
+{
+    public static readonly StreamingFailureSnapshot Empty = new(0, false, []);
+
+    public bool HasTargetableSegmentIds => Count > 0 && !HasUnattributedFailure && SegmentIds.Length > 0;
+
+    internal StreamingFailureSnapshot WithAttributedFailure(string segmentId, int maximumSegmentIds)
+    {
+        if (SegmentIds.Contains(segmentId, StringComparer.Ordinal) || SegmentIds.Length >= maximumSegmentIds)
+            return this with { Count = Count + 1 };
+
+        return this with { Count = Count + 1, SegmentIds = [.. SegmentIds, segmentId] };
+    }
+
+    internal StreamingFailureSnapshot WithUnattributedFailure() =>
+        this with { Count = Count + 1, HasUnattributedFailure = true };
 }
