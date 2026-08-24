@@ -186,6 +186,41 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RequeueRetained_DropsRetainedIdsWhenItemIsCoolingDown()
+    {
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddFileAsync(segments);
+        var service = new Par2RepairService(_config, null!, new RepairPatchStore(Path.Join(_configRoot, "patches-cooldown"), 1024 * 1024));
+
+        await service.EnqueueAsync(item, [segments[0]], CancellationToken.None);
+        await service.EnqueueAsync(item, [segments[1]], CancellationToken.None);
+        Assert.NotEmpty(service.PeekRetainedSegmentIdsForTests(item.Id));
+
+        service.ReleaseQueuedOrRunningForTests(item.Id);
+        await using (var context = new DavDatabaseContext())
+        {
+            context.Par2RepairJobs.Add(new Par2RepairJob
+            {
+                Id = Guid.NewGuid(),
+                DavItemId = item.Id,
+                Path = item.Path,
+                State = Par2RepairJob.RepairJobState.Failed,
+                CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                CompletedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                Attempts = 1,
+                NextAttemptAt = DateTimeOffset.UtcNow.AddHours(1),
+            });
+            await context.SaveChangesAsync();
+        }
+
+        await service.RequeueRetainedForTestsAsync(item.Id, CancellationToken.None);
+
+        // The cooldown blocks the requeue and no flight remains to drain the entry;
+        // the persisted blob indices stay the durable record for a future repair.
+        Assert.Empty(service.PeekRetainedSegmentIdsForTests(item.Id));
+    }
+
+    [Fact]
     public async Task HealthReplaceMutation_PreservesCorruptRecord()
     {
         var segments = NewSegmentIds(3);

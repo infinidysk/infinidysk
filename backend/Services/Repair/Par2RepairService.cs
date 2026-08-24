@@ -1783,11 +1783,8 @@ public class Par2RepairService : BackgroundService
         var retained = _retainedSegmentIds.GetOrAdd(
             davItemId,
             _ => new RetainedRepair { Path = path });
-        foreach (var id in segmentIds)
-        {
-            if (!string.IsNullOrEmpty(id))
-                retained.Ids.TryAdd(id, 0);
-        }
+        foreach (var id in segmentIds.Where(id => !string.IsNullOrEmpty(id)))
+            retained.Ids.TryAdd(id, 0);
     }
 
     private string[] DrainRetainedSegmentIds(Guid davItemId)
@@ -1813,6 +1810,13 @@ public class Par2RepairService : BackgroundService
         }
 
         await EnqueueAsync(davItem, [], ct).ConfigureAwait(false);
+
+        // A blocked requeue (failure cooldown, full queue, repair disabled) leaves no
+        // flight that could drain the retained entry, so it would sit for the process
+        // lifetime. Drop it: the blob's persisted MissingSegmentIndices remain the
+        // durable record and are unioned into any future repair job for the item.
+        if (!_queuedOrRunning.ContainsKey(davItemId))
+            _retainedSegmentIds.TryRemove(davItemId, out _);
     }
 
     private List<(string Id, bool IsCorruption)> DrainPendingSegmentReports(string path)
@@ -1837,12 +1841,15 @@ public class Par2RepairService : BackgroundService
         if (!_pendingZeroFillPaths.TryAdd(path, 0))
             return;
 
+        // Dequeue the head rather than peeking it: ProcessZeroFillEventAsync drains
+        // the queue and then appends the event payload, so a peeked head would be
+        // reported twice.
         var segmentId = "";
         var isCorruption = false;
-        if (queue.TryPeek(out var peek))
+        if (queue.TryDequeue(out var head))
         {
-            segmentId = peek.Id;
-            isCorruption = peek.IsCorruption;
+            segmentId = head.Id;
+            isCorruption = head.IsCorruption;
         }
 
         if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId, isCorruption)))
