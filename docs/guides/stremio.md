@@ -44,6 +44,14 @@ Then in **Addons → Marketplace → Usenet → Newznab**, add each indexer (URL
 
 **Save & Install** in AIOStreams, then install the addon in Stremio.
 
+## Repairs without *Arr [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since }
+
+Enable **Background Repairs** to run health checks, reconstruct recoverable gaps from PAR2 parity,
+and retain playable files with limited damage. A Library Directory and *Arr are only necessary to
+replace linked library items. To auto-remove a broken unlinked item after repeated playback failures,
+set **Repair After Streaming Failures** above `0`; the default (`0`) keeps the item and marks it
+**Action needed**.
+
 ## Security and reachability
 
 - The profile token in the Path A manifest URL is a capability credential. Do not paste it into public chats or commit it.

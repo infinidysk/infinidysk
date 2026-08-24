@@ -1,9 +1,29 @@
+using NzbWebDAV.Config;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Tests.Utils;
 
 public class OrganizedLinksUtilTests
 {
+    [Fact]
+    public void GetLink_WithoutLibraryDirectory_ReturnsNullWithoutScanning()
+    {
+        var configManager = new ConfigManager();
+        var id = Guid.NewGuid();
+        var item = new DavItem
+        {
+            Id = id,
+            IdPrefix = id.ToString("N")[..DavItem.IdPrefixLength],
+            CreatedAt = DateTime.UtcNow,
+            Name = "movie.mkv",
+            Path = "/content/movie.mkv",
+        };
+
+        Assert.Null(OrganizedLinksUtil.GetLink(item, configManager));
+        Assert.Empty(OrganizedLinksUtil.GetLibraryDavItemLinks(configManager));
+    }
+
     [Fact]
     public void GetDavItemLink_Symlink_SkipsNonGuidTarget()
     {

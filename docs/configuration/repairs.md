@@ -1,17 +1,17 @@
 # Repairs
 
-Background health monitoring and replacement of unhealthy library items.
+Background health monitoring, PAR2 reconstruction, and replacement of unhealthy library items.
 
 !!! tip "Headless ENV"
 
     Map config keys below to `NZBDAV_CONFIG__...` with the
     [naming algorithm](headless.md#naming-algorithm)
-    (`repair.enable` → `NZBDAV_CONFIG__REPAIR__ENABLE`). Enabling repairs via ENV
-    also needs `media.library-dir` and configured [*Arr instances](arrs.md).
+    (`repair.enable` → `NZBDAV_CONFIG__REPAIR__ENABLE`). A Library Directory and configured
+    [*Arr instances](arrs.md) are optional; they are only needed to replace linked library items.
 
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
-| Enable Background Repairs | `repair.enable` | off | Needs library dir + *Arr |
+| Enable Background Repairs [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since } | `repair.enable` | off | Enables health checks, PAR2, and damage tolerance; Library Directory + *Arr are only needed for linked-item replacement |
 | Health Check Concurrency [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `repair.healthcheck-concurrency` | `50` | Worker ceiling for concurrent STAT checks; capped by the provider pool. Actual contention with playback is governed by provider-pool admission and **Streaming Priority** |
 | Health Check Depth | `repair.healthcheck-depth` | `standard` | standard / enhanced / deep / complete |
 | Check older releases less thoroughly [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `repair.healthcheck-aging` | off | Aging taper |
@@ -33,10 +33,9 @@ enabled; urgent repairs already queued from streaming failures keep their priori
 !!! note "Streaming failure repair requires Background Repairs"
 
     **Repair After Streaming Failures** (`repair.auto-remove-after-failures`) only takes effect when
-    **Enable Background Repairs** (`repair.enable`) is on, which itself requires **Library Directory**
-    and at least one configured *Arr instance. If a streaming failure is detected but repairs are not
-    fully enabled, InfiniDysk logs a warning naming the missing prerequisite instead of scheduling
-    urgent repair.
+    **Enable Background Repairs** (`repair.enable`) is on. A Library Directory and *Arr are only
+    needed to replace linked library items. Without them, PAR2 can still reconstruct the file and
+    threshold-based removal can delete unlinked items.
 
 `repair.auto-remove-after-failures` applies only to streaming-triggered failures such as missing
 articles, corrupt archives, and seeks that find missing or truncated article data. With a value
@@ -44,7 +43,9 @@ greater than `0`, InfiniDysk waits for that many consecutive failures before it 
 repair. At the threshold, linked library items are removed and their original downloads are marked
 failed in *Arr when **Auto-remove unlinked files only** is enabled. *Arr blocklists those releases
 and applies its configured failed-download redownload policy. Unlinked files are removed. Disable
-that option to force-delete linked items at the threshold.
+that option to force-delete linked items at the threshold. With the default value `0`, failed
+unlinked files are kept and surfaced as **Action needed**; set a value greater than `0` to
+auto-remove them after repeated failures.
 
 Successful full-file playback and a successful background health check reset the in-memory failure
 count. The count resets when InfiniDysk restarts, so it is intentionally not a durable replacement for
@@ -68,7 +69,8 @@ enabled, releases old enough to be sampled are not classified.
   over a gap fill, and the next full health sweep detects a provider-side recovery.
 - **Failed** — over any cap, any hole in an unsafe layout, or an unrecognized container.
   These take the normal repair path (PAR2 reconstruction first when enabled, then Arr
-  remove-and-replace), exactly as before.
+  remove-and-replace when a linked library item has an enabled Arr instance). Without an Arr
+  replacement path, the file remains mounted as **Action needed**.
 
 Eligible containers: `.mkv`, `.mk3d`, `.webm`, `.ts`, `.m2ts` (resync at cluster/packet
 boundaries) and `.mp4`/`.m4v`/`.mov`, whose layout is probed once from a bounded read of the
@@ -110,8 +112,8 @@ silent garbage. InfiniDysk now detects that on the playback path:
 4. **Classify** — full-coverage health sweeps union remaining recorded corruption with
    STAT holes, so a present-but-corrupt file is no longer reported Healthy.
 5. **Escalate** — when playback actually breaks, the same streaming-failure path used for
-   missing articles runs: PAR2-first when enabled, then *Arr remove-and-blocklist, with
-   re-grab protection.
+   missing articles runs: PAR2-first when enabled, then *Arr remove-and-blocklist for linked
+   library items with an enabled Arr instance.
 
 Disable **Track corrupt articles during playback** if you need the previous retry-only
 behavior. Playback-breaking corruption still schedules repair whenever Background Repairs

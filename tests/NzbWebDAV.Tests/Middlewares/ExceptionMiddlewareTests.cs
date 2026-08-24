@@ -838,29 +838,27 @@ public class ExceptionMiddlewareTests
         Assert.Equal(expected, ExceptionMiddleware.ShouldScheduleUrgentRepair(threshold, failureCount));
     }
 
-    [Theory]
-    [InlineData(false, true, 1, "Enable Background Repairs is off")]
-    [InlineData(true, false, 1, "Library Directory is not set")]
-    [InlineData(true, true, 0, "no Radarr/Sonarr instances are configured")]
-    public void GetRepairDisabledReason_NamesMissingPrerequisite(
-        bool isRepairEnabled,
-        bool hasLibraryDir,
-        int arrInstanceCount,
-        string expected)
+    [Fact]
+    public void GetRepairDisabledReason_NamesDisabledToggle()
     {
-        Assert.Equal(expected, ConfigManager.GetRepairDisabledReason(isRepairEnabled, hasLibraryDir, arrInstanceCount));
+        Assert.Equal("Enable Background Repairs is off", ConfigManager.GetRepairDisabledReason(false));
     }
 
     [Fact]
-    public void GetRepairDisabledReason_ReturnsNullWhenFullyEnabled()
+    public void GetRepairDisabledReason_ReturnsNullWhenEnabled()
     {
-        Assert.Null(ConfigManager.GetRepairDisabledReason(true, true, 1));
+        Assert.Null(ConfigManager.GetRepairDisabledReason(true));
     }
 
     [Fact]
-    public void GetRepairDisabledReason_InstanceReflectsConfiguredPrerequisites()
+    public void GetRepairDisabledReason_InstanceAllowsNoLibraryOrArr()
     {
-        var configManager = CreateRepairEnabledConfig();
+        var configManager = new ConfigManager();
+        configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+        ]);
+
         Assert.Null(configManager.GetRepairDisabledReason());
         Assert.True(configManager.IsRepairJobEnabled());
     }

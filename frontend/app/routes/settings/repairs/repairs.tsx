@@ -22,17 +22,17 @@ function isNonNegativeInteger(value: string) {
 export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) {
   const libraryDirConfig = config["media.library-dir"];
   // `arr.instances` config value shape (backend contract)
-  const arrConfig = JSON.parse(config["arr.instances"]!) as {
-    RadarrInstances: unknown[];
-    SonarrInstances: unknown[];
+  const arrConfig = JSON.parse(config["arr.instances"] ?? "{}") as {
+    RadarrInstances?: { Enabled?: boolean }[];
+    SonarrInstances?: { Enabled?: boolean }[];
   };
-  const areArrInstancesConfigured =
-    arrConfig.RadarrInstances.length > 0 || arrConfig.SonarrInstances.length > 0;
-  const canEnableRepairs = !!libraryDirConfig && areArrInstancesConfigured;
-  const helpText = canEnableRepairs
-    ? "When enabled, usenet items will be continuously monitored for health. Unhealthy items will be removed. If an unhealthy item is part of your Radarr/Sonarr library, a new search will be triggered to find a replacement."
-    : "When enabled, usenet items will be continuously monitored for health. Unhealthy items will be removed and replaced. This setting can only be enabled once your Library-Directory and Radarr/Sonarr instances are configured.";
-  const isRepairEnabled = canEnableRepairs && config["repair.enable"] === "true";
+  const hasEnabledArrInstance = [
+    ...(arrConfig.RadarrInstances ?? []),
+    ...(arrConfig.SonarrInstances ?? []),
+  ].some((instance) => instance.Enabled !== false);
+  const helpText =
+    "Continuously monitor mounted media for health, reconstruct missing segments from PAR2 parity, and retain playable files with limited damage. Library Directory and enabled Radarr/Sonarr instances are only needed to replace linked library items.";
+  const isRepairEnabled = config["repair.enable"] === "true";
   const autoRemoveAfter = config["repair.auto-remove-after-failures"] ?? "0";
   const autoRemoveEnabled = isNonNegativeInteger(autoRemoveAfter) && Number(autoRemoveAfter) > 0;
 
@@ -47,7 +47,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
         <SettingsCard
           icon="build"
           title="Background repairs"
-          description="Connect repair monitoring to the organized media library."
+          description="Monitor mounted media and recover or classify missing segments."
           contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
         >
           <ManagedSetting configKey="repair.enable">
@@ -55,8 +55,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
               <Toggle
                 id="enable-repairs-checkbox"
                 className="cursor-pointer gap-2 p-0"
-                checked={canEnableRepairs && config["repair.enable"] === "true"}
-                disabled={!canEnableRepairs}
+                checked={isRepairEnabled}
                 onChange={(e) =>
                   setNewConfig({ ...config, "repair.enable": "" + e.target.checked })
                 }
@@ -64,6 +63,14 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
               />
             </Tooltip>
           </ManagedSetting>
+
+          {(!libraryDirConfig || !hasEnabledArrInstance) && (
+            <p className="text-[11px] leading-relaxed text-base-content/45 lg:col-span-2">
+              Health checks, PAR2 repair, degraded damage tolerance, and unlinked-file handling work
+              without a library. Configure a Library Directory and an enabled Radarr or Sonarr
+              instance to replace linked library items automatically.
+            </p>
+          )}
 
           <ManagedSetting configKey="media.library-dir">
             <div className="space-y-2">

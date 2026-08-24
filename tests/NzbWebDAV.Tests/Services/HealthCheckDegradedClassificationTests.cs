@@ -261,6 +261,53 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Par2Success_RunsWithoutEnabledArrWhenArrPreferenceIsOff()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2PreferredOverArr, ConfigValue = "false" },
+        ]);
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingHoles: [2]);
+        var fake = NewFakeClient(segments, missing: [2]);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: true);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.RepairAction.RepairedViaPar2, row.RepairStatus);
+        Assert.Equal([segments[2]], Assert.Single(par2.Requests));
+    }
+
+    [Fact]
+    public async Task LinkedFile_WithoutEnabledArr_IsLeftInPlace()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "false" },
+        ]);
+        var segments = NewSegmentIds(6);
+        var sizes = Enumerable.Repeat(10_000L, segments.Length).ToArray();
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, sizes);
+        var libraryPath = Path.Join(_configRoot, "library", "movie.strm");
+        await File.WriteAllTextAsync(
+            libraryPath,
+            $"http://localhost:3000/view/.ids/{item.Id}.mkv");
+        var fake = NewFakeClient(segments, missing: [0]);
+        var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Contains("No enabled Radarr/Sonarr instances are configured", row.Message);
+        Assert.Equal(1, _context.Items.AsNoTracking().Count(x => x.Id == item.Id));
+        Assert.True(File.Exists(libraryPath));
+    }
+
+    [Fact]
     public async Task PartialSample_UsesLegacyAbortOnFirstMissPath()
     {
         var segments = NewSegmentIds(HealthCheckService.SampleFloor + 1000);

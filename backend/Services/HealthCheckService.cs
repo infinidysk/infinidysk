@@ -549,8 +549,8 @@ public class HealthCheckService : BackgroundService
                 }
             }
 
-            // when usenet article is missing, try PAR2 repair before Arr remove/re-grab
-            if (_configManager.IsPar2RepairEnabled() && _configManager.IsPar2PreferredOverArr()
+            // When no Arr replacement is available, PAR2 remains the only automatic recovery path.
+            if (ShouldAttemptPar2Repair()
                 && await _par2RepairService.TryPar2RepairAsync(davItem, [e.SegmentId], ct).ConfigureAwait(false))
             {
                 var utcNow = DateTimeOffset.UtcNow;
@@ -632,7 +632,8 @@ public class HealthCheckService : BackgroundService
         var holeSegmentIds = holeIndices.Select(index => segments[index]).ToArray();
 
         // PAR2 first, with the full hole list: reconstruct from parity before any verdict.
-        if (_configManager.IsPar2RepairEnabled() && _configManager.IsPar2PreferredOverArr()
+        // It is also the only automatic recovery path when no Arr replacement is available.
+        if (ShouldAttemptPar2Repair()
             && await _par2RepairService.TryPar2RepairAsync(davItem, holeSegmentIds, ct).ConfigureAwait(false))
         {
             var utcNow = DateTimeOffset.UtcNow;
@@ -1629,7 +1630,7 @@ public class HealthCheckService : BackgroundService
             return;
         }
 
-        if (_configManager.IsPar2RepairEnabled() && _configManager.IsPar2PreferredOverArr()
+        if (ShouldAttemptPar2Repair()
             && await _par2RepairService.TryPar2RepairAsync(davItem, null, ct).ConfigureAwait(false))
         {
             var utcNow = DateTimeOffset.UtcNow;
@@ -1652,6 +1653,15 @@ public class HealthCheckService : BackgroundService
             ct,
             forceDelete: disposition == UrgentRepairDisposition.ForceDelete,
             streamingFailureCount: failureCount).ConfigureAwait(false);
+    }
+
+    private bool ShouldAttemptPar2Repair()
+    {
+        if (!_configManager.IsPar2RepairEnabled())
+            return false;
+
+        return _configManager.IsPar2PreferredOverArr()
+               || !_configManager.GetArrConfig().GetArrClients().Any();
     }
 
     private async Task Repair(
@@ -1689,6 +1699,7 @@ public class HealthCheckService : BackgroundService
             // A missing library link is not proof that the item is orphaned: a FUSE mount can
             // temporarily present a successfully empty or partial view. Only an explicit
             // force-delete policy may remove the item from this branch.
+            var libraryDir = _configManager.GetLibraryDir();
             var symlinkOrStrmPath = OrganizedLinksUtil.GetLink(davItem, _configManager);
             var linkDisposition = GetLibraryLinkRepairDisposition(symlinkOrStrmPath, forceDelete);
             if (linkDisposition != LibraryLinkRepairDisposition.RepairLinked)
@@ -1741,16 +1752,23 @@ public class HealthCheckService : BackgroundService
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
                 davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
-                await RecordHealthResult(
-                    dbClient, davItem,
-                    HealthCheckResult.HealthResult.Unhealthy,
-                    HealthCheckResult.RepairAction.ActionNeeded,
-                    string.Join(" ", [
+                var missingLinkMessage = libraryDir == null
+                    ? string.Join(" ", [
+                        "File failed health validation.",
+                        "No Library Directory is configured, so an Arr replacement cannot be determined.",
+                        "The webdav-file was left in place."
+                    ])
+                    : string.Join(" ", [
                         "File failed health validation.",
                         "Could not find a corresponding symlink or strm-file within Library Dir.",
                         "The library scan may be incomplete, so the webdav-file was left in place.",
                         "Use Remove Orphaned Files for deliberate unlinked-item cleanup."
-                    ]), ct).ConfigureAwait(false);
+                    ]);
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    missingLinkMessage, ct).ConfigureAwait(false);
                 return;
             }
 
@@ -1791,8 +1809,26 @@ public class HealthCheckService : BackgroundService
             // new filename), so replacement searches are additionally budgeted by the Arr
             // media identity, which stays stable across re-grabs of the same movie/episode.
             var arrConfig = _configManager.GetArrConfig();
+            var arrClients = arrConfig.GetArrClients().ToArray();
+            if (arrClients.Length == 0)
+            {
+                var utcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = utcNow;
+                davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    string.Join(" ", [
+                        "File failed health validation.",
+                        $"Corresponding {linkType} found within Library Dir.",
+                        "No enabled Radarr/Sonarr instances are configured, so replacement was skipped.",
+                        $"The webdav-file and {linkType} were left in place."
+                    ]), ct).ConfigureAwait(false);
+                return;
+            }
             var arrDecision = await DecideArrLinkedRepairAsync(
-                arrConfig.GetArrClients(),
+                arrClients,
                 linkedPath,
                 davItem.HistoryItemId ?? davItem.NzbBlobId,
                 ct,

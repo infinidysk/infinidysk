@@ -2,13 +2,13 @@
 
 ## Background repairs
 
-**Settings → Repairs** monitors library items and can trigger *Arr replacements when content is unhealthy.
+**Settings → Repairs** monitors mounted media, reconstructs missing segments from PAR2 parity, and
+can trigger *Arr replacements for unhealthy linked library items.
 
-Requires:
+Requires **Enable Background Repairs**. To automatically replace linked library items, also configure:
 
 - **Library Directory** visible inside the container — the organized library root (parent of Arr root folders), never the rclone mount or `/completed-symlinks`
 - At least one configured [Radarr/Sonarr instance](../configuration/arrs.md)
-- **Enable Background Repairs**
 
 Tune concurrency, health-check depth, aging [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }, and streaming-failure thresholds — [Repairs settings](../configuration/repairs.md).
 

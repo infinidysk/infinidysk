@@ -21,6 +21,9 @@ public static class OrganizedLinksUtil
     /// <returns>The path to a symlink or strm in the organized media library that points to the given target.</returns>
     public static string? GetLink(DavItem targetDavItem, ConfigManager configManager)
     {
+        if (configManager.GetLibraryDir() == null)
+            return null;
+
         return !TryGetLinkFromCache(targetDavItem, configManager, out var linkFromCache)
             ? SearchForLink(targetDavItem, configManager)
             : linkFromCache;
@@ -33,7 +36,10 @@ public static class OrganizedLinksUtil
     /// <returns>All DavItemLinks within the organized media library that point to nzbdav dav-items.</returns>
     public static IEnumerable<DavItemLink> GetLibraryDavItemLinks(ConfigManager configManager)
     {
-        var libraryRoot = configManager.GetLibraryDir()!;
+        var libraryRoot = configManager.GetLibraryDir();
+        if (libraryRoot == null)
+            return [];
+
         var allSymlinksAndStrms = SymlinkAndStrmUtil.GetAllSymlinksAndStrms(libraryRoot);
         return GetDavItemLinks(allSymlinksAndStrms, configManager);
     }
