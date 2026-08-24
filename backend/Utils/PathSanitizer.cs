@@ -51,22 +51,13 @@ public static class PathSanitizer
         if (string.IsNullOrEmpty(sanitized))
             return "untitled";
 
-        var extension = Path.GetExtension(sanitized);
         var stem = Path.GetFileNameWithoutExtension(sanitized);
         if (WindowsReservedNames.Contains(stem))
             sanitized = "_" + sanitized;
 
-        if (sanitized.Length > 240)
+        if (sanitized.Length > MaxComponentLength)
         {
-            if (extension.Length > 0 && extension.Length < 240)
-            {
-                var maxStem = 240 - extension.Length;
-                sanitized = sanitized[..maxStem].TrimEnd('.', ' ') + extension;
-            }
-            else
-            {
-                sanitized = sanitized[..240].TrimEnd('.', ' ');
-            }
+            sanitized = TruncateToMaxComponentLength(sanitized);
 
             if (string.IsNullOrEmpty(sanitized))
                 return "untitled";
@@ -77,6 +68,7 @@ public static class PathSanitizer
 
     /// <summary>
     /// Minimal sanitization when Windows-safe paths are disabled: only '/' and NUL.
+    /// Still length-capped so a sanitized name can never overflow DavItem.Name (255).
     /// </summary>
     private static string SanitizeMinimal(string name)
     {
@@ -90,7 +82,30 @@ public static class PathSanitizer
         }
 
         var sanitized = sb.ToString();
-        return string.IsNullOrEmpty(sanitized) ? "untitled" : sanitized;
+        return string.IsNullOrEmpty(sanitized) ? "untitled" : TruncateToMaxComponentLength(sanitized);
+    }
+
+    // DavItem.Name is HasMaxLength(255); 240 leaves headroom for " (xxxxx)" duplicate suffixes.
+    private const int MaxComponentLength = 240;
+
+    private static string TruncateToMaxComponentLength(string name)
+    {
+        if (name.Length <= MaxComponentLength)
+            return name;
+
+        var extension = Path.GetExtension(name);
+        string truncated;
+        if (extension.Length > 0 && extension.Length < MaxComponentLength)
+        {
+            var maxStem = MaxComponentLength - extension.Length;
+            truncated = name[..maxStem].TrimEnd('.', ' ') + extension;
+        }
+        else
+        {
+            truncated = name[..MaxComponentLength].TrimEnd('.', ' ');
+        }
+
+        return truncated;
     }
 
     public static string SanitizeComponentWithLog(string original)

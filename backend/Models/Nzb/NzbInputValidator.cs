@@ -63,8 +63,12 @@ public static class NzbInputValidator
                     }
 
                     var subject = reader.GetAttribute("subject") ?? string.Empty;
-                    if (subject.Length > limits.MaxNameLength)
-                        errors.Add("nzb", "An NZB file subject exceeds the maximum name length.");
+                    if (subject.Length > limits.MaxSubjectLength)
+                    {
+                        errors.Add(
+                            "nzb",
+                            $"An NZB file subject exceeds the maximum length ({limits.MaxSubjectLength}).");
+                    }
 
                     totalBytes = AddSegmentBytesOrThrow(
                         totalBytes,

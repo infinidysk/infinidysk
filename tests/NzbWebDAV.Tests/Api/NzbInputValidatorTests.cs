@@ -103,6 +103,36 @@ public class NzbInputValidatorTests
         Assert.DoesNotContain("aaaa", ex.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AcceptsSubjectBeyondFilenameLimit()
+    {
+        var subject = new string('a', 600);
+        var xml = $"<nzb><file subject=\"{subject}\"><segments>" +
+                  "<segment bytes=\"15\" number=\"1\">id@example</segment>" +
+                  "</segments></file></nzb>";
+        using var stream = Bytes(xml);
+
+        var bytes = NzbInputValidator.ValidateAndSumSegmentBytes(stream, NzbInputLimits.Default);
+
+        Assert.Equal(15, bytes);
+    }
+
+    [Fact]
+    public void RejectsSubjectPastLimitWithLimit()
+    {
+        var subject = new string('a', 1025);
+        var xml = $"<nzb><file subject=\"{subject}\"><segments>" +
+                  "<segment bytes=\"15\" number=\"1\">id@example</segment>" +
+                  "</segments></file></nzb>";
+        using var stream = Bytes(xml);
+
+        var ex = Assert.Throws<ApiValidationException>(
+            () => NzbInputValidator.ValidateAndSumSegmentBytes(stream, NzbInputLimits.Default));
+
+        Assert.Contains("subject", ex.Errors["nzb"][0], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("1024", ex.Errors["nzb"][0], StringComparison.Ordinal);
+    }
+
     private static string BuildNzb(int fileCount, int segmentsPerFile, long segmentBytes = 15)
     {
         var builder = new StringBuilder("<nzb>");

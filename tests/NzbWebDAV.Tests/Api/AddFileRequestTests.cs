@@ -45,6 +45,17 @@ public class AddFileRequestTests
         Assert.Contains("filename", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void ResolveFileName_RejectsFilenamePastMaxNameLength()
+    {
+        var longName = new string('a', 252) + ".nzb";
+
+        var ex = Assert.Throws<ApiValidationException>(() => AddFileRequest.ResolveFileName(longName, null));
+
+        Assert.True(ex.Errors.ContainsKey("nzbname"));
+        Assert.Contains("maximum name length", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("release.nzb", "release.nzb")]
     [InlineData("release", "release.nzb")]
