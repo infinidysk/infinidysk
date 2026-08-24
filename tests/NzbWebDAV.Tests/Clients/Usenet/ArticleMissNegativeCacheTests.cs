@@ -136,6 +136,24 @@ public class ArticleMissNegativeCacheTests
     }
 
     [Fact]
+    public void MaxEntries_ConcurrentMarksPastCap_DoesNotThrow()
+    {
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        var cache = new ArticleMissNegativeCache(config);
+
+        Parallel.For(0, 8_000, i =>
+        {
+            cache.MarkMissing(ArticleMissNegativeCache.BuildKey($"art-{i}", "p", null));
+        });
+
+        // One extra sequential mark so a skipped single-flight cleanup can finish trim.
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("art-final", "p", null));
+
+        Assert.True(cache.Entries <= 100);
+        Assert.True(cache.IsMissing(ArticleMissNegativeCache.BuildKey("art-final", "p", null)));
+    }
+
+    [Fact]
     public async Task PersistentCache_HydratesFreshMisses_AndPurgesExpiredRows()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

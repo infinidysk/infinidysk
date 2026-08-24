@@ -52,6 +52,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     private CancellationTokenSource? _persistenceLoopCts;
     private Task _persistenceLoop = Task.CompletedTask;
     private volatile bool _persistenceLoopStarted;
+    private int _cleanupRunning;
     private long _hits;
 
     private abstract record PersistenceWorkItem;
@@ -226,21 +227,52 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     {
         _missingAt[key] = at;
         var maxEntries = _configManager.GetArticleMissCacheMaxEntries();
-        if (_missingAt.Count > maxEntries) Cleanup(maxEntries);
+        if (_missingAt.Count <= maxEntries) return;
+        try
+        {
+            Cleanup(maxEntries);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // The in-memory mark already succeeded; eviction must never fail STAT/BODY.
+            Log.Debug(e, "Article-miss cache cleanup failed; in-memory mark was retained.");
+        }
     }
 
     private void Cleanup(int maxEntries)
     {
-        var cutoff = DateTimeOffset.UtcNow - _configManager.GetArticleMissCacheTtl();
-        foreach (var kv in _missingAt)
-            if (kv.Value < cutoff) _missingAt.TryRemove(kv.Key, out _);
+        // Single-flight: a STAT storm must not start N concurrent O(n log n) sorts.
+        // A skipped cleanup is retried on a later MarkMissing; temporary over-cap is fine.
+        if (Interlocked.CompareExchange(ref _cleanupRunning, 1, 0) != 0)
+            return;
 
-        var overflow = _missingAt.Count - maxEntries;
-        if (overflow <= 0) return;
-        // Still over the cap after expiring stale rows — evict the oldest marks
-        // (approximate LRU) so runaway cardinality can't grow unbounded.
-        foreach (var kv in _missingAt.OrderBy(kv => kv.Value).Take(overflow))
-            _missingAt.TryRemove(kv.Key, out _);
+        try
+        {
+            var cutoff = DateTimeOffset.UtcNow - _configManager.GetArticleMissCacheTtl();
+            // Weakly-consistent foreach — never LINQ OrderBy/ToArray on the live
+            // ConcurrentDictionary (those use Count-then-CopyTo and race under writes).
+            var snapshot = new List<KeyValuePair<string, DateTimeOffset>>(Math.Max(4, _missingAt.Count));
+            foreach (var kv in _missingAt)
+            {
+                if (kv.Key is null) continue;
+                if (kv.Value < cutoff)
+                    _missingAt.TryRemove(kv.Key, out _);
+                else
+                    snapshot.Add(kv);
+            }
+
+            var overflow = _missingAt.Count - maxEntries;
+            if (overflow <= 0) return;
+
+            snapshot.Sort(static (a, b) => a.Value.CompareTo(b.Value));
+            var toEvict = Math.Min(overflow, snapshot.Count);
+            for (var i = 0; i < toEvict; i++)
+                _missingAt.TryRemove(snapshot[i].Key, out _);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _cleanupRunning, 0);
+        }
     }
 
     private void EnqueueClear()
