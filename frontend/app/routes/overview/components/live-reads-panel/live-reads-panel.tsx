@@ -112,22 +112,25 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
                 <li key={r.id} className="list-row px-0">
                   <div className="list-col-grow min-w-0 gap-2">
                     <Tooltip content={r.path}>
-                      <div className="truncate text-sm font-medium text-base-content">
+                      <span className="block truncate text-sm font-medium text-base-content">
                         {r.fileName || lastSegment(r.path)}
-                      </div>
+                      </span>
                     </Tooltip>
                     <Tooltip content={clientIdentityTooltip(r.clientUserAgent, r.clientIp) ?? ""}>
-                      <div className="truncate text-xs text-base-content/50">
+                      <span className="block truncate text-xs text-base-content/50">
                         {clientLabelFromUserAgent(r.clientUserAgent)}
                         {r.clientIp ? (
                           <span className="font-mono text-base-content/40"> · {r.clientIp}</span>
                         ) : null}
-                      </div>
+                      </span>
                     </Tooltip>
                     <Tooltip content={`Copy session id: ${r.id}`}>
                       <button
                         type="button"
                         className="btn btn-link btn-xs h-auto min-h-0 px-0 font-mono"
+                        aria-label={`Copy session id: ${r.id}${
+                          copiedId === r.id ? " (copied)" : ""
+                        }`}
                         onClick={() => {
                           void copySessionId(r.id);
                         }}
@@ -142,7 +145,11 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
                         max={100}
                       />
                     ) : (
-                      <span className="loading loading-bars loading-sm text-success" />
+                      <span
+                        className="loading loading-bars loading-sm text-success"
+                        role="status"
+                        aria-label="Loading progress"
+                      />
                     )}
                     <div className="flex items-baseline justify-between font-mono text-xs tabular-nums">
                       <span className="font-medium text-base-content">

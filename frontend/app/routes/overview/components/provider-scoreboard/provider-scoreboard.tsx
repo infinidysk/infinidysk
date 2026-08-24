@@ -220,7 +220,12 @@ function buildProviderTooltip(p: ProviderRow, state: ProviderCircuitState) {
 function ShareBar({ share }: { share: number }) {
   return (
     <div className="flex items-center gap-2">
-      <progress className="progress progress-success w-20" value={share} max={100} />
+      <progress
+        className="progress progress-success w-20"
+        value={share}
+        max={100}
+        aria-label={`Article share: ${formatPercent(share, 0)}`}
+      />
       <span className="font-mono text-[11px] tabular-nums">{formatPercent(share, 0)}</span>
     </div>
   );

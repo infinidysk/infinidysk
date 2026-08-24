@@ -170,6 +170,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   // Window section: load on mount / window change, poll every 30s while visible.
   useEffect(() => {
     let cancelled = false;
+    windowLoadedRef.current = false;
     setWindowLoaded(false);
     setWindowError(false);
     if (isLongWindow) {
@@ -220,6 +221,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   useEffect(() => {
     if (!loaderData.hasConfiguredArrs) return;
     let cancelled = false;
+    arrHealthLoadedRef.current = false;
     setArrHealthLoaded(false);
     setArrHealthError(false);
 

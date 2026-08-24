@@ -81,7 +81,12 @@ export function IndexerScoreboard({ indexers }: IndexerScoreboardProps) {
 function SuccessBar({ rate }: { rate: number }) {
   return (
     <div className="flex items-center gap-2">
-      <progress className="progress progress-success w-20" value={rate * 100} max={100} />
+      <progress
+        className="progress progress-success w-20"
+        value={rate * 100}
+        max={100}
+        aria-label={`Success rate: ${formatPercent(rate * 100, 0)}`}
+      />
       <span className="font-mono text-[11px] tabular-nums">{formatPercent(rate * 100, 0)}</span>
     </div>
   );

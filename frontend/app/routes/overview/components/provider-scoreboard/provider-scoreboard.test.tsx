@@ -33,6 +33,7 @@ describe("ProviderScoreboard", () => {
     expect(active).toContain(">MB/s<");
     expect(active).toContain(">12.3<");
     expect(active).toContain("not wall-clock aggregate bandwidth");
+    expect(active).toContain('aria-label="Article share: 100%"');
     expect(idle).toContain(">—<");
   });
 });
