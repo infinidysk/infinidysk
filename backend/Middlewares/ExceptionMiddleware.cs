@@ -577,7 +577,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         // Count every distinct streaming failure before applying either threshold or deduplication.
         // Repeated failures must still advance the repair threshold while duplicate DB scheduling
         // writes remain suppressed below.
-        var failureCount = segmentId == null
+        var failureCount = string.IsNullOrEmpty(segmentId)
             ? failureTracker.RecordUnattributedFailure(davItemId).Count
             : failureTracker.RecordAttributedFailure(davItemId, segmentId).Count;
         var threshold = configManager.GetAutoRemoveAfterFailures();

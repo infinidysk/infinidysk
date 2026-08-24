@@ -162,7 +162,16 @@ public class Par2RepairService : BackgroundService
             return await RunFlightAsync(flight, davItem, missingSegmentIds, queueGuard: false, ct)
                 .ConfigureAwait(false);
 
-        return await flight.Task.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await flight.Task.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // The repair owner stopped; callers should follow their normal safe fallback
+            // rather than surfacing a cancellation that they did not request.
+            return false;
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -229,30 +238,40 @@ public class Par2RepairService : BackgroundService
 
     private async Task ProcessRepairQueueAsync(CancellationToken stoppingToken)
     {
-        await foreach (var item in _queue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
+        try
         {
-            try
+            await foreach (var item in _queue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
             {
-                await ProcessQueueItemAsync(item, stoppingToken).ConfigureAwait(false);
+                try
+                {
+                    await ProcessQueueItemAsync(item, stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    CancelFlight(item.DavItemId, item.Flight, stoppingToken);
+                    throw;
+                }
+                catch (Exception e) when (e is not OutOfMemoryException)
+                {
+                    _queuedOrRunning.TryRemove(item.DavItemId, out _);
+                    CompleteFlight(item.DavItemId, item.Flight, false);
+                    e.LogWarningKnownOrStack("PAR2 background repair worker failed for {Path}", item.Path);
+                }
+                catch (OutOfMemoryException oom)
+                {
+                    _queuedOrRunning.TryRemove(item.DavItemId, out _);
+                    CompleteFlight(item.DavItemId, item.Flight, false);
+                    OomDiagnostics.LogHeapStateOnOom(oom, "PAR2 background repair worker");
+                    Log.Warning("PAR2 background repair worker deferred after exhausting managed memory. Path: {Path}", item.Path);
+                }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        }
+        finally
+        {
+            while (_queue.Reader.TryRead(out var abandoned))
             {
-                item.Flight.Completion.TrySetCanceled(stoppingToken);
-                _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(item.DavItemId, item.Flight));
-                throw;
-            }
-            catch (Exception e) when (e is not OutOfMemoryException)
-            {
-                _queuedOrRunning.TryRemove(item.DavItemId, out _);
-                CompleteFlight(item.DavItemId, item.Flight, false);
-                e.LogWarningKnownOrStack("PAR2 background repair worker failed for {Path}", item.Path);
-            }
-            catch (OutOfMemoryException oom)
-            {
-                _queuedOrRunning.TryRemove(item.DavItemId, out _);
-                CompleteFlight(item.DavItemId, item.Flight, false);
-                OomDiagnostics.LogHeapStateOnOom(oom, "PAR2 background repair worker");
-                Log.Warning("PAR2 background repair worker deferred after exhausting managed memory. Path: {Path}", item.Path);
+                _queuedOrRunning.TryRemove(abandoned.DavItemId, out _);
+                CancelFlight(abandoned.DavItemId, abandoned.Flight, stoppingToken);
             }
         }
     }
@@ -430,6 +449,12 @@ public class Par2RepairService : BackgroundService
     private void CompleteFlight(Guid davItemId, RepairFlight flight, bool result)
     {
         flight.Completion.TrySetResult(result);
+        _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItemId, flight));
+    }
+
+    private void CancelFlight(Guid davItemId, RepairFlight flight, CancellationToken cancellationToken)
+    {
+        flight.Completion.TrySetCanceled(cancellationToken);
         _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItemId, flight));
     }
 

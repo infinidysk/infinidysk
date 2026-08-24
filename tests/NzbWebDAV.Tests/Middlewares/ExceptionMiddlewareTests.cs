@@ -634,6 +634,26 @@ public class ExceptionMiddlewareTests
     }
 
     [Fact]
+    public async Task MissingArticleWithEmptySegmentId_RecordsUnattributedFailure()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw new UsenetArticleNotFoundException(""),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        var snapshot = failureTracker.GetSnapshot(davItem.Id);
+        Assert.Equal(1, snapshot.Count);
+        Assert.True(snapshot.HasUnattributedFailure);
+        Assert.False(snapshot.HasTargetableSegmentIds);
+    }
+
+    [Fact]
     public async Task CorruptArticleWithDavItem_RecordsFailureAndSeedsFailFastCache()
     {
         var segmentId = $"<{Guid.NewGuid():N}@test>";

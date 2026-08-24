@@ -4,11 +4,13 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Repair;
+using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Tests.Services;
 
+[Collection(nameof(ConfigPathCollection))]
 public sealed class HealthCheckWorkerAdmissionTests
 {
     [Fact]

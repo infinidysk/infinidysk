@@ -1426,8 +1426,7 @@ public class UsenetClientDeterministicTests
         continueBody.SetResult();
 
         Assert.That(async () => await copyTask, Throws.InstanceOf<OperationCanceledException>());
-        Assert.ThrowsAsync<OperationCanceledException>(async () =>
-            await batch.Responses[1]);
+        Assert.That(async () => await batch.Responses[1], Throws.InstanceOf<OperationCanceledException>());
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.Cancelled));
         Assert.That(callbackCount, Is.EqualTo(1));
