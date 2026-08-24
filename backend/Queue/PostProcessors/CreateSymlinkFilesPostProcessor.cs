@@ -57,6 +57,8 @@ public class CreateSymlinkFilesPostProcessor(
         var fullPath = Path.GetFullPath(symlinkPath);
         if (!CreateStrmFilesPostProcessor.IsPathWithinRoot(fullPath, outputRoot))
             throw new IOException($"Generated symlink path '{symlinkPath}' escapes its configured output directory.");
+        if (CreateStrmFilesPostProcessor.HasSymlinkedAncestor(fullPath, outputRoot))
+            throw new IOException($"Generated symlink path '{symlinkPath}' is beneath a symbolic-link directory.");
 
         var directoryName = Path.GetDirectoryName(fullPath);
         if (directoryName is not null)
@@ -66,6 +68,9 @@ public class CreateSymlinkFilesPostProcessor(
 
         var target = DatabaseStoreSymlinkFile.GetTargetPath(davItem.Id, configManager.GetRcloneMountDir());
         await Task.Run(() => CreateOwnedSymlink(fullPath, target)).ConfigureAwait(false);
+        davItem.GeneratedSymlinkOutputRoot = outputRoot;
+        davItem.GeneratedSymlinkPath = fullPath;
+        davItem.GeneratedSymlinkTarget = target;
     }
 
     internal static string GetSymlinkFilePath(string outputDirectory, DavItem davItem)
@@ -75,21 +80,22 @@ public class CreateSymlinkFilesPostProcessor(
             CreateStrmFilesPostProcessor.GetPathRelativeToContentRoot(davItem.Path));
     }
 
-    internal static void DeleteSymlinkFile(ConfigManager configManager, DavItem davItem)
+    internal static void DeleteSymlinkFile(DavItem davItem)
     {
-        var outputDirectory = configManager.GetSymlinkOutputDirectory();
-        if (outputDirectory is null || !CreateStrmFilesPostProcessor.IsStrmCandidate(davItem))
+        if (!CreateStrmFilesPostProcessor.IsStrmCandidate(davItem)
+            || string.IsNullOrWhiteSpace(davItem.GeneratedSymlinkPath)
+            || string.IsNullOrWhiteSpace(davItem.GeneratedSymlinkTarget)
+            || string.IsNullOrWhiteSpace(davItem.GeneratedSymlinkOutputRoot))
             return;
 
-        var outputRoot = Path.GetFullPath(outputDirectory);
-        var symlinkPath = Path.GetFullPath(GetSymlinkFilePath(outputDirectory, davItem));
+        var outputRoot = Path.GetFullPath(davItem.GeneratedSymlinkOutputRoot);
+        var symlinkPath = Path.GetFullPath(davItem.GeneratedSymlinkPath);
         if (!CreateStrmFilesPostProcessor.IsPathWithinRoot(symlinkPath, outputRoot)
             || CreateStrmFilesPostProcessor.HasSymlinkedAncestor(symlinkPath, outputRoot))
             return;
 
-        var expectedTarget = DatabaseStoreSymlinkFile.GetTargetPath(davItem.Id, configManager.GetRcloneMountDir());
         var file = new FileInfo(symlinkPath);
-        if (!string.Equals(file.LinkTarget, expectedTarget, GetPathComparison()))
+        if (!string.Equals(file.LinkTarget, davItem.GeneratedSymlinkTarget, GetPathComparison()))
             return;
 
         File.Delete(symlinkPath);

@@ -92,6 +92,15 @@ namespace NzbWebDAV.Database.Migrations
                     b.Property<long?>("FileSize")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("GeneratedSymlinkOutputRoot")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedSymlinkPath")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneratedSymlinkTarget")
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid?>("HistoryItemId")
                         .HasColumnType("TEXT");
 

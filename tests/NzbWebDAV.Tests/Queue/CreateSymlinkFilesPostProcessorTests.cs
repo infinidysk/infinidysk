@@ -47,11 +47,16 @@ public sealed class CreateSymlinkFilesPostProcessorTests : IDisposable
         var processor = new CreateSymlinkFilesPostProcessor(_config, _dbClient, _historyItemId);
         await processor.CreateSymlinkFilesAsync();
         await processor.CreateSymlinkFilesAsync();
+        await _context.SaveChangesAsync();
 
         var path = CreateSymlinkFilesPostProcessor.GetSymlinkFilePath(_outputDirectory, item);
+        var persisted = await _context.Items.SingleAsync(x => x.Id == item.Id);
         Assert.Equal(
             DatabaseStoreSymlinkFile.GetTargetPath(item.Id, "/mnt/nzbdav"),
             new FileInfo(path).LinkTarget);
+        Assert.Equal(Path.GetFullPath(_outputDirectory), persisted.GeneratedSymlinkOutputRoot);
+        Assert.Equal(Path.GetFullPath(path), persisted.GeneratedSymlinkPath);
+        Assert.Equal(DatabaseStoreSymlinkFile.GetTargetPath(item.Id, "/mnt/nzbdav"), persisted.GeneratedSymlinkTarget);
     }
 
     [Fact]
@@ -62,7 +67,10 @@ public sealed class CreateSymlinkFilesPostProcessorTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.CreateSymbolicLink(path, "/tmp/foreign-target");
 
-        CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(_config, item);
+        item.GeneratedSymlinkOutputRoot = _outputDirectory;
+        item.GeneratedSymlinkPath = path;
+        item.GeneratedSymlinkTarget = DatabaseStoreSymlinkFile.GetTargetPath(item.Id, "/mnt/nzbdav");
+        CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(item);
 
         Assert.Equal("/tmp/foreign-target", new FileInfo(path).LinkTarget);
     }
@@ -77,8 +85,11 @@ public sealed class CreateSymlinkFilesPostProcessorTests : IDisposable
         File.CreateSymbolicLink(
             path,
             DatabaseStoreSymlinkFile.GetTargetPath(item.Id, "/mnt/nzbdav"));
+        item.GeneratedSymlinkOutputRoot = _outputDirectory;
+        item.GeneratedSymlinkPath = path;
+        item.GeneratedSymlinkTarget = DatabaseStoreSymlinkFile.GetTargetPath(item.Id, "/mnt/nzbdav");
 
-        CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(_config, item);
+        CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(item);
 
         Assert.Null(new FileInfo(path).LinkTarget);
         Assert.False(Directory.Exists(directory));

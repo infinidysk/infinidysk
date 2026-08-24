@@ -64,10 +64,13 @@ public class CreateStrmFilesPostProcessor(
         if (!IsStrmCandidate(davItem))
             return;
 
-        var strmFilePath = GetStrmFilePath(configManager, davItem);
+        var strmFilePath = Path.GetFullPath(GetStrmFilePath(configManager, davItem));
         var completedDownloadsRoot = Path.GetFullPath(configManager.GetStrmCompletedDownloadDir());
-        if (!IsPathWithinRoot(Path.GetFullPath(strmFilePath), completedDownloadsRoot))
+        if (!IsPathWithinRoot(strmFilePath, completedDownloadsRoot))
             throw new IOException($"Generated STRM path '{strmFilePath}' escapes its configured output directory.");
+        if (HasSymlinkedAncestor(strmFilePath, completedDownloadsRoot))
+            throw new IOException($"Generated STRM path '{strmFilePath}' is beneath a symbolic-link directory.");
+
         var directoryName = Path.GetDirectoryName(strmFilePath);
         if (directoryName != null)
             await Task.Run(() => Directory.CreateDirectory(directoryName), cancellationToken).ConfigureAwait(false);

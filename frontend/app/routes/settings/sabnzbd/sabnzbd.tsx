@@ -27,7 +27,8 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
   const primaryOutput = config["api.import-strategy"] === "strm" ? "strm" : "symlinks";
   const isSymlinkOutputEnabled =
     primaryOutput === "symlinks" || config["api.symlink-output-enabled"] === "true";
-  const isStrmOutputEnabled = primaryOutput === "strm" || config["api.strm-output-enabled"] === "true";
+  const isStrmOutputEnabled =
+    primaryOutput === "strm" || config["api.strm-output-enabled"] === "true";
 
   const refreshApiKey = useCallback(() => {
     setNewConfig({ ...config, "api.key": generateNewApiKey() });
@@ -175,8 +176,8 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
               className="text-[11px] leading-relaxed text-base-content/45"
               id="import-strategy-help"
             >
-              SAB can report one completed-downloads path. Radarr or Sonarr imports from this output;
-              any other enabled output is for a separate media-server library.
+              SAB can report one completed-downloads path. Radarr or Sonarr imports from this
+              output; any other enabled output is for a separate media-server library.
             </p>
           </div>
         </ManagedSetting>
@@ -214,7 +215,10 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                 <>
                   <ManagedSetting configKey="rclone.mount-dir">
                     <div className="space-y-2">
-                      <label className="block text-sm font-medium text-base-content" htmlFor="mount-dir-input">
+                      <label
+                        className="block text-sm font-medium text-base-content"
+                        htmlFor="mount-dir-input"
+                      >
                         Rclone Mount Directory
                       </label>
                       <Input
@@ -224,16 +228,25 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                         aria-describedby="mount-dir-help"
                         placeholder="/mnt/nzbdav"
                         value={config["rclone.mount-dir"]}
-                        onChange={(e) => setNewConfig({ ...config, "rclone.mount-dir": e.target.value })}
+                        onChange={(e) =>
+                          setNewConfig({ ...config, "rclone.mount-dir": e.target.value })
+                        }
                       />
-                      <p className="text-[11px] leading-relaxed text-base-content/45" id="mount-dir-help">
-                        The WebDAV mount containing <code>.ids</code>. Generated symlinks target this path.
+                      <p
+                        className="text-[11px] leading-relaxed text-base-content/45"
+                        id="mount-dir-help"
+                      >
+                        The WebDAV mount containing <code>.ids</code>. Generated symlinks target
+                        this path.
                       </p>
                     </div>
                   </ManagedSetting>
                   <ManagedSetting configKey="api.symlink-output-dir">
                     <div className="space-y-2">
-                      <label className="block text-sm font-medium text-base-content" htmlFor="symlink-output-dir-input">
+                      <label
+                        className="block text-sm font-medium text-base-content"
+                        htmlFor="symlink-output-dir-input"
+                      >
                         Symlink Output Directory
                       </label>
                       <Input
@@ -247,9 +260,12 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                           setNewConfig({ ...config, "api.symlink-output-dir": e.target.value })
                         }
                       />
-                      <p className="text-[11px] leading-relaxed text-base-content/45" id="symlink-output-dir-help">
-                        Optional. Leave blank to use the virtual <code>completed-symlinks</code> rclone tree.
-                        Set a directory to create real symlinks at queue completion.
+                      <p
+                        className="text-[11px] leading-relaxed text-base-content/45"
+                        id="symlink-output-dir-help"
+                      >
+                        Optional. Leave blank to use the virtual <code>completed-symlinks</code>{" "}
+                        rclone tree. Set a directory to create real symlinks at queue completion.
                       </p>
                     </div>
                   </ManagedSetting>
@@ -288,58 +304,64 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
               </div>
               {isStrmOutputEnabled && (
                 <div className="space-y-4">
-            <ManagedSetting configKey="api.completed-downloads-dir">
-              <div className="space-y-2">
-                <label
-                  className="block text-sm font-medium text-base-content"
-                  htmlFor="completed-downloads-dir-input"
-                >
-                  Completed Downloads Dir
-                </label>
-                <Input
-                  className="w-full"
-                  type="text"
-                  id="completed-downloads-dir-input"
-                  aria-describedby="completed-downloads-dir-help"
-                  placeholder="/data/completed-downloads"
-                  value={config["api.completed-downloads-dir"]}
-                  onChange={(e) =>
-                    setNewConfig({
-                      ...config,
-                      "api.completed-downloads-dir": e.target.value,
-                    })
-                  }
-                />
-                <p
-                  className="text-[11px] leading-relaxed text-base-content/45"
-                  id="completed-downloads-dir-help"
-                >
-                  Directory visible to Radarr or Sonarr where completed STRM files are written.
-                </p>
-              </div>
-            </ManagedSetting>
-            <ManagedSetting configKey="general.base-url">
-              <div className="space-y-2">
-                <label
-                  className="block text-sm font-medium text-base-content"
-                  htmlFor="base-url-input"
-                >
-                  Base URL
-                </label>
-                <Input
-                  className="w-full"
-                  type="text"
-                  id="base-url-input"
-                  aria-describedby="base-url-help"
-                  placeholder="http://localhost:3000"
-                  value={config["general.base-url"]}
-                  onChange={(e) => setNewConfig({ ...config, "general.base-url": e.target.value })}
-                />
-                <p className="text-[11px] leading-relaxed text-base-content/45" id="base-url-help">
-                  URL Emby or Jellyfin can reach. Generated STRM files point to this address.
-                </p>
-              </div>
-            </ManagedSetting>
+                  <ManagedSetting configKey="api.completed-downloads-dir">
+                    <div className="space-y-2">
+                      <label
+                        className="block text-sm font-medium text-base-content"
+                        htmlFor="completed-downloads-dir-input"
+                      >
+                        Completed Downloads Dir
+                      </label>
+                      <Input
+                        className="w-full"
+                        type="text"
+                        id="completed-downloads-dir-input"
+                        aria-describedby="completed-downloads-dir-help"
+                        placeholder="/data/completed-downloads"
+                        value={config["api.completed-downloads-dir"]}
+                        onChange={(e) =>
+                          setNewConfig({
+                            ...config,
+                            "api.completed-downloads-dir": e.target.value,
+                          })
+                        }
+                      />
+                      <p
+                        className="text-[11px] leading-relaxed text-base-content/45"
+                        id="completed-downloads-dir-help"
+                      >
+                        Directory visible to Radarr or Sonarr where completed STRM files are
+                        written.
+                      </p>
+                    </div>
+                  </ManagedSetting>
+                  <ManagedSetting configKey="general.base-url">
+                    <div className="space-y-2">
+                      <label
+                        className="block text-sm font-medium text-base-content"
+                        htmlFor="base-url-input"
+                      >
+                        Base URL
+                      </label>
+                      <Input
+                        className="w-full"
+                        type="text"
+                        id="base-url-input"
+                        aria-describedby="base-url-help"
+                        placeholder="http://localhost:3000"
+                        value={config["general.base-url"]}
+                        onChange={(e) =>
+                          setNewConfig({ ...config, "general.base-url": e.target.value })
+                        }
+                      />
+                      <p
+                        className="text-[11px] leading-relaxed text-base-content/45"
+                        id="base-url-help"
+                      >
+                        URL Emby or Jellyfin can reach. Generated STRM files point to this address.
+                      </p>
+                    </div>
+                  </ManagedSetting>
                 </div>
               )}
             </div>
@@ -784,6 +806,7 @@ function isValidStrmOutput(config: Record<string, string>): boolean {
     config["api.import-strategy"] === "strm" || config["api.strm-output-enabled"] === "true";
   return (
     !strmEnabled ||
-    (Boolean(config["api.completed-downloads-dir"]?.trim()) && Boolean(config["general.base-url"]?.trim()))
+    (Boolean(config["api.completed-downloads-dir"]?.trim()) &&
+      Boolean(config["general.base-url"]?.trim()))
   );
 }

@@ -9,7 +9,7 @@ Choose how Radarr/Sonarr import completed jobs. Set the primary output under
 
     1. Set **Rclone Mount Directory** to the host path of the WebDAV mount (e.g. `/mnt/remote/nzbdav`).
     2. Run an [rclone sidecar](mounting-webdav.md) with `--links` so `*.rclonelink` files become symlinks into `.ids`.
-    3. Point *Arr root folders at paths that see those symlinks.
+    3. Point \*Arr root folders at paths that see those symlinks.
 
     A bounded rclone VFS cache can smooth seeking without storing full media forever.
 
@@ -17,7 +17,7 @@ Choose how Radarr/Sonarr import completed jobs. Set the primary output under
 
     Best when the media server can play `.strm` URLs.
 
-    1. Set **Completed Downloads Dir** to a path shared with *Arr (e.g. `/mnt/completed-downloads`).
+    1. Set **Completed Downloads Dir** to a path shared with \*Arr (e.g. `/mnt/completed-downloads`).
     2. Set **Base URL** to an InfiniDysk URL the media server can reach (HTTPS recommended).
     3. Skip the rclone FUSE mount — no `/dev/fuse` required.
 
@@ -26,8 +26,8 @@ Choose how Radarr/Sonarr import completed jobs. Set the primary output under
 ## Dual outputs [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
 Enable both outputs when Plex needs filesystem symlinks while Emby or Jellyfin
-also needs STRM files. Choose one primary *Arr import output: InfiniDysk reports
-only that output through SAB `complete_dir` and history `storage`, so one *Arr
+also needs STRM files. Choose one primary \*Arr import output: InfiniDysk reports
+only that output through SAB `complete_dir` and history `storage`, so one \*Arr
 instance does not import the same release twice.
 
 - Leave **Symlink Output Directory** empty to retain the virtual
@@ -38,7 +38,7 @@ instance does not import the same release twice.
 - Generated symlinks point at `<rclone.mount-dir>/.ids/...`; the media server
   must see that rclone mount at the same absolute path.
 
-Do not make the same *Arr instance scan both output roots. Avoid placing a
+Do not make the same \*Arr instance scan both output roots. Avoid placing a
 custom symlink-output directory inside the managed Library Directory; repairs
 track one discovered link per media item and overlapping trees can leave a
 second link behind.

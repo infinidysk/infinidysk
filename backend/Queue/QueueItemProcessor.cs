@@ -521,27 +521,31 @@ public class QueueItemProcessor(
                         .ValidateAsync(ct)).ConfigureAwait(false);
             }
 
-            // Generate every enabled import output. A secondary destination must not
-            // prevent the primary SAB/*Arr handoff from completing.
-            if (configManager.IsStrmOutputEnabled())
-            {
-                await CreateOutputAsync(
-                        "STRM",
-                        configManager.GetImportStrategy() == "strm",
-                        () => new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
-                            .CreateStrmFilesAsync())
-                    .ConfigureAwait(false);
-            }
+            // Generate the primary output first. If it cannot be created, do not
+            // leave secondary output files referring to an uncommitted completion.
+            Func<Task>? createStrm = configManager.IsStrmOutputEnabled()
+                ? () => new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
+                    .CreateStrmFilesAsync()
+                : null;
+            Func<Task>? createSymlink = configManager.IsSymlinkOutputEnabled()
+                                        && configManager.GetSymlinkOutputDirectory() is not null
+                ? () => new CreateSymlinkFilesPostProcessor(configManager, dbClient, queueItem.Id)
+                    .CreateSymlinkFilesAsync()
+                : null;
 
-            if (configManager.IsSymlinkOutputEnabled()
-                && configManager.GetSymlinkOutputDirectory() is not null)
+            if (configManager.GetImportStrategy() == "strm")
             {
-                await CreateOutputAsync(
-                        "symlink",
-                        configManager.GetImportStrategy() == "symlinks",
-                        () => new CreateSymlinkFilesPostProcessor(configManager, dbClient, queueItem.Id)
-                            .CreateSymlinkFilesAsync())
-                    .ConfigureAwait(false);
+                if (createStrm is not null)
+                    await createStrm().ConfigureAwait(false);
+                if (createSymlink is not null)
+                    await CreateSecondaryOutputAsync("symlink", createSymlink).ConfigureAwait(false);
+            }
+            else
+            {
+                if (createSymlink is not null)
+                    await createSymlink().ConfigureAwait(false);
+                if (createStrm is not null)
+                    await CreateSecondaryOutputAsync("STRM", createStrm).ConfigureAwait(false);
             }
 
             await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
@@ -549,13 +553,13 @@ public class QueueItemProcessor(
 
             return mountFolder;
 
-            async Task CreateOutputAsync(string outputName, bool isPrimary, Func<Task> createOutput)
+            async Task CreateSecondaryOutputAsync(string outputName, Func<Task> createOutput)
             {
                 try
                 {
                     await createOutput().ConfigureAwait(false);
                 }
-                catch (Exception e) when (!isPrimary && e is not OutOfMemoryException)
+                catch (Exception e) when (e is not OutOfMemoryException)
                 {
                     Log.Warning(
                         "Could not create secondary {OutputName} import output for {JobName}. Reason: {Reason}",

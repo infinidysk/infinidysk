@@ -83,9 +83,7 @@ export function RecreateStrmFiles({ savedConfig }: RecreateStrmFilesProps) {
           <div>
             <p className="font-semibold">Configuration required</p>
             <ul className="mt-1 list-disc space-y-1 pl-4 text-xs opacity-80">
-              {!isStrmOutputEnabled && (
-                <li>Enable STRM output under the SABnzbd tab.</li>
-              )}
+              {!isStrmOutputEnabled && <li>Enable STRM output under the SABnzbd tab.</li>}
               {!completedDir && (
                 <li>Configure Completed Downloads Directory under the SABnzbd tab.</li>
               )}

@@ -2004,6 +2004,12 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiSymlinkOutputDir));
     }
 
+    public string GetSymlinkCompletedDownloadDir()
+    {
+        return GetSymlinkOutputDirectory()
+               ?? Path.Join(GetRcloneMountDir(), "completed-symlinks");
+    }
+
     private bool GetConfiguredOutputEnabled(string configKey)
     {
         var configured = StringUtil.EmptyToNull(GetConfigValue(configKey));

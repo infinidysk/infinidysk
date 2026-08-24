@@ -1,6 +1,6 @@
 # Connect Radarr / Sonarr
 
-InfiniDysk speaks the SABnzbd API surface *Arr apps expect. Hostnames below assume a shared Docker network.
+InfiniDysk speaks the SABnzbd API surface \*Arr apps expect. Hostnames below assume a shared Docker network.
 
 ## Add the download client
 
@@ -16,7 +16,7 @@ In Radarr or Sonarr → **Settings** → **Download Clients** → **Add** → **
 
 Test the connection. Prefer `addfile` when clients can upload NZB bytes; `addurl` to private indexers needs [Trusted local hosts](../configuration/sabnzbd.md) [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }.
 
-## Register *Arr in InfiniDysk
+## Register \*Arr in InfiniDysk
 
 **Settings → Radarr/Sonarr**:
 
@@ -28,16 +28,16 @@ Registered and enabled instances light up the Overview **Arr Health** widget [si
 
 ## Align import paths [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
-| Primary output | InfiniDysk setting | *Arr / media server |
+| Primary output | InfiniDysk setting | \*Arr / media server |
 |----------|----------------|---------------------|
-| Symlinks | Rclone mount dir e.g. `/mnt/remote/nzbdav` | Same path must exist inside *Arr |
+| Symlinks | Rclone mount dir e.g. `/mnt/remote/nzbdav` | Same path must exist inside \*Arr |
 | STRM | Completed dir e.g. `/mnt/completed-downloads` + Base URL | Media server must reach Base URL |
 
-When both outputs are enabled, choose exactly one as the primary *Arr import
-output. Keep the secondary media-server directory outside the *Arr completed
+When both outputs are enabled, choose exactly one as the primary \*Arr import
+output. Keep the secondary media-server directory outside the \*Arr completed
 downloads and root-folder paths so the release is imported once.
 
-Enable **Repairs** with a **Library Directory** once paths and *Arr instances exist — [Repairs](../configuration/repairs.md).
+Enable **Repairs** with a **Library Directory** once paths and \*Arr instances exist — [Repairs](../configuration/repairs.md).
 
 ## Next
 

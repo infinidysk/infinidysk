@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 
@@ -69,7 +68,7 @@ public sealed class HistoryItemAddedPayload
         if (importStrategy == "symlinks")
         {
             return Path.Join(
-                SabPathResolver.GetSymlinkCompletedDir(configManager),
+                configManager.GetSymlinkCompletedDownloadDir(),
                 historyItem.Category,
                 downloadFolder.Name);
         }
