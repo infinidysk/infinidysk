@@ -31,7 +31,9 @@ internal sealed class FinalMediaReadinessValidator(
 
         foreach (var item in items)
         {
-            var payload = dbClient.Ctx.NzbFiles.Local.FirstOrDefault(file => file.Id == item.Id);
+            var payload = item.FileBlobId is { } blobId
+                ? dbClient.Ctx.BlobNzbFiles.FirstOrDefault(file => file.Id == blobId)
+                : null;
             if (payload is null)
                 throw new NonRetryableDownloadException(
                     $"Import readiness check could not load media payload for {item.Name}.");
