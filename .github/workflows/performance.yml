@@ -140,7 +140,7 @@ jobs:
           if [ -f performance-out/compare.log ]; then
             DETAILS=$(tail -n 40 performance-out/compare.log)
           fi
-          ANNOUNCEMENT_BODY=$(printf '📉 **Performance envelopes failed** (`%s`)\nRun: %s\n\n%s' \
+          ANNOUNCEMENT_BODY=$(printf '📉 **Performance envelopes failed** (`%s`)\nThese timings are from GitHub-hosted runner hardware, which is shared, noisy, and not representative of real machines.\nRun: %s\n\n%s' \
             "${SHA:0:7}" "${RUN_URL}" "${DETAILS}")
           MAX_LEN=1900
           if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then
@@ -171,8 +171,10 @@ jobs:
       - name: Write baselines and open PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           python3 scripts/check-performance-baseline.py \
@@ -205,6 +207,8 @@ jobs:
               "## Summary",
               "",
               f"Nightly/manual performance re-baseline from [this run]({run_url}).",
+              "",
+              "These timings are from GitHub-hosted runner hardware, which is shared, noisy, and not representative of real machines. Treat them as regression envelopes, not streaming-speed claims.",
               "",
               "## Timing changes",
               "",
@@ -249,6 +253,21 @@ jobs:
           fi
           git commit -m "chore(ci): re-baseline performance envelopes"
           git push -u origin "HEAD:chore/performance-rebaseline-${RUN_ID}"
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "chore(ci): re-baseline performance envelopes" \
-            --body-file "${BODY_FILE}"
+            --body-file "${BODY_FILE}")
+
+          if [ -z "${DISCORD_DEVELOPMENT_WEBHOOK_URL:-}" ]; then
+            echo "Discord webhook not configured; skipping re-baseline notification."
+          else
+            ANNOUNCEMENT_BODY=$(printf '📊 **Performance envelopes re-baselined** (`%s`)\nThese timings are from GitHub-hosted runner hardware, which is shared, noisy, and not representative of real machines. Treat them as regression envelopes, not streaming-speed claims.\nPR: %s\nRun: %s' \
+              "${GITHUB_SHA:0:7}" "${PR_URL}" "${RUN_URL}")
+            MAX_LEN=1900
+            if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then
+              ANNOUNCEMENT_BODY="${ANNOUNCEMENT_BODY:0:$((MAX_LEN - 3))}..."
+            fi
+            ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
+            curl --fail-with-body -sS -H "Content-Type: application/json" \
+              -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
+              "$DISCORD_DEVELOPMENT_WEBHOOK_URL"
+          fi
