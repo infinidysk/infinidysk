@@ -233,18 +233,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             if (TryGetRemainingExactBytes(out remainingExact) && remainingExact > 0)
             {
                 var shortId = _segmentIds.Span[_openSegmentIndex];
-                var hole = new UsenetArticleNotFoundException(shortId);
-                ZeroFillLogLimiter.Write(
-                    "Segment {SegmentId} of {FileName} decoded {Bytes} bytes short of its recorded size. " +
-                    "Filling the gap to keep the rest of the file aligned.",
-                    shortId,
-                    _fileName,
-                    remainingExact);
-                if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
-                    StreamTrace.TryZeroFill(sessionId, shortId, remainingExact);
-
-                PlaybackHoleTracker.RecordHole(_fileName, shortId, hole);
-                Par2RepairTriggerSink.Current?.ReportZeroFill(
+                var hole = SegmentHoleReporter.ReportShortDecode(
                     _fileName, shortId, _openSegmentIndex, remainingExact);
                 _consecutiveZeroFills++;
                 _openSegmentHole = true;
@@ -645,6 +634,10 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             catch (UsenetArticleNotFoundException)
             {
                 await DisposeBodyStreamAsync(fallbackStream).ConfigureAwait(false);
+                // A playback fail-fast raised by FetchBodyAsync must escape instead of
+                // walking every fallback ID and recording an extra hole per attempt.
+                if (PlaybackHoleTracker.ShouldFailFast(_fileName, out var failFast) && failFast is not null)
+                    ExceptionDispatchInfo.Capture(failFast).Throw();
             }
             catch (UsenetCorruptArticleException)
             {
