@@ -146,11 +146,11 @@ public class ArticleMissNegativeCacheTests
             cache.MarkMissing(ArticleMissNegativeCache.BuildKey($"art-{i}", "p", null));
         });
 
-        // One extra sequential mark so a skipped single-flight cleanup can finish trim.
-        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("art-final", "p", null));
-
+        // Cleanup re-checks the live count after releasing the single-flight, so once
+        // the parallel marks join, the last cleaner has trimmed to the cap without
+        // needing a final sequential mark.
         Assert.True(cache.Entries <= 100);
-        Assert.True(cache.IsMissing(ArticleMissNegativeCache.BuildKey("art-final", "p", null)));
+        Assert.True(cache.Entries > 0);
     }
 
     [Fact]

@@ -44,6 +44,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 {
     private const int PersistenceQueueCapacity = 4096;
     private const int MaxPersistenceBatchSize = 256;
+    private const int MaxCleanupRounds = 8;
 
     private readonly ConfigManager _configManager;
     private readonly Func<DavDatabaseContext>? _contextFactory;
@@ -242,38 +243,57 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     private void Cleanup(int maxEntries)
     {
         // Single-flight: a STAT storm must not start N concurrent O(n log n) sorts.
-        // A skipped cleanup is retried on a later MarkMissing; temporary over-cap is fine.
-        if (Interlocked.CompareExchange(ref _cleanupRunning, 1, 0) != 0)
-            return;
-
-        try
+        // The flight is released between rounds and the count re-checked, so marks
+        // that skipped cleanup while another thread held the flight are handled by
+        // the next round instead of waiting for a future MarkMissing. The round cap
+        // bounds the work done under a sustained mark storm; temporary over-cap is
+        // fine and is trimmed by a later call.
+        for (var round = 0; round < MaxCleanupRounds; round++)
         {
-            var cutoff = DateTimeOffset.UtcNow - _configManager.GetArticleMissCacheTtl();
-            // Weakly-consistent foreach — never LINQ OrderBy/ToArray on the live
-            // ConcurrentDictionary (those use Count-then-CopyTo and race under writes).
-            var snapshot = new List<KeyValuePair<string, DateTimeOffset>>(Math.Max(4, _missingAt.Count));
-            foreach (var kv in _missingAt)
+            if (Interlocked.CompareExchange(ref _cleanupRunning, 1, 0) != 0)
+                return;
+
+            try
             {
-                if (kv.Key is null) continue;
-                if (kv.Value < cutoff)
-                    _missingAt.TryRemove(kv.Key, out _);
-                else
-                    snapshot.Add(kv);
+                CleanupRound(maxEntries);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _cleanupRunning, 0);
             }
 
-            var overflow = _missingAt.Count - maxEntries;
-            if (overflow <= 0) return;
-
-            snapshot.Sort(static (a, b) => a.Value.CompareTo(b.Value));
-            var toEvict = Math.Min(overflow, snapshot.Count);
-            for (var i = 0; i < toEvict; i++)
-                _missingAt.TryRemove(snapshot[i].Key, out _);
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _cleanupRunning, 0);
+            if (_missingAt.Count <= maxEntries) return;
         }
     }
+
+    private void CleanupRound(int maxEntries)
+    {
+        var cutoff = DateTimeOffset.UtcNow - _configManager.GetArticleMissCacheTtl();
+        // Weakly-consistent foreach — never LINQ OrderBy/ToArray on the live
+        // ConcurrentDictionary (those use Count-then-CopyTo and race under writes).
+        var snapshot = new List<KeyValuePair<string, DateTimeOffset>>(Math.Max(4, _missingAt.Count));
+        foreach (var kv in _missingAt)
+        {
+            if (kv.Key is null) continue;
+            if (kv.Value < cutoff)
+                RemoveIfUnchanged(kv);
+            else
+                snapshot.Add(kv);
+        }
+
+        var overflow = _missingAt.Count - maxEntries;
+        if (overflow <= 0) return;
+
+        snapshot.Sort(static (a, b) => a.Value.CompareTo(b.Value));
+        var toEvict = Math.Min(overflow, snapshot.Count);
+        for (var i = 0; i < toEvict; i++)
+            RemoveIfUnchanged(snapshot[i]);
+    }
+
+    // Removes only when the timestamp still matches the snapshot, so a concurrent
+    // re-mark with a fresher timestamp is never evicted by a stale cleanup round.
+    private void RemoveIfUnchanged(KeyValuePair<string, DateTimeOffset> entry) =>
+        ((ICollection<KeyValuePair<string, DateTimeOffset>>)_missingAt).Remove(entry);
 
     private void EnqueueClear()
     {
