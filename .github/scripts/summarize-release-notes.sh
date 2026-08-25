@@ -11,7 +11,7 @@
 #   OPENAI_API_KEY
 #
 # Optional env:
-#   OPENAI_MODEL          — default: gpt-5-mini
+#   OPENAI_MODEL          — default: gpt-5.6-luna
 #   OPENAI_API_BASE       — default: https://api.openai.com/v1
 
 set -euo pipefail
@@ -66,7 +66,7 @@ if [[ ${#NOTES} -gt $MAX_INPUT ]]; then
   NOTES+=$'\n… (truncated)'
 fi
 
-MODEL="${OPENAI_MODEL:-gpt-5-mini}"
+MODEL="${OPENAI_MODEL:-gpt-5.6-luna}"
 API_BASE="${OPENAI_API_BASE:-https://api.openai.com/v1}"
 
 SYSTEM_PROMPT=$(cat <<'EOF'
