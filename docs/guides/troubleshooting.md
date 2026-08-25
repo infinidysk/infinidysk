@@ -116,7 +116,7 @@ Allow Docker DNS or LAN hosts under **Trusted local hosts** — [SABnzbd API](..
 
 See [Deletion audit](../operations/deletion-audit.md) — history retention ≠ deleting mounts; orphan cleanup and *Arr actions can remove content. History rows disappearing after import are usually the Arr or a `/completed-symlinks` folder delete, not InfiniDysk deleting the file. If Remove Orphaned Files lists imported files, check that **Library Directory** is your organized library root, not the rclone mount.
 
-## Plex marks old episodes as newly added
+## Plex marks old episodes as newly added [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
 InfiniDysk does not change WebDAV `Last-Modified` after import, and it does not issue ETags. Plex keys library items by **file path**, so an old episode showing up as *newly added* means Plex deleted its library row and then re-created it on a later scan.
 

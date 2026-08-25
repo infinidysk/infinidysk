@@ -1,4 +1,4 @@
-# Plex “newly added” churn on /content mounts
+# Plex “newly added” churn on /content mounts [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
 When Plex marks an old episode as *newly added* and re-runs intro/credits detection, InfiniDysk almost never changed the file’s metadata in place. WebDAV `getlastmodified` is the immutable `DavItem.CreatedAt`; there is no ETag. Plex tracks items by **file path**, so “newly added” means the path vanished and came back — either the server deleted and recreated it, or Plex removed its own library row after a failed scan and re-added it on the next clean scan.
 
@@ -14,7 +14,7 @@ ls -l "/path/to/plex/library/Show Name/Season 01/episode.mkv"
 
 If the mtime is weeks or months old but Plex says *added today*, InfiniDysk did not recreate the file. The Plex library row was deleted and re-added because a scan saw the path as unavailable — skip to section 4 below.
 
-If the mtime is recent or the path changed (new release name, or a ` (2)` suffix), the server really did re-import the file. Check InfiniDysk history, health results, and Sonarr history for that episode.
+If the mtime is recent or the path changed (new release name, or a `(2)` suffix), the server really did re-import the file. Check InfiniDysk history, health results, and Sonarr history for that episode.
 
 ## 2. Is background repair enabled?
 
@@ -59,4 +59,4 @@ Even if you do not remember a grab, check Sonarr History for the affected series
 
 ---
 
-If these checks point to a transient listing failure, collect a [technical support pack](../configuration/support.md) while the problem is fresh and open an issue with the `webdav.counters` section and any `dav-delete` lines.
+If these checks point to a transient listing failure, collect a [technical support pack](../configuration/support.md) while the problem is fresh and open an issue with the `webdavCounters` section of `environment.json` and any `dav-delete` lines.
