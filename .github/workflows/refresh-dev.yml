@@ -93,9 +93,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
       - name: Post :dev refresh to Discord
         env:
           DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
           PREVIOUS_SHA: ${{ needs.tag-dev.outputs.previous_sha }}
@@ -122,8 +127,20 @@ jobs:
             CHANGELOG="- (no new commits since last dev build)"
           fi
 
-          ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `dev-%s`)\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s\n%s' \
-            "${SHORT_SHA}" "${REPO}" "${BASE_LABEL}" "${CHANGELOG}")
+          SUMMARY=""
+          case "$CHANGELOG" in
+            *"(no new commits"*|*"No previous"*) ;;
+            *)
+              SUMMARY=$(printf '%s' "$CHANGELOG" | bash .github/scripts/summarize-release-notes.sh --type dev --version "dev-${SHORT_SHA}" || true)
+              ;;
+          esac
+          if [ -n "${SUMMARY}" ]; then
+            ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `dev-%s`)\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s' \
+              "${SHORT_SHA}" "${REPO}" "${SUMMARY}")
+          else
+            ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `dev-%s`)\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s\n%s' \
+              "${SHORT_SHA}" "${REPO}" "${BASE_LABEL}" "${CHANGELOG}")
+          fi
 
           MAX_LEN=1900
           if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then

@@ -202,9 +202,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
       - name: Post release candidate to Discord
         env:
           DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
           SHA: ${{ needs.resolve.outputs.sha }}
@@ -231,8 +236,20 @@ jobs:
             CHANGELOG="- (no new commits since last release candidate)"
           fi
 
-          ANNOUNCEMENT_BODY=$(printf '🧪 **Release Candidate Available** (`%s`)\nRelease and downloads: https://github.com/%s/releases/tag/%s\n\n%s\n%s' \
-            "${RELEASE_TAG}" "${REPO}" "${RELEASE_TAG}" "${BASE_LABEL}" "${CHANGELOG}")
+          SUMMARY=""
+          case "$CHANGELOG" in
+            *"(no new commits"*|*"No previous"*) ;;
+            *)
+              SUMMARY=$(printf '%s' "$CHANGELOG" | bash .github/scripts/summarize-release-notes.sh --type rc --version "$RELEASE_TAG" || true)
+              ;;
+          esac
+          if [ -n "${SUMMARY}" ]; then
+            ANNOUNCEMENT_BODY=$(printf '🧪 **Release Candidate Available** (`%s`)\nRelease and downloads: https://github.com/%s/releases/tag/%s\n\n%s' \
+              "${RELEASE_TAG}" "${REPO}" "${RELEASE_TAG}" "${SUMMARY}")
+          else
+            ANNOUNCEMENT_BODY=$(printf '🧪 **Release Candidate Available** (`%s`)\nRelease and downloads: https://github.com/%s/releases/tag/%s\n\n%s\n%s' \
+              "${RELEASE_TAG}" "${REPO}" "${RELEASE_TAG}" "${BASE_LABEL}" "${CHANGELOG}")
+          fi
 
           MAX_LEN=1900
           if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then

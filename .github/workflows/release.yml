@@ -347,7 +347,10 @@ jobs:
       - name: Post announcement to Discord
         env:
           DISCORD_ANNOUNCEMENTS_WEBHOOK_URL: ${{ secrets.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           VERSION: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ -z "${DISCORD_ANNOUNCEMENTS_WEBHOOK_URL}" ]; then
@@ -369,7 +372,13 @@ jobs:
             -e 's/ \(\[[0-9a-f]+\]\(https:\/\/github\.com\/[^)]+\/commit\/[^)]+\)\)//g' \
             -e 's/, closes \[#[0-9]+\]\(https:\/\/github\.com\/[^)]+\/issues\/[0-9]+\)//g')
 
-          ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**%s' "${VERSION}" "${RELEASE_NOTES}")
+          SUMMARY=$(printf '%s' "$RELEASE_NOTES" | bash .github/scripts/summarize-release-notes.sh --type stable --version "v${VERSION}" || true)
+          if [ -n "${SUMMARY}" ]; then
+            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**\n\n%s\n\nFull changelog: https://github.com/%s/releases/tag/v%s' \
+              "${VERSION}" "${SUMMARY}" "${REPO}" "${VERSION}")
+          else
+            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**%s' "${VERSION}" "${RELEASE_NOTES}")
+          fi
 
           # Discord content is limited to 2000 characters.
           MAX_LEN=1900
