@@ -1,6 +1,8 @@
 using System.Data.Common;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.AspNetCore.Http;
 using Npgsql;
 using NzbWebDAV.Api.Controllers.GetOverviewStats;
@@ -9,6 +11,8 @@ using NzbWebDAV.Api.SabControllers.GetQueue;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Interceptors;
+using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
@@ -229,6 +233,98 @@ public sealed class PostgresMigrationTests
         finally
         {
             await ExecuteAsync(adminConnection, $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+        }
+    }
+
+    [SkippableFact]
+    public async Task DatabaseContractWriter_ReadsMainHistoryFromPostgres()
+    {
+        Skip.IfNot(
+            DatabaseProviderConfig.IsPostgres,
+            "PostgreSQL migration tests require DATABASE_PROVIDER=postgres.");
+
+        // The default factory must route to the PostgreSQL migration context.
+        await using (var probe = DatabaseContractWriter.MainContextFactory())
+            Assert.IsType<PostgresDavDatabaseContext>(probe);
+
+        var schema = $"nzbdav_contract_{Guid.NewGuid():N}";
+        var connectionString = DatabaseProviderConfig.PostgresConnectionString;
+        await using var adminConnection = new NpgsqlConnection(connectionString);
+        await adminConnection.OpenAsync();
+        await ExecuteAsync(adminConnection, $"CREATE SCHEMA \"{schema}\"");
+
+        var configRoot = Path.Join(Path.GetTempPath(), $"nzbdav-contract-pg-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(configRoot);
+        var contractPath = Path.Join(configRoot, "db-contract.json");
+
+        var previousMainFactory = DatabaseContractWriter.MainContextFactory;
+        var previousMetricsFactory = DatabaseContractWriter.MetricsContextFactory;
+        var previousLedgerFilePath = DatabaseContractWriter.UsenetMigrationDatabaseFilePath;
+        var previousContractFilePath = DatabaseContractWriter.ContractFilePath;
+
+        try
+        {
+            var scopedConnectionString = new NpgsqlConnectionStringBuilder(connectionString)
+            {
+                SearchPath = schema
+            }.ConnectionString;
+            var mainOptions = new DbContextOptionsBuilder<PostgresDavDatabaseContext>()
+                .UseNpgsql(scopedConnectionString)
+                .Options;
+
+            List<string> applied;
+            await using (var context = new PostgresDavDatabaseContext(mainOptions))
+            {
+                await context.Database.MigrateAsync().WaitAsync(TimeSpan.FromSeconds(30));
+                applied = (await context.Database.GetAppliedMigrationsAsync())
+                    .OrderBy(id => id, StringComparer.Ordinal)
+                    .ToList();
+            }
+
+            var metricsOptions = new DbContextOptionsBuilder<MetricsDbContext>()
+                .UseSqlite($"Data Source={Path.Join(configRoot, "metrics.sqlite")};Pooling=False")
+                .AddInterceptors(new SqliteMetricsPragmas())
+                .ReplaceService<
+                    IMigrationsSqlGenerator,
+                    SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
+                .Options;
+            await using (var metrics = new MetricsDbContext(metricsOptions))
+                await metrics.Database.MigrateAsync();
+
+            DatabaseContractWriter.MainContextFactory = () => new PostgresDavDatabaseContext(mainOptions);
+            DatabaseContractWriter.MetricsContextFactory = () => new MetricsDbContext(metricsOptions);
+            DatabaseContractWriter.UsenetMigrationDatabaseFilePath =
+                () => Path.Join(configRoot, "usenet-migration.db");
+            DatabaseContractWriter.ContractFilePath = () => contractPath;
+
+            await DatabaseContractWriter.WriteAsync();
+
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(contractPath));
+            var root = doc.RootElement;
+            Assert.Equal("postgres", root.GetProperty("provider").GetString());
+            Assert.Equal(applied.Last(), root.GetProperty("terminalMigration").GetString());
+            Assert.Equal(applied.Count, root.GetProperty("migrationCount").GetInt32());
+
+            var main = root.GetProperty("databases").GetProperty("main");
+            Assert.Equal("postgres", main.GetProperty("provider").GetString());
+            Assert.Equal(applied.Last(), main.GetProperty("terminalMigration").GetString());
+            Assert.Equal(applied.Count, main.GetProperty("migrationCount").GetInt32());
+        }
+        finally
+        {
+            DatabaseContractWriter.MainContextFactory = previousMainFactory;
+            DatabaseContractWriter.MetricsContextFactory = previousMetricsFactory;
+            DatabaseContractWriter.UsenetMigrationDatabaseFilePath = previousLedgerFilePath;
+            DatabaseContractWriter.ContractFilePath = previousContractFilePath;
+            await ExecuteAsync(adminConnection, $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+            try
+            {
+                Directory.Delete(configRoot, recursive: true);
+            }
+            catch (IOException)
+            {
+                // best effort — temp files.
+            }
         }
     }
 
