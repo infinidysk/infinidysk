@@ -23,10 +23,14 @@ jobs:
       minor: ${{ steps.release.outputs.minor }}
       patch: ${{ steps.release.outputs.patch }}
       sha: ${{ steps.release.outputs.sha }}
+      dev_label: ${{ steps.vars.outputs.dev_label }}
     permissions:
       contents: write
       pull-requests: write
     steps:
+      - id: vars
+        run: echo "dev_label=dev-$(date -u +%y%m%d.%H%M)" >> "$GITHUB_OUTPUT"
+
       - name: Create release
         uses: googleapis/release-please-action@v5
         id: release
@@ -43,6 +47,7 @@ jobs:
       minor: ${{ steps.vars.outputs.minor }}
       patch: ${{ steps.vars.outputs.patch }}
       ref: ${{ steps.vars.outputs.ref }}
+      dev_label: ${{ steps.vars.outputs.dev_label }}
     steps:
       - name: Resolve version and tag
         id: vars
@@ -64,6 +69,7 @@ jobs:
           echo "minor=${MINOR}" >> "$GITHUB_OUTPUT"
           echo "patch=${PATCH}" >> "$GITHUB_OUTPUT"
           echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+          echo "dev_label=dev-$(date -u +%y%m%d.%H%M)" >> "$GITHUB_OUTPUT"
 
   deploy:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
@@ -125,10 +131,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
           VERSION: v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
+          DEV_LABEL: ${{ needs.release-please.outputs.dev_label }}
         run: |
           set -euo pipefail
           SHORT_SHA="${RELEASE_SHA:0:7}"
-          DEV_LABEL="dev-$(date -u +%y%m%d.%H%M)"
           ROLLING_TITLE="Rolling :dev (${DEV_LABEL})"
           ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to [$VERSION](https://github.com/${{ github.repository }}/releases/tag/$VERSION)."
           if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
@@ -206,11 +212,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_REF: ${{ needs.resolve-version.outputs.ref }}
+          DEV_LABEL: ${{ needs.resolve-version.outputs.dev_label }}
         run: |
           set -euo pipefail
           RELEASE_SHA=$(gh api "repos/${{ github.repository }}/commits/${RELEASE_REF}" --jq .sha)
           SHORT_SHA="${RELEASE_SHA:0:7}"
-          DEV_LABEL="dev-$(date -u +%y%m%d.%H%M)"
           ROLLING_TITLE="Rolling :dev (${DEV_LABEL})"
           ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to [$RELEASE_REF](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_REF)."
           if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
