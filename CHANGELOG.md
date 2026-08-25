@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.2.5](https://github.com/infinidysk/infinidysk/compare/v1.2.4...v1.2.5) (2026-08-25)
+
+
+### Features
+
+* **queue:** create symlink and STRM outputs together ([#1146](https://github.com/infinidysk/infinidysk/issues/1146)) ([c888279](https://github.com/infinidysk/infinidysk/commit/c88827999fec100a03c4f212c04b4415322e4e29))
+* **ui:** make Overview easier to scan and recover when stats fail to load ([#1135](https://github.com/infinidysk/infinidysk/issues/1135)) ([3e8d70d](https://github.com/infinidysk/infinidysk/commit/3e8d70dce9947dab4ede10292e05d3e40687cec9))
+
+
+### Bug Fixes
+
+* **arr:** prevent completed downloads waiting indefinitely for import ([#1138](https://github.com/infinidysk/infinidysk/issues/1138)) ([72fb79d](https://github.com/infinidysk/infinidysk/commit/72fb79dd5876710b44bbfe2d7d4e6b6c656699e6))
+* **deps:** Bump zensical from 0.0.54 to 0.0.55 in the docs-python group ([#1155](https://github.com/infinidysk/infinidysk/issues/1155)) ([9556699](https://github.com/infinidysk/infinidysk/commit/95566994c68b7f302bb2499e56416688d567bf3d))
+* **health:** enable health checks and PAR2 repair without Radarr or Sonarr ([#1139](https://github.com/infinidysk/infinidysk/issues/1139)) ([34750c3](https://github.com/infinidysk/infinidysk/commit/34750c3dfc561d55c4bbee44867dec3aec60c4d5))
+* **queue:** NZBs with long Usenet subjects no longer rejected during import ([#1160](https://github.com/infinidysk/infinidysk/issues/1160)) ([d98be41](https://github.com/infinidysk/infinidysk/commit/d98be418345d1bcaf36d8bdf3d35bc098e3323cc))
+* **repair:** wait for PAR2 recovery before removing failed playback ([#1143](https://github.com/infinidysk/infinidysk/issues/1143)) ([eb10439](https://github.com/infinidysk/infinidysk/commit/eb104392d08161de7a61f3606b9908de5ddde6a5))
+* **ui:** connections counter no longer flashes a spinner on the queue page ([#1154](https://github.com/infinidysk/infinidysk/issues/1154)) ([9edff32](https://github.com/infinidysk/infinidysk/commit/9edff32ab7fedebb6c4cf11121b42825b9ca18ae))
+* **ui:** live file reads are now full-width rows in the Overview stack ([#1162](https://github.com/infinidysk/infinidysk/issues/1162)) ([400a99f](https://github.com/infinidysk/infinidysk/commit/400a99fef921f4a5e4e25dd9cb6e3a4adaa29b62))
+* **usenet:** STAT of missing articles no longer logs unclassified cache-cleanup failures ([#1159](https://github.com/infinidysk/infinidysk/issues/1159)) ([5f568d8](https://github.com/infinidysk/infinidysk/commit/5f568d85450948adeb2a2ce050542f778c95f41d))
+* **usenet:** stop skipping through incomplete files after every missing article ([#1158](https://github.com/infinidysk/infinidysk/issues/1158)) ([02df429](https://github.com/infinidysk/infinidysk/commit/02df429ac15b87c85a2b98a0b39ef66aa5e7bcde))
+* **webdav:** resume lazy RAR playback from tail seeks ([#1136](https://github.com/infinidysk/infinidysk/issues/1136)) ([0605978](https://github.com/infinidysk/infinidysk/commit/06059782fe30ad92934f8c155e091a115858518d))
+
+
+### Chores
+
+* force next release to 1.2.5 ([#1147](https://github.com/infinidysk/infinidysk/issues/1147)) ([0c5d56b](https://github.com/infinidysk/infinidysk/commit/0c5d56b86684e525a4870ae1f6d8a1cac582e5e2))
+
 ## [1.2.4](https://github.com/infinidysk/infinidysk/compare/v1.2.3...v1.2.4) (2026-08-23)
 
 
