@@ -1,5 +1,7 @@
+using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
 using NzbWebDAV.Api.Errors;
@@ -21,6 +23,9 @@ using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Websocket;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Api;
 
@@ -290,6 +295,90 @@ public sealed class SabPauseResumeTests : IAsyncLifetime
         Assert.Equal("Invalid mode", ex.Message);
     }
 
+    [Fact]
+    public async Task HandleApiRequests_AuthFailure_LogsClientUserAgent()
+    {
+        // A unique category keeps the process-static auth-failure throttle key
+        // fresh for this test run.
+        var category = $"test-cat-{Guid.NewGuid():N}";
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.ApiCategories, ConfigValue = category },
+        ]);
+
+        var previousEnvKey = Environment.GetEnvironmentVariable("FRONTEND_BACKEND_API_KEY");
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", "test-env-key");
+        var sink = new CollectingSink();
+        var previousLogger = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        try
+        {
+            var context = new DefaultHttpContext();
+            context.Request.QueryString =
+                new QueryString($"?mode=queue&cat={category}&apikey=wrong-key");
+            context.Request.Headers.UserAgent = "Sonarr/4.0.16 (test)";
+            context.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.10");
+
+            var result = await CreateSabApiController(context).HandleApiRequests();
+
+            Assert.IsType<UnauthorizedObjectResult>(result);
+            var warning = Assert.Single(sink.Events, e =>
+                e.Level == LogEventLevel.Warning &&
+                e.MessageTemplate.Text.Contains(
+                    "SAB API authentication rejected", StringComparison.Ordinal));
+            Assert.Equal("Sonarr/4.0.16 (test)", PropertyText(warning, "UserAgent"));
+            Assert.Equal("queue", PropertyText(warning, "Mode"));
+            Assert.Equal(category, PropertyText(warning, "Category"));
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+            Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousEnvKey);
+        }
+    }
+
+    [Fact]
+    public async Task HandleApiRequests_AuthFailureWithoutUserAgent_LogsUnknown()
+    {
+        var category = $"test-cat-{Guid.NewGuid():N}";
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.ApiCategories, ConfigValue = category },
+        ]);
+
+        var previousEnvKey = Environment.GetEnvironmentVariable("FRONTEND_BACKEND_API_KEY");
+        Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", "test-env-key");
+        var sink = new CollectingSink();
+        var previousLogger = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        try
+        {
+            var context = new DefaultHttpContext();
+            context.Request.QueryString =
+                new QueryString($"?mode=queue&cat={category}&apikey=wrong-key");
+
+            var result = await CreateSabApiController(context).HandleApiRequests();
+
+            Assert.IsType<UnauthorizedObjectResult>(result);
+            var warning = Assert.Single(sink.Events, e =>
+                e.Level == LogEventLevel.Warning &&
+                e.MessageTemplate.Text.Contains(
+                    "SAB API authentication rejected", StringComparison.Ordinal));
+            Assert.Equal("unknown", PropertyText(warning, "UserAgent"));
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+            Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", previousEnvKey);
+        }
+    }
+
 
     [Fact]
     public async Task PerJobPause_SetsPriorityPaused()
@@ -354,5 +443,32 @@ public sealed class SabPauseResumeTests : IAsyncLifetime
             Priority = priority,
             PostProcessing = QueueItem.PostProcessingOption.None
         };
+    }
+
+    private static string PropertyText(LogEvent logEvent, string name)
+    {
+        if (!logEvent.Properties.TryGetValue(name, out var value))
+            return "";
+        return value is ScalarValue { Value: { } raw }
+            ? raw.ToString() ?? ""
+            : value.ToString();
+    }
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+
+        public IReadOnlyList<LogEvent> Events
+        {
+            get
+            {
+                lock (_events) return _events.ToArray();
+            }
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            lock (_events) _events.Add(logEvent);
+        }
     }
 }

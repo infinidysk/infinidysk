@@ -47,6 +47,9 @@ public class SabApiController(
 {
     private static readonly LogThrottle AuthenticationFailureThrottle = new();
     private static readonly TimeSpan AuthenticationFailureLogInterval = TimeSpan.FromMinutes(5);
+    // Client-supplied and unbounded; the warning is held in the in-memory
+    // WarningLogBuffer/LogBufferSink, so it must be truncated before logging.
+    private const int MaxUserAgentLength = 200;
     private static readonly HashSet<string> KnownModes =
     [
         "version", "status", "get_cats", "get_config", "fullstatus", "server_stats", "warnings",
@@ -112,19 +115,25 @@ public class SabApiController(
                 string.Equals(configured, requestedCategory, StringComparison.OrdinalIgnoreCase))
             ?? "unknown";
         var source = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        // Source remains useful event context, but it must not be part of the
-        // process-lifetime throttle key: unauthenticated clients can generate
-        // an unbounded number of distinct remote addresses.
+        var userAgent = HttpContext.Request.Headers.UserAgent.ToString();
+        if (string.IsNullOrWhiteSpace(userAgent))
+            userAgent = "unknown";
+        else if (userAgent.Length > MaxUserAgentLength)
+            userAgent = userAgent[..MaxUserAgentLength];
+        // Source and user agent remain useful event context, but neither may be
+        // part of the process-lifetime throttle key: unauthenticated clients can
+        // generate an unbounded number of distinct values for both.
         var key = $"{mode}|{category}";
         if (!AuthenticationFailureThrottle.ShouldLog(key, AuthenticationFailureLogInterval, out var suppressed))
             return;
 
         Log.Warning(
-            "SAB API authentication rejected for mode {Mode}, category {Category}, source {Source}. " +
+            "SAB API authentication rejected for mode {Mode}, category {Category}, source {Source}, user agent {UserAgent}. " +
             "Update the configured API key; {SuppressedCount} matching failures were suppressed.",
             mode,
             category,
             source,
+            userAgent,
             suppressed);
     }
 
