@@ -7,6 +7,11 @@ on:
         description: Message to post to the announcements Discord channel
         required: true
         type: string
+      summarize:
+        description: Treat the message as conventional commits, summarize with the LLM, and post to the development channel instead
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,14 +20,31 @@ jobs:
   test-announcements-webhook:
     runs-on: ubuntu-latest
     steps:
-      - name: Post test message to Discord announcements
+      - name: Checkout repository
+        if: ${{ inputs.summarize }}
+        uses: actions/checkout@v7
+
+      - name: Post test message to Discord
         env:
           DISCORD_ANNOUNCEMENTS_WEBHOOK_URL: ${{ secrets.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL }}
+          DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           MESSAGE: ${{ inputs.message }}
+          SUMMARIZE: ${{ inputs.summarize }}
         run: |
           set -euo pipefail
-          if [ -z "${DISCORD_ANNOUNCEMENTS_WEBHOOK_URL}" ]; then
-            echo "DISCORD_ANNOUNCEMENTS_WEBHOOK_URL secret is not set" >&2
+          WEBHOOK_URL="${DISCORD_ANNOUNCEMENTS_WEBHOOK_URL}"
+          if [ "${SUMMARIZE}" = "true" ]; then
+            WEBHOOK_URL="${DISCORD_DEVELOPMENT_WEBHOOK_URL}"
+            if ! SUMMARY=$(printf '%s' "${MESSAGE}" | bash .github/scripts/summarize-release-notes.sh --type dev --version "test"); then
+              echo "LLM summarization failed; nothing was posted." >&2
+              exit 1
+            fi
+            MESSAGE="${SUMMARY}"
+          fi
+          if [ -z "${WEBHOOK_URL}" ]; then
+            echo "Discord webhook URL secret for the selected channel is not set" >&2
             exit 1
           fi
           if [ -z "${MESSAGE}" ]; then
@@ -33,4 +55,4 @@ jobs:
           ESCAPED_BODY=$(printf '%s' "$MESSAGE" | jq -Rsa .)
           curl --fail-with-body -sS -H "Content-Type: application/json" \
             -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4}" \
-            "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL"
+            "$WEBHOOK_URL"
