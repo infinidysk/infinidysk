@@ -709,6 +709,265 @@ public class RemoveUnlinkedFilesTaskTests
         Assert.DoesNotContain("SCAN t", plan, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Execute_RemovesGeneratedSidecarsWithOrphanedItem()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var rootDir = Path.Join(Path.GetTempPath(), $"nzbdav-orphan-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(rootDir, "library");
+        var completedDir = Path.Join(rootDir, "completed-downloads");
+        var symlinkDir = Path.Join(rootDir, "symlinks");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+            await SeedLinkedItemsAsync(ctx, libraryDir, 5);
+
+            var orphanId = Guid.NewGuid();
+            var orphan = DavItem.New(
+                orphanId,
+                DavItem.ContentFolder,
+                "orphan.mkv",
+                10,
+                DavItem.ItemType.UsenetFile,
+                DavItem.ItemSubType.NzbFile,
+                null,
+                null,
+                null,
+                null);
+
+            var strmPath = Path.Join(completedDir, "movies", "Some.Release", "orphan.mkv.strm");
+            var strmTarget = $"http://localhost/view/.ids/{orphanId}.mkv";
+            orphan.GeneratedStrmOutputRoot = Path.GetFullPath(completedDir);
+            orphan.GeneratedStrmPath = strmPath;
+            orphan.GeneratedStrmTarget = strmTarget;
+
+            var symlinkPath = Path.Join(symlinkDir, "movies", "Some.Release", "orphan.mkv");
+            var symlinkTarget = $"/mnt/nzbdav/.ids/{orphanId}";
+            orphan.GeneratedSymlinkOutputRoot = Path.GetFullPath(symlinkDir);
+            orphan.GeneratedSymlinkPath = symlinkPath;
+            orphan.GeneratedSymlinkTarget = symlinkTarget;
+
+            ctx.Items.Add(orphan);
+            await ctx.SaveChangesAsync();
+
+            Directory.CreateDirectory(Path.GetDirectoryName(strmPath)!);
+            await File.WriteAllTextAsync(strmPath, strmTarget);
+            Directory.CreateDirectory(Path.GetDirectoryName(symlinkPath)!);
+            File.CreateSymbolicLink(symlinkPath, symlinkTarget);
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: false,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.StartsWith("Done. Removed 1 unlinked files.", progress);
+            Assert.False(await ctx.Items.AnyAsync(x => x.Id == orphanId));
+            Assert.False(File.Exists(strmPath));
+            Assert.Null(new FileInfo(symlinkPath).LinkTarget);
+
+            // empty sidecar directories are pruned up to (but not including) the output root
+            Assert.False(Directory.Exists(Path.Join(completedDir, "movies")));
+            Assert.False(Directory.Exists(Path.Join(symlinkDir, "movies")));
+            Assert.True(Directory.Exists(completedDir));
+            Assert.True(Directory.Exists(symlinkDir));
+
+            var report = RemoveUnlinkedFilesTask.GetAuditReport();
+            Assert.Contains($"(strm sidecar of {orphan.Path})", report);
+            Assert.Contains($"(symlink sidecar of {orphan.Path})", report);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(rootDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PreservesSidecarWhoseOnDiskTargetChanged()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var rootDir = Path.Join(Path.GetTempPath(), $"nzbdav-orphan-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(rootDir, "library");
+        var completedDir = Path.Join(rootDir, "completed-downloads");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+            await SeedLinkedItemsAsync(ctx, libraryDir, 5);
+
+            var orphanId = Guid.NewGuid();
+            var orphan = DavItem.New(
+                orphanId,
+                DavItem.ContentFolder,
+                "orphan.mkv",
+                10,
+                DavItem.ItemType.UsenetFile,
+                DavItem.ItemSubType.NzbFile,
+                null,
+                null,
+                null,
+                null);
+
+            var strmPath = Path.Join(completedDir, "movies", "Some.Release", "orphan.mkv.strm");
+            orphan.GeneratedStrmOutputRoot = Path.GetFullPath(completedDir);
+            orphan.GeneratedStrmPath = strmPath;
+            orphan.GeneratedStrmTarget = $"http://localhost/view/.ids/{orphanId}.mkv";
+
+            ctx.Items.Add(orphan);
+            await ctx.SaveChangesAsync();
+
+            // The file at the recorded path now belongs to something else (e.g. an Arr
+            // import replaced it). Ownership no longer verified -> must be preserved.
+            Directory.CreateDirectory(Path.GetDirectoryName(strmPath)!);
+            await File.WriteAllTextAsync(strmPath, $"http://localhost/view/.ids/{Guid.NewGuid()}.mkv");
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: false,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.StartsWith("Done. Removed 1 unlinked files.", progress);
+            Assert.False(await ctx.Items.AnyAsync(x => x.Id == orphanId));
+            Assert.True(File.Exists(strmPath));
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(rootDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task DryRun_ReportsGeneratedSidecarsWithoutDeleting()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var rootDir = Path.Join(Path.GetTempPath(), $"nzbdav-orphan-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(rootDir, "library");
+        var completedDir = Path.Join(rootDir, "completed-downloads");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+            await SeedLinkedItemsAsync(ctx, libraryDir, 5);
+
+            var orphanId = Guid.NewGuid();
+            var orphan = DavItem.New(
+                orphanId,
+                DavItem.ContentFolder,
+                "orphan.mkv",
+                10,
+                DavItem.ItemType.UsenetFile,
+                DavItem.ItemSubType.NzbFile,
+                null,
+                null,
+                null,
+                null);
+
+            var strmPath = Path.Join(completedDir, "movies", "Some.Release", "orphan.mkv.strm");
+            var strmTarget = $"http://localhost/view/.ids/{orphanId}.mkv";
+            orphan.GeneratedStrmOutputRoot = Path.GetFullPath(completedDir);
+            orphan.GeneratedStrmPath = strmPath;
+            orphan.GeneratedStrmTarget = strmTarget;
+
+            ctx.Items.Add(orphan);
+            await ctx.SaveChangesAsync();
+
+            Directory.CreateDirectory(Path.GetDirectoryName(strmPath)!);
+            await File.WriteAllTextAsync(strmPath, strmTarget);
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.StartsWith("Dry Run - Done. Identified 1 unlinked files.", progress);
+            Assert.True(await ctx.Items.AnyAsync(x => x.Id == orphanId));
+            Assert.True(File.Exists(strmPath));
+
+            var report = RemoveUnlinkedFilesTask.GetAuditReport();
+            Assert.Contains(orphan.Path, report);
+            Assert.Contains($"(strm sidecar of {orphan.Path})", report);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(rootDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    private static async Task SeedLinkedItemsAsync(DavDatabaseContext ctx, string libraryDir, int count)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            var id = Guid.NewGuid();
+            ctx.Items.Add(DavItem.New(
+                id,
+                DavItem.ContentFolder,
+                $"{id:N}.mkv",
+                10,
+                DavItem.ItemType.UsenetFile,
+                DavItem.ItemSubType.NzbFile,
+                null,
+                null,
+                null,
+                null));
+            await File.WriteAllTextAsync(
+                Path.Join(libraryDir, $"{id:N}.strm"),
+                $"http://localhost/view/.ids/{id}.mkv");
+        }
+
+        await ctx.SaveChangesAsync();
+    }
+
     private static DavItem NewDir(Guid id, DavItem parent, string name) =>
         DavItem.New(id, parent, name, null, DavItem.ItemType.Directory, DavItem.ItemSubType.Directory,
             null, null, null, null);

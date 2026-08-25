@@ -94,23 +94,27 @@ public class CreateSymlinkFilesPostProcessor(
             CreateStrmFilesPostProcessor.GetPathRelativeToContentRoot(davItem.Path));
     }
 
-    internal static void DeleteSymlinkFile(DavItem davItem)
+    /// <summary>
+    /// Removes a generated symlink only when its target belongs to <paramref name="davItem"/>.
+    /// </summary>
+    /// <returns>True when an owned symlink was deleted.</returns>
+    internal static bool DeleteSymlinkFile(DavItem davItem)
     {
         if (!CreateStrmFilesPostProcessor.IsStrmCandidate(davItem)
             || string.IsNullOrWhiteSpace(davItem.GeneratedSymlinkPath)
             || string.IsNullOrWhiteSpace(davItem.GeneratedSymlinkTarget)
             || string.IsNullOrWhiteSpace(davItem.GeneratedSymlinkOutputRoot))
-            return;
+            return false;
 
         var outputRoot = Path.GetFullPath(davItem.GeneratedSymlinkOutputRoot);
         var symlinkPath = Path.GetFullPath(davItem.GeneratedSymlinkPath);
         if (!CreateStrmFilesPostProcessor.IsPathWithinRoot(symlinkPath, outputRoot)
             || CreateStrmFilesPostProcessor.HasSymlinkedAncestor(symlinkPath, outputRoot))
-            return;
+            return false;
 
         var file = new FileInfo(symlinkPath);
         if (!string.Equals(file.LinkTarget, davItem.GeneratedSymlinkTarget, GetPathComparison()))
-            return;
+            return false;
 
         File.Delete(symlinkPath);
         try
@@ -123,6 +127,8 @@ public class CreateSymlinkFilesPostProcessor(
         {
             // A concurrent cleanup already pruned the empty parent directory.
         }
+
+        return true;
     }
 
     private static bool CreateOwnedSymlink(string path, string target)

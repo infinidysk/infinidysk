@@ -6,6 +6,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
@@ -28,6 +29,23 @@ public class RemoveUnlinkedFilesTask : BaseTask
     private ProgressHeartbeat? _progressHeartbeat;
 
     internal record UnlinkedItemInfo(string Id, int Type, string Path);
+
+    /// <summary>
+    /// An unlinked usenet file plus the generated-sidecar columns needed to remove its
+    /// strm/symlink outputs from disk before the owning row is deleted. After deletion
+    /// the Generated* metadata would be unrecoverable and the sidecars stranded.
+    /// </summary>
+    internal record UnlinkedFileInfo(
+        string Id,
+        int Type,
+        string Path,
+        string Name,
+        string? GeneratedStrmOutputRoot,
+        string? GeneratedStrmPath,
+        string? GeneratedStrmTarget,
+        string? GeneratedSymlinkOutputRoot,
+        string? GeneratedSymlinkPath,
+        string? GeneratedSymlinkTarget);
 
     internal static DbParameter CreateWallClockParameter(
         DavDatabaseContext dbContext,
@@ -188,14 +206,14 @@ public class RemoveUnlinkedFilesTask : BaseTask
         if (_isDryRun)
         {
             StartPhase("Identifying unlinked files...");
-            await DryRunIdentifyUnlinkedFiles(startTime).ConfigureAwait(false);
-            Complete($"Done. Identified {_allRemovedPaths.Count} unlinked files.");
+            var identified = await DryRunIdentifyUnlinkedFiles(startTime).ConfigureAwait(false);
+            Complete($"Done. Identified {identified} unlinked files.");
         }
         else
         {
-            await RemoveUnlinkedItems(startTime, unlinkedItems).ConfigureAwait(false);
+            var removed = await RemoveUnlinkedItems(startTime, unlinkedItems).ConfigureAwait(false);
             await RemoveEmptyDirectories(startTime).ConfigureAwait(false);
-            Complete($"Done. Removed {_allRemovedPaths.Count} unlinked files.");
+            Complete($"Done. Removed {removed} unlinked files.");
         }
     }
 
@@ -297,7 +315,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
     /// </summary>
     private static async Task<int> DeleteItemsByIdTextAsync(
         DavDatabaseContext dbContext,
-        List<UnlinkedItemInfo> items,
+        List<UnlinkedFileInfo> items,
         CancellationToken cancellationToken = default)
     {
         var parameters = new DbParameter[items.Count];
@@ -433,7 +451,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         return count;
     }
 
-    private async Task RemoveUnlinkedItems(DateTime createdBefore, int totalCount)
+    private async Task<int> RemoveUnlinkedItems(DateTime createdBefore, int totalCount)
     {
         StartPhase("Removing unlinked items...");
         _allRemovedPaths.Clear();
@@ -446,9 +464,12 @@ public class RemoveUnlinkedFilesTask : BaseTask
             // Select items to delete (batch of 100). t.Id on the left inherits NOCASE from
             // the TMP_LINKED_FILES PK so lowercase DavItems.Id still match uppercase links.
             var itemsToDelete = await dbContext.Database
-                .SqlQuery<UnlinkedItemInfo>(
+                .SqlQuery<UnlinkedFileInfo>(
                     $"""
-                     SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path" FROM "DavItems"
+                     SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path", "Name",
+                            "GeneratedStrmOutputRoot", "GeneratedStrmPath", "GeneratedStrmTarget",
+                            "GeneratedSymlinkOutputRoot", "GeneratedSymlinkPath", "GeneratedSymlinkTarget"
+                     FROM "DavItems"
                      WHERE "Type" = {usenetFileType}
                        AND "HistoryItemId" IS NULL
                        AND "CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
@@ -466,12 +487,15 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 break;
 
             // Delete by the exact Id text from the select so stored casing never matters.
+            // Sidecars go first: once the row is gone, the Generated* ownership metadata
+            // needed to safely delete them is gone with it.
             foreach (var item in itemsToDelete)
             {
                 DeletionAuditLog.Record(
                     "remove-orphaned",
                     new DavItem { Id = Guid.Parse(item.Id), Path = item.Path },
                     "no library symlink/strm link");
+                DeleteGeneratedSidecarFiles(item);
             }
 
             var deleted = await DeleteItemsByIdTextAsync(dbContext, itemsToDelete)
@@ -502,6 +526,52 @@ public class RemoveUnlinkedFilesTask : BaseTask
         }
 
         UpdatePhase($"Removing unlinked items...\nRemoved {removed} of {removed}...");
+        return removed;
+    }
+
+    /// <summary>
+    /// Removes the generated strm/symlink outputs belonging to an orphaned item from disk.
+    /// Both deleters verify on-disk ownership (recorded root, no symlinked ancestor, matching
+    /// target) before deleting, so files an Arr import has already moved or replaced are left
+    /// alone. A filesystem failure must not block removal of the webdav item itself.
+    /// </summary>
+    private static void DeleteGeneratedSidecarFiles(UnlinkedFileInfo item)
+    {
+        var davItem = new DavItem
+        {
+            Id = Guid.Parse(item.Id),
+            Name = item.Name,
+            Type = (DavItem.ItemType)item.Type,
+            Path = item.Path,
+            GeneratedStrmOutputRoot = item.GeneratedStrmOutputRoot,
+            GeneratedStrmPath = item.GeneratedStrmPath,
+            GeneratedStrmTarget = item.GeneratedStrmTarget,
+            GeneratedSymlinkOutputRoot = item.GeneratedSymlinkOutputRoot,
+            GeneratedSymlinkPath = item.GeneratedSymlinkPath,
+            GeneratedSymlinkTarget = item.GeneratedSymlinkTarget,
+        };
+
+        try
+        {
+            if (CreateStrmFilesPostProcessor.DeleteStrmFile(davItem))
+            {
+                DeletionAuditLog.Record("remove-orphaned", davItem, "generated strm sidecar of orphaned file");
+                _allRemovedPaths.Add($"{item.GeneratedStrmPath} (strm sidecar of {item.Path})");
+            }
+
+            if (CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(davItem))
+            {
+                DeletionAuditLog.Record("remove-orphaned", davItem, "generated symlink sidecar of orphaned file");
+                _allRemovedPaths.Add($"{item.GeneratedSymlinkPath} (symlink sidecar of {item.Path})");
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Warning(
+                e,
+                "Could not remove generated strm/symlink sidecars for {Path}. The webdav item is still being removed; the sidecar files may need manual cleanup.",
+                item.Path);
+        }
     }
 
     private async Task RemoveEmptyDirectories(DateTime createdBefore)
@@ -614,7 +684,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         return removed;
     }
 
-    private async Task DryRunIdentifyUnlinkedFiles(DateTime createdBefore)
+    private async Task<int> DryRunIdentifyUnlinkedFiles(DateTime createdBefore)
     {
         _allRemovedPaths.Clear();
         await using var dbContext = CreateContext();
@@ -622,13 +692,17 @@ public class RemoveUnlinkedFilesTask : BaseTask
         // Keyset pagination: LIMIT/OFFSET without ORDER BY has no stable order in SQLite,
         // which can duplicate or skip rows across batches.
         var lastId = string.Empty;
+        var identified = 0;
 
         while (true)
         {
             var batch = await dbContext.Database
-                .SqlQuery<UnlinkedItemInfo>(
+                .SqlQuery<UnlinkedFileInfo>(
                     $"""
-                     SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path" FROM "DavItems"
+                     SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path", "Name",
+                            "GeneratedStrmOutputRoot", "GeneratedStrmPath", "GeneratedStrmTarget",
+                            "GeneratedSymlinkOutputRoot", "GeneratedSymlinkPath", "GeneratedSymlinkTarget"
+                     FROM "DavItems"
                      WHERE "Type" = {usenetFileType}
                        AND "HistoryItemId" IS NULL
                        AND "CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
@@ -646,10 +720,21 @@ public class RemoveUnlinkedFilesTask : BaseTask
             if (batch.Count == 0)
                 break;
 
-            _allRemovedPaths.AddRange(batch.Select(x => x.Path));
+            foreach (var item in batch)
+            {
+                identified++;
+                _allRemovedPaths.Add(item.Path);
+                if (!string.IsNullOrWhiteSpace(item.GeneratedStrmPath))
+                    _allRemovedPaths.Add($"{item.GeneratedStrmPath} (strm sidecar of {item.Path})");
+                if (!string.IsNullOrWhiteSpace(item.GeneratedSymlinkPath))
+                    _allRemovedPaths.Add($"{item.GeneratedSymlinkPath} (symlink sidecar of {item.Path})");
+            }
+
             lastId = batch[^1].Id;
-            UpdatePhase($"Identifying unlinked files...\nFound {_allRemovedPaths.Count}...");
+            UpdatePhase($"Identifying unlinked files...\nFound {identified}...");
         }
+
+        return identified;
     }
 
     private void StartPhase(string message) => _progressHeartbeat?.StartPhase(message);

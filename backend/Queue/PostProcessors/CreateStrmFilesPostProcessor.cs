@@ -118,21 +118,22 @@ public class CreateStrmFilesPostProcessor(
     /// <summary>
     /// Removes a generated STRM sidecar only when its target belongs to <paramref name="davItem"/>.
     /// </summary>
-    internal static void DeleteStrmFile(DavItem davItem)
+    /// <returns>True when an owned sidecar file was deleted.</returns>
+    internal static bool DeleteStrmFile(DavItem davItem)
     {
         if (!IsStrmCandidate(davItem)
             || string.IsNullOrWhiteSpace(davItem.GeneratedStrmOutputRoot)
             || string.IsNullOrWhiteSpace(davItem.GeneratedStrmPath)
             || string.IsNullOrWhiteSpace(davItem.GeneratedStrmTarget))
-            return;
+            return false;
 
         var completedDownloadsRoot = Path.GetFullPath(davItem.GeneratedStrmOutputRoot);
         var strmFilePath = Path.GetFullPath(davItem.GeneratedStrmPath);
         if (!IsPathWithinRoot(strmFilePath, completedDownloadsRoot))
-            return;
+            return false;
 
         if (HasSymlinkedAncestor(strmFilePath, completedDownloadsRoot))
-            return;
+            return false;
 
         SymlinkAndStrmUtil.ISymlinkOrStrmInfo? strmOrSymlink;
         try
@@ -141,18 +142,18 @@ public class CreateStrmFilesPostProcessor(
         }
         catch (FileNotFoundException)
         {
-            return;
+            return false;
         }
         catch (DirectoryNotFoundException)
         {
-            return;
+            return false;
         }
 
         if (strmOrSymlink is not SymlinkAndStrmUtil.StrmInfo strmInfo)
-            return;
+            return false;
 
         if (!string.Equals(strmInfo.TargetUrl, davItem.GeneratedStrmTarget, StringComparison.Ordinal))
-            return;
+            return false;
 
         File.Delete(strmFilePath);
         try
@@ -163,6 +164,8 @@ public class CreateStrmFilesPostProcessor(
         {
             // A concurrent cleanup already pruned the empty parent directory.
         }
+
+        return true;
     }
 
     internal string GetStrmFilePath(DavItem davItem) =>
