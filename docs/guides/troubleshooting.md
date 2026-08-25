@@ -116,6 +116,14 @@ Allow Docker DNS or LAN hosts under **Trusted local hosts** — [SABnzbd API](..
 
 See [Deletion audit](../operations/deletion-audit.md) — history retention ≠ deleting mounts; orphan cleanup and *Arr actions can remove content. History rows disappearing after import are usually the Arr or a `/completed-symlinks` folder delete, not InfiniDysk deleting the file. If Remove Orphaned Files lists imported files, check that **Library Directory** is your organized library root, not the rclone mount.
 
+## Plex marks old episodes as newly added
+
+InfiniDysk does not change WebDAV `Last-Modified` after import, and it does not issue ETags. Plex keys library items by **file path**, so an old episode showing up as *newly added* means Plex deleted its library row and then re-created it on a later scan.
+
+The most common cause on an rclone mount of `/content` is a transient scan-time failure (container restart, rclone re-list after `vfs/forget`, lazy RAR size correction, proxy timeout) combined with Plex's **Empty trash automatically after every scan**. The path is briefly unavailable, trash collection removes the item, and the next clean scan re-adds it — triggering intro/credits analysis again.
+
+Quick check: compare the file's mtime in the mount (`ls -l`) with Plex's *added* date. An old mtime with a new *added* date means the server never recreated the file. For the full checklist see [Plex “newly added” churn on /content mounts](../operations/plex-readd-diagnosis.md).
+
 ## Provider / missing articles
 
 - Circuit breaker may pause a bad provider — check Usenet settings and Overview.
