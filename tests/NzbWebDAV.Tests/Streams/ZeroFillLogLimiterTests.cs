@@ -30,7 +30,9 @@ public sealed class ZeroFillLogLimiterTests : IDisposable
     [Fact]
     public void TryLog_DistinctPathsWithSameFileName_EachLogOnce()
     {
-        var name = $"movie-{Guid.NewGuid():N}.mkv";
+        // Fixed name: this class runs sequentially and resets the limiter per test,
+        // so a deterministic fixture cannot leak windows between runs.
+        const string name = "movie-same-name-distinct-dirs.mkv";
         Assert.True(ZeroFillLogLimiter.TryLog($"/view/a/{name}", out _));
         Assert.True(ZeroFillLogLimiter.TryLog($"/view/b/{name}", out _));
         Assert.False(ZeroFillLogLimiter.TryLog($"/view/a/{name}", out _));
