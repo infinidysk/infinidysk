@@ -47,6 +47,7 @@ nav = [
     { "Watchtower" = "features/watchtower.md" },
     { "Warden, Watchdog, Preflight" = "features/warden-watchdog-preflight.md" },
     { "NNTP pipelining" = "features/nntp-pipelining.md" },
+    { "Connection warming" = "features/connection-warming.md" },
     { "SABnzbd API" = "features/sab-api.md" },
   ]},
   { "Configuration" = [

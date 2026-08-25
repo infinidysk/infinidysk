@@ -72,8 +72,8 @@ glibc-specific; the shipped Alpine image uses musl and does not use
 - Lower provider **Max connections** and explicit download/queue connection
   limits before reducing buffers. NNTP I/O is asynchronous; it does not create
   a dedicated OS thread per socket.
-- Disable warm connections or shorten the idle timeout if many pooled sockets
-  are unnecessary.
+- Disable [warm connections](../features/connection-warming.md) or shorten the
+  idle timeout if many pooled sockets are unnecessary.
 - Lower **Streaming body batch width** and set an explicit **In-flight article
   budget** to reduce active decoded-pipe retention.
 - `DOTNET_GCRetainVM=0` is already the .NET default; setting it does not shrink

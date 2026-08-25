@@ -55,6 +55,22 @@ Run Auto-tune before enabling queue pipelining. WebDAV streaming batching is a *
 
 See [NNTP pipelining](../features/nntp-pipelining.md) and [Multi-provider](../features/multi-provider.md).
 
+## Warm connections [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
+
+Each pooled provider keeps a small floor of pre-connected, authenticated NNTP sockets
+ready so playback and queue work skip the connect/TLS/login handshake after idle
+periods. Warm sockets count against the provider's connection limit but never hold
+download permits. See [Connection warming](../features/connection-warming.md) for the
+mechanics and the header indicator.
+
+| Control | Config key | Default | Effect |
+|---------|------------|---------|--------|
+| Warm connections | `usenet.warm-connections.enabled` | on | Keep pre-connected sockets ready per provider |
+| Warm floor | `usenet.warm-connections.floor` | auto | Idle sockets kept ready per provider; auto derives one sixth of Max Connections, clamped to 1–8 |
+
+Changes take effect on the next provider save or restart — connection pools are not
+rebuilt when these keys change alone.
+
 ## Article-miss negative cache [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
 After a provider (or [storage group](../features/multi-provider.md)) reports a definitive article miss

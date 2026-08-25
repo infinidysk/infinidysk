@@ -16,6 +16,7 @@ InfiniDysk combines a virtual filesystem, Usenet streaming stack, and automation
 -   [Watchtower](watchtower.md)
 -   [Warden, Watchdog, Preflight](warden-watchdog-preflight.md)
 -   [NNTP pipelining](nntp-pipelining.md)
+-   [Connection warming](connection-warming.md)
 -   [SABnzbd API](sab-api.md)
 
 </div>
