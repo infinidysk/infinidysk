@@ -266,6 +266,8 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                       >
                         Optional. Leave blank to use the virtual <code>completed-symlinks</code>{" "}
                         rclone tree. Set a directory to create real symlinks at queue completion.
+                        Disk symlinks keep the raw release names — renaming only happens when
+                        Radarr or Sonarr imports the primary output.
                       </p>
                     </div>
                   </ManagedSetting>
@@ -331,7 +333,8 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                         id="completed-downloads-dir-help"
                       >
                         Directory visible to Radarr or Sonarr where completed STRM files are
-                        written.
+                        written. STRM files keep the raw release names — renaming only happens
+                        when Radarr or Sonarr imports the primary output.
                       </p>
                     </div>
                   </ManagedSetting>
@@ -394,7 +397,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
         </ManagedSetting>
 
         <ManagedSetting configKey="api.sample-filter-enabled">
-          <Tooltip content="Discard video files whose name contains 'sample' as a whole word and that are under 20% of the largest video in the same NZB.">
+          <Tooltip content="Discard video files whose name — or release subfolder, such as 'Sample' — contains 'sample' as a whole word and that are under 20% of the largest video in the same NZB.">
             <Toggle
               id="sample-filter-enabled-checkbox"
               className="cursor-pointer gap-2 p-0"
