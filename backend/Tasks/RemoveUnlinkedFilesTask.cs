@@ -581,6 +581,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
             GeneratedSymlinkTarget = item.GeneratedSymlinkTarget,
         };
 
+        // Each deleter gets its own guard: a strm failure must not strand the symlink.
         try
         {
             if (CreateStrmFilesPostProcessor.DeleteStrmFile(davItem))
@@ -588,18 +589,28 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 DeletionAuditLog.Record("remove-orphaned", davItem, "generated strm sidecar of orphaned file");
                 _allRemovedPaths.Add($"{item.GeneratedStrmPath} (strm sidecar of {item.Path})");
             }
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Log.Warning(
+                e,
+                "Could not remove the generated strm sidecar for {Path}. The webdav item is still being removed; the sidecar file may need manual cleanup.",
+                item.Path);
+        }
 
+        try
+        {
             if (CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(davItem))
             {
                 DeletionAuditLog.Record("remove-orphaned", davItem, "generated symlink sidecar of orphaned file");
                 _allRemovedPaths.Add($"{item.GeneratedSymlinkPath} (symlink sidecar of {item.Path})");
             }
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Warning(
                 e,
-                "Could not remove generated strm/symlink sidecars for {Path}. The webdav item is still being removed; the sidecar files may need manual cleanup.",
+                "Could not remove the generated symlink sidecar for {Path}. The webdav item is still being removed; the sidecar file may need manual cleanup.",
                 item.Path);
         }
     }
