@@ -45,6 +45,7 @@ import { SectionLoadError } from "./components/section-load-error/section-load-e
 import { Icon, Tooltip } from "~/components/ui";
 import { backendClient, type ArrHealthResponse } from "~/clients/backend-client.server";
 import { useRowOrder } from "./utils/use-row-order";
+import { useMediaQuery } from "~/utils/use-media-query";
 import { hasConfiguredIndexers } from "./utils/has-configured-indexers";
 import { hasConfiguredArrs, isArrHealthEnabled } from "./utils/has-configured-arrs";
 import {
@@ -73,6 +74,7 @@ const WINDOWS: { value: OverviewWindow; label: string }[] = [
 
 const DEFAULT_ROW_ORDER = [
   "liveTiles",
+  "rightNow",
   "throughput",
   "providers",
   "activity",
@@ -370,6 +372,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   const rowContent = useMemo<Record<string, ReactNode>>(
     () => ({
       liveTiles: <LiveTiles tiles={liveTiles} />,
+      rightNow: <LiveReadsPanel paused={editMode} />,
       throughput:
         windowError && !windowLoaded ? (
           <SectionLoadError label="activity" onRetry={() => setWindowRetry((n) => n + 1)} />
@@ -512,6 +515,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     }),
     [
       liveTiles,
+      editMode,
       stats,
       window,
       isLongWindow,
@@ -529,16 +533,28 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     ],
   );
 
-  const visibleOrder = useMemo(
-    () =>
-      order.filter((id) => {
-        if (!loaderData.hasConfiguredIndexers && (id === "indexers" || id === "indexerApiUsage"))
-          return false;
-        if (!loaderData.hasConfiguredArrs && id === "arrHealth") return false;
-        return true;
-      }),
-    [loaderData.hasConfiguredIndexers, loaderData.hasConfiguredArrs, order],
-  );
+  // Below lg the stats bar stacks vertically; live reads matter more there,
+  // so Right now leads the stack. Edit mode keeps the canonical order so
+  // drag-and-drop stays consistent.
+  const mobileStack = useMediaQuery("(max-width: 1023px)");
+  const visibleOrder = useMemo(() => {
+    const filtered = order.filter((id) => {
+      if (!loaderData.hasConfiguredIndexers && (id === "indexers" || id === "indexerApiUsage"))
+        return false;
+      if (!loaderData.hasConfiguredArrs && id === "arrHealth") return false;
+      return true;
+    });
+    if (!mobileStack || editMode) return filtered;
+    const idx = filtered.indexOf("rightNow");
+    if (idx <= 0) return filtered;
+    return ["rightNow", ...filtered.slice(0, idx), ...filtered.slice(idx + 1)];
+  }, [
+    loaderData.hasConfiguredIndexers,
+    loaderData.hasConfiguredArrs,
+    order,
+    mobileStack,
+    editMode,
+  ]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -639,28 +655,20 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         </div>
       )}
 
-      <div
-        id="overview-dashboard"
-        className="grid min-w-0 grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]"
-      >
-        <aside className="flex w-full min-w-0 xl:col-start-2 xl:row-start-1 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)]">
-          <LiveReadsPanel paused={editMode} />
-        </aside>
-        <div className="flex min-w-0 flex-col gap-4 xl:col-start-1 xl:row-start-1">
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
-              {visibleOrder.map((id) => {
-                const content = rowContent[id];
-                if (!content) return null;
-                return (
-                  <SortableRow key={id} id={id} editMode={editMode}>
-                    {content}
-                  </SortableRow>
-                );
-              })}
-            </SortableContext>
-          </DndContext>
-        </div>
+      <div id="overview-dashboard" className="flex min-w-0 flex-col gap-4">
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
+            {visibleOrder.map((id) => {
+              const content = rowContent[id];
+              if (!content) return null;
+              return (
+                <SortableRow key={id} id={id} editMode={editMode}>
+                  {content}
+                </SortableRow>
+              );
+            })}
+          </SortableContext>
+        </DndContext>
       </div>
     </div>
   );
