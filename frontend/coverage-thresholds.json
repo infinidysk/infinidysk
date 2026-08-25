@@ -1,9 +1,9 @@
 {
   "global": {
     "branches": 24,
-    "functions": 20,
-    "lines": 25,
-    "statements": 24
+    "functions": 23,
+    "lines": 28,
+    "statements": 27
   },
   "globs": {
     "app/clients/**": {
