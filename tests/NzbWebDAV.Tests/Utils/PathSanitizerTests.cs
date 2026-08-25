@@ -82,32 +82,16 @@ public class PathSanitizerTests
     [Fact]
     public void SanitizeComponent_WhenDisabled_StillTruncatesToComponentLimit()
     {
-        PathSanitizer.SetWindowsSafePathsEnabled(false);
-        try
-        {
-            var stem = new string('a', 300);
-            var result = PathSanitizer.SanitizeComponent(stem + ".mkv");
-            Assert.True(result.Length <= 240);
-            Assert.EndsWith(".mkv", result);
-        }
-        finally
-        {
-            PathSanitizer.SetWindowsSafePathsEnabled(true);
-        }
+        var stem = new string('a', 300);
+        var result = PathSanitizer.SanitizeComponent(stem + ".mkv", windowsSafe: false);
+        Assert.True(result.Length <= 240);
+        Assert.EndsWith(".mkv", result);
     }
 
     [Fact]
     public void SanitizeComponent_WhenDisabled_TruncationToEmptyBecomesUntitled()
     {
-        PathSanitizer.SetWindowsSafePathsEnabled(false);
-        try
-        {
-            Assert.Equal("untitled", PathSanitizer.SanitizeComponent(new string(' ', 241)));
-        }
-        finally
-        {
-            PathSanitizer.SetWindowsSafePathsEnabled(true);
-        }
+        Assert.Equal("untitled", PathSanitizer.SanitizeComponent(new string(' ', 241), windowsSafe: false));
     }
 
     [Fact]
