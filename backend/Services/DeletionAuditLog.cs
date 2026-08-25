@@ -27,6 +27,7 @@ public static class DeletionAuditLog
         string Path,
         string Reason,
         Guid? ItemId,
+        Guid? ParentId,
         int? Count);
 
     /// <summary>
@@ -43,6 +44,7 @@ public static class DeletionAuditLog
             item.Path,
             reason,
             item.Id,
+            null,
             null));
     }
 
@@ -69,6 +71,7 @@ public static class DeletionAuditLog
             source,
             samplePaths,
             reason,
+            null,
             parentId,
             items.Count));
     }
@@ -88,18 +91,15 @@ public static class DeletionAuditLog
 
     internal static IReadOnlyList<DeletionAuditEntry> GetRecent() => Recent.ToArray();
 
-    internal static void Reset()
-    {
-        while (Recent.TryDequeue(out _))
-        {
-        }
-    }
+    internal static void Reset() => Recent.Clear();
 
     private static void Enqueue(DeletionAuditEntry entry)
     {
         Recent.Enqueue(entry);
+        // ConcurrentQueue has no capacity bound; drop the oldest entries past the cap.
         while (Recent.Count > RecentBufferCapacity && Recent.TryDequeue(out _))
         {
+            // Trimming is the condition, not the body.
         }
     }
 }

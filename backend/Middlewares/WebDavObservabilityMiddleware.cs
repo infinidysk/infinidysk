@@ -16,6 +16,9 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
     private static readonly TimeSpan SlowThreshold = TimeSpan.FromSeconds(5);
     private static readonly ConcurrentDictionary<string, long> Counters = new(StringComparer.Ordinal);
 
+    // Test seam: the five-second default is impractical to exercise in a unit test.
+    internal static TimeSpan? SlowThresholdOverride { get; set; }
+
     private static readonly HashSet<string> WebDavRoots = new(StringComparer.OrdinalIgnoreCase)
     {
         "/content",
@@ -48,16 +51,19 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
 
             Increment("total");
 
-            if (status >= 500)
+            var failed = status >= 500;
+            var slow = elapsedMs >= (SlowThresholdOverride ?? SlowThreshold).TotalMilliseconds;
+            if (failed) Increment("failed");
+            if (slow) Increment("slow");
+
+            if (failed)
             {
-                Increment("failed");
                 Log.Warning(
                     "WebDAV request failed. Method={Method} Path={Path} Status={Status} DurationMs={DurationMs}",
                     method, path, status, elapsedMs);
             }
-            else if (elapsedMs >= SlowThreshold.TotalMilliseconds)
+            else if (slow)
             {
-                Increment("slow");
                 Log.Warning(
                     "Slow WebDAV request. Method={Method} Path={Path} Status={Status} DurationMs={DurationMs}",
                     method, path, status, elapsedMs);
@@ -74,13 +80,9 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
         if (string.IsNullOrEmpty(path))
             return false;
 
-        foreach (var root in WebDavRoots)
-        {
-            if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-
-        return false;
+        return WebDavRoots.Any(root =>
+            path.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+            && (path.Length == root.Length || path[root.Length] == '/'));
     }
 
     private static void Increment(string key) =>

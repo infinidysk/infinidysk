@@ -444,8 +444,10 @@ public partial class Program
             // Must run before anything that reads Scheme/Host/RemoteIpAddress.
             app.UseForwardedHeaders();
             app.UseMiddleware<RequestCorrelationMiddleware>();
-            app.UseMiddleware<ExceptionMiddleware>();
+            // Observability wraps exception translation so its counters see the final
+            // status codes that ExceptionMiddleware assigns to WebDAV failures.
             app.UseMiddleware<WebDavObservabilityMiddleware>();
+            app.UseMiddleware<ExceptionMiddleware>();
             app.UseMiddleware<MetricsAuthenticationMiddleware>();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
             app.Use(async (context, next) =>
