@@ -445,6 +445,7 @@ public partial class Program
             app.UseForwardedHeaders();
             app.UseMiddleware<RequestCorrelationMiddleware>();
             app.UseMiddleware<ExceptionMiddleware>();
+            app.UseMiddleware<WebDavObservabilityMiddleware>();
             app.UseMiddleware<MetricsAuthenticationMiddleware>();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
             app.Use(async (context, next) =>

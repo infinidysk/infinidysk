@@ -431,6 +431,12 @@ public sealed class SupportPackService(
             cpu,
             gc = BuildGcDiagnostics(usage, addressSpace),
             gcDiagnostics = gcDiagnosticsStore.LastResult,
+            webdavCounters = NzbWebDAV.Middlewares.WebDavObservabilityMiddleware.Snapshot(),
+            recentDavDeletions = DeletionAuditLog.GetRecent(),
+            rcloneLastForgetError = NzbWebDAV.Clients.Rclone.RcloneClient.Current?.LastForgetError
+                is { } forgetError
+                ? new { message = forgetError.Message, atUtc = forgetError.At }
+                : null,
             threadPool = new
             {
                 minWorkerThreads,
