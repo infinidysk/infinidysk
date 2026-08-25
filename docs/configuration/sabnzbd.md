@@ -15,7 +15,7 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | Manual Upload Category (upload-time picker [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }) | `api.manual-category` | `uncategorized` | Queue page uploads; default for the category picker beside the Upload NZB button |
 | Import Strategy | `api.import-strategy` | `symlinks` | Symlinks (Plex) / STRM (Emby/Jellyfin) |
 | Rclone Mount Directory | `rclone.mount-dir` | env `MOUNT_DIR` or `/mnt/nzbdav` | When symlinks |
-| Completed Downloads Dir | `api.completed-downloads-dir` | backend default under `/data` | When STRM |
+| Completed Downloads Dir | `api.completed-downloads-dir` | `/data/completed-downloads` | When STRM |
 | Base URL | `general.base-url` | `http://localhost:3000` | STRM / adapter absolute URLs |
 | Ignored Files | `api.download-file-blocklist` | `*.nfo, *.par2, …` | Glob blocklist for mounts (`*` and `?`) |
 | Filter sample videos [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `api.sample-filter-enabled` | on | Discard videos with whole-word `sample`/`samples` in the filename — or in a release subfolder such as `Sample/` [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } — under 20% of the largest video in the NZB |

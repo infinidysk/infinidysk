@@ -416,6 +416,12 @@ public class RemoveUnlinkedFilesTask : BaseTask
             return false;
         }
 
+        // Only STRM mode writes generated sidecars under completed-downloads-dir.
+        // In symlink mode that directory is not InfiniDysk's output, so links there
+        // are real library links and must keep their dav-items from being orphaned.
+        if (_configManager.GetImportStrategy() != "strm")
+            return false;
+
         var strmRoot = _configManager.GetStrmCompletedDownloadDir();
         return !string.IsNullOrWhiteSpace(strmRoot)
                && CreateStrmFilesPostProcessor.IsPathWithinRoot(fullPath, Path.GetFullPath(strmRoot));

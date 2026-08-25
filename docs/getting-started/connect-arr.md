@@ -31,7 +31,7 @@ Registered and enabled instances light up the Overview **Arr Health** widget [si
 | Strategy | InfiniDysk setting | \*Arr / media server |
 |----------|----------------|---------------------|
 | Symlinks | Rclone mount dir e.g. `/mnt/remote/nzbdav` | Same path must exist inside \*Arr |
-| STRM | Completed dir e.g. `/mnt/completed-downloads` + Base URL | Media server must reach Base URL |
+| STRM | Completed dir e.g. `/mnt/completed-downloads` + Base URL | The completed-downloads path must exist at the same absolute path inside \*Arr; the media server must reach Base URL |
 
 Enable **Repairs** with a **Library Directory** once paths and \*Arr instances exist — [Repairs](../configuration/repairs.md).
 

@@ -1976,6 +1976,11 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                ?? "symlinks";
     }
 
+    public string GetSymlinkCompletedDownloadDir()
+    {
+        return Path.Join(GetRcloneMountDir(), DavItem.SymlinkFolder.Name);
+    }
+
     public string GetStrmCompletedDownloadDir()
     {
         return GetConfigValue(ConfigKeys.ApiCompletedDownloadsDir) ?? "/data/completed-downloads";

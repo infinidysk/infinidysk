@@ -33,6 +33,24 @@ describe("SABnzbd import strategy", () => {
     ).toBe(true);
   });
 
+  it("treats a case-insensitive STRM strategy as requiring STRM paths", () => {
+    expect(
+      isSabnzbdSettingsValid({
+        ...config,
+        "api.import-strategy": "STRM",
+      }),
+    ).toBe(false);
+
+    expect(
+      isSabnzbdSettingsValid({
+        ...config,
+        "api.import-strategy": "STRM",
+        "api.completed-downloads-dir": "/mnt/jellyfin",
+        "general.base-url": "https://infinidysk.example",
+      }),
+    ).toBe(true);
+  });
+
   it("tracks import-strategy as a saveable change", () => {
     expect(isSabnzbdSettingsUpdated(config, { ...config, "api.import-strategy": "strm" })).toBe(
       true,

@@ -753,6 +753,7 @@ public class RemoveUnlinkedFilesTaskTests
             config.UpdateValues(
             [
                 new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiImportStrategy, ConfigValue = "strm" },
                 new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
             ]);
 
@@ -831,6 +832,7 @@ public class RemoveUnlinkedFilesTaskTests
             config.UpdateValues(
             [
                 new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiImportStrategy, ConfigValue = "strm" },
                 new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
             ]);
 
@@ -901,6 +903,7 @@ public class RemoveUnlinkedFilesTaskTests
             config.UpdateValues(
             [
                 new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiImportStrategy, ConfigValue = "strm" },
                 new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
             ]);
 
@@ -953,6 +956,7 @@ public class RemoveUnlinkedFilesTaskTests
             config.UpdateValues(
             [
                 new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiImportStrategy, ConfigValue = "strm" },
                 new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
             ]);
 
@@ -1016,6 +1020,7 @@ public class RemoveUnlinkedFilesTaskTests
             config.UpdateValues(
             [
                 new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiImportStrategy, ConfigValue = "strm" },
                 new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
             ]);
 
@@ -1032,6 +1037,53 @@ public class RemoveUnlinkedFilesTaskTests
             Assert.NotNull(progress);
             Assert.StartsWith("Dry Run - Done.", progress);
             Assert.Contains("Identified 1 unlinked files", progress);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(rootDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task DryRun_CountsLibraryLinksUnderCompletedDownloadsDirInSymlinkMode()
+    {
+        // In symlink mode, completed-downloads-dir is not InfiniDysk's generated output.
+        // Arr-imported links that happen to sit under that path must still count.
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var rootDir = Path.Join(Path.GetTempPath(), $"nzbdav-orphan-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(rootDir, "data");
+        var completedDir = Path.Join(libraryDir, "completed-downloads");
+        Directory.CreateDirectory(completedDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+            await SeedLinkedItemsAsync(ctx, completedDir, 5);
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiImportStrategy, ConfigValue = "symlinks" },
+                new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.DoesNotContain("Aborted:", progress, StringComparison.Ordinal);
+            Assert.StartsWith("Dry Run - Done.", progress);
         }
         finally
         {

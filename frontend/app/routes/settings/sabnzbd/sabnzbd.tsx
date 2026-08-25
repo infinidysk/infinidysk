@@ -24,6 +24,7 @@ type SabnzbdSettingsProps = {
 
 export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
   const ensureArticleExistence = useEnsureArticleExistenceSetting(config, setNewConfig);
+  const importStrategy = normalizeImportStrategy(config["api.import-strategy"]);
 
   const refreshApiKey = useCallback(() => {
     setNewConfig({ ...config, "api.key": generateNewApiKey() });
@@ -161,7 +162,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
               className="w-full"
               id="import-strategy-input"
               aria-describedby="import-strategy-help"
-              value={config["api.import-strategy"]}
+              value={importStrategy}
               onChange={(e) => setNewConfig({ ...config, "api.import-strategy": e.target.value })}
             >
               <option value="symlinks">Symlinks — Plex</option>
@@ -177,7 +178,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
           </div>
         </ManagedSetting>
 
-        {config["api.import-strategy"] === "symlinks" && (
+        {importStrategy === "symlinks" && (
           <ManagedSetting configKey="rclone.mount-dir">
             <div className="ml-4 space-y-2 border-l border-base-content/10 pl-4">
               <label
@@ -203,7 +204,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
           </ManagedSetting>
         )}
 
-        {config["api.import-strategy"] === "strm" && (
+        {importStrategy === "strm" && (
           <div className="ml-4 space-y-4 border-l border-base-content/10 pl-4">
             <ManagedSetting configKey="api.completed-downloads-dir">
               <div className="space-y-2">
@@ -691,9 +692,13 @@ function isValidNzbBackupLocation(config: Record<string, string>): boolean {
 }
 
 function isValidStrmOutput(config: Record<string, string>): boolean {
-  if (config["api.import-strategy"] !== "strm") return true;
+  if (normalizeImportStrategy(config["api.import-strategy"]) !== "strm") return true;
   return (
     Boolean(config["api.completed-downloads-dir"]?.trim()) &&
     Boolean(config["general.base-url"]?.trim())
   );
+}
+
+function normalizeImportStrategy(value: string | undefined): "symlinks" | "strm" {
+  return value?.trim().toLowerCase() === "strm" ? "strm" : "symlinks";
 }
