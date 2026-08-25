@@ -60,7 +60,12 @@ public class ProviderCircuitBreaker
         _providerName = providerName;
         _onTransition = onTransition;
         _coalesceFailureBursts = coalesceFailureBursts;
-        _initialCooldown = initialCooldown ?? DefaultInitialCooldown;
+        // A non-positive initial cooldown would trip straight into half-open and the
+        // doubling ladder would never grow, silently disabling the breaker.
+        var configuredInitial = initialCooldown ?? DefaultInitialCooldown;
+        _initialCooldown = configuredInitial > TimeSpan.Zero
+            ? configuredInitial
+            : DefaultInitialCooldown;
         // A ceiling under the initial cooldown would shorten the first trip instead of
         // bounding the ladder, so keep it at or above the value it caps.
         var ceiling = maxCooldown ?? DefaultMaxCooldown;

@@ -76,6 +76,21 @@ public class ProviderCircuitBreakerCooldownTests
         Assert.Equal(TimeSpan.FromSeconds(120), breaker.CurrentCooldown);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-30)]
+    public void NonPositiveInitialCooldown_FallsBackToTheDefault(int seconds)
+    {
+        var clock = new TestClock();
+        var breaker = CreateBreaker(clock, initial: TimeSpan.FromSeconds(seconds));
+
+        breaker.RecordConnectionFailure();
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.InRange(snapshot.CooldownRemainingSeconds ?? 0, 59, 60);
+        Assert.Equal(TimeSpan.FromSeconds(120), breaker.CurrentCooldown);
+    }
+
     [Fact]
     public void UnconfiguredBreaker_KeepsTheShippedLadder()
     {
