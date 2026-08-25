@@ -27,7 +27,9 @@ internal static class DatabaseContractWriter
 
     // Test seams (same pattern as UsenetMigrationStore).
     internal static Func<DavDatabaseContext> MainContextFactory { get; set; } =
-        static () => new DavDatabaseContext();
+        static () => DatabaseProviderConfig.IsPostgres
+            ? new PostgresDavDatabaseContext()
+            : new DavDatabaseContext();
 
     internal static Func<MetricsDbContext> MetricsContextFactory { get; set; } =
         static () => new MetricsDbContext();
@@ -136,7 +138,11 @@ internal static class DatabaseContractWriter
             {
                 File.Delete(stale);
             }
-            catch
+            catch (IOException)
+            {
+                // best effort — stale temp files from a crashed write.
+            }
+            catch (UnauthorizedAccessException)
             {
                 // best effort — stale temp files from a crashed write.
             }
