@@ -23,6 +23,7 @@ using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Tests.Database;
 
+[Collection(nameof(DatabaseContractWriterCollection))]
 public sealed class PostgresMigrationTests
 {
     [SkippableFact]

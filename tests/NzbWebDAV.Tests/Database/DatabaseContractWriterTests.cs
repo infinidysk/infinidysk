@@ -10,6 +10,7 @@ using NzbWebDAV.Database.MigrationHelpers;
 
 namespace NzbWebDAV.Tests.Database;
 
+[Collection(nameof(DatabaseContractWriterCollection))]
 public sealed class DatabaseContractWriterTests : IAsyncLifetime
 {
     private readonly string _root = Path.Join(Path.GetTempPath(), $"nzbdav-contract-{Guid.NewGuid():N}");
