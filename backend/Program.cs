@@ -131,6 +131,9 @@ public partial class Program
             if (args.Contains("--db-migration"))
             {
                 await RunDatabaseMigrationsAsync(args).ConfigureAwait(false);
+                await DatabaseContractWriter
+                    .WriteAsync(SigtermUtil.GetCancellationToken())
+                    .ConfigureAwait(false);
                 return;
             }
 
@@ -150,6 +153,12 @@ public partial class Program
             await using var metricsBootstrap = new MetricsDbContext();
             await StartupDatabaseMigrator
                 .RunAsync(databaseContext, metricsBootstrap, startupCancellationToken)
+                .ConfigureAwait(false);
+
+            // Refresh the machine-readable database contract so external migrators
+            // (DUMB) can pin against the applied migration history.
+            await DatabaseContractWriter
+                .WriteAsync(startupCancellationToken)
                 .ConfigureAwait(false);
 
             // Surface database corruption as one clear event with recovery guidance,

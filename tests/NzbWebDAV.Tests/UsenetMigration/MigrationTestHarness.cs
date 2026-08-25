@@ -46,7 +46,11 @@ internal sealed class MigrationTestHarness : IAsyncDisposable
             .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
             .Options;
 
-        Store = new UsenetMigrationStore { ContextFactory = MigFactory };
+        Store = new UsenetMigrationStore
+        {
+            ContextFactory = MigFactory,
+            WriteDatabaseContract = static _ => Task.CompletedTask,
+        };
     }
 
     public static async Task<MigrationTestHarness> CreateAsync()

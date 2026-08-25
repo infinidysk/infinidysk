@@ -52,6 +52,10 @@ public sealed class UsenetMigrationStore : IDisposable
     internal Action ClearSqlitePools { get; set; } =
         static () => SqliteConnection.ClearAllPools();
 
+    /// <summary>Refreshes db-contract.json after the ledger is (re)created. Overridable in tests.</summary>
+    internal Func<CancellationToken, Task> WriteDatabaseContract { get; set; } =
+        static ct => DatabaseContractWriter.WriteAsync(ct);
+
     private readonly SemaphoreSlim _databaseInitialization = new(1, 1);
     private bool _databaseInitialized;
 
@@ -89,6 +93,10 @@ public sealed class UsenetMigrationStore : IDisposable
                 RecreateDatabaseFiles();
                 await MigrateAndCreateSessionAsync(ct).ConfigureAwait(false);
             }
+
+            // The ledger was just migrated (or recreated) — refresh the on-disk
+            // database contract so external migrators see it. Non-fatal.
+            await WriteDatabaseContract(ct).ConfigureAwait(false);
 
             Volatile.Write(ref _databaseInitialized, true);
         }

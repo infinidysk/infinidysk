@@ -32,6 +32,7 @@ public class UsenetMigrationStoreTests
         var store = new UsenetMigrationStore
         {
             ContextFactory = () => new UsenetMigrationDbContext(options),
+            WriteDatabaseContract = static _ => Task.CompletedTask,
         };
 
         try
@@ -74,6 +75,7 @@ public class UsenetMigrationStoreTests
             ContextFactory = () => new UsenetMigrationDbContext(options),
             DatabaseFilePath = () => databasePath,
             DatabaseFileExists = () => File.Exists(databasePath),
+            WriteDatabaseContract = static _ => Task.CompletedTask,
         };
 
         try
