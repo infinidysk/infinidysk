@@ -26,6 +26,7 @@ jobs:
       tag: ${{ steps.vars.outputs.tag }}
       sha: ${{ steps.vars.outputs.sha }}
       short_sha: ${{ steps.vars.outputs.short_sha }}
+      dev_label: ${{ steps.vars.outputs.dev_label }}
     steps:
       - id: vars
         env:
@@ -68,6 +69,7 @@ jobs:
           echo "tag=v${VERSION}-rc.${RC}" >> "$GITHUB_OUTPUT"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "dev_label=dev-$(date -u +%y%m%d.%H%M)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: resolve
@@ -101,7 +103,7 @@ jobs:
       tags: |
         ghcr.io/${{ github.repository }}:dev
         docker.io/infinidysk/infinidysk:dev
-      nzbdav_version: dev-${{ needs.resolve.outputs.short_sha }}
+      nzbdav_version: ${{ needs.resolve.outputs.dev_label }}
       checkout_ref: ${{ needs.resolve.outputs.sha }}
       dockerhub_username: infinidysk
     secrets:
@@ -120,6 +122,7 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
           RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
           SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
+          DEV_LABEL: ${{ needs.resolve.outputs.dev_label }}
         run: |
           set -euo pipefail
           gh release create "$RELEASE_TAG" \
@@ -146,7 +149,7 @@ jobs:
               --prerelease
           fi
 
-          DEV_TITLE="Rolling :dev (dev-${SHORT_SHA})"
+          DEV_TITLE="Rolling :dev (${DEV_LABEL})"
           DEV_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to release candidate [$RELEASE_TAG](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG)."
           if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release edit dev \
