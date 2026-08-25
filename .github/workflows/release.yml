@@ -330,8 +330,11 @@ jobs:
     needs:
       - release-please
       - deploy
+      - assets
+      - publish-dev-release
       - tag-dev
       - tag-rc
+      - cleanup-prereleases
     runs-on: ubuntu-latest
     permissions:
       contents: read
