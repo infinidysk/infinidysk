@@ -77,20 +77,20 @@ function Tile({
   const valueClass = accent === "live" ? "text-success" : accent === "danger" ? "text-error" : "";
   return (
     <div
-      className={`stat px-3 py-2.5 sm:px-4 sm:py-4 lg:px-6 max-sm:border-e-0 max-sm:bg-base-200 ${className ?? ""}`}
+      className={`stat px-3 py-2.5 sm:px-4 sm:py-4 lg:px-6 max-sm:min-w-0 max-sm:border-e-0 max-sm:bg-base-200 ${className ?? ""}`}
     >
       {accent && (
         <div className="stat-figure">
           <span className={`status ${accent === "live" ? "status-success" : "status-error"}`} />
         </div>
       )}
-      <div className="stat-title">{label}</div>
+      <div className="stat-title max-sm:whitespace-normal max-sm:break-words">{label}</div>
       <div
-        className={`stat-value font-mono text-lg sm:text-xl md:text-2xl lg:text-3xl ${valueClass}`}
+        className={`stat-value font-mono text-lg sm:text-xl md:text-2xl lg:text-3xl max-sm:whitespace-normal max-sm:break-words ${valueClass}`}
       >
         {value}
       </div>
-      {sub && <div className="stat-desc">{sub}</div>}
+      {sub && <div className="stat-desc max-sm:whitespace-normal max-sm:break-words">{sub}</div>}
     </div>
   );
 }
