@@ -38,6 +38,12 @@ describe("mergeRowOrder", () => {
     expect(mergeRowOrder(DEFAULT, ["liveTiles"])).toEqual([...DEFAULT]);
   });
 
+  it("dedupes repeated saved ids, keeping the first occurrence", () => {
+    expect(
+      mergeRowOrder(DEFAULT, ["providers", "liveTiles", "providers", "rightNow", "throughput"]),
+    ).toEqual(["providers", "liveTiles", "rightNow", "throughput"]);
+  });
+
   it("ignores non-array or malformed saved values", () => {
     expect(mergeRowOrder(DEFAULT, "nope")).toEqual([...DEFAULT]);
     expect(

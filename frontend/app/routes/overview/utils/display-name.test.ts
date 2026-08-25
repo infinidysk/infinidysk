@@ -44,4 +44,15 @@ describe("displayNameForRead", () => {
     const result = displayNameForRead("9f2c7a1e4b.mkv", "/.ids/9f2c7a1e-4b2c");
     expect(result).toEqual({ name: "9f2c7a1e4b.mkv", isReleaseFallback: false });
   });
+
+  it("keeps the obfuscated leaf for root-level or empty paths", () => {
+    expect(displayNameForRead("9f2c7a1e4b.mkv", "/9f2c7a1e4b.mkv")).toEqual({
+      name: "9f2c7a1e4b.mkv",
+      isReleaseFallback: false,
+    });
+    expect(displayNameForRead("9f2c7a1e4b.mkv", "")).toEqual({
+      name: "9f2c7a1e4b.mkv",
+      isReleaseFallback: false,
+    });
+  });
 });

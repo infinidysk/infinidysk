@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 
-/** SSR-safe media query hook. */
+/** SSR-safe media query hook. Initial render is always `false` so server and
+ * client markup match; the effect syncs the real value after mount. */
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(
-    () => typeof window !== "undefined" && window.matchMedia(query).matches,
-  );
+  const [matches, setMatches] = useState(false);
 
   useEffect(() => {
     const mql = window.matchMedia(query);

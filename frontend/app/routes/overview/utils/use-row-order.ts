@@ -11,8 +11,14 @@ const STORAGE_KEY = "overview-row-order";
  */
 export function mergeRowOrder(defaultOrder: readonly string[], saved: unknown): string[] {
   const known = new Set(defaultOrder);
+  const seen = new Set<string>();
   const merged = Array.isArray(saved)
-    ? saved.filter((id: unknown): id is string => typeof id === "string" && known.has(id))
+    ? saved.filter(
+        (id: unknown): id is string =>
+          // Known string ids only, first occurrence wins — a corrupt saved
+          // layout with duplicates must not produce duplicate React keys.
+          typeof id === "string" && known.has(id) && !seen.has(id) && (seen.add(id), true),
+      )
     : [];
   for (const id of defaultOrder) {
     if (merged.includes(id)) continue;

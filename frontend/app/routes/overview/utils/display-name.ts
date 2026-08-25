@@ -48,7 +48,8 @@ export function displayNameForRead(fileName: string, path: string): DisplayName 
 
   const segments = path.split("/").filter(Boolean);
   const parent = segments.length >= 2 ? segments[segments.length - 2]! : "";
-  if (IGNORED_PARENTS.has(parent.toLowerCase())) return { name: leaf, isReleaseFallback: false };
+  if (parent === "" || IGNORED_PARENTS.has(parent.toLowerCase()))
+    return { name: leaf, isReleaseFallback: false };
 
   const ext = leaf.includes(".") ? leaf.slice(leaf.lastIndexOf(".")) : "";
   return { name: parent + ext, isReleaseFallback: true };
