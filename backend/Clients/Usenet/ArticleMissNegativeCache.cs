@@ -54,6 +54,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     private Task _persistenceLoop = Task.CompletedTask;
     private volatile bool _persistenceLoopStarted;
     private int _cleanupRunning;
+    private int _cleanupContinuationScheduled;
     private long _hits;
 
     private abstract record PersistenceWorkItem;
@@ -207,6 +208,12 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         MarkMissingInMemory(key, at);
     }
 
+    /// <summary>
+    /// Test hook: invoked after each cleanup round while the single-flight is still
+    /// held, so marks added by the hook skip cleanup instead of recursing into it.
+    /// </summary>
+    internal Action? CleanupRoundCompletedForTests { get; set; }
+
     internal async Task MarkMissingAndPersistForTestsAsync(string key)
     {
         MarkMissing(key);
@@ -246,8 +253,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         // The flight is released between rounds and the count re-checked, so marks
         // that skipped cleanup while another thread held the flight are handled by
         // the next round instead of waiting for a future MarkMissing. The round cap
-        // bounds the work done under a sustained mark storm; temporary over-cap is
-        // fine and is trimmed by a later call.
+        // bounds the work done under a sustained mark storm.
         for (var round = 0; round < MaxCleanupRounds; round++)
         {
             if (Interlocked.CompareExchange(ref _cleanupRunning, 1, 0) != 0)
@@ -256,6 +262,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             try
             {
                 CleanupRound(maxEntries);
+                CleanupRoundCompletedForTests?.Invoke();
             }
             finally
             {
@@ -264,6 +271,32 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
             if (_missingAt.Count <= maxEntries) return;
         }
+
+        // Marks kept landing after each round's snapshot, so the loop is still over
+        // cap and every caller that added them skipped cleanup (the flight was
+        // held). Don't strand the cache over cap until some future MarkMissing —
+        // queue one coalesced continuation to keep trimming in the background.
+        ScheduleCleanupContinuation();
+    }
+
+    private void ScheduleCleanupContinuation()
+    {
+        if (Interlocked.CompareExchange(ref _cleanupContinuationScheduled, 1, 0) != 0)
+            return;
+        _ = Task.Run(() =>
+        {
+            // Re-arm before running, so a still-over-cap result can schedule the
+            // next coalesced continuation from inside Cleanup.
+            Interlocked.Exchange(ref _cleanupContinuationScheduled, 0);
+            try
+            {
+                Cleanup(_configManager.GetArticleMissCacheMaxEntries());
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                Log.Debug(e, "Article-miss cache cleanup continuation failed; a later mark retriggers cleanup.");
+            }
+        });
     }
 
     private void CleanupRound(int maxEntries)
@@ -271,10 +304,10 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         var cutoff = DateTimeOffset.UtcNow - _configManager.GetArticleMissCacheTtl();
         // Weakly-consistent foreach — never LINQ OrderBy/ToArray on the live
         // ConcurrentDictionary (those use Count-then-CopyTo and race under writes).
+        // Enumeration only yields fully constructed nodes, so keys are never null.
         var snapshot = new List<KeyValuePair<string, DateTimeOffset>>(Math.Max(4, _missingAt.Count));
         foreach (var kv in _missingAt)
         {
-            if (kv.Key is null) continue;
             if (kv.Value < cutoff)
                 RemoveIfUnchanged(kv);
             else

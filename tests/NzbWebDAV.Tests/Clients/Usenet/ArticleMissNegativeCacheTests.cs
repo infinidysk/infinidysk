@@ -154,6 +154,49 @@ public class ArticleMissNegativeCacheTests
     }
 
     [Fact]
+    public async Task MaxEntries_RoundCapReachedOverCap_SchedulesCoalescedContinuation()
+    {
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        var cache = new ArticleMissNegativeCache(config);
+
+        for (var i = 0; i < 100; i++)
+        {
+            cache.MarkMissingAtForTests(
+                ArticleMissNegativeCache.BuildKey($"seed-{i}", "p", null),
+                DateTimeOffset.UtcNow.AddMilliseconds(i));
+        }
+
+        // Every round lands a fresh mark after that round's snapshot (the hook runs
+        // while the single-flight is held, so the nested mark skips cleanup), so all
+        // eight rounds finish over cap and the round cap is reached.
+        var sabotage = 1;
+        var lateMarks = 0;
+        cache.CleanupRoundCompletedForTests = () =>
+        {
+            if (Volatile.Read(ref sabotage) == 0) return;
+            var n = Interlocked.Increment(ref lateMarks);
+            cache.MarkMissingAtForTests(
+                ArticleMissNegativeCache.BuildKey($"late-{n}", "p", null),
+                DateTimeOffset.UtcNow);
+        };
+
+        // The 101st mark pushes over the cap and runs the capped cleanup loop; the
+        // hook keeps every round over cap, so all eight rounds fire synchronously.
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("trigger", "p", null));
+        Assert.True(Volatile.Read(ref lateMarks) >= 8);
+
+        // Once marks stop arriving, the scheduled continuation must drain the cache
+        // to the cap without any further MarkMissing call.
+        Interlocked.Exchange(ref sabotage, 0);
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        while (cache.Entries > 100 && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(10);
+
+        Assert.True(cache.Entries <= 100, $"continuation left {cache.Entries} entries");
+        Assert.True(cache.Entries > 0);
+    }
+
+    [Fact]
     public async Task PersistentCache_HydratesFreshMisses_AndPurgesExpiredRows()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
