@@ -944,6 +944,116 @@ public class RemoveUnlinkedFilesTaskTests
         }
     }
 
+    [Fact]
+    public async Task DryRun_IgnoresGeneratedSidecarsInsideLibraryDir()
+    {
+        // A completed-downloads dir nested inside the Library Directory must not let
+        // generated strm sidecars mark their own dav-items as "linked"; otherwise nothing
+        // with STRM output enabled could ever be orphaned.
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var rootDir = Path.Join(Path.GetTempPath(), $"nzbdav-orphan-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(rootDir, "data");
+        var completedDir = Path.Join(libraryDir, "completed-downloads");
+        Directory.CreateDirectory(completedDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+            await SeedLinkedItemsAsync(ctx, completedDir, 5);
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.Contains("Aborted:", progress, StringComparison.Ordinal);
+            Assert.Contains("less than five linked files", progress, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(rootDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task DryRun_StillCountsLibraryLinksOutsideGeneratedOutputDirs()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var rootDir = Path.Join(Path.GetTempPath(), $"nzbdav-orphan-{Guid.NewGuid():N}");
+        var libraryDir = Path.Join(rootDir, "data");
+        var completedDir = Path.Join(libraryDir, "completed-downloads");
+        Directory.CreateDirectory(completedDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+            await SeedLinkedItemsAsync(ctx, libraryDir, 5);
+
+            // An orphan whose only "link" is its own generated strm sidecar inside the
+            // completed-downloads dir nested within the Library Directory.
+            var orphanId = Guid.NewGuid();
+            ctx.Items.Add(DavItem.New(
+                orphanId,
+                DavItem.ContentFolder,
+                $"{orphanId:N}.mkv",
+                10,
+                DavItem.ItemType.UsenetFile,
+                DavItem.ItemSubType.NzbFile,
+                null,
+                null,
+                null,
+                null));
+            await ctx.SaveChangesAsync();
+            await File.WriteAllTextAsync(
+                Path.Join(completedDir, $"{orphanId:N}.mkv.strm"),
+                $"http://localhost/view/.ids/{orphanId}.mkv");
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = completedDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.StartsWith("Dry Run - Done.", progress);
+            Assert.Contains("Identified 1 unlinked files", progress);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(rootDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
     private static async Task SeedLinkedItemsAsync(DavDatabaseContext ctx, string libraryDir, int count)
     {
         for (var i = 0; i < count; i++)

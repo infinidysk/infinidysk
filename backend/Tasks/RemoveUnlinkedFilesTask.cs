@@ -381,6 +381,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
     {
         var linkedIds = OrganizedLinksUtil
             .GetLibraryDavItemLinks(_configManager)
+            .Where(x => !IsGeneratedOutputPath(x.LinkPath))
             .Select(x => x.DavItemId);
 
         var count = 0;
@@ -397,6 +398,35 @@ public class RemoveUnlinkedFilesTask : BaseTask
         }
 
         UpdatePhase($"Scanning all linked files...\nFound {count}...");
+    }
+
+    /// <summary>
+    /// Generated strm/symlink outputs are written by InfiniDysk itself and are removed together
+    /// with their owning dav-item. When an output directory is nested inside the Library
+    /// Directory, counting those sidecars as library links would let an item self-protect:
+    /// the link scan would keep finding its own leftover sidecar and the item would never
+    /// be orphaned. Links an Arr has imported into the library proper still count.
+    /// </summary>
+    private bool IsGeneratedOutputPath(string linkPath)
+    {
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(linkPath);
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+
+        var strmRoot = _configManager.GetStrmCompletedDownloadDir();
+        if (!string.IsNullOrWhiteSpace(strmRoot)
+            && CreateStrmFilesPostProcessor.IsPathWithinRoot(fullPath, Path.GetFullPath(strmRoot)))
+            return true;
+
+        var symlinkRoot = _configManager.GetSymlinkOutputDirectory();
+        return !string.IsNullOrWhiteSpace(symlinkRoot)
+               && CreateStrmFilesPostProcessor.IsPathWithinRoot(fullPath, Path.GetFullPath(symlinkRoot));
     }
 
     /// <summary>
