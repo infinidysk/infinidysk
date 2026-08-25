@@ -103,7 +103,7 @@ or restrict backend capabilities when enforcement is required.
 | `DOTNET_GCRegionSize` | runtime default | .NET SOH region size; hexadecimal bytes |
 | `DOTNET_GCConserveMemory` | `0` | .NET heap-conservation level (0–9) |
 | `DOTNET_gcServer` | image default (`1`) | Enables (`1`) or disables (`0`) server GC |
-| `MAX_REQUEST_BODY_SIZE` | 100 MiB | Max request body bytes |
+| `MAX_REQUEST_BODY_SIZE` | 300 MiB | Max request body bytes |
 | `QUEUE_ITEM_STUCK_MINUTES` [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since } | `5` | Minutes without queue progress before the stuck-item watchdog pauses and cancels the worker |
 | `NZBDAV_VERSION` | `0.0.0` | Reported app version |
 | `DOTNET_DbgEnableMiniDump` | off | Opt-in crash dumps — [Logs](../operations/logs-crash-dumps.md) |

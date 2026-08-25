@@ -239,7 +239,8 @@ public partial class Program
             // initialize webapp
             var builder = WebApplication.CreateBuilder(args);
             var apiDocsEnabled = AdminOpenApiExtensions.IsEnabled(builder.Environment);
-            var maxRequestBodySize = EnvironmentUtil.GetLongVariable("MAX_REQUEST_BODY_SIZE") ?? 100 * 1024 * 1024;
+            // Default headroom covers the 256 MiB NZB ingest cap plus multipart overhead.
+            var maxRequestBodySize = EnvironmentUtil.GetLongVariable("MAX_REQUEST_BODY_SIZE") ?? 300 * 1024 * 1024;
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
             builder.Services.Configure<HostOptions>(options =>
