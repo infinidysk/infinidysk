@@ -97,26 +97,26 @@ cd frontend && npm install && npm run dev
 
 Open `http://localhost:5173` (dev) or `http://localhost:3000` (production build).
 
-**Before opening a PR:**
+**Testing — run locally only what CI does not cover.** PR CI (`ci.yml`) runs
+the full gate on every PR — frontend lint/typecheck/build/tests and backend
+build/tests — so do not run those suites locally; re-running CI-covered checks
+before opening a PR wastes time. The only local runs worth doing are the ones
+CI excludes:
 
 ```bash
-# Frontend
-cd frontend && npm run typecheck && npm run build && npm test
+# SharpCompress stress tests (CI runs --filter "format!=stress"; from repository root)
+dotnet test tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release --filter "format=stress"
 
-# Backend (from repository root)
-dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
-
-# SharpCompress (from repository root; stress tests run manually)
-dotnet test tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release --filter "format!=stress"
+# BenchmarkDotNet timing benchmarks (timing stays off CI)
+dotnet run --project backend.Benchmarks -c Release
 ```
 
 Backend tests use xUnit and live in `tests/NzbWebDAV.Tests/`. They cover streams,
 NZB/PAR2 parsing, NNTP caching and concurrency, queue logic, and SQLite-backed
 database behavior. Frontend tests use Vitest and are colocated as `*.test.ts`.
-Performance benchmarks live in `backend.Benchmarks/` and are run manually with
-`dotnet run --project backend.Benchmarks -c Release`. BenchmarkDotNet timing
-stays off CI; the deterministic streaming/SAB reports are compared in PR CI
-and against floored envelopes in `performance.yml`.
+Performance benchmarks live in `backend.Benchmarks/`; the deterministic
+streaming/SAB reports are compared in PR CI and against floored envelopes in
+`performance.yml`.
 
 ## In-tree libraries (UsenetSharp / SharpCompress / RapidYencSharp)
 
@@ -473,7 +473,7 @@ else
 - **Submodule / natives:** after clone run `git submodule update --init libs/rapidyenc`. Prefer `scripts/run-backend.sh` so the host rapidyenc native is built and `RAPIDYENC_LIBRARY_PATH` is set (required for yEnc on macOS and for local Linux without Docker).
 - **Breaking upgrades:** irreversible schema changes ship as ordinary EF migrations that auto-apply on startup and surface through the migration-progress splash; there is no `UPGRADE` env-var interlock. Advise a `/config` backup before upgrading across such a migration. Only **irreversible/destructive** migrations use a breaking conventional-commit marker (`!` or `BREAKING CHANGE`); routine additive migrations ship as plain `feat(db)` / `fix(db)` with a backup note in the PR description and release announcement.
 - **Test fixtures:** prefer deterministic generated data and `FakeNntpClient`; do not require live Usenet providers in the automated suite.
-- **Streaming changes:** run the focused backend tests and retain manual range, rclone scrubbing, and encrypted-archive playback checks for behavior not covered by automation.
+- **Streaming changes:** retain manual range, rclone scrubbing, and encrypted-archive playback checks for behavior not covered by automation; PR CI runs the automated backend tests.
 - **Stack dumps for known failures:** do not dismiss an attached exception trace as “expected” without a remediation that catches it and logs a human-friendly event (see [Stack dumps and human-friendly log events](#stack-dumps-and-human-friendly-log-events)).
 
 ## Docs version pills
