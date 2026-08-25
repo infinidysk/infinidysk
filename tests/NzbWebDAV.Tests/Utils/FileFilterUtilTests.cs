@@ -85,6 +85,49 @@ public class FileFilterUtilTests
     }
 
     [Theory]
+    [InlineData("/content/tv/Show.S01E01.1080p-Group/Sample/show.s01e01.mkv", true)]
+    [InlineData("/content/movies/Release.Name/Samples/movie.mkv", true)]
+    [InlineData("/content/tv/Release/Season 01/Sample/ep.mkv", true)]
+    [InlineData("/content/tv/Release/Resampled/ep.mkv", false)]
+    [InlineData("/content/tv/Release/Season 01/ep.mkv", false)]
+    [InlineData("/content/movies/Release/ep.sample.mkv", false)] // the leaf is not a directory
+    [InlineData("/content/movies/The.Sample.2024/movie.mkv", false)] // the job folder is excluded
+    public void HasSampleDirectory_MatchesOnlySampleDirectoriesBelowTheJobFolder(string path, bool expected)
+    {
+        Assert.Equal(expected, FileFilterUtil.HasSampleDirectory(path));
+    }
+
+    [Fact]
+    public void IsSampleFile_SmallVideoUnderSampleDirectory_IsFiltered()
+    {
+        Assert.True(FileFilterUtil.IsSampleFile(
+            "show.s01e01.mkv",
+            SampleSize,
+            FeatureSize,
+            "/content/tv/Show.S01E01.1080p-Group/Sample/show.s01e01.mkv"));
+    }
+
+    [Fact]
+    public void IsSampleFile_MainFeatureUnderSampleDirectory_IsKeptBySizeGuard()
+    {
+        Assert.False(FileFilterUtil.IsSampleFile(
+            "movie.mkv",
+            FeatureSize,
+            FeatureSize,
+            "/content/movies/Release/Sample/movie.mkv"));
+    }
+
+    [Fact]
+    public void IsSampleFile_JobFolderNamedSample_DoesNotCondemnSmallExtras()
+    {
+        Assert.False(FileFilterUtil.IsSampleFile(
+            "behind-the-scenes.mkv",
+            SampleSize,
+            FeatureSize,
+            "/content/movies/The.Sample.2024/behind-the-scenes.mkv"));
+    }
+
+    [Theory]
     [InlineData("Show.S01E01.trailer.mkv", "*trailer*", true)]
     [InlineData("proof.jpg", "proof.???", true)]
     [InlineData("Show.S01E01.mkv", "*trailer*", false)]

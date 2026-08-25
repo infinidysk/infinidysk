@@ -96,6 +96,52 @@ public class BlocklistedFilePostProcessorTests : IDisposable
 
 
     [Fact]
+    public void RemoveFilteredFiles_RemovesSmallVideoUnderSampleDirectory()
+    {
+        // Release layout that hides the sample behind an episode-styled leaf name:
+        // /content/tv/Show.Release/Sample/Show.S01E01.mkv
+        var category = SeedDirectory(DavItem.ContentFolder, "tv");
+        var mount = SeedDirectory(category, "Show.Release");
+        var sampleDir = SeedDirectory(mount, "Sample");
+        var keep = SeedNzbFile(mount, "Show.S01E01.mkv", 2_000_000_000);
+        var sample = SeedNzbFile(sampleDir, "Show.S01E01.mkv", 40_000_000);
+
+        new BlocklistedFilePostProcessor(_config, _dbClient).RemoveFilteredFiles();
+
+        var remainingAdded = _context.ChangeTracker.Entries<DavItem>()
+            .Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity)
+            .Where(e => e.Type != DavItem.ItemType.Directory)
+            .Select(e => e.Path)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Contains(keep.Path, remainingAdded);
+        Assert.DoesNotContain(sample.Path, remainingAdded);
+        Assert.DoesNotContain(_context.BlobNzbFiles, b => b.Id == sample.FileBlobId);
+    }
+
+    [Fact]
+    public void RemoveFilteredFiles_KeepsSmallVideoWhenOnlyTheJobFolderSaysSample()
+    {
+        var category = SeedDirectory(DavItem.ContentFolder, "movies");
+        var mount = SeedDirectory(category, "The.Sample.2024");
+        var feature = SeedNzbFile(mount, "The.Sample.2024.1080p.mkv", 8_000_000_000);
+        var extra = SeedNzbFile(mount, "behind-the-scenes.mkv", 40_000_000);
+
+        new BlocklistedFilePostProcessor(_config, _dbClient).RemoveFilteredFiles();
+
+        var remainingAdded = _context.ChangeTracker.Entries<DavItem>()
+            .Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity)
+            .Where(e => e.Type != DavItem.ItemType.Directory)
+            .Select(e => e.Path)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Contains(feature.Path, remainingAdded);
+        Assert.Contains(extra.Path, remainingAdded);
+    }
+
+    [Fact]
     public void MatchesAnyPattern_SupportsQuestionMarkWildcard()
     {
         Assert.True(BlocklistedFilePostProcessor.MatchesAnyPattern("proof.jpg", ["proof.???"]));

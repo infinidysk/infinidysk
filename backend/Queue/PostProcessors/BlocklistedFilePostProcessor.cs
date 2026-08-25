@@ -50,8 +50,9 @@ public class BlocklistedFilePostProcessor(ConfigManager configManager, DavDataba
             if (FileFilterUtil.MatchesAnyGlob(file.Name, blocklistedFilenames))
                 yield return (file, "blacklisted filename");
 
-            else if (sampleFilterEnabled && FileFilterUtil.IsSampleFile(file.Name, file.FileSize, largestVideoFileSize))
-                yield return (file, "sample file");
+            else if (sampleFilterEnabled
+                     && FileFilterUtil.IsSampleFile(file.Name, file.FileSize, largestVideoFileSize, file.Path))
+                yield return (file, FileFilterUtil.LooksLikeSampleName(file.Name) ? "sample file" : "sample directory");
         }
     }
 

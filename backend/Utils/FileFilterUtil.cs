@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using NzbWebDAV.Database.Models;
 
 namespace NzbWebDAV.Utils;
 
@@ -33,15 +34,51 @@ public static partial class FileFilterUtil
     }
 
     /// <summary>
-    /// True when the file is a video whose name looks like a sample and which
-    /// is much smaller than the largest video in the same release. The size
-    /// check is what keeps a real release such as `Free.Samples.2012.mkv` —
-    /// which is itself the largest video — from being filtered out.
+    /// True when any directory segment below the release (job) folder looks like a
+    /// sample folder — e.g. "/content/tv/Release.Name/Sample/episode.mkv". Release
+    /// layouts frequently hide the sample behind an episode-styled leaf name, which
+    /// <see cref="LooksLikeSampleName"/> alone cannot catch. The category and job
+    /// segments are skipped so a release whose own name contains the word "sample"
+    /// does not condemn every file inside it.
     /// </summary>
-    public static bool IsSampleFile(string filename, long? fileSize, long largestVideoFileSize)
+    public static bool HasSampleDirectory(string davPath)
+    {
+        var relativePath = davPath;
+        var contentPrefix = DavItem.ContentFolder.Path.TrimEnd('/') + "/";
+        if (relativePath.StartsWith(contentPrefix, StringComparison.Ordinal))
+            relativePath = relativePath[contentPrefix.Length..];
+
+        var segments = relativePath.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, '/'],
+            StringSplitOptions.RemoveEmptyEntries);
+
+        // Skip the category and job-folder segments; the last segment is the leaf
+        // filename, which LooksLikeSampleName already covers.
+        for (var i = 2; i < segments.Length - 1; i++)
+        {
+            if (SampleNameRegex().IsMatch(segments[i]))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when the file is a video whose name (or, when <paramref name="davPath"/>
+    /// is given, one of its release subfolders) looks like a sample and which is much
+    /// smaller than the largest video in the same release. The size check is what
+    /// keeps a real release such as `Free.Samples.2012.mkv` — which is itself the
+    /// largest video — from being filtered out.
+    /// </summary>
+    public static bool IsSampleFile(
+        string filename,
+        long? fileSize,
+        long largestVideoFileSize,
+        string? davPath = null)
     {
         if (!FilenameUtil.IsVideoFile(filename)) return false;
-        if (!LooksLikeSampleName(filename)) return false;
+        if (!LooksLikeSampleName(filename) && !(davPath != null && HasSampleDirectory(davPath)))
+            return false;
 
         // Without sizes to compare against, we cannot tell a sample apart
         // from a small release, so leave the file alone.
