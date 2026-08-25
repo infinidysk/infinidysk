@@ -95,6 +95,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Post :dev refresh to Discord
         env:
@@ -114,9 +116,13 @@ jobs:
 
           SHORT_SHA="${SHA:0:7}"
           BASE_LABEL="Changes since last dev build"
+          HAS_COMMITS=false
           if [ -n "${PREVIOUS_SHA}" ] && [ "${PREVIOUS_SHA}" != "${SHA}" ]; then
             CHANGELOG=$(gh api "repos/${REPO}/compare/${PREVIOUS_SHA}...${SHA}" \
               --jq '.commits[] | "- " + (.commit.message | split("\n")[0] | sub(" \\(#[0-9]+\\)$"; ""))')
+            if [ -n "${CHANGELOG}" ]; then
+              HAS_COMMITS=true
+            fi
           elif [ "${PREVIOUS_SHA}" = "${SHA}" ]; then
             CHANGELOG="- (no new commits since last dev build)"
           else
@@ -128,12 +134,9 @@ jobs:
           fi
 
           SUMMARY=""
-          case "$CHANGELOG" in
-            *"(no new commits"*|*"No previous"*) ;;
-            *)
-              SUMMARY=$(printf '%s' "$CHANGELOG" | bash .github/scripts/summarize-release-notes.sh --type dev --version "dev-${SHORT_SHA}" || true)
-              ;;
-          esac
+          if [ "${HAS_COMMITS}" = "true" ]; then
+            SUMMARY=$(printf '%s' "$CHANGELOG" | bash .github/scripts/summarize-release-notes.sh --type dev --version "dev-${SHORT_SHA}" || true)
+          fi
           if [ -n "${SUMMARY}" ]; then
             ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `dev-%s`)\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s' \
               "${SHORT_SHA}" "${REPO}" "${SUMMARY}")

@@ -204,6 +204,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Post release candidate to Discord
         env:
@@ -223,9 +225,13 @@ jobs:
           fi
 
           BASE_LABEL="Changes since last release candidate"
+          HAS_COMMITS=false
           if [ -n "${PREVIOUS_SHA}" ] && [ "${PREVIOUS_SHA}" != "${SHA}" ]; then
             CHANGELOG=$(gh api "repos/${REPO}/compare/${PREVIOUS_SHA}...${SHA}" \
               --jq '.commits[] | "- " + (.commit.message | split("\n")[0] | sub(" \\(#[0-9]+\\)$"; ""))')
+            if [ -n "${CHANGELOG}" ]; then
+              HAS_COMMITS=true
+            fi
           elif [ "${PREVIOUS_SHA}" = "${SHA}" ]; then
             CHANGELOG="- (no new commits since last release candidate)"
           else
@@ -237,12 +243,9 @@ jobs:
           fi
 
           SUMMARY=""
-          case "$CHANGELOG" in
-            *"(no new commits"*|*"No previous"*) ;;
-            *)
-              SUMMARY=$(printf '%s' "$CHANGELOG" | bash .github/scripts/summarize-release-notes.sh --type rc --version "$RELEASE_TAG" || true)
-              ;;
-          esac
+          if [ "${HAS_COMMITS}" = "true" ]; then
+            SUMMARY=$(printf '%s' "$CHANGELOG" | bash .github/scripts/summarize-release-notes.sh --type rc --version "$RELEASE_TAG" || true)
+          fi
           if [ -n "${SUMMARY}" ]; then
             ANNOUNCEMENT_BODY=$(printf '🧪 **Release Candidate Available** (`%s`)\nRelease and downloads: https://github.com/%s/releases/tag/%s\n\n%s' \
               "${RELEASE_TAG}" "${REPO}" "${RELEASE_TAG}" "${SUMMARY}")

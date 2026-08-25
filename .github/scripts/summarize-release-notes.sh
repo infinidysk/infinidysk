@@ -145,4 +145,8 @@ if printf '%s\n' "$SUMMARY" | grep -qiE '<(html|div|span|p|br/?|img|table|thead|
   fail "Summary contains HTML"
 fi
 
+if printf '%s\n' "$SUMMARY" | grep -qE '@(everyone|here)([^[:alnum:]_]|$)|<@!?[0-9]+>|<@&[0-9]+>'; then
+  fail "Summary contains a Discord mention"
+fi
+
 printf '%s\n' "$SUMMARY"

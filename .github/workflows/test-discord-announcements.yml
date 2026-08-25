@@ -51,6 +51,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Summarize commits and post to announcements Discord
         env:
@@ -69,8 +71,12 @@ jobs:
             exit 1
           fi
 
-          SUMMARY=$(printf '%s' "$COMMITS" | bash .github/scripts/summarize-release-notes.sh --type dev --version test)
-          ANNOUNCEMENT_BODY=$(printf '🧪 **Summary test**\n\n%s' "${SUMMARY}")
+          SUMMARY=$(printf '%s' "$COMMITS" | bash .github/scripts/summarize-release-notes.sh --type dev --version test || true)
+          if [ -n "$SUMMARY" ]; then
+            ANNOUNCEMENT_BODY=$(printf '🧪 **Summary test**\n\n%s' "${SUMMARY}")
+          else
+            ANNOUNCEMENT_BODY=$(printf '🧪 **Summary test** (summarizer unavailable, posting raw input)\n\n%s' "${COMMITS}")
+          fi
 
           MAX_LEN=1900
           if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then
