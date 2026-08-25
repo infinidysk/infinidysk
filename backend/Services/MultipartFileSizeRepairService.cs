@@ -107,7 +107,12 @@ public class MultipartFileSizeRepairService(IDbContextFactory<DavDatabaseContext
                 .ExecuteUpdateAsync(s => s.SetProperty(i => i.FileSize, publishedSize), ct)
                 .ConfigureAwait(false);
             if (updated > 0)
+            {
                 repaired++;
+                Log.Information(
+                    "MultipartFileSizeRepair: changed advertised FileSize for {Path} from sentinel to {Size}",
+                    item.Path, publishedSize);
+            }
         }
 
         Log.Information(

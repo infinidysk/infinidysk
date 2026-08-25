@@ -355,7 +355,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
             if (updated > 0)
             {
                 Log.Information(
-                    "Reconciled DavItem FileSize for multipart blob {BlobId} to {Size}",
+                    "Reconciled DavItem FileSize for multipart blob {BlobId} to {Size} (changed after import)",
                     fileBlobId, publishedSize);
             }
         }
