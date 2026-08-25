@@ -533,10 +533,10 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     ],
   );
 
-  // Below lg the stats bar stacks vertically; live reads matter more there,
-  // so Right now leads the stack. Edit mode keeps the canonical order so
-  // drag-and-drop stays consistent.
-  const mobileStack = useMediaQuery("(max-width: 1023px)");
+  // Below sm the stats bar wraps into a compact grid; live reads matter more
+  // there, so Right now leads the stack. Edit mode keeps the canonical order
+  // so drag-and-drop stays consistent.
+  const mobileStack = useMediaQuery("(max-width: 639px)");
   const visibleOrder = useMemo(() => {
     const filtered = order.filter((id) => {
       if (!loaderData.hasConfiguredIndexers && (id === "indexers" || id === "indexerApiUsage"))
