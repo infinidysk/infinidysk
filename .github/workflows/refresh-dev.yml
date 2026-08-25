@@ -13,9 +13,12 @@ jobs:
     permissions: {}
     outputs:
       short_sha: ${{ steps.sha.outputs.short_sha }}
+      dev_label: ${{ steps.sha.outputs.dev_label }}
     steps:
       - id: sha
-        run: echo "short_sha=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "short_sha=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "dev_label=dev-$(date -u +%y%m%d.%H%M)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: resolve
@@ -27,7 +30,7 @@ jobs:
       tags: |
         ghcr.io/${{ github.repository }}:dev
         docker.io/infinidysk/infinidysk:dev
-      nzbdav_version: dev-${{ needs.resolve.outputs.short_sha }}
+      nzbdav_version: ${{ needs.resolve.outputs.dev_label }}
       dockerhub_username: infinidysk
     secrets:
       registry_token: ${{ secrets.GITHUB_TOKEN }}
@@ -44,9 +47,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_SHA: ${{ github.sha }}
           SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
+          DEV_LABEL: ${{ needs.resolve.outputs.dev_label }}
         run: |
           set -euo pipefail
-          ROLLING_TITLE="Rolling :dev (dev-${SHORT_SHA})"
+          ROLLING_TITLE="Rolling :dev (${DEV_LABEL})"
           ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Not a release candidate — use for testing only."
           if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release edit dev \
@@ -86,6 +90,7 @@ jobs:
 
   announce-dev:
     needs:
+      - resolve
       - build
       - tag-dev
       - assets
@@ -99,6 +104,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
           PREVIOUS_SHA: ${{ needs.tag-dev.outputs.previous_sha }}
+          DEV_LABEL: ${{ needs.resolve.outputs.dev_label }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -107,7 +113,6 @@ jobs:
             exit 1
           fi
 
-          SHORT_SHA="${SHA:0:7}"
           BASE_LABEL="Changes since last dev build"
           if [ -n "${PREVIOUS_SHA}" ] && [ "${PREVIOUS_SHA}" != "${SHA}" ]; then
             CHANGELOG=$(gh api "repos/${REPO}/compare/${PREVIOUS_SHA}...${SHA}" \
@@ -122,8 +127,8 @@ jobs:
             CHANGELOG="- (no new commits since last dev build)"
           fi
 
-          ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `dev-%s`)\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s\n%s' \
-            "${SHORT_SHA}" "${REPO}" "${BASE_LABEL}" "${CHANGELOG}")
+          ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `%s`)\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s\n%s' \
+            "${DEV_LABEL}" "${REPO}" "${BASE_LABEL}" "${CHANGELOG}")
 
           MAX_LEN=1900
           if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then

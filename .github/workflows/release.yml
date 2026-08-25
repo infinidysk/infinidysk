@@ -128,7 +128,8 @@ jobs:
         run: |
           set -euo pipefail
           SHORT_SHA="${RELEASE_SHA:0:7}"
-          ROLLING_TITLE="Rolling :dev (dev-${SHORT_SHA})"
+          DEV_LABEL="dev-$(date -u +%y%m%d.%H%M)"
+          ROLLING_TITLE="Rolling :dev (${DEV_LABEL})"
           ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to [$VERSION](https://github.com/${{ github.repository }}/releases/tag/$VERSION)."
           if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release edit dev \
@@ -209,7 +210,8 @@ jobs:
           set -euo pipefail
           RELEASE_SHA=$(gh api "repos/${{ github.repository }}/commits/${RELEASE_REF}" --jq .sha)
           SHORT_SHA="${RELEASE_SHA:0:7}"
-          ROLLING_TITLE="Rolling :dev (dev-${SHORT_SHA})"
+          DEV_LABEL="dev-$(date -u +%y%m%d.%H%M)"
+          ROLLING_TITLE="Rolling :dev (${DEV_LABEL})"
           ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to [$RELEASE_REF](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_REF)."
           if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release edit dev \
