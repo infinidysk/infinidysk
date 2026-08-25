@@ -266,8 +266,8 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                       >
                         Optional. Leave blank to use the virtual <code>completed-symlinks</code>{" "}
                         rclone tree. Set a directory to create real symlinks at queue completion.
-                        Disk symlinks keep the raw release names — renaming only happens when
-                        Radarr or Sonarr imports the primary output.
+                        Disk symlinks keep the raw release names — renaming only happens when Radarr
+                        or Sonarr imports the primary output.
                       </p>
                     </div>
                   </ManagedSetting>
@@ -333,8 +333,8 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                         id="completed-downloads-dir-help"
                       >
                         Directory visible to Radarr or Sonarr where completed STRM files are
-                        written. STRM files keep the raw release names — renaming only happens
-                        when Radarr or Sonarr imports the primary output.
+                        written. STRM files keep the raw release names — renaming only happens when
+                        Radarr or Sonarr imports the primary output.
                       </p>
                     </div>
                   </ManagedSetting>
