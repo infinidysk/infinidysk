@@ -104,6 +104,23 @@ public class NzbInputValidatorTests
     }
 
     [Fact]
+    public void AcceptsDocumentAbove64MiB()
+    {
+        // Regression for #1176: padding via an XML comment keeps the document
+        // valid without tripping the subject or segment limits.
+        var padding = new string('a', 65 * 1024 * 1024);
+        var xml = $"<nzb><!-- {padding} --><file subject=\"file-1\"><segments>" +
+                  "<segment bytes=\"15\" number=\"1\">id@example</segment>" +
+                  "</segments></file></nzb>";
+        using var stream = Bytes(xml);
+
+        var bytes = NzbInputValidator.ValidateAndSumSegmentBytes(stream, NzbInputLimits.Default);
+
+        Assert.True(stream.Length > 64 * 1024 * 1024);
+        Assert.Equal(15, bytes);
+    }
+
+    [Fact]
     public void AcceptsSubjectBeyondFilenameLimit()
     {
         var subject = new string('a', 600);
