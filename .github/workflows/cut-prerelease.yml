@@ -207,7 +207,7 @@ jobs:
 
       - name: Post release candidate to Discord
         env:
-          DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
+          DISCORD_ANNOUNCEMENTS_WEBHOOK_URL: ${{ secrets.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -217,8 +217,8 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [ -z "${DISCORD_DEVELOPMENT_WEBHOOK_URL}" ]; then
-            echo "DISCORD_DEVELOPMENT_WEBHOOK_URL secret is not set" >&2
+          if [ -z "${DISCORD_ANNOUNCEMENTS_WEBHOOK_URL}" ]; then
+            echo "DISCORD_ANNOUNCEMENTS_WEBHOOK_URL secret is not set" >&2
             exit 1
           fi
 
@@ -259,4 +259,4 @@ jobs:
           ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
           curl --fail-with-body -sS -H "Content-Type: application/json" \
             -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
-            "$DISCORD_DEVELOPMENT_WEBHOOK_URL"
+            "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL"

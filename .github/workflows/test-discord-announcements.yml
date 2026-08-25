@@ -8,7 +8,7 @@ on:
         required: false
         type: string
       summarize:
-        description: Summarize conventional-commit notes with the LLM and post to the development channel
+        description: Summarize conventional-commit notes with the LLM and post to the announcements channel
         required: false
         type: boolean
         default: false
@@ -52,16 +52,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Summarize commits and post to development Discord
+      - name: Summarize commits and post to announcements Discord
         env:
-          DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
+          DISCORD_ANNOUNCEMENTS_WEBHOOK_URL: ${{ secrets.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           COMMITS: ${{ inputs.commits }}
         run: |
           set -euo pipefail
-          if [ -z "${DISCORD_DEVELOPMENT_WEBHOOK_URL}" ]; then
-            echo "DISCORD_DEVELOPMENT_WEBHOOK_URL secret is not set" >&2
+          if [ -z "${DISCORD_ANNOUNCEMENTS_WEBHOOK_URL}" ]; then
+            echo "DISCORD_ANNOUNCEMENTS_WEBHOOK_URL secret is not set" >&2
             exit 1
           fi
           if [ -z "${COMMITS}" ]; then
@@ -80,4 +80,4 @@ jobs:
           ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
           curl --fail-with-body -sS -H "Content-Type: application/json" \
             -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
-            "$DISCORD_DEVELOPMENT_WEBHOOK_URL"
+            "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL"

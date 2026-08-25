@@ -124,15 +124,15 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-      - name: Notify development Discord
+      - name: Notify Discord
         if: ${{ failure() }}
         env:
-          DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
+          DISCORD_ANNOUNCEMENTS_WEBHOOK_URL: ${{ secrets.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ -z "${DISCORD_DEVELOPMENT_WEBHOOK_URL}" ]; then
+          if [ -z "${DISCORD_ANNOUNCEMENTS_WEBHOOK_URL}" ]; then
             echo "Discord webhook not configured; skipping failure notification."
             exit 0
           fi
@@ -149,7 +149,7 @@ jobs:
           ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
           curl --fail-with-body -sS -H "Content-Type: application/json" \
             -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
-            "$DISCORD_DEVELOPMENT_WEBHOOK_URL"
+            "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL"
 
   rebaseline:
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.rebaseline && needs.measure.result != 'skipped' }}
@@ -171,7 +171,7 @@ jobs:
       - name: Write baselines and open PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DISCORD_DEVELOPMENT_WEBHOOK_URL: ${{ secrets.DISCORD_DEVELOPMENT_WEBHOOK_URL }}
+          DISCORD_ANNOUNCEMENTS_WEBHOOK_URL: ${{ secrets.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GITHUB_SHA: ${{ github.sha }}
@@ -257,7 +257,7 @@ jobs:
             --title "chore(ci): re-baseline performance envelopes" \
             --body-file "${BODY_FILE}")
 
-          if [ -z "${DISCORD_DEVELOPMENT_WEBHOOK_URL:-}" ]; then
+          if [ -z "${DISCORD_ANNOUNCEMENTS_WEBHOOK_URL:-}" ]; then
             echo "Discord webhook not configured; skipping re-baseline notification."
           else
             ANNOUNCEMENT_BODY=$(printf '📊 **Performance envelopes re-baselined** (`%s`)\nThese timings are from GitHub-hosted runner hardware, which is shared, noisy, and not representative of real machines. Treat them as regression envelopes, not streaming-speed claims.\nPR: %s\nRun: %s' \
@@ -269,7 +269,7 @@ jobs:
             ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
             if ! curl --fail-with-body -sS -H "Content-Type: application/json" \
               -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
-              "$DISCORD_DEVELOPMENT_WEBHOOK_URL"; then
+              "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL"; then
               echo "Discord re-baseline notification failed; PR is still open at ${PR_URL}."
             fi
           fi
