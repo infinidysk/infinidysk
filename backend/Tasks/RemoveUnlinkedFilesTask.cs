@@ -32,8 +32,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
     /// <summary>
     /// An unlinked usenet file plus the generated-sidecar columns needed to remove its
-    /// strm/symlink outputs from disk before the owning row is deleted. After deletion
-    /// the Generated* metadata would be unrecoverable and the sidecars stranded.
+    /// strm output from disk before the owning row is deleted. After deletion
+    /// the Generated* metadata would be unrecoverable and the sidecar stranded.
     /// </summary>
     internal record UnlinkedFileInfo(
         string Id,
@@ -42,10 +42,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         string Name,
         string? GeneratedStrmOutputRoot,
         string? GeneratedStrmPath,
-        string? GeneratedStrmTarget,
-        string? GeneratedSymlinkOutputRoot,
-        string? GeneratedSymlinkPath,
-        string? GeneratedSymlinkTarget);
+        string? GeneratedStrmTarget);
 
     internal static DbParameter CreateWallClockParameter(
         DavDatabaseContext dbContext,
@@ -401,7 +398,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
     }
 
     /// <summary>
-    /// Generated strm/symlink outputs are written by InfiniDysk itself and are removed together
+    /// Generated strm outputs are written by InfiniDysk itself and are removed together
     /// with their owning dav-item. When an output directory is nested inside the Library
     /// Directory, counting those sidecars as library links would let an item self-protect:
     /// the link scan would keep finding its own leftover sidecar and the item would never
@@ -420,13 +417,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
         }
 
         var strmRoot = _configManager.GetStrmCompletedDownloadDir();
-        if (!string.IsNullOrWhiteSpace(strmRoot)
-            && CreateStrmFilesPostProcessor.IsPathWithinRoot(fullPath, Path.GetFullPath(strmRoot)))
-            return true;
-
-        var symlinkRoot = _configManager.GetSymlinkOutputDirectory();
-        return !string.IsNullOrWhiteSpace(symlinkRoot)
-               && CreateStrmFilesPostProcessor.IsPathWithinRoot(fullPath, Path.GetFullPath(symlinkRoot));
+        return !string.IsNullOrWhiteSpace(strmRoot)
+               && CreateStrmFilesPostProcessor.IsPathWithinRoot(fullPath, Path.GetFullPath(strmRoot));
     }
 
     /// <summary>
@@ -497,8 +489,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 .SqlQuery<UnlinkedFileInfo>(
                     $"""
                      SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path", "Name",
-                            "GeneratedStrmOutputRoot", "GeneratedStrmPath", "GeneratedStrmTarget",
-                            "GeneratedSymlinkOutputRoot", "GeneratedSymlinkPath", "GeneratedSymlinkTarget"
+                            "GeneratedStrmOutputRoot", "GeneratedStrmPath", "GeneratedStrmTarget"
                      FROM "DavItems"
                      WHERE "Type" = {usenetFileType}
                        AND "HistoryItemId" IS NULL
@@ -560,8 +551,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
     }
 
     /// <summary>
-    /// Removes the generated strm/symlink outputs belonging to an orphaned item from disk.
-    /// Both deleters verify on-disk ownership (recorded root, no symlinked ancestor, matching
+    /// Removes the generated strm output belonging to an orphaned item from disk.
+    /// The deleter verifies on-disk ownership (recorded root, no symlinked ancestor, matching
     /// target) before deleting, so files an Arr import has already moved or replaced are left
     /// alone. A filesystem failure must not block removal of the webdav item itself.
     /// </summary>
@@ -576,12 +567,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
             GeneratedStrmOutputRoot = item.GeneratedStrmOutputRoot,
             GeneratedStrmPath = item.GeneratedStrmPath,
             GeneratedStrmTarget = item.GeneratedStrmTarget,
-            GeneratedSymlinkOutputRoot = item.GeneratedSymlinkOutputRoot,
-            GeneratedSymlinkPath = item.GeneratedSymlinkPath,
-            GeneratedSymlinkTarget = item.GeneratedSymlinkTarget,
         };
 
-        // Each deleter gets its own guard: a strm failure must not strand the symlink.
         try
         {
             if (CreateStrmFilesPostProcessor.DeleteStrmFile(davItem))
@@ -595,22 +582,6 @@ public class RemoveUnlinkedFilesTask : BaseTask
             Log.Warning(
                 e,
                 "Could not remove the generated strm sidecar for {Path}. The webdav item is still being removed; the sidecar file may need manual cleanup.",
-                item.Path);
-        }
-
-        try
-        {
-            if (CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(davItem))
-            {
-                DeletionAuditLog.Record("remove-orphaned", davItem, "generated symlink sidecar of orphaned file");
-                _allRemovedPaths.Add($"{item.GeneratedSymlinkPath} (symlink sidecar of {item.Path})");
-            }
-        }
-        catch (Exception e) when (e is not OutOfMemoryException)
-        {
-            Log.Warning(
-                e,
-                "Could not remove the generated symlink sidecar for {Path}. The webdav item is still being removed; the sidecar file may need manual cleanup.",
                 item.Path);
         }
     }
@@ -741,8 +712,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 .SqlQuery<UnlinkedFileInfo>(
                     $"""
                      SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path", "Name",
-                            "GeneratedStrmOutputRoot", "GeneratedStrmPath", "GeneratedStrmTarget",
-                            "GeneratedSymlinkOutputRoot", "GeneratedSymlinkPath", "GeneratedSymlinkTarget"
+                            "GeneratedStrmOutputRoot", "GeneratedStrmPath", "GeneratedStrmTarget"
                      FROM "DavItems"
                      WHERE "Type" = {usenetFileType}
                        AND "HistoryItemId" IS NULL
@@ -767,8 +737,6 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 _allRemovedPaths.Add(item.Path);
                 if (!string.IsNullOrWhiteSpace(item.GeneratedStrmPath))
                     _allRemovedPaths.Add($"{item.GeneratedStrmPath} (strm sidecar of {item.Path})");
-                if (!string.IsNullOrWhiteSpace(item.GeneratedSymlinkPath))
-                    _allRemovedPaths.Add($"{item.GeneratedSymlinkPath} (symlink sidecar of {item.Path})");
             }
 
             lastId = batch[^1].Id;

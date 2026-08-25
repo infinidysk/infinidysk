@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
-using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue.PostProcessors;
@@ -9,8 +8,7 @@ using NzbWebDAV.Utils;
 namespace NzbWebDAV.Services;
 
 public class HistoryCleanupService(
-    IDbContextFactory<DavDatabaseContext> dbContextFactory,
-    ConfigManager configManager) : BackgroundService
+    IDbContextFactory<DavDatabaseContext> dbContextFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -21,7 +19,7 @@ public class HistoryCleanupService(
                 await using var dbContext = dbContextFactory.CreateDbContext();
 
                 // If no items in queue, wait 10 seconds before checking again
-                if (!await ProcessNextItemAsync(dbContext, configManager, stoppingToken).ConfigureAwait(false))
+                if (!await ProcessNextItemAsync(dbContext, stoppingToken).ConfigureAwait(false))
                 {
                     await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
                     continue;
@@ -45,7 +43,6 @@ public class HistoryCleanupService(
 
     internal static async Task<bool> ProcessNextItemAsync(
         DavDatabaseContext dbContext,
-        ConfigManager configManager,
         CancellationToken cancellationToken = default)
     {
         var cleanupItem = await dbContext.HistoryCleanupItems
@@ -69,9 +66,6 @@ public class HistoryCleanupService(
                     GeneratedStrmOutputRoot = x.GeneratedStrmOutputRoot,
                     GeneratedStrmPath = x.GeneratedStrmPath,
                     GeneratedStrmTarget = x.GeneratedStrmTarget,
-                    GeneratedSymlinkOutputRoot = x.GeneratedSymlinkOutputRoot,
-                    GeneratedSymlinkPath = x.GeneratedSymlinkPath,
-                    GeneratedSymlinkTarget = x.GeneratedSymlinkTarget,
                 })
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
 
@@ -87,7 +81,6 @@ public class HistoryCleanupService(
                     "history-cleanup",
                     deletedItem,
                     $"DeleteMountedFiles=true historyItemId={cleanupItem.Id}");
-                CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(deletedItem);
                 CreateStrmFilesPostProcessor.DeleteStrmFile(deletedItem);
             }
 

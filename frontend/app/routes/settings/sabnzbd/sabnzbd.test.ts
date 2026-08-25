@@ -6,62 +6,36 @@ const config = {
   "api.nzb-backup-enabled": "false",
   "api.nzb-backup-location": "",
   "api.import-strategy": "symlinks",
-  "api.symlink-output-enabled": "",
-  "api.symlink-output-dir": "",
-  "api.strm-output-enabled": "",
   "api.completed-downloads-dir": "",
   "general.base-url": "",
 };
 
-describe("SABnzbd dual import outputs", () => {
-  it("keeps legacy symlink installs valid without explicit output toggles", () => {
+describe("SABnzbd import strategy", () => {
+  it("keeps symlink installs valid without STRM paths", () => {
     expect(isSabnzbdSettingsValid(config)).toBe(true);
   });
 
-  it("requires a completed directory and base URL when STRM is enabled", () => {
+  it("requires a completed directory and base URL when STRM is selected", () => {
     expect(
       isSabnzbdSettingsValid({
         ...config,
-        "api.strm-output-enabled": "true",
+        "api.import-strategy": "strm",
       }),
     ).toBe(false);
 
     expect(
       isSabnzbdSettingsValid({
         ...config,
-        "api.strm-output-enabled": "true",
+        "api.import-strategy": "strm",
         "api.completed-downloads-dir": "/mnt/jellyfin",
         "general.base-url": "https://infinidysk.example",
       }),
     ).toBe(true);
   });
 
-  it("normalizes output values returned by environment-managed settings", () => {
-    expect(
-      isSabnzbdSettingsValid({
-        ...config,
-        "api.import-strategy": " STRM ",
-        "api.completed-downloads-dir": "/mnt/jellyfin",
-        "general.base-url": "https://infinidysk.example",
-      }),
-    ).toBe(true);
-    expect(
-      isSabnzbdSettingsValid({
-        ...config,
-        "api.strm-output-enabled": " TRUE ",
-        "api.completed-downloads-dir": "/mnt/jellyfin",
-        "general.base-url": "https://infinidysk.example",
-      }),
-    ).toBe(true);
-  });
-
-  it("tracks every dual-output setting as a saveable change", () => {
-    for (const key of [
-      "api.symlink-output-enabled",
-      "api.symlink-output-dir",
-      "api.strm-output-enabled",
-    ]) {
-      expect(isSabnzbdSettingsUpdated(config, { ...config, [key]: "true" })).toBe(true);
-    }
+  it("tracks import-strategy as a saveable change", () => {
+    expect(isSabnzbdSettingsUpdated(config, { ...config, "api.import-strategy": "strm" })).toBe(
+      true,
+    );
   });
 });

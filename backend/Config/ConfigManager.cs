@@ -455,8 +455,6 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.ApiLazyRarParsing:
                 case ConfigKeys.ApiNzbBackupEnabled:
                 case ConfigKeys.ApiSkipNonVideoOnMissingArticles:
-                case ConfigKeys.ApiStrmOutputEnabled:
-                case ConfigKeys.ApiSymlinkOutputEnabled:
                 case ConfigKeys.WebdavShowHiddenFiles:
                 case ConfigKeys.WebdavEnforceReadonly:
                 case ConfigKeys.WebdavPreviewPar2Files:
@@ -1976,46 +1974,6 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiImportStrategy))?.ToLowerInvariant()
                ?? "symlinks";
-    }
-
-    /// <summary>
-    /// Whether STRM files should be emitted at queue completion. Existing installations
-    /// without an explicit output toggle retain their legacy import-strategy behavior.
-    /// </summary>
-    public bool IsStrmOutputEnabled()
-    {
-        return GetImportStrategy() == "strm"
-               || GetConfiguredOutputEnabled(ConfigKeys.ApiStrmOutputEnabled);
-    }
-
-    /// <summary>
-    /// Whether the symlink output is enabled. The virtual completed-symlinks tree
-    /// remains available independently; a configured output directory additionally
-    /// enables filesystem symlink creation at queue completion.
-    /// </summary>
-    public bool IsSymlinkOutputEnabled()
-    {
-        return GetImportStrategy() == "symlinks"
-               || GetConfiguredOutputEnabled(ConfigKeys.ApiSymlinkOutputEnabled);
-    }
-
-    public string? GetSymlinkOutputDirectory()
-    {
-        return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiSymlinkOutputDir));
-    }
-
-    public string GetSymlinkCompletedDownloadDir()
-    {
-        var outputDirectory = GetSymlinkOutputDirectory();
-        return outputDirectory is not null
-            ? Path.GetFullPath(outputDirectory)
-            : Path.Join(GetRcloneMountDir(), "completed-symlinks");
-    }
-
-    private bool GetConfiguredOutputEnabled(string configKey)
-    {
-        var configured = StringUtil.EmptyToNull(GetConfigValue(configKey));
-        return configured is not null && bool.TryParse(configured, out var enabled) && enabled;
     }
 
     public string GetStrmCompletedDownloadDir()

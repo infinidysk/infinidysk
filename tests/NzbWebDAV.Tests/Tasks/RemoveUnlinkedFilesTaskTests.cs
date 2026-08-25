@@ -716,7 +716,6 @@ public class RemoveUnlinkedFilesTaskTests
         var rootDir = Path.Join(Path.GetTempPath(), $"nzbdav-orphan-{Guid.NewGuid():N}");
         var libraryDir = Path.Join(rootDir, "library");
         var completedDir = Path.Join(rootDir, "completed-downloads");
-        var symlinkDir = Path.Join(rootDir, "symlinks");
         Directory.CreateDirectory(libraryDir);
         await using var harness = await TempDb.CreateAsync();
         try
@@ -744,19 +743,11 @@ public class RemoveUnlinkedFilesTaskTests
             orphan.GeneratedStrmPath = strmPath;
             orphan.GeneratedStrmTarget = strmTarget;
 
-            var symlinkPath = Path.Join(symlinkDir, "movies", "Some.Release", "orphan.mkv");
-            var symlinkTarget = $"/mnt/nzbdav/.ids/{orphanId}";
-            orphan.GeneratedSymlinkOutputRoot = Path.GetFullPath(symlinkDir);
-            orphan.GeneratedSymlinkPath = symlinkPath;
-            orphan.GeneratedSymlinkTarget = symlinkTarget;
-
             ctx.Items.Add(orphan);
             await ctx.SaveChangesAsync();
 
             Directory.CreateDirectory(Path.GetDirectoryName(strmPath)!);
             await File.WriteAllTextAsync(strmPath, strmTarget);
-            Directory.CreateDirectory(Path.GetDirectoryName(symlinkPath)!);
-            File.CreateSymbolicLink(symlinkPath, symlinkTarget);
 
             var config = new ConfigManager();
             config.UpdateValues(
@@ -779,17 +770,13 @@ public class RemoveUnlinkedFilesTaskTests
             Assert.StartsWith("Done. Removed 1 unlinked files.", progress);
             Assert.False(await ctx.Items.AnyAsync(x => x.Id == orphanId));
             Assert.False(File.Exists(strmPath));
-            Assert.Null(new FileInfo(symlinkPath).LinkTarget);
 
             // empty sidecar directories are pruned up to (but not including) the output root
             Assert.False(Directory.Exists(Path.Join(completedDir, "movies")));
-            Assert.False(Directory.Exists(Path.Join(symlinkDir, "movies")));
             Assert.True(Directory.Exists(completedDir));
-            Assert.True(Directory.Exists(symlinkDir));
 
             var report = RemoveUnlinkedFilesTask.GetAuditReport();
             Assert.Contains($"(strm sidecar of {orphan.Path})", report);
-            Assert.Contains($"(symlink sidecar of {orphan.Path})", report);
         }
         finally
         {
@@ -949,7 +936,7 @@ public class RemoveUnlinkedFilesTaskTests
     {
         // A completed-downloads dir nested inside the Library Directory must not let
         // generated strm sidecars mark their own dav-items as "linked"; otherwise nothing
-        // with STRM output enabled could ever be orphaned.
+        // using the STRM import strategy could ever be orphaned.
         await BaseTask.ResetRunningTaskForTestsAsync();
         var rootDir = Path.Join(Path.GetTempPath(), $"nzbdav-orphan-{Guid.NewGuid():N}");
         var libraryDir = Path.Join(rootDir, "data");

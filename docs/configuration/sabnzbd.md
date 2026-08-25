@@ -13,12 +13,9 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | API Key | `api.key` | from `FRONTEND_BACKEND_API_KEY` if unset | *Arr download client auth |
 | Categories | `api.categories` | env/`audio,software,tv,movies` | Letters/numbers/dashes |
 | Manual Upload Category (upload-time picker [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }) | `api.manual-category` | `uncategorized` | Queue page uploads; default for the category picker beside the Upload NZB button |
-| Primary Import Output [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `api.import-strategy` | `symlinks` | The one symlink or STRM path reported to *Arr through SAB |
-| Enable Symlink Output [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `api.symlink-output-enabled` | inherits primary output | Emit the optional symlink output |
-| Symlink Output Directory [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `api.symlink-output-dir` | empty | Empty uses virtual `completed-symlinks`; a path creates disk symlinks |
-| Rclone Mount Directory | `rclone.mount-dir` | env `MOUNT_DIR` or `/mnt/nzbdav` | Virtual symlinks and disk-symlink targets |
-| Enable STRM Output [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `api.strm-output-enabled` | inherits primary output | Emit STRM sidecars |
-| Completed Downloads Dir | `api.completed-downloads-dir` | backend default under `/data` | STRM output directory |
+| Import Strategy | `api.import-strategy` | `symlinks` | Symlinks (Plex) / STRM (Emby/Jellyfin) |
+| Rclone Mount Directory | `rclone.mount-dir` | env `MOUNT_DIR` or `/mnt/nzbdav` | When symlinks |
+| Completed Downloads Dir | `api.completed-downloads-dir` | backend default under `/data` | When STRM |
 | Base URL | `general.base-url` | `http://localhost:3000` | STRM / adapter absolute URLs |
 | Ignored Files | `api.download-file-blocklist` | `*.nfo, *.par2, …` | Glob blocklist for mounts (`*` and `?`) |
 | Filter sample videos [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `api.sample-filter-enabled` | on | Discard videos with whole-word `sample`/`samples` in the filename — or in a release subfolder such as `Sample/` [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } — under 20% of the largest video in the NZB |
@@ -37,21 +34,12 @@ Queue capacity and admission limits are configured separately under
 [Queue](queue.md). The default user agent for retrieving NZBs, including
 matched `addurl` requests, is configured under [Indexers](indexers.md).
 
-## Secondary output naming
+## STRM sidecar cleanup [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
-The optional symlink/STRM outputs mirror the release paths under `/content` —
-InfiniDysk never renames them. The organized names in your media library come
-from Sonarr/Radarr renaming files during import, which only applies to the
-primary import output. To get *Arr-renamed STRM files in your library, set
-Primary Import Output to `strm` so the STRMs themselves are what gets
-imported.
-
-Keep the STRM/symlink output directories separate from your organized library
-folders. Generated sidecars are deleted together with their content (history
-delete-with-files, health repair, Remove Orphaned Files) [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since },
-and sidecars under the configured output directories never count as library
-links for orphan cleanup — even when the output directory sits inside the
-Library Directory.
+Generated STRM files are deleted together with their content (history
+delete-with-files, health repair, Remove Orphaned Files). Sidecars under the
+configured completed-downloads directory never count as library links for
+orphan cleanup — even when that directory sits inside the Library Directory.
 
 ## Sampled article checks [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 

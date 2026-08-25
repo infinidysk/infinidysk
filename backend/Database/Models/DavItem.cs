@@ -25,6 +25,8 @@ public class DavItem
     public string? GeneratedStrmOutputRoot { get; set; }
     public string? GeneratedStrmPath { get; set; }
     public string? GeneratedStrmTarget { get; set; }
+    // Legacy columns from the reverted dual-output feature; kept so the EF model
+    // stays in sync with existing databases. Nothing reads or writes them anymore.
     public string? GeneratedSymlinkOutputRoot { get; set; }
     public string? GeneratedSymlinkPath { get; set; }
     public string? GeneratedSymlinkTarget { get; set; }

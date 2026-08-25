@@ -122,11 +122,6 @@ services:
       NZBDAV_CONFIG__API__CATEGORIES: "tv,movies"
       NZBDAV_CONFIG__API__MANUAL_CATEGORY: "uncategorized"
       NZBDAV_CONFIG__API__IMPORT_STRATEGY: "symlinks"
-      # Optional secondary output:
-      # NZBDAV_CONFIG__API__STRM_OUTPUT_ENABLED: "true"
-      # NZBDAV_CONFIG__API__COMPLETED_DOWNLOADS_DIR: "/mnt/Jellyfin"
-      # NZBDAV_CONFIG__API__SYMLINK_OUTPUT_ENABLED: "true"
-      # NZBDAV_CONFIG__API__SYMLINK_OUTPUT_DIR: "/mnt/Plex"
       NZBDAV_CONFIG__API__ENSURE_IMPORTABLE_VIDEO: "true"
       NZBDAV_CONFIG__API__IGNORE_HISTORY_LIMIT: "true"
       # NZBDAV_CONFIG__API__ADDURL_TRUSTED_HOSTS: "prowlarr,indexer"
@@ -182,8 +177,6 @@ services:
       - ./config:/config
       - /mnt:/mnt
 ```
-
-Optional secondary output settings [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } require a completed-downloads directory and a reachable `NZBDAV_CONFIG__GENERAL__BASE_URL` whenever STRM output is enabled.
 
 !!! note "JSON and Compose escaping"
 

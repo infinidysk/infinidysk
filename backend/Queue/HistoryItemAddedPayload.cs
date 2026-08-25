@@ -68,7 +68,8 @@ public sealed class HistoryItemAddedPayload
         if (importStrategy == "symlinks")
         {
             return Path.Join(
-                configManager.GetSymlinkCompletedDownloadDir(),
+                configManager.GetRcloneMountDir(),
+                DavItem.SymlinkFolder.Name,
                 historyItem.Category,
                 downloadFolder.Name);
         }

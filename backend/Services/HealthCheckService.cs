@@ -1672,13 +1672,12 @@ public class HealthCheckService : BackgroundService
     }
 
     /// <summary>
-    /// Removes a dav-item together with the strm/symlink sidecars generated for it.
-    /// The deleters verify on-disk ownership before deleting and no-op when the item
-    /// has no generated outputs. A filesystem failure must not block the repair.
+    /// Removes a dav-item together with the strm sidecar generated for it.
+    /// The deleter verifies on-disk ownership before deleting and no-ops when the item
+    /// has no generated output. A filesystem failure must not block the repair.
     /// </summary>
     internal static void RemoveDavItemWithGeneratedSidecars(DavDatabaseClient dbClient, DavItem davItem)
     {
-        // Each deleter gets its own guard: a strm failure must not strand the symlink.
         try
         {
             CreateStrmFilesPostProcessor.DeleteStrmFile(davItem);
@@ -1688,18 +1687,6 @@ public class HealthCheckService : BackgroundService
             Log.Warning(
                 e,
                 "Could not remove the generated strm sidecar for {Path} during health repair. The webdav item is still being removed; the sidecar file may need manual cleanup.",
-                davItem.Path);
-        }
-
-        try
-        {
-            CreateSymlinkFilesPostProcessor.DeleteSymlinkFile(davItem);
-        }
-        catch (Exception e) when (e is not OutOfMemoryException)
-        {
-            Log.Warning(
-                e,
-                "Could not remove the generated symlink sidecar for {Path} during health repair. The webdav item is still being removed; the sidecar file may need manual cleanup.",
                 davItem.Path);
         }
 

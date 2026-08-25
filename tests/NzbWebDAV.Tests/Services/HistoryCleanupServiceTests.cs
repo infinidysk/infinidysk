@@ -60,7 +60,7 @@ public sealed class HistoryCleanupServiceTests : IDisposable
         var firstStrmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, firstVideo);
         var secondStrmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, secondVideo);
 
-        var processed = await HistoryCleanupService.ProcessNextItemAsync(_context, _config);
+        var processed = await HistoryCleanupService.ProcessNextItemAsync(_context);
 
         Assert.True(processed);
         Assert.False(File.Exists(firstStrmPath));
@@ -86,7 +86,7 @@ public sealed class HistoryCleanupServiceTests : IDisposable
         await _context.SaveChangesAsync();
         var strmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, video);
 
-        var processed = await HistoryCleanupService.ProcessNextItemAsync(_context, _config);
+        var processed = await HistoryCleanupService.ProcessNextItemAsync(_context);
 
         Assert.True(processed);
         Assert.True(File.Exists(strmPath));

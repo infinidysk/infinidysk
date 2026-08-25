@@ -521,54 +521,16 @@ public class QueueItemProcessor(
                         .ValidateAsync(ct)).ConfigureAwait(false);
             }
 
-            // Generate the primary output first. If it cannot be created, do not
-            // leave secondary output files referring to an uncommitted completion.
-            Func<Task>? createStrm = configManager.IsStrmOutputEnabled()
-                ? () => new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
-                    .CreateStrmFilesAsync()
-                : null;
-            Func<Task>? createSymlink = configManager.IsSymlinkOutputEnabled()
-                                        && configManager.GetSymlinkOutputDirectory() is not null
-                ? () => new CreateSymlinkFilesPostProcessor(configManager, dbClient, queueItem.Id)
-                    .CreateSymlinkFilesAsync()
-                : null;
-
+            // create strm files, if necessary
             if (configManager.GetImportStrategy() == "strm")
-            {
-                if (createStrm is not null)
-                    await createStrm().ConfigureAwait(false);
-                if (createSymlink is not null)
-                    await CreateSecondaryOutputAsync("symlink", createSymlink).ConfigureAwait(false);
-            }
-            else
-            {
-                if (createSymlink is not null)
-                    await createSymlink().ConfigureAwait(false);
-                if (createStrm is not null)
-                    await CreateSecondaryOutputAsync("STRM", createStrm).ConfigureAwait(false);
-            }
+                await new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
+                    .CreateStrmFilesAsync()
+                    .ConfigureAwait(false);
 
             await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
                 dbClient, queueItem, nzb, configManager, ct).ConfigureAwait(false);
 
             return mountFolder;
-
-            async Task CreateSecondaryOutputAsync(string outputName, Func<Task> createOutput)
-            {
-                try
-                {
-                    await createOutput().ConfigureAwait(false);
-                }
-                catch (Exception e) when (e is not OutOfMemoryException)
-                {
-                    Log.Warning(
-                        "Could not create secondary {OutputName} import output for {JobName}. Reason: {Reason}",
-                        outputName,
-                        queueItem.JobName,
-                        e.Message);
-                    Log.Debug(e, "Secondary {OutputName} import output failure stack", outputName);
-                }
-            }
         }).ConfigureAwait(false);
     }
 

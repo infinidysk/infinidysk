@@ -21,10 +21,8 @@ export function RecreateStrmFiles({ savedConfig }: RecreateStrmFilesProps) {
   const completedDir = savedConfig["api.completed-downloads-dir"]?.trim();
   const importStrategy = savedConfig["api.import-strategy"]?.trim().toLowerCase() ?? "symlinks";
   const baseUrl = savedConfig["general.base-url"]?.trim();
-  const isStrmOutputEnabled =
-    importStrategy === "strm" ||
-    savedConfig["api.strm-output-enabled"]?.trim().toLowerCase() === "true";
-  const canRun = !!completedDir && !!baseUrl && isStrmOutputEnabled;
+  const isStrmStrategy = importStrategy === "strm";
+  const canRun = !!completedDir && !!baseUrl && isStrmStrategy;
 
   const isFinished =
     !!progress &&
@@ -84,7 +82,7 @@ export function RecreateStrmFiles({ savedConfig }: RecreateStrmFilesProps) {
           <div>
             <p className="font-semibold">Configuration required</p>
             <ul className="mt-1 list-disc space-y-1 pl-4 text-xs opacity-80">
-              {!isStrmOutputEnabled && <li>Enable STRM output under the SABnzbd tab.</li>}
+              {!isStrmStrategy && <li>Set Import Strategy to STRM under the SABnzbd tab.</li>}
               {!completedDir && (
                 <li>Configure Completed Downloads Directory under the SABnzbd tab.</li>
               )}

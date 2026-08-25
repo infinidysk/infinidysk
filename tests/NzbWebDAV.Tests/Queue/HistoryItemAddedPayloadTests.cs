@@ -7,14 +7,12 @@ namespace NzbWebDAV.Tests.Queue;
 public sealed class HistoryItemAddedPayloadTests
 {
     [Fact]
-    public void DualOutput_ReportsOnlyPrimarySymlinkPath()
+    public void SymlinkStrategy_ReportsCompletedSymlinksPath()
     {
         var config = new ConfigManager();
         config.UpdateValues(
         [
-            new() { ConfigName = ConfigKeys.ApiSymlinkOutputDir, ConfigValue = "/mnt/plex" },
-            new() { ConfigName = ConfigKeys.ApiStrmOutputEnabled, ConfigValue = "true" },
-            new() { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = "/mnt/jellyfin" },
+            new() { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = "/mnt/nzbdav" },
         ]);
 
         var payload = HistoryItemAddedPayload.FromHistoryItem(
@@ -22,18 +20,18 @@ public sealed class HistoryItemAddedPayloadTests
             new DavItem { Name = "Movie" },
             config);
 
-        Assert.Equal(Path.Join("/mnt/plex", "movies", "Movie"), payload.DownloadPath);
+        Assert.Equal(
+            Path.Join("/mnt/nzbdav", DavItem.SymlinkFolder.Name, "movies", "Movie"),
+            payload.DownloadPath);
     }
 
     [Fact]
-    public void DualOutput_ReportsOnlyPrimaryStrmPath()
+    public void StrmStrategy_ReportsCompletedDownloadsDir()
     {
         var config = new ConfigManager();
         config.UpdateValues(
         [
             new() { ConfigName = ConfigKeys.ApiImportStrategy, ConfigValue = "strm" },
-            new() { ConfigName = ConfigKeys.ApiSymlinkOutputEnabled, ConfigValue = "true" },
-            new() { ConfigName = ConfigKeys.ApiSymlinkOutputDir, ConfigValue = "/mnt/plex" },
             new() { ConfigName = ConfigKeys.ApiCompletedDownloadsDir, ConfigValue = "/mnt/jellyfin" },
         ]);
 
