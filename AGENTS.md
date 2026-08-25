@@ -400,9 +400,9 @@ Skip this handoff if there are no local changes and nothing to push or PR. Do no
 | `ci.yml` | PRs and pushes to `main` | Frontend lint/typecheck/build/tests + backend build/tests |
 | `docs.yml` | PRs and pushes to `main` | Zensical docs build (`zensical build --clean --strict`); deploys to GitHub Pages on `main` |
 | `codeql.yml` | PRs, pushes to `main`, and weekly schedule | CodeQL security analysis for C#, TypeScript, and GitHub Actions |
-| `refresh-dev.yml` | Manual `workflow_dispatch` | Publishes `ghcr.io/.../infinidysk:dev`, builds Linux archives, creates/updates the rolling `dev` GitHub pre-release, and moves the git `dev` tag to that commit (unversioned snapshot) |
-| `cut-prerelease.yml` | Manual `workflow_dispatch` | Creates numbered and rolling `rc` GitHub Pre-releases with Linux archives; pushes versioned RC tags to every registry and rolling `:rc`/`:dev` tags to canonical GHCR and Docker Hub; refreshes the rolling `dev` pre-release with the RC's archives; moves git `rc` and `dev` tags (`dev` first, so `rc` is never ahead of `dev`); announces to development Discord |
-| `release.yml` | Push to `main` | release-please versioning; publishes Linux archives and stable Docker tags to every registry, plus `dev` and `rc` tags to canonical GHCR and Docker Hub; refreshes the rolling `dev` pre-release; moves git `dev` and `rc` tags (`dev` first); deletes versioned `v*-rc.*` pre-releases and their image tags |
+| `refresh-dev.yml` | Manual `workflow_dispatch` | Publishes `ghcr.io/.../infinidysk:dev`, builds Linux archives, creates/updates the rolling `dev` GitHub pre-release, and moves the git `dev` tag to that commit (unversioned snapshot); announces LLM-summarized changes to the development Discord |
+| `cut-prerelease.yml` | Manual `workflow_dispatch` | Creates numbered and rolling `rc` GitHub Pre-releases with Linux archives; pushes versioned RC tags to every registry and rolling `:rc`/`:dev` tags to canonical GHCR and Docker Hub; refreshes the rolling `dev` pre-release with the RC's archives; moves git `rc` and `dev` tags (`dev` first, so `rc` is never ahead of `dev`); announces LLM-summarized changes to the development Discord |
+| `release.yml` | Push to `main` | release-please versioning; publishes Linux archives and stable Docker tags to every registry, plus `dev` and `rc` tags to canonical GHCR and Docker Hub; refreshes the rolling `dev` pre-release; moves git `dev` and `rc` tags (`dev` first); deletes versioned `v*-rc.*` pre-releases and their image tags; announces LLM-summarized release notes to the announcements Discord |
 | `release.yml` | Manual `workflow_dispatch` | Republishes Linux archives and stable Docker tags to every registry, plus `dev` and `rc` tags to canonical GHCR and Docker Hub, for an existing version; refreshes the rolling `dev` pre-release; moves git `dev` and `rc` tags (`dev` first); deletes versioned `v*-rc.*` pre-releases and their image tags |
 | `promote-lts.yml` | Manual `workflow_dispatch` | Moves git `lts` and GHCR `:lts` to an existing published version (no rebuild) |
 | `performance.yml` | Nightly cron (`17 5 * * *`) + `workflow_dispatch` | Streaming and SAB API report compare (deterministic + floored timing envelopes); optional re-baseline PR |
@@ -412,6 +412,8 @@ Skip this handoff if there are no local changes and nothing to push or PR. Do no
 | `move-movable-tag.yml` | Reusable (called by refresh-dev/cut-prerelease/release) | Force-moves a movable git tag (`dev`, `rc`, …) to a given commit |
 
 Docker image builds are shared via the reusable workflow. Branch and dependabot image pipelines were removed — PRs are validated by `ci.yml` instead of publishing throwaway images.
+
+Discord announcements in `release.yml`, `cut-prerelease.yml`, and `refresh-dev.yml` run the raw conventional-commit notes through `.github/scripts/summarize-release-notes.sh` (OpenAI chat completions) to post user-friendly summaries; the script enforces Discord's markdown subset and 2000-character cap. When the `OPENAI_API_KEY` secret is unset or the API call fails, the announcement falls back to the previous raw commit list. `OPENAI_MODEL` (repo variable, default `gpt-5-mini`) overrides the model. Use the **Test Discord Announcements** workflow with `summarize=true` to dry-run the summarizer against the development channel.
 
 ## Releases
 
