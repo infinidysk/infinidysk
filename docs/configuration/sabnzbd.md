@@ -21,7 +21,7 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | Completed Downloads Dir | `api.completed-downloads-dir` | backend default under `/data` | STRM output directory |
 | Base URL | `general.base-url` | `http://localhost:3000` | STRM / adapter absolute URLs |
 | Ignored Files | `api.download-file-blocklist` | `*.nfo, *.par2, …` | Glob blocklist for mounts (`*` and `?`) |
-| Filter sample videos [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `api.sample-filter-enabled` | on | Discard videos with whole-word `sample`/`samples` under 20% of the largest video in the NZB |
+| Filter sample videos [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `api.sample-filter-enabled` | on | Discard videos with whole-word `sample`/`samples` in the filename — or in a release subfolder such as `Sample/` — under 20% of the largest video in the NZB |
 | Behavior for Duplicate NZBs | `api.duplicate-nzb-behavior` | `increment` | increment / mark-failed |
 | Trusted local hosts [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `api.addurl-trusted-hosts` | env `TRUSTED_INTERNAL_HOSTS` | SSRF allowlist for private addurl |
 | Fail downloads without video or audio | `api.ensure-importable-video` | on | Reject NZBs with no media files |
@@ -36,6 +36,21 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 Queue capacity and admission limits are configured separately under
 [Queue](queue.md). The default user agent for retrieving NZBs, including
 matched `addurl` requests, is configured under [Indexers](indexers.md).
+
+## Secondary output naming
+
+The optional symlink/STRM outputs mirror the release paths under `/content` —
+InfiniDysk never renames them. The organized names in your media library come
+from Sonarr/Radarr renaming files during import, which only applies to the
+primary import output. To get *Arr-renamed STRM files in your library, set
+Primary Import Output to `strm` so the STRMs themselves are what gets
+imported.
+
+Keep the STRM/symlink output directories separate from your organized library
+folders. Generated sidecars are deleted together with their content (history
+delete-with-files, health repair, Remove Orphaned Files), and sidecars under
+the configured output directories never count as library links for orphan
+cleanup — even when the output directory sits inside the Library Directory.
 
 ## Sampled article checks [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
