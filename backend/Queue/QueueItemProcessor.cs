@@ -529,11 +529,9 @@ public class QueueItemProcessor(
             if (configManager.IsEnsureImportableMediaEnabled())
                 new EnsureImportableMediaValidator(dbClient).ThrowIfValidationFails();
 
-            // create strm files, if necessary
-            if (configManager.GetImportStrategy() == "strm")
-                await new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
-                    .CreateStrmFilesAsync()
-                    .ConfigureAwait(false);
+            // STRM sidecars are published after the commit below (see
+            // MarkQueueItemCompleted), never inside these staged operations:
+            // a failed SaveChanges must not leave sidecars for an uncommitted import.
 
             await SiblingDonorAttacher.BackfillCompletedSiblingsAsync(
                 dbClient, queueItem, nzb, configManager, ct).ConfigureAwait(false);
@@ -855,6 +853,35 @@ public class QueueItemProcessor(
 
         try
         {
+            // STRM sidecars publish only after the mount tree and history row have
+            // committed, and outside the finalize lock: sidecar filesystem I/O needs
+            // no global serialization, and a hung write (e.g. a stalled network mount)
+            // must not block other imports whose history is already committed. The
+            // files land before the Arr refresh below, preserving scan order.
+            if (error is null && configManager.GetImportStrategy() == "strm")
+            {
+                try
+                {
+                    await new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
+                        .CreateStrmFilesAsync(finalizeCt)
+                        .ConfigureAwait(false);
+                    if (dbClient.Ctx.ChangeTracker.HasChanges())
+                        await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception strmError)
+                {
+                    // The import is already committed; a sidecar failure must not
+                    // re-finalize it as failed. Operators can run Recreate STRM Files.
+                    strmError.LogWarningKnownOrStack(
+                        "STRM publish failed for {JobName} after the import committed",
+                        queueItem.JobName);
+                }
+            }
+
             _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
             _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historyJson!);
             _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);

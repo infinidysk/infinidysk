@@ -134,6 +134,51 @@ public class CreateStrmFilesPostProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateStrmFilesAsync_RestoresRewrittenFilesWhenLaterWriteFails()
+    {
+        var category = SeedDirectory(DavItem.ContentFolder, "tv");
+        var job = SeedDirectory(category, "Show", _historyItemId);
+        var second = SeedVideo(job, "second.mkv", _historyItemId);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+        // Added items are processed before persisted rows, so this write runs
+        // first. A stale sidecar from a previous import makes it a rewrite that
+        // must be restored — not deleted — when the later write fails.
+        var first = SeedVideo(job, "first.mkv", _historyItemId);
+        var firstPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, first);
+        Directory.CreateDirectory(Path.GetDirectoryName(firstPath)!);
+        await File.WriteAllTextAsync(firstPath, "stale-url-from-previous-import");
+
+        var secondPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, second);
+        Directory.CreateDirectory(secondPath);
+
+        var processor = new CreateStrmFilesPostProcessor(_config, _dbClient, _historyItemId);
+        await Assert.ThrowsAnyAsync<Exception>(() => processor.CreateStrmFilesAsync());
+
+        Assert.Equal("stale-url-from-previous-import", await File.ReadAllTextAsync(firstPath));
+        Assert.True(Directory.Exists(secondPath));
+    }
+
+    [Fact]
+    public async Task CreateStrmFilesAsync_CancelledToken_ThrowsAndWritesNothing()
+    {
+        var category = SeedDirectory(DavItem.ContentFolder, "tv");
+        var job = SeedDirectory(category, "Show", _historyItemId);
+        SeedVideo(job, "episode.mkv", _historyItemId);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var processor = new CreateStrmFilesPostProcessor(_config, _dbClient, _historyItemId);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => processor.CreateStrmFilesAsync(cts.Token));
+
+        Assert.Empty(Directory.GetFiles(_strmDir, "*.strm", SearchOption.AllDirectories));
+    }
+
+    [Fact]
     public async Task DeleteStrmFile_UsesPersistedPathAfterCompletedDirectoryChanges()
     {
         var davItem = new DavItem

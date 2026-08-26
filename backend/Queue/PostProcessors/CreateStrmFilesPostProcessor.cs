@@ -5,6 +5,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
+using Serilog;
 
 namespace NzbWebDAV.Queue.PostProcessors;
 
@@ -16,23 +17,53 @@ public class CreateStrmFilesPostProcessor(
     private static readonly string ContentRootPrefix =
         DavItem.ContentFolder.Path.TrimEnd('/') + "/";
 
-    public async Task CreateStrmFilesAsync()
+    /// <summary>
+    /// Outcome of a written STRM sidecar. <see cref="PreviousContent"/> is null for a
+    /// newly created file and holds the pre-write content for a rewritten one, so a
+    /// failed publish can restore rewrites instead of deleting pre-existing files.
+    /// </summary>
+    internal sealed record StrmWrite(string Path, string? PreviousContent);
+
+    public async Task CreateStrmFilesAsync(CancellationToken cancellationToken = default)
     {
         var candidates = CollectVideoItems();
         var created = new List<DavItem>();
+        var rewritten = new List<StrmWrite>();
         try
         {
             foreach (var videoItem in candidates)
             {
-                if (await CreateStrmFileAsync(videoItem).ConfigureAwait(false))
+                var write = await CreateStrmFileAsync(videoItem, cancellationToken).ConfigureAwait(false);
+                if (write is null)
+                    continue;
+                if (write.PreviousContent is null)
                     created.Add(videoItem);
+                else
+                    rewritten.Add(write);
             }
         }
         catch
         {
             foreach (var createdItem in created)
                 DeleteStrmFile(createdItem);
+            foreach (var rewrite in rewritten)
+                TryRestorePreviousContent(rewrite);
             throw;
+        }
+    }
+
+    private static void TryRestorePreviousContent(StrmWrite write)
+    {
+        try
+        {
+            File.WriteAllText(write.Path, write.PreviousContent);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Warning(
+                e,
+                "Could not restore previous STRM file {StrmPath} after a publish failure",
+                write.Path);
         }
     }
 
@@ -66,16 +97,17 @@ public class CreateStrmFilesPostProcessor(
 
     /// <summary>
     /// Writes (or updates) the STRM sidecar for a DavItem. Shared by queue post-processing
-    /// and the Recreate STRM maintenance task.
+    /// and the Recreate STRM maintenance task. Returns null when no write was needed;
+    /// otherwise the written path plus the pre-write content (null when newly created).
     /// </summary>
-    internal static async Task<bool> WriteStrmFileAsync(
+    internal static async Task<StrmWrite?> WriteStrmFileAsync(
         ConfigManager configManager,
         DavItem davItem,
         bool forceRewrite,
         CancellationToken cancellationToken = default)
     {
         if (!IsStrmCandidate(davItem))
-            return false;
+            return null;
 
         var strmFilePath = Path.GetFullPath(GetStrmFilePath(configManager, davItem));
         var completedDownloadsRoot = Path.GetFullPath(configManager.GetStrmCompletedDownloadDir());
@@ -91,23 +123,24 @@ public class CreateStrmFilesPostProcessor(
             throw new IOException($"Generated STRM path '{strmFilePath}' is beneath a symbolic-link directory.");
 
         var targetUrl = GetStrmTargetUrl(configManager, davItem);
-        if (!forceRewrite && File.Exists(strmFilePath))
+        string? previousContent = null;
+        if (File.Exists(strmFilePath))
         {
-            var existing = await File.ReadAllTextAsync(strmFilePath, cancellationToken).ConfigureAwait(false);
-            if (existing == targetUrl)
-                return false;
+            previousContent = await File.ReadAllTextAsync(strmFilePath, cancellationToken).ConfigureAwait(false);
+            if (!forceRewrite && previousContent == targetUrl)
+                return null;
         }
 
-        var wasCreated = !File.Exists(strmFilePath);
         await File.WriteAllTextAsync(strmFilePath, targetUrl, cancellationToken).ConfigureAwait(false);
         davItem.GeneratedStrmOutputRoot = completedDownloadsRoot;
         davItem.GeneratedStrmPath = strmFilePath;
         davItem.GeneratedStrmTarget = targetUrl;
-        return wasCreated;
+        return new StrmWrite(strmFilePath, previousContent);
     }
 
-    private async Task<bool> CreateStrmFileAsync(DavItem davItem) =>
-        await WriteStrmFileAsync(configManager, davItem, forceRewrite: false).ConfigureAwait(false);
+    private async Task<StrmWrite?> CreateStrmFileAsync(DavItem davItem, CancellationToken cancellationToken) =>
+        await WriteStrmFileAsync(configManager, davItem, forceRewrite: false, cancellationToken)
+            .ConfigureAwait(false);
 
     internal static string GetStrmFilePath(ConfigManager configManager, DavItem davItem)
     {
