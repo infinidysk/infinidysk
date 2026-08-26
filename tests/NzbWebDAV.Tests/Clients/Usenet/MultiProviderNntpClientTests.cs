@@ -1012,6 +1012,44 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task ArticleMissCache_ThrownArticleNotFound_SecondFetch_SkipsKnownMissingProvider()
+    {
+        var config = new ConfigManager();
+        var cache = new ArticleMissNegativeCache(config);
+        var missing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(missing, host: "a.example"),
+            CreateProvider(backup, host: "b.example"),
+        ], articleMissCache: cache);
+
+        Assert.Equal(
+            UsenetResponseType.ArticleRetrievedBodyFollows,
+            (await client.DecodedBodyAsync("segment", CancellationToken.None)).ResponseType);
+        Assert.Equal(1, missing.SingularRequests);
+        Assert.Equal(1, backup.SingularRequests);
+        Assert.Equal(1, cache.Entries);
+
+        Assert.Equal(
+            UsenetResponseType.ArticleRetrievedBodyFollows,
+            (await client.DecodedBodyAsync("segment", CancellationToken.None)).ResponseType);
+        Assert.Equal(1, missing.SingularRequests);
+        Assert.Equal(2, backup.SingularRequests);
+        Assert.True(cache.Hits >= 1);
+        Assert.True(cache.Skips >= 1);
+    }
+
+    [Fact]
     public async Task ArticleMissCache_Batch_FirstPrimary430_StillReprobesOnce()
     {
         var config = new ConfigManager();

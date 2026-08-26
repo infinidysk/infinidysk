@@ -673,6 +673,7 @@ public class MultiProviderNntpClient(
                     {
                         stopwatch.Stop();
                         walk.NoteException(e);
+                        MarkCachedMissingOnThrownMiss(e, segmentId, provider, missingGroups);
                         var reason = ClassifyAndRecordFailure(
                             provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
                             priorMisses?.Count ?? 0, traceRange,
@@ -905,6 +906,7 @@ public class MultiProviderNntpClient(
             {
                 stopwatch.Stop();
                 walk.NoteException(e);
+                MarkCachedMissingOnThrownMiss(e, segmentId, provider, missingGroups);
                 var reason = ClassifyAndRecordFailure(
                     provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex,
                     traceRange, operation, segmentId);
@@ -1055,6 +1057,7 @@ public class MultiProviderNntpClient(
             {
                 stopwatch.Stop();
                 walk.NoteException(e);
+                MarkCachedMissingOnThrownMiss(e, articleId, provider, missingGroups);
                 var reason = ClassifyAndRecordFailure(
                     provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex,
                     traceRange, operation, articleId);
@@ -1092,6 +1095,26 @@ public class MultiProviderNntpClient(
     private void MarkCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider)
     {
         articleMissCache?.MarkMissing(CacheKey(segmentId, provider));
+    }
+
+    /// <summary>
+    /// Production <see cref="BaseNntpClient"/> throws <see cref="UsenetArticleNotFoundException"/>
+    /// on 430 instead of returning a response object. The response-object path already
+    /// marks the miss cache; this keeps the throw path in the retry/fallback loop
+    /// consistent. The initial batch primary 430 must not mark, so the intentional
+    /// re-probe is not skipped by its own cache entry.
+    /// </summary>
+    private void MarkCachedMissingOnThrownMiss(
+        Exception exception,
+        SegmentId? segmentId,
+        MultiConnectionNntpClient provider,
+        HashSet<string> missingGroups)
+    {
+        if (segmentId is not { } id) return;
+        if (ClassifyException(exception) != SegmentFetch.FetchStatus.Missing) return;
+        var group = NormalizeStorageGroup(provider.StorageGroup);
+        if (group.Length > 0) missingGroups.Add(group);
+        MarkCachedMissing(id, provider);
     }
 
     private static string CacheKey(SegmentId segmentId, MultiConnectionNntpClient provider) =>
