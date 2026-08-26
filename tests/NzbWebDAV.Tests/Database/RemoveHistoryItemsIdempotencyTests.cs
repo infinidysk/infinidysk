@@ -82,10 +82,11 @@ public sealed class RemoveHistoryItemsIdempotencyTests : IDisposable
     }
 
     [Fact]
-    public async Task RemoveHistoryItems_TwoContextsStagedBeforeEitherSaves_SecondDoesNotThrow()
+    public async Task RemoveHistoryItems_TwoContextsStagedBeforeEitherSaves_FourIdsDoNotExhaustRetries()
     {
-        var historyItemId = Guid.NewGuid();
-        _context.HistoryItems.Add(CompletedHistory(historyItemId));
+        var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToList();
+        foreach (var id in ids)
+            _context.HistoryItems.Add(CompletedHistory(id));
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
@@ -93,14 +94,14 @@ public sealed class RemoveHistoryItemsIdempotencyTests : IDisposable
         var client1 = new DavDatabaseClient(_context);
         var client2 = new DavDatabaseClient(context2);
 
-        await client1.RemoveHistoryItemsAsync([historyItemId], deleteFiles: false);
-        await client2.RemoveHistoryItemsAsync([historyItemId], deleteFiles: false);
+        await client1.RemoveHistoryItemsAsync(ids, deleteFiles: false);
+        await client2.RemoveHistoryItemsAsync(ids, deleteFiles: false);
 
         await client1.SaveHistoryRemovalAsync();
         await client2.SaveHistoryRemovalAsync();
 
-        Assert.False(await _context.HistoryItems.AnyAsync(x => x.Id == historyItemId));
-        Assert.Equal(1, await _context.HistoryCleanupItems.CountAsync(x => x.Id == historyItemId));
+        Assert.False(await _context.HistoryItems.AnyAsync(x => ids.Contains(x.Id)));
+        Assert.Equal(ids.Count, await _context.HistoryCleanupItems.CountAsync(x => ids.Contains(x.Id)));
     }
 
     private static HistoryItem CompletedHistory(Guid id) => new()

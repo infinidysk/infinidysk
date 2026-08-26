@@ -565,11 +565,17 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     /// same history row or a duplicate <see cref="HistoryCleanupItem"/> insert as
     /// success. Two SAB remove-from-history calls can otherwise collide on the
     /// cleanup primary key after both have staged the same id.
+    ///
+    /// SQLite's EF provider issues one modification command per batch, so a
+    /// colliding delete of N ids can surface N separate concurrency (or unique)
+    /// exceptions. The retry budget is therefore the number of pending entries,
+    /// plus one for the successful save — not a fixed attempt count.
     /// </summary>
     public async Task SaveHistoryRemovalAsync(CancellationToken ct = default)
     {
+        var maxAttempts = CountPendingSaveEntries() + 1;
         DbUpdateException? last = null;
-        for (var attempt = 0; attempt < 3; attempt++)
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
             try
             {
@@ -579,7 +585,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             catch (DbUpdateConcurrencyException ex) when (ex.Entries.All(e => e.Entity is HistoryItem))
             {
                 last = ex;
+                var pendingBefore = CountPendingSaveEntries();
                 DetachVanishedHistory(ex);
+                if (CountPendingSaveEntries() >= pendingBefore)
+                    throw;
             }
             catch (DbUpdateException ex) when (TryDetachDuplicateCleanup(ex))
             {
@@ -590,6 +599,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         if (last is not null)
             throw last;
     }
+
+    private int CountPendingSaveEntries() =>
+        Ctx.ChangeTracker.Entries()
+            .Count(e => e.State is EntityState.Added or EntityState.Deleted or EntityState.Modified);
 
     private void DetachVanishedHistory(DbUpdateConcurrencyException ex)
     {
