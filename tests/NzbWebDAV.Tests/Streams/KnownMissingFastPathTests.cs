@@ -282,6 +282,7 @@ public class KnownMissingFastPathTests
                 usePipelinedBodyRequests: true,
                 CancellationToken.None,
                 fileName: path,
+                segmentFallbacks: ids.Select(id => new[] { $"fallback-{id}" }).ToArray(),
                 exactSegmentSizes: new long[] { 5, 5, 5, 5 });
 
             await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
@@ -294,6 +295,10 @@ public class KnownMissingFastPathTests
             Assert.Equal(ids.Length, client.IssuedStreamCount);
             Assert.Equal(ids.Length, client.DisposedStreamCount);
             Assert.Equal(1, client.CompletionCallbackCount);
+
+            // A tracker-provided fail-fast must not trigger fallback or rescue fetches
+            // on a path already declared dead — the singular path stays untouched.
+            Assert.Equal(0, client.SingularBodyRequestCount);
 
             var followUp = await client.DecodedBodyAsync("follow-up@test", null, CancellationToken.None);
             Assert.NotNull(followUp.Stream);
@@ -336,6 +341,7 @@ public class KnownMissingFastPathTests
 
         public int BatchRequestCount { get; private set; }
         public int CompletionCallbackCount { get; private set; }
+        public int SingularBodyRequestCount { get; private set; }
         public int IssuedStreamCount => _streams.Count;
         public int DisposedStreamCount => _disposedStreams;
 
@@ -388,6 +394,7 @@ public class KnownMissingFastPathTests
             ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
+            SingularBodyRequestCount++;
             if (Volatile.Read(ref _batchOutstanding) != 0)
             {
                 return Task.FromException<UsenetDecodedBodyResponse>(
@@ -422,7 +429,7 @@ public class KnownMissingFastPathTests
 
         public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            DecodedBodyAsync(segmentId, null, cancellationToken);
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId, CancellationToken cancellationToken) =>

@@ -847,6 +847,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         var estimate = GetPlannedSegmentBytes(segmentIndex);
         var lease = initialLease;
+        Exception? playbackFailFast = null;
         try
         {
             // The producer issued this batch before the task ran, so the response must
@@ -871,8 +872,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     }
                 }
 
-                ExceptionDispatchInfo.Capture(
-                    failFast ?? new UsenetArticleNotFoundException(segmentId)).Throw();
+                playbackFailFast = failFast ?? new UsenetArticleNotFoundException(segmentId);
+                ExceptionDispatchInfo.Capture(playbackFailFast).Throw();
             }
 
             await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
@@ -883,6 +884,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 .ConfigureAwait(false);
             lease = null; // owned by BudgetedStream / buffer
             return ToDownloadResult(drained, estimate, segmentId);
+        }
+        catch (Exception) when (playbackFailFast is not null)
+        {
+            // A tracker-provided fail-fast bypasses the miss/corruption recovery below:
+            // those handlers can issue fallback or rescue requests on a path already
+            // declared dead, and a successful fallback would defeat the fail-fast.
+            throw;
         }
         catch (UsenetArticleNotFoundException e)
         {
