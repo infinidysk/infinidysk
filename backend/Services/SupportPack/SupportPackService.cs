@@ -13,6 +13,7 @@ using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
@@ -35,7 +36,8 @@ public sealed class SupportPackService(
     GcDiagnosticsStore gcDiagnosticsStore,
     Repair.Par2RepairService par2RepairService,
     Repair.RepairPatchStore repairPatchStore,
-    ConcurrentReadTracker? concurrentReadTracker = null)
+    ConcurrentReadTracker? concurrentReadTracker = null,
+    IQueueCoordinator? queueCoordinator = null)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -231,6 +233,11 @@ public sealed class SupportPackService(
         debug-level install can push older events out of it. logs/warnings.log keeps
         the last 500 warnings and errors separately for that reason - check it first
         when the main log looks like it only contains routine activity.
+
+        environment.json → queue.inProgress lists every in-flight import with its
+        current stage, how long that stage has been running, and cumulative queue
+        semaphore wait. Use it to tell NNTP work apart from finalize-lock wait,
+        metadata blob writes, or the SQLite commit.
 
         environment.json reports CPU and GC pause figures, thread pool occupancy, and
         per-provider connection-pool state with lifetime churn. Read cpu.rolling and
@@ -459,6 +466,7 @@ public sealed class SupportPackService(
                 availableFreeSpaceBytes = drive.IsReady ? drive.AvailableFreeSpace : (long?)null,
             },
             par2Repair = BuildPar2RepairDiagnostics(),
+            queue = BuildQueueDiagnostics(),
             streamTracing = new
             {
                 enabled = streamTracing.Enabled,
@@ -695,6 +703,34 @@ public sealed class SupportPackService(
         {
             Log.Debug(e, "Support pack: could not read the process thread count");
             return null;
+        }
+    }
+
+    private object BuildQueueDiagnostics()
+    {
+        try
+        {
+            var items = queueCoordinator?.GetInProgressQueueItems() ?? [];
+            return new
+            {
+                inProgressCount = items.Count,
+                inProgress = items.Select(item => new
+                {
+                    id = item.QueueItem.Id,
+                    jobName = item.QueueItem.JobName,
+                    category = item.QueueItem.Category,
+                    isPrimary = item.IsPrimary,
+                    progressPercentage = item.ProgressPercentage,
+                    currentStage = item.CurrentStage,
+                    stageAgeMs = item.StageAgeMs,
+                    semaphoreWaitMs = item.SemaphoreWaitMilliseconds,
+                }).ToList(),
+            };
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Log.Debug(ex, "Support pack: could not snapshot in-progress queue items");
+            return new { inProgressCount = 0, inProgress = Array.Empty<object>(), unavailable = true };
         }
     }
 

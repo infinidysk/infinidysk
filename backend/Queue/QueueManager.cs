@@ -882,7 +882,11 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
             _configManager, _websocketManager, _providerUsageTracker,
             _watchdogLog, _sourceTracker, progressHook, _retryAttempts,
             _finalizeLock, cts.Token,
-            stageReporter: stage => inProgressQueueItem.CurrentStage = stage
+            stageReporter: stage =>
+            {
+                inProgressQueueItem.CurrentStage = stage;
+                inProgressQueueItem.StageStartedAtUtc = DateTime.UtcNow;
+            }
         )
         {
             // The stuck watchdog flips this flag on the final stall attempt; the
@@ -1255,10 +1259,17 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         int ProgressPercentage,
         bool IsPrimary,
         TimeSpan? Eta = null,
-        double BytesPerSecond = 0);
+        double BytesPerSecond = 0,
+        string CurrentStage = "",
+        long StageAgeMs = 0,
+        long SemaphoreWaitMilliseconds = 0);
 
-    private static InProgressQueueItemSnapshot ToSnapshot(InProgressQueueItem item) =>
-        new(
+    private static InProgressQueueItemSnapshot ToSnapshot(InProgressQueueItem item)
+    {
+        var stageAgeMs = item.StageStartedAtUtc is { } started
+            ? Math.Max(0, (long)(DateTime.UtcNow - started).TotalMilliseconds)
+            : 0;
+        return new(
             item.QueueItem,
             item.ProgressPercentage,
             item.IsPrimary,
@@ -1266,7 +1277,11 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
                 item.BytesPerSecond,
                 item.ProgressPercentage,
                 item.QueueItem.TotalSegmentBytes),
-            item.BytesPerSecond);
+            item.BytesPerSecond,
+            item.CurrentStage,
+            stageAgeMs,
+            item.QueueDownloadContext.SemaphoreWaitMilliseconds);
+    }
 
     private sealed class InProgressQueueItem
     {
@@ -1281,6 +1296,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         /// processors). Set by the processor; read by the stuck watchdog.
         /// </summary>
         public string CurrentStage { get; set; } = string.Empty;
+        public DateTime? StageStartedAtUtc { get; set; }
         public Task ProcessingTask { get; set; } = null!;
         public TaskCompletionSource CompletionSignal { get; init; } = null!;
         public CancellationTokenSource CancellationTokenSource { get; init; } = null!;
