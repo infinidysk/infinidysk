@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.2.6](https://github.com/infinidysk/infinidysk/compare/v1.2.5...v1.2.6) (2026-08-26)
+
+
+### Features
+
+* **sab:** include client user agent in authentication rejection warnings ([#1179](https://github.com/infinidysk/infinidysk/issues/1179)) ([8848ad5](https://github.com/infinidysk/infinidysk/commit/8848ad517623cf892d6c464d6fb817ef35f9a523))
+
+
+### Bug Fixes
+
+* **queue:** large imports of missing or corrupt Usenet articles no longer grind the server ([#1188](https://github.com/infinidysk/infinidysk/issues/1188)) ([544aa6c](https://github.com/infinidysk/infinidysk/commit/544aa6ce180c27f2fc85cb0134bc07857d343216))
+* **queue:** large NZBs up to 256 MiB no longer rejected during import ([#1177](https://github.com/infinidysk/infinidysk/issues/1177)) ([3328f03](https://github.com/infinidysk/infinidysk/commit/3328f0304c0ca378bbb247b480ca22fa6ac033cb))
+* **queue:** leftover STRM files are cleaned up and samples in Sample folders no longer get mounted ([#1169](https://github.com/infinidysk/infinidysk/issues/1169)) ([87993e1](https://github.com/infinidysk/infinidysk/commit/87993e17a1bec27feefd4ee046aaf09536b69040))
+* **queue:** restore a single import strategy instead of dual symlink and STRM outputs ([#1171](https://github.com/infinidysk/infinidysk/issues/1171)) ([144cac9](https://github.com/infinidysk/infinidysk/commit/144cac947fa32290d540d7d6be2e33837af12983))
+* **ui:** overview stats stay a compact bar on tablets and wrap 3-wide on phones ([#1163](https://github.com/infinidysk/infinidysk/issues/1163)) ([09130e2](https://github.com/infinidysk/infinidysk/commit/09130e2b8d37449b4e7c47118ebd4b1e6b62dd72))
+* **usenet:** missing-article playback no longer freezes all streams and imports ([#1199](https://github.com/infinidysk/infinidysk/issues/1199)) ([497de64](https://github.com/infinidysk/infinidysk/commit/497de64282027ba854e2e1386277149f737f8015))
+
+
+### Chores
+
+* **release:** force next release to 1.2.6 ([#1194](https://github.com/infinidysk/infinidysk/issues/1194)) ([f559135](https://github.com/infinidysk/infinidysk/commit/f55913539b35247bbb60ebc9d3cb68646e99f32e))
+
 ## [1.2.5](https://github.com/infinidysk/infinidysk/compare/v1.2.4...v1.2.5) (2026-08-25)
 
 
