@@ -11,8 +11,9 @@ namespace NzbWebDAV.Queue.PostProcessors;
 
 /// <summary>
 /// Reads the opening and closing bytes of direct media outputs before SAB reports
-/// completion. This intentionally runs only for categories that already opted into
-/// article-health checks: it is an additional BODY-level signal, not a global delay.
+/// completion. Probes run unbuffered and unpipelined — one segment at a time — and
+/// under a non-rooted label, so they neither hold playback-scale prefetch windows
+/// nor consult or seed the process-wide playback-hole tracker.
 /// </summary>
 internal sealed class FinalMediaReadinessValidator(
     DavDatabaseClient dbClient,
@@ -43,13 +44,13 @@ internal sealed class FinalMediaReadinessValidator(
                 await using var stream = usenetClient.GetFileStream(
                     payload.SegmentIds,
                     item.FileSize ?? 0,
-                    configManager.GetArticleBufferSize(),
+                    articleBufferSize: 0,
                     payload.SegmentByteRanges,
-                    configManager.IsPipelinedBodyRequestsEnabled(),
-                    item.Path,
-                    payload.SegmentFallbackIds,
+                    usePipelinedBodyRequests: false,
+                    fileName: $"import-readiness {item.Name}",
+                    segmentFallbacks: payload.SegmentFallbackIds,
                     useContainerAwareFill: configManager.IsContainerAwareFillEnabled(),
-                    streamingBodyBatchWidth: configManager.GetStreamingBodyBatchWidth());
+                    streamingBodyBatchWidth: 1);
 
                 var head = await ReadExactlyAtAsync(stream, 0, Math.Min(ProbeBytes, item.FileSize ?? 0), ct)
                     .ConfigureAwait(false);
