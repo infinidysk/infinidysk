@@ -381,6 +381,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             if (ShouldStopPrefetch(segmentsEnqueued, enqueuedBytes))
                 break;
 
+            // Fail-fast must win before the batch goes on the wire: once BODY commands
+            // are issued, every response needs an owner that drains or disposes it.
+            ThrowIfPlaybackFailFast();
+
             await WaitForPrefetchCeilingAsync(cancellationToken).ConfigureAwait(false);
 
             // Adaptive width: narrower batches → more outstanding connections at the
@@ -535,8 +539,27 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         var batch = await _usenetClient.DecodedBodiesAsync(
             liveIds, onConnectionReadyAgain: null, cancellationToken).ConfigureAwait(false);
         if (batch.Responses.Count != liveIds.Length)
+        {
+            // The client broke the batch contract after the commands went on the wire.
+            // Drain whatever arrived so the shared batch connection can complete.
+            foreach (var responseTask in batch.Responses)
+            {
+                try
+                {
+                    var response = await responseTask.ConfigureAwait(false);
+                    if (response.Stream is not null)
+                        await response.Stream.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception e) when (e is not OutOfMemoryException)
+                {
+                    Log.Debug(e, "Failed to drain BODY response after batch size mismatch for {FileName}.", _fileName);
+                }
+            }
+
             throw new InvalidOperationException(
                 $"Pipelined BODY returned {batch.Responses.Count} responses for {liveIds.Length} requests.");
+        }
+
         return batch.Responses.ToArray();
     }
 
@@ -826,8 +849,32 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         var lease = initialLease;
         try
         {
-            ThrowIfPlaybackFailFast();
+            // The producer issued this batch before the task ran, so the response must
+            // always be owned here. A fail-fast check before the await would strand an
+            // already-on-the-wire body, and UsenetSharp's pump cannot release the shared
+            // batch connection until every handed-out stream is consumed or disposed.
             var response = await responseTask.ConfigureAwait(false);
+            if (PlaybackHoleTracker.ShouldFailFast(_fileName, out var failFast))
+            {
+                if (response.Stream is not null)
+                {
+                    try
+                    {
+                        await response.Stream.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception disposeError) when (disposeError is not OutOfMemoryException)
+                    {
+                        Log.Debug(
+                            disposeError,
+                            "Failed to dispose pipelined BODY stream after playback fail-fast for {FileName}.",
+                            _fileName);
+                    }
+                }
+
+                ExceptionDispatchInfo.Capture(
+                    failFast ?? new UsenetArticleNotFoundException(segmentId)).Throw();
+            }
+
             await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
             var drained = await DrainSegmentAsync(
