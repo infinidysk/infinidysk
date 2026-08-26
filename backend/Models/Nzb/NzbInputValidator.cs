@@ -168,6 +168,19 @@ public static class NzbInputValidator
         }
     }
 
+    /// <summary>
+    /// The size-limit error thrown both while streaming the decompressed
+    /// document to disk (via a bounded read stream) and while validating the
+    /// committed blob, so SAB clients always get the same 4xx sentence.
+    /// </summary>
+    internal static ApiValidationException CreateSizeLimitException() =>
+        new(
+            new Dictionary<string, string[]>
+            {
+                ["nzb"] = ["The NZB document exceeds the maximum allowed size."],
+            },
+            "The NZB document exceeds the maximum allowed size.");
+
     private static void Throw(string field, string message)
     {
         var errors = new ValidationErrors();

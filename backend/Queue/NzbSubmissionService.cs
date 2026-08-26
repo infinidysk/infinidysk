@@ -88,6 +88,7 @@ public class NzbSubmissionService(
             await AfterDuplicatePreCheckHook().ConfigureAwait(false);
 
         QueueItem? queueItem;
+        string? backupPath = null;
         try
         {
             var prepared = await NzbStreamUtil.OpenMaybeCompressedAsync(
@@ -97,8 +98,14 @@ public class NzbSubmissionService(
             try
             {
                 // Store normalized XML so every downstream parser remains
-                // compression-agnostic.
-                await BlobStore.WriteBlob(id, nzbInputStream, request.CancellationToken)
+                // compression-agnostic. The bounded stream enforces the
+                // decompressed size limit during the copy, so an oversize
+                // document (or gzip bomb) fails before filling the disk.
+                await using var bounded = new LimitedReadStream(
+                    nzbInputStream,
+                    NzbInputLimits.Default.MaxXmlBytes,
+                    NzbInputValidator.CreateSizeLimitException);
+                await BlobStore.WriteBlob(id, bounded, request.CancellationToken)
                     .ConfigureAwait(false);
             }
             catch (InvalidDataException exception) when (prepared.IsGzip)
@@ -106,20 +113,23 @@ public class NzbSubmissionService(
                 throw new BadHttpRequestException("The uploaded gzip NZB is invalid.", exception);
             }
 
+            // compute the total segment bytes before any backup, so a rejected
+            // document never leaves a backup file behind
+            await using var nzbFileStream = BlobStore.ReadBlob(id)!;
+            var totalSegmentBytes = NzbInputValidator.ValidateAndSumSegmentBytes(
+                nzbFileStream, NzbInputLimits.Default, request.CancellationToken);
+
             // backup the nzb file if enabled
             if (configManager.IsNzbBackupEnabled())
             {
                 var backupLocation = configManager.GetNzbBackupLocation();
                 if (backupLocation != null)
                 {
-                    await BackupNzbAsync(id, request.FileName, category, backupLocation).ConfigureAwait(false);
+                    backupPath = await BackupNzbAsync(
+                            id, request.FileName, category, backupLocation, request.CancellationToken)
+                        .ConfigureAwait(false);
                 }
             }
-
-            // compute the total segment bytes
-            await using var nzbFileStream = BlobStore.ReadBlob(id)!;
-            var totalSegmentBytes = NzbInputValidator.ValidateAndSumSegmentBytes(
-                nzbFileStream, NzbInputLimits.Default, request.CancellationToken);
 
             // Keep enqueues after any manually moved item in their priority band.
             // CreatedAt remains the immutable enqueue timestamp; SortOrder owns
@@ -189,8 +199,10 @@ public class NzbSubmissionService(
         }
         catch
         {
-            // Delete partial or unreferenced blobs after ingest/database failures.
+            // Delete partial or unreferenced blobs after ingest/database failures,
+            // plus any backup sidecar written before the failure.
             BlobStore.Delete(id);
+            TryDeleteBackupFile(backupPath);
             throw;
         }
 
@@ -287,8 +299,15 @@ public class NzbSubmissionService(
         return false;
     }
 
-    private static async Task BackupNzbAsync(Guid id, string fileName, string category, string backupLocation)
+    /// <summary>
+    /// Copies the committed blob into the configured backup directory and
+    /// returns the written path so a later submission failure can remove it.
+    /// A failed or cancelled copy deletes its own partial file.
+    /// </summary>
+    private static async Task<string> BackupNzbAsync(
+        Guid id, string fileName, string category, string backupLocation, CancellationToken ct)
     {
+        string? destPath = null;
         try
         {
             ValidateBackupCategory(category);
@@ -310,7 +329,7 @@ public class NzbSubmissionService(
                 ? destDir
                 : destDir + Path.DirectorySeparatorChar;
             var safeFileName = GetSafeBackupFileName(id, fileName);
-            var destPath = CombineUnderDirectory(destDirPrefix, safeFileName);
+            destPath = CombineUnderDirectory(destDirPrefix, safeFileName);
             var counter = 2;
             while (System.IO.File.Exists(destPath))
             {
@@ -324,11 +343,32 @@ public class NzbSubmissionService(
 
             await using var src = BlobStore.ReadBlob(id);
             await using var dst = System.IO.File.Create(destPath);
-            await src!.CopyToAsync(dst).ConfigureAwait(false);
+            await src!.CopyToAsync(dst, ct).ConfigureAwait(false);
+            return destPath;
         }
-        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+        catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
         {
+            TryDeleteBackupFile(destPath);
             throw new InvalidOperationException($"Could not save nzb to `{backupLocation}`", e);
+        }
+        catch
+        {
+            TryDeleteBackupFile(destPath);
+            throw;
+        }
+    }
+
+    private static void TryDeleteBackupFile(string? backupPath)
+    {
+        if (backupPath is null) return;
+        try
+        {
+            if (System.IO.File.Exists(backupPath))
+                System.IO.File.Delete(backupPath);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Warning(e, "Could not delete NZB backup file {BackupPath} after a submission failure", backupPath);
         }
     }
 

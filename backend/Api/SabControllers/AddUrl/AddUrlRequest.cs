@@ -21,7 +21,19 @@ public class AddUrlRequest() : AddFileRequest
     private static readonly HttpClient PermissiveDirectHttpClient = InitializeHttpClient(skipTlsVerification: true);
     private static readonly HttpRequestOptionsKey<TrustedHostsMatcher> TrustedHostsOptionKey = new("TrustedHosts");
 
-    public static async Task<AddUrlRequest> New(HttpContext context, ConfigManager configManager, IndexerHitTracker hitTracker)
+    /// <summary>
+    /// Shared fetch/ingest deadline created by <see cref="New"/>. Its token is
+    /// this request's <see cref="AddFileRequest.CancellationToken"/>, so the
+    /// header wait and the body copy inside SubmitAsync share one budget.
+    /// Owned (and disposed) by AddUrlController.AddUrlAsync.
+    /// </summary>
+    internal CancellationTokenSource? FetchDeadlineSource { get; init; }
+
+    public static async Task<AddUrlRequest> New(
+        HttpContext context,
+        ConfigManager configManager,
+        IndexerHitTracker hitTracker,
+        TimeSpan? fetchTimeout = null)
     {
         var errors = new ValidationErrors();
         var nzbUrl = context.GetRequestParam("name");
@@ -61,14 +73,30 @@ public class AddUrlRequest() : AddFileRequest
             }
         }
 
-        var nzbFile = await GetNzbFile(
-            nzbUrl,
-            nzbName,
-            userAgent,
-            proxyUrl,
-            skipTlsVerification,
-            trustedHosts,
-            context.RequestAborted).ConfigureAwait(false);
+        // One deadline covers the header wait in GetNzbFile and the body copy
+        // inside SubmitAsync; with ResponseHeadersRead neither HttpClient.Timeout
+        // nor a per-call CTS bounds the body. Linked so client abort still cancels.
+        var fetchDeadline = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        fetchDeadline.CancelAfter(fetchTimeout ?? FetchTimeout);
+        NzbFileResponse nzbFile;
+        try
+        {
+            nzbFile = await GetNzbFile(
+                nzbUrl,
+                nzbName,
+                userAgent,
+                proxyUrl,
+                skipTlsVerification,
+                trustedHosts,
+                fetchDeadline.Token,
+                context.RequestAborted).ConfigureAwait(false);
+        }
+        catch
+        {
+            fetchDeadline.Dispose();
+            throw;
+        }
+
         if (matchedIndexer is not null)
             _ = hitTracker.RecordAsync(matchedIndexer.Name, IndexerApiHit.HitType.Download, CancellationToken.None);
         return new AddUrlRequest()
@@ -80,7 +108,8 @@ public class AddUrlRequest() : AddFileRequest
                        ?? configManager.GetManualUploadCategory(),
             Priority = MapPriorityOption(context.GetRequestParam("priority")),
             PostProcessing = MapPostProcessingOption(context.GetRequestParam("pp")),
-            CancellationToken = context.RequestAborted
+            CancellationToken = fetchDeadline.Token,
+            FetchDeadlineSource = fetchDeadline,
         };
     }
 
@@ -108,7 +137,8 @@ public class AddUrlRequest() : AddFileRequest
         string? proxyUrl,
         bool skipTlsVerification,
         TrustedHostsMatcher trustedHosts,
-        CancellationToken cancellationToken)
+        CancellationToken fetchToken,
+        CancellationToken requestAborted)
     {
         try
         {
@@ -116,7 +146,7 @@ public class AddUrlRequest() : AddFileRequest
                 throw new InvalidOperationException($"The url is invalid.");
 
             var response = await GetAsync(
-                url, userAgent, proxyUrl, skipTlsVerification, trustedHosts, cancellationToken).ConfigureAwait(false);
+                url, userAgent, proxyUrl, skipTlsVerification, trustedHosts, fetchToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 response.Dispose();
@@ -131,7 +161,7 @@ public class AddUrlRequest() : AddFileRequest
                                    ?? throw new InvalidOperationException("Nzb filename could not be determined.");
             var fileName = NzbStreamUtil.NormalizeFileName(resolvedFileName);
 
-            var fileStream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            var fileStream = await response.Content.ReadAsStreamAsync(fetchToken).ConfigureAwait(false);
 
             return new NzbFileResponse
             {
@@ -140,9 +170,14 @@ public class AddUrlRequest() : AddFileRequest
                 FileStream = fileStream
             };
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (requestAborted.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException ex) when (fetchToken.IsCancellationRequested)
+        {
+            throw new BadHttpRequestException(
+                $"Failed to fetch nzb-file url `{url}`: the download timed out.", ex);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or IOException)
         {
@@ -164,9 +199,9 @@ public class AddUrlRequest() : AddFileRequest
         CancellationToken cancellationToken
     )
     {
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(FetchTimeout);
-        var ct = timeoutCts.Token;
+        // The caller owns the fetch deadline and keeps it alive through the body
+        // copy in SubmitAsync; do not scope a timeout CTS here.
+        var ct = cancellationToken;
         var currentUri = ValidateHttpUri(url);
         var httpClient = string.IsNullOrWhiteSpace(proxyUrl)
             ? (skipTlsVerification ? PermissiveDirectHttpClient : StrictDirectHttpClient)

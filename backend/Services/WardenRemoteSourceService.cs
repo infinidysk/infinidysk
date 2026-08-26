@@ -78,7 +78,7 @@ public class WardenRemoteSourceService : BackgroundService
 
             using Stream body = LooksGzip(buffer) ? new GZipStream(buffer, CompressionMode.Decompress) : buffer;
 
-            using var limitedBody = new LimitedReadStream(body, WardenInputLimits.MaxDecompressedBytes);
+            using var limitedBody = WardenInputLimits.CreateLimitedStream(body);
             var count = await _store.ReplaceSourceAsync(source.Id, limitedBody, ct).ConfigureAwait(false);
             _store.SetSourceStatus(source.Id, newEtag, now, now, $"ok ({count})");
             Log.Information("Warden: refreshed remote list {Name} ({Count} fingerprints)", source.Name, count);

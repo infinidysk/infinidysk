@@ -20,13 +20,26 @@ public class AddUrlController(
 {
     public async Task<AddUrlResponse> AddUrlAsync(AddUrlRequest request)
     {
+        // Owns the shared fetch/ingest deadline created in AddUrlRequest.New.
+        using var fetchDeadline = request.FetchDeadlineSource;
         var controller = new AddFileController(Context, dbClient, queueManager, Config, websocketManager);
-        var response = await controller.AddFileAsync(request).ConfigureAwait(false);
-        return new AddUrlResponse()
+        try
         {
-            Status = response.Status,
-            NzoIds = response.NzoIds,
-        };
+            var response = await controller.AddFileAsync(request).ConfigureAwait(false);
+            return new AddUrlResponse()
+            {
+                Status = response.Status,
+                NzoIds = response.NzoIds,
+            };
+        }
+        catch (OperationCanceledException ex) when (
+            fetchDeadline?.IsCancellationRequested == true && !Context.RequestAborted.IsCancellationRequested)
+        {
+            // The deadline fired while SubmitAsync was copying the response body;
+            // surface a fetch failure to the SAB client instead of an aborted request.
+            throw new BadHttpRequestException(
+                "Failed to fetch the nzb file: the download timed out.", ex);
+        }
     }
 
     protected override async Task<IActionResult> Handle()
