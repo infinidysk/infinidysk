@@ -279,8 +279,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          DOCKERHUB_USERNAME: infinidysk
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           OLD_GHCR_TOKEN: ${{ secrets.OLD_GHCR_TOKEN }}
         run: bash .github/scripts/cleanup-prerelease-artifacts.sh
 
@@ -328,8 +326,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          DOCKERHUB_USERNAME: infinidysk
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           OLD_GHCR_TOKEN: ${{ secrets.OLD_GHCR_TOKEN }}
         run: bash .github/scripts/cleanup-prerelease-artifacts.sh
 
