@@ -1273,6 +1273,24 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             .ToHashSet();
     }
 
+    private static readonly HashSet<string> DefaultMediaReadinessCategories =
+        new(StringComparer.OrdinalIgnoreCase) { "tv", "movies", "movie", "series" };
+
+    /// <summary>
+    /// Categories whose media outputs get a BODY-level head/tail readiness probe before
+    /// SAB reports completion. Always includes the explicit article-existence categories;
+    /// when ensure-importable-video is enabled, the common media categories are included
+    /// too so a short-decoded or unseekable file fails into history before Arr/rclone
+    /// reads it, rather than after.
+    /// </summary>
+    public HashSet<string> GetMediaReadinessCategories()
+    {
+        var categories = GetEnsureArticleExistenceCategories();
+        if (IsEnsureImportableMediaEnabled())
+            categories.UnionWith(DefaultMediaReadinessCategories);
+        return categories;
+    }
+
     public string GetArticleExistenceCheckMode()
     {
         var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiArticleExistenceCheckMode));

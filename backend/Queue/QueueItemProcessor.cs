@@ -513,7 +513,10 @@ public class QueueItemProcessor(
             if (configManager.IsEnsureImportableMediaEnabled())
                 new EnsureImportableMediaValidator(dbClient).ThrowIfValidationFails();
 
-            if (healthCheckCategories.Contains(queueItem.Category.ToLowerInvariant()))
+            // BODY readiness runs for the explicit health-check categories and, when
+            // ensure-importable-video is on, for the common media categories — so a
+            // short-decoded or unseekable file fails into history before Arr/rclone.
+            if (configManager.GetMediaReadinessCategories().Contains(queueItem.Category.ToLowerInvariant()))
             {
                 await RunStageAsync(
                     "import-readiness",
