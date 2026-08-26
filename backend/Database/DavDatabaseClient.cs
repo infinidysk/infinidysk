@@ -582,11 +582,12 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
                 return;
             }
-            catch (DbUpdateConcurrencyException ex) when (ex.Entries.All(e => e.Entity is HistoryItem))
+            catch (DbUpdateConcurrencyException ex) when (
+                ex.Entries.All(e => e.Entity is HistoryItem or DavItem))
             {
                 last = ex;
                 var pendingBefore = CountPendingSaveEntries();
-                DetachVanishedHistory(ex);
+                DetachVanishedEntries(ex);
                 if (CountPendingSaveEntries() >= pendingBefore)
                     throw;
             }
@@ -604,17 +605,22 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         Ctx.ChangeTracker.Entries()
             .Count(e => e.State is EntityState.Added or EntityState.Deleted or EntityState.Modified);
 
-    private void DetachVanishedHistory(DbUpdateConcurrencyException ex)
+    private void DetachVanishedEntries(DbUpdateConcurrencyException ex)
     {
-        var vanishedIds = ex.Entries
-            .Select(e => ((HistoryItem)e.Entity).Id)
+        var vanishedHistoryIds = ex.Entries
+            .Select(e => e.Entity)
+            .OfType<HistoryItem>()
+            .Select(item => item.Id)
             .ToHashSet();
 
         foreach (var entry in ex.Entries)
             entry.State = EntityState.Detached;
 
+        if (vanishedHistoryIds.Count == 0)
+            return;
+
         foreach (var entry in Ctx.ChangeTracker.Entries<HistoryCleanupItem>()
-                     .Where(e => e.State == EntityState.Added && vanishedIds.Contains(e.Entity.Id))
+                     .Where(e => e.State == EntityState.Added && vanishedHistoryIds.Contains(e.Entity.Id))
                      .ToList())
         {
             entry.State = EntityState.Detached;

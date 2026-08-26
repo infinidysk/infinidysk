@@ -104,7 +104,41 @@ public sealed class RemoveHistoryItemsIdempotencyTests : IDisposable
         Assert.Equal(ids.Count, await _context.HistoryCleanupItems.CountAsync(x => ids.Contains(x.Id)));
     }
 
-    private static HistoryItem CompletedHistory(Guid id) => new()
+    [Fact]
+    public async Task RemoveHistoryItems_TwoContextsDeleteFiles_ConcurrentDavItemDeleteDoesNotThrow()
+    {
+        var historyItemId = Guid.NewGuid();
+        var dirId = Guid.NewGuid();
+        _context.Items.Add(new DavItem
+        {
+            Id = dirId,
+            IdPrefix = dirId.ToString("N")[..DavItem.IdPrefixLength],
+            CreatedAt = DateTime.UtcNow,
+            Name = "job",
+            Type = DavItem.ItemType.Directory,
+            SubType = DavItem.ItemSubType.Directory,
+            Path = "/job",
+        });
+        _context.HistoryItems.Add(CompletedHistory(historyItemId, dirId));
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        await using var context2 = CreateContext();
+        var client1 = new DavDatabaseClient(_context);
+        var client2 = new DavDatabaseClient(context2);
+
+        await client1.RemoveHistoryItemsAsync([historyItemId], deleteFiles: true);
+        await client2.RemoveHistoryItemsAsync([historyItemId], deleteFiles: true);
+
+        await client1.SaveHistoryRemovalAsync();
+        await client2.SaveHistoryRemovalAsync();
+
+        Assert.False(await _context.HistoryItems.AnyAsync(x => x.Id == historyItemId));
+        Assert.False(await _context.Items.AnyAsync(x => x.Id == dirId));
+        Assert.Equal(1, await _context.HistoryCleanupItems.CountAsync(x => x.Id == historyItemId));
+    }
+
+    private static HistoryItem CompletedHistory(Guid id, Guid? downloadDirId = null) => new()
     {
         Id = id,
         CreatedAt = DateTime.UtcNow,
@@ -112,5 +146,6 @@ public sealed class RemoveHistoryItemsIdempotencyTests : IDisposable
         JobName = "job",
         Category = "tv",
         DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+        DownloadDirId = downloadDirId,
     };
 }
