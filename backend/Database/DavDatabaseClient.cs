@@ -496,11 +496,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 
             Ctx.Items.RemoveRange(davItems);
             Ctx.HistoryItems.RemoveRange(historyItems);
-            Ctx.HistoryCleanupItems.AddRange(historyItems.Select(x => new HistoryCleanupItem
-            {
-                Id = x.Id,
-                DeleteMountedFiles = deleteFiles
-            }));
+            await AddCleanupItemsIdempotentAsync(historyItems, deleteFiles, ct).ConfigureAwait(false);
         }
         else
         {
@@ -523,11 +519,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             }
 
             Ctx.HistoryItems.RemoveRange(existing);
-            Ctx.HistoryCleanupItems.AddRange(existing.Select(x => new HistoryCleanupItem
-            {
-                Id = x.Id,
-                DeleteMountedFiles = deleteFiles
-            }));
+            await AddCleanupItemsIdempotentAsync(existing, deleteFiles, ct).ConfigureAwait(false);
         }
 
         await CascadeWatchdogEntriesAsync(
@@ -535,6 +527,34 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             contentGroupKeys: groupKeys,
             ct: ct,
             excludeHistoryIds: ids).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Adds a HistoryCleanupItem for each removed history row, skipping ids that already
+    /// have a pending cleanup row. A concurrent RemoveFromHistory (or a retry while the
+    /// previous cleanup row is still pending) would otherwise collide on the primary key
+    /// and 500 the SAB call; a duplicate cleanup request is already satisfied, so it is
+    /// treated as success.
+    /// </summary>
+    private async Task AddCleanupItemsIdempotentAsync(
+        List<HistoryItem> removed,
+        bool deleteFiles,
+        CancellationToken ct)
+    {
+        if (removed.Count == 0) return;
+        var removedIds = removed.Select(x => x.Id).ToList();
+        var alreadyPending = await Ctx.HistoryCleanupItems
+            .Where(x => removedIds.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToHashSetAsync(ct)
+            .ConfigureAwait(false);
+        Ctx.HistoryCleanupItems.AddRange(removed
+            .Where(x => !alreadyPending.Contains(x.Id))
+            .Select(x => new HistoryCleanupItem
+            {
+                Id = x.Id,
+                DeleteMountedFiles = deleteFiles
+            }));
     }
 
     public sealed record DavSubtreeDeleteEntry(
