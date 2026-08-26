@@ -1009,6 +1009,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         var failure = initialFailure;
         var lease = existingLease;
+        var persistent = new PersistentCorruptionTracker();
+        persistent.NoteOrThrow(initialFailure);
         try
         {
             for (var attempt = 1; attempt <= GetCorruptionRetryLimit(segmentId); attempt++)
@@ -1045,6 +1047,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 }
                 catch (UsenetCorruptArticleException exception)
                 {
+                    persistent.NoteOrThrow(exception);
                     failure = exception;
                 }
             }

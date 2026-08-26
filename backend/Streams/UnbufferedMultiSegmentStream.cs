@@ -405,6 +405,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _hasProbedByte = false;
 
         var failure = initialFailure;
+        var persistent = new PersistentCorruptionTracker();
+        persistent.NoteOrThrow(initialFailure);
         for (var attempt = 1; attempt <= GetCorruptionRetryLimit(segmentId); attempt++)
         {
             Log.Debug(
@@ -432,6 +434,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             catch (UsenetCorruptArticleException e)
             {
                 await DisposeBodyStreamAsync(retryStream).ConfigureAwait(false);
+                persistent.NoteOrThrow(e);
                 failure = e;
             }
         }
