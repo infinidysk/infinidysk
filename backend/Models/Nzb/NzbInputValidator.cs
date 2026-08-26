@@ -106,12 +106,12 @@ public static class NzbInputValidator
 
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (reader is { NodeType: XmlNodeType.EndElement, LocalName: "file" })
                 break;
 
             if (reader is { NodeType: XmlNodeType.Element, LocalName: "segment" })
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 totalSegments++;
                 if (totalSegments > limits.MaxTotalSegments)
                 {

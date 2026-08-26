@@ -15,6 +15,68 @@ internal static class TestStreams
     public static Stream CancelAfterBytes(Stream inner, long cancelAfterBytes, CancellationTokenSource cts) =>
         new CancelAfterBytesStream(inner, cancelAfterBytes, cts);
 
+    /// <summary>
+    /// Wraps <paramref name="inner"/> and delivers at most <paramref name="byteLimit"/> bytes,
+    /// cancelling <paramref name="cts"/> on the first read beyond the limit (that read still
+    /// returns the remaining data). Unlike <see cref="CancelAfterBytes"/>, delivery is capped so
+    /// buffered readers cannot race ahead of the cancellation point.
+    /// </summary>
+    public static Stream CancelOnReadBeyond(Stream inner, long byteLimit, CancellationTokenSource cts) =>
+        new CancelOnReadBeyondStream(inner, byteLimit, cts);
+
+    private sealed class CancelOnReadBeyondStream(Stream inner, long byteLimit, CancellationTokenSource cts)
+        : Stream
+    {
+        private long _bytesRead;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => _bytesRead;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_bytesRead >= byteLimit)
+            {
+                cts.Cancel();
+                var read = inner.Read(buffer, offset, count);
+                _bytesRead += read;
+                return read;
+            }
+
+            var capped = inner.Read(buffer, offset, (int)Math.Min(count, byteLimit - _bytesRead));
+            _bytesRead += capped;
+            return capped;
+        }
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (_bytesRead >= byteLimit)
+            {
+                cts.Cancel();
+                return await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            }
+
+            var read = await inner
+                .ReadAsync(buffer[..(int)Math.Min(buffer.Length, byteLimit - _bytesRead)], cancellationToken)
+                .ConfigureAwait(false);
+            _bytesRead += read;
+            return read;
+        }
+
+        public override void Flush() => inner.Flush();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class CancelAfterBytesStream(Stream inner, long cancelAfterBytes, CancellationTokenSource cts)
         : Stream
     {
