@@ -30,10 +30,10 @@ public class NzbDocument
                 switch (reader.Name)
                 {
                     case "head":
-                        await ReadHeadAsync(reader, document.Metadata).ConfigureAwait(false);
+                        await ReadHeadAsync(reader, document.Metadata, ct).ConfigureAwait(false);
                         break;
                     case "file":
-                        var file = await ReadFileAsync(reader).ConfigureAwait(false);
+                        var file = await ReadFileAsync(reader, ct).ConfigureAwait(false);
                         document.Files.Add(file);
                         break;
                 }
@@ -41,19 +41,29 @@ public class NzbDocument
 
             return document;
         }
+        catch (OperationCanceledException)
+        {
+            // Cancellation must stay cancellation; only malformed XML maps to
+            // InvalidDataException (which finalizes as failed history).
+            throw;
+        }
         catch (XmlException e)
         {
             throw new InvalidDataException("Could not parse the nzb document (malformed nzb)", e);
         }
     }
 
-    private static async Task ReadHeadAsync(XmlReader reader, Dictionary<string, string> metadata)
+    private static async Task ReadHeadAsync(
+        XmlReader reader,
+        Dictionary<string, string> metadata,
+        CancellationToken ct)
     {
         if (reader.IsEmptyElement)
             return;
 
         while (true)
         {
+            ct.ThrowIfCancellationRequested();
             if (reader is { NodeType: XmlNodeType.EndElement, Name: "head" })
                 break;
 
@@ -73,7 +83,7 @@ public class NzbDocument
         }
     }
 
-    private static async Task<NzbFile> ReadFileAsync(XmlReader reader)
+    private static async Task<NzbFile> ReadFileAsync(XmlReader reader, CancellationToken ct)
     {
         var file = new NzbFile
         {
@@ -85,12 +95,13 @@ public class NzbDocument
 
         while (await reader.ReadAsync().ConfigureAwait(false))
         {
+            ct.ThrowIfCancellationRequested();
             if (reader is { NodeType: XmlNodeType.EndElement, Name: "file" })
                 break;
 
             if (reader is { NodeType: XmlNodeType.Element, Name: "segments" })
             {
-                await ReadSegmentsAsync(reader, file).ConfigureAwait(false);
+                await ReadSegmentsAsync(reader, file, ct).ConfigureAwait(false);
             }
         }
 
@@ -98,7 +109,7 @@ public class NzbDocument
         return file;
     }
 
-    private static async Task ReadSegmentsAsync(XmlReader reader, NzbFile file)
+    private static async Task ReadSegmentsAsync(XmlReader reader, NzbFile file, CancellationToken ct)
     {
         if (reader.IsEmptyElement)
             return;
@@ -110,6 +121,7 @@ public class NzbDocument
 
             if (reader is { NodeType: XmlNodeType.Element, Name: "segment" })
             {
+                ct.ThrowIfCancellationRequested();
                 var bytesAttr = reader.GetAttribute("bytes");
                 var numberAttr = reader.GetAttribute("number");
                 var segment = new NzbSegment

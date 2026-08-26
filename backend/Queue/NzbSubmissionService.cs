@@ -119,7 +119,7 @@ public class NzbSubmissionService(
             // compute the total segment bytes
             await using var nzbFileStream = BlobStore.ReadBlob(id)!;
             var totalSegmentBytes = NzbInputValidator.ValidateAndSumSegmentBytes(
-                nzbFileStream, NzbInputLimits.Default);
+                nzbFileStream, NzbInputLimits.Default, request.CancellationToken);
 
             // Keep enqueues after any manually moved item in their priority band.
             // CreatedAt remains the immutable enqueue timestamp; SortOrder owns

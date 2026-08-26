@@ -17,9 +17,13 @@ public static class NzbInputValidator
     /// <summary>
     /// Walks NZB XML incrementally, enforces <paramref name="limits"/>, and
     /// returns the sum of valid segment byte counts. Does not echo message IDs
-    /// or raw XML in error text.
+    /// or raw XML in error text. Cancellation is observed per file and per
+    /// segment so a cancelled submission stops promptly on huge documents.
     /// </summary>
-    public static long ValidateAndSumSegmentBytes(Stream stream, NzbInputLimits limits)
+    public static long ValidateAndSumSegmentBytes(
+        Stream stream,
+        NzbInputLimits limits,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(limits);
@@ -53,6 +57,7 @@ public static class NzbInputValidator
 
                 if (reader.LocalName == "file")
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     fileCount++;
                     if (fileCount > limits.MaxFiles)
                     {
@@ -72,7 +77,7 @@ public static class NzbInputValidator
 
                     totalBytes = AddSegmentBytesOrThrow(
                         totalBytes,
-                        ReadFileSegments(reader, limits, errors, ref totalSegments),
+                        ReadFileSegments(reader, limits, errors, ref totalSegments, cancellationToken),
                         errors);
                 }
             }
@@ -91,7 +96,8 @@ public static class NzbInputValidator
         XmlReader reader,
         NzbInputLimits limits,
         ValidationErrors errors,
-        ref int totalSegments)
+        ref int totalSegments,
+        CancellationToken cancellationToken)
     {
         long fileBytes = 0;
         var seenNumbers = new HashSet<int>();
@@ -105,6 +111,7 @@ public static class NzbInputValidator
 
             if (reader is { NodeType: XmlNodeType.Element, LocalName: "segment" })
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 totalSegments++;
                 if (totalSegments > limits.MaxTotalSegments)
                 {

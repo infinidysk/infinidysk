@@ -1,6 +1,7 @@
 using System.Text;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Models;
 
@@ -92,6 +93,43 @@ public class NzbDocumentTests
 
         Assert.Equal("Could not parse the nzb document (malformed nzb)", exception.Message);
         Assert.IsType<System.Xml.XmlException>(exception.InnerException);
+    }
+
+    [Fact]
+    public async Task LoadAsync_PreCancelledToken_ThrowsOperationCanceled()
+    {
+        const string xml = """
+            <nzb><file subject="file"><segments>
+              <segment bytes="10" number="1">a@example</segment>
+            </segments></file></nzb>
+            """;
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => NzbDocument.LoadAsync(stream, cts.Token));
+    }
+
+    [Fact]
+    public async Task LoadAsync_CancelMidSegments_ThrowsOperationCanceledUnwrapped()
+    {
+        // ~3 MB single-file document; cancelling after 64 KiB of reads must
+        // propagate as OCE, not as InvalidDataException("malformed nzb").
+        var builder = new StringBuilder("<nzb><file subject=\"huge\"><segments>");
+        for (var i = 1; i <= 50_000; i++)
+            builder.Append($"<segment bytes=\"15\" number=\"{i}\">id-{i}@example</segment>");
+        builder.Append("</segments></file></nzb>");
+        using var cts = new CancellationTokenSource();
+        await using var stream = TestStreams.CancelAfterBytes(
+            new MemoryStream(Encoding.UTF8.GetBytes(builder.ToString())),
+            cancelAfterBytes: 64 * 1024,
+            cts);
+
+        // ThrowsAsync requires the exact type: an OCE wrapped as
+        // InvalidDataException("malformed nzb") would fail this assertion.
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => NzbDocument.LoadAsync(stream, cts.Token));
     }
 
     [Fact]
