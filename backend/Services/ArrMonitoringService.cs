@@ -18,11 +18,16 @@ public class ArrMonitoringService : BackgroundService
 {
     private readonly ConfigManager _configManager;
     private readonly ArrReplacementSearchBudget _replacementSearchBudget;
+    private readonly ArrInstanceBackoff _backoff;
 
-    public ArrMonitoringService(ConfigManager configManager, ArrReplacementSearchBudget replacementSearchBudget)
+    public ArrMonitoringService(
+        ConfigManager configManager,
+        ArrReplacementSearchBudget replacementSearchBudget,
+        ArrInstanceBackoff? backoff = null)
     {
         _configManager = configManager;
         _replacementSearchBudget = replacementSearchBudget;
+        _backoff = backoff ?? new ArrInstanceBackoff();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -61,11 +66,23 @@ public class ArrMonitoringService : BackgroundService
         // the buffer support packs are built from, so detail goes to Debug and the pass
         // reports one Warning per release and action.
         var resolutions = new List<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)>();
+
+        // Skip a host that is timing out or refusing connections until its backoff elapses.
+        if (_backoff.IsInBackoff(client.Host))
+        {
+            Log.Debug(
+                "Arr queue monitoring for {Host} skipped; instance is in backoff for {Remaining}",
+                client.Host,
+                _backoff.GetRemainingBackoff(client.Host));
+            return;
+        }
+
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
         try
         {
             var queueStatus = await client.GetQueueStatusAsync(timeout.Token).ConfigureAwait(false);
+            _backoff.RecordSuccess(client.Host);
             if (queueStatus is { Warnings: false, UnknownWarnings: false }) return;
             var queue = await client.GetQueueAsync(timeout.Token).ConfigureAwait(false);
             var stuckRecords = GetActionableStuckRecords(queue, arrConfig.QueueRules);
@@ -84,10 +101,12 @@ public class ArrMonitoringService : BackgroundService
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
             Log.Warning("Arr queue monitoring timed out after 20 seconds for {Host}", client.Host);
+            _backoff.RecordFailure(client.Host, new TimeoutException("Arr queue monitoring timed out."));
         }
         catch (Exception e) when (e is HttpRequestException { InnerException: System.Net.Sockets.SocketException })
         {
             Log.Debug(e, "Could not reach Arr instance {Host} for queue monitoring", client.Host);
+            _backoff.RecordFailure(client.Host, e);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {

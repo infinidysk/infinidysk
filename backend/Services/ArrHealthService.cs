@@ -31,6 +31,7 @@ public sealed class ArrHealthService : BackgroundService
     ];
 
     private readonly ConfigManager _configManager;
+    private readonly ArrInstanceBackoff _backoff;
     private readonly SemaphoreSlim _cycleGate = new(1, 1);
     private readonly object _snapshotLock = new();
     private readonly Dictionary<string, ArrHealthSnapshot> _snapshots = new(StringComparer.Ordinal);
@@ -46,9 +47,11 @@ public sealed class ArrHealthService : BackgroundService
 
     public ArrHealthService(
         ConfigManager configManager,
-        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null,
+        ArrInstanceBackoff? backoff = null)
     {
         _configManager = configManager;
+        _backoff = backoff ?? new ArrInstanceBackoff();
         DavContextFactory = dbContextFactory is null
             ? static () => new DavDatabaseContext()
             : dbContextFactory.CreateDbContext;
@@ -181,6 +184,19 @@ public sealed class ArrHealthService : BackgroundService
     {
         var key = ArrConfig.MakeInstanceKey(appType, details.Host);
         var displayName = string.IsNullOrWhiteSpace(details.Name) ? details.Host : details.Name;
+
+        // Skip a host that is timing out or refusing connections until its backoff
+        // elapses — polling a dying peer on the fixed cadence only adds load it cannot
+        // serve. The last-known snapshot stays in place so the UI keeps showing it.
+        if (_backoff.IsInBackoff(details.Host))
+        {
+            Log.Debug(
+                "Arr health poll for {Host} skipped; instance is in backoff for {Remaining}",
+                details.Host,
+                _backoff.GetRemainingBackoff(details.Host));
+            return;
+        }
+
         ArrClient client;
         try
         {
@@ -228,6 +244,7 @@ public sealed class ArrHealthService : BackgroundService
                 ? ArrInstanceHealthStatus.Degraded
                 : ArrInstanceHealthStatus.Healthy;
 
+            _backoff.RecordSuccess(details.Host);
             RecordSuccess(new ArrHealthSnapshot
             {
                 InstanceKey = key,
@@ -254,6 +271,7 @@ public sealed class ArrHealthService : BackgroundService
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             e.LogWarningKnownOrStack("Arr health poll failed for {Host}", details.Host);
+            _backoff.RecordFailure(details.Host, e);
             RecordFailure(key, appType, details.Host, displayName, e);
         }
     }

@@ -65,6 +65,7 @@ public class HealthCheckService : BackgroundService
 
     private readonly ConfigManager _configManager;
     private readonly ArrReplacementSearchBudget _replacementSearchBudget;
+    private readonly ArrInstanceBackoff _arrBackoff;
     private readonly UsenetStreamingClient _usenetClient;
     private readonly WebsocketManager _websocketManager;
     private readonly BenchmarkGate _benchmarkGate;
@@ -92,11 +93,13 @@ public class HealthCheckService : BackgroundService
         RepairPatchStore repairPatchStore,
         ArrReplacementSearchBudget replacementSearchBudget,
         IDbContextFactory<DavDatabaseContext>? dbContextFactory = null,
-        TimeProvider? timeProvider = null
+        TimeProvider? timeProvider = null,
+        ArrInstanceBackoff? arrBackoff = null
     )
     {
         _configManager = configManager;
         _replacementSearchBudget = replacementSearchBudget;
+        _arrBackoff = arrBackoff ?? new ArrInstanceBackoff();
         _usenetClient = usenetClient;
         _websocketManager = websocketManager;
         _benchmarkGate = benchmarkGate;
@@ -1507,7 +1510,8 @@ public class HealthCheckService : BackgroundService
         string symlinkOrStrmPath,
         Guid? downloadId,
         CancellationToken ct,
-        Func<ArrClient, IReadOnlyList<string>, bool>? shouldRequestSearch = null)
+        Func<ArrClient, IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+        ArrInstanceBackoff? arrBackoff = null)
     {
         // Track whether a no-owner result is authoritative enough to explain to the operator.
         // Neither outcome permits deletion: a successful-but-incomplete library/Arr view is
@@ -1518,14 +1522,29 @@ public class HealthCheckService : BackgroundService
         {
             ct.ThrowIfCancellationRequested();
 
+            // Skip the root-folder query for an instance that is timing out or refusing
+            // connections — it cannot answer, and asking only adds load to a dying peer.
+            // Treat it like an unreachable instance so repair defers rather than deletes.
+            if (arrBackoff is not null && arrBackoff.IsInBackoff(arrClient.Host))
+            {
+                anInstanceFailed = true;
+                Log.Debug(
+                    "Health-check repair: skipping root-folder query for {Host}; instance is in backoff for {Remaining}",
+                    arrClient.Host,
+                    arrBackoff.GetRemainingBackoff(arrClient.Host));
+                continue;
+            }
+
             List<ArrRootFolder> rootFolders;
             try
             {
                 rootFolders = await arrClient.GetRootFolders(ct).ConfigureAwait(false);
+                arrBackoff?.RecordSuccess(arrClient.Host);
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
             {
                 anInstanceFailed = true;
+                arrBackoff?.RecordFailure(arrClient.Host, e);
                 LogArrRepairFailure(
                     e,
                     "Health-check repair: could not query root folders from {Host}",
@@ -1869,7 +1888,8 @@ public class HealthCheckService : BackgroundService
                         .Select(identity => $"{arrClient.Host.TrimEnd('/').ToLowerInvariant()}|{identity}")
                         .ToArray(),
                     arrConfig.EffectiveQueueReplacementSearchLimit(),
-                    arrConfig.EffectiveQueueReplacementSearchWindow())).ConfigureAwait(false);
+                    arrConfig.EffectiveQueueReplacementSearchWindow()),
+                _arrBackoff).ConfigureAwait(false);
 
             if (arrDecision != ArrLinkedRepairDecision.DeferNoMatchingMediaItem)
                 _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);

@@ -403,6 +403,7 @@ public partial class Program
                 .AddSingleton<LiveStatsBroadcaster>()
                 .AddHostedService(sp => sp.GetRequiredService<LiveStatsBroadcaster>())
                 .AddSingleton<ArrReplacementSearchBudget>()
+                .AddSingleton<NzbWebDAV.Clients.RadarrSonarr.ArrInstanceBackoff>()
                 .AddHostedService<HealthCheckService>()
                 .AddHostedService<HealthCheckRetentionService>()
                 .AddHostedService<ArrMonitoringService>()
