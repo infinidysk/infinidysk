@@ -347,16 +347,22 @@ public class MetricsWriter : BackgroundService
 
             await db.SaveChangesAsync().ConfigureAwait(false);
             await tx.CommitAsync().ConfigureAwait(false);
-
-            var completed = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            Interlocked.Exchange(ref _lastFlushLagMs, (long)(DateTime.UtcNow - started).TotalMilliseconds);
-            Interlocked.Exchange(ref _lastSuccessfulFlushAtMs, completed);
-            Interlocked.Exchange(ref _lastFlushError, null);
+            RecordFlushSuccess(started);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
+            if (ex.IsTransientDatabaseException()
+                && Volatile.Read(ref _resetGeneration) == generation
+                && Volatile.Read(ref _resetting) == 0
+                && await TryFlushBatchAsync(fetches, events, sessions, failoverMisses).ConfigureAwait(false))
+            {
+                RecordFlushSuccess(started);
+                return;
+            }
+
             // Only requeue if this flush still belongs to the current generation.
             // A reset that started mid-flush must not resurrect wiped rows.
+            var queuedRows = fetches.Count + events.Count + sessions.Count + failoverMisses.Count;
             if (Volatile.Read(ref _resetGeneration) == generation && Volatile.Read(ref _resetting) == 0)
             {
                 Requeue(_fetches, fetches);
@@ -365,14 +371,59 @@ public class MetricsWriter : BackgroundService
                 Requeue(_failoverMisses, failoverMisses);
             }
             Interlocked.Exchange(ref _lastFlushError, ex.GetBaseException().Message);
+            if (ex.IsTransientDatabaseException())
+            {
+                Log.Warning(
+                    "MetricsWriter flush deferred. QueuedRows={QueuedRows} Reason: {Reason}",
+                    queuedRows,
+                    ex.GetBaseException().Message);
+                return;
+            }
+
             throw;
         }
     }
 
+    private async Task<bool> TryFlushBatchAsync(
+        List<SegmentFetch> fetches,
+        List<MetricEvent> events,
+        List<ReadSession> sessions,
+        List<FailoverMiss> failoverMisses)
+    {
+        try
+        {
+            await Task.Delay(250).ConfigureAwait(false);
+            await using var db = _contextFactory();
+            await using var tx = await db.Database.BeginTransactionAsync().ConfigureAwait(false);
+            if (fetches.Count > 0) db.SegmentFetches.AddRange(fetches);
+            if (events.Count > 0) db.MetricEvents.AddRange(events);
+            if (sessions.Count > 0) db.ReadSessions.AddRange(sessions);
+            if (failoverMisses.Count > 0) db.FailoverMisses.AddRange(failoverMisses);
+            await db.SaveChangesAsync().ConfigureAwait(false);
+            await tx.CommitAsync().ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception retryEx) when (retryEx is not OutOfMemoryException)
+        {
+            Log.Debug(retryEx, "MetricsWriter busy retry failed");
+            return false;
+        }
+    }
+
+    private void RecordFlushSuccess(DateTime started)
+    {
+        var completed = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        Interlocked.Exchange(ref _lastFlushLagMs, (long)(DateTime.UtcNow - started).TotalMilliseconds);
+        Interlocked.Exchange(ref _lastSuccessfulFlushAtMs, completed);
+        Interlocked.Exchange(ref _lastFlushError, null);
+    }
+
     private static List<T> Drain<T>(ConcurrentQueue<T> q)
     {
-        var list = new List<T>(Math.Min(q.Count, FlushThreshold * 2));
-        while (q.TryDequeue(out var item)) list.Add(item);
+        var cap = FlushThreshold * 2;
+        var list = new List<T>(Math.Min(q.Count, cap));
+        while (list.Count < cap && q.TryDequeue(out var item))
+            list.Add(item);
         return list;
     }
 

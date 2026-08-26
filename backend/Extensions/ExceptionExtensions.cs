@@ -150,6 +150,12 @@ public static class ExceptionExtensions
             return true;
         }
 
+        if (exception.IsTransientDatabaseException())
+        {
+            reason = exception.GetBaseException().Message;
+            return true;
+        }
+
         string? found = null;
         for (var current = exception; current != null; current = current.InnerException)
         {

@@ -188,13 +188,12 @@ public class ExceptionExtensionsTests
     }
 
     [Fact]
-    public void TryGetKnownErrorMessage_OtherSqliteErrors_StayUnknown()
+    public void TryGetKnownErrorMessage_RecognizesSqliteBusy()
     {
-        // Busy/locked and friends stay unclassified: they are transient and
-        // handled by their own retry paths, not by corruption guidance.
         var ex = new SqliteException("SQLite Error 5: 'database is locked'.", 5);
 
-        Assert.False(ex.TryGetKnownErrorMessage(out _));
+        Assert.True(ex.TryGetKnownErrorMessage(out var reason));
+        Assert.Contains("locked", reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
