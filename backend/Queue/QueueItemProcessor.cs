@@ -72,7 +72,7 @@ public class QueueItemProcessor(
     }
 
     private const int MaxProviderRetryAttempts = 20;
-    private static readonly TimeSpan StageWarningInterval = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan StageWarningInterval = TimeSpan.FromMinutes(2);
 
     /// <summary>
     /// Set by the queue's stuck watchdog when this worker's cancellation should
@@ -206,8 +206,10 @@ public class QueueItemProcessor(
                 queueItem.PauseUntil = DateTime.Now + backoff;
                 dbClient.Ctx.QueueItems.Attach(queueItem);
                 dbClient.Ctx.Entry(queueItem).Property(x => x.PauseUntil).IsModified = true;
-                await WithFinalizeLockAsync(() => dbClient.Ctx.SaveChangesAsync(ct))
-                    .ConfigureAwait(false);
+                // Retry persistence is a single-row PauseUntil write. It must not join
+                // the finalize convoy — a worker blocked in readiness/blob I/O would
+                // otherwise pin every provider-retry for the process.
+                await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
                 _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Queued");
             }
             catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
@@ -892,9 +894,11 @@ public class QueueItemProcessor(
         }
 
         var waitCt = cancellationToken ?? ct;
+        _stageReporter("finalize-lock-wait");
         await finalizeLock.WaitAsync(waitCt).ConfigureAwait(false);
         try
         {
+            _stageReporter("finalize-commit");
             await action().ConfigureAwait(false);
         }
         finally
