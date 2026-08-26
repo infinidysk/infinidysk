@@ -1,9 +1,12 @@
 using System.Text;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
+using UsenetSharp.Models;
+using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.Streams;
 
@@ -226,6 +229,82 @@ public class KnownMissingFastPathTests
         }
     }
 
+    [Fact]
+    public async Task PipelinedStream_AlreadyFailFast_IssuesNoBodyRequests()
+    {
+        PlaybackHoleTracker.ResetForTests();
+        var path = $"/view/fail-fast-{Guid.NewGuid():N}.mkv";
+        var ids = new[] { "miss-a@test", "miss-b@test", "miss-c@test", "miss-d@test" };
+        try
+        {
+            foreach (var id in ids.Take(GapFillLimits.MaxConsecutiveZeroFills))
+                PlaybackHoleTracker.RecordHole(path, id, new UsenetArticleNotFoundException(id));
+
+            var client = new FakeNntpClient(ids.ToDictionary(id => id, _ => new byte[5]));
+            await using var stream = MultiSegmentStream.Create(
+                ids.AsMemory(),
+                client,
+                articleBufferSize: 4,
+                estimatedSegmentSize: 5,
+                failFastOnFirstSegment: false,
+                usePipelinedBodyRequests: true,
+                CancellationToken.None,
+                fileName: path,
+                exactSegmentSizes: new long[] { 5, 5, 5, 5 });
+
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+                async () => await stream.CopyToAsync(Stream.Null));
+
+            Assert.Equal(0, client.BatchRequestCount);
+            Assert.Equal(0, client.BodyRequestCount);
+        }
+        finally
+        {
+            PlaybackHoleTracker.ResetForTests();
+        }
+    }
+
+    [Fact]
+    public async Task PipelinedFailFastAfterBatchIssue_OwnsEveryIssuedResponse()
+    {
+        PlaybackHoleTracker.ResetForTests();
+        var path = $"/view/fail-fast-{Guid.NewGuid():N}.mkv";
+        var ids = new[] { "seg-a@test", "seg-b@test", "seg-c@test", "seg-d@test" };
+        try
+        {
+            var client = new TrackerTrippingBatchClient(path);
+            var stream = MultiSegmentStream.Create(
+                ids.AsMemory(),
+                client,
+                articleBufferSize: 4,
+                estimatedSegmentSize: 5,
+                failFastOnFirstSegment: false,
+                usePipelinedBodyRequests: true,
+                CancellationToken.None,
+                fileName: path,
+                exactSegmentSizes: new long[] { 5, 5, 5, 5 });
+
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+                async () => await stream.CopyToAsync(Stream.Null));
+            await stream.DisposeAsync();
+
+            // Every response the batch put on the wire must be consumed or disposed,
+            // or UsenetSharp's pump stays blocked behind the unread body and the batch
+            // completion callback (which returns the pooled connection) never fires.
+            Assert.Equal(ids.Length, client.IssuedStreamCount);
+            Assert.Equal(ids.Length, client.DisposedStreamCount);
+            Assert.Equal(1, client.CompletionCallbackCount);
+
+            var followUp = await client.DecodedBodyAsync("follow-up@test", null, CancellationToken.None);
+            Assert.NotNull(followUp.Stream);
+            await followUp.Stream.DisposeAsync();
+        }
+        finally
+        {
+            PlaybackHoleTracker.ResetForTests();
+        }
+    }
+
     private static Stream CreateGapFillStream(
         string[] ids,
         INntpClient client,
@@ -242,4 +321,134 @@ public class KnownMissingFastPathTests
             CancellationToken.None,
             fileName: path,
             exactSegmentSizes: sizes);
+
+    /// <summary>
+    /// Models the batch backpressure contract: the completion callback fires only once
+    /// every handed-out body stream is disposed, and the single pooled connection cannot
+    /// serve a follow-up request until then. The tracker is tripped after the batch is
+    /// on the wire but before the segment tasks accept their responses.
+    /// </summary>
+    private sealed class TrackerTrippingBatchClient(string path) : NntpClient
+    {
+        private readonly List<TrackingYencStream> _streams = [];
+        private int _disposedStreams;
+        private int _batchOutstanding;
+
+        public int BatchRequestCount { get; private set; }
+        public int CompletionCallbackCount { get; private set; }
+        public int IssuedStreamCount => _streams.Count;
+        public int DisposedStreamCount => _disposedStreams;
+
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            BatchRequestCount++;
+            Interlocked.Exchange(ref _batchOutstanding, 1);
+
+            var responses = new List<Task<UsenetDecodedBodyResponse>>();
+            foreach (var segmentId in segmentIds)
+            {
+                var stream = new TrackingYencStream(OnStreamDisposed);
+                _streams.Add(stream);
+                responses.Add(Task.FromResult(new UsenetDecodedBodyResponse
+                {
+                    SegmentId = segmentId.ToString(),
+                    ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+                    ResponseMessage = $"222 <{segmentId}>",
+                    Stream = stream,
+                }));
+            }
+
+            void CompleteBatch()
+            {
+                if (Interlocked.Exchange(ref _batchOutstanding, 0) != 1) return;
+                CompletionCallbackCount++;
+                onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            }
+
+            cancellationToken.Register(static state => ((Action)state!)(), (Action)CompleteBatch);
+
+            foreach (var segmentId in segmentIds.Take(GapFillLimits.MaxConsecutiveZeroFills))
+                PlaybackHoleTracker.RecordHole(
+                    path, segmentId.ToString(), new UsenetArticleNotFoundException(segmentId.ToString()));
+
+            return Task.FromResult(new UsenetDecodedBodyBatch { Responses = responses });
+
+            void OnStreamDisposed()
+            {
+                if (Interlocked.Increment(ref _disposedStreams) == _streams.Count)
+                    CompleteBatch();
+            }
+        }
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            if (Volatile.Read(ref _batchOutstanding) != 0)
+            {
+                return Task.FromException<UsenetDecodedBodyResponse>(
+                    new InvalidOperationException("The pooled connection is still held by the abandoned batch."));
+            }
+
+            onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            return Task.FromResult(new UsenetDecodedBodyResponse
+            {
+                SegmentId = segmentId.ToString(),
+                ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+                ResponseMessage = $"222 <{segmentId}>",
+                Stream = new YencStream(new MemoryStream([1, 2, 3, 4, 5], writable: false)),
+            });
+        }
+
+        public override Task ConnectAsync(
+            string host, int port, bool useSsl, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public override Task<UsenetResponse> AuthenticateAsync(
+            string user, string pass, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetStatResponse> StatAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override void Dispose()
+        {
+        }
+
+        private sealed class TrackingYencStream(Action onDisposed)
+            : YencStream(new MemoryStream([1, 2, 3, 4, 5], writable: false))
+        {
+            protected override void Dispose(bool disposing)
+            {
+                onDisposed();
+                base.Dispose(disposing);
+            }
+        }
+    }
 }
