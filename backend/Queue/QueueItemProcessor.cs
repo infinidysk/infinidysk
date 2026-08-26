@@ -72,6 +72,9 @@ public class QueueItemProcessor(
     }
 
     private const int MaxProviderRetryAttempts = 20;
+    private const int MaxFinalizeCommitRetries = 3;
+    private static readonly TimeSpan TransientDatabaseBackoff = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DiskOrCorruptionBackoff = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StageWarningInterval = TimeSpan.FromMinutes(2);
 
     /// <summary>
@@ -223,6 +226,27 @@ public class QueueItemProcessor(
         // it to the history as a failed job.
         catch (Exception e) when (e is not OutOfMemoryException)
         {
+            // A persistence-layer failure is not a content failure. Keep the item
+            // queued with a backoff instead of writing a misleading failed-history
+            // row for healthy content; the next claim retries the finalize.
+            if (e.IsTransientDatabaseException())
+            {
+                e.LogWarningKnownOrStack(
+                    "Queue finalize deferred for {JobName}; the import stays queued and is not failed",
+                    queueItem.JobName);
+                await PauseQueueItemAfterDatabaseErrorAsync(TransientDatabaseBackoff).ConfigureAwait(false);
+                return;
+            }
+
+            if (e.IsKnownSqliteDiskException() || e.IsDatabaseCorruptionException())
+            {
+                e.LogWarningKnownOrStack(
+                    "Queue finalize blocked for {JobName}; the import stays queued and is not failed",
+                    queueItem.JobName);
+                await PauseQueueItemAfterDatabaseErrorAsync(DiskOrCorruptionBackoff).ConfigureAwait(false);
+                return;
+            }
+
             // Remember definitively missing articles so retries of this item and re-grabs
             // of the same release fail in milliseconds at the step-0 precheck instead of
             // re-verifying every article across all providers (issue #732).
@@ -243,7 +267,39 @@ public class QueueItemProcessor(
                     "Failed to mark queue item {JobName} as failed after processing error: {ProcessingError}",
                     queueItem.JobName,
                     e.Message);
+                if (ex.IsTransientDatabaseException())
+                {
+                    // Without a backoff the row is immediately reclaimable and the
+                    // failing finalize hot-loops; leave it queued with a pause instead.
+                    await PauseQueueItemAfterDatabaseErrorAsync(TransientDatabaseBackoff)
+                        .ConfigureAwait(false);
+                }
             }
+        }
+    }
+
+    /// <summary>
+    /// Leaves the item queued with a PauseUntil backoff after a database
+    /// infrastructure failure. The backoff write is itself best-effort: if the
+    /// database is still contended, the row is simply reclaimable one cycle early.
+    /// </summary>
+    private async Task PauseQueueItemAfterDatabaseErrorAsync(TimeSpan backoff)
+    {
+        try
+        {
+            dbClient.Ctx.ClearChangeTracker();
+            queueItem.PauseUntil = DateTime.Now + backoff;
+            dbClient.Ctx.QueueItems.Attach(queueItem);
+            dbClient.Ctx.Entry(queueItem).Property(x => x.PauseUntil).IsModified = true;
+            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemStatus, $"{queueItem.Id}|Queued");
+        }
+        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
+        {
+            Log.Warning(
+                "Could not persist the database-error backoff for {JobName}: {Reason}",
+                queueItem.JobName,
+                ex.GetBaseException().Message);
         }
     }
 
@@ -843,7 +899,7 @@ public class QueueItemProcessor(
             try
             {
                 _stageReporter("finalize-commit");
-                await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
+                await SaveFinalizeWithTransientRetryAsync(finalizeCt).ConfigureAwait(false);
             }
             finally
             {
@@ -909,6 +965,38 @@ public class QueueItemProcessor(
             // post-finalize logging or watchdog recording throws.
             retryAttempts.TryRemove(queueItem.Id, out _);
             OnTerminal?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Retries the finalize commit in place on SQLITE_BUSY/LOCKED contention only.
+    /// The ChangeTracker is left intact so each attempt re-runs the same commit;
+    /// blob writes are idempotent (same ids, temp-file + move). Disk-full,
+    /// read-only, and corruption errors are never retried here.
+    /// </summary>
+    private async Task SaveFinalizeWithTransientRetryAsync(CancellationToken finalizeCt)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex) when (
+                attempt < MaxFinalizeCommitRetries
+                && ex.IsTransientDatabaseException()
+                && !finalizeCt.IsCancellationRequested)
+            {
+                Log.Warning(
+                    "Queue finalize commit deferred for {JobName} (attempt {Attempt}/{MaxAttempts}). Reason: {Reason}",
+                    queueItem.JobName,
+                    attempt + 1,
+                    MaxFinalizeCommitRetries + 1,
+                    ex.GetBaseException().Message);
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), finalizeCt)
+                    .ConfigureAwait(false);
+            }
         }
     }
 
