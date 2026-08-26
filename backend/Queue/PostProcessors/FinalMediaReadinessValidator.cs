@@ -1,10 +1,11 @@
-using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
-using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Queue.FileAggregators;
+using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Queue.PostProcessors;
@@ -16,61 +17,106 @@ namespace NzbWebDAV.Queue.PostProcessors;
 /// nor consult or seed the process-wide playback-hole tracker.
 /// </summary>
 internal sealed class FinalMediaReadinessValidator(
-    DavDatabaseClient dbClient,
     INntpClient usenetClient,
     ConfigManager configManager)
 {
     private const int ProbeBytes = VideoSignatureUtil.First16KBLength;
 
-    public async Task ValidateAsync(CancellationToken ct)
+    /// <summary>A direct media output to probe: the mounted name and its NZB source.</summary>
+    internal sealed record ProbeTarget(string Name, NzbFile NzbFile, long FileSize);
+
+    /// <summary>
+    /// Plans the same direct media files the import will mount, minus the files output
+    /// filtering will remove (blocklist globs and the sample heuristic), so probes only
+    /// ever run for files that will actually be served.
+    /// </summary>
+    internal static IReadOnlyList<ProbeTarget> PlanTargets(
+        List<BaseProcessor.Result> processorResults,
+        string category,
+        string mountName,
+        ConfigManager configManager)
     {
-        var items = dbClient.Ctx.ChangeTracker.Entries<DavItem>()
-            .Where(entry => entry.State == EntityState.Added)
-            .Select(entry => entry.Entity)
-            .Where(item => item.SubType == DavItem.ItemSubType.NzbFile && FilenameUtil.IsMediaFile(item.Name))
-            .ToList();
+        var directFiles = FileAggregator.PlanDirectFiles(processorResults, mountName);
+        var largestVideoFileSize = PlannedImportOutputs.GetLargestVideoFileSize(processorResults, mountName);
+        var blocklistedFilenames = configManager.GetBlocklistedFiles();
+        var sampleFilterEnabled = configManager.IsSampleFilterEnabled();
 
-        foreach (var item in items)
+        var targets = new List<ProbeTarget>();
+        foreach (var file in directFiles)
         {
-            var payload = item.FileBlobId is { } blobId
-                ? dbClient.Ctx.BlobNzbFiles.FirstOrDefault(file => file.Id == blobId)
-                : null;
-            if (payload is null)
-                throw new NonRetryableDownloadException(
-                    $"Import readiness check could not load media payload for {item.Name}.");
+            if (!FilenameUtil.IsMediaFile(file.Name)) continue;
+            var davPath = PlannedDavPath(category, mountName, file);
+            if (FileFilterUtil.GetRemovalReason(
+                    file.Name,
+                    file.FileSize,
+                    davPath,
+                    largestVideoFileSize,
+                    blocklistedFilenames,
+                    sampleFilterEnabled) is not null)
+                continue;
 
+            targets.Add(new ProbeTarget(file.Name, file.NzbFile, file.FileSize));
+        }
+
+        return targets;
+    }
+
+    public async Task ValidateAsync(IReadOnlyList<ProbeTarget> targets, CancellationToken ct)
+    {
+        foreach (var target in targets)
+        {
             try
             {
                 await using var stream = usenetClient.GetFileStream(
-                    payload.SegmentIds,
-                    item.FileSize ?? 0,
+                    target.NzbFile,
+                    target.FileSize,
                     articleBufferSize: 0,
-                    payload.SegmentByteRanges,
                     usePipelinedBodyRequests: false,
-                    fileName: $"import-readiness {item.Name}",
-                    segmentFallbacks: payload.SegmentFallbackIds,
+                    fileName: $"import-readiness {target.Name}",
                     useContainerAwareFill: configManager.IsContainerAwareFillEnabled(),
                     streamingBodyBatchWidth: 1);
 
-                var head = await ReadExactlyAtAsync(stream, 0, Math.Min(ProbeBytes, item.FileSize ?? 0), ct)
+                var head = await ReadExactlyAtAsync(stream, 0, Math.Min(ProbeBytes, target.FileSize), ct)
                     .ConfigureAwait(false);
-                ValidateContainerSignature(item, head);
+                ValidateContainerSignature(target.Name, head);
 
-                var tailStart = Math.Max(0, (item.FileSize ?? 0) - ProbeBytes);
-                _ = await ReadExactlyAtAsync(stream, tailStart, (item.FileSize ?? 0) - tailStart, ct)
+                var tailStart = Math.Max(0, target.FileSize - ProbeBytes);
+                _ = await ReadExactlyAtAsync(stream, tailStart, target.FileSize - tailStart, ct)
                     .ConfigureAwait(false);
             }
             catch (Exception e) when (e.IsNonRetryableDownloadException())
             {
                 throw new NonRetryableDownloadException(
-                    $"Import readiness check found unreadable media bytes for {item.Name}.", e);
+                    $"Import readiness check found unreadable media bytes for {target.Name}.", e);
             }
             catch (Exception e) when (e is not OutOfMemoryException && !e.IsCancellationException(ct))
             {
                 throw new RetryableDownloadException(
-                    $"Import readiness check could not read media bytes for {item.Name}.", e);
+                    $"Import readiness check could not read media bytes for {target.Name}.", e);
             }
         }
+    }
+
+    private static string PlannedDavPath(
+        string category,
+        string mountName,
+        FileAggregator.PlannedDirectFile file)
+    {
+        // Mirrors the mounted path shape (/content/<category>/<job>/<dirs>/<name>) so
+        // FileFilterUtil.HasSampleDirectory sees the same release subfolders. That check
+        // skips the category and job segments, so the planned (pre-increment) mount name
+        // is sufficient here.
+        var directorySegments = file.RelativePath
+            .Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, '/'],
+                StringSplitOptions.RemoveEmptyEntries)
+            .SkipLast(1)
+            .Select(segment => PathSanitizer.SanitizeComponent(segment));
+        return string.Join(
+            '/',
+            new[] { DavItem.ContentFolder.Path, category, mountName }
+                .Concat(directorySegments)
+                .Append(file.Name));
     }
 
     private static async Task<byte[]> ReadExactlyAtAsync(Stream stream, long position, long length, CancellationToken ct)
@@ -93,9 +139,9 @@ internal sealed class FinalMediaReadinessValidator(
         return buffer;
     }
 
-    private static void ValidateContainerSignature(DavItem item, byte[] head)
+    private static void ValidateContainerSignature(string name, byte[] head)
     {
-        var extension = Path.GetExtension(item.Name);
+        var extension = Path.GetExtension(name);
         var expected = extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".webm", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
@@ -109,7 +155,7 @@ internal sealed class FinalMediaReadinessValidator(
         if (expected && VideoSignatureUtil.GuessVideoExtension(head) is null)
         {
             throw new NonRetryableDownloadException(
-                $"Import readiness check found an invalid media container header for {item.Name}.");
+                $"Import readiness check found an invalid media container header for {name}.");
         }
     }
 }

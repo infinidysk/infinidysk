@@ -47,12 +47,15 @@ public class BlocklistedFilePostProcessor(ConfigManager configManager, DavDataba
 
         foreach (var file in addedFiles)
         {
-            if (FileFilterUtil.MatchesAnyGlob(file.Name, blocklistedFilenames))
-                yield return (file, "blacklisted filename");
-
-            else if (sampleFilterEnabled
-                     && FileFilterUtil.IsSampleFile(file.Name, file.FileSize, largestVideoFileSize, file.Path))
-                yield return (file, FileFilterUtil.LooksLikeSampleName(file.Name) ? "sample file" : "sample directory");
+            var reason = FileFilterUtil.GetRemovalReason(
+                file.Name,
+                file.FileSize,
+                file.Path,
+                largestVideoFileSize,
+                blocklistedFilenames,
+                sampleFilterEnabled);
+            if (reason is not null)
+                yield return (file, reason);
         }
     }
 

@@ -496,6 +496,20 @@ public class QueueItemProcessor(
             queueItem.Id, nzbFiles.Count, msFirstSeg, msPar2, msRar, msProcessors, msHealth,
             ct.GetContext<QueueDownloadContext>()?.SemaphoreWaitMilliseconds ?? 0);
 
+        // BODY-level readiness runs before finalization so a slow or damaged probe can
+        // never hold the process-wide finalize lock. Targets are the same direct media
+        // files that output filtering will mount.
+        if (configManager.GetMediaReadinessCategories().Contains(queueItem.Category.ToLowerInvariant()))
+        {
+            await RunStageAsync(
+                "import-readiness",
+                () => new FinalMediaReadinessValidator(usenetClient, configManager)
+                    .ValidateAsync(
+                        FinalMediaReadinessValidator.PlanTargets(
+                            fileProcessingResults, queueItem.Category, queueItem.JobName, configManager),
+                        ct)).ConfigureAwait(false);
+        }
+
         // update the database
         await MarkQueueItemCompleted(startTime, error: null, async () =>
         {
@@ -514,17 +528,6 @@ public class QueueItemProcessor(
             // validate media files found
             if (configManager.IsEnsureImportableMediaEnabled())
                 new EnsureImportableMediaValidator(dbClient).ThrowIfValidationFails();
-
-            // BODY readiness runs for the explicit health-check categories and, when
-            // ensure-importable-video is on, for the common media categories — so a
-            // short-decoded or unseekable file fails into history before Arr/rclone.
-            if (configManager.GetMediaReadinessCategories().Contains(queueItem.Category.ToLowerInvariant()))
-            {
-                await RunStageAsync(
-                    "import-readiness",
-                    () => new FinalMediaReadinessValidator(dbClient, usenetClient, configManager)
-                        .ValidateAsync(ct)).ConfigureAwait(false);
-            }
 
             // create strm files, if necessary
             if (configManager.GetImportStrategy() == "strm")

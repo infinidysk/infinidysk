@@ -89,6 +89,29 @@ public static partial class FileFilterUtil
     }
 
     /// <summary>
+    /// The queue's removal decision for one output file: configured filename globs
+    /// first, then the sample heuristic against the largest video in the same release.
+    /// Shared by the blocklist post-processor (on persisted items) and import-readiness
+    /// target planning (on planned outputs) so both filter identically.
+    /// </summary>
+    public static string? GetRemovalReason(
+        string fileName,
+        long? fileSize,
+        string? davPath,
+        long largestVideoFileSize,
+        IReadOnlyCollection<string> blocklistedFilenames,
+        bool sampleFilterEnabled)
+    {
+        if (MatchesAnyGlob(fileName, blocklistedFilenames))
+            return "blacklisted filename";
+
+        if (sampleFilterEnabled && IsSampleFile(fileName, fileSize, largestVideoFileSize, davPath))
+            return LooksLikeSampleName(fileName) ? "sample file" : "sample directory";
+
+        return null;
+    }
+
+    /// <summary>
     /// True when the filename matches any of the given globs (`*` and `?`).
     /// Matching is case-insensitive and applied to the filename only.
     /// </summary>

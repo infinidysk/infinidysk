@@ -1,6 +1,7 @@
 ﻿using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Utils;
 
@@ -11,42 +12,74 @@ public class FileAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, 
     protected override DavDatabaseClient DBClient => dbClient;
     protected override DavItem MountDirectory => mountDirectory;
 
-    public override void UpdateDatabase(List<BaseProcessor.Result> processorResults)
+    /// <summary>
+    /// A direct (non-archive) file an import will mount, with the exact relative path
+    /// and leaf name <see cref="UpdateDatabase"/> persists. Pre-commit consumers such as
+    /// import-readiness plan from this same projection so they cannot drift from what
+    /// gets mounted.
+    /// </summary>
+    internal sealed record PlannedDirectFile(
+        string RelativePath,
+        string Name,
+        long FileSize,
+        DateTimeOffset ReleaseDate,
+        NzbFile NzbFile,
+        string? SniffedVideoExtension);
+
+    internal static List<PlannedDirectFile> PlanDirectFiles(
+        List<BaseProcessor.Result> processorResults,
+        string mountName)
     {
+        var planned = new List<PlannedDirectFile>();
         foreach (var processorResult in processorResults)
         {
             if (processorResult is not FileProcessor.Result result) continue;
             if (string.IsNullOrEmpty(result.FileName) && result.SniffedVideoExtension is null)
                 continue;
-            var parentDirectory = EnsureParentDirectory(
-                string.IsNullOrEmpty(result.FileName)
-                    ? MountDirectory.Name + result.SniffedVideoExtension
-                    : result.FileName);
+            var relativePath = string.IsNullOrEmpty(result.FileName)
+                ? mountName + result.SniffedVideoExtension
+                : result.FileName;
             var leafName = string.IsNullOrEmpty(result.FileName)
-                ? MountDirectory.Name
+                ? mountName
                 : Path.GetFileName(result.FileName);
             var name = ImportableVideoNamer.Normalize(
                 SanitizeDavName(leafName),
                 result.SniffedVideoExtension,
-                MountDirectory.Name,
+                mountName,
                 allowBaseRename: true);
+            planned.Add(new PlannedDirectFile(
+                relativePath,
+                name,
+                result.FileSize,
+                result.ReleaseDate,
+                result.NzbFile,
+                result.SniffedVideoExtension));
+        }
 
+        return planned;
+    }
+
+    public override void UpdateDatabase(List<BaseProcessor.Result> processorResults)
+    {
+        foreach (var planned in PlanDirectFiles(processorResults, MountDirectory.Name))
+        {
+            var parentDirectory = EnsureParentDirectory(planned.RelativePath);
             var davNzbFile = new DavNzbFile()
             {
                 Id = Guid.NewGuid(),
-                SegmentIds = result.NzbFile.GetSegmentIds(),
-                SegmentByteRanges = result.NzbFile.GetSegmentByteRanges(),
-                SegmentFallbackIds = result.NzbFile.GetSegmentFallbackIds(),
+                SegmentIds = planned.NzbFile.GetSegmentIds(),
+                SegmentByteRanges = planned.NzbFile.GetSegmentByteRanges(),
+                SegmentFallbackIds = planned.NzbFile.GetSegmentFallbackIds(),
             };
 
             var davItem = DavItem.New(
                 id: Guid.NewGuid(),
                 parent: parentDirectory,
-                name: name,
-                fileSize: result.FileSize,
+                name: planned.Name,
+                fileSize: planned.FileSize,
                 type: DavItem.ItemType.UsenetFile,
                 subType: DavItem.ItemSubType.NzbFile,
-                releaseDate: result.ReleaseDate,
+                releaseDate: planned.ReleaseDate,
                 lastHealthCheck: checkedFullHealth ? DateTimeOffset.UtcNow : null,
                 historyItemId: MountDirectory.HistoryItemId,
                 fileBlobId: davNzbFile.Id,
