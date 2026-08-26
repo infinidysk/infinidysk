@@ -25,8 +25,8 @@ public static class ExceptionExtensions
     /// <summary>
     /// True when the exception chain contains SQLITE_CORRUPT (primary result code 11),
     /// meaning the database file itself is damaged. Transient busy/locked errors
-    /// (codes 5/6/8/13) are deliberately excluded: corruption never heals on retry,
-    /// while busy/locked conditions do.
+    /// (codes 5/6) and disk errors (codes 8/13) are deliberately excluded: corruption
+    /// never heals on retry, while those conditions are classified separately.
     /// </summary>
     public static bool IsDatabaseCorruptionException(this Exception exception)
     {
@@ -75,21 +75,40 @@ public static class ExceptionExtensions
     }
 
     /// <summary>
-    /// True for write contention that can be retried by the caller's next sweep.
-    /// PostgreSQL reports concurrent serialization/deadlock failures by SQLSTATE.
+    /// True for write contention that can be retried by the caller's next sweep
+    /// (SQLITE_BUSY / SQLITE_LOCKED). SQLITE_READONLY (8) and SQLITE_FULL (13) are
+    /// operator-facing disk errors that do not heal on retry — see
+    /// <see cref="IsKnownSqliteDiskException"/>. PostgreSQL reports concurrent
+    /// serialization/deadlock failures by SQLSTATE.
     /// </summary>
     public static bool IsTransientDatabaseException(this Exception exception)
     {
         for (var current = exception; current != null; current = current.InnerException)
         {
             if (current is SqliteException sqlite
-                && sqlite.SqliteErrorCode is 5 or 6 or 8 or 13)
+                && sqlite.SqliteErrorCode is 5 or 6)
                 return true;
 
             if (current is PostgresException postgres
                 && postgres.SqlState is PostgresErrorCodes.SerializationFailure
                     or PostgresErrorCodes.DeadlockDetected
                     or PostgresErrorCodes.LockNotAvailable)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True for SQLITE_READONLY (8) and SQLITE_FULL (13). These are known
+    /// operator errors (disk full, read-only mount) that should log as a single
+    /// line without a stack, but must not be retried as transient contention.
+    /// </summary>
+    public static bool IsKnownSqliteDiskException(this Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is SqliteException sqlite && sqlite.SqliteErrorCode is 8 or 13)
                 return true;
         }
 
@@ -150,7 +169,7 @@ public static class ExceptionExtensions
             return true;
         }
 
-        if (exception.IsTransientDatabaseException())
+        if (exception.IsTransientDatabaseException() || exception.IsKnownSqliteDiskException())
         {
             reason = exception.GetBaseException().Message;
             return true;

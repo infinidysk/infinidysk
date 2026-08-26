@@ -596,6 +596,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 return result;
             }
 
+            var persistent = new PersistentCorruptionTracker();
             for (var attempt = 0; ; attempt++)
             {
                 try
@@ -645,6 +646,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 }
                 catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
                 {
+                    persistent.NoteOrThrow(e);
                     if (attempt >= GetCorruptionRetryLimit(segmentId))
                     {
                         var fallback = await TryFallbackSegmentsAsync(
@@ -687,7 +689,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     OomDiagnostics.LogHeapStateOnOom(oom, "segment body retry");
                     throw;
                 }
-                catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
+                catch (Exception e) when (
+                    !cancellationToken.IsCancellationRequested
+                    && e is not OutOfMemoryException
+                    && e is not PersistentUsenetCorruptionException)
                 {
                     if (attempt < MaxBodyRetries)
                     {
@@ -878,7 +883,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             OomDiagnostics.LogHeapStateOnOom(oom, "pipelined segment batch");
             throw;
         }
-        catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
+        catch (Exception e) when (
+            !cancellationToken.IsCancellationRequested
+            && e is not OutOfMemoryException
+            && e is not PersistentUsenetCorruptionException)
         {
             // A failure inside a pipelined batch says nothing about whether the article
             // can be fetched at all: the batch shares one connection, so a stall or a
@@ -932,6 +940,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         CancellationToken cancellationToken)
     {
         var lease = existingLease;
+        var persistent = new PersistentCorruptionTracker();
+        if (batchFailure is UsenetCorruptArticleException corruptBatch)
+            persistent.NoteOrThrow(corruptBatch);
         try
         {
             for (var attempt = 1; attempt <= MaxBodyRetries; attempt++)
@@ -970,17 +981,28 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 {
                     throw;
                 }
+                catch (PersistentUsenetCorruptionException)
+                {
+                    throw;
+                }
+                catch (UsenetCorruptArticleException e)
+                {
+                    persistent.NoteOrThrow(e);
+                    Log.Debug(e, "Individual rescue of segment {SegmentId} failed (attempt {Attempt}).",
+                        segmentId, attempt);
+                }
                 catch (OutOfMemoryException oom)
                 {
                     OomDiagnostics.LogHeapStateOnOom(oom, "individual segment rescue");
                     throw;
                 }
-                catch (Exception e) when (!cancellationToken.IsCancellationRequested && e is not OutOfMemoryException)
+                catch (Exception e) when (
+                    !cancellationToken.IsCancellationRequested
+                    && e is not OutOfMemoryException
+                    && e is not PersistentUsenetCorruptionException)
                 {
-                    // A corrupt rescue response is swallowed here and the original non-corrupt
+                    // A non-corrupt rescue failure is swallowed here and the original
                     // batch failure is surfaced as TransientSegmentExhaustionException.
-                    // Corruption evidence for this read is dropped; the next read hits the
-                    // proper corrupt path.
                     Log.Debug(e, "Individual rescue of segment {SegmentId} failed (attempt {Attempt}).",
                         segmentId, attempt);
                 }

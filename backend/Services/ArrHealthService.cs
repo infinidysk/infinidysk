@@ -212,6 +212,8 @@ public sealed class ArrHealthService : BackgroundService
         {
             var queueStatus = await CallAsync(callCt => client.GetQueueStatusAsync(callCt), ct).ConfigureAwait(false);
             var queue = await CallAsync(callCt => client.GetQueueAsync(callCt), ct).ConfigureAwait(false);
+            // Arr answered; clear reachability backoff before local DB/history work.
+            _backoff.RecordSuccess(details.Host);
 
             await using var dav = DavContextFactory();
             await using var metrics = MetricsContextFactory();
@@ -244,7 +246,6 @@ public sealed class ArrHealthService : BackgroundService
                 ? ArrInstanceHealthStatus.Degraded
                 : ArrInstanceHealthStatus.Healthy;
 
-            _backoff.RecordSuccess(details.Host);
             RecordSuccess(new ArrHealthSnapshot
             {
                 InstanceKey = key,

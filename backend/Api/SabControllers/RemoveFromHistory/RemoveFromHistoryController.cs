@@ -39,28 +39,7 @@ public class RemoveFromHistoryController(
                     ct: request.CancellationToken)
                 .ConfigureAwait(false);
         }
-        try
-        {
-            await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
-        }
-        catch (DbUpdateConcurrencyException ex) when (ex.Entries.All(e => e.Entity is HistoryItem))
-        {
-            // Ignore concurrently deleted history rows, then retry the surviving batch.
-            var vanishedIds = ex.Entries
-                .Select(e => ((HistoryItem)e.Entity).Id)
-                .ToHashSet();
-
-            foreach (var entry in ex.Entries)
-                entry.State = EntityState.Detached;
-
-            var cleanupEntries = dbClient.Ctx.ChangeTracker.Entries<HistoryCleanupItem>()
-                .Where(e => e.State == EntityState.Added && vanishedIds.Contains(e.Entity.Id))
-                .ToList();
-            foreach (var entry in cleanupEntries)
-                entry.State = EntityState.Detached;
-
-            await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
-        }
+        await dbClient.SaveHistoryRemovalAsync(request.CancellationToken).ConfigureAwait(false);
         _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", ids));
         return new RemoveFromHistoryResponse() { Status = true };
     }

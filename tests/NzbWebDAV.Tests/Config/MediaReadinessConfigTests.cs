@@ -31,6 +31,7 @@ public sealed class MediaReadinessConfigTests
         var categories = config.GetMediaReadinessCategories();
         Assert.Contains("tv", categories);
         Assert.Contains("movies", categories);
+        Assert.Contains("audio", categories);
     }
 
     [Fact]

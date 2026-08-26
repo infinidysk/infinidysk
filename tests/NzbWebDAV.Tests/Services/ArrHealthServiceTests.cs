@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -282,6 +283,28 @@ public sealed class ArrHealthServiceTests
     }
 
     [Fact]
+    public async Task Poll_ArrSuccessThenLocalDbFailure_ClearsReachabilityBackoff()
+    {
+        var host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        backoff.RecordFailure(host, new SocketException());
+        Assert.False(backoff.IsInBackoff(host));
+
+        await using var harness = await DualDbHarness.CreateAsync();
+        var client = new ScriptedArrClient(host);
+        using var service = harness.CreateService(client, host, backoff);
+        service.DavContextFactory = () => throw new InvalidOperationException("local db blew up");
+
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+
+        // A later Arr reachability failure must start a fresh streak. Without
+        // RecordSuccess after the HTTP calls, the prior failure would still count
+        // and this second socket error would enter backoff.
+        backoff.RecordFailure(host, new SocketException());
+        Assert.False(backoff.IsInBackoff(host));
+    }
+
+    [Fact]
     public async Task UniqueConstraint_OnDuplicateArrRecordId_IsTolerated()
     {
         await using var harness = await DualDbHarness.CreateAsync();
@@ -396,16 +419,19 @@ public sealed class ArrHealthServiceTests
             return new DualDbHarness(dir, metricsPath, davPath, metrics, dav);
         }
 
-        public ArrHealthService CreateService(ScriptedArrClient client, string host)
+        public ArrHealthService CreateService(ScriptedArrClient client, string host, ArrInstanceBackoff? backoff = null)
         {
             var config = new ConfigManager();
             SetInstances(config, ("sonarr", host, true));
-            return CreateService(config, new Dictionary<string, ArrClient> { [host] = client });
+            return CreateService(config, new Dictionary<string, ArrClient> { [host] = client }, backoff);
         }
 
-        public ArrHealthService CreateService(ConfigManager config, IReadOnlyDictionary<string, ArrClient> clients)
+        public ArrHealthService CreateService(
+            ConfigManager config,
+            IReadOnlyDictionary<string, ArrClient> clients,
+            ArrInstanceBackoff? backoff = null)
         {
-            return new ArrHealthService(config)
+            return new ArrHealthService(config, backoff: backoff)
             {
                 ClientFactory = (_, details) => clients[details.Host],
                 MetricsContextFactory = CloneMetrics,

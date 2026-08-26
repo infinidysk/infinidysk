@@ -153,6 +153,53 @@ public class CorruptionDetectionTests
     }
 
     [Fact]
+    public async Task BufferedStream_SameCrcFromTwoProviders_ThrowsPersistent()
+    {
+        using var client = new ScriptedNntpClient((id, n) =>
+            ImmediateCrcCorruptStream(id, n == 1 ? "provider-a" : "provider-b"));
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "segment@example" }.AsMemory(),
+            client,
+            articleBufferSize: 1,
+            estimatedSegmentSize: 8,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None);
+        using var output = new MemoryStream();
+
+        var exception = await Assert.ThrowsAsync<PersistentUsenetCorruptionException>(
+            () => stream.CopyToAsync(output));
+
+        Assert.Equal("segment@example", exception.SegmentId);
+        Assert.Equal(0xafccdc56u, exception.ActualCrc);
+        Assert.Equal(0xa8e2a630u, exception.ExpectedCrc);
+        Assert.Equal(2, client.BodyRequestCount);
+    }
+
+    [Fact]
+    public async Task UnbufferedStream_PostEmissionSameCrcFromTwoProviders_ThrowsPersistent()
+    {
+        var payload = "hello"u8.ToArray();
+        var segmentId = $"segment-{Guid.NewGuid():N}@example";
+        using var client = new ScriptedNntpClient((id, n) =>
+            new PayloadThenCorruptYencStream(
+                payload,
+                id,
+                n == 1 ? "provider-a" : "provider-b",
+                CrcMismatch()));
+        await using var stream = CreateUnbuffered(
+            client, [segmentId], exactSizes: [payload.Length]);
+        using var output = new MemoryStream();
+
+        var exception = await Assert.ThrowsAsync<PersistentUsenetCorruptionException>(
+            () => stream.CopyToAsync(output));
+
+        Assert.Equal(segmentId, exception.SegmentId);
+        Assert.Equal(payload, output.ToArray());
+        Assert.Equal(2, client.BodyRequestCount);
+    }
+
+    [Fact]
     public async Task UnbufferedStream_FailFastOnFirstSegment_RethrowsPersistentCorruption()
     {
         using var client = new ScriptedNntpClient((id, _) => ImmediateCorruptStream(id));
@@ -244,12 +291,23 @@ public class CorruptionDetectionTests
             segmentFallbacks: fallbacks,
             exactSegmentSizes: exactSizes);
 
+    private static InvalidDataException CrcMismatch(uint actual = 0xafccdc56, uint expected = 0xa8e2a630) =>
+        new($"The decoded yEnc CRC32 was {actual:x8}, but the trailer expected {expected:x8}.");
+
     private static YencStream ImmediateCorruptStream(string segmentId) =>
         new ThrowingYencStream(
             new UsenetCorruptArticleException(segmentId, "provider-a",
                 new InvalidDataException("CRC mismatch")));
 
-    private sealed class PayloadThenCorruptYencStream(byte[] bytes, string segmentId) : YencStream(Null)
+    private static YencStream ImmediateCrcCorruptStream(string segmentId, string provider) =>
+        new ThrowingYencStream(
+            new UsenetCorruptArticleException(segmentId, provider, CrcMismatch()));
+
+    private sealed class PayloadThenCorruptYencStream(
+        byte[] bytes,
+        string segmentId,
+        string provider = "provider-a",
+        Exception? trailer = null) : YencStream(Null)
     {
         private int _position;
 
@@ -267,8 +325,8 @@ public class CorruptionDetectionTests
             }
 
             return ValueTask.FromException<int>(
-                new UsenetCorruptArticleException(segmentId, "provider-a",
-                    new InvalidDataException("CRC mismatch")));
+                new UsenetCorruptArticleException(segmentId, provider,
+                    trailer ?? new InvalidDataException("CRC mismatch")));
         }
     }
 

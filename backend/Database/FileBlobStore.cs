@@ -84,6 +84,8 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
             await using (var fileStream = OpenBlobWrite(tempPath))
             await using (var compressionStream = new CompressionStream(fileStream, CompressionLevel))
             {
+                // CPU-bound serialization may finish before the token is observed;
+                // ThrowIfCancellationRequested and temp-file cleanup still honor it.
                 await MemoryPackSerializer.SerializeAsync(compressionStream, blob, cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
             }

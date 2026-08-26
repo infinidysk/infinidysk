@@ -484,6 +484,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         await DisposeOpenBodyAsync().ConfigureAwait(false);
         _hasProbedByte = false;
 
+        var persistent = new PersistentCorruptionTracker();
+        persistent.NoteOrThrow(corrupt);
         try
         {
             var body = await FetchBodyAsync(segmentId, cancellationToken)
@@ -505,6 +507,10 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             throw;
         }
+        catch (PersistentUsenetCorruptionException)
+        {
+            throw;
+        }
         catch (OperationCanceledException)
         {
             throw;
@@ -513,13 +519,14 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             throw;
         }
-        catch (UsenetCorruptArticleException)
+        catch (UsenetCorruptArticleException confirmation)
         {
+            persistent.NoteOrThrow(confirmation);
             Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
             ExceptionDispatchInfo.Capture(corrupt).Throw();
             throw;
         }
-        catch (Exception e) when (e is not OutOfMemoryException)
+        catch (Exception e) when (e is not OutOfMemoryException && e is not PersistentUsenetCorruptionException)
         {
             Log.Debug(
                 e,

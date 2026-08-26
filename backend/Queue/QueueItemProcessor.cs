@@ -841,6 +841,7 @@ public class QueueItemProcessor(
             dbClient.Ctx.SuppressAutomaticRcloneVfsForget = true;
             try
             {
+                _stageReporter("finalize-commit");
                 await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
             }
             finally
@@ -898,7 +899,6 @@ public class QueueItemProcessor(
         await finalizeLock.WaitAsync(waitCt).ConfigureAwait(false);
         try
         {
-            _stageReporter("finalize-commit");
             await action().ConfigureAwait(false);
         }
         finally

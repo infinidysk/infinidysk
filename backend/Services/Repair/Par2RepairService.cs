@@ -871,14 +871,15 @@ public class Par2RepairService : BackgroundService
             catch (OverflowException)
             {
                 await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.NotFeasible("PAR2 working-set estimate overflowed.");
+                return RepairExecutionResult.NotFeasible("PAR2 working-set estimate overflowed.", bytesRead);
             }
 
             if (workingSetBytes > maxMemoryBytes)
             {
                 await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
                 return RepairExecutionResult.NotFeasible(
-                    $"PAR2 working set {workingSetBytes} bytes exceeds memory cap.");
+                    $"PAR2 working set {workingSetBytes} bytes exceeds memory cap.",
+                    bytesRead);
             }
 
             Interlocked.Exchange(ref _activeEstimatedWorkingSetBytes, workingSetBytes);
@@ -888,7 +889,8 @@ public class Par2RepairService : BackgroundService
             {
                 await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
                 return RepairExecutionResult.NotFeasible(
-                    $"Recovery set size {releaseBytes} bytes exceeds release cap.");
+                    $"Recovery set size {releaseBytes} bytes exceeds release cap.",
+                    bytesRead);
             }
 
             var missingSliceIndices = unavailableSlices.OrderBy(x => x).ToList();
@@ -909,7 +911,8 @@ public class Par2RepairService : BackgroundService
             {
                 await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
                 return RepairExecutionResult.NotFeasible(
-                    $"Need {missingSliceIndices.Count} recovery slices but only collected {recoverySlices.Count}.");
+                    $"Need {missingSliceIndices.Count} recovery slices but only collected {recoverySlices.Count}.",
+                    bytesRead);
             }
 
             var reconstructor = new Par2Reconstructor();
@@ -928,13 +931,17 @@ public class Par2RepairService : BackgroundService
             {
                 PrometheusMetrics.Current?.RecordPar2ValidationFailure("slice");
                 await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.Failed(reconstruction.FailureReason ?? "Reconstruction failed.");
+                return RepairExecutionResult.Failed(
+                    reconstruction.FailureReason ?? "Reconstruction failed.",
+                    bytesRead);
             }
 
             if (patchTargets.Count == 0)
             {
                 await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.NotFeasible("No missing or corrupt segments were confirmed during PAR2 repair.");
+                return RepairExecutionResult.NotFeasible(
+                    "No missing or corrupt segments were confirmed during PAR2 repair.",
+                    bytesRead);
             }
 
             SetRepairPhase("assembling-patches", maxMemoryBytes);
@@ -958,7 +965,7 @@ public class Par2RepairService : BackgroundService
             {
                 PrometheusMetrics.Current?.RecordPar2ValidationFailure("file");
                 await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.Failed(md5Reason);
+                return RepairExecutionResult.Failed(md5Reason, bytesRead);
             }
 
             _patchStore.CommitPatches(
@@ -975,7 +982,7 @@ public class Par2RepairService : BackgroundService
         catch (Par2MemoryCapExceededException e)
         {
             await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-            return RepairExecutionResult.NotFeasible(e.Message);
+            return RepairExecutionResult.NotFeasible(e.Message, bytesRead);
         }
     }
 
@@ -1932,8 +1939,8 @@ public class Par2RepairService : BackgroundService
         public static RepairExecutionResult NotFeasible(string reason, long bytesRead = 0)
             => new(false, true, reason, bytesRead, 0, 0);
 
-        public static RepairExecutionResult Failed(string reason)
-            => new(false, false, reason, 0, 0, 0);
+        public static RepairExecutionResult Failed(string reason, long bytesRead = 0)
+            => new(false, false, reason, bytesRead, 0, 0);
     }
 
     private sealed class SliceSegmentAccessor

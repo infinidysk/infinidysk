@@ -196,6 +196,30 @@ public class ExceptionExtensionsTests
         Assert.Contains("locked", reason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    public void IsTransientDatabaseException_RecognizesBusyAndLocked(int errorCode)
+    {
+        var ex = new SqliteException("sqlite contention", errorCode);
+
+        Assert.True(ex.IsTransientDatabaseException());
+        Assert.False(ex.IsKnownSqliteDiskException());
+    }
+
+    [Theory]
+    [InlineData(8, "SQLite Error 8: 'attempt to write a readonly database'.")]
+    [InlineData(13, "SQLite Error 13: 'database or disk is full'.")]
+    public void SqliteReadonlyAndFull_AreKnownButNotTransient(int errorCode, string message)
+    {
+        var ex = new SqliteException(message, errorCode);
+
+        Assert.False(ex.IsTransientDatabaseException());
+        Assert.True(ex.IsKnownSqliteDiskException());
+        Assert.True(ex.TryGetKnownErrorMessage(out var reason));
+        Assert.Equal(message, reason);
+    }
+
     [Fact]
     public void IsTransientTransportException_RejectsAlreadyRetryable()
     {

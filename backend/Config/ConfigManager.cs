@@ -1274,7 +1274,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     }
 
     private static readonly HashSet<string> DefaultMediaReadinessCategories =
-        new(StringComparer.OrdinalIgnoreCase) { "tv", "movies", "movie", "series" };
+        new(StringComparer.OrdinalIgnoreCase) { "tv", "movies", "movie", "series", "audio" };
 
     /// <summary>
     /// Categories whose media outputs get a BODY-level head/tail readiness probe before

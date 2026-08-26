@@ -548,6 +548,9 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             .Select(x => x.Id)
             .ToHashSetAsync(ct)
             .ConfigureAwait(false);
+        alreadyPending.UnionWith(Ctx.ChangeTracker.Entries<HistoryCleanupItem>()
+            .Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity.Id));
         Ctx.HistoryCleanupItems.AddRange(removed
             .Where(x => !alreadyPending.Contains(x.Id))
             .Select(x => new HistoryCleanupItem
@@ -555,6 +558,68 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 Id = x.Id,
                 DeleteMountedFiles = deleteFiles
             }));
+    }
+
+    /// <summary>
+    /// Commits a history-removal change set, treating a concurrent delete of the
+    /// same history row or a duplicate <see cref="HistoryCleanupItem"/> insert as
+    /// success. Two SAB remove-from-history calls can otherwise collide on the
+    /// cleanup primary key after both have staged the same id.
+    /// </summary>
+    public async Task SaveHistoryRemovalAsync(CancellationToken ct = default)
+    {
+        DbUpdateException? last = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+                return;
+            }
+            catch (DbUpdateConcurrencyException ex) when (ex.Entries.All(e => e.Entity is HistoryItem))
+            {
+                last = ex;
+                DetachVanishedHistory(ex);
+            }
+            catch (DbUpdateException ex) when (TryDetachDuplicateCleanup(ex))
+            {
+                last = ex;
+            }
+        }
+
+        if (last is not null)
+            throw last;
+    }
+
+    private void DetachVanishedHistory(DbUpdateConcurrencyException ex)
+    {
+        var vanishedIds = ex.Entries
+            .Select(e => ((HistoryItem)e.Entity).Id)
+            .ToHashSet();
+
+        foreach (var entry in ex.Entries)
+            entry.State = EntityState.Detached;
+
+        foreach (var entry in Ctx.ChangeTracker.Entries<HistoryCleanupItem>()
+                     .Where(e => e.State == EntityState.Added && vanishedIds.Contains(e.Entity.Id))
+                     .ToList())
+        {
+            entry.State = EntityState.Detached;
+        }
+    }
+
+    private static bool TryDetachDuplicateCleanup(DbUpdateException ex)
+    {
+        if (!ex.IsUniqueConstraintException())
+            return false;
+
+        var cleanup = ex.Entries.Where(e => e.Entity is HistoryCleanupItem).ToList();
+        if (cleanup.Count == 0)
+            return false;
+
+        foreach (var entry in cleanup)
+            entry.State = EntityState.Detached;
+        return true;
     }
 
     public sealed record DavSubtreeDeleteEntry(
