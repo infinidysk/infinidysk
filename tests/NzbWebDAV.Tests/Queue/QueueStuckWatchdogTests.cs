@@ -743,12 +743,24 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
                 Assert.Equal(0, await ctx.HistoryItems.CountAsync());
             }
 
-            // Releasing the hung I/O lets the cancelled worker stop and the
-            // coordinator reap it; the row remains queued for a later claim.
+            // Stop re-claims before releasing: the row stays queued and claimable,
+            // and a released HungStream reads as EOF, which would fail a re-claimed
+            // worker into history and break the assertions below.
+            _queueManager.GetTopQueueItemOverride = (_, _) =>
+                Task.FromResult<(QueueItem? queueItem, Stream? queueNzbStream)>((null, null));
+
+            // Releasing the hung I/O lets the cancelled worker stop; the shutdown
+            // path then reaps it. The row remains queued for a later claim.
             hung.Release();
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-            while (DateTime.UtcNow < deadline && FindInProgressItem(item.Id) is not null)
-                await Task.Delay(20);
+            await cts.CancelAsync();
+            try
+            {
+                await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                // Expected when shutdown cancels an in-flight claim.
+            }
 
             Assert.Null(FindInProgressItem(item.Id));
             await using (var ctx = new DavDatabaseContext(_options))
@@ -761,7 +773,14 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         {
             hung.Release();
             await cts.CancelAsync();
-            await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            try
+            {
+                await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                // Expected when shutdown cancels an in-flight claim.
+            }
         }
     }
 
@@ -901,9 +920,95 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         }
         finally
         {
+            // Block re-claims before releasing the hung stream so teardown cannot
+            // start a fresh worker that reads EOF off the released stream.
+            _queueManager.GetTopQueueItemOverride = (_, _) =>
+                Task.FromResult<(QueueItem? queueItem, Stream? queueNzbStream)>((null, null));
             hung.Release();
             await cts.CancelAsync();
-            await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            try
+            {
+                await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                // Expected when shutdown cancels an in-flight claim.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RemoveQueueItemsAsync_TwoHungWorkers_ShareOneGraceBudget()
+    {
+        // Two hung workers must be bounded by one shared grace period, not
+        // N × grace: cancel all first, then wait on a single deadline.
+        _queueManager.StuckItemThreshold = TimeSpan.FromHours(1);
+        _queueManager.StuckCancelGracePeriod = TimeSpan.FromSeconds(2);
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.QueueWorkerCount, ConfigValue = "2" },
+        ]);
+
+        var hung1 = new HungStream();
+        var hung2 = new HungStream();
+        var item1 = CreateQueueItem("hung-a.nzb", "movies", "HungJobA");
+        var item2 = CreateQueueItem("hung-b.nzb", "movies", "HungJobB");
+        item2.CreatedAt = item1.CreatedAt.AddMinutes(1);
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            ctx.QueueItems.AddRange(item1, item2);
+            await ctx.SaveChangesAsync();
+        }
+
+        var claims = new Queue<HungStream>([hung1, hung2]);
+        _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
+        {
+            await using var ctx = new DavDatabaseContext(_options);
+            var client = new DavDatabaseClient(ctx);
+            var (claimed, _) = await client.GetTopQueueItem(exclude, ct);
+            if (claimed is null) return (null, null);
+            ctx.ChangeTracker.Clear();
+            return (claimed, claims.Count > 0 ? claims.Dequeue() : new HungStream());
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var loop = _queueManager.ProcessQueueAsync(cts.Token);
+        try
+        {
+            Assert.NotNull(await WaitForInProgress(item1.Id, TimeSpan.FromSeconds(5)));
+            Assert.NotNull(await WaitForInProgress(item2.Id, TimeSpan.FromSeconds(5)));
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            IReadOnlyList<Guid> stillRunning;
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                stillRunning = await _queueManager.RemoveQueueItemsAsync(
+                    [item1.Id, item2.Id], new DavDatabaseClient(ctx), CancellationToken.None);
+            }
+
+            stopwatch.Stop();
+
+            Assert.Equal(2, stillRunning.Count);
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(3500),
+                $"two hung workers took {stopwatch.Elapsed}; one shared 2s grace budget " +
+                "should bound the wait, per-worker budgets would take ~4s");
+        }
+        finally
+        {
+            _queueManager.GetTopQueueItemOverride = (_, _) =>
+                Task.FromResult<(QueueItem? queueItem, Stream? queueNzbStream)>((null, null));
+            hung1.Release();
+            hung2.Release();
+            await cts.CancelAsync();
+            try
+            {
+                await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                // Expected when shutdown cancels an in-flight claim.
+            }
         }
     }
 

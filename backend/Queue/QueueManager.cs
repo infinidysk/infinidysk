@@ -255,11 +255,17 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
                 .ToList();
         }, ct).ConfigureAwait(false);
 
+        // Cancel every worker first, then wait on one shared grace budget:
+        // per-item waits would multiply the worst case to N × grace period.
+        foreach (var item in toCancel)
+            await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
+
         List<Guid> stillRunning = [];
+        using var grace = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        grace.CancelAfter(StuckCancelGracePeriod);
         foreach (var item in toCancel)
         {
-            await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
-            if (await TryAwaitWorkerAsync(item, StuckCancelGracePeriod, ct).ConfigureAwait(false))
+            if (await TryAwaitWorkerAsync(item, grace.Token).ConfigureAwait(false))
             {
                 await ObserveStoppedWorkerAsync(item).ConfigureAwait(false);
             }
@@ -297,16 +303,16 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
     }
 
     /// <summary>
-    /// Waits up to <paramref name="wait"/> for a cancelled worker to stop.
-    /// Returns false when the worker is still running after the grace period.
+    /// Waits for a cancelled worker to stop until <paramref name="graceExpired"/>
+    /// fires. Returns false when the worker is still running at that point.
     /// </summary>
     private static async Task<bool> TryAwaitWorkerAsync(
         InProgressQueueItem item,
-        TimeSpan wait,
-        CancellationToken ct = default)
+        CancellationToken graceExpired)
     {
         // WhenAny does not observe ProcessingTask exceptions — the reaper does.
-        var finished = await Task.WhenAny(item.ProcessingTask, Task.Delay(wait, ct))
+        var finished = await Task.WhenAny(
+                item.ProcessingTask, Task.Delay(Timeout.InfiniteTimeSpan, graceExpired))
             .ConfigureAwait(false);
         return finished == item.ProcessingTask || item.ProcessingTask.IsCompleted;
     }
@@ -491,10 +497,16 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
                 .ToList();
         }, ct).ConfigureAwait(false);
 
+        // Cancel every worker first, then wait on one shared grace budget:
+        // per-item waits would multiply the worst case to N × grace period.
+        foreach (var item in toCancel)
+            await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
+
+        using var grace = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        grace.CancelAfter(StuckCancelGracePeriod);
         foreach (var item in toCancel)
         {
-            await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
-            if (await TryAwaitWorkerAsync(item, StuckCancelGracePeriod, ct).ConfigureAwait(false))
+            if (await TryAwaitWorkerAsync(item, grace.Token).ConfigureAwait(false))
             {
                 await ObserveStoppedWorkerAsync(item).ConfigureAwait(false);
             }
@@ -596,7 +608,9 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
                 catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
                 {
-                    Log.Debug(e, "Queue workers finished with errors during shutdown");
+                    // The filter excludes cancellations, so only unexpected worker
+                    // faults land here; those keep their stack at Error.
+                    Log.Error(e, "Queue workers finished with errors during shutdown");
                 }
             }
             else
