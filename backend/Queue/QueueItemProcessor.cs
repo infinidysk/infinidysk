@@ -868,10 +868,6 @@ public class QueueItemProcessor(
                     if (dbClient.Ctx.ChangeTracker.HasChanges())
                         await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
                 catch (Exception strmError)
                 {
                     // The import is already committed; a sidecar failure must not

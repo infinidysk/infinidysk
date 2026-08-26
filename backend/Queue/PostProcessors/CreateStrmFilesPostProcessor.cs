@@ -45,10 +45,25 @@ public class CreateStrmFilesPostProcessor(
         catch
         {
             foreach (var createdItem in created)
-                DeleteStrmFile(createdItem);
+                TryDeleteStrmFile(createdItem);
             foreach (var rewrite in rewritten)
                 TryRestorePreviousContent(rewrite);
             throw;
+        }
+    }
+
+    private static void TryDeleteStrmFile(DavItem davItem)
+    {
+        try
+        {
+            DeleteStrmFile(davItem);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Warning(
+                e,
+                "Could not remove new STRM file for {ItemPath} after a publish failure",
+                davItem.Path);
         }
     }
 
