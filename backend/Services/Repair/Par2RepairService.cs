@@ -613,12 +613,15 @@ public class Par2RepairService : BackgroundService
                 ? Par2RepairJob.RepairJobState.Infeasible
                 : Par2RepairJob.RepairJobState.Failed;
             job.CompletedAt = DateTimeOffset.UtcNow;
+            job.BytesRead = result.BytesRead;
             job.FailureReason = result.FailureReason;
             job.NextAttemptAt = DateTimeOffset.UtcNow +
                                 TimeSpan.FromHours(_configManager.GetPar2FailureCooldownHours());
             await PersistJobAsync(job, ct).ConfigureAwait(false);
             PrometheusMetrics.Current?.RecordPar2RepairJob(result.IsInfeasible ? "infeasible" : "failed");
             PrometheusMetrics.Current?.ObservePar2RepairDuration(stopwatch.Elapsed);
+            if (result.BytesRead > 0)
+                Interlocked.Add(ref _totalBytesRead, result.BytesRead);
             if (result.IsInfeasible) Interlocked.Increment(ref _totalInfeasible);
             else Interlocked.Increment(ref _totalFailed);
             Log.Warning(
@@ -761,6 +764,17 @@ public class Par2RepairService : BackgroundService
         if (unavailableSlices.Count == 0)
             return RepairExecutionResult.NotFeasible("Missing or corrupt segments do not map to PAR2 slices.");
 
+        var maxMissingSlices = _configManager.GetPar2MaxMissingSlices();
+        if (unavailableSlices.Count > maxMissingSlices)
+        {
+            Log.Warning(
+                "PAR2 repair targeting {Path} infeasible before discovery. " +
+                "Initial={Initial} Discovered={Discovered} Cap={Cap} BytesRead={BytesRead} Elapsed={Elapsed}",
+                davItem.Path, unavailableSlices.Count, 0, maxMissingSlices, 0L, TimeSpan.Zero);
+            return RepairExecutionResult.NotFeasible(
+                $"Missing slice count {unavailableSlices.Count} exceeds cap {maxMissingSlices}.");
+        }
+
         var fetchConcurrency = _configManager.GetPar2FetchConcurrency();
         using var fetchGate = new SemaphoreSlim(fetchConcurrency, fetchConcurrency);
         var bytesRead = 0L;
@@ -803,9 +817,13 @@ public class Par2RepairService : BackgroundService
 
         try
         {
-            await DiscoverUnavailableSourcesAsync(
-                    accessor, sliceMap, targetIfsc, unavailableSegments, unavailableSlices, ct)
+            var initialUnavailableSlices = unavailableSlices.Count;
+            var discoveryWatch = Stopwatch.StartNew();
+            var exceededCap = await DiscoverUnavailableSourcesAsync(
+                    accessor, sliceMap, targetIfsc, unavailableSegments, unavailableSlices,
+                    maxMissingSlices, ct)
                 .ConfigureAwait(false);
+            discoveryWatch.Stop();
 
             var discoveredMissing = accessor.MissingSegmentIndices.Except(persistedMissing).Except(requested.Select(x => x.Index)).Count();
             var discoveredCorrupt = accessor.CorruptSegmentIndices.Except(persistedCorrupt).Except(requested.Select(x => x.Index)).Count();
@@ -821,12 +839,21 @@ public class Par2RepairService : BackgroundService
                 discoveredCorrupt,
                 unavailableSlices.Count);
 
-            var maxMissingSlices = _configManager.GetPar2MaxMissingSlices();
-            if (unavailableSlices.Count > maxMissingSlices)
+            if (exceededCap || unavailableSlices.Count > maxMissingSlices)
             {
                 await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
+                Log.Warning(
+                    "PAR2 repair targeting {Path} infeasible after discovery. " +
+                    "Initial={Initial} Discovered={Discovered} Cap={Cap} BytesRead={BytesRead} Elapsed={Elapsed}",
+                    davItem.Path,
+                    initialUnavailableSlices,
+                    unavailableSlices.Count,
+                    maxMissingSlices,
+                    bytesRead,
+                    discoveryWatch.Elapsed);
                 return RepairExecutionResult.NotFeasible(
-                    $"Missing slice count {unavailableSlices.Count} exceeds cap {maxMissingSlices}.");
+                    $"Missing slice count {unavailableSlices.Count} exceeds cap {maxMissingSlices}.",
+                    bytesRead);
             }
 
             var patchTargets = SegmentsOverlappingSlices(sliceMap, unavailableSlices, segmentIds);
@@ -952,12 +979,13 @@ public class Par2RepairService : BackgroundService
         }
     }
 
-    private static async Task DiscoverUnavailableSourcesAsync(
+    private static async Task<bool> DiscoverUnavailableSourcesAsync(
         SliceSegmentAccessor accessor,
         Par2FileSliceMap sliceMap,
         IfscPacket targetIfsc,
         HashSet<int> unavailableSegments,
         HashSet<int> unavailableSlices,
+        int maxMissingSlices,
         CancellationToken ct)
     {
         var expanded = true;
@@ -967,6 +995,8 @@ public class Par2RepairService : BackgroundService
             expanded = false;
             accessor.BeginSequentialPass();
             AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
+            if (unavailableSlices.Count > maxMissingSlices)
+                return true;
 
             for (var local = 0; local < sliceMap.SliceCount; local++)
             {
@@ -981,8 +1011,12 @@ public class Par2RepairService : BackgroundService
                 expanded |= (assembled is null ||
                              !Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
                             && unavailableSlices.Add(globalSlice);
+                if (unavailableSlices.Count > maxMissingSlices)
+                    return true;
             }
         }
+
+        return false;
     }
 
     private static void AbsorbAccessorDiscoveries(
@@ -1895,8 +1929,8 @@ public class Par2RepairService : BackgroundService
         public static RepairExecutionResult Succeeded(long bytesRead, int slices, int segmentsCommitted)
             => new(true, false, null, bytesRead, slices, segmentsCommitted);
 
-        public static RepairExecutionResult NotFeasible(string reason)
-            => new(false, true, reason, 0, 0, 0);
+        public static RepairExecutionResult NotFeasible(string reason, long bytesRead = 0)
+            => new(false, true, reason, bytesRead, 0, 0);
 
         public static RepairExecutionResult Failed(string reason)
             => new(false, false, reason, 0, 0, 0);
