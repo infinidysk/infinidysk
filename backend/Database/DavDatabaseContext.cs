@@ -1002,11 +1002,11 @@ public class DavDatabaseContext : DbContext
         {
             // save blobs to blob-store
             foreach (var blobNzbFile in BlobNzbFiles)
-                await BlobStore.WriteBlob(blobNzbFile.Id, blobNzbFile).ConfigureAwait(false);
+                await BlobStore.WriteBlob(blobNzbFile.Id, blobNzbFile, cancellationToken).ConfigureAwait(false);
             foreach (var blobRarFile in BlobRarFiles)
-                await BlobStore.WriteBlob(blobRarFile.Id, blobRarFile).ConfigureAwait(false);
+                await BlobStore.WriteBlob(blobRarFile.Id, blobRarFile, cancellationToken).ConfigureAwait(false);
             foreach (var blobMultipartFile in BlobMultipartFiles)
-                await BlobStore.WriteBlob(blobMultipartFile.Id, blobMultipartFile).ConfigureAwait(false);
+                await BlobStore.WriteBlob(blobMultipartFile.Id, blobMultipartFile, cancellationToken).ConfigureAwait(false);
 
             // save db changes
             var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();

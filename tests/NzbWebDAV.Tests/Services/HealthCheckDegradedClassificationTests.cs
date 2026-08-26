@@ -785,7 +785,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         public Task WriteBlob(Guid id, Stream stream, CancellationToken cancellationToken = default) =>
             Task.FromException(new NotSupportedException());
 
-        public Task WriteBlob<T>(Guid id, T blob) =>
+        public Task WriteBlob<T>(Guid id, T blob, CancellationToken cancellationToken = default) =>
             Task.FromException(new NotSupportedException());
 
         public Stream? ReadBlob(Guid id) => null;

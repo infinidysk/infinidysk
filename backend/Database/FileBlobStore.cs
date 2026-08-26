@@ -73,8 +73,9 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         }
     }
 
-    public async Task WriteBlob<T>(Guid id, T blob)
+    public async Task WriteBlob<T>(Guid id, T blob, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var blobPath = GetBlobPath(id);
         var tempPath = blobPath + ".tmp";
         var committed = false;
@@ -83,8 +84,10 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
             await using (var fileStream = OpenBlobWrite(tempPath))
             await using (var compressionStream = new CompressionStream(fileStream, CompressionLevel))
             {
-                await MemoryPackSerializer.SerializeAsync(compressionStream, blob).ConfigureAwait(false);
+                await MemoryPackSerializer.SerializeAsync(compressionStream, blob, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
             }
+            cancellationToken.ThrowIfCancellationRequested();
 
             CommitBlobWrite(blobPath, tempPath);
             committed = true;

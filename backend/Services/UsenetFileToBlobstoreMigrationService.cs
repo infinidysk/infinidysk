@@ -98,7 +98,7 @@ public class UsenetFileToBlobstoreMigrationService(
                 var davItem = await GetDavItem(getFileToMigrateId(fileToMigrate), dbContext, ct).ConfigureAwait(false);
                 dbContext.Entry(fileToMigrate).State = EntityState.Detached;
                 setFileToMigrateNewId(fileToMigrate);
-                await BlobStore.WriteBlob(getFileToMigrateId(fileToMigrate), fileToMigrate).ConfigureAwait(false);
+                await BlobStore.WriteBlob(getFileToMigrateId(fileToMigrate), fileToMigrate, ct).ConfigureAwait(false);
                 try
                 {
                     // database changes
