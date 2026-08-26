@@ -687,6 +687,226 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task RemoveQueueItemsAsync_HungWorker_QuarantinesAndReturnsWithinGrace()
+    {
+        // A worker ignoring cancellation must not hang a SAB delete: the call
+        // returns after the grace period with the id flagged still-running, the
+        // row stays queued, and the slot stays occupied until the task stops.
+        _queueManager.StuckItemThreshold = TimeSpan.FromHours(1);
+        var hung = new HungStream();
+        var item = CreateQueueItem("hung-remove.nzb", "movies", "HungRemoveJob");
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            ctx.QueueItems.Add(item);
+            await ctx.SaveChangesAsync();
+        }
+
+        _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
+        {
+            await using var ctx = new DavDatabaseContext(_options);
+            var client = new DavDatabaseClient(ctx);
+            var (claimed, _) = await client.GetTopQueueItem(exclude, ct);
+            if (claimed is null) return (null, null);
+            ctx.ChangeTracker.Clear();
+            return (claimed, hung);
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var loop = _queueManager.ProcessQueueAsync(cts.Token);
+        try
+        {
+            object? inProgress = await WaitForInProgress(item.Id, TimeSpan.FromSeconds(5));
+            Assert.NotNull(inProgress);
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            IReadOnlyList<Guid> stillRunning;
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                stillRunning = await _queueManager.RemoveQueueItemsAsync(
+                    [item.Id], new DavDatabaseClient(ctx), CancellationToken.None);
+            }
+
+            stopwatch.Stop();
+
+            Assert.Equal([item.Id], stillRunning.ToArray());
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+                $"remove hung for {stopwatch.Elapsed}; expected a bounded grace wait");
+
+            // Quarantined: row kept, slot still occupied, no counters cleared.
+            Assert.NotNull(FindInProgressItem(item.Id));
+            Assert.False(GetProcessingTask(inProgress!).IsCompleted);
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                Assert.Equal(1, await ctx.QueueItems.CountAsync());
+                Assert.Equal(0, await ctx.HistoryItems.CountAsync());
+            }
+
+            // Releasing the hung I/O lets the cancelled worker stop and the
+            // coordinator reap it; the row remains queued for a later claim.
+            hung.Release();
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (DateTime.UtcNow < deadline && FindInProgressItem(item.Id) is not null)
+                await Task.Delay(20);
+
+            Assert.Null(FindInProgressItem(item.Id));
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                Assert.Equal(1, await ctx.QueueItems.CountAsync());
+                Assert.Equal(0, await ctx.HistoryItems.CountAsync());
+            }
+        }
+        finally
+        {
+            hung.Release();
+            await cts.CancelAsync();
+            await loop.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
+    public async Task Shutdown_HungWorker_LogsErrorAndReturnsWithinGrace()
+    {
+        _queueManager.StuckItemThreshold = TimeSpan.FromHours(1);
+        var hung = new HungStream();
+        var item = CreateQueueItem("hung-shutdown.nzb", "movies", "HungShutdownJob");
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            ctx.QueueItems.Add(item);
+            await ctx.SaveChangesAsync();
+        }
+
+        _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
+        {
+            await using var ctx = new DavDatabaseContext(_options);
+            var client = new DavDatabaseClient(ctx);
+            var (claimed, _) = await client.GetTopQueueItem(exclude, ct);
+            if (claimed is null) return (null, null);
+            ctx.ChangeTracker.Clear();
+            return (claimed, hung);
+        };
+
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Error()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var loop = _queueManager.ProcessQueueAsync(cts.Token);
+        try
+        {
+            object? inProgress = await WaitForInProgress(item.Id, TimeSpan.FromSeconds(5));
+            Assert.NotNull(inProgress);
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            await cts.CancelAsync();
+            await loop.WaitAsync(TimeSpan.FromSeconds(10));
+            stopwatch.Stop();
+
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+                $"shutdown hung for {stopwatch.Elapsed}; expected a bounded grace wait");
+            Assert.Contains(sink.Events, e =>
+                e.Level == LogEventLevel.Error
+                && e.RenderMessage().Contains("ignored cancellation", StringComparison.OrdinalIgnoreCase));
+
+            // Quarantined workers keep their slot and are not reaped.
+            Assert.NotNull(FindInProgressItem(item.Id));
+        }
+        finally
+        {
+            hung.Release();
+            Log.Logger = previous;
+        }
+    }
+
+    [Fact]
+    public async Task ReplaceExistingQueueItem_HungWorker_FailsSubmissionInsteadOfInserting()
+    {
+        _queueManager.StuckItemThreshold = TimeSpan.FromHours(1);
+        var hung = new HungStream();
+        var item = CreateQueueItem("replace-hung.nzb", "movies", "ReplaceHungJob");
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            ctx.QueueItems.Add(item);
+            await ctx.SaveChangesAsync();
+        }
+
+        _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
+        {
+            await using var ctx = new DavDatabaseContext(_options);
+            var client = new DavDatabaseClient(ctx);
+            var (claimed, _) = await client.GetTopQueueItem(exclude, ct);
+            if (claimed is null) return (null, null);
+            ctx.ChangeTracker.Clear();
+            return (claimed, hung);
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var loop = _queueManager.ProcessQueueAsync(cts.Token);
+        try
+        {
+            object? inProgress = await WaitForInProgress(item.Id, TimeSpan.FromSeconds(5));
+            Assert.NotNull(inProgress);
+
+            var controller = new global::NzbWebDAV.Api.SabControllers.AddFile.AddFileController(
+                new Microsoft.AspNetCore.Http.DefaultHttpContext(),
+                new DavDatabaseClient(new DavDatabaseContext(_options)),
+                _queueManager,
+                _configManager,
+                new WebsocketManager());
+
+            var nzb = """
+                <?xml version="1.0" encoding="utf-8"?>
+                <nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+                  <file subject="test">
+                    <groups><group>alt.binaries.test</group></groups>
+                    <segments>
+                      <segment bytes="100" number="1">seg@example.com</segment>
+                    </segments>
+                  </file>
+                </nzb>
+                """;
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var error = await Assert.ThrowsAsync<Microsoft.AspNetCore.Http.BadHttpRequestException>(() =>
+                controller.AddFileAsync(new global::NzbWebDAV.Api.SabControllers.AddFile.AddFileRequest
+                {
+                    ReplaceExistingQueueItem = true,
+                    FileName = "replace-hung.nzb",
+                    ContentType = "application/x-nzb",
+                    NzbFileStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(nzb)),
+                    Category = "movies",
+                    Priority = QueueItem.PriorityOption.Normal,
+                    PostProcessing = QueueItem.PostProcessingOption.None,
+                    CancellationToken = CancellationToken.None,
+                }));
+            stopwatch.Stop();
+
+            Assert.Contains("still stopping", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+                $"replace hung for {stopwatch.Elapsed}; expected a bounded grace wait");
+
+            // The quarantined row survives and no replacement row was inserted.
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                var rows = await ctx.QueueItems.AsNoTracking().ToListAsync();
+                Assert.Single(rows);
+                Assert.Equal(item.Id, rows[0].Id);
+            }
+        }
+        finally
+        {
+            hung.Release();
+            await cts.CancelAsync();
+            await loop.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
     private async Task<object?> WaitForInProgress(Guid queueItemId, TimeSpan timeout, QueueManager? manager = null)
     {
         var deadline = DateTime.UtcNow + timeout;

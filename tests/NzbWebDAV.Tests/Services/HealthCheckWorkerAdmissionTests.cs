@@ -122,7 +122,7 @@ public sealed class HealthCheckWorkerAdmissionTests
         public QueueManager.InProgressQueueItemSnapshot? FindInProgressQueueItem(Guid queueItemId) => null;
         public IDisposable? TryReserveQueueSlot(int persistedCount, int maxItems, int resumeThreshold) => null;
         public void AwakenQueue(DateTime? dateTime = null) { }
-        public Task RemoveQueueItemsAsync(List<Guid> queueItemIds, DavDatabaseClient dbClient, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<Guid>> RemoveQueueItemsAsync(List<Guid> queueItemIds, DavDatabaseClient dbClient, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Guid>>([]);
         public Task PauseQueueItemsAsync(List<Guid> queueItemIds, DavDatabaseClient dbClient, CancellationToken ct = default) => Task.CompletedTask;
         public Task ResumeQueueItemsAsync(List<Guid> queueItemIds, DavDatabaseClient dbClient, CancellationToken ct = default) => Task.CompletedTask;
         public Task SetQueueItemsPriorityAsync(List<Guid> queueItemIds, QueueItem.PriorityOption priority, DavDatabaseClient dbClient, CancellationToken ct = default) => Task.CompletedTask;

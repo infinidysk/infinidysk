@@ -11,15 +11,27 @@ public sealed class QueueRemovalService(
     QueueManager queueManager,
     WebsocketManager websocketManager)
 {
-    public async Task RemoveAsync(List<Guid> ids, CancellationToken cancellationToken)
+    /// <summary>
+    /// Removes the requested items and returns the ids whose workers ignored
+    /// cancellation (still running, still queued). Only actually-removed ids are
+    /// announced to the frontend.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> RemoveAsync(List<Guid> ids, CancellationToken cancellationToken)
     {
+        IReadOnlyList<Guid> stillRunning = [];
         if (ids.Count > 0)
         {
-            await queueManager.RemoveQueueItemsAsync(ids, dbClient, cancellationToken)
+            stillRunning = await queueManager.RemoveQueueItemsAsync(ids, dbClient, cancellationToken)
                 .ConfigureAwait(false);
         }
 
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", ids));
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], cancellationToken);
+        var removedIds = ids.Where(id => !stillRunning.Contains(id)).ToList();
+        if (removedIds.Count > 0)
+        {
+            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", removedIds));
+            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], cancellationToken);
+        }
+
+        return stillRunning;
     }
 }

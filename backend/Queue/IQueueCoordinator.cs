@@ -14,7 +14,11 @@ public interface IQueueCoordinator
     QueueManager.InProgressQueueItemSnapshot? FindInProgressQueueItem(Guid queueItemId);
     IDisposable? TryReserveQueueSlot(int persistedCount, int maxItems, int resumeThreshold);
     void AwakenQueue(DateTime? dateTime = null);
-    Task RemoveQueueItemsAsync(List<Guid> queueItemIds, DavDatabaseClient dbClient, CancellationToken ct = default);
+    /// <summary>
+    /// Removes the requested items; ids whose in-progress workers ignored
+    /// cancellation are returned and remain queued instead of being deleted.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> RemoveQueueItemsAsync(List<Guid> queueItemIds, DavDatabaseClient dbClient, CancellationToken ct = default);
     Task PauseQueueItemsAsync(List<Guid> queueItemIds, DavDatabaseClient dbClient, CancellationToken ct = default);
     Task ResumeQueueItemsAsync(List<Guid> queueItemIds, DavDatabaseClient dbClient, CancellationToken ct = default);
     Task SetQueueItemsPriorityAsync(

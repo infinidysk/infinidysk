@@ -246,7 +246,19 @@ public class NzbSubmissionService(
             category,
             wasInProgress ? "; cancelling in-progress download" : "");
 
-        await queueManager.RemoveQueueItemsAsync([existingId.Value], dbClient, ct).ConfigureAwait(false);
+        var stillRunning = await queueManager
+            .RemoveQueueItemsAsync([existingId.Value], dbClient, ct)
+            .ConfigureAwait(false);
+        if (stillRunning.Count > 0)
+        {
+            // Inserting over a quarantined worker would hit the queue unique
+            // constraint and re-attempt removal — a remove/insert loop against a
+            // hung task. Fail the submission visibly instead.
+            throw new BadHttpRequestException(
+                $"The existing queue item '{fileName}' is still stopping and cannot be replaced yet; " +
+                "try again shortly.");
+        }
+
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, existingId.Value.ToString());
         _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
     }
@@ -273,7 +285,16 @@ public class NzbSubmissionService(
             category,
             wasInProgress ? "; cancelling in-progress download" : "");
 
-        await queueManager.RemoveQueueItemsAsync([conflictingId.Value], freshClient, ct).ConfigureAwait(false);
+        var stillRunning = await queueManager
+            .RemoveQueueItemsAsync([conflictingId.Value], freshClient, ct)
+            .ConfigureAwait(false);
+        if (stillRunning.Count > 0)
+        {
+            throw new BadHttpRequestException(
+                $"The existing queue item '{fileName}' is still stopping and cannot be replaced yet; " +
+                "try again shortly.");
+        }
+
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, conflictingId.Value.ToString());
         _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
     }

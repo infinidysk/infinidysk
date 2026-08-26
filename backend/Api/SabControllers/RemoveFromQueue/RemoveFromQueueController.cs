@@ -23,7 +23,17 @@ public class RemoveFromQueueController(
             ? await GetQueueItemIdsToRemoveAsync(request).ConfigureAwait(false)
             : request.NzoIds;
         var service = new QueueRemovalService(dbClient, queueManager, websocketManager);
-        await service.RemoveAsync(ids, request.CancellationToken).ConfigureAwait(false);
+        var stillRunning = await service.RemoveAsync(ids, request.CancellationToken).ConfigureAwait(false);
+        if (stillRunning.Count > 0)
+        {
+            return new RemoveFromQueueResponse()
+            {
+                Status = false,
+                Error = $"{stillRunning.Count} item(s) are still stopping and could not be removed; " +
+                        "try again shortly.",
+            };
+        }
+
         return new RemoveFromQueueResponse() { Status = true };
     }
 
