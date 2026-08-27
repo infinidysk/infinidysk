@@ -121,6 +121,27 @@ public class DetectKneeTests
     }
 
     [Fact]
+    public void DetectKnee_StillClimbingAtHardCeilingDoesNotMisstateConfiguredLimit()
+    {
+        var sweep = Sweep((1, 10), (10, 20), (25, 40), (50, 80));
+        var warnings = new List<string>();
+
+        UsenetBenchmarkService.DetectKnee(
+            sweep,
+            providerCap: null,
+            warnings,
+            out var stillClimbing,
+            configuredProviderLimit: 51,
+            benchmarkConnectionCeiling: 50);
+
+        Assert.True(stillClimbing);
+        var warning = Assert.Single(warnings);
+        Assert.Contains("benchmark ceiling (50)", warning, StringComparison.Ordinal);
+        Assert.Contains("configured Provider Connection Limit (51)", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("Raise that limit", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DetectKnee_StillClimbingFalseOnPlateau()
     {
         var sweep = Sweep((1, 10), (2, 20), (4, 35), (8, 40), (16, 41));

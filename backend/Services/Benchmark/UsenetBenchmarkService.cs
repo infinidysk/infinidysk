@@ -64,6 +64,9 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         CancellationToken ct)
     {
         var profile = BenchmarkProfile.For(intensity);
+        var configuredProviderLimitForWarning = Math.Max(
+            1,
+            configuredProviderConnectionLimit);
         var configuredProviderLimit = Math.Clamp(
             configuredProviderConnectionLimit,
             1,
@@ -254,6 +257,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                     providerCap,
                     result.Warnings,
                     out var stillClimbing,
+                    configuredProviderLimitForWarning,
                     configuredProviderLimit),
                 configuredProviderLimit,
                 result.Warnings);
@@ -295,6 +299,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                                 providerCap,
                                 [],
                                 out stillClimbing,
+                                configuredProviderLimitForWarning,
                                 configuredProviderLimit),
                             configuredProviderLimit,
                             result.Warnings);
@@ -767,7 +772,8 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
     internal static int? DetectKnee(
         List<BenchmarkSweepPoint> sweep, int? providerCap, List<string> warnings,
         out bool stillClimbing,
-        int? configuredProviderLimit = null)
+        int? configuredProviderLimit = null,
+        int? benchmarkConnectionCeiling = null)
     {
         stillClimbing = false;
         if (sweep.Count == 0) return null;
@@ -804,11 +810,24 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             if (prev.MegaBytesPerSec > 0 && (peak.MegaBytesPerSec - prev.MegaBytesPerSec) / prev.MegaBytesPerSec > 0.08)
             {
                 stillClimbing = true;
-                warnings.Add(
-                    configuredProviderLimit is { } limit && peak.Connections >= limit
-                        ? $"Speed was still climbing at your Provider Connection Limit ({limit}). " +
-                          "Raise that limit and re-run Auto-tune to test higher transfer counts."
-                        : "Speed was still climbing at the highest level tested — a faster line or even more connections may help.");
+                if (benchmarkConnectionCeiling is { } benchmarkCeiling
+                    && configuredProviderLimit is { } configuredLimit
+                    && configuredLimit > benchmarkCeiling
+                    && peak.Connections >= benchmarkCeiling)
+                {
+                    warnings.Add(
+                        $"Speed was still climbing at the benchmark ceiling ({benchmarkCeiling}), " +
+                        $"below your configured Provider Connection Limit ({configuredLimit}). " +
+                        "The benchmark does not probe higher in one run.");
+                }
+                else
+                {
+                    warnings.Add(
+                        configuredProviderLimit is { } limit && peak.Connections >= limit
+                            ? $"Speed was still climbing at your Provider Connection Limit ({limit}). " +
+                              "Raise that limit and re-run Auto-tune to test higher transfer counts."
+                            : "Speed was still climbing at the highest level tested — a faster line or even more connections may help.");
+                }
             }
         }
 
