@@ -112,6 +112,22 @@ describe("mergeHealthCheckQueue", () => {
       uncheckedCount: 7,
     });
   });
+
+  it("preserves refreshed ordering while retaining live progress", () => {
+    const current: HealthQueueState = {
+      items: [{ ...queueItem("active", null), progress: 45 }, queueItem("waiting", null)],
+      uncheckedCount: 2,
+    };
+    const refreshed: HealthQueueState = {
+      items: [queueItem("waiting", null), queueItem("active", null)],
+      uncheckedCount: 2,
+    };
+
+    expect(mergeHealthCheckQueue(current, refreshed).items).toEqual([
+      queueItem("waiting", null),
+      { ...queueItem("active", null), progress: 45 },
+    ]);
+  });
 });
 
 describe("health websocket payload parsing", () => {

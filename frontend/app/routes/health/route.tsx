@@ -117,10 +117,12 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     setHistoryTotalCount(loaderData.historyTotalCount);
   }, [loaderData.historyTotalCount]);
   useEffect(() => {
-    setQueueState({
-      items: loaderData.queueItems,
-      uncheckedCount: loaderData.uncheckedCount,
-    });
+    setQueueState((state) =>
+      mergeHealthCheckQueue(state, {
+        items: loaderData.queueItems,
+        uncheckedCount: loaderData.uncheckedCount,
+      }),
+    );
   }, [loaderData.queueItems, loaderData.uncheckedCount]);
 
   const setHistoryParams = useCallback(
