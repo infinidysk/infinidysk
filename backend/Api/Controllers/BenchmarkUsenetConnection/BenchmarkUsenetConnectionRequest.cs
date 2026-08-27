@@ -14,7 +14,7 @@ public class BenchmarkUsenetConnectionRequest
     public bool UseSsl { get; init; }
     public bool SkipTlsVerification { get; init; }
 
-    /// <summary>The provider's currently-configured max connections (the sweep probes a bit above it).</summary>
+    /// <summary>The provider's configured connection ceiling, which the benchmark never exceeds.</summary>
     public int MaxConnections { get; init; }
 
     public BenchmarkIntensity Intensity { get; init; }

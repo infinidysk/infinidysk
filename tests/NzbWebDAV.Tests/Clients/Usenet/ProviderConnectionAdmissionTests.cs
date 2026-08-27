@@ -163,6 +163,66 @@ public class ProviderConnectionAdmissionTests
     }
 
     [Fact]
+    public async Task MixedPriorityOddsAdmitLowTransferWaitersAtExpectedInterval()
+    {
+        using var admission = CreateAdmission(
+            providerLimit: 1,
+            transferLimit: 1,
+            new SemaphorePriorityOdds { HighPriorityOdds = 50 });
+        using var held = await AcquireTransfer(admission);
+        var low1 = AcquireTransfer(admission);
+        var low2 = AcquireTransfer(admission);
+        var high1 = admission.AcquireAsync(
+            ProviderConnectionKind.Transfer,
+            SemaphorePriority.High,
+            CancellationToken.None);
+        var high2 = admission.AcquireAsync(
+            ProviderConnectionKind.Transfer,
+            SemaphorePriority.High,
+            CancellationToken.None);
+
+        held.Dispose();
+        using var highLease1 = await high1.WaitAsync(TestTimeout);
+        Assert.False(low1.IsCompleted);
+        highLease1.Dispose();
+
+        using var lowLease1 = await low1.WaitAsync(TestTimeout);
+        Assert.False(high2.IsCompleted);
+        lowLease1.Dispose();
+
+        using var highLease2 = await high2.WaitAsync(TestTimeout);
+        Assert.False(low2.IsCompleted);
+        highLease2.Dispose();
+        using var lowLease2 = await low2.WaitAsync(TestTimeout);
+    }
+
+    [Fact]
+    public async Task SustainedTransferBacklogCannotStarveMetadata()
+    {
+        using var admission = CreateAdmission(providerLimit: 1, transferLimit: 1);
+        using var held = await AcquireTransfer(admission);
+        var transfers = Enumerable.Range(
+                0,
+                ProviderConnectionAdmission.MaxConsecutiveTransferGrants + 1)
+            .Select(_ => AcquireTransfer(admission))
+            .ToArray();
+        var metadata = AcquireMetadata(admission);
+
+        held.Dispose();
+        for (var i = 0; i < ProviderConnectionAdmission.MaxConsecutiveTransferGrants; i++)
+        {
+            using var transfer = await transfers[i].WaitAsync(TestTimeout);
+            Assert.False(metadata.IsCompleted);
+            transfer.Dispose();
+        }
+
+        using var metadataLease = await metadata.WaitAsync(TestTimeout);
+        Assert.False(transfers[^1].IsCompleted);
+        metadataLease.Dispose();
+        using var remainingTransfer = await transfers[^1].WaitAsync(TestTimeout);
+    }
+
+    [Fact]
     public async Task SnapshotReportsDerivedLimitsAndLiveOperationCounts()
     {
         using var admission = CreateAdmission(providerLimit: 5, transferLimit: 2);

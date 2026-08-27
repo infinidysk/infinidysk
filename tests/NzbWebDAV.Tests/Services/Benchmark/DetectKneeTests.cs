@@ -152,6 +152,30 @@ public class DetectKneeTests
         Assert.Null(UsenetBenchmarkService.CapTransferRecommendation(null, 20));
     }
 
+    [Fact]
+    public void VerificationConnections_CannotExceedConfiguredProviderLimit()
+    {
+        Assert.Equal(
+            20,
+            UsenetBenchmarkService.BoundBenchmarkConnections(
+                requestedConnections: 40,
+                configuredProviderLimit: 20));
+    }
+
+    [Theory]
+    [InlineData(BenchmarkIntensity.Auto)]
+    [InlineData(BenchmarkIntensity.Thorough)]
+    public void BuildLevels_NeverProbesAboveConfiguredProviderLimit(
+        BenchmarkIntensity intensity)
+    {
+        var levels = UsenetBenchmarkService.BuildLevels(
+            configuredProviderLimit: 7,
+            BenchmarkProfile.For(intensity));
+
+        Assert.Contains(7, levels);
+        Assert.All(levels, level => Assert.InRange(level, 1, 7));
+    }
+
     private static List<BenchmarkSweepPoint> Sweep(params (int Connections, double MegaBytesPerSec)[] points) =>
         points.Select(point => new BenchmarkSweepPoint
         {

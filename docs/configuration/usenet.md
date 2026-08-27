@@ -18,7 +18,7 @@ Add one or more accounts. Each provider supports:
 | Storage group | Same label → skip siblings after a clean article miss | optional; only same upstream |
 | Host / Port | NNTP endpoint | port often `563` |
 | Username / Password | Credentials | prefer SSL |
-| Provider Connection Limit | Provider-wide ceiling for transfers and metadata combined | do not exceed the account allowance |
+| Provider Connection Limit | Provider-wide ceiling for all pooled connections, including transfers, metadata, and warm sockets | do not exceed the account allowance |
 | Transfer Connections | Hard cap for concurrent `BODY` / `ARTICLE` work | blank = legacy shared pool |
 | Metadata Capacity | Read-only base-to-burst range calculated from the two limits | shown when Transfer Connections is set |
 | Pipeline depth | Per-provider override when pipelining on | blank = global `8` |
@@ -47,14 +47,13 @@ and `DATE`. The editor previews **Metadata Capacity** from the configured values
 provider cards use the current effective provider limit when live runtime data is available. The
 runtime range is calculated as follows:
 
-```text
-P = effective Provider Connection Limit
-T = min(configured Transfer Connections, P)
+    P = effective Provider Connection Limit
+    T = min(configured Transfer Connections, P)
 
-base metadata = P - T
-metadata burst = floor(T / 2)
-metadata capacity = base metadata through base metadata + metadata burst
-```
+    base metadata = P - T
+    maximum metadata = min(P, max(1, base metadata + floor(T / 2)))
+    metadata burst = maximum metadata - base metadata
+    metadata capacity = base metadata through maximum metadata
 
 For example:
 
@@ -63,11 +62,13 @@ For example:
 | 50 | 20 | 30–40 |
 | 50 | 50 | 0–25 |
 | 40 | 16 | 24–32 |
+| 1 | 1 | 0–1 |
 
 Transfers never exceed their hard cap, and all work combined never exceeds the effective provider
 limit. Metadata may borrow only the displayed burst allowance while transfer capacity is idle. If
 transfers begin waiting, currently running metadata commands finish normally; their released slots
-return to transfers before metadata can borrow again.
+normally return to transfers first. Under a sustained transfer backlog, one metadata waiter is
+admitted after at most eight consecutive transfer grants so health and control work cannot starve.
 
 !!! info "Existing providers stay in legacy mode"
 

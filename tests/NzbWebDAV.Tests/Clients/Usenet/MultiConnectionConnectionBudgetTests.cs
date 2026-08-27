@@ -37,23 +37,33 @@ public class MultiConnectionConnectionBudgetTests
         Assert.Equal(4, Volatile.Read(ref state.Entered));
     }
 
-    [Theory]
-    [InlineData((int)NntpOperation.Body, (int)ProviderConnectionKind.Transfer)]
-    [InlineData((int)NntpOperation.Article, (int)ProviderConnectionKind.Transfer)]
-    [InlineData((int)NntpOperation.PipelinedBody, (int)ProviderConnectionKind.Transfer)]
-    [InlineData((int)NntpOperation.PipelinedArticle, (int)ProviderConnectionKind.Transfer)]
-    [InlineData((int)NntpOperation.Stat, (int)ProviderConnectionKind.Metadata)]
-    [InlineData((int)NntpOperation.Head, (int)ProviderConnectionKind.Metadata)]
-    [InlineData((int)NntpOperation.Date, (int)ProviderConnectionKind.Metadata)]
-    [InlineData((int)NntpOperation.PipelinedStat, (int)ProviderConnectionKind.Metadata)]
-    [InlineData((int)NntpOperation.Control, (int)ProviderConnectionKind.Metadata)]
-    public void ClassifyConnectionKind_UsesOperationSemantics(
-        int operation,
-        int expected)
+    [Fact]
+    public void ClassifyConnectionKind_CoversEveryOperation()
     {
-        Assert.Equal(
-            (ProviderConnectionKind)expected,
-            MultiConnectionNntpClient.ClassifyConnectionKind((NntpOperation)operation));
+        var expected = new Dictionary<NntpOperation, ProviderConnectionKind>
+        {
+            [NntpOperation.Admission] = ProviderConnectionKind.Metadata,
+            [NntpOperation.Body] = ProviderConnectionKind.Transfer,
+            [NntpOperation.Article] = ProviderConnectionKind.Transfer,
+            [NntpOperation.Stat] = ProviderConnectionKind.Metadata,
+            [NntpOperation.Head] = ProviderConnectionKind.Metadata,
+            [NntpOperation.Date] = ProviderConnectionKind.Metadata,
+            [NntpOperation.PipelinedBody] = ProviderConnectionKind.Transfer,
+            [NntpOperation.PipelinedArticle] = ProviderConnectionKind.Transfer,
+            [NntpOperation.PipelinedStat] = ProviderConnectionKind.Metadata,
+            [NntpOperation.Control] = ProviderConnectionKind.Metadata,
+        };
+
+        Assert.Equal(Enum.GetValues<NntpOperation>().Length, expected.Count);
+        foreach (var operation in Enum.GetValues<NntpOperation>())
+        {
+            Assert.True(
+                expected.TryGetValue(operation, out var expectedKind),
+                $"Unclassified operation: {operation}");
+            Assert.Equal(
+                expectedKind,
+                MultiConnectionNntpClient.ClassifyConnectionKind(operation));
+        }
     }
 
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(5);

@@ -19,9 +19,8 @@ namespace NzbWebDAV.Services.Benchmark;
 /// Safety model — the test never disrupts normal operation or usage accounting:
 ///   • It opens its own ad-hoc connections via <see cref="UsenetStreamingClient.CreateNewConnection"/>,
 ///     bypassing the shared connection pool, byte tracker and metrics writer.
-///   • It probes a few steps above the configured max but stops the instant the
-///     provider refuses another connection (the classic 502 "too many connections"),
-///     treating that as the real ceiling.
+///   • It never probes above the configured provider limit and stops early if the
+///     provider refuses another connection (the classic 502 "too many connections").
 ///   • Every level is byte- and time-bounded, and the whole run honours the
 ///     caller's cancellation token (closing the modal aborts it cleanly).
 /// </summary>
@@ -64,6 +63,10 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         CancellationToken ct)
     {
         var profile = BenchmarkProfile.For(intensity);
+        var configuredProviderLimit = Math.Clamp(
+            configuredMaxConnections,
+            1,
+            HardConnectionCeiling);
         var budget = Math.Max(50_000_000, dataBudgetBytes ?? profile.HardTotalBytes);
         var result = new BenchmarkResult { PipeliningOnly = pipeliningOnly, DataBudgetBytes = budget };
         var runClock = Stopwatch.StartNew();
@@ -106,7 +109,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         // the best pipelining depth at the count the user already runs.
         if (pipeliningOnly)
         {
-            var conns = Math.Clamp(configuredMaxConnections, 1, HardConnectionCeiling);
+            var conns = configuredProviderLimit;
             Report("pipelining", $"Testing pipelining at {conns} connection{(conns == 1 ? "" : "s")}…", 30, result, conns);
             await ladder.EnsureAsync(conns, ct).ConfigureAwait(false);
             result.Pipelining = await MeasurePipeliningAsync(
@@ -120,7 +123,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         }
         else if (verifyConnections is int vc0)
         {
-            var vc = Math.Clamp(vc0, 1, HardConnectionCeiling);
+            var vc = BoundBenchmarkConnections(vc0, configuredProviderLimit);
             Report("sweep", $"Verifying {vc} connection{(vc == 1 ? "" : "s")}…", 40, result, vc);
             var have = await ladder.EnsureAsync(vc, ct).ConfigureAwait(false);
 
@@ -153,7 +156,10 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                 MegaBytesPerSec = Math.Round(sample.MegaBytesPerSec, 2),
                 Cv = Math.Round(sample.Cv, 3),
             });
-            result.RecommendedConnections = have > 0 ? have : vc;
+            result.RecommendedConnections = CapTransferRecommendation(
+                have > 0 ? have : vc,
+                configuredProviderLimit,
+                result.Warnings);
             result.VerificationRun = true;
             if (have == 0)
                 result.Warnings.Add("Could not open any connections for the verification run.");
@@ -167,7 +173,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         else
         {
             // 3) Throughput sweep — climb connection counts until the knee or the cap.
-            var levels = BuildLevels(configuredMaxConnections, profile);
+            var levels = BuildLevels(configuredProviderLimit, profile);
             int? providerCap = null;
             double lastMegaBytesPerSec = 0;
             for (var i = 0; i < levels.Count; i++)
@@ -240,7 +246,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             result.ProviderConnectionCap = providerCap;
             result.RecommendedConnections = CapTransferRecommendation(
                 DetectKnee(result.Sweep, providerCap, result.Warnings, out var stillClimbing),
-                configuredMaxConnections,
+                configuredProviderLimit,
                 result.Warnings);
             result.StillClimbing = stillClimbing;
 
@@ -276,7 +282,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                         point.Cv = Math.Round(Math.Max(point.Cv, confirm.Cv), 3);
                         result.RecommendedConnections = CapTransferRecommendation(
                             DetectKnee(result.Sweep, providerCap, [], out stillClimbing),
-                            configuredMaxConnections,
+                            configuredProviderLimit,
                             result.Warnings);
                         result.StillClimbing = stillClimbing;
                     }
@@ -718,16 +724,23 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         return region.Max(p => p.Cv);
     }
 
-    private static List<int> BuildLevels(int configuredMaxConnections, BenchmarkProfile profile)
+    internal static int BoundBenchmarkConnections(
+        int requestedConnections,
+        int configuredProviderLimit) =>
+        Math.Clamp(
+            requestedConnections,
+            1,
+            Math.Clamp(configuredProviderLimit, 1, HardConnectionCeiling));
+
+    internal static List<int> BuildLevels(
+        int configuredProviderLimit,
+        BenchmarkProfile profile)
     {
-        // Probe a few steps above the configured max to discover the real sweet
-        // spot, but never beyond a safe hard ceiling.
-        var ceiling = Math.Clamp(
-            Math.Max(configuredMaxConnections + 10, configuredMaxConnections * 2),
-            8, HardConnectionCeiling);
+        var ceiling = Math.Clamp(configuredProviderLimit, 1, HardConnectionCeiling);
 
         return profile.SweepLevels
             .Where(l => l > 0 && l <= ceiling)
+            .Append(ceiling)
             .Distinct()
             .OrderBy(l => l)
             .ToList();

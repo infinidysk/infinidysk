@@ -272,6 +272,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                 label);
         }
 
+        MultiConnectionNntpClient? providerClient = null;
 #pragma warning disable CA2000 // the pool is owned by the provider's MultiConnectionNntpClient and disposed on provider config change
         var connectionPool = CreateNewConnectionPool(
 #pragma warning restore CA2000
@@ -293,7 +294,10 @@ public class UsenetStreamingClient : WrappingNntpClient
                     "(configured MaxConnections={Configured}). Pool width reduced to {Effective} until restart. " +
                     "Lower MaxConnections in settings to make this permanent.",
                     label, learned, maxConnections, effective);
-            }
+            },
+            keepAliveAdmission: ct => providerClient is null
+                ? Task.FromResult<IDisposable?>(null)
+                : providerClient.AcquireKeepAliveAdmissionAsync(ct)
         );
         // Ensure a metrics key even if startup backfill was skipped somehow.
         if (connectionDetails.ProviderId == Guid.Empty)
@@ -328,7 +332,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                 connectionDetails.Host,
                 () => circuitBreaker.CapCooldown(TimeSpan.FromSeconds(10)));
         }
-        return new MultiConnectionNntpClient(
+        providerClient = new MultiConnectionNntpClient(
             connectionPool,
             connectionDetails.Type,
             circuitBreaker,
@@ -343,6 +347,7 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionDetails.MaxTransferConnections,
             streamingPriority
         );
+        return providerClient;
     }
 
     private static string? BuildCircuitTransitionNote(ProviderCircuitTransition transition)
@@ -373,7 +378,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         int warmConnectionFloor,
         SemaphorePriorityOdds? streamingPriority = null,
         Func<Exception, int?>? connectionLimitDetector = null,
-        Action<int, int>? onConnectionLimitLearned = null
+        Action<int, int>? onConnectionLimitLearned = null,
+        Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null
     )
     {
         var idleTimeout = TimeSpan.FromSeconds(idleTimeoutSeconds);
@@ -383,7 +389,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         var connectionPool = new ConnectionPool<INntpClient>(
             maxConnections, connectionFactory, idleTimeout, streamingPriority,
             connectionLimitDetector, onConnectionLimitLearned, warmConnectionFloor,
-            KeepAliveAsync);
+            KeepAliveAsync, keepAliveAdmission);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         onConnectionPoolChanged(connectionPool, args);

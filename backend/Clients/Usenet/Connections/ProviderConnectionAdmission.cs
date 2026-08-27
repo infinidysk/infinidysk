@@ -11,10 +11,14 @@ internal enum ProviderConnectionKind
 /// <summary>
 /// Operation-aware admission in front of a single physical provider pool.
 /// Transfers have a hard cap; metadata can use its base allocation plus a bounded
-/// burst. Waiting transfers are admitted before metadata can re-borrow capacity.
+/// burst. Waiting transfers are normally admitted first, with a bounded grant streak
+/// so control and health metadata cannot starve behind sustained transfer demand.
 /// </summary>
 internal sealed class ProviderConnectionAdmission : IDisposable
 {
+    // Long enough to retain transfer bias while bounding metadata latency.
+    internal const int MaxConsecutiveTransferGrants = 8;
+
     private readonly Func<int> _getEffectiveProviderLimit;
     private readonly int _configuredTransferLimit;
     private readonly Lock _lock = new();
@@ -28,6 +32,7 @@ internal sealed class ProviderConnectionAdmission : IDisposable
     private int _activeMetadata;
     private int _transferAccumulatedOdds;
     private int _metadataAccumulatedOdds;
+    private int _consecutiveTransferGrants;
     private bool _disposed;
 
     internal bool IsDisposed
@@ -194,21 +199,33 @@ internal sealed class ProviderConnectionAdmission : IDisposable
         while (true)
         {
             ProviderConnectionKind? kind = null;
-            if (HasWaiters(ProviderConnectionKind.Transfer)
-                && CanEnter(ProviderConnectionKind.Transfer))
+            var transferWaiting = HasWaiters(ProviderConnectionKind.Transfer);
+            var metadataWaiting = HasWaiters(ProviderConnectionKind.Metadata);
+            var transferCanEnter = transferWaiting && CanEnter(ProviderConnectionKind.Transfer);
+            var metadataCanEnter = metadataWaiting && CanEnter(ProviderConnectionKind.Metadata);
+            if (transferCanEnter
+                && (!metadataCanEnter
+                    || _consecutiveTransferGrants < MaxConsecutiveTransferGrants))
             {
                 kind = ProviderConnectionKind.Transfer;
             }
-            else if (HasWaiters(ProviderConnectionKind.Metadata)
-                     && CanEnter(ProviderConnectionKind.Metadata))
+            else if (metadataCanEnter)
             {
                 kind = ProviderConnectionKind.Metadata;
+            }
+            else if (transferCanEnter)
+            {
+                kind = ProviderConnectionKind.Transfer;
             }
 
             if (kind is not { } selectedKind) break;
 
             var waiter = Dequeue(selectedKind);
             if (waiter is null) continue;
+            if (selectedKind == ProviderConnectionKind.Transfer && metadataWaiting)
+                _consecutiveTransferGrants++;
+            else if (selectedKind == ProviderConnectionKind.Metadata || !metadataWaiting)
+                _consecutiveTransferGrants = 0;
             Enter(selectedKind);
             ready.Add((waiter.Completion, new Lease(this, selectedKind)));
         }

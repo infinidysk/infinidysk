@@ -76,6 +76,79 @@ public class ConnectionPoolWarmConnectionTests
         Assert.Equal(1, pool.IdleConnections);
     }
 
+    [Fact]
+    public async Task InFlightKeepAliveReservesPhysicalPoolCapacity()
+    {
+        var created = 0;
+        var keepAliveEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseKeepAlive = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 1,
+            connectionFactory: _ => ValueTask.FromResult(
+                new TestConnection(Interlocked.Increment(ref created))),
+            idleTimeout: TimeSpan.FromMinutes(1),
+            warmConnectionFloor: 1,
+            keepAlive: async (_, ct) =>
+            {
+                keepAliveEntered.TrySetResult();
+                await releaseKeepAlive.Task.WaitAsync(ct);
+            });
+
+        await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1);
+        var sweep = pool.SweepOnceForTestsAsync();
+        await keepAliveEntered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        var borrower = pool.GetConnectionLockAsync(SemaphorePriority.High);
+        Assert.False(borrower.IsCompleted);
+        Assert.Equal(1, created);
+
+        releaseKeepAlive.TrySetResult();
+        await sweep.WaitAsync(TimeSpan.FromSeconds(1));
+        using var connection = await borrower.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(1, created);
+    }
+
+    [Fact]
+    public async Task KeepAliveUsesMetadataAdmission()
+    {
+        using var admission = new ProviderConnectionAdmission(
+            getEffectiveProviderLimit: () => 1,
+            configuredTransferLimit: 1);
+        var keepAliveCalls = 0;
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 1,
+            connectionFactory: _ => ValueTask.FromResult(new TestConnection(0)),
+            idleTimeout: TimeSpan.FromMinutes(1),
+            warmConnectionFloor: 1,
+            keepAlive: (_, _) =>
+            {
+                Interlocked.Increment(ref keepAliveCalls);
+                return Task.CompletedTask;
+            },
+            keepAliveAdmission: async ct => await admission.AcquireAsync(
+                ProviderConnectionKind.Metadata,
+                SemaphorePriority.Low,
+                ct));
+
+        await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1);
+        using var transfer = await admission.AcquireAsync(
+            ProviderConnectionKind.Transfer,
+            SemaphorePriority.Low,
+            CancellationToken.None);
+
+        var sweep = pool.SweepOnceForTestsAsync();
+        await WaitUntilAsync(
+            () => admission.GetSnapshot().WaitingMetadataOperations == 1);
+        Assert.False(sweep.IsCompleted);
+        Assert.Equal(0, Volatile.Read(ref keepAliveCalls));
+
+        transfer.Dispose();
+        await sweep.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(1, Volatile.Read(ref keepAliveCalls));
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         await Task.WhenAny(

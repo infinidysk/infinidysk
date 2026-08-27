@@ -16,6 +16,17 @@ describe("applyAutoTuneTransferRecommendation", () => {
     });
   });
 
+  it("caps a stale recommendation at the current provider limit", () => {
+    const applied = applyAutoTuneTransferRecommendation(
+      { providerConnectionLimit: "12", transferConnections: "10" },
+      20,
+      false,
+      false,
+    );
+
+    expect(applied.transferConnections).toBe("12");
+  });
+
   it("does not change limits for a pipelining-only result", () => {
     expect(applyAutoTuneTransferRecommendation(draft, 20, true, false)).toBe(draft);
   });

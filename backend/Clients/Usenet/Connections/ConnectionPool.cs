@@ -62,6 +62,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private readonly int _maxConnections;
     private readonly int _warmConnectionFloor;
     private readonly Func<T, CancellationToken, Task>? _keepAlive;
+    private readonly Func<CancellationToken, Task<IDisposable?>>? _keepAliveAdmission;
     private readonly Func<Exception, int?>? _connectionLimitDetector;
     private readonly Action<int, int>? _onConnectionLimitLearned;
 
@@ -109,7 +110,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         Func<Exception, int?>? connectionLimitDetector = null,
         Action<int, int>? onConnectionLimitLearned = null,
         int warmConnectionFloor = 0,
-        Func<T, CancellationToken, Task>? keepAlive = null)
+        Func<T, CancellationToken, Task>? keepAlive = null,
+        Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
 
@@ -124,6 +126,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         _maxConnections = maxConnections;
         _warmConnectionFloor = Math.Clamp(warmConnectionFloor, 0, maxConnections);
         _keepAlive = _warmConnectionFloor > 0 ? keepAlive : null;
+        _keepAliveAdmission = _warmConnectionFloor > 0 ? keepAliveAdmission : null;
         _effectiveMaxConnections = maxConnections;
         _connectionLimitDetector = connectionLimitDetector;
         _onConnectionLimitLearned = onConnectionLimitLearned;
@@ -455,42 +458,74 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             }
         }
 
-        // Ping idle warm connections before they reach their provider's own idle timeout.
-        // These connections are popped from the stack while the ping is in flight, so no
-        // borrower can receive a connection with a command already on the wire.
-        if (_keepAlive is not null)
-        {
-            var warmCount = Math.Min(effectiveWarmFloor, survivors.Count);
-            for (var i = 0; i < warmCount;)
-            {
-                var item = survivors[i];
-                try
-                {
-                    await _keepAlive(item.Connection, cancellationToken).ConfigureAwait(false);
-                    survivors[i] = item with { LastTouchedMillis = Environment.TickCount64 };
-                    i++;
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception e) when (e is not OutOfMemoryException)
-                {
-                    // An idle DATE failure only proves this socket is stale. Dispose it
-                    // and let the floor refill; it is deliberately not provider traffic.
-                    DisposeConnection(item.Connection);
-                    Interlocked.Decrement(ref _live);
-                    Interlocked.Increment(ref _connectionsDestroyed);
-                    survivors.RemoveAt(i);
-                    warmCount--;
-                    isAnyConnectionFreed = true;
-                }
-            }
-        }
-
+        // Restore survivors before borrowing warm sockets through the normal gate. This
+        // prevents hidden keepalive sockets from making the pool open above its ceiling.
         // Preserve original LIFO order.
         for (var i = survivors.Count - 1; i >= 0; i--)
             _idleConnections.Push(survivors[i]);
+
+        // Retain each borrowed socket until all pings finish so every DATE uses a distinct
+        // connection. Admission is held only while that socket's DATE is in flight.
+        if (_keepAlive is not null)
+        {
+            var warmCount = Math.Min(effectiveWarmFloor, survivors.Count);
+            var keepAliveLocks = new List<ConnectionLock<T>>(warmCount);
+            try
+            {
+                for (var i = 0; i < warmCount; i++)
+                {
+                    IDisposable? admission = null;
+                    try
+                    {
+                        if (_keepAliveAdmission is not null)
+                        {
+                            admission = await _keepAliveAdmission(cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+
+                        var connection = await GetConnectionLockCoreAsync(
+                                SemaphorePriority.Low,
+                                preferIdle: true,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                        keepAliveLocks.Add(connection);
+                        try
+                        {
+                            await _keepAlive(connection.Connection, cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception e) when (e is not OutOfMemoryException)
+                        {
+                            // An idle DATE failure only proves this socket is stale. Replace
+                            // it without recording a provider-traffic failure.
+                            connection.Replace();
+                        }
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception e) when (e is not OutOfMemoryException)
+                    {
+                        // Admission/pool acquisition failed; retry on the next sweep.
+                        break;
+                    }
+                    finally
+                    {
+                        admission?.Dispose();
+                    }
+                }
+            }
+            finally
+            {
+                foreach (var connection in keepAliveLocks)
+                    connection.Dispose();
+            }
+        }
 
         if (isAnyConnectionFreed)
             TriggerConnectionPoolChangedEvent();

@@ -130,10 +130,23 @@ public class MultiConnectionNntpClient(
     }
 
     private int _pendingSelections;
+    private int _pendingTransferSelections;
+    private int _pendingMetadataSelections;
     private int _retiredPoolWarningLogged;
     public int PendingSelections => Volatile.Read(ref _pendingSelections);
     public void ReservePending() => Interlocked.Increment(ref _pendingSelections);
     public void ReleasePending() => Interlocked.Decrement(ref _pendingSelections);
+    internal void ReservePending(NntpOperation operation)
+    {
+        Interlocked.Increment(ref _pendingSelections);
+        Interlocked.Increment(ref PendingSelectionsFor(ClassifyConnectionKind(operation)));
+    }
+
+    internal void ReleasePending(NntpOperation operation)
+    {
+        Interlocked.Decrement(ref PendingSelectionsFor(ClassifyConnectionKind(operation)));
+        Interlocked.Decrement(ref _pendingSelections);
+    }
 
     public int UnreservedConnections => Math.Max(0, AvailableConnections - PendingSelections);
     public bool HasSpareConnection => UnreservedConnections > 0;
@@ -143,6 +156,53 @@ public class MultiConnectionNntpClient(
     /// </summary>
     public double SpareFraction =>
         (double)UnreservedConnections / Math.Max(1, MaxConnections);
+
+    internal int UnreservedConnectionsFor(NntpOperation operation)
+    {
+        var physicalSpare = UnreservedConnections;
+        var admission = GetConnectionAdmissionSnapshot();
+        if (admission is null)
+            return physicalSpare;
+
+        var kind = ClassifyConnectionKind(operation);
+        var pendingForKind = Volatile.Read(ref PendingSelectionsFor(kind));
+        var kindSpare = kind == ProviderConnectionKind.Transfer
+            ? admission.EffectiveTransferLimit
+              - admission.ActiveTransferOperations
+              - pendingForKind
+            : admission.MaxMetadataCapacity
+              - admission.ActiveMetadataOperations
+              - pendingForKind;
+        var effectiveProviderLimit =
+            admission.EffectiveTransferLimit + admission.BaseMetadataCapacity;
+        var combinedSpare = effectiveProviderLimit
+                            - admission.ActiveTransferOperations
+                            - admission.ActiveMetadataOperations
+                            - PendingSelections;
+        return Math.Max(0, Math.Min(physicalSpare, Math.Min(kindSpare, combinedSpare)));
+    }
+
+    internal double SpareFractionFor(NntpOperation operation) =>
+        (double)UnreservedConnectionsFor(operation) / Math.Max(1, MaxConnections);
+
+    internal async Task<IDisposable?> AcquireKeepAliveAdmissionAsync(CancellationToken ct)
+    {
+        if (_connectionAdmission is null)
+            return null;
+
+        return await _connectionAdmission.AcquireAsync(
+                ProviderConnectionKind.Metadata,
+                SemaphorePriority.Low,
+                ct)
+            .ConfigureAwait(false);
+    }
+
+    private ref int PendingSelectionsFor(ProviderConnectionKind kind)
+    {
+        if (kind == ProviderConnectionKind.Transfer)
+            return ref _pendingTransferSelections;
+        return ref _pendingMetadataSelections;
+    }
 
     public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken)
     {

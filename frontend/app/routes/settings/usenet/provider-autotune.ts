@@ -19,8 +19,13 @@ export function applyAutoTuneTransferRecommendation(
     return draft;
   }
 
+  const providerLimit = Number(draft.providerConnectionLimit);
+  if (!Number.isInteger(providerLimit) || providerLimit <= 0) {
+    return draft;
+  }
+
   return {
     ...draft,
-    transferConnections: String(recommendedConnections),
+    transferConnections: String(Math.min(recommendedConnections, providerLimit)),
   };
 }
