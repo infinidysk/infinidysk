@@ -20,8 +20,22 @@ on:
         required: false
         default: ""
         type: string
-      library_cache_artifact:
-        description: Optional same-run artifact containing trusted compiled C# libraries
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version label embedded in the archive (for example 0.9.6)
+        required: true
+        type: string
+      checkout_ref:
+        description: Git ref or SHA to build (defaults to the release tag)
+        required: false
+        type: string
+      release_tag:
+        description: Existing GitHub release tag to receive the archives
+        required: true
+        type: string
+      rolling_tag:
+        description: Optional space-separated rolling GitHub release tags to receive stable-named copies
         required: false
         default: ""
         type: string
@@ -42,6 +56,8 @@ jobs:
         uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Build production frontend
         working-directory: frontend
@@ -92,59 +108,22 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Restore compiled C# libraries
-        if: inputs.library_cache_artifact != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
-        with:
-          name: ${{ inputs.library_cache_artifact }}
-          path: release-csharp-libraries
-
-      - name: Extract compiled C# libraries
-        if: inputs.library_cache_artifact != ''
-        run: tar -xzf release-csharp-libraries/release-csharp-libraries.tar.gz
-
       - name: Install native build tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
 
       - name: Build rapidyenc
         run: scripts/build-rapidyenc.sh "${{ matrix.rid }}"
 
-      - name: Restore backend
-        env:
-          RID: ${{ matrix.rid }}
-        run: dotnet restore backend/NzbWebDAV.csproj -r "$RID"
-
       - name: Publish backend
         env:
-          LIBRARY_CACHE_HIT: ${{ inputs.library_cache_artifact != '' }}
           RID: ${{ matrix.rid }}
         run: |
           set -euo pipefail
-          publish_args=()
-          if [[ "$LIBRARY_CACHE_HIT" == "true" ]]; then
-            for assembly in SharpCompress UsenetSharp RapidYencSharp; do
-              assembly_path="$(
-                dotnet msbuild "libs/$assembly/$assembly.csproj" \
-                  -getProperty:TargetPath \
-                  -p:Configuration=Release
-              )"
-              if [[ ! -f "$assembly_path" ]]; then
-                echo "Cached library output is incomplete: $assembly_path is missing." >&2
-                exit 1
-              fi
-            done
-            publish_args+=("-p:BuildProjectReferences=false")
-          fi
-
           dotnet publish backend/NzbWebDAV.csproj \
             -c Release \
             -r "$RID" \
             --self-contained false \
-            --no-restore \
-            -o backend-publish \
-            -p:RunAnalyzers=false \
-            -p:EnforceCodeStyleInBuild=false \
-            "${publish_args[@]}"
+            -o backend-publish
           cp "libs/RapidYencSharp/runtimes/$RID/native/librapidyenc.so" backend-publish/
 
       - name: Download frontend build
