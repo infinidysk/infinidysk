@@ -42,6 +42,9 @@ health check is already running, both paths share the aggregate admission limit 
 receives released capacity before waiting background verification. Repair and urgent-repair behavior
 inside each file check is otherwise unchanged.
 
+Provider auto-tune pauses new health checks and waits for active checks to release their verification
+connections before opening benchmark connections, so parallel workers cannot skew the measured limit.
+
 ## Re-check after provider changes [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
 
 Changing Usenet providers can affect which library files are available. After saving provider changes,
