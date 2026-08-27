@@ -22,7 +22,8 @@ Set username and password for the web UI. Session cookies can be hardened later 
 |---------|----------|
 | Host / Port | Provider NNTP endpoint (often `563` with SSL) |
 | Username / Password | Provider credentials |
-| Max Connections | At or below your plan allowance |
+| Provider Connection Limit | At or below your account allowance |
+| Transfer Connections | Leave blank for legacy scheduling, or use Auto-tune to set it |
 | Type | **Pool Connections** for primary accounts |
 | Use SSL | On for remote providers |
 | Storage group | Optional — same label for resellers that share upstream storage |

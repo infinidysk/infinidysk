@@ -111,6 +111,47 @@ public class DetectKneeTests
         Assert.False(stillClimbing);
     }
 
+    [Fact]
+    public void CapTransferRecommendation_LeavesRecommendationWithinProviderLimit()
+    {
+        var warnings = new List<string>();
+
+        var recommendation = UsenetBenchmarkService.CapTransferRecommendation(20, 50, warnings);
+
+        Assert.Equal(20, recommendation);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void CapTransferRecommendation_DoesNotRecommendChangingProviderLimit()
+    {
+        var warnings = new List<string>();
+
+        var recommendation = UsenetBenchmarkService.CapTransferRecommendation(40, 20, warnings);
+
+        Assert.Equal(20, recommendation);
+        var warning = Assert.Single(warnings);
+        Assert.Contains("Provider Connection Limit (20)", warning, StringComparison.Ordinal);
+        Assert.Contains("re-run Auto-tune", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CapTransferRecommendation_DoesNotDuplicateWarningOnConfirmationRun()
+    {
+        var warnings = new List<string>();
+
+        UsenetBenchmarkService.CapTransferRecommendation(40, 20, warnings);
+        UsenetBenchmarkService.CapTransferRecommendation(35, 20, warnings);
+
+        Assert.Single(warnings);
+    }
+
+    [Fact]
+    public void CapTransferRecommendation_PreservesMissingRecommendation()
+    {
+        Assert.Null(UsenetBenchmarkService.CapTransferRecommendation(null, 20));
+    }
+
     private static List<BenchmarkSweepPoint> Sweep(params (int Connections, double MegaBytesPerSec)[] points) =>
         points.Select(point => new BenchmarkSweepPoint
         {

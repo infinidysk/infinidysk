@@ -656,6 +656,13 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                     throw new ArgumentException($"Provider '{label}': port must be between 1 and 65535, but was {p.Port}.");
                 if (p.MaxConnections < 1)
                     throw new ArgumentException($"Provider '{label}': max connections must be at least 1, but was {p.MaxConnections}.");
+                if (p.MaxTransferConnections is < 1)
+                    throw new ArgumentException(
+                        $"Provider '{label}': transfer connections must be at least 1, but was {p.MaxTransferConnections}.");
+                if (p.MaxTransferConnections > p.MaxConnections)
+                    throw new ArgumentException(
+                        $"Provider '{label}': transfer connections must not exceed max connections " +
+                        $"({p.MaxConnections}), but was {p.MaxTransferConnections}.");
                 if (p.ByteLimit is < 0)
                     throw new ArgumentException($"Provider '{label}': byte limit must not be negative.");
             }

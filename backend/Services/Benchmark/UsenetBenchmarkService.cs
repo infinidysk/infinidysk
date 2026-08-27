@@ -12,7 +12,7 @@ namespace NzbWebDAV.Services.Benchmark;
 
 /// <summary>
 /// Measures real download speed and latency against a single provider and
-/// recommends the smallest connection count that nearly maxes out throughput
+/// recommends the smallest transfer connection count that nearly maxes out throughput
 /// (the diminishing-returns "knee"), plus whether NNTP pipelining helps and at
 /// what depth.
 ///
@@ -91,7 +91,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             result.ThroughputTested = false;
             result.Warnings.Add(
                 "No downloaded articles were available to measure speed, so only latency was tested. " +
-                "Download something first, then re-run to get a connection recommendation.");
+                "Download something first, then re-run to get a transfer-connection recommendation.");
             StampElapsed();
             Report("done", "Done — latency only.", 100, result, null, includeResult: true);
             return result;
@@ -238,8 +238,10 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             }
 
             result.ProviderConnectionCap = providerCap;
-            result.RecommendedConnections = DetectKnee(
-                result.Sweep, providerCap, result.Warnings, out var stillClimbing);
+            result.RecommendedConnections = CapTransferRecommendation(
+                DetectKnee(result.Sweep, providerCap, result.Warnings, out var stillClimbing),
+                configuredMaxConnections,
+                result.Warnings);
             result.StillClimbing = stillClimbing;
 
             // Thorough only: confirm the pick with a second independent window and blend.
@@ -272,8 +274,10 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
 
                         point.MegaBytesPerSec = Math.Round((point.MegaBytesPerSec + confirm.MegaBytesPerSec) / 2, 2);
                         point.Cv = Math.Round(Math.Max(point.Cv, confirm.Cv), 3);
-                        result.RecommendedConnections = DetectKnee(
-                            result.Sweep, providerCap, [], out stillClimbing);
+                        result.RecommendedConnections = CapTransferRecommendation(
+                            DetectKnee(result.Sweep, providerCap, [], out stillClimbing),
+                            configuredMaxConnections,
+                            result.Warnings);
                         result.StillClimbing = stillClimbing;
                     }
                 }
@@ -647,6 +651,28 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             ? Math.Sqrt(rates.Sum(r => (r - avg) * (r - avg)) / rates.Count) / avg
             : 0;
         return (median, cv);
+    }
+
+    internal static int? CapTransferRecommendation(
+        int? recommendation,
+        int configuredProviderLimit,
+        List<string>? warnings = null)
+    {
+        if (recommendation is not { } value) return null;
+
+        var providerLimit = Math.Max(1, configuredProviderLimit);
+        if (value <= providerLimit) return value;
+
+        const string warningPrefix = "The transfer recommendation was limited to your configured Provider Connection Limit";
+        var warning = $"{warningPrefix} ({providerLimit}). Increase that limit and re-run Auto-tune " +
+                      "if you want to test a higher transfer allocation.";
+        if (warnings is not null
+            && !warnings.Any(existing => existing.StartsWith(warningPrefix, StringComparison.Ordinal)))
+        {
+            warnings.Add(warning);
+        }
+
+        return providerLimit;
     }
 
     internal static string ComputeConfidence(BenchmarkResult result)

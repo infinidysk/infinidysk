@@ -23,6 +23,84 @@ public class UsenetProvidersValidationTests
         Assert.Contains("bad-pool", ex.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ValidateConfigItems_AcceptsNullMaxTransferConnections()
+    {
+        var items = ProvidersConfigItems(MakeProvider(maxTransferConnections: null));
+
+        ConfigManager.ValidateConfigItems(items);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ValidateConfigItems_RejectsNonPositiveMaxTransferConnections(int maxTransferConnections)
+    {
+        var items = ProvidersConfigItems(MakeProvider(
+            maxConnections: 10,
+            maxTransferConnections: maxTransferConnections,
+            nickname: "bad-transfer"));
+
+        var ex = Assert.Throws<ArgumentException>(() => ConfigManager.ValidateConfigItems(items));
+        Assert.Contains("transfer connections must be at least 1", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("bad-transfer", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateConfigItems_RejectsMaxTransferConnectionsAboveProviderLimit()
+    {
+        var items = ProvidersConfigItems(MakeProvider(
+            maxConnections: 10,
+            maxTransferConnections: 11,
+            nickname: "oversubscribed"));
+
+        var ex = Assert.Throws<ArgumentException>(() => ConfigManager.ValidateConfigItems(items));
+        Assert.Contains("transfer connections must not exceed max connections", ex.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("oversubscribed", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ProviderType.Pooled)]
+    [InlineData(ProviderType.BackupAndStats)]
+    [InlineData(ProviderType.BackupOnly)]
+    [InlineData(ProviderType.Disabled)]
+    public void ValidateConfigItems_AcceptsValidMaxTransferConnectionsForEveryProviderType(
+        ProviderType providerType)
+    {
+        var items = ProvidersConfigItems(MakeProvider(
+            type: providerType,
+            maxConnections: 10,
+            maxTransferConnections: 10));
+
+        ConfigManager.ValidateConfigItems(items);
+    }
+
+    [Fact]
+    public void DeserializeProviderWithoutMaxTransferConnections_UsesLegacyNull()
+    {
+        const string json = """
+                            {
+                              "Providers": [
+                                {
+                                  "Type": 1,
+                                  "Host": "legacy.example",
+                                  "Port": 563,
+                                  "UseSsl": true,
+                                  "User": "u",
+                                  "Pass": "p",
+                                  "MaxConnections": 20
+                                }
+                              ]
+                            }
+                            """;
+
+        var config = JsonSerializer.Deserialize<UsenetProviderConfig>(json);
+
+        Assert.NotNull(config);
+        Assert.Null(Assert.Single(config.Providers).MaxTransferConnections);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(70000)]
@@ -147,6 +225,7 @@ public class UsenetProvidersValidationTests
         string host = "nntp.example",
         int port = 563,
         int maxConnections = 10,
+        int? maxTransferConnections = null,
         ProviderType type = ProviderType.Pooled,
         string? nickname = null,
         long? byteLimit = null)
@@ -160,6 +239,7 @@ public class UsenetProvidersValidationTests
             User = "u",
             Pass = "p",
             MaxConnections = maxConnections,
+            MaxTransferConnections = maxTransferConnections,
             Nickname = nickname,
             ByteLimit = byteLimit,
         };

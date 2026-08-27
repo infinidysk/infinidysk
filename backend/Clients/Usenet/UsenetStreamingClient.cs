@@ -339,7 +339,9 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionDetails.PipeliningDepth,
             connectionDetails.StorageGroup,
             metricsKey,
-            latencyTracker
+            latencyTracker,
+            connectionDetails.MaxTransferConnections,
+            streamingPriority
         );
     }
 

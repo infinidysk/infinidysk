@@ -1,4 +1,7 @@
 using System.Text;
+using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services.Observability;
 using Prometheus;
 
@@ -47,5 +50,65 @@ public sealed class PrometheusMetricsTests
         Assert.Contains("nzbdav_shared_stream_lagging_readers", exposition);
         Assert.Contains("nzbdav_shared_stream_pressure_detaches_total", exposition);
         Assert.Contains("nzbdav_shared_stream_pressure_reaps_total", exposition);
+    }
+
+    [Fact]
+    public async Task ProviderPoolMetricsExposeAndRemoveAdmissionState()
+    {
+        var registry = new CollectorRegistry();
+        var metrics = new PrometheusMetrics(registry);
+        var churn = new ConnectionPoolChurn(1, 2, 3, 4, 5, 6, 7);
+        var admission = new ProviderConnectionAdmissionSnapshot(
+            ConfiguredTransferLimit: 20,
+            EffectiveTransferLimit: 15,
+            BaseMetadataCapacity: 0,
+            MetadataBurstAllowance: 7,
+            MaxMetadataCapacity: 7,
+            ActiveTransferOperations: 10,
+            ActiveMetadataOperations: 5,
+            WaitingTransferOperations: 2,
+            WaitingMetadataOperations: 3);
+        var snapshot = new ProviderConnectionSnapshot(
+            "provider-a", "news.example", ProviderType.Pooled,
+            LiveConnections: 15,
+            IdleConnections: 0,
+            ActiveConnections: 15,
+            AvailableConnections: 0,
+            PendingSelections: 1,
+            churn,
+            LearnedConnectionLimit: 17,
+            ConfiguredMaxConnections: 50,
+            EffectiveMaxConnections: 15,
+            admission);
+
+        metrics.SetPool(snapshot);
+        var exposition = await ExportAsync(registry);
+
+        Assert.Contains("state=\"transfer_active\"} 10", exposition);
+        Assert.Contains("state=\"metadata_active\"} 5", exposition);
+        Assert.Contains("state=\"transfer_waiting\"} 2", exposition);
+        Assert.Contains("state=\"metadata_waiting\"} 3", exposition);
+        Assert.Contains("limit=\"configured\"} 50", exposition);
+        Assert.Contains("limit=\"effective\"} 15", exposition);
+        Assert.Contains("limit=\"transfer_configured\"} 20", exposition);
+        Assert.Contains("limit=\"transfer_effective\"} 15", exposition);
+        Assert.Contains("limit=\"metadata_base\"} 0", exposition);
+        Assert.Contains("limit=\"metadata_burst\"} 7", exposition);
+        Assert.Contains("limit=\"metadata_max\"} 7", exposition);
+
+        metrics.SetPool(snapshot with { Admission = null, LearnedConnectionLimit = null });
+        exposition = await ExportAsync(registry);
+
+        Assert.DoesNotContain("state=\"transfer_active\"", exposition);
+        Assert.DoesNotContain("state=\"metadata_active\"", exposition);
+        Assert.DoesNotContain("limit=\"transfer_configured\"", exposition);
+        Assert.DoesNotContain("limit=\"learned\"", exposition);
+    }
+
+    private static async Task<string> ExportAsync(CollectorRegistry registry)
+    {
+        await using var stream = new MemoryStream();
+        await registry.CollectAndExportAsTextAsync(stream);
+        return Encoding.UTF8.GetString(stream.ToArray());
     }
 }
