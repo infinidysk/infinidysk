@@ -108,22 +108,70 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Resolve .NET SDK version
+        id: dotnet-sdk
+        run: echo "version=$(dotnet --version)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-release-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props', 'nuget.config') }}
+          restore-keys: |
+            ${{ runner.os }}-release-nuget-
+
+      # Use only exact hits: checkout timestamps cannot safely drive MSBuild incrementality.
+      - name: Cache compiled C# libraries
+        id: library-build-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            libs/SharpCompress/bin
+            libs/SharpCompress/obj
+            libs/UsenetSharp/bin
+            libs/UsenetSharp/obj
+            libs/RapidYencSharp/bin
+            libs/RapidYencSharp/obj
+          key: library-build-v1-${{ runner.os }}-${{ matrix.rid }}-Release-${{ steps.dotnet-sdk.outputs.version }}-${{ hashFiles('Directory.Build.props', 'Directory.Packages.props', '.editorconfig', 'libs/SharpCompress.snk', 'libs/SharpCompress/**/*.cs', 'libs/SharpCompress/*.csproj', 'libs/SharpCompress/.editorconfig', 'libs/UsenetSharp/**/*.cs', 'libs/UsenetSharp/*.csproj', 'libs/UsenetSharp/.editorconfig', 'libs/RapidYencSharp/**/*.cs', 'libs/RapidYencSharp/*.csproj', 'libs/RapidYencSharp/.editorconfig') }}
+
       - name: Install native build tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
 
       - name: Build rapidyenc
         run: scripts/build-rapidyenc.sh "${{ matrix.rid }}"
 
+      - name: Restore backend
+        env:
+          RID: ${{ matrix.rid }}
+        run: dotnet restore backend/NzbWebDAV.csproj -r "$RID"
+
       - name: Publish backend
         env:
+          LIBRARY_CACHE_HIT: ${{ steps.library-build-cache.outputs.cache-hit }}
           RID: ${{ matrix.rid }}
         run: |
           set -euo pipefail
+          publish_args=()
+          if [[ "$LIBRARY_CACHE_HIT" == "true" ]]; then
+            for assembly in SharpCompress UsenetSharp RapidYencSharp; do
+              assembly_path="libs/$assembly/bin/Release/net10.0/$assembly.dll"
+              if [[ ! -f "$assembly_path" ]]; then
+                echo "Cached library output is incomplete: $assembly_path is missing." >&2
+                exit 1
+              fi
+            done
+            publish_args+=("-p:BuildProjectReferences=false")
+          fi
+
           dotnet publish backend/NzbWebDAV.csproj \
             -c Release \
             -r "$RID" \
             --self-contained false \
-            -o backend-publish
+            --no-restore \
+            -o backend-publish \
+            -p:RunAnalyzers=false \
+            -p:EnforceCodeStyleInBuild=false \
+            "${publish_args[@]}"
           cp "libs/RapidYencSharp/runtimes/$RID/native/librapidyenc.so" backend-publish/
 
       - name: Download frontend build
