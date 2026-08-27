@@ -29,6 +29,36 @@ rules. Typical mappings:
 
 Any action other than **Do Nothing** tells the Arr to delete the queue record with `removeFromClient=true`. The Arr then removes the download from InfiniDysk History even when its own **Remove Completed** checkbox is off. That is independent of mounted files, which stay.
 
+## Releases stuck in Awaiting import
+
+Sometimes Sonarr completes a download but refuses to import it because the
+season numbering in the release name disagrees with Sonarr's metadata. A
+representative queue reason is:
+
+> Episode 11x01 was unexpected considering the
+> American.Dad.S10E01... folder name
+
+Sonarr determines episode identity and import eligibility. InfiniDysk cannot
+remap the episode or force Sonarr to import it, but it can automatically
+resolve the stuck queue record.
+
+In **Settings -> Arr Apps -> Automatic queue management**, choose an action
+for **Episode(s) was/were unexpected considering the folder name**:
+
+- **Remove** removes the stuck queue record.
+- **Remove and Blocklist** also prevents Sonarr from accepting that release
+  again.
+- **Remove, Blocklist, and Search** also asks Sonarr to find a replacement.
+
+All queue rules default to **Do Nothing**. With that default, the item remains
+in Awaiting Import until an operator resolves it. The Overview Arr Health
+panel reports unusually long waits but does not mutate the queue.
+
+Use **Remove, Blocklist, and Search** when an automatic replacement is wanted.
+A numbering disagreement can affect every indexed release for the episode;
+the per-media replacement-search limit eventually withholds additional
+searches while continuing to remove and blocklist rejected releases.
+
 ## Replacement-search safety limit [since 1.2.4](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.4){ .nzbdav-since }
 
 **Remove, Blocklist, and Search** is bounded to **3 automatic replacement searches in
