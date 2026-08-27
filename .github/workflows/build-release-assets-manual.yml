@@ -1,0 +1,36 @@
+name: Build release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version label embedded in the archive (for example 0.9.6)
+        required: true
+        type: string
+      checkout_ref:
+        description: Git ref or SHA to build (defaults to the release tag)
+        required: false
+        type: string
+      release_tag:
+        description: Existing GitHub release tag to receive the archives
+        required: true
+        type: string
+      rolling_tag:
+        description: Optional space-separated rolling GitHub release tags to receive stable-named copies
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  assets:
+    uses: ./.github/workflows/build-release-assets.yml
+    permissions:
+      contents: write
+    with:
+      version: ${{ inputs.version }}
+      checkout_ref: ${{ inputs.checkout_ref || inputs.release_tag }}
+      release_tag: ${{ inputs.release_tag }}
+      rolling_tag: ${{ inputs.rolling_tag }}
