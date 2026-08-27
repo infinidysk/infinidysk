@@ -24,7 +24,7 @@ export function RadioJoinFilter<T extends string>({
         return (
           <label
             key={option.id}
-            className={`btn btn-sm join-item max-sm:min-h-11 ${
+            className={`btn btn-sm join-item max-sm:min-h-11 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${
               selected ? "btn-active" : "btn-ghost"
             }`}
           >

@@ -523,7 +523,7 @@ function LevelChip({
   const activeClass = !active ? "btn-ghost opacity-55" : levelActiveBtnClass(level);
   return (
     <label
-      className={`btn btn-sm join-item max-sm:min-h-11 uppercase tracking-wide ${activeClass}`}
+      className={`btn btn-sm join-item max-sm:min-h-11 uppercase tracking-wide focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${activeClass}`}
     >
       <input
         type="checkbox"
