@@ -19,11 +19,22 @@ internal sealed class LimitedReadStream(
     public override long Length => throw new NotSupportedException();
     public override long Position { get => _read; set => throw new NotSupportedException(); }
     public override void Flush() => throw new NotSupportedException();
-    public override int Read(byte[] buffer, int offset, int count) => Count(inner.Read(buffer, offset, count));
-    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) => ReadAndCountAsync(buffer, ct);
+    public override int Read(byte[] buffer, int offset, int count) =>
+        Count(inner.Read(buffer, offset, CapCount(count)));
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) =>
+        ReadAndCountAsync(buffer[..CapCount(buffer.Length)], ct);
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    // Bound each inner read to the remaining allowance plus one byte: an exact-limit
+    // payload still reaches EOF, while an oversize source trips the limit after a
+    // single extra byte instead of consuming a full caller buffer past the limit.
+    private int CapCount(int requested)
+    {
+        var remaining = maximumBytes - _read;
+        return remaining >= requested ? requested : (int)(remaining + 1);
+    }
 
     private int Count(int read)
     {

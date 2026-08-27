@@ -14,7 +14,7 @@ public class LimitedReadStreamTests
         await using var limited = new LimitedReadStream(
             inner, payload.Length, () => new InvalidOperationException("limit"));
 
-        var copied = new MemoryStream();
+        await using var copied = new MemoryStream();
         await limited.CopyToAsync(copied);
 
         Assert.Equal(payload, copied.ToArray());
@@ -28,9 +28,39 @@ public class LimitedReadStreamTests
             inner, 1024, () => new InvalidOperationException("limit tripped"));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => limited.CopyToAsync(new MemoryStream()));
+            () => limited.CopyToAsync(Stream.Null));
 
         Assert.Equal("limit tripped", ex.Message);
+    }
+
+    [Fact]
+    public async Task Copy_OversizeSource_InnerReadStopsAtLimitPlusOne()
+    {
+        // A payload far larger than the limit must not be drained a full copy
+        // buffer past it: the inner read is capped at the remaining allowance
+        // plus the single byte that trips the limit.
+        await using var inner = new MemoryStream(new byte[1 << 20]);
+        await using var limited = new LimitedReadStream(
+            inner, 1024, () => new InvalidDataException("limit"));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => limited.CopyToAsync(Stream.Null));
+
+        Assert.True(
+            inner.Position <= 1024 + 1,
+            $"inner stream was read to {inner.Position}, beyond the limit plus one byte");
+    }
+
+    [Fact]
+    public void Read_OversizeSource_SyncPathCapsInnerRead()
+    {
+        using var inner = new MemoryStream(new byte[1 << 20]);
+        using var limited = new LimitedReadStream(
+            inner, 1024, () => new InvalidDataException("limit"));
+
+        var buffer = new byte[8192];
+        Assert.Throws<InvalidDataException>(() => limited.Read(buffer, 0, buffer.Length));
+
+        Assert.Equal(1025, inner.Position);
     }
 
     [Fact]
@@ -48,7 +78,7 @@ public class LimitedReadStreamTests
         // ThrowsAny: an OCE crossing async method boundaries resurfaces as
         // TaskCanceledException; either proves cancellation beat the limit.
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => limited.CopyToAsync(new MemoryStream(), cts.Token));
+            () => limited.CopyToAsync(Stream.Null, cts.Token));
     }
 
     /// <summary>
