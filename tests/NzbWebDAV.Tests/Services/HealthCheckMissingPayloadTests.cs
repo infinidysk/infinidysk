@@ -5,6 +5,7 @@ using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Tests.Services;
 
@@ -22,17 +23,19 @@ public sealed class HealthCheckMissingPayloadTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+        _context = new DavDatabaseContext(CreateOptions());
+        await _context.Database.MigrateAsync();
+        _dbClient = new DavDatabaseClient(_context);
+    }
+
+    private DbContextOptions<DavDatabaseContext> CreateOptions() =>
+        new DbContextOptionsBuilder<DavDatabaseContext>()
             .UseSqlite($"Data Source={_databasePath}")
             .AddInterceptors(new SqliteForeignKeyEnabler())
             .ReplaceService<
                 IMigrationsSqlGenerator,
                 SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
             .Options;
-        _context = new DavDatabaseContext(options);
-        await _context.Database.MigrateAsync();
-        _dbClient = new DavDatabaseClient(_context);
-    }
 
     public async Task DisposeAsync()
     {
@@ -88,6 +91,81 @@ public sealed class HealthCheckMissingPayloadTests : IAsyncLifetime
         Assert.Equal(DavItem.ItemSubType.MultipartFile, ex.StoreKind);
         Assert.Contains(payloadId.ToString(), ex.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task MissingPayloadConfirmation_SurvivesContextReopen()
+    {
+        var item = NewUsenetFile(DavItem.ItemSubType.NzbFile, fileBlobId: Guid.NewGuid());
+        _context.HealthCheckResults.AddRange(
+            MissingPayloadResult(item, DateTimeOffset.UtcNow.AddMinutes(-2)),
+            MissingPayloadResult(item, DateTimeOffset.UtcNow.AddMinutes(-1)));
+        await _context.SaveChangesAsync();
+
+        await _context.DisposeAsync();
+        _context = new DavDatabaseContext(CreateOptions());
+        _dbClient = new DavDatabaseClient(_context);
+
+        var confirmations = await HealthCheckService.GetMissingPayloadConfirmationAsync(
+            _context, item.Id, CancellationToken.None);
+
+        Assert.Equal(3, confirmations);
+    }
+
+    [Fact]
+    public async Task MissingPayloadConfirmation_ResetsAfterUnrelatedResult()
+    {
+        var item = NewUsenetFile(DavItem.ItemSubType.NzbFile, fileBlobId: Guid.NewGuid());
+        _context.HealthCheckResults.AddRange(
+            MissingPayloadResult(item, DateTimeOffset.UtcNow.AddMinutes(-3)),
+            new HealthCheckResult
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                DavItemId = item.Id,
+                Path = item.Path,
+                Result = HealthCheckResult.HealthResult.Healthy,
+                RepairStatus = HealthCheckResult.RepairAction.None,
+                Message = "File is healthy.",
+            },
+            MissingPayloadResult(item, DateTimeOffset.UtcNow.AddMinutes(-1)));
+        await _context.SaveChangesAsync();
+
+        var confirmations = await HealthCheckService.GetMissingPayloadConfirmationAsync(
+            _context, item.Id, CancellationToken.None);
+
+        Assert.Equal(2, confirmations);
+    }
+
+    [Fact]
+    public void MissingPayloadRecheckDelay_UsesDailyThenWeeklySchedule()
+    {
+        Assert.Equal(
+            TimeSpan.FromDays(1),
+            HealthCheckService.GetMissingPayloadRecheckDelay(1));
+        Assert.Equal(
+            TimeSpan.FromDays(1),
+            HealthCheckService.GetMissingPayloadRecheckDelay(2));
+        Assert.Equal(
+            TimeSpan.FromDays(7),
+            HealthCheckService.GetMissingPayloadRecheckDelay(3));
+        Assert.Equal(
+            TimeSpan.FromDays(7),
+            HealthCheckService.GetMissingPayloadRecheckDelay(4));
+    }
+
+    private static HealthCheckResult MissingPayloadResult(
+        DavItem item,
+        DateTimeOffset createdAt) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = createdAt,
+            DavItemId = item.Id,
+            Path = item.Path,
+            Result = HealthCheckResult.HealthResult.Unhealthy,
+            RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
+            Message = HealthCheckService.MissingPayloadMessagePrefix + " details",
+        };
 
     private static DavItem NewUsenetFile(DavItem.ItemSubType subType, Guid? fileBlobId)
     {

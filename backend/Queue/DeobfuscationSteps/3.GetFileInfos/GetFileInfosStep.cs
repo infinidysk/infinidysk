@@ -87,6 +87,7 @@ public static class GetFileInfosStep
             FileSize = (long?)fileDesc?.FileLength,
             IsRar = isRar,
             SniffedVideoExtension = sniffedVideoExtension,
+            First16KB = file.First16KB,
         };
     }
 
@@ -168,5 +169,6 @@ public static class GetFileInfosStep
         public long? FileSize { get; init; }
         public bool IsRar { get; init; }
         public string? SniffedVideoExtension { get; init; }
+        public byte[]? First16KB { get; init; }
     }
 }

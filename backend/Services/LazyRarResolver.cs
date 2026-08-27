@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
@@ -23,7 +24,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
     // Keyed by the volume's first segment ID so two readers asking for the
     // same trailing part share one parse, even if they hit different
     // FileParts.Length snapshots (which the old (Guid,int) key broke).
-    private readonly ConcurrentDictionary<(Guid, string), Task<DavMultipartFile.FilePart>> _inFlight = new();
+    private readonly ConcurrentDictionary<(Guid, string), Task<Resolution>> _inFlight = new();
 
     private readonly ConcurrentDictionary<Guid, Persistor> _persistors = new();
 
@@ -44,6 +45,18 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         public readonly SemaphoreSlim Sem = new(1, 1);
         public long LatestStamp;
     }
+
+    private sealed class Resolution
+    {
+        public required DavMultipartFile.PendingPart Pending { get; init; }
+        public DavMultipartFile.FilePart? Part { get; init; }
+        public string? FoundPath { get; init; }
+        public bool IsSplitBefore { get; init; }
+        public bool IsSplitAfter { get; init; }
+        public bool IsSolid { get; init; }
+        public bool IsEncrypted { get; init; }
+        public Exception? Error { get; init; }
+    }
 #pragma warning restore CA1001
 
     // Resolve enough trailing volumes to cover targetByteOffset and return
@@ -56,7 +69,11 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         long targetByteOffset,
         CancellationToken ct)
     {
-        var meta = mpf.Metadata;
+        var current = mpf.Metadata;
+        if (!current.IsLazy) return current;
+        if (SumResolvedBytes(current) > targetByteOffset) return current;
+
+        var meta = await EnsureLastResolvedSplitStateAsync(mpf, ct).ConfigureAwait(false);
         if (!meta.IsLazy) return meta;
 
         // Old MemoryPack blobs may deserialize PendingParts as null despite
@@ -82,27 +99,214 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         var partsToResolve = new DavMultipartFile.PendingPart[count];
         Array.Copy(pending, partsToResolve, count);
 
-        // Run resolutions in parallel, bounded by the provider plan limit.
-        // Use the same cap that governs the rest of the queue processor so
-        // we never burst past what the user's provider plan allows.
+        // Start a bounded parallel window, but consume it in physical order.
+        // This preserves tail-seek throughput while letting a terminal member
+        // part return without waiting for unrelated trailing probes.
         var maxConcurrency = Math.Max(1, configManager.GetMaxDownloadConnections());
-        using var semaphore = new SemaphoreSlim(maxConcurrency);
+        var resolveds = await ResolveOrderedPrefixAsync(
+                mpf, partsToResolve, maxConcurrency, ct)
+            .ConfigureAwait(false);
+        return CommitResolvedBatch(mpf, resolveds);
+    }
 
-        var resolveTasks = partsToResolve.Select(async part =>
+    private async Task<DavMultipartFile.Meta> EnsureLastResolvedSplitStateAsync(
+        DavMultipartFile mpf,
+        CancellationToken ct)
+    {
+        var meta = mpf.Metadata;
+        var pending = meta.PendingParts ?? [];
+        var fileParts = meta.FileParts ?? [];
+        if (!meta.IsLazy || pending.Length == 0 || fileParts.Length == 0) return meta;
+
+        var lastPart = fileParts[^1];
+        if (lastPart.IsSplitAfter is null)
         {
-            await semaphore.WaitAsync(ct).ConfigureAwait(false);
+            var splitAfter = await ReadResolvedPartSplitStateAsync(
+                    meta, lastPart, fileParts.Length - 1, ct)
+                .ConfigureAwait(false);
+
+            lock (mpf)
+            {
+                meta = mpf.Metadata;
+                fileParts = meta.FileParts ?? [];
+                if (fileParts.Length > 0
+                    && fileParts[^1].SegmentIds.SequenceEqual(lastPart.SegmentIds)
+                    && fileParts[^1].IsSplitAfter is null)
+                {
+                    fileParts[^1].IsSplitAfter = splitAfter;
+                    _ = SchedulePersistAsync(mpf, reconcileFileSize: false);
+                }
+            }
+        }
+
+        meta = mpf.Metadata;
+        fileParts = meta.FileParts ?? [];
+        if (fileParts.Length == 0 || fileParts[^1].IsSplitAfter is not false) return meta;
+        return CompleteAtResolvedTerminal(mpf);
+    }
+
+    private async Task<bool> ReadResolvedPartSplitStateAsync(
+        DavMultipartFile.Meta meta,
+        DavMultipartFile.FilePart part,
+        int partIndex,
+        CancellationToken ct)
+    {
+        var pathInArchive = meta.PathInArchive
+            ?? throw new InvalidOperationException("Lazy RAR meta missing PathInArchive.");
+        var fileSize = Math.Max(
+            part.SegmentIdByteRange.Count,
+            part.FilePartByteRange.EndExclusive);
+        await using var stream = OpenVolumeStream(
+            part.SegmentIds,
+            fileSize,
+            part.SegmentFallbackIds,
+            part.SegmentByteRanges);
+        var headers = await RarUtil.ReadHeadersUntilFirstFileAsync(
+                stream, meta.ArchivePassword, ct)
+            .ConfigureAwait(false);
+        var header = headers.OfType<IRarFileHeader>().LastOrDefault(h => !h.IsDirectory);
+        var expectedSplitBefore = partIndex > 0;
+        if (header is null
+            || !string.Equals(header.FileName, pathInArchive, StringComparison.Ordinal)
+            || header.IsSplitBefore != expectedSplitBefore
+            || header.IsSolid
+            || header.IsEncrypted != (meta.AesParams is not null))
+        {
+            var found = header is null
+                ? "no file header"
+                : $"'{header.FileName}' (split-before: {header.IsSplitBefore}, " +
+                  $"split-after: {header.IsSplitAfter}, solid: {header.IsSolid}, " +
+                  $"encrypted: {header.IsEncrypted})";
+            throw new CorruptRarException(
+                $"Lazy RAR resolution: could not recover split state for resolved volume " +
+                $"{partIndex + 1}; expected '{pathInArchive}', found {found}.");
+        }
+
+        return header.IsSplitAfter;
+    }
+
+    private DavMultipartFile.Meta CompleteAtResolvedTerminal(DavMultipartFile mpf)
+    {
+        lock (mpf)
+        {
+            var meta = mpf.Metadata;
+            var fileParts = meta.FileParts ?? [];
+            var pendingParts = meta.PendingParts ?? [];
+            if (!meta.IsLazy
+                || pendingParts.Length == 0
+                || fileParts.Length == 0
+                || fileParts[^1].IsSplitAfter is not false)
+            {
+                return meta;
+            }
+
+            ValidateTerminalSize(meta, fileParts, [], pendingParts.Length);
+            var newMeta = new DavMultipartFile.Meta
+            {
+                AesParams = meta.AesParams,
+                FileParts = fileParts,
+                IsLazy = false,
+                PathInArchive = meta.PathInArchive,
+                ArchivePassword = meta.ArchivePassword,
+                PendingParts = [],
+                ExpectedFileSize = meta.ExpectedFileSize,
+            };
+
+            Log.Information(
+                "Lazy RAR member {Path} was already complete; discarding {IgnoredCount} unrelated " +
+                "trailing volume(s) from multipart {Id}",
+                meta.PathInArchive,
+                pendingParts.Length,
+                mpf.Id);
+            mpf.Metadata = newMeta;
+            _ = SchedulePersistAsync(mpf, reconcileFileSize: true);
+            return newMeta;
+        }
+    }
+
+    private async Task<Resolution[]> ResolveOrderedPrefixAsync(
+        DavMultipartFile mpf,
+        DavMultipartFile.PendingPart[] parts,
+        int maxConcurrency,
+        CancellationToken ct)
+    {
+        var tasks = new Task<Resolution>?[parts.Length];
+        var started = Math.Min(maxConcurrency, parts.Length);
+        for (var i = 0; i < started; i++)
+            tasks[i] = GetOrStartResolutionAsync(mpf, parts[i], ct);
+
+        var results = new List<Resolution>(parts.Length);
+        try
+        {
+            for (var i = 0; i < parts.Length; i++)
+            {
+                var outcome = await tasks[i]!.ConfigureAwait(false);
+                results.Add(outcome);
+
+                if (outcome.Error is not null
+                    || outcome.Part is null
+                    || outcome.IsEncrypted != (mpf.Metadata.AesParams is not null)
+                    || !outcome.IsSplitAfter)
+                {
+                    _ = ObserveResolutionTasksAsync(
+                        tasks.Skip(i + 1).Take(started - i - 1),
+                        mpf.Metadata.PathInArchive);
+                    break;
+                }
+
+                if (started < parts.Length)
+                {
+                    tasks[started] = GetOrStartResolutionAsync(mpf, parts[started], ct);
+                    started++;
+                }
+            }
+        }
+        catch
+        {
+            _ = ObserveResolutionTasksAsync(
+                tasks.Take(started).Where(task => task is not null)!,
+                mpf.Metadata.PathInArchive);
+            throw;
+        }
+
+        return results.ToArray();
+    }
+
+    private static async Task ObserveResolutionTasksAsync(
+        IEnumerable<Task<Resolution>?> tasks,
+        string? pathInArchive)
+    {
+        foreach (var task in tasks.Where(task => task is not null))
+        {
             try
             {
-                return await GetOrStartResolutionAsync(mpf, part, ct).ConfigureAwait(false);
+                var outcome = await task!.ConfigureAwait(false);
+                if (outcome.Error is not null)
+                {
+                    Log.Debug(
+                        outcome.Error,
+                        "Ignored failure from a RAR probe after ordered resolution stopped for {Path}",
+                        pathInArchive);
+                }
             }
-            finally
+            catch (OutOfMemoryException e)
             {
-                semaphore.Release();
+                Log.Fatal(
+                    e,
+                    "Fatal out-of-memory failure in detached RAR probe for {Path}",
+                    pathInArchive);
+                Environment.FailFast(
+                    $"Fatal out-of-memory failure in detached RAR probe for {pathInArchive}.",
+                    e);
             }
-        }).ToArray();
-
-        var resolveds = await Task.WhenAll(resolveTasks).ConfigureAwait(false);
-        return CommitResolvedBatch(mpf, resolveds);
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                Log.Debug(
+                    e,
+                    "Ignored RAR probe task failure after ordered resolution stopped for {Path}",
+                    pathInArchive);
+            }
+        }
     }
 
     // Convenience for the sequential read path (DavMultipartFileStream
@@ -112,7 +316,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         DavMultipartFile mpf,
         CancellationToken ct)
     {
-        var meta = mpf.Metadata;
+        var meta = await EnsureLastResolvedSplitStateAsync(mpf, ct).ConfigureAwait(false);
         var pending = meta.PendingParts ?? [];
         if (!meta.IsLazy || pending.Length == 0) return meta;
 
@@ -123,7 +327,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
     // Coalesce by the part's first segment ID. Two concurrent readers
     // asking for the same volume share one resolution regardless of where
     // it currently sits in PendingParts.
-    private Task<DavMultipartFile.FilePart> GetOrStartResolutionAsync(
+    private Task<Resolution> GetOrStartResolutionAsync(
         DavMultipartFile mpf,
         DavMultipartFile.PendingPart pending,
         CancellationToken callerCt)
@@ -135,7 +339,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         // out doesn't kill resolution for others waiting on it.
         var shared = _inFlight.GetOrAdd(key, k =>
         {
-            var task = DoResolveAsync(mpf, pending, CancellationToken.None);
+            var task = CaptureResolutionAsync(mpf, pending, CancellationToken.None);
             // Drop the entry once done so the dictionary doesn't grow
             // unbounded; the result lives in FileParts after commit.
             _ = task.ContinueWith(t => _inFlight.TryRemove(k, out _),
@@ -148,7 +352,30 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         return shared.WaitAsync(callerCt);
     }
 
-    private async Task<DavMultipartFile.FilePart> DoResolveAsync(
+    private async Task<Resolution> CaptureResolutionAsync(
+        DavMultipartFile mpf,
+        DavMultipartFile.PendingPart pending,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await DoResolveAsync(mpf, pending, ct).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // Full pre-warm resolves volumes concurrently. Preserve failures as
+            // ordered outcomes so a terminal member part can make failures in
+            // unrelated trailing volumes irrelevant; failures before the
+            // terminal part are rethrown by CommitResolvedBatch.
+            return new Resolution
+            {
+                Pending = pending,
+                Error = e,
+            };
+        }
+    }
+
+    private async Task<Resolution> DoResolveAsync(
         DavMultipartFile mpf,
         DavMultipartFile.PendingPart pending,
         CancellationToken ct)
@@ -184,7 +411,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         }
     }
 
-    private async Task<DavMultipartFile.FilePart> ParseVolumeHeaderAsync(
+    private async Task<Resolution> ParseVolumeHeaderAsync(
         DavMultipartFile.PendingPart pending,
         string pathInArchive,
         string? password,
@@ -192,34 +419,65 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         CancellationToken ct)
     {
         await using var stream = OpenVolumeStream(
-            pending.SegmentIds, fileSize, pending.SegmentFallbackIds);
+            pending.SegmentIds,
+            fileSize,
+            pending.SegmentFallbackIds);
 
-        // Find-and-stop after the matching header. With in-tree SharpCompress
-        // deferred data-skip, this no longer seeks past packed payload on
-        // NzbFileStream (which previously triggered InterpolationSearch).
-        // Measure-and-retry for understated Length remains as defense in depth.
-        var match = await RarUtil.FindFirstFileHeaderAsync(
-            stream,
-            password,
-            h => h.FileName == pathInArchive,
-            ct).ConfigureAwait(false)
-            ?? throw new CorruptRarException(
-                $"Lazy RAR resolution: continuation header for '{pathInArchive}' not found in trailing volume.");
+        // A continuation must be the first real file header in the next
+        // physical volume. Reading only that header avoids scanning unrelated
+        // payload and lets split flags, rather than filename alone, define the
+        // member's volume span.
+        var headers = await RarUtil.ReadHeadersUntilFirstFileAsync(stream, password, ct)
+            .ConfigureAwait(false);
+        var match = headers.OfType<IRarFileHeader>().LastOrDefault(h => !h.IsDirectory);
+        if (match is null
+            || !string.Equals(match.FileName, pathInArchive, StringComparison.Ordinal)
+            || !match.IsSplitBefore
+            || match.IsSolid)
+        {
+            return new Resolution
+            {
+                Pending = pending,
+                FoundPath = match?.FileName,
+                IsSplitBefore = match?.IsSplitBefore ?? false,
+                IsSplitAfter = match?.IsSplitAfter ?? false,
+                IsSolid = match?.IsSolid ?? false,
+                IsEncrypted = match?.IsEncrypted ?? false,
+            };
+        }
 
         var dataStart = match.DataStartPosition;
         var dataSize = match.AdditionalDataSize;
-        return new DavMultipartFile.FilePart
+        return new Resolution
         {
-            SegmentIds = pending.SegmentIds,
-            SegmentIdByteRange = LongRange.FromStartAndSize(0, Math.Max(fileSize, dataStart + dataSize)),
-            FilePartByteRange = LongRange.FromStartAndSize(dataStart, dataSize),
-            SegmentFallbackIds = pending.SegmentFallbackIds,
+            Pending = pending,
+            Part = new DavMultipartFile.FilePart
+            {
+                SegmentIds = pending.SegmentIds,
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, Math.Max(fileSize, dataStart + dataSize)),
+                FilePartByteRange = LongRange.FromStartAndSize(dataStart, dataSize),
+                SegmentFallbackIds = pending.SegmentFallbackIds,
+                IsSplitAfter = match.IsSplitAfter,
+            },
+            FoundPath = match.FileName,
+            IsSplitBefore = match.IsSplitBefore,
+            IsSplitAfter = match.IsSplitAfter,
+            IsSolid = match.IsSolid,
+            IsEncrypted = match.IsEncrypted,
         };
     }
 
-    private Stream OpenVolumeStream(string[] segmentIds, long fileSize, string[][]? segmentFallbacks = null) =>
+    private Stream OpenVolumeStream(
+        string[] segmentIds,
+        long fileSize,
+        string[][]? segmentFallbacks = null,
+        LongRange[]? segmentByteRanges = null) =>
         VolumeStreamFactory?.Invoke(segmentIds, fileSize)
-        ?? usenetClient.GetFileStream(segmentIds, fileSize, articleBufferSize: 0,
+        ?? usenetClient.GetFileStream(
+            segmentIds,
+            fileSize,
+            articleBufferSize: 0,
+            segmentByteRanges: segmentByteRanges,
             segmentFallbacks: segmentFallbacks);
 
     private async Task<long> MeasureVolumeSizeAsync(string[] segmentIds, CancellationToken ct)
@@ -235,7 +493,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
     // already moved some/all of our resolveds across, in which case we
     // skip them silently. Persists fire-and-forget — a failed write only
     // costs us a re-resolve after restart.
-    private DavMultipartFile.Meta CommitResolvedBatch(DavMultipartFile mpf, DavMultipartFile.FilePart[] resolveds)
+    private DavMultipartFile.Meta CommitResolvedBatch(DavMultipartFile mpf, Resolution[] resolveds)
     {
         if (resolveds.Length == 0) return mpf.Metadata;
 
@@ -253,32 +511,105 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
             while (startIdx < resolveds.Length)
             {
                 if (pendingParts.Length > 0
-                    && pendingParts[0].SegmentIds.SequenceEqual(resolveds[startIdx].SegmentIds))
+                    && pendingParts[0].SegmentIds.SequenceEqual(resolveds[startIdx].Pending.SegmentIds))
                 {
                     break;
                 }
                 startIdx++;
             }
 
-            // Match consecutive resolveds against consecutive pending head.
+            // Match consecutive outcomes against the pending head and stop at
+            // the member's terminal split part. Outcomes after that point
+            // belong to later archive members and are intentionally ignored.
+            var accepted = new List<DavMultipartFile.FilePart>();
             var matchedCount = 0;
             while (startIdx + matchedCount < resolveds.Length
                    && matchedCount < pendingParts.Length
                    && pendingParts[matchedCount].SegmentIds
-                       .SequenceEqual(resolveds[startIdx + matchedCount].SegmentIds))
+                       .SequenceEqual(resolveds[startIdx + matchedCount].Pending.SegmentIds))
             {
+                var volume = resolveds[startIdx + matchedCount];
+                if (volume.Error is not null)
+                    ExceptionDispatchInfo.Capture(volume.Error).Throw();
+
+                if (volume.Part is null)
+                {
+                    var volumeNumber = fileParts.Length + matchedCount + 1;
+                    var totalVolumes = fileParts.Length + pendingParts.Length;
+                    var found = volume.FoundPath is null
+                        ? "no file header"
+                        : $"'{volume.FoundPath}' (split-before: {volume.IsSplitBefore}, " +
+                          $"split-after: {volume.IsSplitAfter}, solid: {volume.IsSolid}, " +
+                          $"encrypted: {volume.IsEncrypted})";
+                    throw new CorruptRarException(
+                        $"Lazy RAR resolution: expected continuation header for '{meta.PathInArchive}' " +
+                        $"in volume {volumeNumber} of {totalVolumes}; found {found}.");
+                }
+
+                if (volume.IsEncrypted != (meta.AesParams is not null))
+                {
+                    throw new CorruptRarException(
+                        $"Lazy RAR resolution: continuation volume " +
+                        $"{fileParts.Length + matchedCount + 1} for '{meta.PathInArchive}' changed " +
+                        $"encryption state (expected encrypted: {meta.AesParams is not null}, " +
+                        $"found: {volume.IsEncrypted}).");
+                }
+
+                accepted.Add(volume.Part);
                 matchedCount++;
+                if (!volume.IsSplitAfter) break;
             }
 
             if (matchedCount == 0) return meta;
 
-            var newParts = new DavMultipartFile.FilePart[fileParts.Length + matchedCount];
-            Array.Copy(fileParts, newParts, fileParts.Length);
-            for (var i = 0; i < matchedCount; i++)
-                newParts[fileParts.Length + i] = resolveds[startIdx + i];
+            var terminalReached = !resolveds[startIdx + matchedCount - 1].IsSplitAfter;
+            if (!terminalReached && matchedCount == pendingParts.Length)
+            {
+                throw new CorruptRarException(
+                    $"Lazy RAR resolution: '{meta.PathInArchive}' continues beyond the final " +
+                    $"available volume {fileParts.Length + matchedCount}.");
+            }
 
-            var newPending = new DavMultipartFile.PendingPart[pendingParts.Length - matchedCount];
-            Array.Copy(pendingParts, matchedCount, newPending, 0, newPending.Length);
+            var ignoredTailCount = terminalReached
+                ? pendingParts.Length - matchedCount
+                : 0;
+            if (terminalReached)
+                ValidateTerminalSize(meta, fileParts, accepted, ignoredTailCount);
+
+            var newParts = new DavMultipartFile.FilePart[fileParts.Length + accepted.Count];
+            Array.Copy(fileParts, newParts, fileParts.Length);
+            for (var i = 0; i < accepted.Count; i++)
+                newParts[fileParts.Length + i] = accepted[i];
+
+            DavMultipartFile.PendingPart[] newPending;
+            if (terminalReached)
+            {
+                newPending = [];
+                if (ignoredTailCount > 0)
+                {
+                    Log.Information(
+                        "Lazy RAR member {Path} ended before {IgnoredCount} unrelated trailing volume(s); " +
+                        "discarding them from multipart {Id}",
+                        meta.PathInArchive,
+                        ignoredTailCount,
+                        mpf.Id);
+                }
+
+                foreach (var ignoredOutcome in resolveds
+                             .Skip(startIdx + matchedCount)
+                             .Where(outcome => outcome.Error is not null))
+                {
+                    Log.Debug(
+                        ignoredOutcome.Error!,
+                        "Ignored failure while probing a RAR volume after terminal member {Path}",
+                        meta.PathInArchive);
+                }
+            }
+            else
+            {
+                newPending = new DavMultipartFile.PendingPart[pendingParts.Length - matchedCount];
+                Array.Copy(pendingParts, matchedCount, newPending, 0, newPending.Length);
+            }
 
             var newMeta = new DavMultipartFile.Meta
             {
@@ -288,6 +619,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
                 PathInArchive = meta.PathInArchive,
                 ArchivePassword = meta.ArchivePassword,
                 PendingParts = newPending,
+                ExpectedFileSize = meta.ExpectedFileSize,
             };
 
             var becameComplete = meta.IsLazy && newPending.Length == 0;
@@ -296,6 +628,49 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
             _ = SchedulePersistAsync(mpf, becameComplete);
             return newMeta;
         }
+    }
+
+    private static void ValidateTerminalSize(
+        DavMultipartFile.Meta meta,
+        IReadOnlyList<DavMultipartFile.FilePart> existingParts,
+        IReadOnlyList<DavMultipartFile.FilePart> newParts,
+        int ignoredTailCount)
+    {
+        if (meta.ExpectedFileSize is not { } expectedFileSize)
+        {
+            if (ignoredTailCount == 0) return;
+            throw new CorruptRarException(
+                $"Lazy RAR resolution: '{meta.PathInArchive}' ended before {ignoredTailCount} " +
+                "trailing volume(s), but its original file size is unavailable for safe recovery.");
+        }
+
+        long resolvedSize;
+        long expectedStoredSize;
+        try
+        {
+            resolvedSize = 0;
+            foreach (var part in existingParts)
+                resolvedSize = checked(resolvedSize + part.FilePartByteRange.Count);
+            foreach (var part in newParts)
+                resolvedSize = checked(resolvedSize + part.FilePartByteRange.Count);
+
+            expectedStoredSize = meta.AesParams is null
+                ? expectedFileSize
+                : checked((expectedFileSize + 15) / 16 * 16);
+        }
+        catch (OverflowException)
+        {
+            throw new CorruptRarException(
+                $"Lazy RAR resolution: size validation overflowed for '{meta.PathInArchive}'.");
+        }
+
+        const long tolerance = 16; // matches RarAggregator.ValidateVolumes
+        if (Math.Abs((decimal)resolvedSize - expectedStoredSize) <= tolerance) return;
+
+        throw new CorruptRarException(
+            $"Lazy RAR resolution: terminal continuation for '{meta.PathInArchive}' resolves " +
+            $"{resolvedSize} stored bytes, expected {expectedStoredSize}; refusing to complete " +
+            $"the chain with {ignoredTailCount} trailing volume(s) ignored.");
     }
 
     private static long SumResolvedBytes(DavMultipartFile.Meta meta) =>

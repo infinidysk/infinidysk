@@ -80,6 +80,8 @@ public class QueueItemProcessor(
     private static readonly TimeSpan DiskOrCorruptionBackoff = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StageWarningInterval = TimeSpan.FromMinutes(2);
 
+    internal static readonly TimeSpan RejectedReleaseRecheckWindow = TimeSpan.FromDays(14);
+
     /// <summary>
     /// Set by the queue's stuck watchdog when this worker's cancellation should
     /// fail the item into history (repeated stalls) rather than leave it queued
@@ -93,6 +95,42 @@ public class QueueItemProcessor(
     /// called for a plain cancellation that leaves the item queued for retry.
     /// </summary>
     internal Action? OnTerminal { get; set; }
+
+    internal static async Task ThrowIfRecentlyRejectedAsync(
+        DavDatabaseClient dbClient,
+        QueueItem queueItem,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var cutoff = now - RejectedReleaseRecheckWindow;
+        var rejection = await dbClient.Ctx.HealthCheckResults
+            .AsNoTracking()
+            .Where(result => result.RepairStatus == HealthCheckResult.RepairAction.Repaired)
+            .Where(result => result.CreatedAt >= cutoff)
+            .Where(result =>
+                (result.NzbFileName != null
+                    && result.NzbFileName == queueItem.FileName)
+                || (result.NzbFileName == null
+                    && result.JobName != null
+                    && result.JobName == queueItem.JobName))
+            .OrderByDescending(result => result.CreatedAt)
+            .Select(result => new
+            {
+                result.CreatedAt,
+                result.NzbFileName,
+                result.JobName,
+            })
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        if (rejection is null)
+            return;
+
+        throw new NonRetryableDownloadException(
+            $"This release failed health validation on {rejection.CreatedAt:yyyy-MM-dd HH:mm} UTC " +
+            "and its original download was removed and blocklisted. Refusing to process the " +
+            $"same release again for {RejectedReleaseRecheckWindow.TotalDays:0} days.");
+    }
 
     internal static List<string> SelectArticlesForExistenceCheck(
         IEnumerable<IReadOnlyList<string>> segmentsByFile,
@@ -397,6 +435,8 @@ public class QueueItemProcessor(
         // https://github.com/infinidysk/infinidysk/issues/101
         var articlesToPrecheck = nzbFiles.SelectMany(x => x.Segments).Select(x => x.MessageId);
         HealthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck);
+        await ThrowIfRecentlyRejectedAsync(dbClient, queueItem, DateTimeOffset.UtcNow, ct)
+            .ConfigureAwait(false);
 
         await RunStageAsync("sibling-donors",
             () => SiblingDonorAttacher.AttachToNewImportAsync(
@@ -458,10 +498,10 @@ public class QueueItemProcessor(
         }
 
         // step 2a -- try altmount-style lazy RAR mounting for the rar group
-        // when enabled. On success, the entire rar group is handled here
-        // (only the first volume gets parsed) and skipped in step 2b. On
-        // ineligibility — multi-file, compressed, solid, or first-volume
-        // parse failure — fall through to the per-part eager pipeline.
+        // when enabled. On success, the first volume is parsed and cached
+        // continuation-header prefixes are validated before the rar group is
+        // skipped in step 2b. On ineligibility — multi-file, compressed,
+        // solid, or header-parse failure — fall through to the eager pipeline.
         LazyRarProcessor.Result? lazyRarResult = null;
         var rarFiles = fileInfos.Where(x => GetGroupName(x) == "rar").ToList();
         if (configManager.IsLazyRarParsingEnabled() && rarFiles.Count > 0)

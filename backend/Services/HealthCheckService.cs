@@ -30,6 +30,10 @@ public class HealthCheckService : BackgroundService
 {
     private const int MaximumMissingSegmentIds = 100_000;
     private const int NoMatchConfirmationsRequired = 2;
+    internal const string MissingPayloadMessagePrefix = "Streaming payload missing.";
+    private const int MissingPayloadConfirmationsRequired = 3;
+    private static readonly TimeSpan MissingPayloadInitialRecheck = TimeSpan.FromDays(1);
+    private static readonly TimeSpan MissingPayloadConfirmedRecheck = TimeSpan.FromDays(7);
     private static readonly TimeSpan HealthCheckProgressTimeout = TimeSpan.FromMinutes(5);
 
     // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
@@ -38,6 +42,36 @@ public class HealthCheckService : BackgroundService
     internal const int RepairRecurrenceLimit = 3;
     internal static readonly TimeSpan RepairRecurrenceWindow = TimeSpan.FromHours(6);
     private const int MaximumTrackedRepairPaths = 10_000;
+
+    internal static bool IsMissingPayloadMessage(string? message) =>
+        message?.StartsWith(
+            MissingPayloadMessagePrefix,
+            StringComparison.Ordinal) == true;
+
+    internal static async Task<int> GetMissingPayloadConfirmationAsync(
+        DavDatabaseContext context,
+        Guid davItemId,
+        CancellationToken ct)
+    {
+        var recentMessages = await context.HealthCheckResults
+            .AsNoTracking()
+            .Where(result => result.DavItemId == davItemId)
+            .OrderByDescending(result => result.CreatedAt)
+            .ThenByDescending(result => result.Id)
+            .Select(result => result.Message)
+            .Take(MissingPayloadConfirmationsRequired - 1)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return recentMessages
+            .TakeWhile(IsMissingPayloadMessage)
+            .Count() + 1;
+    }
+
+    internal static TimeSpan GetMissingPayloadRecheckDelay(int confirmations) =>
+        confirmations >= MissingPayloadConfirmationsRequired
+            ? MissingPayloadConfirmedRecheck
+            : MissingPayloadInitialRecheck;
 
     // How many of a rejected release's segment ids to seed into the fail-fast cache.
     // Bounded so a single large release cannot evict the whole FIFO cache; the queue
@@ -697,21 +731,37 @@ public class HealthCheckService : BackgroundService
             // This says nothing about the release's health, so surface it for
             // operator action instead of deleting or blocklisting through Arr.
             CompleteHealthProgress(davItem.Id);
-            var utcNow = DateTimeOffset.UtcNow;
+            var confirmations = await GetMissingPayloadConfirmationAsync(
+                dbClient.Ctx,
+                davItem.Id,
+                ct).ConfigureAwait(false);
+            var utcNow = _timeProvider.GetUtcNow();
+            var delay = GetMissingPayloadRecheckDelay(confirmations);
             davItem.LastHealthCheck = utcNow;
-            davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
+            davItem.NextHealthCheck = utcNow + delay;
             Log.Warning(
-                "Health check cannot run for {Path}: {Reason}",
-                davItem.Path, e.Message);
+                "Health check cannot run for {Path}: {Reason} " +
+                "(confirmation {Count}/{Threshold}; next check in {Delay})",
+                davItem.Path,
+                e.Message,
+                confirmations,
+                MissingPayloadConfirmationsRequired,
+                delay);
             Log.Debug(e, "Missing streaming payload stack for {Path}", davItem.Path);
+            var state = confirmations >= MissingPayloadConfirmationsRequired
+                ? "The payload has been missing for at least 3 consecutive checks; " +
+                  "this DavItem is orphaned and will be rechecked weekly."
+                : "The file will be rechecked daily.";
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Unhealthy,
                 HealthCheckResult.RepairAction.ActionNeeded,
                 string.Join(" ", [
+                    MissingPayloadMessagePrefix,
                     "The file's streaming data is missing from the server",
                     "(often a database restore without the blobs/ folder).",
-                    "Remove and re-download the release, or restore from a backup that includes blobs."
+                    "Remove and re-download the release, or restore from a backup that includes blobs.",
+                    state,
                 ]), ct).ConfigureAwait(false);
         }
         catch (UsenetArticleNotFoundException e)
@@ -729,8 +779,11 @@ public class HealthCheckService : BackgroundService
             }
 
             // When no Arr replacement is available, PAR2 remains the only automatic recovery path.
-            if (ShouldAttemptPar2Repair()
-                && await _par2RepairService.TryPar2RepairAsync(davItem, [e.SegmentId], ct).ConfigureAwait(false))
+            var par2Outcome = ShouldAttemptPar2Repair()
+                ? await _par2RepairService.TryPar2RepairAsync(
+                    davItem, [e.SegmentId], ct).ConfigureAwait(false)
+                : Par2RepairOutcome.NotRepaired;
+            if (par2Outcome is not Par2RepairOutcome.NotRepaired)
             {
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
@@ -740,8 +793,13 @@ public class HealthCheckService : BackgroundService
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Healthy,
-                    HealthCheckResult.RepairAction.RepairedViaPar2,
-                    "Missing segment repaired from PAR2 parity.", ct).ConfigureAwait(false);
+                    par2Outcome is Par2RepairOutcome.Repaired
+                        ? HealthCheckResult.RepairAction.RepairedViaPar2
+                        : HealthCheckResult.RepairAction.None,
+                    par2Outcome is Par2RepairOutcome.Repaired
+                        ? "Missing segment repaired from PAR2 parity."
+                        : "PAR2 verified every file slice and found no damage.",
+                    ct).ConfigureAwait(false);
                 return;
             }
 
@@ -812,8 +870,11 @@ public class HealthCheckService : BackgroundService
 
         // PAR2 first, with the full hole list: reconstruct from parity before any verdict.
         // It is also the only automatic recovery path when no Arr replacement is available.
-        if (ShouldAttemptPar2Repair()
-            && await _par2RepairService.TryPar2RepairAsync(davItem, holeSegmentIds, ct).ConfigureAwait(false))
+        var par2Outcome = ShouldAttemptPar2Repair()
+            ? await _par2RepairService.TryPar2RepairAsync(
+                davItem, holeSegmentIds, ct).ConfigureAwait(false)
+            : Par2RepairOutcome.NotRepaired;
+        if (par2Outcome is not Par2RepairOutcome.NotRepaired)
         {
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
@@ -821,14 +882,20 @@ public class HealthCheckService : BackgroundService
             _failureTracker.ClearFailure(davItem.Id);
             _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
             // The patched segments are served locally now; any earlier hole/corrupt record is obsolete.
-            if (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null)
+            if (par2Outcome is Par2RepairOutcome.Repaired
+                && (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
                 await SwapNzbFileBlobAsync(davItem, nzbFile, null, null, replaceCorruptRecord: true)
                     .ConfigureAwait(false);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
-                HealthCheckResult.RepairAction.RepairedViaPar2,
-                "Missing segment(s) repaired from PAR2 parity.", ct).ConfigureAwait(false);
+                par2Outcome is Par2RepairOutcome.Repaired
+                    ? HealthCheckResult.RepairAction.RepairedViaPar2
+                    : HealthCheckResult.RepairAction.None,
+                par2Outcome is Par2RepairOutcome.Repaired
+                    ? "Missing segment(s) repaired from PAR2 parity."
+                    : "PAR2 verified every file slice and found no damage.",
+                ct).ConfigureAwait(false);
             return;
         }
 
@@ -1833,11 +1900,13 @@ public class HealthCheckService : BackgroundService
             return;
         }
 
-        if (ShouldAttemptPar2Repair()
-            && await _par2RepairService.TryPar2RepairAsync(
+        var par2Outcome = ShouldAttemptPar2Repair()
+            ? await _par2RepairService.TryPar2RepairAsync(
                 davItem,
                 failureSnapshot.HasTargetableSegmentIds ? failureSnapshot.SegmentIds : null,
-                ct).ConfigureAwait(false))
+                ct).ConfigureAwait(false)
+            : Par2RepairOutcome.NotRepaired;
+        if (par2Outcome is not Par2RepairOutcome.NotRepaired)
         {
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
@@ -1847,8 +1916,13 @@ public class HealthCheckService : BackgroundService
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
-                HealthCheckResult.RepairAction.RepairedViaPar2,
-                "Missing segment(s) repaired from PAR2 parity after streaming failure.", ct)
+                par2Outcome is Par2RepairOutcome.Repaired
+                    ? HealthCheckResult.RepairAction.RepairedViaPar2
+                    : HealthCheckResult.RepairAction.None,
+                par2Outcome is Par2RepairOutcome.Repaired
+                    ? "Missing segment(s) repaired from PAR2 parity after streaming failure."
+                    : "PAR2 verified every file slice and found no damage.",
+                ct)
                 .ConfigureAwait(false);
             return;
         }

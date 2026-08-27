@@ -307,6 +307,29 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Par2VerifiedClean_RecordsHealthyWithoutRepairStatus()
+    {
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingHoles: [2]);
+        var fake = NewFakeClient(segments, missing: [2]);
+        _failureTracker.RecordFailure(item.Id);
+        var (service, par2) = await NewServiceAsync(
+            fake, Par2RepairOutcome.VerifiedClean);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.None, row.RepairStatus);
+        Assert.Equal(
+            "PAR2 verified every file slice and found no damage.",
+            row.Message);
+        Assert.Equal([segments[2]], Assert.Single(par2.Requests));
+    }
+
+    [Fact]
     public async Task Par2Success_RunsWithoutEnabledArrWhenArrPreferenceIsOff()
     {
         _configManager.UpdateValues(
@@ -843,12 +866,12 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         public Task<T?> ReadBlob<T>(Guid id) =>
             Task.FromException<T?>(new OutOfMemoryException("simulated payload allocation failure"));
 
-        public void Delete(Guid id) => throw new NotSupportedException();
+        public bool Delete(Guid id) => throw new NotSupportedException();
     }
 
     private async Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(
         INntpClient fake,
-        bool par2Outcome)
+        Par2RepairOutcome par2Outcome)
     {
         await _usenet.ReplaceUnderlyingClientForTestsAsync(fake);
         var par2 = new ScriptedPar2RepairService(_configManager, _patchStore, par2Outcome);
@@ -865,6 +888,13 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             _healthCheckConnectionGate);
         return (service, par2);
     }
+
+    private Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(
+        INntpClient fake,
+        bool par2Outcome) =>
+        NewServiceAsync(
+            fake,
+            par2Outcome ? Par2RepairOutcome.Repaired : Par2RepairOutcome.NotRepaired);
 
     private async Task<(DavItem Item, Guid BlobId)> AddVideoFileAsync(
         string name,
@@ -963,11 +993,11 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     private sealed class ScriptedPar2RepairService(
         ConfigManager configManager,
         RepairPatchStore store,
-        bool repairOutcome) : Par2RepairService(configManager, null!, store)
+        Par2RepairOutcome repairOutcome) : Par2RepairService(configManager, null!, store)
     {
         public List<string[]> Requests { get; } = [];
 
-        public override Task<bool> TryPar2RepairAsync(
+        public override Task<Par2RepairOutcome> TryPar2RepairAsync(
             DavItem davItem, IReadOnlyList<string>? missingSegmentIds, CancellationToken ct)
         {
             Requests.Add(missingSegmentIds?.ToArray() ?? []);

@@ -151,19 +151,31 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 
     public async Task<DavMultipartFile?> GetDavMultipartFileAsync(DavItem davItem, CancellationToken ct = default)
     {
+        DavMultipartFile? multipartFile = null;
+
         // attempt to read from blob-store
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            var blob = await BlobStore.ReadBlob<DavMultipartFile>(blobId.Value).ConfigureAwait(false);
-            if (blob is not null) return blob;
+            multipartFile = await BlobStore.ReadBlob<DavMultipartFile>(blobId.Value).ConfigureAwait(false);
         }
 
         // read from database
-        return await ctx.MultipartFiles
+        multipartFile ??= await ctx.MultipartFiles
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
             .ConfigureAwait(false);
+
+        if (multipartFile?.Metadata.IsLazy == true
+            && multipartFile.Metadata.ExpectedFileSize is null
+            && davItem.FileSize is { } expectedFileSize
+            && expectedFileSize >= 0
+            && expectedFileSize < long.MaxValue)
+        {
+            multipartFile.Metadata.ExpectedFileSize = expectedFileSize;
+        }
+
+        return multipartFile;
     }
 
     // queue
