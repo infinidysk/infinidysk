@@ -641,6 +641,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                   accept=".zip,.sql,application/zip,text/plain"
                   className="file-input file-input-bordered file-input-sm w-full max-w-xs"
                   aria-label="Upload backup archive"
+                  disabled={busy === "upload" || taskRunning}
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) void uploadBackup(file);

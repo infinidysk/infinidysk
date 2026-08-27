@@ -691,19 +691,21 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
 
           {stats.total > 0 && (
             <div className="flex flex-wrap items-center gap-2">
-              <label
-                className="label cursor-pointer gap-1.5 p-0 text-xs text-base-content/70"
-                title="Select all items shown"
-              >
-                <Checkbox
-                  ref={selectAllRef}
-                  checked={allVisibleSelected}
-                  onChange={toggleSelectAllVisible}
-                  disabled={allVisibleLeafKeys.length === 0}
-                  className="checkbox-sm"
-                />
-                All
-              </label>
+              {!isReadOnly && (
+                <label
+                  className="label cursor-pointer gap-1.5 p-0 text-xs text-base-content/70"
+                  title="Select all items shown"
+                >
+                  <Checkbox
+                    ref={selectAllRef}
+                    checked={allVisibleSelected}
+                    onChange={toggleSelectAllVisible}
+                    disabled={allVisibleLeafKeys.length === 0}
+                    className="checkbox-sm"
+                  />
+                  All
+                </label>
+              )}
               <Form.Control
                 value={queryInput}
                 onChange={(e) => setQueryInput(e.target.value)}
@@ -730,7 +732,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                   clear
                 </button>
               )}
-              {stats.unavailable > 0 && (
+              {stats.unavailable > 0 && !isReadOnly && (
                 <filterFetcher.Form method="post" className="ml-auto flex items-center">
                   <input type="hidden" name="action" value="recheck-by-filter" />
                   <input type="hidden" name="state" value="unavailable" />
@@ -753,18 +755,20 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
               </Badge>
               <span className="text-base-content/70">of {total} shown</span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
-                <filterFetcher.Form method="post">
-                  <input type="hidden" name="action" value="recheck-by-filter" />
-                  {stateFilter && <input type="hidden" name="state" value={stateFilter} />}
-                  {urlQuery && <input type="hidden" name="q" value={urlQuery} />}
-                  <Button type="submit" size="xsmall" variant="primary" disabled={filterBusy}>
-                    <Icon
-                      name={filterBusy ? "progress_activity" : "refresh"}
-                      className={`!text-[16px] ${filterBusy ? "animate-spin" : ""}`}
-                    />
-                    {filterBusy ? "Working…" : `Re-check all ${total}`}
-                  </Button>
-                </filterFetcher.Form>
+                {!isReadOnly && (
+                  <filterFetcher.Form method="post">
+                    <input type="hidden" name="action" value="recheck-by-filter" />
+                    {stateFilter && <input type="hidden" name="state" value={stateFilter} />}
+                    {urlQuery && <input type="hidden" name="q" value={urlQuery} />}
+                    <Button type="submit" size="xsmall" variant="primary" disabled={filterBusy}>
+                      <Icon
+                        name={filterBusy ? "progress_activity" : "refresh"}
+                        className={`!text-[16px] ${filterBusy ? "animate-spin" : ""}`}
+                      />
+                      {filterBusy ? "Working…" : `Re-check all ${total}`}
+                    </Button>
+                  </filterFetcher.Form>
+                )}
                 <Button
                   type="button"
                   size="xsmall"
@@ -786,17 +790,19 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
               </Badge>
               <span className="text-base-content/70">selected</span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
-                <bulkItemFetcher.Form method="post">
-                  <input type="hidden" name="action" value="bulk-recheck" />
-                  <input type="hidden" name="keys" value={bulkKeysValue} readOnly />
-                  <Button type="submit" size="xsmall" variant="primary" disabled={bulkBusy}>
-                    <Icon
-                      name={bulkBusy ? "progress_activity" : "refresh"}
-                      className={`!text-[16px] ${bulkBusy ? "animate-spin" : ""}`}
-                    />
-                    {bulkBusy ? "Working…" : "Re-check"}
-                  </Button>
-                </bulkItemFetcher.Form>
+                {!isReadOnly && (
+                  <bulkItemFetcher.Form method="post">
+                    <input type="hidden" name="action" value="bulk-recheck" />
+                    <input type="hidden" name="keys" value={bulkKeysValue} readOnly />
+                    <Button type="submit" size="xsmall" variant="primary" disabled={bulkBusy}>
+                      <Icon
+                        name={bulkBusy ? "progress_activity" : "refresh"}
+                        className={`!text-[16px] ${bulkBusy ? "animate-spin" : ""}`}
+                      />
+                      {bulkBusy ? "Working…" : "Re-check"}
+                    </Button>
+                  </bulkItemFetcher.Form>
+                )}
                 <Button
                   type="button"
                   size="xsmall"

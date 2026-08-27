@@ -16,7 +16,7 @@ const variants: Record<ButtonVariant, string> = {
 };
 
 const sizes: Record<ButtonSize, string> = {
-  xsmall: "btn-sm max-sm:min-h-11",
+  xsmall: "btn-xs max-sm:min-h-11",
   small: "btn-sm max-sm:min-h-11",
   medium: "",
   large: "btn-lg",

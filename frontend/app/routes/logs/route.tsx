@@ -312,6 +312,7 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
               <button
                 type="button"
                 className={`btn btn-sm join-item ${followTail ? "btn-active" : "btn-ghost"}`}
+                aria-pressed={followTail}
                 onClick={() => {
                   setFollowTail((v) => {
                     if (!v) requestAnimationFrame(scrollToBottom);
@@ -457,21 +458,26 @@ function LogRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const rowClass = `grid w-full cursor-pointer grid-cols-[86px_64px_1fr] items-baseline gap-3 border-l-2 border-transparent px-3.5 py-0.5 text-left transition-colors duration-75 [contain:content] hover:bg-base-content/5 max-[899px]:grid-cols-[70px_56px_1fr] max-[899px]:gap-2 max-[899px]:px-2.5 max-[899px]:py-1 ${levelRowClass(entry.level)}`;
+  const expandable = Boolean(entry.exception);
+  const rowClass = `grid w-full ${expandable ? "cursor-pointer" : ""} grid-cols-[86px_64px_1fr] items-baseline gap-3 border-l-2 border-transparent px-3.5 py-0.5 text-left transition-colors duration-75 [contain:content] ${expandable ? "hover:bg-base-content/5" : ""} max-[899px]:grid-cols-[70px_56px_1fr] max-[899px]:gap-2 max-[899px]:px-2.5 max-[899px]:py-1 ${levelRowClass(entry.level)}`;
   return (
     <div
-      role="button"
-      tabIndex={0}
       className={rowClass}
-      onClick={onToggle}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onToggle();
-        }
-      }}
-      aria-expanded={expanded}
-      title={entry.exception ? "Toggle stack trace" : undefined}
+      {...(expandable
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            onClick: onToggle,
+            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onToggle();
+              }
+            },
+            "aria-expanded": expanded,
+            title: "Toggle stack trace",
+          }
+        : {})}
     >
       <span className="whitespace-nowrap tabular-nums text-base-content/40">
         {formatTime(entry.ts)}

@@ -53,9 +53,9 @@ export function ConfirmModal(props: ConfirmModalProps) {
             {props.cancelText || "Close"}
           </Button>
           <Button
-            variant={
-              props.confirmVariant === false ? undefined : (props.confirmVariant ?? "danger")
-            }
+            {...(props.confirmVariant === false
+              ? {}
+              : { variant: props.confirmVariant ?? "danger" })}
             disabled={confirmDisabled(props.requireCheckbox, isCheckboxChecked)}
             onClick={() => onConfirm(isCheckboxChecked)}
           >

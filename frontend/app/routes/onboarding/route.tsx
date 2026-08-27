@@ -112,8 +112,11 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.currentTarget.value)}
                   />
+                  {password !== "" && confirmPassword === "" && (
+                    <p className="mt-1 text-xs text-error">Confirm your password.</p>
+                  )}
                   {password !== confirmPassword && confirmPassword !== "" && (
-                    <p className="validator-hint text-error">Passwords must match.</p>
+                    <p className="mt-1 text-xs text-error">Passwords must match.</p>
                   )}
                 </label>
               </fieldset>

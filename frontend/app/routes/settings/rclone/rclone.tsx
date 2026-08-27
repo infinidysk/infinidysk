@@ -148,13 +148,11 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                   <Tooltip content="Tests host, credentials, and API response">
                     <Button
                       className="join-item shrink-0"
-                      variant={
-                        connectionState === "success"
-                          ? "success"
-                          : connectionState === "error"
-                            ? "danger"
-                            : undefined
-                      }
+                      {...(connectionState === "success"
+                        ? { variant: "success" as const }
+                        : connectionState === "error"
+                          ? { variant: "danger" as const }
+                          : {})}
                       onClick={() => void testConnection()}
                       disabled={connectionState === "testing"}
                     >

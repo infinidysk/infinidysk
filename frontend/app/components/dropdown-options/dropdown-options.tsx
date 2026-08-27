@@ -49,7 +49,6 @@ export function DropdownOptions({
     <ul
       ref={ref}
       tabIndex={0}
-      role="menu"
       className={`menu dropdown-content absolute right-0 top-full z-50 mt-1 w-52 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg ${className ?? ""}`}
       style={style}
     >
