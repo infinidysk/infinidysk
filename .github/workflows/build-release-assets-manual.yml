@@ -28,6 +28,7 @@ jobs:
   assets:
     uses: ./.github/workflows/build-release-assets.yml
     permissions:
+      # Required by build-release-assets.yml to upload release archives.
       contents: write
     with:
       version: ${{ inputs.version }}
