@@ -2230,7 +2230,7 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
 
       <div className="mt-4 grid gap-3 sm:grid-cols-[auto_minmax(14rem,1fr)_auto] sm:items-end">
         <fieldset className="fieldset gap-1 p-0">
-          <legend className="fieldset-legend py-0 text-[11px] text-base-content/60">
+          <legend className="fieldset-legend mb-1 py-0 text-[11px] text-base-content/60">
             Test depth
           </legend>
           <div className="join" role="group" aria-label="Test intensity">
