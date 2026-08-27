@@ -7,9 +7,6 @@
 #   GITHUB_REPOSITORY     — owner/name (e.g. infinidysk/infinidysk)
 #
 # Optional env:
-#   DOCKERHUB_USERNAME    — default: infinidysk
-#   DOCKERHUB_TOKEN       — Docker Hub token (skip Hub cleanup when empty)
-#   DOCKERHUB_REPO        — default: infinidysk
 #   OLD_GHCR_TOKEN        — token for legacy ghcr.io/nzbdav/nzbdav (skip when empty)
 #   LEGACY_GHCR_ORG       — default: nzbdav
 #   LEGACY_GHCR_PACKAGE   — default: nzbdav
@@ -19,8 +16,6 @@ set -euo pipefail
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 ORG="${REPO%%/*}"
 PACKAGE="${REPO##*/}"
-DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-infinidysk}"
-DOCKERHUB_REPO="${DOCKERHUB_REPO:-infinidysk}"
 LEGACY_GHCR_ORG="${LEGACY_GHCR_ORG:-nzbdav}"
 LEGACY_GHCR_PACKAGE="${LEGACY_GHCR_PACKAGE:-nzbdav}"
 RC_TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'
@@ -115,44 +110,6 @@ delete_ghcr_versions_for_tags() {
   done
 }
 
-delete_dockerhub_tags() {
-  local tags=("$@")
-  if [[ ${#tags[@]} -eq 0 ]]; then
-    return 0
-  fi
-  if [[ -z "${DOCKERHUB_TOKEN:-}" ]]; then
-    echo "DOCKERHUB_TOKEN unset; skipping Docker Hub tag cleanup"
-    return 0
-  fi
-
-  echo "Authenticating to Docker Hub…"
-  local hub_token
-  hub_token=$(
-    curl -fsS -H "Content-Type: application/json" \
-      -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
-      https://hub.docker.com/v2/users/login/ \
-      | jq -r .token
-  )
-  if [[ -z "$hub_token" || "$hub_token" == "null" ]]; then
-    echo "Failed to obtain Docker Hub JWT" >&2
-    return 1
-  fi
-
-  local tag http_code
-  for tag in "${tags[@]}"; do
-    echo "Deleting docker.io/${DOCKERHUB_USERNAME}/${DOCKERHUB_REPO}:${tag}"
-    http_code=$(
-      curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
-        -H "Authorization: JWT ${hub_token}" \
-        "https://hub.docker.com/v2/repositories/${DOCKERHUB_USERNAME}/${DOCKERHUB_REPO}/tags/${tag}/"
-    )
-    if ! is_http_ok_or_missing "$http_code"; then
-      echo "Unexpected status ${http_code} deleting Docker Hub tag ${tag}" >&2
-      return 1
-    fi
-  done
-}
-
 delete_github_releases() {
   local tags=("$@")
   local tag
@@ -187,7 +144,6 @@ else
   echo "OLD_GHCR_TOKEN unset; skipping legacy GHCR tag cleanup"
 fi
 
-delete_dockerhub_tags "${RC_TAGS[@]}"
 delete_github_releases "${RC_TAGS[@]}"
 
 echo "Versioned pre-release cleanup complete."
