@@ -251,7 +251,7 @@ export function SupportSettings() {
         title="Technical support pack"
         description="A ZIP with recent backend diagnostics for troubleshooting."
       >
-        <ul className="list-inside list-disc space-y-1 text-sm text-base-content/70">
+        <ul className="list-disc space-y-1 pl-5 text-sm text-base-content/70">
           <li>Current backend logs from the in-memory buffer, plus a separate warnings lane</li>
           <li>Redacted active settings and runtime information</li>
           <li>Recent provider outage, failover, and consumption metrics</li>
@@ -278,7 +278,7 @@ export function SupportSettings() {
               <span className="mb-1 block font-semibold">
                 This pack may not answer playback questions — consider re-collecting:
               </span>
-              <ul className="list-inside list-disc space-y-1">
+              <ul className="list-disc space-y-1 pl-5">
                 {packQuality.map((warning) => (
                   <li key={warning}>{warning}</li>
                 ))}

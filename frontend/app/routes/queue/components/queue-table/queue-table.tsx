@@ -317,8 +317,10 @@ export function QueueTable({
             <>
               <SimpleDropdown
                 options={["-1", "0", "1", "2"]}
+                optionLabels={{ "-1": "Low", "0": "Normal", "1": "High", "2": "Force" }}
                 value={bulkPriority}
                 onChange={setBulkPriority}
+                ariaLabel="Queue priority"
               />
               <Button
                 variant="secondary"

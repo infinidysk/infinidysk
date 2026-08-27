@@ -468,7 +468,7 @@ export function Actions({
       )}
       {(isFolderDisabled || !folderLink) && <ActionButton type="explore" disabled />}
       {(!isReadOnly || !!nzbDownloadUrl) && (
-        <div className="relative">
+        <div className={`dropdown dropdown-end ${isMenuOpen ? "dropdown-open" : ""}`}>
           <ActionButton
             type="menu"
             disabled={!!slot.isRemoving || isRetrying}

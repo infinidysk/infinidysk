@@ -40,7 +40,11 @@ afterEach(cleanup);
 
 function StreamingHarness() {
   const [config, setConfig] = useState<Record<string, string>>(validConfig);
-  return createElement(StreamingSettings, { config, setNewConfig: setConfig });
+  return createElement(StreamingSettings, {
+    config,
+    setNewConfig: setConfig,
+    effectiveArticleBudgetBytes: 512 * 1024 * 1024,
+  });
 }
 
 describe("Streaming settings", () => {
@@ -86,6 +90,7 @@ describe("Streaming settings", () => {
 
     expect(screen.getByText(/Segment Cache is enabled by default/i)).toBeTruthy();
     expect(screen.getByText(/cannot automatically determine/i)).toBeTruthy();
+    expect(screen.getByText("Effective now: 512 MiB")).toBeTruthy();
     const segmentCache = screen.getByRole<HTMLInputElement>("checkbox", {
       name: "Enable Segment Cache (fast storage)",
     });

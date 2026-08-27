@@ -206,8 +206,14 @@ const defaultConfig = {
   "warden.backbone-scope": "true",
 };
 
-export async function loader() {
-  const configItems = await backendClient.getConfig(Object.keys(defaultConfig));
+export async function loader({ request }: Route.LoaderArgs) {
+  const activeTab = parseSettingsTab(new URL(request.url).searchParams.get("tab"));
+  const [configItems, overviewStats] = await Promise.all([
+    backendClient.getConfig(Object.keys(defaultConfig)),
+    activeTab === "streaming"
+      ? backendClient.getOverviewStats("1h", "window").catch(() => null)
+      : Promise.resolve(null),
+  ]);
 
   const config: Record<string, string> = { ...defaultConfig };
   const managedEnv: ManagedEnvMap = {};
@@ -221,6 +227,7 @@ export async function loader() {
   return {
     config: config,
     managedEnv,
+    inFlightArticleBudgetBytes: overviewStats?.tiles.inFlightArticleBudgetBytes ?? null,
   };
 }
 
@@ -252,6 +259,7 @@ export default function Settings(props: Route.ComponentProps) {
 type BodyProps = {
   config: Record<string, string>;
   managedEnv: ManagedEnvMap;
+  inFlightArticleBudgetBytes: number | null;
   activeTab: SettingsTab;
 };
 
@@ -462,7 +470,7 @@ function Body(props: BodyProps) {
         <SettingsPanel>
           <header className="mb-6 flex items-center gap-3 border-b border-base-content/10 pb-4">
             <Icon name={activeTabItem.icon} className="!text-[28px] text-base-content/70" />
-            <h1 className="text-2xl font-semibold tracking-tight text-base-content">
+            <h1 className="text-4xl font-bold tracking-tight text-base-content">
               {activeTabItem.label}
             </h1>
           </header>
@@ -508,7 +516,11 @@ function Body(props: BodyProps) {
               <SabnzbdSettings config={newConfig} setNewConfig={setNewConfig} />
             )}
             {activeTab === "streaming" && (
-              <StreamingSettings config={newConfig} setNewConfig={setNewConfig} />
+              <StreamingSettings
+                config={newConfig}
+                setNewConfig={setNewConfig}
+                effectiveArticleBudgetBytes={props.inFlightArticleBudgetBytes}
+              />
             )}
             {activeTab === "webdav" && (
               <WebdavSettings config={newConfig} setNewConfig={setNewConfig} />
@@ -640,6 +652,7 @@ function Body(props: BodyProps) {
           }
           cancelText="Stay"
           confirmText="Leave"
+          confirmVariant={false}
           onCancel={navigationBlocker.onCancelNavigation}
           onConfirm={navigationBlocker.onConfirmNavigation}
         />

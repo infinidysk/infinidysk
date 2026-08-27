@@ -110,7 +110,7 @@ export function PruneCompletedHistory({ savedConfig }: PruneCompletedHistoryProp
               Older than (days)
             </span>
             <Input
-              className="w-full"
+              className="w-full max-w-48"
               type="number"
               min={0}
               placeholder="Any age"

@@ -33,8 +33,16 @@ export function DropdownOptions({
       }
     }
 
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose?.();
+    }
+
     document.addEventListener("click", handleClick);
-    return () => document.removeEventListener("click", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("click", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
   }, [isOpen, onClose]);
 
   return !isOpen ? null : (

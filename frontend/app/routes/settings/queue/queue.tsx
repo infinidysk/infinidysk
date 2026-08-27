@@ -42,7 +42,7 @@ export function QueueSettings({ config, setNewConfig }: QueueSettingsProps) {
                 Concurrent Queue Downloads
               </label>
               <Select
-                className="w-full"
+                className="w-full max-w-md"
                 id="queue-worker-count-select"
                 aria-describedby="queue-worker-count-help"
                 value={config["queue.worker-count"] || "1"}
@@ -80,7 +80,7 @@ export function QueueSettings({ config, setNewConfig }: QueueSettingsProps) {
               </label>
               <Input
                 {...className([
-                  "w-full",
+                  "w-full max-w-xs",
                   !isValidMaxQueueConnections(config["usenet.max-queue-connections"]) &&
                     "input-error",
                 ])}
@@ -121,7 +121,7 @@ export function QueueSettings({ config, setNewConfig }: QueueSettingsProps) {
                   Maximum queued jobs
                 </label>
                 <Input
-                  className={`w-full ${queueAdmissionValid ? "" : "input-error"}`}
+                  className={`w-full max-w-48 ${queueAdmissionValid ? "" : "input-error"}`}
                   type="number"
                   min={0}
                   step={1}
@@ -148,7 +148,7 @@ export function QueueSettings({ config, setNewConfig }: QueueSettingsProps) {
                   Resume threshold
                 </label>
                 <Input
-                  className={`w-full ${queueAdmissionValid ? "" : "input-error"}`}
+                  className={`w-full max-w-48 ${queueAdmissionValid ? "" : "input-error"}`}
                   type="number"
                   min={0}
                   max={queueMaxItems ?? undefined}

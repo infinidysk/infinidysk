@@ -4,6 +4,8 @@ import { Select } from "~/components/ui";
 export type SimpleDropdownProps = {
   type?: "plain" | "bordered";
   options: string[];
+  /** Optional display labels keyed by option value (values stay in `options`). */
+  optionLabels?: Record<string, string>;
   value?: string;
   onChange?: (value: string) => void;
   valueRef?: RefObject<string>;
@@ -11,7 +13,7 @@ export type SimpleDropdownProps = {
 };
 
 export const SimpleDropdown = memo(
-  ({ type, options, value, onChange, valueRef, ariaLabel }: SimpleDropdownProps) => {
+  ({ type, options, optionLabels, value, onChange, valueRef, ariaLabel }: SimpleDropdownProps) => {
     if (!valueRef && (value == null || !onChange)) {
       throw new Error(
         "SimpleDropdown requires either the valueRef prop or both the value and onChange props.",
@@ -44,7 +46,7 @@ export const SimpleDropdown = memo(
       >
         {options.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {optionLabels?.[option] ?? option}
           </option>
         ))}
       </Select>

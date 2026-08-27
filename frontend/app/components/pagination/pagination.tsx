@@ -71,7 +71,7 @@ export const Pagination = memo(
           <div className="join join-horizontal flex flex-wrap items-center justify-center">
             <button
               type="button"
-              className="btn btn-ghost btn-xs join-item"
+              className="btn btn-ghost btn-sm join-item max-sm:min-h-11"
               disabled={pageNumber <= 1}
               onClick={() => handlePageClick(pageNumber - 1)}
             >
@@ -92,7 +92,7 @@ export const Pagination = memo(
 
             <button
               type="button"
-              className="btn btn-ghost btn-xs join-item"
+              className="btn btn-ghost btn-sm join-item max-sm:min-h-11"
               disabled={pageNumber >= totalPages}
               onClick={() => handlePageClick(pageNumber + 1)}
             >

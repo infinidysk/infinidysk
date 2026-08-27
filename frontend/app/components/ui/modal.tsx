@@ -57,7 +57,9 @@ export function Modal({
         if (open) onClose();
       }}
     >
-      <div className={`modal-box max-h-[90dvh] w-full ${sizeClass} overflow-y-auto ${className}`}>
+      <div
+        className={`modal-box max-h-[90dvh] w-full ${sizeClass} overflow-x-hidden overflow-y-auto ${className}`}
+      >
         <form method="dialog">
           <Button
             type="submit"

@@ -25,19 +25,14 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
   const isLoading = navigation.state == "submitting";
 
   let submitButtonDisabled = false;
-  let submitButtonText = "Register";
   if (isLoading) {
     submitButtonDisabled = true;
-    submitButtonText = "Registering...";
   } else if (username == "") {
     submitButtonDisabled = true;
-    submitButtonText = "Username is required";
   } else if (password === "") {
     submitButtonDisabled = true;
-    submitButtonText = "Password is required";
   } else if (password != confirmPassword) {
     submitButtonDisabled = true;
-    submitButtonText = "Passwords must match";
   }
 
   return (
@@ -56,9 +51,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                   alt="InfiniDysk"
                 />
                 <div>
-                  <h1 className="bg-gradient-to-r from-primary to-success bg-clip-text text-2xl font-bold tracking-tight text-transparent">
-                    InfiniDysk
-                  </h1>
+                  <h1 className="text-2xl font-bold tracking-tight text-primary">InfiniDysk</h1>
                   <p className="mt-1 text-xs font-medium tracking-wide text-base-content/50">
                     The NzbDAV SuperFork
                   </p>
@@ -70,49 +63,70 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
 
               {pageData.error && <Alert variant="danger">{pageData.error}</Alert>}
               {!pageData.error && (
-                <Alert variant="warning">
-                  <p className="mb-1 font-semibold">Welcome!</p>
-                  Create credentials for managing your InfiniDysk server.
+                <Alert variant="info">
+                  <div>
+                    <p className="font-semibold">Welcome!</p>
+                    <p>Create credentials for managing your InfiniDysk server.</p>
+                  </div>
                 </Alert>
               )}
 
               <fieldset className="fieldset space-y-3">
-                <label className="floating-label">
-                  <span>Username</span>
-                  <Input
-                    className="w-full"
-                    autoFocus
-                    name="username"
-                    type="text"
-                    placeholder="Choose a username"
-                    autoComplete="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.currentTarget.value)}
-                  />
-                </label>
-                <label className="floating-label">
-                  <span>Password</span>
-                  <Input
-                    className="w-full"
-                    name="password"
-                    type="password"
-                    placeholder="Choose a password"
-                    autoComplete="new-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.currentTarget.value)}
-                  />
-                </label>
-                <label className="floating-label">
-                  <span>Confirm password</span>
-                  <Input
-                    className="w-full"
-                    type="password"
-                    placeholder="Repeat your password"
-                    autoComplete="new-password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.currentTarget.value)}
-                  />
-                </label>
+                <div className="space-y-1">
+                  <label className="floating-label validator w-full">
+                    <Input
+                      className="w-full"
+                      autoFocus
+                      name="username"
+                      type="text"
+                      required
+                      placeholder="Choose a username"
+                      autoComplete="username"
+                      value={username}
+                      onChange={(e) => setUsername(e.currentTarget.value)}
+                    />
+                    <span>Username</span>
+                  </label>
+                  <p className="validator-hint">Username is required.</p>
+                </div>
+                <div className="space-y-1">
+                  <label className="floating-label validator w-full">
+                    <Input
+                      className="w-full"
+                      name="password"
+                      type="password"
+                      required
+                      minLength={1}
+                      placeholder="Choose a password"
+                      autoComplete="new-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.currentTarget.value)}
+                    />
+                    <span>Password</span>
+                  </label>
+                  <p className="validator-hint">Password is required.</p>
+                </div>
+                <div className="space-y-1">
+                  <label className="floating-label w-full">
+                    <Input
+                      className={`w-full ${password !== confirmPassword ? "input-error" : ""}`}
+                      name="confirmPassword"
+                      type="password"
+                      required
+                      placeholder="Repeat your password"
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.currentTarget.value)}
+                    />
+                    <span>Confirm password</span>
+                  </label>
+                  {password !== "" && confirmPassword === "" && (
+                    <p className="text-xs text-error">Confirm your password.</p>
+                  )}
+                  {password !== confirmPassword && confirmPassword !== "" && (
+                    <p className="text-xs text-error">Passwords must match.</p>
+                  )}
+                </div>
               </fieldset>
 
               <Button
@@ -123,7 +137,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                 disabled={submitButtonDisabled}
               >
                 {isLoading && <Spinner />}
-                {submitButtonText}
+                {isLoading ? "Registering..." : "Register"}
               </Button>
               <p className="text-center text-xs text-base-content/50">
                 First-time setup · this account becomes the administrator
@@ -146,8 +160,11 @@ export async function action({ request }: Route.ActionArgs) {
     const formData = await request.formData();
     const username = formData.get("username");
     const password = formData.get("password");
+    const confirmPassword = formData.get("confirmPassword");
     if (typeof username !== "string" || typeof password !== "string" || !username || !password)
       throw new Error("username and password required");
+    if (typeof confirmPassword !== "string" || confirmPassword !== password)
+      throw new Error("Passwords must match.");
     const isSuccess = await backendClient.createAccount(username, password);
     if (!isSuccess) throw new Error("Unknown error creating account");
     const responseInit = await setSessionUser(request, username);

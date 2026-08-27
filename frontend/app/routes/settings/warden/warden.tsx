@@ -498,7 +498,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
         <Form.Group className={"flex flex-col gap-2"}>
           <Form.Label>Agreement needed for shared lists</Form.Label>
           <Form.Control
-            className={"w-full max-w-md"}
+            className={"w-full max-w-48"}
             type="number"
             min={1}
             max={20}
@@ -545,17 +545,11 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               <Icon name="add_link" className="!text-[16px]" />
               Add remote backup
             </Button>
-            <Button
-              variant="primary"
-              size="xsmall"
-              disabled={busy !== null}
-              onClick={() => setShowBulk(true)}
-            >
+            <Button size="xsmall" disabled={busy !== null} onClick={() => setShowBulk(true)}>
               <Icon name="playlist_add" className="!text-[16px]" />
               Bundle
             </Button>
             <Button
-              variant="primary"
               size="xsmall"
               disabled={busy !== null}
               onClick={() => {
@@ -567,7 +561,6 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Import
             </Button>
             <Button
-              variant="primary"
               size="xsmall"
               disabled={!snap || snap.totalRows === 0}
               onClick={() => {
@@ -646,7 +639,6 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
                   <div className={"ml-auto flex shrink-0 items-center gap-1.5"}>
                     {s.kind === "remote" && (
                       <Button
-                        variant="primary"
                         size="xsmall"
                         disabled={rowBusy}
                         onClick={() => void refreshSource(s.id)}
@@ -866,6 +858,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={busy === "add-remote" || !remoteUrl.trim()}
               onClick={() => void addRemoteSource()}
             >
@@ -934,6 +927,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={busy === "bulk" || (!bulkText.trim() && !bulkFile)}
               onClick={() => void submitBulk()}
             >
@@ -962,7 +956,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
           </Form.Text>
         </Form.Group>
         <div className={"flex items-center gap-2.5"}>
-          <Button variant="primary" size="xsmall" onClick={() => bulkFileRef.current?.click()}>
+          <Button size="xsmall" onClick={() => bulkFileRef.current?.click()}>
             <Icon name="attach_file" className="!text-[16px]" />
             Choose file…
           </Button>
@@ -1002,7 +996,6 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
         <hr />
         <div className={"flex items-center gap-2.5"}>
           <Button
-            variant="primary"
             size="xsmall"
             disabled={!sources.some((s) => s.kind === "remote")}
             onClick={exportSourcesBundle}
@@ -1026,6 +1019,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={busy === "import" || !pendingFile}
               onClick={() => void submitImport()}
             >
@@ -1090,7 +1084,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
         )}
 
         <div className={"flex items-center gap-2.5"}>
-          <Button variant="primary" size="xsmall" onClick={() => fileRef.current?.click()}>
+          <Button size="xsmall" onClick={() => fileRef.current?.click()}>
             <Icon name="attach_file" className="!text-[16px]" />
             Choose file…
           </Button>
@@ -1110,6 +1104,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={exportScope === "merged" && exportSources.size === 0}
               onClick={doExport}
             >
@@ -1179,6 +1174,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={busy === "backup-save" || !bRepo.trim()}
               onClick={() => void saveBackup()}
             >

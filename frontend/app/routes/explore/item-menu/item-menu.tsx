@@ -50,7 +50,7 @@ export function ItemMenu({
   if (options.length === 0) return null;
 
   return (
-    <>
+    <div className={`dropdown dropdown-end ${isOpen ? "dropdown-open" : ""}`}>
       <button
         type="button"
         aria-label={exploreFile ? `Actions for ${exploreFile.name}` : "Item actions"}
@@ -61,7 +61,7 @@ export function ItemMenu({
         <Icon name="more_horiz" className="!text-[24px]" />
       </button>
       <DropdownOptions isOpen={isOpen} onClose={() => setIsOpen(false)} options={options} />
-    </>
+    </div>
   );
 }
 

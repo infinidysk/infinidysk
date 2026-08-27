@@ -16,7 +16,7 @@ export function Field({ className = "", ...props }: FieldsetHTMLAttributes<HTMLF
 export function Label({ className = "", ...props }: LabelHTMLAttributes<HTMLLabelElement>) {
   return (
     <label
-      className={`fieldset-legend text-sm font-medium text-base-content ${className}`}
+      className={`label flex w-fit max-w-full flex-wrap text-sm font-medium text-base-content ${className}`}
       {...props}
     />
   );
@@ -40,6 +40,23 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     return <input ref={ref} className={`input ${className}`} {...props} />;
   },
 );
+
+type InputGroupProps = InputHTMLAttributes<HTMLInputElement> & {
+  suffix: ReactNode;
+  inputClassName?: string;
+};
+
+export const InputGroup = forwardRef<HTMLInputElement, InputGroupProps>(function InputGroup(
+  { className = "", inputClassName = "", suffix, ...props },
+  ref,
+) {
+  return (
+    <div className={`input ${className}`}>
+      <input ref={ref} className={`min-w-0 grow ${inputClassName}`} {...props} />
+      <span className="label shrink-0">{suffix}</span>
+    </div>
+  );
+});
 
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
   function Select({ className = "", ...props }, ref) {
@@ -69,7 +86,11 @@ export const Toggle = forwardRef<HTMLInputElement, ToggleProps>(function Toggle(
   ref,
 ) {
   return (
-    <label htmlFor={id} style={style} className={`label ${className}`}>
+    <label
+      htmlFor={id}
+      style={style}
+      className={`label min-w-0 cursor-pointer whitespace-normal ${className}`}
+    >
       <input
         ref={ref}
         id={id}
@@ -78,7 +99,7 @@ export const Toggle = forwardRef<HTMLInputElement, ToggleProps>(function Toggle(
         className="toggle toggle-success"
         {...props}
       />
-      <span>{label}</span>
+      <span className="min-w-0 whitespace-normal">{label}</span>
     </label>
   );
 });
@@ -97,9 +118,13 @@ export const Check = forwardRef<HTMLInputElement, CheckProps>(function Check(
   }
 
   return (
-    <label htmlFor={props.id} style={style} className={`label ${className}`}>
+    <label
+      htmlFor={props.id}
+      style={style}
+      className={`label min-w-0 cursor-pointer whitespace-normal ${className}`}
+    >
       <input ref={ref} type={type} className={type === "radio" ? "radio" : "checkbox"} {...props} />
-      <span>{label}</span>
+      <span className="min-w-0 whitespace-normal">{label}</span>
     </label>
   );
 });

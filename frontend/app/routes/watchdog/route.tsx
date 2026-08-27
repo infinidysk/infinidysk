@@ -7,7 +7,7 @@ import {
   type WatchdogOutcome,
 } from "~/clients/backend-client.server";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
-import { Alert, Badge, Icon } from "~/components/ui";
+import { Alert, Badge, Icon, PageHeader, RadioJoinFilter } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import { withUrlBase } from "~/utils/url-base";
 
@@ -121,10 +121,10 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
         <div className="card-body gap-4 p-4 md:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h2 className="text-base font-semibold tracking-tight text-base-content">Watchdog</h2>
-              <p className="mt-1 text-xs text-base-content/50">
-                Live playback resolution log. Persisted across restarts.
-              </p>
+              <PageHeader
+                title="Watchdog"
+                subtitle="Live playback resolution log. Persisted across restarts."
+              />
             </div>
             <div className="join flex w-full flex-wrap sm:w-auto">
               <button
@@ -144,7 +144,7 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
               </button>
               <button
                 type="button"
-                className="btn btn-sm btn-primary join-item gap-2"
+                className="btn btn-sm join-item gap-2"
                 onClick={() => void refresh()}
                 disabled={refreshing || clearing}
                 title="Refresh now."
@@ -177,18 +177,16 @@ export default function Watchdog({ loaderData }: Route.ComponentProps) {
             <Stat label="In flight" value={stats.inFlight} tone="warn" />
           </div>
 
-          <div className="join flex-wrap">
-            {FILTER_OPTIONS.map((option) => (
-              <FilterChip
-                key={option.key}
-                active={filter === option.key}
-                onClick={() => setFilter(option.key)}
-                count={filterCounts[option.key]}
-              >
-                {option.label}
-              </FilterChip>
-            ))}
-          </div>
+          <RadioJoinFilter
+            name="watchdog-filter"
+            aria-label="Watchdog status filter"
+            value={filter}
+            onChange={setFilter}
+            options={FILTER_OPTIONS.map((option) => ({
+              id: option.key,
+              label: `${option.label} ${filterCounts[option.key]}`,
+            }))}
+          />
 
           {error && (
             <Alert variant="danger" className="text-xs">
@@ -381,7 +379,8 @@ function ClickCard({ group }: { group: ClickGroup }) {
                   </div>
                   <div className="flex gap-1.5 text-[11px] tabular-nums text-base-content/50">
                     <span title={a.providerHost ?? undefined}>
-                      📡 {a.providerNickname?.trim() || formatProviderShort(a.providerHost)}
+                      <Icon name="cell_tower" className="!text-[14px] align-middle" />{" "}
+                      {a.providerNickname?.trim() || formatProviderShort(a.providerHost)}
                     </span>
                     <span className="text-base-content/40">·</span>
                     <span>{formatBytes(a.size)}</span>
@@ -425,29 +424,6 @@ function Stat({
       <div className="stat-title text-[10px] uppercase tracking-wider">{label}</div>
       <div className={`stat-value font-mono text-xl ${valueClass}`}>{value}</div>
     </div>
-  );
-}
-
-function FilterChip({
-  active,
-  onClick,
-  count,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  count: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      className={`btn btn-sm join-item gap-2 ${active ? "btn-primary" : "btn-ghost"}`}
-      onClick={onClick}
-    >
-      <span>{children}</span>
-      <span className="badge badge-xs badge-ghost font-mono tabular-nums">{count}</span>
-    </button>
   );
 }
 

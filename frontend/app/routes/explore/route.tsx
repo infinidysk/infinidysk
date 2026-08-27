@@ -17,7 +17,7 @@ import { ItemMenu } from "./item-menu/item-menu";
 import { MediaPreview } from "./media-preview/media-preview";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { classNames } from "~/utils/styling";
-import { Icon, Checkbox, Button } from "~/components/ui";
+import { Icon, Checkbox, Button, PageHeader } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import { withUrlBase } from "~/utils/url-base";
 
@@ -357,6 +357,7 @@ function Body(props: ExplorePageData) {
 
   return (
     <div className="absolute flex min-h-full min-w-full flex-col px-4 py-4 text-base text-base-content/70 md:px-8">
+      <PageHeader title="Files" subtitle="Browse the WebDAV tree served by InfiniDysk." />
       <Breadcrumbs parentDirectories={parentDirectories} />
       {!showSkeleton && props.error === "not-found" && (
         <div className="card bg-base-200 border-base-content/10 my-4 min-h-[320px] shadow-md">

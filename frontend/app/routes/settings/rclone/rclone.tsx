@@ -134,10 +134,11 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
               >
                 Rclone Server Host
               </label>
-              <div className="flex w-full">
+              <div className="join w-full">
                 <Input
                   type="text"
                   id="rclone-host-input"
+                  className="join-item min-w-0 flex-1"
                   aria-describedby="rclone-host-help"
                   placeholder="http://localhost:5572"
                   value={config["rclone.host"]}
@@ -146,16 +147,14 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                 {config["rclone.host"]?.trim() && (
                   <Tooltip content="Tests host, credentials, and API response">
                     <Button
-                      variant={
-                        connectionState === "success"
-                          ? "success"
-                          : connectionState === "error"
-                            ? "danger"
-                            : "secondary"
-                      }
+                      className="join-item shrink-0"
+                      {...(connectionState === "success"
+                        ? { variant: "success" as const }
+                        : connectionState === "error"
+                          ? { variant: "danger" as const }
+                          : {})}
                       onClick={() => void testConnection()}
                       disabled={connectionState === "testing"}
-                      className={"shrink-0"}
                     >
                       {connectionState === "testing" ? (
                         <Spinner />

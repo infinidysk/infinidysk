@@ -47,15 +47,16 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
             <label className="block text-sm font-medium text-base-content" htmlFor="api-key-input">
               API Key
             </label>
-            <div className="flex w-full">
+            <div className="join w-full">
               <Input
                 type="text"
                 id="api-key-input"
+                className="join-item min-w-0 flex-1"
                 aria-describedby="api-key-help"
                 value={config["api.key"]}
                 readOnly
               />
-              <Button variant="primary" onClick={refreshApiKey}>
+              <Button className="join-item" onClick={refreshApiKey}>
                 <Icon name="refresh" className="!text-[18px]" />
                 Refresh
               </Button>
@@ -542,7 +543,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                 Keep NZB backups for (days)
               </label>
               <Input
-                className="w-full"
+                className="w-full max-w-48"
                 type="number"
                 min={0}
                 id="nzb-backup-retention-days-input"

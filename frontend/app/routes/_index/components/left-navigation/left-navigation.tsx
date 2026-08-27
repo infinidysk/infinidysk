@@ -40,10 +40,23 @@ export function LeftNavigation({ isWatchdogEnabled, serviceProvider }: LeftNavig
   const providerName = serviceProvider?.name;
 
   const [settingsOpen, setSettingsOpen] = useState(isSettingsRoute);
+  const [settingsQuery, setSettingsQuery] = useState("");
   const [providerNoticeOpen, setProviderNoticeOpen] = useState(false);
   useEffect(() => {
     if (isSettingsRoute) setSettingsOpen(true);
   }, [isSettingsRoute]);
+
+  const settingsQueryNormalized = settingsQuery.trim().toLowerCase();
+  const visibleSettingsGroups = SETTINGS_TAB_GROUPS.map((group) => ({
+    ...group,
+    items: settingsQueryNormalized
+      ? group.items.filter(
+          (item) =>
+            item.label.toLowerCase().includes(settingsQueryNormalized) ||
+            item.id.toLowerCase().includes(settingsQueryNormalized),
+        )
+      : group.items,
+  })).filter((group) => group.items.length > 0);
 
   const items: NavItem[] = [
     { target: "/overview", icon: "dashboard", label: "Overview", featureId: "overview" },
@@ -102,28 +115,51 @@ export function LeftNavigation({ isWatchdogEnabled, serviceProvider }: LeftNavig
               <span className="flex-1 text-left">Settings</span>
             </button>
           </li>
+          {settingsOpen && (
+            <li className="px-1 pb-1">
+              <label className="input input-sm flex items-center gap-2">
+                <Icon name="search" className="!text-[16px] text-base-content/50" />
+                <input
+                  type="search"
+                  className="grow"
+                  placeholder="Filter settings…"
+                  value={settingsQuery}
+                  onChange={(e) => setSettingsQuery(e.target.value)}
+                  aria-label="Filter settings tabs"
+                />
+              </label>
+            </li>
+          )}
           {settingsOpen &&
-            SETTINGS_TAB_GROUPS.map((group) => (
-              <Fragment key={group.title}>
-                <li className="menu-title ms-3 mt-2 border-s border-base-content/10 ps-3">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-base-content/45">
-                    {group.title}
-                  </span>
-                </li>
-                {group.items.map((item) => (
-                  <SettingsItem
-                    key={item.id}
-                    tab={item.id}
-                    icon={item.icon}
-                    activeTab={activeSettingsTab}
-                    disabled={isSettingsTabDisabled(serviceProvider, item.id)}
-                    {...(providerName !== undefined ? { providerName } : {})}
-                    onDisabledClick={() => setProviderNoticeOpen(true)}
-                  >
-                    {item.label}
-                  </SettingsItem>
-                ))}
-              </Fragment>
+            (visibleSettingsGroups.length === 0 ? (
+              <li className="menu-title ms-3 mt-2 ps-3">
+                <span className="normal-case tracking-normal text-base-content/50">
+                  No settings match "{settingsQuery.trim()}".
+                </span>
+              </li>
+            ) : (
+              visibleSettingsGroups.map((group) => (
+                <Fragment key={group.title}>
+                  <li className="menu-title ms-3 mt-2 border-s border-base-content/10 ps-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-base-content/45">
+                      {group.title}
+                    </span>
+                  </li>
+                  {group.items.map((item) => (
+                    <SettingsItem
+                      key={item.id}
+                      tab={item.id}
+                      icon={item.icon}
+                      activeTab={activeSettingsTab}
+                      disabled={isSettingsTabDisabled(serviceProvider, item.id)}
+                      {...(providerName !== undefined ? { providerName } : {})}
+                      onDisabledClick={() => setProviderNoticeOpen(true)}
+                    >
+                      {item.label}
+                    </SettingsItem>
+                  ))}
+                </Fragment>
+              ))
             ))}
         </ul>
       </nav>
