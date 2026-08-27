@@ -51,7 +51,7 @@ jobs:
             libs/UsenetSharp/obj
             libs/RapidYencSharp/bin
             libs/RapidYencSharp/obj
-          key: library-build-v1-${{ runner.os }}-Release-${{ steps.dotnet-sdk.outputs.version }}-${{ hashFiles('Directory.Build.props', 'Directory.Packages.props', '.editorconfig', 'libs/SharpCompress.snk', 'libs/SharpCompress/**/*.cs', 'libs/SharpCompress/*.csproj', 'libs/SharpCompress/.editorconfig', 'libs/UsenetSharp/**/*.cs', 'libs/UsenetSharp/*.csproj', 'libs/UsenetSharp/.editorconfig', 'libs/RapidYencSharp/**/*.cs', 'libs/RapidYencSharp/*.csproj', 'libs/RapidYencSharp/.editorconfig') }}
+          key: library-build-v1-${{ runner.os }}-Release-${{ steps.dotnet-sdk.outputs.version }}-${{ hashFiles('Directory.Build.props', 'Directory.Packages.props', 'nuget.config', '.editorconfig', 'libs/SharpCompress.snk', 'libs/SharpCompress/**/*.cs', 'libs/SharpCompress/*.csproj', 'libs/SharpCompress/.editorconfig', 'libs/UsenetSharp/**/*.cs', 'libs/UsenetSharp/*.csproj', 'libs/UsenetSharp/.editorconfig', 'libs/RapidYencSharp/**/*.cs', 'libs/RapidYencSharp/*.csproj', 'libs/RapidYencSharp/.editorconfig') }}
 
       - name: Restore C# libraries
         if: github.ref != 'refs/heads/main' || steps.library-build-cache.outputs.cache-hit != 'true'
