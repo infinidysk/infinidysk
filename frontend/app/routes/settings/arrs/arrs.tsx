@@ -256,7 +256,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
               title="Radarr instances"
               description="Movie managers that can search for replacement releases."
               action={
-                <Button variant="primary" size="small" onClick={addRadarrInstance}>
+                <Button size="small" onClick={addRadarrInstance}>
                   <Icon name="add" className="!text-[18px]" />
                   Add
                 </Button>
@@ -285,7 +285,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
               title="Sonarr instances"
               description="Series managers that can search for replacement releases."
               action={
-                <Button variant="primary" size="small" onClick={addSonarrInstance}>
+                <Button size="small" onClick={addSonarrInstance}>
                   <Icon name="add" className="!text-[18px]" />
                   Add
                 </Button>

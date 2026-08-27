@@ -25,19 +25,14 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
   const isLoading = navigation.state == "submitting";
 
   let submitButtonDisabled = false;
-  let submitButtonText = "Register";
   if (isLoading) {
     submitButtonDisabled = true;
-    submitButtonText = "Registering...";
   } else if (username == "") {
     submitButtonDisabled = true;
-    submitButtonText = "Username is required";
   } else if (password === "") {
     submitButtonDisabled = true;
-    submitButtonText = "Password is required";
   } else if (password != confirmPassword) {
     submitButtonDisabled = true;
-    submitButtonText = "Passwords must match";
   }
 
   return (
@@ -56,9 +51,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                   alt="InfiniDysk"
                 />
                 <div>
-                  <h1 className="bg-gradient-to-r from-primary to-success bg-clip-text text-2xl font-bold tracking-tight text-transparent">
-                    InfiniDysk
-                  </h1>
+                  <h1 className="text-2xl font-bold tracking-tight text-primary">InfiniDysk</h1>
                   <p className="mt-1 text-xs font-medium tracking-wide text-base-content/50">
                     The NzbDAV SuperFork
                   </p>
@@ -70,7 +63,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
 
               {pageData.error && <Alert variant="danger">{pageData.error}</Alert>}
               {!pageData.error && (
-                <Alert variant="warning">
+                <Alert variant="info">
                   <p className="mb-1 font-semibold">Welcome!</p>
                   Create credentials for managing your InfiniDysk server.
                 </Alert>
@@ -80,38 +73,48 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                 <label className="floating-label">
                   <span>Username</span>
                   <Input
-                    className="w-full"
+                    className="validator w-full"
                     autoFocus
                     name="username"
                     type="text"
+                    required
                     placeholder="Choose a username"
                     autoComplete="username"
                     value={username}
                     onChange={(e) => setUsername(e.currentTarget.value)}
                   />
+                  <p className="validator-hint">Username is required.</p>
                 </label>
                 <label className="floating-label">
                   <span>Password</span>
                   <Input
-                    className="w-full"
+                    className="validator w-full"
                     name="password"
                     type="password"
+                    required
+                    minLength={1}
                     placeholder="Choose a password"
                     autoComplete="new-password"
                     value={password}
                     onChange={(e) => setPassword(e.currentTarget.value)}
                   />
+                  <p className="validator-hint">Password is required.</p>
                 </label>
                 <label className="floating-label">
                   <span>Confirm password</span>
                   <Input
-                    className="w-full"
+                    className={`w-full ${password !== confirmPassword ? "input-error" : ""}`}
+                    name="confirmPassword"
                     type="password"
+                    required
                     placeholder="Repeat your password"
                     autoComplete="new-password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.currentTarget.value)}
                   />
+                  {password !== confirmPassword && confirmPassword !== "" && (
+                    <p className="validator-hint text-error">Passwords must match.</p>
+                  )}
                 </label>
               </fieldset>
 
@@ -123,7 +126,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                 disabled={submitButtonDisabled}
               >
                 {isLoading && <Spinner />}
-                {submitButtonText}
+                {isLoading ? "Registering..." : "Register"}
               </Button>
               <p className="text-center text-xs text-base-content/50">
                 First-time setup · this account becomes the administrator

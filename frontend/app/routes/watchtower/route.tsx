@@ -2,7 +2,7 @@ import type { Route } from "./+types/route";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFetcher, useSearchParams, useLocation } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
-import { Alert, Badge, Button, Icon, NativeForm as Form } from "~/components/ui";
+import { Alert, Badge, Button, Icon, NativeForm as Form, PageHeader } from "~/components/ui";
 import { Checkbox } from "~/components/ui/form";
 import {
   backendClient,
@@ -377,61 +377,53 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
       : `Remove ${selectedItems.size} item${selectedItems.size === 1 ? "" : "s"} from Watchtower?`;
 
   return (
-    <div
-      className={`mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-4 text-sm text-base-content/70 md:px-8 ${isReadOnly ? "[&_form]:hidden" : ""}`}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight text-base-content">Watchtower</h2>
-          <p className="mt-1.5 max-w-[660px] text-xs leading-relaxed text-base-content/50">
-            Keeps your lists ready. Each title is pre-resolved to a healthy release and re-verified
-            over time, so it's found and ready before you need it. Pointer-only: it stores segment
-            maps, never video.
-          </p>
-        </div>
-        <div className="stats stats-vertical w-full border border-base-content/10 shadow sm:stats-horizontal">
+    <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-4 text-sm text-base-content/70 md:px-8">
+      <PageHeader
+        title="Watchtower"
+        subtitle="Pre-resolves titles on your lists to a healthy Usenet release and re-checks them over time so they are ready before you play. It stores article pointers, never the video itself."
+      />
+      <div className="stats stats-vertical w-full border border-base-content/10 shadow sm:stats-horizontal">
+        <StatButton
+          label="Ready"
+          value={stats.ready}
+          tone="ok"
+          active={stateFilter === "ready"}
+          onClick={() => toggleState("ready")}
+        />
+        <StatButton
+          label="Scouting"
+          value={stats.scouting}
+          tone="warn"
+          active={stateFilter === "scouting"}
+          onClick={() => toggleState("scouting")}
+        />
+        <StatButton
+          label="Unavailable"
+          value={stats.unavailable}
+          tone="bad"
+          active={stateFilter === "unavailable"}
+          onClick={() => toggleState("unavailable")}
+        />
+        {stats.parked > 0 && (
           <StatButton
-            label="Ready"
-            value={stats.ready}
-            tone="ok"
-            active={stateFilter === "ready"}
-            onClick={() => toggleState("ready")}
+            label="Parked"
+            value={stats.parked}
+            active={stateFilter === "parked"}
+            onClick={() => toggleState("parked")}
           />
-          <StatButton
-            label="Scouting"
-            value={stats.scouting}
-            tone="warn"
-            active={stateFilter === "scouting"}
-            onClick={() => toggleState("scouting")}
-          />
-          <StatButton
-            label="Unavailable"
-            value={stats.unavailable}
-            tone="bad"
-            active={stateFilter === "unavailable"}
-            onClick={() => toggleState("unavailable")}
-          />
-          {stats.parked > 0 && (
-            <StatButton
-              label="Parked"
-              value={stats.parked}
-              active={stateFilter === "parked"}
-              onClick={() => toggleState("parked")}
-            />
-          )}
-          <StatButton
-            label="Shows"
-            value={stats.expanders}
-            active={stateFilter === "expander"}
-            onClick={() => toggleState("expander")}
-          />
-          <StatButton
-            label="Total"
-            value={stats.total}
-            active={stateFilter === null}
-            onClick={() => clearFilters()}
-          />
-        </div>
+        )}
+        <StatButton
+          label="Shows"
+          value={stats.expanders}
+          active={stateFilter === "expander"}
+          onClick={() => toggleState("expander")}
+        />
+        <StatButton
+          label="Total"
+          value={stats.total}
+          active={stateFilter === null}
+          onClick={() => clearFilters()}
+        />
       </div>
 
       {!enabled && (
@@ -462,190 +454,205 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
           ) : (
             <div className="divide-y divide-base-content/10 rounded-lg border border-base-content/10">
               {sources.map((s) => (
-                <SourceRow key={s.id} source={s} />
+                <SourceRow key={s.id} source={s} isReadOnly={isReadOnly} />
               ))}
             </div>
           )}
 
-          <addFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
-            <input type="hidden" name="action" value="add-source" />
-            <Form.Select
-              name="kind"
-              defaultValue="stremio-catalog"
-              className="select-sm max-w-[170px]"
-            >
-              <option value="stremio-catalog">Stremio catalog</option>
-              <option value="url-list">URL list</option>
-            </Form.Select>
-            <Form.Control
-              name="name"
-              placeholder="Name (optional)"
-              className="input-sm max-w-[170px]"
-            />
-            <Form.Control
-              name="url"
-              placeholder="https://addon/catalog/movie/xyz.json"
-              className="input-sm min-w-[220px] flex-1"
-            />
-            <Form.Control
-              name="cap"
-              type="number"
-              min={0}
-              placeholder="cap"
-              className="input-sm max-w-[100px]"
-              title="Per-list active cap (0 = use default)"
-            />
-            <Form.Select
-              name="seriesScope"
-              defaultValue=""
-              className="select-sm max-w-[170px]"
-              title="Series scope for this list"
-            >
-              {SCOPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Form.Select>
-            <Button type="submit" variant="primary" disabled={addFetcher.state !== "idle"}>
-              Add list
-            </Button>
-          </addFetcher.Form>
-
-          <div className="flex flex-col gap-3 border-t border-dashed border-base-content/10 pt-4">
-            <p className="text-xs leading-relaxed text-base-content/50">
-              Or paste a Stremio addon's{" "}
-              <code className="rounded border border-base-content/10 bg-base-200 px-1 font-mono text-[11px]">
-                manifest.json
-              </code>{" "}
-              URL to see its catalogs and pick the ones you want. Each catalog you add becomes its
-              own list.
-            </p>
-            <discoverFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
-              <input type="hidden" name="action" value="discover-catalogs" />
-              <Form.Control
-                name="url"
-                placeholder="https://addon.example.com/.../manifest.json"
-                className="input-sm min-w-[220px] flex-1"
-              />
-              <Button type="submit" variant="primary" disabled={discoverFetcher.state !== "idle"}>
-                <Icon
-                  name={discoverFetcher.state !== "idle" ? "progress_activity" : "travel_explore"}
-                  className={`!text-[18px] ${discoverFetcher.state !== "idle" ? "animate-spin" : ""}`}
+          {!isReadOnly && (
+            <>
+              <addFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
+                <input type="hidden" name="action" value="add-source" />
+                <Form.Select
+                  name="kind"
+                  defaultValue="stremio-catalog"
+                  className="select-sm max-w-[170px]"
+                >
+                  <option value="stremio-catalog">Stremio catalog</option>
+                  <option value="url-list">URL list</option>
+                </Form.Select>
+                <Form.Control
+                  name="name"
+                  placeholder="Name (optional)"
+                  className="input-sm max-w-[170px]"
                 />
-                {discoverFetcher.state !== "idle" ? "Loading…" : "Discover catalogs"}
-              </Button>
-            </discoverFetcher.Form>
+                <Form.Control
+                  name="url"
+                  placeholder="https://addon/catalog/movie/xyz.json"
+                  className="input-sm min-w-[220px] flex-1"
+                />
+                <Form.Control
+                  name="cap"
+                  type="number"
+                  min={0}
+                  placeholder="cap"
+                  className="input-sm max-w-[100px]"
+                  title="Per-list active cap (0 = use default)"
+                />
+                <Form.Select
+                  name="seriesScope"
+                  defaultValue=""
+                  className="select-sm max-w-[170px]"
+                  title="Series scope for this list"
+                >
+                  {SCOPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Form.Select>
+                <Button type="submit" variant="primary" disabled={addFetcher.state !== "idle"}>
+                  Add list
+                </Button>
+              </addFetcher.Form>
 
-            {discoverError && (
-              <Alert variant="danger" className="text-xs">
-                {discoverError}
-              </Alert>
-            )}
+              <div className="flex flex-col gap-3 border-t border-dashed border-base-content/10 pt-4">
+                <p className="text-xs leading-relaxed text-base-content/50">
+                  Or paste a Stremio addon's{" "}
+                  <code className="rounded border border-base-content/10 bg-base-200 px-1 font-mono text-[11px]">
+                    manifest.json
+                  </code>{" "}
+                  URL to see its catalogs and pick the ones you want. Each catalog you add becomes
+                  its own list.
+                </p>
+                <discoverFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
+                  <input type="hidden" name="action" value="discover-catalogs" />
+                  <Form.Control
+                    name="url"
+                    placeholder="https://addon.example.com/.../manifest.json"
+                    className="input-sm min-w-[220px] flex-1"
+                  />
+                  <Button type="submit" disabled={discoverFetcher.state !== "idle"}>
+                    <Icon
+                      name={
+                        discoverFetcher.state !== "idle" ? "progress_activity" : "travel_explore"
+                      }
+                      className={`!text-[18px] ${discoverFetcher.state !== "idle" ? "animate-spin" : ""}`}
+                    />
+                    {discoverFetcher.state !== "idle" ? "Loading…" : "Discover catalogs"}
+                  </Button>
+                </discoverFetcher.Form>
 
-            {discovered && !discoveryDismissed && (
-              <div className="card border border-base-content/10 bg-base-200/40 shadow-sm">
-                <div className="card-body gap-3 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-xs font-semibold text-base-content">
-                      {discovered.addonName ? `${discovered.addonName} · ` : ""}
-                      {discovered.catalogs.length} catalog
-                      {discovered.catalogs.length === 1 ? "" : "s"} found
-                    </div>
-                    <div className="join">
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-xs join-item"
-                        onClick={() => setSelected(new Set(discovered.catalogs.map((c) => c.url)))}
-                      >
-                        select all
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-xs join-item"
-                        onClick={() => setSelected(new Set())}
-                      >
-                        select none
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-xs join-item"
-                        onClick={() => setDiscoveryDismissed(true)}
-                      >
-                        close
-                      </button>
-                    </div>
-                  </div>
+                {discoverError && (
+                  <Alert variant="danger" className="text-xs">
+                    {discoverError}
+                  </Alert>
+                )}
 
-                  <div className="max-h-[340px] overflow-y-auto divide-y divide-base-content/10">
-                    {discovered.catalogs.map((cat) => (
-                      <label
-                        key={cat.url}
-                        className="flex min-w-0 cursor-pointer items-center gap-2.5 py-2"
-                      >
-                        <Checkbox
-                          checked={selected.has(cat.url)}
-                          onChange={(e) =>
-                            setSelected((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(cat.url);
-                              else next.delete(cat.url);
-                              return next;
-                            })
-                          }
-                        />
-                        <Badge className="badge-ghost badge-sm uppercase">{cat.type}</Badge>
-                        <span className="shrink-0 font-medium text-base-content">{cat.name}</span>
-                        {cat.extraRequired && (
-                          <Badge
-                            className="badge-warning badge-sm"
-                            title={`This catalog requires "${cat.extraRequired}"; the basic endpoint may return nothing.`}
+                {discovered && !discoveryDismissed && (
+                  <div className="card border border-base-content/10 bg-base-200/40 shadow-sm">
+                    <div className="card-body gap-3 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-xs font-semibold text-base-content">
+                          {discovered.addonName ? `${discovered.addonName} · ` : ""}
+                          {discovered.catalogs.length} catalog
+                          {discovered.catalogs.length === 1 ? "" : "s"} found
+                        </div>
+                        <div className="join">
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm max-sm:min-h-11 join-item"
+                            onClick={() =>
+                              setSelected(new Set(discovered.catalogs.map((c) => c.url)))
+                            }
                           >
-                            needs {cat.extraRequired}
-                          </Badge>
-                        )}
-                        <span
-                          className="min-w-0 flex-1 truncate text-right font-mono text-[11px] text-base-content/50"
-                          title={cat.url}
-                        >
-                          {cat.url}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
+                            select all
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm max-sm:min-h-11 join-item"
+                            onClick={() => setSelected(new Set())}
+                          >
+                            select none
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm max-sm:min-h-11 join-item"
+                            onClick={() => setDiscoveryDismissed(true)}
+                          >
+                            close
+                          </button>
+                        </div>
+                      </div>
 
-                  <div className="flex flex-wrap items-center gap-3">
-                    <bulkFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
-                      <input type="hidden" name="action" value="add-sources" />
-                      <input type="hidden" name="sources" value={sourcesJson} readOnly />
-                      <Form.Select
-                        name="seriesScope"
-                        defaultValue=""
-                        className="select-sm max-w-[170px]"
-                        title="Series scope for these lists"
-                      >
-                        {SCOPE_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
+                      <div className="max-h-[340px] overflow-y-auto divide-y divide-base-content/10">
+                        {discovered.catalogs.map((cat) => (
+                          <label
+                            key={cat.url}
+                            className="flex min-w-0 cursor-pointer items-center gap-2.5 py-2"
+                          >
+                            <Checkbox
+                              checked={selected.has(cat.url)}
+                              onChange={(e) =>
+                                setSelected((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(cat.url);
+                                  else next.delete(cat.url);
+                                  return next;
+                                })
+                              }
+                            />
+                            <Badge className="badge-ghost badge-sm uppercase">{cat.type}</Badge>
+                            <span className="shrink-0 font-medium text-base-content">
+                              {cat.name}
+                            </span>
+                            {cat.extraRequired && (
+                              <Badge
+                                className="badge-warning badge-sm"
+                                title={`This catalog requires "${cat.extraRequired}"; the basic endpoint may return nothing.`}
+                              >
+                                needs {cat.extraRequired}
+                              </Badge>
+                            )}
+                            <span
+                              className="min-w-0 flex-1 truncate text-right font-mono text-[11px] text-base-content/50"
+                              title={cat.url}
+                            >
+                              {cat.url}
+                            </span>
+                          </label>
                         ))}
-                      </Form.Select>
-                      <Button
-                        type="submit"
-                        variant="primary"
-                        disabled={bulkFetcher.state !== "idle" || selected.size === 0}
-                      >
-                        {bulkFetcher.state !== "idle" ? "Adding…" : `Add ${selected.size} selected`}
-                      </Button>
-                    </bulkFetcher.Form>
-                    {bulkFetcher.data && bulkFetcher.data.ok === false && (
-                      <span className="text-xs text-error">{bulkFetcher.data.error}</span>
-                    )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3">
+                        <bulkFetcher.Form
+                          method="post"
+                          className="flex flex-wrap items-center gap-2"
+                        >
+                          <input type="hidden" name="action" value="add-sources" />
+                          <input type="hidden" name="sources" value={sourcesJson} readOnly />
+                          <Form.Select
+                            name="seriesScope"
+                            defaultValue=""
+                            className="select-sm max-w-[170px]"
+                            title="Series scope for these lists"
+                          >
+                            {SCOPE_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </Form.Select>
+                          <Button
+                            type="submit"
+                            variant="primary"
+                            disabled={bulkFetcher.state !== "idle" || selected.size === 0}
+                          >
+                            {bulkFetcher.state !== "idle"
+                              ? "Adding…"
+                              : `Add ${selected.size} selected`}
+                          </Button>
+                        </bulkFetcher.Form>
+                        {bulkFetcher.data && bulkFetcher.data.ok === false && (
+                          <span className="text-xs text-error">{bulkFetcher.data.error}</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -659,26 +666,28 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
             </p>
           </div>
 
-          <addFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
-            <input type="hidden" name="action" value="add-item" />
-            <Form.Select name="type" defaultValue="movie" className="select-sm max-w-[170px]">
-              <option value="movie">movie</option>
-              <option value="series">series</option>
-            </Form.Select>
-            <Form.Control
-              name="id"
-              placeholder="tt0111161  (or tt0903747:1:2 for an episode)"
-              className="input-sm min-w-[220px] flex-1"
-            />
-            <Form.Control
-              name="title"
-              placeholder="Title (optional)"
-              className="input-sm max-w-[170px]"
-            />
-            <Button type="submit" variant="primary" disabled={addFetcher.state !== "idle"}>
-              Add item
-            </Button>
-          </addFetcher.Form>
+          {!isReadOnly && (
+            <addFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="action" value="add-item" />
+              <Form.Select name="type" defaultValue="movie" className="select-sm max-w-[170px]">
+                <option value="movie">movie</option>
+                <option value="series">series</option>
+              </Form.Select>
+              <Form.Control
+                name="id"
+                placeholder="tt0111161  (or tt0903747:1:2 for an episode)"
+                className="input-sm min-w-[220px] flex-1"
+              />
+              <Form.Control
+                name="title"
+                placeholder="Title (optional)"
+                className="input-sm max-w-[170px]"
+              />
+              <Button type="submit" variant="primary" disabled={addFetcher.state !== "idle"}>
+                Add item
+              </Button>
+            </addFetcher.Form>
+          )}
 
           {stats.total > 0 && (
             <div className="flex flex-wrap items-center gap-2">
@@ -713,7 +722,11 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                 <option value="recheck">Re-check soonest</option>
               </Form.Select>
               {filtering && (
-                <button type="button" className="btn btn-ghost btn-xs" onClick={clearFilters}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm max-sm:min-h-11"
+                  onClick={clearFilters}
+                >
                   clear
                 </button>
               )}
@@ -721,7 +734,11 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                 <filterFetcher.Form method="post" className="ml-auto flex items-center">
                   <input type="hidden" name="action" value="recheck-by-filter" />
                   <input type="hidden" name="state" value="unavailable" />
-                  <button type="submit" className="btn btn-ghost btn-xs" disabled={filterBusy}>
+                  <button
+                    type="submit"
+                    className="btn btn-ghost btn-sm max-sm:min-h-11"
+                    disabled={filterBusy}
+                  >
                     re-check {stats.unavailable} unavailable
                   </button>
                 </filterFetcher.Form>
@@ -792,7 +809,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                 </Button>
                 <button
                   type="button"
-                  className="btn btn-ghost btn-xs"
+                  className="btn btn-ghost btn-sm max-sm:min-h-11"
                   onClick={() => setSelectedItems(new Set())}
                 >
                   Clear
@@ -830,6 +847,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                   selectedKeys={selectedItems}
                   onToggleSelect={toggleItem}
                   onSelectMany={setKeysSelected}
+                  isReadOnly={isReadOnly}
                 />
               ))}
               {orphans.map((it) => (
@@ -838,6 +856,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                   item={it}
                   selected={selectedItems.has(it.key)}
                   onToggleSelect={toggleItem}
+                  isReadOnly={isReadOnly}
                 />
               ))}
             </div>
@@ -863,7 +882,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
   );
 }
 
-function SourceRow({ source }: { source: WatchtowerSource }) {
+function SourceRow({ source, isReadOnly }: { source: WatchtowerSource; isReadOnly: boolean }) {
   const fetcher = useFetcher();
   const label = sourceLabel(source);
   const host = source.url ? hostOf(source.url) : "";
@@ -891,51 +910,55 @@ function SourceRow({ source }: { source: WatchtowerSource }) {
         ) : (
           <span className="text-xs text-base-content/50">not synced yet</span>
         )}
-        {source.url && (
-          <fetcher.Form method="post">
-            <input type="hidden" name="action" value="sync-source" />
-            <input type="hidden" name="id" value={source.id} />
-            <button
-              type="submit"
-              className="btn btn-ghost btn-xs"
-              disabled={fetcher.state !== "idle"}
-            >
-              sync now
-            </button>
-          </fetcher.Form>
+        {!isReadOnly && (
+          <>
+            {source.url && (
+              <fetcher.Form method="post">
+                <input type="hidden" name="action" value="sync-source" />
+                <input type="hidden" name="id" value={source.id} />
+                <button
+                  type="submit"
+                  className="btn btn-ghost btn-sm max-sm:min-h-11"
+                  disabled={fetcher.state !== "idle"}
+                >
+                  sync now
+                </button>
+              </fetcher.Form>
+            )}
+            <fetcher.Form method="post">
+              <input type="hidden" name="action" value="set-source-scope" />
+              <input type="hidden" name="id" value={source.id} />
+              <Form.Select
+                name="seriesScope"
+                defaultValue={source.seriesScope ?? ""}
+                className="select-sm max-w-[170px]"
+                title="Series scope for this list"
+                onChange={(e) => e.currentTarget.form?.requestSubmit()}
+              >
+                {SCOPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Form.Select>
+            </fetcher.Form>
+            <fetcher.Form method="post">
+              <input type="hidden" name="action" value="toggle-source" />
+              <input type="hidden" name="id" value={source.id} />
+              <input type="hidden" name="enabled" value={String(!source.enabled)} />
+              <button type="submit" className="btn btn-ghost btn-sm max-sm:min-h-11">
+                {source.enabled ? "disable" : "enable"}
+              </button>
+            </fetcher.Form>
+            <fetcher.Form method="post">
+              <input type="hidden" name="action" value="remove-source" />
+              <input type="hidden" name="id" value={source.id} />
+              <button type="submit" className="btn btn-ghost btn-sm max-sm:min-h-11 text-error">
+                remove
+              </button>
+            </fetcher.Form>
+          </>
         )}
-        <fetcher.Form method="post">
-          <input type="hidden" name="action" value="set-source-scope" />
-          <input type="hidden" name="id" value={source.id} />
-          <Form.Select
-            name="seriesScope"
-            defaultValue={source.seriesScope ?? ""}
-            className="select-sm max-w-[170px]"
-            title="Series scope for this list"
-            onChange={(e) => e.currentTarget.form?.requestSubmit()}
-          >
-            {SCOPE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Form.Select>
-        </fetcher.Form>
-        <fetcher.Form method="post">
-          <input type="hidden" name="action" value="toggle-source" />
-          <input type="hidden" name="id" value={source.id} />
-          <input type="hidden" name="enabled" value={String(!source.enabled)} />
-          <button type="submit" className="btn btn-ghost btn-xs">
-            {source.enabled ? "disable" : "enable"}
-          </button>
-        </fetcher.Form>
-        <fetcher.Form method="post">
-          <input type="hidden" name="action" value="remove-source" />
-          <input type="hidden" name="id" value={source.id} />
-          <button type="submit" className="btn btn-ghost btn-xs text-error">
-            remove
-          </button>
-        </fetcher.Form>
       </div>
     </div>
   );
@@ -945,10 +968,12 @@ function ItemRow({
   item,
   selected,
   onToggleSelect,
+  isReadOnly,
 }: {
   item: WatchtowerItem;
   selected: boolean;
   onToggleSelect: (key: string) => void;
+  isReadOnly: boolean;
 }) {
   const fetcher = useFetcher<typeof action>();
   const pending = fetcher.formData?.get("action");
@@ -960,12 +985,14 @@ function ItemRow({
       className={`flex flex-col items-stretch gap-2.5 px-2.5 py-3 transition-colors hover:bg-base-200/40 sm:flex-row sm:items-center sm:justify-between ${removing ? "opacity-50" : ""} ${selected ? "bg-primary/10 shadow-[inset_2px_0_0_0] shadow-primary" : ""}`}
     >
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5 sm:flex-nowrap">
-        <Checkbox
-          checked={selected}
-          onChange={() => onToggleSelect(item.key)}
-          aria-label={`Select ${item.title}`}
-          className="checkbox-sm shrink-0"
-        />
+        {!isReadOnly && (
+          <Checkbox
+            checked={selected}
+            onChange={() => onToggleSelect(item.key)}
+            aria-label={`Select ${item.title}`}
+            className="checkbox-sm shrink-0"
+          />
+        )}
         <StateChip state={item.state} />
         <div className="min-w-0">
           <div className="truncate font-medium text-base-content" title={item.title}>
@@ -1011,28 +1038,32 @@ function ItemRow({
             failed — retry
           </span>
         )}
-        <fetcher.Form method="post">
-          <input type="hidden" name="action" value="recheck-item" />
-          <input type="hidden" name="key" value={item.key} />
-          <button
-            type="submit"
-            className="btn btn-ghost btn-xs"
-            disabled={fetcher.state !== "idle"}
-          >
-            {checking ? "checking…" : "check now"}
-          </button>
-        </fetcher.Form>
-        <fetcher.Form method="post">
-          <input type="hidden" name="action" value="remove-item" />
-          <input type="hidden" name="key" value={item.key} />
-          <button
-            type="submit"
-            className="btn btn-ghost btn-xs text-error"
-            disabled={fetcher.state !== "idle"}
-          >
-            {removing ? "removing…" : "remove"}
-          </button>
-        </fetcher.Form>
+        {!isReadOnly && (
+          <>
+            <fetcher.Form method="post">
+              <input type="hidden" name="action" value="recheck-item" />
+              <input type="hidden" name="key" value={item.key} />
+              <button
+                type="submit"
+                className="btn btn-ghost btn-sm max-sm:min-h-11"
+                disabled={fetcher.state !== "idle"}
+              >
+                {checking ? "checking…" : "check now"}
+              </button>
+            </fetcher.Form>
+            <fetcher.Form method="post">
+              <input type="hidden" name="action" value="remove-item" />
+              <input type="hidden" name="key" value={item.key} />
+              <button
+                type="submit"
+                className="btn btn-ghost btn-sm max-sm:min-h-11 text-error"
+                disabled={fetcher.state !== "idle"}
+              >
+                {removing ? "removing…" : "remove"}
+              </button>
+            </fetcher.Form>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1048,6 +1079,7 @@ function ExpanderGroup({
   selectedKeys,
   onToggleSelect,
   onSelectMany,
+  isReadOnly,
 }: {
   expander: WatchtowerItem;
   episodes: WatchtowerItem[];
@@ -1058,6 +1090,7 @@ function ExpanderGroup({
   selectedKeys: Set<string>;
   onToggleSelect: (key: string) => void;
   onSelectMany: (keys: string[], select: boolean) => void;
+  isReadOnly: boolean;
 }) {
   const fetcher = useFetcher<typeof action>();
   const seriesCheckRef = useRef<HTMLInputElement>(null);
@@ -1099,14 +1132,16 @@ function ExpanderGroup({
         }}
       >
         <span onClick={(e) => e.stopPropagation()}>
-          <Checkbox
-            ref={seriesCheckRef}
-            checked={allSel}
-            disabled={childKeys.length === 0}
-            onChange={() => onSelectMany(childKeys, !allSel)}
-            aria-label={`Select loaded episodes of ${expander.title}`}
-            className="checkbox-sm shrink-0"
-          />
+          {!isReadOnly && (
+            <Checkbox
+              ref={seriesCheckRef}
+              checked={allSel}
+              disabled={childKeys.length === 0}
+              onChange={() => onSelectMany(childKeys, !allSel)}
+              aria-label={`Select loaded episodes of ${expander.title}`}
+              className="checkbox-sm shrink-0"
+            />
+          )}
         </span>
         <Icon
           name="chevron_right"
@@ -1142,28 +1177,32 @@ function ExpanderGroup({
               failed — retry
             </span>
           )}
-          <fetcher.Form method="post">
-            <input type="hidden" name="action" value="recheck-item" />
-            <input type="hidden" name="key" value={expander.key} />
-            <button
-              type="submit"
-              className="btn btn-ghost btn-xs"
-              disabled={fetcher.state !== "idle"}
-            >
-              {checking ? "checking…" : "check now"}
-            </button>
-          </fetcher.Form>
-          <fetcher.Form method="post">
-            <input type="hidden" name="action" value="remove-item" />
-            <input type="hidden" name="key" value={expander.key} />
-            <button
-              type="submit"
-              className="btn btn-ghost btn-xs text-error"
-              disabled={fetcher.state !== "idle"}
-            >
-              {removing ? "removing…" : "remove"}
-            </button>
-          </fetcher.Form>
+          {!isReadOnly && (
+            <>
+              <fetcher.Form method="post">
+                <input type="hidden" name="action" value="recheck-item" />
+                <input type="hidden" name="key" value={expander.key} />
+                <button
+                  type="submit"
+                  className="btn btn-ghost btn-sm max-sm:min-h-11"
+                  disabled={fetcher.state !== "idle"}
+                >
+                  {checking ? "checking…" : "check now"}
+                </button>
+              </fetcher.Form>
+              <fetcher.Form method="post">
+                <input type="hidden" name="action" value="remove-item" />
+                <input type="hidden" name="key" value={expander.key} />
+                <button
+                  type="submit"
+                  className="btn btn-ghost btn-sm max-sm:min-h-11 text-error"
+                  disabled={fetcher.state !== "idle"}
+                >
+                  {removing ? "removing…" : "remove"}
+                </button>
+              </fetcher.Form>
+            </>
+          )}
         </div>
       </div>
       {expanded &&
@@ -1175,6 +1214,7 @@ function ExpanderGroup({
                 item={c}
                 selected={selectedKeys.has(c.key)}
                 onToggleSelect={onToggleSelect}
+                isReadOnly={isReadOnly}
               />
             ))}
           </div>

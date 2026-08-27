@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
 } from "react";
+import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import {
   Alert,
   Badge,
@@ -498,6 +499,7 @@ export function UsenetSettings({
   const [searchParams] = useSearchParams();
   const isDemoPreview = searchParams.get("demoProviders") === "1";
   const [showModal, setShowModal] = useState(false);
+  const [resetUsageIndex, setResetUsageIndex] = useState<number | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [connections, setConnections] = useState<Record<string, ConnectionCounts>>({});
   const [usage, setUsage] = useState<Record<string, ProviderUsage>>({});
@@ -592,13 +594,6 @@ export function UsenetSettings({
     (index: number) => {
       const current = providerConfig.Providers[index];
       if (!current) return;
-      const label = current.Nickname?.trim() || current.Host;
-      if (
-        !confirm(
-          `Reset bytes-used counter for "${label}" to zero?\n\nThis only rewinds the gauge for this provider's data cap. Historical metrics and graphs are untouched. Takes effect after you save settings.`,
-        )
-      )
-        return;
       const updated: ConnectionDetails = {
         ...current,
         BytesUsedOffset: 0,
@@ -609,6 +604,7 @@ export function UsenetSettings({
         i === index ? updated : p,
       );
       setNewConfig({ ...config, "usenet.providers": serializeProviderConfig(newProviderConfig) });
+      setResetUsageIndex(null);
     },
     [config, providerConfig, setNewConfig],
   );
@@ -881,7 +877,7 @@ export function UsenetSettings({
                 <UsageRow
                   provider={provider}
                   usage={providerUsage}
-                  onReset={() => handleResetUsage(index)}
+                  onReset={() => setResetUsageIndex(index)}
                   resetDisabled={isDemoPreview}
                 />
               </div>
@@ -1157,6 +1153,21 @@ export function UsenetSettings({
         onSave={handleSaveProvider}
         onApplyPipelining={handleApplyPipelining}
         defaultPipeliningDepth={config["usenet.queue-pipelining.depth"] || "8"}
+      />
+      <ConfirmModal
+        show={resetUsageIndex !== null}
+        title="Reset data-cap counter?"
+        message={
+          resetUsageIndex !== null
+            ? `Reset the bytes-used counter for "${providerConfig.Providers[resetUsageIndex]?.Nickname?.trim() || providerConfig.Providers[resetUsageIndex]?.Host}" to zero? This only rewinds the gauge for this provider's data cap. Historical metrics and graphs are untouched. Takes effect after you save settings.`
+            : ""
+        }
+        confirmText="Reset counter"
+        cancelText="Cancel"
+        onCancel={() => setResetUsageIndex(null)}
+        onConfirm={() => {
+          if (resetUsageIndex !== null) handleResetUsage(resetUsageIndex);
+        }}
       />
     </SettingsPage>
   );
@@ -2217,7 +2228,7 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
           <div className="join" role="group" aria-label="Test intensity">
             <button
               type="button"
-              className={`btn btn-sm join-item ${intensity === "quick" ? "btn-primary" : "btn-ghost"}`}
+              className={`btn btn-sm join-item ${intensity === "quick" ? "btn-active" : "btn-ghost"}`}
               onClick={() => setIntensity("quick")}
               disabled={isBenchmarking}
               aria-pressed={intensity === "quick"}
@@ -2226,7 +2237,7 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
             </button>
             <button
               type="button"
-              className={`btn btn-sm join-item ${intensity === "thorough" ? "btn-primary" : "btn-ghost"}`}
+              className={`btn btn-sm join-item ${intensity === "thorough" ? "btn-active" : "btn-ghost"}`}
               onClick={() => setIntensity("thorough")}
               disabled={isBenchmarking}
               aria-pressed={intensity === "thorough"}

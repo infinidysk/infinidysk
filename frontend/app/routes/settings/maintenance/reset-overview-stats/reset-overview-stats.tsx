@@ -1,3 +1,4 @@
+import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Alert } from "~/components/ui/feedback";
@@ -24,6 +25,7 @@ export function ResetOverviewStats() {
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [target, setTarget] = useState<string>(""); // "" = all providers
+  const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,18 +55,7 @@ export function ResetOverviewStats() {
   }, []);
 
   const onReset = useCallback(async () => {
-    const targetLabel = providers.find((p) => p.providerId === target)?.label;
-    const prompt = target
-      ? `Reset Overview statistics for "${targetLabel}"? Its scoreboard, ` +
-        "latency, and failover data will be permanently removed. Global " +
-        "throughput charts and session history are unaffected. " +
-        "This cannot be undone."
-      : "Reset all Overview statistics? Throughput history, provider " +
-        "scoreboard, sessions, failover and latency data will be " +
-        "permanently removed. Queue, history, and provider data-cap " +
-        "gauges are not affected. This cannot be undone.";
-    if (!window.confirm(prompt)) return;
-
+    setShowConfirm(false);
     setIsRunning(true);
     setMessage(null);
     setError(null);
@@ -86,7 +77,12 @@ export function ResetOverviewStats() {
     } finally {
       setIsRunning(false);
     }
-  }, [target, providers]);
+  }, [target]);
+
+  const targetLabel = providers.find((p) => p.providerId === target)?.label;
+  const confirmMessage = target
+    ? `Reset Overview statistics for "${targetLabel}"? Its scoreboard, latency, and failover data will be permanently removed. Global throughput charts and session history are unaffected.`
+    : "Reset all Overview statistics? Throughput history, provider scoreboard, sessions, failover and latency data will be permanently removed. Queue, history, and provider data-cap gauges are not affected.";
 
   return (
     <div className="space-y-4">
@@ -137,7 +133,7 @@ export function ResetOverviewStats() {
             variant={isRunning ? "secondary" : "danger"}
             disabled={isRunning}
             className="shrink-0"
-            onClick={() => void onReset()}
+            onClick={() => setShowConfirm(true)}
           >
             <Icon
               name={isRunning ? "progress_activity" : "delete_sweep"}
@@ -155,6 +151,17 @@ export function ResetOverviewStats() {
           </div>
         </div>
       </div>
+      <ConfirmModal
+        show={showConfirm}
+        title="Reset Overview statistics?"
+        message={confirmMessage}
+        confirmText="Reset statistics"
+        cancelText="Cancel"
+        requireCheckbox
+        checkboxMessage="I understand this cannot be undone"
+        onCancel={() => setShowConfirm(false)}
+        onConfirm={() => void onReset()}
+      />
     </div>
   );
 }

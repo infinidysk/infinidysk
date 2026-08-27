@@ -19,7 +19,7 @@ export function SettingsPage({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={`flex w-full flex-col gap-6 ${className}`}>{children}</div>;
+  return <div className={`flex w-full flex-col gap-8 ${className}`}>{children}</div>;
 }
 
 /** One settings block (label / control / help). */

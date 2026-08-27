@@ -23,7 +23,7 @@ export function Breadcrumbs({ parentDirectories }: BreadcrumbProps): ReactNode {
         <li>
           <button type="button" className="flex items-center gap-1" onClick={() => onClick(-1)}>
             <Icon name="home" filled className="!text-[18px]" />
-            {parentDirectories.length === 0 && <span>Home</span>}
+            <span>Home</span>
           </button>
         </li>
         {parentDirectories.map((parentDirectory, index) => (

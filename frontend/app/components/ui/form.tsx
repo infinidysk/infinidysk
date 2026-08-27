@@ -15,10 +15,7 @@ export function Field({ className = "", ...props }: FieldsetHTMLAttributes<HTMLF
 
 export function Label({ className = "", ...props }: LabelHTMLAttributes<HTMLLabelElement>) {
   return (
-    <label
-      className={`fieldset-legend text-sm font-medium text-base-content ${className}`}
-      {...props}
-    />
+    <label className={`label text-sm font-medium text-base-content ${className}`} {...props} />
   );
 }
 
@@ -29,7 +26,7 @@ export function HelpText({
 }: HTMLAttributes<HTMLElement> & { muted?: boolean }) {
   return (
     <small
-      className={`block text-[11px] leading-relaxed text-base-content/45 ${className}`}
+      className={`label block text-[11px] leading-relaxed text-base-content/45 ${className}`}
       {...props}
     />
   );
@@ -69,15 +66,8 @@ export const Toggle = forwardRef<HTMLInputElement, ToggleProps>(function Toggle(
   ref,
 ) {
   return (
-    <label htmlFor={id} style={style} className={`label ${className}`}>
-      <input
-        ref={ref}
-        id={id}
-        type="checkbox"
-        disabled={disabled}
-        className="toggle toggle-success"
-        {...props}
-      />
+    <label htmlFor={id} style={style} className={`label cursor-pointer ${className}`}>
+      <input ref={ref} id={id} type="checkbox" disabled={disabled} className="toggle" {...props} />
       <span>{label}</span>
     </label>
   );
@@ -97,7 +87,7 @@ export const Check = forwardRef<HTMLInputElement, CheckProps>(function Check(
   }
 
   return (
-    <label htmlFor={props.id} style={style} className={`label ${className}`}>
+    <label htmlFor={props.id} style={style} className={`label cursor-pointer ${className}`}>
       <input ref={ref} type={type} className={type === "radio" ? "radio" : "checkbox"} {...props} />
       <span>{label}</span>
     </label>

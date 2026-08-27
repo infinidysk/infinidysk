@@ -94,6 +94,9 @@ describe("HealthHistoryTable", () => {
     const markup = render([], "degraded");
 
     expect(markup).toContain("No degraded items");
-    expect(markup).toMatch(/btn btn-sm join-item btn-primary[^>]*>\s*Degraded/);
+    expect(markup).toMatch(/aria-label="Degraded"/);
+    expect(markup).toMatch(
+      /name="health-history-filter"[^>]*checked|checked[^>]*aria-label="Degraded"/,
+    );
   });
 });

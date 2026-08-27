@@ -455,7 +455,7 @@ function Body(props: BodyProps) {
         <SettingsPanel>
           <header className="mb-6 flex items-center gap-3 border-b border-base-content/10 pb-4">
             <Icon name={activeTabItem.icon} className="!text-[28px] text-base-content/70" />
-            <h1 className="text-2xl font-semibold tracking-tight text-base-content">
+            <h1 className="text-4xl font-bold tracking-tight text-base-content">
               {activeTabItem.label}
             </h1>
           </header>
@@ -633,6 +633,7 @@ function Body(props: BodyProps) {
           }
           cancelText="Stay"
           confirmText="Leave"
+          confirmVariant={false}
           onCancel={navigationBlocker.onCancelNavigation}
           onConfirm={navigationBlocker.onConfirmNavigation}
         />

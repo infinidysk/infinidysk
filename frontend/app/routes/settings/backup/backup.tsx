@@ -639,7 +639,8 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                   ref={fileInputRef}
                   type="file"
                   accept=".zip,.sql,application/zip,text/plain"
-                  className="hidden"
+                  className="file-input file-input-bordered file-input-sm w-full max-w-xs"
+                  aria-label="Upload backup archive"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) void uploadBackup(file);
@@ -726,7 +727,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                     </div>
                     <label className="flex cursor-pointer items-center gap-2 rounded-lg bg-base-200/40 px-3 py-1.5 text-xs text-base-content/80">
                       <Checkbox
-                        className="checkbox-primary checkbox-sm"
+                        className="checkbox-sm"
                         checked={backup.preserved}
                         onChange={(e) =>
                           void updateBackup(backup.id, { preserved: e.target.checked })

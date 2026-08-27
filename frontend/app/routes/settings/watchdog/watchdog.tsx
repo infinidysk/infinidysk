@@ -1,9 +1,9 @@
 import { Link } from "react-router";
-import type { Dispatch, ReactNode, SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import {
-  Icon,
   NativeForm as Form,
   ManagedSetting,
+  SettingsCard,
   SettingsIntro,
   SettingsPage,
   Tooltip,
@@ -13,33 +13,6 @@ type WatchdogSettingsProps = {
   config: Record<string, string>;
   setNewConfig: Dispatch<SetStateAction<Record<string, string>>>;
 };
-
-function SettingsCard({
-  icon,
-  title,
-  description,
-  children,
-}: {
-  icon: string;
-  title: string;
-  description: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="overflow-hidden rounded-lg border border-base-content/10 bg-base-100">
-      <div className="flex items-start gap-3 border-b border-base-content/10 p-4">
-        <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Icon name={icon} className="!text-[20px]" />
-        </span>
-        <div>
-          <h2 className="text-sm font-semibold text-base-content">{title}</h2>
-          <p className="mt-0.5 text-xs leading-relaxed text-base-content/50">{description}</p>
-        </div>
-      </div>
-      <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-2">{children}</div>
-    </section>
-  );
-}
 
 export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps) {
   const set = (key: string, value: string) => setNewConfig({ ...config, [key]: value });
@@ -92,6 +65,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
                 fast enough. These controls keep requests from hanging on a dead release.
               </>
             }
+            contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
           >
             <Form.Group className="flex flex-col gap-2">
               <Tooltip
@@ -265,6 +239,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
                 the slow candidate as failed. Requires the failover watchdog.
               </>
             }
+            contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
           >
             <Form.Group className="flex flex-col gap-2">
               <Tooltip
@@ -327,6 +302,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
                 selected on future requests. Off by default.
               </>
             }
+            contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
           >
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Mode</Form.Label>

@@ -59,7 +59,7 @@ describe("DropdownOptions", () => {
     const onClose = vi.fn();
     render(<DropdownOptions options={[{ option: "Rename" }]} onClose={onClose} />);
 
-    await userEvent.click(screen.getByRole("list"));
+    await userEvent.click(screen.getByRole("menu"));
 
     expect(onClose).not.toHaveBeenCalled();
   });

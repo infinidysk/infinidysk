@@ -50,18 +50,19 @@ export function ItemMenu({
   if (options.length === 0) return null;
 
   return (
-    <>
+    <div className={`dropdown dropdown-end ${isOpen ? "dropdown-open" : ""}`}>
       <button
         type="button"
         aria-label={exploreFile ? `Actions for ${exploreFile.name}` : "Item actions"}
         aria-expanded={isOpen}
+        aria-haspopup="menu"
         className={`flex shrink-0 select-none items-center self-stretch rounded-r-lg px-5 py-[15px] text-base-content/60 transition-colors hover:bg-base-content/10 hover:text-base-content active:bg-base-content/15 ${isOpen ? `bg-base-content/10 text-base-content ${openClassName ?? ""}` : ""} ${className ?? ""}`}
         onClick={onClick}
       >
         <Icon name="more_horiz" className="!text-[24px]" />
       </button>
       <DropdownOptions isOpen={isOpen} onClose={() => setIsOpen(false)} options={options} />
-    </>
+    </div>
   );
 }
 

@@ -298,18 +298,20 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
                   className={`status status-sm ${connectionStatusClass(connection)}`}
                   title={`WebSocket ${connection}`}
                 />
-                <h2 className="text-base font-semibold tracking-tight text-base-content">Logs</h2>
+                <h1 className="text-4xl font-bold tracking-tight text-base-content">Logs</h1>
               </div>
-              <p className="mt-1 text-xs text-base-content/50">
+              <p className="mt-1 text-xs text-base-content/60">
                 Live application logs from the in-memory ring buffer. Last{" "}
                 {capacity.toLocaleString()} entries are kept in RAM only, not persisted across
-                restarts.
+                restarts. Press <kbd className="kbd kbd-xs">/</kbd> to search,{" "}
+                <kbd className="kbd kbd-xs">f</kbd> to follow, <kbd className="kbd kbd-xs">Esc</kbd>{" "}
+                to blur.
               </p>
             </div>
             <div className="join flex w-full flex-wrap sm:w-auto">
               <button
                 type="button"
-                className={`btn btn-sm join-item ${followTail ? "btn-primary" : "btn-ghost"}`}
+                className={`btn btn-sm join-item ${followTail ? "btn-active" : "btn-ghost"}`}
                 onClick={() => {
                   setFollowTail((v) => {
                     if (!v) requestAnimationFrame(scrollToBottom);
@@ -431,7 +433,7 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
         {!followTail && entries.length > 0 && (
           <button
             type="button"
-            className="btn btn-sm btn-primary absolute right-4 bottom-4 z-2 gap-2 shadow-lg"
+            className="btn btn-sm absolute right-4 bottom-4 z-2 gap-2 shadow-lg"
             onClick={() => {
               setFollowTail(true);
               requestAnimationFrame(scrollToBottom);
@@ -455,12 +457,21 @@ function LogRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const rowClass = `grid cursor-pointer grid-cols-[86px_64px_1fr] items-baseline gap-3 border-l-2 border-transparent px-3.5 py-0.5 transition-colors duration-75 [contain:content] hover:bg-base-content/5 max-[899px]:grid-cols-[70px_56px_1fr] max-[899px]:gap-2 max-[899px]:px-2.5 max-[899px]:py-1 ${levelRowClass(entry.level)}`;
+  const rowClass = `grid w-full cursor-pointer grid-cols-[86px_64px_1fr] items-baseline gap-3 border-l-2 border-transparent px-3.5 py-0.5 text-left transition-colors duration-75 [contain:content] hover:bg-base-content/5 max-[899px]:grid-cols-[70px_56px_1fr] max-[899px]:gap-2 max-[899px]:px-2.5 max-[899px]:py-1 ${levelRowClass(entry.level)}`;
   return (
     <div
+      role="button"
+      tabIndex={0}
       className={rowClass}
       onClick={onToggle}
-      title={entry.exception ? "Click to toggle stack trace" : undefined}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onToggle();
+        }
+      }}
+      aria-expanded={expanded}
+      title={entry.exception ? "Toggle stack trace" : undefined}
     >
       <span className="whitespace-nowrap tabular-nums text-base-content/40">
         {formatTime(entry.ts)}
@@ -479,7 +490,7 @@ function LogRow({
         )}
         {entry.exception && !expanded && (
           <span className="mt-0.5 text-[10.5px] text-base-content/50">
-            ▸ click to view stack trace
+            ▸ expand to view stack trace
           </span>
         )}
         {entry.exception && expanded && (
@@ -505,14 +516,13 @@ function LevelChip({
 }) {
   const activeClass = !active ? "btn-ghost opacity-55" : levelActiveBtnClass(level);
   return (
-    <button
-      type="button"
-      className={`btn btn-xs join-item gap-2 uppercase tracking-wide ${activeClass}`}
-      onClick={onClick}
-    >
-      <span>{shortLevel(level)}</span>
-      <span className="badge badge-xs font-mono tabular-nums opacity-70">{count}</span>
-    </button>
+    <input
+      type="checkbox"
+      className={`btn btn-sm join-item max-sm:min-h-11 uppercase tracking-wide ${activeClass}`}
+      aria-label={`${shortLevel(level)} ${count}`}
+      checked={active}
+      onChange={onClick}
+    />
   );
 }
 

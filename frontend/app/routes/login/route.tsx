@@ -51,9 +51,7 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                   alt="InfiniDysk"
                 />
                 <div>
-                  <h1 className="bg-gradient-to-r from-primary to-success bg-clip-text text-2xl font-bold tracking-tight text-transparent">
-                    InfiniDysk
-                  </h1>
+                  <h1 className="text-2xl font-bold tracking-tight text-primary">InfiniDysk</h1>
                   <p className="mt-1 text-xs font-medium tracking-wide text-base-content/50">
                     The NzbDAV SuperFork
                   </p>
