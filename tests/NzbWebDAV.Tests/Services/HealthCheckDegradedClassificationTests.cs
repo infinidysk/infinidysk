@@ -816,7 +816,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         public Task<T?> ReadBlob<T>(Guid id) =>
             Task.FromException<T?>(new OutOfMemoryException("simulated payload allocation failure"));
 
-        public void Delete(Guid id) => throw new NotSupportedException();
+        public bool Delete(Guid id) => throw new NotSupportedException();
     }
 
     private async Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(

@@ -40,7 +40,8 @@ public sealed class FileBlobStoreTests : IDisposable
             Assert.Equal(payload, buffer.ToArray());
         }
 
-        _store.Delete(id);
+        Assert.True(_store.Delete(id));
+        Assert.False(_store.Delete(id));
         Assert.Null(_store.ReadBlob(id));
     }
 

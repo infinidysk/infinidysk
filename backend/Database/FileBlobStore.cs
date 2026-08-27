@@ -157,12 +157,13 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         }
     }
 
-    public void Delete(Guid id)
+    public bool Delete(Guid id)
     {
         _metadataCache.Remove(id);
         var blobPath = GetBlobPath(id);
+        var deleted = File.Exists(blobPath);
 
-        if (File.Exists(blobPath))
+        if (deleted)
             File.Delete(blobPath);
 
         lock (_lockObj)
@@ -172,6 +173,8 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
             TryDeleteEmptyDirectory(nextTwoDir);
             TryDeleteEmptyDirectory(firstTwoDir);
         }
+
+        return deleted;
     }
 
     public void Dispose()

@@ -88,7 +88,19 @@ public class BlobCleanupService(IDbContextFactory<DavDatabaseContext> dbContextF
             // Delete the blob before SaveChangesAsync so a failure leaves the
             // cleanup item in the DB for a retry; BlobStore.Delete is
             // idempotent when the file is already gone.
-            BlobStore.Delete(blobId);
+            var deleted = BlobStore.Delete(blobId);
+            if (deleted)
+            {
+                Log.Information(
+                    "blob-delete source=payload-cleanup id={BlobId} reason=unreferenced",
+                    blobId);
+            }
+            else
+            {
+                Log.Debug(
+                    "Payload cleanup found blob {BlobId} already absent.",
+                    blobId);
+            }
         }
         else
         {
