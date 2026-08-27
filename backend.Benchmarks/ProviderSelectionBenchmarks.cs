@@ -3,6 +3,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services.Metrics;
 
 namespace NzbWebDAV.Benchmarks;
 
