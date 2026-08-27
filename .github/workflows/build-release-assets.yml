@@ -112,8 +112,9 @@ jobs:
         id: dotnet-sdk
         run: echo "version=$(dotnet --version)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache NuGet packages
-        uses: actions/cache@v6
+      - name: Restore NuGet package cache
+        id: nuget-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-release-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props', 'nuget.config') }}
@@ -121,9 +122,9 @@ jobs:
             ${{ runner.os }}-release-nuget-
 
       # Use only exact hits: checkout timestamps cannot safely drive MSBuild incrementality.
-      - name: Cache compiled C# libraries
+      - name: Restore compiled C# library cache
         id: library-build-cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
         with:
           path: |
             libs/SharpCompress/bin
@@ -154,7 +155,11 @@ jobs:
           publish_args=()
           if [[ "$LIBRARY_CACHE_HIT" == "true" ]]; then
             for assembly in SharpCompress UsenetSharp RapidYencSharp; do
-              assembly_path="libs/$assembly/bin/Release/net10.0/$assembly.dll"
+              assembly_path="$(
+                dotnet msbuild "libs/$assembly/$assembly.csproj" \
+                  -getProperty:TargetPath \
+                  -p:Configuration=Release
+              )"
               if [[ ! -f "$assembly_path" ]]; then
                 echo "Cached library output is incomplete: $assembly_path is missing." >&2
                 exit 1
@@ -206,6 +211,26 @@ jobs:
           compat_name="nzbdav-${prefix}${VERSION}-${RID}"
           cp -a "$archive_name" "$compat_name"
           tar -czf "${compat_name}.tar.gz" "$compat_name"
+
+      - name: Save NuGet package cache
+        if: github.ref_protected && inputs.checkout_ref == github.sha && steps.nuget-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ steps.nuget-cache.outputs.cache-primary-key }}
+
+      - name: Save compiled C# library cache
+        if: github.ref_protected && inputs.checkout_ref == github.sha && steps.library-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
+        with:
+          path: |
+            libs/SharpCompress/bin
+            libs/SharpCompress/obj
+            libs/UsenetSharp/bin
+            libs/UsenetSharp/obj
+            libs/RapidYencSharp/bin
+            libs/RapidYencSharp/obj
+          key: ${{ steps.library-build-cache.outputs.cache-primary-key }}
 
       - name: Attach archives to releases
         env:
