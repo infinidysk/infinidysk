@@ -2219,9 +2219,20 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
 
   return (
     <div className="rounded-lg border border-base-content/10 bg-base-200/40 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="space-y-1">
         <div className="text-sm font-semibold text-base-content">Auto-tune connections</div>
-        <div className="flex flex-wrap items-center gap-3">
+        <HelpText>
+          {pipeliningOnly
+            ? "Keeps your Max Connections and measures the best NNTP pipelining depth at that count."
+            : "Runs a real speed and latency test, then recommends the best connection count and pipelining settings. Speeds use megabytes per second (MB/s), matching SABnzbd. 1 Gb/s is about 125 MB/s."}
+        </HelpText>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-[auto_minmax(14rem,1fr)_auto] sm:items-end">
+        <fieldset className="fieldset gap-1 p-0">
+          <legend className="fieldset-legend py-0 text-[11px] text-base-content/60">
+            Test depth
+          </legend>
           <div className="join" role="group" aria-label="Test intensity">
             <button
               type="button"
@@ -2242,11 +2253,15 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
               Thorough
             </button>
           </div>
+        </fieldset>
+        <div className="flex min-w-0 flex-col gap-1">
+          <Label htmlFor="benchmark-data-budget">Data budget</Label>
           <Select
+            id="benchmark-data-budget"
+            className="w-full"
             value={dataBudget}
             onChange={(e) => setDataBudget(e.target.value)}
             disabled={isBenchmarking}
-            aria-label="Data budget"
           >
             <option value="">Auto ({intensity === "quick" ? "up to 500 MB" : "up to 2 GB"})</option>
             <option value="100">100 MB</option>
@@ -2260,7 +2275,9 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
             <option value="35000">35 GB</option>
             <option value="50000">50 GB</option>
           </Select>
-          <Button variant="primary" onClick={onRun} disabled={!canBenchmark || isBenchmarking}>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={onRun} disabled={!canBenchmark || isBenchmarking}>
             {isBenchmarking && <span className="loading loading-spinner loading-xs" />}
             {isBenchmarking ? "Testing…" : pipeliningOnly ? "Test pipelining" : "Run speed test"}
           </Button>
@@ -2271,39 +2288,36 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
           )}
         </div>
       </div>
-      <HelpText className="mt-1">
-        {pipeliningOnly
-          ? "Keeps your Max Connections and just measures the best NNTP pipelining depth at that count."
-          : "Runs a real speed & latency test, then recommends the best connection count and pipelining settings. Speeds are megabytes/sec (MB/s), same as SABnzbd — not megabits (Mb/s). 1 Gb/s ≈ 125 MB/s max."}
-      </HelpText>
 
-      <Tooltip
-        className="mt-3 block"
-        content={
-          pipeliningOnly
-            ? "Won't change your connection count — tests pipelining depth at the Max Connections you've set. Run idle for the cleanest read."
-            : "When off, also sweeps connection counts. Prefer idle for the cleanest read."
-        }
-      >
-        <Toggle
-          id="bench-pipe-only"
-          className="cursor-pointer gap-2 p-0"
-          checked={pipeliningOnly}
-          disabled={isBenchmarking}
-          onChange={(e) => setPipeliningOnly(e.target.checked)}
-          label={
-            <span className="text-sm text-base-content">
-              Only tune pipelining (keep my Max Connections)
-            </span>
+      <div className="mt-4 border-t border-base-content/10 pt-3">
+        <Tooltip
+          className="block"
+          content={
+            pipeliningOnly
+              ? "Won't change your connection count. Tests pipelining depth at the Max Connections you've set. Run idle for the cleanest read."
+              : "When off, also sweeps connection counts. Prefer idle for the cleanest read."
           }
-        />
-      </Tooltip>
+        >
+          <Toggle
+            id="bench-pipe-only"
+            className="cursor-pointer gap-2 p-0"
+            checked={pipeliningOnly}
+            disabled={isBenchmarking}
+            onChange={(e) => setPipeliningOnly(e.target.checked)}
+            label={
+              <span className="text-sm text-base-content">
+                Only tune pipelining (keep my Max Connections)
+              </span>
+            }
+          />
+        </Tooltip>
 
-      <HelpText>
-        {intensity === "quick"
-          ? "Quick sizes each step to your line speed, up to the data budget (default 500 MB) — light on metered / block accounts."
-          : "Thorough runs longer measurement windows for steadier numbers, up to the data budget (default 2 GB). Gigabit-class lines often need 10–20 GB for a full sweep."}
-      </HelpText>
+        <HelpText className="mt-1">
+          {intensity === "quick"
+            ? "Quick sizes each step to your line speed, up to the data budget (default 500 MB). It is lighter on metered or block accounts."
+            : "Thorough runs longer measurement windows for steadier numbers, up to the data budget (default 2 GB). Gigabit-class lines often need 10-20 GB for a full sweep."}
+        </HelpText>
+      </div>
 
       {error && (
         <Alert variant="danger" className="alert-soft mt-3 text-xs">

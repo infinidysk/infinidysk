@@ -19,9 +19,19 @@ import { isPositiveInteger } from "../validation";
 type StreamingSettingsProps = {
   config: Record<string, string>;
   setNewConfig: Dispatch<SetStateAction<Record<string, string>>>;
+  effectiveArticleBudgetBytes?: number | null;
 };
 
-export function StreamingSettings({ config, setNewConfig }: StreamingSettingsProps) {
+export function StreamingSettings({
+  config,
+  setNewConfig,
+  effectiveArticleBudgetBytes = null,
+}: StreamingSettingsProps) {
+  const effectiveArticleBudgetMiB =
+    effectiveArticleBudgetBytes !== null && effectiveArticleBudgetBytes > 0
+      ? Math.round(effectiveArticleBudgetBytes / (1024 * 1024))
+      : null;
+
   return (
     <SettingsPage>
       <SettingsIntro>
@@ -436,12 +446,19 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
 
         <ManagedSetting configKey="usenet.in-flight-article-budget-mb">
           <div className="space-y-2">
-            <label
-              className="block text-sm font-medium text-base-content"
-              htmlFor="in-flight-article-budget-input"
-            >
-              In-flight article budget (MiB)
-            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <label
+                className="block text-sm font-medium text-base-content"
+                htmlFor="in-flight-article-budget-input"
+              >
+                In-flight article budget (MiB)
+              </label>
+              {effectiveArticleBudgetMiB !== null && (
+                <Badge className="badge-ghost badge-sm font-mono">
+                  Effective now: {effectiveArticleBudgetMiB.toLocaleString()} MiB
+                </Badge>
+              )}
+            </div>
             <Input
               {...className([
                 "w-full max-w-48",

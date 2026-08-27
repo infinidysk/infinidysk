@@ -240,6 +240,12 @@ export default function Health({ loaderData }: Route.ComponentProps) {
       <PageHeader
         title="Health"
         subtitle="Repair queue and history for files that fail Usenet article checks."
+        actions={
+          <a className="btn btn-sm" href="#repair-history">
+            <Icon name="history" className="!text-[16px]" />
+            Jump to history
+          </a>
+        }
       />
       <HealthStats stats={historyStats} />
       {isEnabled && uncheckedCount > 20 && (
@@ -254,6 +260,10 @@ export default function Health({ loaderData }: Route.ComponentProps) {
           </div>
         </Alert>
       )}
+      <HealthTable
+        isEnabled={isEnabled}
+        healthCheckItems={queueItems.filter((_, index) => index < 10)}
+      />
       <HealthHistoryTable
         items={historyItems}
         totalCount={historyTotalCount}
@@ -266,10 +276,6 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         onPageSelected={(page) => setHistoryParams({ page })}
         onPageSizeSelected={onHistoryPageSizeSelected}
         onRefresh={() => void revalidator.revalidate()}
-      />
-      <HealthTable
-        isEnabled={isEnabled}
-        healthCheckItems={queueItems.filter((_, index) => index < 10)}
       />
     </div>
   );

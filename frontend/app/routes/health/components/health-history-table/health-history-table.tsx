@@ -44,7 +44,10 @@ export function HealthHistoryTable({
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   return (
-    <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
+    <section
+      id="repair-history"
+      className="card w-full scroll-mt-4 border border-base-content/10 bg-base-100 shadow-sm"
+    >
       <div className="card-body gap-0 p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-content/10 px-4 py-4 md:px-6">
           <div>
