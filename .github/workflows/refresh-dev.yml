@@ -45,16 +45,6 @@ jobs:
         id: dotnet-sdk
         run: echo "version=$(dotnet --version)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache NuGet packages
-        if: github.ref == 'refs/heads/main'
-        id: nuget-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-release-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props', 'nuget.config') }}
-          restore-keys: |
-            ${{ runner.os }}-release-nuget-
-
       - name: Cache compiled C# libraries
         if: github.ref == 'refs/heads/main'
         id: library-build-cache
@@ -70,7 +60,7 @@ jobs:
           key: library-build-v1-${{ runner.os }}-Release-${{ steps.dotnet-sdk.outputs.version }}-${{ hashFiles('Directory.Build.props', 'Directory.Packages.props', '.editorconfig', 'libs/SharpCompress.snk', 'libs/SharpCompress/**/*.cs', 'libs/SharpCompress/*.csproj', 'libs/SharpCompress/.editorconfig', 'libs/UsenetSharp/**/*.cs', 'libs/UsenetSharp/*.csproj', 'libs/UsenetSharp/.editorconfig', 'libs/RapidYencSharp/**/*.cs', 'libs/RapidYencSharp/*.csproj', 'libs/RapidYencSharp/.editorconfig') }}
 
       - name: Restore C# libraries
-        if: github.ref == 'refs/heads/main' && (steps.library-build-cache.outputs.cache-hit != 'true' || steps.nuget-cache.outputs.cache-hit != 'true')
+        if: github.ref == 'refs/heads/main' && steps.library-build-cache.outputs.cache-hit != 'true'
         run: |
           dotnet restore libs/SharpCompress/SharpCompress.csproj
           dotnet restore libs/UsenetSharp/UsenetSharp.csproj
