@@ -77,6 +77,59 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetDavMultipartFileAsync_BackfillsExpectedSizeForLegacyLazyMetadata()
+    {
+        var id = Guid.NewGuid();
+        var item = DavItem.New(
+            id,
+            DavItem.Root,
+            "movie.mkv",
+            1_234,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.MultipartFile,
+            null,
+            null,
+            null,
+            null);
+        var multipart = new DavMultipartFile
+        {
+            Id = id,
+            Metadata = new DavMultipartFile.Meta
+            {
+                IsLazy = true,
+                PathInArchive = "movie.mkv",
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["vol1"],
+                        SegmentIdByteRange = new NzbWebDAV.Models.LongRange(0, 1_000),
+                        FilePartByteRange = new NzbWebDAV.Models.LongRange(60, 1_000),
+                    }
+                ],
+                PendingParts =
+                [
+                    new DavMultipartFile.PendingPart
+                    {
+                        SegmentIds = ["vol2"],
+                        SegmentIdByteRange = new NzbWebDAV.Models.LongRange(0, 300),
+                        EstimatedDataSize = 294,
+                    }
+                ],
+            },
+        };
+        _context.Items.Add(item);
+        _context.MultipartFiles.Add(multipart);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var loaded = await _client.GetDavMultipartFileAsync(item);
+
+        Assert.NotNull(loaded);
+        Assert.Equal(1_234, loaded!.Metadata.ExpectedFileSize);
+    }
+
+    [Fact]
     public async Task MoveQueueItemsToTopAsync_BumpsPriorityAndCreatedAt()
     {
         var first = CreateQueueItem("first.nzb", DateTime.UtcNow.AddMinutes(-30), QueueItem.PriorityOption.Normal);

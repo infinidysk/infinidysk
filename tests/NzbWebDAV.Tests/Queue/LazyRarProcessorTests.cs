@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using System.Text;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
@@ -10,6 +8,7 @@ using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
+using static NzbWebDAV.Tests.Fakes.Rar4TestArchiveBuilder;
 
 namespace NzbWebDAV.Tests.Queue;
 
@@ -81,11 +80,17 @@ public class LazyRarProcessorTests
         const int packed = 1_000;
         const int uncompressed = 3_000;
         var volumeBytes = BuildRar4SplitFirstVolume("movie.mkv", packed, uncompressed);
+        var continuationBytes = BuildRar4ContinuationVolume("movie.mkv", 2_000);
         var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
         // Encoded trailing size must cover remaining uncompressed bytes, but the
         // 0.95*encoded estimate (minus header guess) must not overshoot remaining
         // or LazyRar falls back before the coverage bound matters.
-        var trailing = FileInfoFor("vol.r00", "r00@example.com", encodedBytes: 2_100, fileSize: null);
+        var trailing = FileInfoFor(
+            "vol.r00",
+            "r00@example.com",
+            encodedBytes: 2_100,
+            fileSize: null,
+            first16KB: continuationBytes);
 
         using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
         {
@@ -107,13 +112,19 @@ public class LazyRarProcessorTests
         const int packed = 1_000;
         const int uncompressed = 3_000;
         var volumeBytes = BuildRar4SplitFirstVolume("movie.mkv", packed, uncompressed);
+        var continuationBytes = BuildRar4ContinuationVolume("movie.mkv", 2_000);
         var underestimatedSize = volumeBytes.Length - 100;
         var first = FileInfoFor(
             "vol.rar",
             "first@example.com",
             volumeBytes.Length,
             underestimatedSize);
-        var trailing = FileInfoFor("vol.r00", "r00@example.com", encodedBytes: 2_100, fileSize: null);
+        var trailing = FileInfoFor(
+            "vol.r00",
+            "r00@example.com",
+            encodedBytes: 2_100,
+            fileSize: null,
+            first16KB: continuationBytes);
 
         using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
         {
@@ -137,8 +148,15 @@ public class LazyRarProcessorTests
         const int uncompressed = 3_000;
         var volumeBytes = BuildRar4SplitFirstVolume(
             "b082fa0beaa644d3aa01045d5b8d0b36.xyz", packed, uncompressed, payload);
+        var continuationBytes = BuildRar4ContinuationVolume(
+            "b082fa0beaa644d3aa01045d5b8d0b36.xyz", 2_000);
         var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
-        var trailing = FileInfoFor("vol.r00", "r00@example.com", encodedBytes: 2_100, fileSize: null);
+        var trailing = FileInfoFor(
+            "vol.r00",
+            "r00@example.com",
+            encodedBytes: 2_100,
+            fileSize: null,
+            first16KB: continuationBytes);
 
         using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
         {
@@ -158,8 +176,14 @@ public class LazyRarProcessorTests
         const int packed = 1_000;
         const int uncompressed = 3_000;
         var volumeBytes = BuildRar4SplitFirstVolume("movie.mkv", packed, uncompressed);
+        var continuationBytes = BuildRar4ContinuationVolume("movie.mkv", 2_000);
         var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
-        var trailing = FileInfoFor("vol.r00", "r00@example.com", encodedBytes: 2_100, fileSize: null);
+        var trailing = FileInfoFor(
+            "vol.r00",
+            "r00@example.com",
+            encodedBytes: 2_100,
+            fileSize: null,
+            first16KB: continuationBytes);
 
         using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
         {
@@ -171,6 +195,230 @@ public class LazyRarProcessorTests
 
         Assert.NotNull(result);
         Assert.Null(result!.SniffedVideoExtension);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MemberEndsBeforeLastVolume_ReturnsNull()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 1_000, uncompressedSize: 1_800);
+        var finalMemberBytes = BuildRar4ContinuationVolume(member, packedSize: 800);
+        var extraBytes = BuildRar4Volume(
+            "extra.srt",
+            packedSize: 100,
+            uncompressedSize: 100,
+            firstVolume: false,
+            splitBefore: false,
+            splitAfter: false);
+        var infos = new List<GetFileInfosStep.FileInfo>
+        {
+            FileInfoFor("opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length),
+            FileInfoFor(
+                "opaque.part02.rar",
+                "part2@example.com",
+                finalMemberBytes.Length,
+                finalMemberBytes.Length,
+                finalMemberBytes),
+            FileInfoFor(
+                "opaque.part03.rar",
+                "part3@example.com",
+                extraBytes.Length,
+                extraBytes.Length,
+                extraBytes),
+        };
+
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = firstBytes,
+        });
+
+        var result = await new LazyRarProcessor(infos, client, password: null, CancellationToken.None)
+            .ProcessAsync();
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MemberSpansEveryVolume_MountsLazily()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_800);
+        var middleBytes = BuildRar4ContinuationVolume(member, packedSize: 600, splitAfter: true);
+        var finalBytes = BuildRar4ContinuationVolume(member, packedSize: 600);
+        var infos = new List<GetFileInfosStep.FileInfo>
+        {
+            FileInfoFor("opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length),
+            FileInfoFor(
+                "opaque.part02.rar",
+                "part2@example.com",
+                middleBytes.Length,
+                middleBytes.Length,
+                middleBytes),
+            FileInfoFor(
+                "opaque.part03.rar",
+                "part3@example.com",
+                finalBytes.Length,
+                finalBytes.Length,
+                finalBytes),
+        };
+
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = firstBytes,
+        });
+
+        var result = Assert.IsType<LazyRarProcessor.Result>(
+            await new LazyRarProcessor(infos, client, password: null, CancellationToken.None)
+                .ProcessAsync());
+
+        Assert.Equal(member, result.PathInArchive);
+        Assert.Equal(2, result.PendingParts.Length);
+        Assert.Equal(true, result.FirstPart.IsSplitAfter);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ContinuationWithoutSplitBefore_ReturnsNull()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_200);
+        var invalidContinuation = BuildRar4Volume(
+            member,
+            packedSize: 600,
+            uncompressedSize: 600,
+            firstVolume: false,
+            splitBefore: false,
+            splitAfter: false);
+        var first = FileInfoFor(
+            "opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length);
+        var trailing = FileInfoFor(
+            "opaque.part02.rar",
+            "part2@example.com",
+            invalidContinuation.Length,
+            invalidContinuation.Length,
+            invalidContinuation);
+
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = firstBytes,
+        });
+
+        var result = await new LazyRarProcessor(
+                [first, trailing], client, password: null, CancellationToken.None)
+            .ProcessAsync();
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ContinuationWithDifferentMember_ReturnsNull()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_200);
+        var wrongMember = BuildRar4ContinuationVolume("different.mkv", packedSize: 600);
+        var first = FileInfoFor(
+            "opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length);
+        var trailing = FileInfoFor(
+            "opaque.part02.rar",
+            "part2@example.com",
+            wrongMember.Length,
+            wrongMember.Length,
+            wrongMember);
+
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = firstBytes,
+        });
+
+        var result = await new LazyRarProcessor(
+                [first, trailing], client, password: null, CancellationToken.None)
+            .ProcessAsync();
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ContinuationSizeMismatch_ReturnsNull()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_300);
+        var finalBytes = BuildRar4ContinuationVolume(member, packedSize: 600);
+        var first = FileInfoFor(
+            "opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length);
+        var trailing = FileInfoFor(
+            "opaque.part02.rar",
+            "part2@example.com",
+            finalBytes.Length,
+            finalBytes.Length,
+            finalBytes);
+
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = firstBytes,
+        });
+
+        var result = await new LazyRarProcessor(
+                [first, trailing], client, password: null, CancellationToken.None)
+            .ProcessAsync();
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_EncryptedMemberWithoutPassword_ReturnsNull()
+    {
+        var volumeBytes = BuildRar4Volume(
+            "movie.mkv",
+            packedSize: 100,
+            uncompressedSize: 100,
+            firstVolume: true,
+            splitBefore: false,
+            splitAfter: false,
+            encrypted: true);
+        var first = FileInfoFor(
+            "opaque.rar", "part1@example.com", volumeBytes.Length, volumeBytes.Length);
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = volumeBytes,
+        });
+
+        var result = await new LazyRarProcessor(
+                [first], client, password: null, CancellationToken.None)
+            .ProcessAsync();
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ContinuationEncryptionStateChanges_ReturnsNull()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_200);
+        var encryptedContinuation = BuildRar4Volume(
+            member,
+            packedSize: 600,
+            uncompressedSize: 600,
+            firstVolume: false,
+            splitBefore: true,
+            splitAfter: false,
+            encrypted: true);
+        var first = FileInfoFor(
+            "opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length);
+        var trailing = FileInfoFor(
+            "opaque.part02.rar",
+            "part2@example.com",
+            encryptedContinuation.Length,
+            encryptedContinuation.Length,
+            encryptedContinuation);
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = firstBytes,
+        });
+
+        var result = await new LazyRarProcessor(
+                [first, trailing], client, password: null, CancellationToken.None)
+            .ProcessAsync();
+
+        Assert.Null(result);
     }
 
     [Fact]
@@ -189,7 +437,11 @@ public class LazyRarProcessorTests
     }
 
     private static GetFileInfosStep.FileInfo FileInfoFor(
-        string fileName, string messageId, long encodedBytes, long? fileSize)
+        string fileName,
+        string messageId,
+        long encodedBytes,
+        long? fileSize,
+        byte[]? first16KB = null)
     {
         return new GetFileInfosStep.FileInfo
         {
@@ -205,85 +457,8 @@ public class LazyRarProcessorTests
             ReleaseDate = DateTimeOffset.UnixEpoch,
             FileSize = fileSize,
             IsRar = true,
+            First16KB = first16KB,
         };
-    }
-
-    // Minimal RAR4 multi-volume first part: mark + archive(VOLUME|FIRSTVOLUME) +
-    // stored file header (HAS_DATA|SPLIT_AFTER) with full UNP_SIZE + packed payload.
-    private static byte[] BuildRar4SplitFirstVolume(
-        string fileName, int packedSize, int uncompressedSize, ReadOnlySpan<byte> payloadPrefix = default)
-    {
-        using var ms = new MemoryStream();
-        ms.Write([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
-
-        // Archive header (HEAD_SIZE=13 including CRC).
-        {
-            Span<byte> body = stackalloc byte[11];
-            body[0] = 0x73;
-            // MHD_VOLUME (0x0001) | MHD_FIRSTVOLUME (0x0100)
-            BinaryPrimitives.WriteUInt16LittleEndian(body[1..], 0x0101);
-            BinaryPrimitives.WriteUInt16LittleEndian(body[3..], 13);
-            BinaryPrimitives.WriteUInt16LittleEndian(body[5..], 0);
-            BinaryPrimitives.WriteUInt32LittleEndian(body[7..], 0);
-            WriteHeader(ms, body);
-        }
-
-        var nameBytes = Encoding.ASCII.GetBytes(fileName);
-        var headSize = (ushort)(32 + nameBytes.Length);
-        {
-            var body = new byte[headSize - 2];
-            var o = 0;
-            body[o++] = 0x74;
-            // LHD_HAS_DATA (0x8000) | LHD_SPLIT_AFTER (0x0002)
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), 0x8002);
-            o += 2;
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), headSize);
-            o += 2;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), (uint)packedSize); // ADD_SIZE
-            o += 4;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), (uint)uncompressedSize); // UNP_SIZE
-            o += 4;
-            body[o++] = 2; // HostOS Unix
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0); // FileCRC
-            o += 4;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0); // FileTime
-            o += 4;
-            body[o++] = 20; // UnpVer
-            body[o++] = 0x30; // store
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), (ushort)nameBytes.Length);
-            o += 2;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0); // Attr
-            o += 4;
-            nameBytes.CopyTo(body.AsSpan(o));
-            WriteHeader(ms, body);
-        }
-
-        var payload = new byte[packedSize];
-        payloadPrefix.CopyTo(payload);
-        ms.Write(payload);
-        return ms.ToArray();
-    }
-
-    private static void WriteHeader(Stream stream, ReadOnlySpan<byte> bodyWithoutCrc)
-    {
-        var crc = RarCrc16(bodyWithoutCrc);
-        Span<byte> hdr = stackalloc byte[bodyWithoutCrc.Length + 2];
-        BinaryPrimitives.WriteUInt16LittleEndian(hdr, crc);
-        bodyWithoutCrc.CopyTo(hdr[2..]);
-        stream.Write(hdr);
-    }
-
-    private static ushort RarCrc16(ReadOnlySpan<byte> data)
-    {
-        uint crc = 0xFFFFFFFF;
-        foreach (var b in data)
-        {
-            crc ^= b;
-            for (var i = 0; i < 8; i++)
-                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
-        }
-
-        return (ushort)(~crc);
     }
 
     /// <summary>

@@ -40,7 +40,8 @@ public sealed class FileBlobStoreTests : IDisposable
             Assert.Equal(payload, buffer.ToArray());
         }
 
-        _store.Delete(id);
+        Assert.True(_store.Delete(id));
+        Assert.False(_store.Delete(id));
         Assert.Null(_store.ReadBlob(id));
     }
 
@@ -61,5 +62,19 @@ public sealed class FileBlobStoreTests : IDisposable
         {
             Assert.Empty(Directory.EnumerateFiles(blobsRoot, "*", SearchOption.AllDirectories));
         }
+    }
+
+    [Fact]
+    public async Task ConcurrentDelete_ReportsOnlyOnePhysicalRemoval()
+    {
+        var id = Guid.NewGuid();
+        await _store.WriteBlob(id, new MemoryStream("concurrent-delete"u8.ToArray()));
+
+        var results = await Task.WhenAll(
+            Task.Run(() => _store.Delete(id)),
+            Task.Run(() => _store.Delete(id)));
+
+        Assert.Equal(1, results.Count(result => result));
+        Assert.Null(_store.ReadBlob(id));
     }
 }

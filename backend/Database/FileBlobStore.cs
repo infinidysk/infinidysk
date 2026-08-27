@@ -157,21 +157,36 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         }
     }
 
-    public void Delete(Guid id)
+    public bool Delete(Guid id)
     {
         _metadataCache.Remove(id);
         var blobPath = GetBlobPath(id);
-
-        if (File.Exists(blobPath))
-            File.Delete(blobPath);
+        var deleted = false;
 
         lock (_lockObj)
         {
+            try
+            {
+                File.GetAttributes(blobPath);
+                File.Delete(blobPath);
+                deleted = true;
+            }
+            catch (FileNotFoundException)
+            {
+                // The blob is already absent; the cleanup operation is idempotent.
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // The blob's sharded directory is already absent.
+            }
+
             var nextTwoDir = Path.GetDirectoryName(blobPath);
             var firstTwoDir = Path.GetDirectoryName(nextTwoDir);
             TryDeleteEmptyDirectory(nextTwoDir);
             TryDeleteEmptyDirectory(firstTwoDir);
         }
+
+        return deleted;
     }
 
     public void Dispose()

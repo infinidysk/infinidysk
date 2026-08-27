@@ -49,6 +49,7 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
                 PathInArchive = pathInArchive,
                 ArchivePassword = result.Password,
                 PendingParts = result.PendingParts,
+                ExpectedFileSize = result.TotalFileSize,
             }
         };
 
