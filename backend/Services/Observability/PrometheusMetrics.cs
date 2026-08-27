@@ -26,6 +26,8 @@ public sealed class PrometheusMetrics
     private readonly Gauge _poolConnections;
     private readonly Gauge _poolMaxConnections;
     private readonly Gauge _poolChurn;
+    private readonly Gauge _healthCheckGateOperations;
+    private readonly Gauge _healthCheckGateLimit;
     private readonly Gauge _circuitState;
     private readonly Gauge _circuitCooldownSeconds;
     private readonly Gauge _circuitTrips;
@@ -82,6 +84,14 @@ public sealed class PrometheusMetrics
         _poolConnections = metrics.CreateGauge("nzbdav_nntp_pool_connections", "NNTP pool connection and admitted-operation state.", new GaugeConfiguration { LabelNames = ["provider_key", "state"] });
         _poolMaxConnections = metrics.CreateGauge("nzbdav_nntp_pool_max_connections", "NNTP pool and operation-admission limits.", new GaugeConfiguration { LabelNames = ["provider_key", "limit"] });
         _poolChurn = metrics.CreateGauge("nzbdav_nntp_pool_churn_total", "NNTP pool lifetime churn.", new GaugeConfiguration { LabelNames = ["provider_key", "event"] });
+        _healthCheckGateOperations = metrics.CreateGauge(
+            "nzbdav_health_check_gate_operations",
+            "Process-wide health and queue verification admission state.",
+            new GaugeConfiguration { LabelNames = ["state"] });
+        _healthCheckGateLimit = metrics.CreateGauge(
+            "nzbdav_health_check_gate_limit",
+            "Process-wide health and queue verification admission limits.",
+            new GaugeConfiguration { LabelNames = ["limit"] });
         _circuitState = metrics.CreateGauge("nzbdav_circuit_state", "Circuit state: 0=closed, 1=open, 2=half_open.", new GaugeConfiguration { LabelNames = ["provider_key"] });
         _circuitCooldownSeconds = metrics.CreateGauge("nzbdav_circuit_cooldown_remaining_seconds", "Circuit cooldown remaining.", new GaugeConfiguration { LabelNames = ["provider_key"] });
         _circuitTrips = metrics.CreateGauge("nzbdav_circuit_trips_total", "Circuit trips.", new GaugeConfiguration { LabelNames = ["provider_key"] });
@@ -308,6 +318,21 @@ public sealed class PrometheusMetrics
         _poolChurn.WithLabels(key, "destroyed").Set(pool.Churn.ConnectionsDestroyed);
         _poolChurn.WithLabels(key, "stale_eviction").Set(pool.Churn.StaleEvictions);
         _poolChurn.WithLabels(key, "handshake_failure").Set(pool.Churn.HandshakeFailures);
+    }
+
+    internal void SetHealthCheckGate(HealthCheckConnectionGateSnapshot snapshot)
+    {
+        _healthCheckGateOperations.WithLabels("active").Set(snapshot.Active);
+        _healthCheckGateOperations.WithLabels("waiting_queue").Set(snapshot.WaitingQueue);
+        _healthCheckGateOperations.WithLabels("waiting_background").Set(snapshot.WaitingBackground);
+        _healthCheckGateLimit.WithLabels("effective").Set(snapshot.Limit);
+    }
+
+    internal void ClearHealthCheckGate()
+    {
+        foreach (var state in new[] { "active", "waiting_queue", "waiting_background" })
+            _healthCheckGateOperations.RemoveLabelled(state);
+        _healthCheckGateLimit.RemoveLabelled("effective");
     }
 
     private void SetCircuit(ProviderCircuitRuntimeSnapshot circuit)

@@ -2,6 +2,7 @@ using System.Text;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Services.Observability;
 using Prometheus;
 
@@ -103,6 +104,31 @@ public sealed class PrometheusMetricsTests
         Assert.DoesNotContain("state=\"metadata_active\"", exposition);
         Assert.DoesNotContain("limit=\"transfer_configured\"", exposition);
         Assert.DoesNotContain("limit=\"learned\"", exposition);
+    }
+
+    [Fact]
+    public async Task HealthCheckGateMetricsExposeAndRemoveAdmissionState()
+    {
+        var registry = new CollectorRegistry();
+        var metrics = new PrometheusMetrics(registry);
+
+        metrics.SetHealthCheckGate(new HealthCheckConnectionGateSnapshot(
+            Limit: 12,
+            Active: 7,
+            WaitingQueue: 2,
+            WaitingBackground: 5));
+        var exposition = await ExportAsync(registry);
+
+        Assert.Contains("nzbdav_health_check_gate_operations{state=\"active\"} 7", exposition);
+        Assert.Contains("state=\"waiting_queue\"} 2", exposition);
+        Assert.Contains("state=\"waiting_background\"} 5", exposition);
+        Assert.Contains("nzbdav_health_check_gate_limit{limit=\"effective\"} 12", exposition);
+
+        metrics.ClearHealthCheckGate();
+        exposition = await ExportAsync(registry);
+
+        Assert.DoesNotContain("nzbdav_health_check_gate_operations{", exposition);
+        Assert.DoesNotContain("nzbdav_health_check_gate_limit{", exposition);
     }
 
     private static async Task<string> ExportAsync(CollectorRegistry registry)

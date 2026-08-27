@@ -48,6 +48,20 @@ nzbdav_nntp_pool_connections{state=~"transfer_active|metadata_active"}
 nzbdav_nntp_pool_max_connections{limit=~"transfer_effective|metadata_max"}
 ```
 
+## Health-check admission [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+
+The process-wide verification gate exports a bounded `state` label for current
+admission and a bounded `limit` label for its effective connection ceiling:
+
+| Metric | Label | Values |
+|--------|-------|--------|
+| `nzbdav_health_check_gate_operations` | `state` | `active`, `waiting_queue`, `waiting_background` |
+| `nzbdav_health_check_gate_limit` | `limit` | `effective` |
+
+Queue article validation and background library checks share this gate. Queue
+waiters receive released capacity first, so compare `waiting_queue` and
+`waiting_background` when diagnosing a saturated verification budget.
+
 ## Prometheus configuration
 
 For the normal frontend endpoint:

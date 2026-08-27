@@ -132,6 +132,21 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_ReportsHealthCheckGateAdmissionState()
+    {
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)));
+
+        using var environment = JsonDocument.Parse(entries["environment.json"]);
+        var gate = environment.RootElement.GetProperty("healthCheckGate");
+        Assert.Equal(1, gate.GetProperty("limit").GetInt32());
+        Assert.Equal(0, gate.GetProperty("active").GetInt32());
+        Assert.Equal(0, gate.GetProperty("waitingQueue").GetInt32());
+        Assert.Equal(0, gate.GetProperty("waitingBackground").GetInt32());
+    }
+
+    [Fact]
     public async Task Pack_ReportsCpuGcAndThreadPoolCountersForBottleneckTriage()
     {
         var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));
@@ -758,6 +773,7 @@ public sealed class SupportPackContentsTests : IDisposable
         var repairPatchStore = new RepairPatchStore(repairDir, 1024 * 1024);
         await repairPatchStore.CatalogLoadTask;
         var par2RepairService = new Par2RepairService(configManager, usenet, repairPatchStore);
+        using var healthCheckConnectionGate = new HealthCheckConnectionGate(configManager);
         var service = new SupportPackService(
             logBuffer,
             warningBuffer,
@@ -773,6 +789,7 @@ public sealed class SupportPackContentsTests : IDisposable
             gcDiagnosticsStore,
             par2RepairService,
             repairPatchStore,
+            healthCheckConnectionGate,
             concurrentReadTracker);
 
         using var memory = new MemoryStream();
