@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using System.Text;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
@@ -10,6 +8,7 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Utils;
 using UsenetSharp.Models;
+using static NzbWebDAV.Tests.Fakes.Rar4TestArchiveBuilder;
 
 namespace NzbWebDAV.Tests.Services;
 
@@ -207,6 +206,28 @@ public class LazyRarResolverTests
     }
 
     [Fact]
+    public async Task EnsureResolvedThroughAsync_CoveredRangeSkipsLegacySplitRecovery()
+    {
+        using var client = new MeasuringNntpClient("unused", 0);
+        var resolver = new LazyRarResolver(client, new ConfigManager())
+        {
+            VolumeStreamFactory = (_, _) => throw new InvalidOperationException(
+                "Covered reads must not open a RAR volume."),
+        };
+        var mpf = MultipartFile(
+            "movie.mkv",
+            Pending("vol2-seg0", volumeLength: 800, estimatedDataSize: 800));
+        mpf.Metadata.FileParts[0].IsSplitAfter = null;
+
+        var meta = await resolver.EnsureResolvedThroughAsync(
+            mpf, targetByteOffset: 0, ct: CancellationToken.None);
+
+        Assert.Same(mpf.Metadata, meta);
+        Assert.True(meta.IsLazy);
+        Assert.Null(meta.FileParts[0].IsSplitAfter);
+    }
+
+    [Fact]
     public async Task EnsureResolvedThroughAsync_LegacyResolvedTerminalDropsPendingTail()
     {
         const string pathInArchive = "movie.mkv";
@@ -365,100 +386,6 @@ public class LazyRarResolverTests
             SegmentIdByteRange = LongRange.FromStartAndSize(0, volumeLength),
             EstimatedDataSize = estimatedDataSize,
         };
-
-    // Minimal RAR4 multi-volume continuation: mark + archive(VOLUME) +
-    // stored file header (HAS_DATA|SPLIT_BEFORE) + packed payload.
-    private static byte[] BuildRar4ContinuationVolume(
-        string fileName,
-        int packedSize,
-        int trailingBytes = 0,
-        bool splitAfter = false)
-        => BuildRar4Volume(
-            fileName,
-            packedSize,
-            splitBefore: true,
-            splitAfter: splitAfter,
-            trailingBytes: trailingBytes);
-
-    private static byte[] BuildRar4Volume(
-        string fileName,
-        int packedSize,
-        bool splitBefore,
-        bool splitAfter,
-        int trailingBytes = 0)
-    {
-        using var ms = new MemoryStream();
-        ms.Write([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
-
-        // Archive header (HEAD_SIZE=13 including CRC).
-        {
-            Span<byte> body = stackalloc byte[11];
-            body[0] = 0x73;
-            BinaryPrimitives.WriteUInt16LittleEndian(body[1..], 0x0001); // MHD_VOLUME
-            BinaryPrimitives.WriteUInt16LittleEndian(body[3..], 13);
-            BinaryPrimitives.WriteUInt16LittleEndian(body[5..], 0);
-            BinaryPrimitives.WriteUInt32LittleEndian(body[7..], 0);
-            WriteHeader(ms, body);
-        }
-
-        var nameBytes = Encoding.ASCII.GetBytes(fileName);
-        var headSize = (ushort)(32 + nameBytes.Length);
-        {
-            var body = new byte[headSize - 2];
-            var o = 0;
-            body[o++] = 0x74;
-            var fileFlags = (ushort)(0x8000
-                                     | (splitBefore ? 0x0001 : 0)
-                                     | (splitAfter ? 0x0002 : 0));
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), fileFlags);
-            o += 2;
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), headSize);
-            o += 2;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), (uint)packedSize); // ADD_SIZE
-            o += 4;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), (uint)packedSize); // UNP_SIZE
-            o += 4;
-            body[o++] = 2; // HostOS Unix
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0); // FileCRC
-            o += 4;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0); // FileTime
-            o += 4;
-            body[o++] = 20; // UnpVer
-            body[o++] = 0x30; // store
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), (ushort)nameBytes.Length);
-            o += 2;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0); // Attr
-            o += 4;
-            nameBytes.CopyTo(body.AsSpan(o));
-            WriteHeader(ms, body);
-        }
-
-        ms.Write(new byte[packedSize]);
-        ms.Write(new byte[trailingBytes]);
-        return ms.ToArray();
-    }
-
-    private static void WriteHeader(Stream stream, ReadOnlySpan<byte> bodyWithoutCrc)
-    {
-        var crc = RarCrc16(bodyWithoutCrc);
-        Span<byte> hdr = stackalloc byte[bodyWithoutCrc.Length + 2];
-        BinaryPrimitives.WriteUInt16LittleEndian(hdr, crc);
-        bodyWithoutCrc.CopyTo(hdr[2..]);
-        stream.Write(hdr);
-    }
-
-    private static ushort RarCrc16(ReadOnlySpan<byte> data)
-    {
-        uint crc = 0xFFFFFFFF;
-        foreach (var b in data)
-        {
-            crc ^= b;
-            for (var i = 0; i < 8; i++)
-                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
-        }
-
-        return (ushort)(~crc);
-    }
 
     // Only GetYencHeadersAsync is used by the measured-size retry path.
     private sealed class MeasuringNntpClient(string segmentId, long measuredSize) : NntpClient

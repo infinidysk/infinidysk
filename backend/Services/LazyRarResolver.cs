@@ -69,6 +69,10 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         long targetByteOffset,
         CancellationToken ct)
     {
+        var current = mpf.Metadata;
+        if (!current.IsLazy) return current;
+        if (SumResolvedBytes(current) > targetByteOffset) return current;
+
         var meta = await EnsureLastResolvedSplitStateAsync(mpf, ct).ConfigureAwait(false);
         if (!meta.IsLazy) return meta;
 
@@ -272,12 +276,11 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         IEnumerable<Task<Resolution>?> tasks,
         string? pathInArchive)
     {
-        foreach (var task in tasks)
+        foreach (var task in tasks.Where(task => task is not null))
         {
-            if (task is null) continue;
             try
             {
-                var outcome = await task.ConfigureAwait(false);
+                var outcome = await task!.ConfigureAwait(false);
                 if (outcome.Error is not null)
                 {
                     Log.Debug(
@@ -592,15 +595,14 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
                         mpf.Id);
                 }
 
-                foreach (var ignoredOutcome in resolveds.Skip(startIdx + matchedCount))
+                foreach (var ignoredOutcome in resolveds
+                             .Skip(startIdx + matchedCount)
+                             .Where(outcome => outcome.Error is not null))
                 {
-                    if (ignoredOutcome.Error is not null)
-                    {
-                        Log.Debug(
-                            ignoredOutcome.Error,
-                            "Ignored failure while probing a RAR volume after terminal member {Path}",
-                            meta.PathInArchive);
-                    }
+                    Log.Debug(
+                        ignoredOutcome.Error!,
+                        "Ignored failure while probing a RAR volume after terminal member {Path}",
+                        meta.PathInArchive);
                 }
             }
             else

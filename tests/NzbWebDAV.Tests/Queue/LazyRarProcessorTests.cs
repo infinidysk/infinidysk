@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using System.Text;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
@@ -10,6 +8,7 @@ using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
+using static NzbWebDAV.Tests.Fakes.Rar4TestArchiveBuilder;
 
 namespace NzbWebDAV.Tests.Queue;
 
@@ -268,11 +267,11 @@ public class LazyRarProcessorTests
             ["part1@example.com"] = firstBytes,
         });
 
-        var result = await new LazyRarProcessor(infos, client, password: null, CancellationToken.None)
-            .ProcessAsync() as LazyRarProcessor.Result;
+        var result = Assert.IsType<LazyRarProcessor.Result>(
+            await new LazyRarProcessor(infos, client, password: null, CancellationToken.None)
+                .ProcessAsync());
 
-        Assert.NotNull(result);
-        Assert.Equal(member, result!.PathInArchive);
+        Assert.Equal(member, result.PathInArchive);
         Assert.Equal(2, result.PendingParts.Length);
         Assert.Equal(true, result.FirstPart.IsSplitAfter);
     }
@@ -460,115 +459,6 @@ public class LazyRarProcessorTests
             IsRar = true,
             First16KB = first16KB,
         };
-    }
-
-    // Minimal RAR4 multi-volume first part: mark + archive(VOLUME|FIRSTVOLUME) +
-    // stored file header (HAS_DATA|SPLIT_AFTER) with full UNP_SIZE + packed payload.
-    private static byte[] BuildRar4SplitFirstVolume(
-        string fileName, int packedSize, int uncompressedSize, ReadOnlySpan<byte> payloadPrefix = default)
-        => BuildRar4Volume(
-            fileName,
-            packedSize,
-            uncompressedSize,
-            firstVolume: true,
-            splitBefore: false,
-            splitAfter: true,
-            payloadPrefix: payloadPrefix);
-
-    private static byte[] BuildRar4ContinuationVolume(
-        string fileName, int packedSize, bool splitAfter = false)
-        => BuildRar4Volume(
-            fileName,
-            packedSize,
-            packedSize,
-            firstVolume: false,
-            splitBefore: true,
-            splitAfter: splitAfter);
-
-    private static byte[] BuildRar4Volume(
-        string fileName,
-        int packedSize,
-        int uncompressedSize,
-        bool firstVolume,
-        bool splitBefore,
-        bool splitAfter,
-        ReadOnlySpan<byte> payloadPrefix = default,
-        bool encrypted = false)
-    {
-        using var ms = new MemoryStream();
-        ms.Write([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
-
-        // Archive header (HEAD_SIZE=13 including CRC).
-        {
-            Span<byte> body = stackalloc byte[11];
-            body[0] = 0x73;
-            var archiveFlags = firstVolume ? (ushort)0x0101 : (ushort)0x0001;
-            BinaryPrimitives.WriteUInt16LittleEndian(body[1..], archiveFlags);
-            BinaryPrimitives.WriteUInt16LittleEndian(body[3..], 13);
-            BinaryPrimitives.WriteUInt16LittleEndian(body[5..], 0);
-            BinaryPrimitives.WriteUInt32LittleEndian(body[7..], 0);
-            WriteHeader(ms, body);
-        }
-
-        var nameBytes = Encoding.ASCII.GetBytes(fileName);
-        var headSize = (ushort)(32 + nameBytes.Length);
-        {
-            var body = new byte[headSize - 2];
-            var o = 0;
-            body[o++] = 0x74;
-            var fileFlags = (ushort)(0x8000
-                                     | (splitBefore ? 0x0001 : 0)
-                                     | (splitAfter ? 0x0002 : 0)
-                                     | (encrypted ? 0x0004 : 0));
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), fileFlags);
-            o += 2;
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), headSize);
-            o += 2;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), (uint)packedSize); // ADD_SIZE
-            o += 4;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), (uint)uncompressedSize); // UNP_SIZE
-            o += 4;
-            body[o++] = 2; // HostOS Unix
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0); // FileCRC
-            o += 4;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0); // FileTime
-            o += 4;
-            body[o++] = 20; // UnpVer
-            body[o++] = 0x30; // store
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), (ushort)nameBytes.Length);
-            o += 2;
-            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0); // Attr
-            o += 4;
-            nameBytes.CopyTo(body.AsSpan(o));
-            WriteHeader(ms, body);
-        }
-
-        var payload = new byte[packedSize];
-        payloadPrefix.CopyTo(payload);
-        ms.Write(payload);
-        return ms.ToArray();
-    }
-
-    private static void WriteHeader(Stream stream, ReadOnlySpan<byte> bodyWithoutCrc)
-    {
-        var crc = RarCrc16(bodyWithoutCrc);
-        Span<byte> hdr = stackalloc byte[bodyWithoutCrc.Length + 2];
-        BinaryPrimitives.WriteUInt16LittleEndian(hdr, crc);
-        bodyWithoutCrc.CopyTo(hdr[2..]);
-        stream.Write(hdr);
-    }
-
-    private static ushort RarCrc16(ReadOnlySpan<byte> data)
-    {
-        uint crc = 0xFFFFFFFF;
-        foreach (var b in data)
-        {
-            crc ^= b;
-            for (var i = 0; i < 8; i++)
-                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
-        }
-
-        return (ushort)(~crc);
     }
 
     /// <summary>

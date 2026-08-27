@@ -278,7 +278,7 @@ public class LazyRarProcessor(
 
     private async Task<bool> ValidateContinuationChainAsync(
         IRarFileHeader firstHeader,
-        IReadOnlyList<GetFileInfosStep.FileInfo> trailingInfos,
+        List<GetFileInfosStep.FileInfo> trailingInfos,
         string pathInArchive,
         long expectedFileSize,
         bool isEncrypted)
