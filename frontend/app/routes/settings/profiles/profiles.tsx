@@ -533,15 +533,16 @@ function AdapterRow({ token, origin, adapter, enabled, onToggle }: AdapterRowPro
         </Tooltip>
       </div>
       {enabled && (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="join mt-2 w-full">
           <Input
-            className="flex-1 font-mono text-xs"
+            className="join-item min-w-0 flex-1 font-mono text-xs"
             type="text"
             readOnly
             value={url}
             onFocus={(e) => e.currentTarget.select()}
           />
           <Button
+            className="join-item"
             variant={copied ? "success" : "secondary"}
             size="xsmall"
             onClick={() => void onCopy()}

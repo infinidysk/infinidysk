@@ -498,7 +498,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
         <Form.Group className={"flex flex-col gap-2"}>
           <Form.Label>Agreement needed for shared lists</Form.Label>
           <Form.Control
-            className={"w-full max-w-md"}
+            className={"w-full max-w-48"}
             type="number"
             min={1}
             max={20}
@@ -858,6 +858,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={busy === "add-remote" || !remoteUrl.trim()}
               onClick={() => void addRemoteSource()}
             >
@@ -926,6 +927,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={busy === "bulk" || (!bulkText.trim() && !bulkFile)}
               onClick={() => void submitBulk()}
             >
@@ -1017,6 +1019,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={busy === "import" || !pendingFile}
               onClick={() => void submitImport()}
             >
@@ -1101,6 +1104,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={exportScope === "merged" && exportSources.size === 0}
               onClick={doExport}
             >
@@ -1170,6 +1174,7 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
               Cancel
             </Button>
             <Button
+              variant="primary"
               disabled={busy === "backup-save" || !bRepo.trim()}
               onClick={() => void saveBackup()}
             >

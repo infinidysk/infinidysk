@@ -19,17 +19,26 @@ export function RadioJoinFilter<T extends string>({
 }) {
   return (
     <div className="join flex-wrap" role="radiogroup" aria-label={ariaLabel ?? name}>
-      {options.map((option) => (
-        <input
-          key={option.id}
-          type="radio"
-          name={name}
-          className="btn btn-sm join-item max-sm:min-h-11"
-          aria-label={option.label}
-          checked={value === option.id}
-          onChange={() => onChange(option.id)}
-        />
-      ))}
+      {options.map((option) => {
+        const selected = value === option.id;
+        return (
+          <label
+            key={option.id}
+            className={`btn btn-sm join-item max-sm:min-h-11 ${
+              selected ? "btn-active" : "btn-ghost"
+            }`}
+          >
+            <input
+              type="radio"
+              name={name}
+              className="sr-only"
+              checked={selected}
+              onChange={() => onChange(option.id)}
+            />
+            <span>{option.label}</span>
+          </label>
+        );
+      })}
     </div>
   );
 }

@@ -111,7 +111,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Health Check Concurrency
               </label>
               <Input
-                className={`w-full ${!isPositiveInteger(config["repair.healthcheck-concurrency"] || "50") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.healthcheck-concurrency"] || "50") ? "input-error" : ""}`}
                 type="text"
                 id="healthcheck-concurrency-input"
                 aria-describedby="healthcheck-concurrency-help"
@@ -207,7 +207,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Repair After Streaming Failures
               </label>
               <Input
-                className={`w-full ${!isNonNegativeInteger(autoRemoveAfter || "0") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isNonNegativeInteger(autoRemoveAfter || "0") ? "input-error" : ""}`}
                 type="text"
                 id="auto-remove-after-failures-input"
                 aria-describedby="auto-remove-after-failures-help"
@@ -317,7 +317,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Max missing slices
               </label>
               <Input
-                className={`w-full ${!isPositiveInteger(config["repair.par2-max-missing-slices"] ?? "8") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.par2-max-missing-slices"] ?? "8") ? "input-error" : ""}`}
                 type="text"
                 id="par2-max-missing-slices-input"
                 placeholder="8"
@@ -339,7 +339,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Max release size (GB)
               </label>
               <Input
-                className={`w-full ${!isPositiveInteger(config["repair.par2-max-release-gb"] ?? "16") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.par2-max-release-gb"] ?? "16") ? "input-error" : ""}`}
                 type="text"
                 id="par2-max-release-gb-input"
                 placeholder="16"
@@ -362,7 +362,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Max memory (MB)
               </label>
               <Input
-                className={`w-full ${!isPositiveInteger(config["repair.par2-max-memory-mb"] ?? "256") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.par2-max-memory-mb"] ?? "256") ? "input-error" : ""}`}
                 type="text"
                 id="par2-max-memory-mb-input"
                 placeholder="256"
@@ -381,7 +381,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Patch store cap (GB)
               </label>
               <Input
-                className={`w-full ${!isPositiveInteger(config["repair.par2-max-patch-gb"] ?? "4") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.par2-max-patch-gb"] ?? "4") ? "input-error" : ""}`}
                 type="text"
                 id="par2-max-patch-gb-input"
                 placeholder="4"
@@ -400,7 +400,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Fetch concurrency
               </label>
               <Input
-                className={`w-full ${!isPositiveInteger(config["repair.par2-fetch-concurrency"] ?? "2") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.par2-fetch-concurrency"] ?? "2") ? "input-error" : ""}`}
                 type="text"
                 id="par2-fetch-concurrency-input"
                 placeholder="2"
@@ -419,7 +419,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Failure cooldown (hours)
               </label>
               <Input
-                className={`w-full ${!isPositiveInteger(config["repair.par2-failure-cooldown-hours"] ?? "6") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.par2-failure-cooldown-hours"] ?? "6") ? "input-error" : ""}`}
                 type="text"
                 id="par2-failure-cooldown-hours-input"
                 placeholder="6"
@@ -508,7 +508,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Max consecutive missing segments
               </label>
               <Input
-                className={`w-full ${!isPositiveInteger(config["repair.degraded-max-consecutive-missing"] ?? "2") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.degraded-max-consecutive-missing"] ?? "2") ? "input-error" : ""}`}
                 type="text"
                 id="degraded-max-consecutive-missing-input"
                 placeholder="2"
@@ -537,7 +537,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Max total missing segments
               </label>
               <Input
-                className={`w-full ${!isPositiveInteger(config["repair.degraded-max-total-missing"] ?? "5") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.degraded-max-total-missing"] ?? "5") ? "input-error" : ""}`}
                 type="text"
                 id="degraded-max-total-missing-input"
                 placeholder="5"
@@ -562,7 +562,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Max missing data (% of file)
               </label>
               <Input
-                className={`w-full ${!isPositiveNumber(config["repair.degraded-max-missing-byte-percent"] ?? "1.0") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveNumber(config["repair.degraded-max-missing-byte-percent"] ?? "1.0") ? "input-error" : ""}`}
                 type="text"
                 id="degraded-max-missing-byte-percent-input"
                 placeholder="1.0"

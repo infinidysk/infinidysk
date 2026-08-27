@@ -676,7 +676,7 @@ export function IndexersSettings({
             <Input
               type="text"
               id="indexers-default-timeout"
-              className={`w-full ${!isTimeoutValid(globalTimeoutRaw) ? "input-error" : ""}`}
+              className={`w-full max-w-48 ${!isTimeoutValid(globalTimeoutRaw) ? "input-error" : ""}`}
               placeholder={DEFAULT_TIMEOUT_SECONDS.toString()}
               value={globalTimeoutRaw}
               onChange={(e) => handleTimeoutChange(e.target.value)}
@@ -693,7 +693,7 @@ export function IndexersSettings({
             <Input
               type="text"
               id="indexers-default-search-limit"
-              className={`w-full ${!isTimeoutValid(globalSearchLimitRaw) ? "input-error" : ""}`}
+              className={`w-full max-w-48 ${!isTimeoutValid(globalSearchLimitRaw) ? "input-error" : ""}`}
               placeholder={DEFAULT_SEARCH_RESULT_LIMIT.toString()}
               value={globalSearchLimitRaw}
               onChange={(e) => handleSearchLimitChange(e.target.value)}
@@ -768,7 +768,7 @@ export function IndexersSettings({
               type="text"
               inputMode="numeric"
               id="prowlarr-sync-interval"
-              className={`w-full ${!prowlarrIntervalValid ? "input-error" : ""}`}
+              className={`w-full max-w-48 ${!prowlarrIntervalValid ? "input-error" : ""}`}
               placeholder={DEFAULT_PROWLARR_SYNC_INTERVAL_MINUTES.toString()}
               value={prowlarrSyncInterval}
               onChange={(e) =>
@@ -1792,7 +1792,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={!isFormValid}>
+          <Button variant="primary" onClick={handleSave} disabled={!isFormValid}>
             {indexer ? "Save Indexer" : "Add Indexer"}
           </Button>
         </>
@@ -1922,7 +1922,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
           <Input
             type="text"
             id="indexer-rpm"
-            className={`w-full ${!isRpmValid && maxRpm !== "" ? "input-error" : ""}`}
+            className={`w-full max-w-48 ${!isRpmValid && maxRpm !== "" ? "input-error" : ""}`}
             placeholder="0"
             value={maxRpm}
             onChange={(e) => setMaxRpm(e.target.value)}
@@ -1939,7 +1939,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
           <Input
             type="text"
             id="indexer-timeout"
-            className={`w-full ${!isTimeoutFieldValid && timeoutSeconds !== "" ? "input-error" : ""}`}
+            className={`w-full max-w-48 ${!isTimeoutFieldValid && timeoutSeconds !== "" ? "input-error" : ""}`}
             placeholder="Use global default"
             value={timeoutSeconds}
             onChange={(e) => setTimeoutSeconds(e.target.value.replace(/[^0-9]/g, ""))}
@@ -1956,7 +1956,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
           <Input
             type="text"
             id="indexer-search-limit"
-            className={`w-full ${!isSearchResultLimitValid ? "input-error" : ""}`}
+            className={`w-full max-w-48 ${!isSearchResultLimitValid ? "input-error" : ""}`}
             placeholder="Use global default"
             value={searchResultLimit}
             onChange={(e) => setSearchResultLimit(e.target.value.replace(/[^0-9]/g, ""))}
@@ -1973,7 +1973,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
           <Input
             type="text"
             id="indexer-hit-limit"
-            className={`w-full ${!isHitLimitValid ? "input-error" : ""}`}
+            className={`w-full max-w-48 ${!isHitLimitValid ? "input-error" : ""}`}
             placeholder="Unlimited"
             value={hitLimit}
             onChange={(e) => setHitLimit(e.target.value.replace(/[^0-9]/g, ""))}
@@ -1990,7 +1990,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
           <Input
             type="text"
             id="indexer-download-limit"
-            className={`w-full ${!isDownloadLimitValid ? "input-error" : ""}`}
+            className={`w-full max-w-48 ${!isDownloadLimitValid ? "input-error" : ""}`}
             placeholder="Unlimited"
             value={downloadLimit}
             onChange={(e) => setDownloadLimit(e.target.value.replace(/[^0-9]/g, ""))}
@@ -2007,7 +2007,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
           <Input
             type="text"
             id="indexer-hit-reset-time"
-            className={`w-full ${!isHitResetValid ? "input-error" : ""}`}
+            className={`w-full max-w-48 ${!isHitResetValid ? "input-error" : ""}`}
             placeholder="Rolling 24h"
             value={hitResetTime}
             onChange={(e) => setHitResetTime(e.target.value.replace(/[^0-9]/g, ""))}
@@ -2147,7 +2147,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
               <Input
                 type="text"
                 id="indexer-filter-mingrabs"
-                className="w-full"
+                className="w-full max-w-48"
                 placeholder={OPTIMISED_DEFAULTS.MinGrabs.toString()}
                 value={filterMinGrabs}
                 onChange={(e) => setFilterMinGrabs(e.target.value.replace(/[^0-9]/g, ""))}
@@ -2164,7 +2164,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
               <Input
                 type="text"
                 id="indexer-filter-grace"
-                className="w-full"
+                className="w-full max-w-48"
                 placeholder={OPTIMISED_DEFAULTS.GrabsGraceHours.toString()}
                 value={filterGrabsGraceHours}
                 onChange={(e) => setFilterGrabsGraceHours(e.target.value.replace(/[^0-9]/g, ""))}
@@ -2179,7 +2179,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
               <Input
                 type="text"
                 id="indexer-filter-maxage"
-                className="w-full"
+                className="w-full max-w-48"
                 placeholder={OPTIMISED_DEFAULTS.MaxAgeDaysWithoutGrabs.toString()}
                 value={filterMaxAgeDaysWithoutGrabs}
                 onChange={(e) =>

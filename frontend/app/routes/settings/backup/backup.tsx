@@ -15,7 +15,7 @@ import {
 } from "~/components/migration-progress";
 import { Button } from "~/components/ui/button";
 import { Alert, Badge, Spinner, Tooltip } from "~/components/ui/feedback";
-import { Checkbox, Input, Select, Toggle } from "~/components/ui/form";
+import { Checkbox, Input, InputGroup, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import { ManagedSetting, SettingsIntro, SettingsPage } from "~/components/ui";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
@@ -551,22 +551,20 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                 >
                   Keep newest backups
                 </label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="backup-retention-count"
-                    type="number"
-                    min={0}
-                    value={config["backup.retention-count"] ?? "5"}
-                    onChange={(e) =>
-                      setNewConfig({
-                        ...config,
-                        "backup.retention-count": e.target.value,
-                      })
-                    }
-                    className="w-full max-w-[8rem]"
-                  />
-                  <span className="text-xs text-base-content/45">count</span>
-                </div>
+                <InputGroup
+                  className="w-full max-w-48"
+                  id="backup-retention-count"
+                  type="number"
+                  min={0}
+                  suffix="backups"
+                  value={config["backup.retention-count"] ?? "5"}
+                  onChange={(e) =>
+                    setNewConfig({
+                      ...config,
+                      "backup.retention-count": e.target.value,
+                    })
+                  }
+                />
                 <p className="text-[11px] leading-relaxed text-base-content/45">
                   Prunes older non-preserved backups. Set to 0 to disable pruning.
                 </p>
@@ -621,19 +619,6 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                     <Icon name="backup" className="!text-[18px]" />
                   )}
                   Create Backup
-                </Button>
-                <Button
-                  className="shrink-0"
-                  variant="outline"
-                  disabled={busy === "upload" || taskRunning}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  {busy === "upload" ? (
-                    <Spinner className="h-4 w-4" />
-                  ) : (
-                    <Icon name="upload" className="!text-[18px]" />
-                  )}
-                  Upload Backup
                 </Button>
                 <input
                   ref={fileInputRef}

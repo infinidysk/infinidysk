@@ -979,7 +979,7 @@ export function UsenetSettings({
                 />
               </Tooltip>
               <Tooltip content="Requests kept in flight per connection during queue imports (1–64). 8 is a good default. Each provider can override this.">
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-col items-start gap-1">
                   <Label
                     htmlFor="pipelining-depth"
                     className="mb-0 shrink-0 text-[11px] text-base-content/50"
@@ -1007,7 +1007,7 @@ export function UsenetSettings({
 
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
               <Tooltip content="After a provider (or storage group) reports a definitive article miss (430/451), skip re-probing that provider for the same article until the TTL expires. Default 300s (30–86400).">
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-col items-start gap-1">
                   <Label
                     htmlFor="article-miss-cache-ttl"
                     className="mb-0 shrink-0 text-[11px] text-base-content/50"
@@ -1030,7 +1030,7 @@ export function UsenetSettings({
                 </div>
               </Tooltip>
               <Tooltip content="Max negative-cache entries before oldest are evicted. Default 10000 (100–1000000).">
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-col items-start gap-1">
                   <Label
                     htmlFor="article-miss-cache-max"
                     className="mb-0 shrink-0 text-[11px] text-base-content/50"
@@ -1993,7 +1993,7 @@ function ProviderModal({
               <Input
                 type="text"
                 id="provider-max-connections"
-                className={`w-full ${!isPositiveInteger(maxConnections) && maxConnections !== "" ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(maxConnections) && maxConnections !== "" ? "input-error" : ""}`}
                 placeholder="20"
                 value={maxConnections}
                 onChange={(e) => setMaxConnections(e.target.value)}
@@ -2012,7 +2012,7 @@ function ProviderModal({
               <Input
                 type="text"
                 id="provider-pipelining-depth"
-                className={`w-full ${!isPipeliningDepthValid ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPipeliningDepthValid ? "input-error" : ""}`}
                 placeholder={defaultPipeliningDepth || "8"}
                 value={pipeliningDepth}
                 onChange={(e) => setPipeliningDepth(e.target.value)}
@@ -2043,7 +2043,7 @@ function ProviderModal({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">
-                <Label>Data Cap</Label>
+                <Label htmlFor="provider-data-cap">Data Cap</Label>
                 <Tooltip
                   placement="bottom"
                   content="For block accounts: total bytes purchased. The provider auto-pauses near 95% of this value to absorb in-flight requests."
@@ -2051,17 +2051,19 @@ function ProviderModal({
                   <Icon name="info" className="!text-[15px] text-base-content/45" />
                 </Tooltip>
               </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-2">
+              <div className="join w-full max-w-72">
                 <Input
+                  id="provider-data-cap"
                   type="text"
                   inputMode="decimal"
-                  className="w-full"
+                  className="join-item min-w-0 flex-1"
                   placeholder="No cap"
                   value={limitValue}
                   onChange={(e) => setLimitValue(e.target.value)}
                 />
                 <Select
-                  className="w-full"
+                  className="join-item w-20"
+                  aria-label="Data cap unit"
                   value={limitUnit}
                   onChange={(e) => setLimitUnit(e.target.value as ByteUnitLabel)}
                 >
@@ -2075,7 +2077,7 @@ function ProviderModal({
             </div>
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">
-                <Label>Already Used</Label>
+                <Label htmlFor="provider-data-used">Already Used</Label>
                 <Tooltip
                   placement="bottom"
                   content="Seed the counter when migrating a partially-used block from another client. Leave empty for a fresh block."
@@ -2083,17 +2085,19 @@ function ProviderModal({
                   <Icon name="info" className="!text-[15px] text-base-content/45" />
                 </Tooltip>
               </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-2">
+              <div className="join w-full max-w-72">
                 <Input
+                  id="provider-data-used"
                   type="text"
                   inputMode="decimal"
-                  className="w-full"
+                  className="join-item min-w-0 flex-1"
                   placeholder="0"
                   value={initialUsedValue}
                   onChange={(e) => setInitialUsedValue(e.target.value)}
                 />
                 <Select
-                  className="w-full"
+                  className="join-item w-20"
+                  aria-label="Already used unit"
                   value={initialUsedUnit}
                   onChange={(e) => setInitialUsedUnit(e.target.value as ByteUnitLabel)}
                 >
@@ -2215,15 +2219,8 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
 
   return (
     <div className="rounded-lg border border-base-content/10 bg-base-200/40 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-[180px] flex-1">
-          <div className="text-sm font-semibold text-base-content">Auto-tune connections</div>
-          <HelpText className="mt-0">
-            {pipeliningOnly
-              ? "Keeps your Max Connections and just measures the best NNTP pipelining depth at that count."
-              : "Runs a real speed & latency test, then recommends the best connection count and pipelining settings. Speeds are megabytes/sec (MB/s), same as SABnzbd — not megabits (Mb/s). 1 Gb/s ≈ 125 MB/s max."}
-          </HelpText>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-sm font-semibold text-base-content">Auto-tune connections</div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="join" role="group" aria-label="Test intensity">
             <button
@@ -2274,6 +2271,11 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
           )}
         </div>
       </div>
+      <HelpText className="mt-1">
+        {pipeliningOnly
+          ? "Keeps your Max Connections and just measures the best NNTP pipelining depth at that count."
+          : "Runs a real speed & latency test, then recommends the best connection count and pipelining settings. Speeds are megabytes/sec (MB/s), same as SABnzbd — not megabits (Mb/s). 1 Gb/s ≈ 125 MB/s max."}
+      </HelpText>
 
       <Tooltip
         className="mt-3 block"

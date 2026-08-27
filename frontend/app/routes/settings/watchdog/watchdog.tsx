@@ -91,7 +91,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Total budget (seconds)</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={3}
                 max={180}
@@ -108,7 +108,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Hedge delay (seconds)</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={1}
                 max={30}
@@ -126,7 +126,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Parallel candidates per batch</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={1}
                 max={10}
@@ -144,7 +144,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Total candidates per request</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={1}
                 max={200}
@@ -184,7 +184,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Negative-cache TTL (minutes)</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={1}
                 max={1440}
@@ -201,7 +201,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Search link lifetime (hours)</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={1}
                 max={720}
@@ -261,7 +261,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Stall window (seconds)</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={2}
                 max={60}
@@ -278,7 +278,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Per-candidate ceiling (seconds)</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={5}
                 max={120}
@@ -331,7 +331,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Size tolerance (%)</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={0}
                 max={100}
@@ -349,7 +349,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Max copies per group</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={0}
                 max={50}
@@ -430,7 +430,7 @@ export function WatchdogSettings({ config, setNewConfig }: WatchdogSettingsProps
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Active-use grace (seconds)</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={0}
                 max={300}

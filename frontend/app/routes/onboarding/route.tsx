@@ -64,61 +64,69 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
               {pageData.error && <Alert variant="danger">{pageData.error}</Alert>}
               {!pageData.error && (
                 <Alert variant="info">
-                  <p className="mb-1 font-semibold">Welcome!</p>
-                  Create credentials for managing your InfiniDysk server.
+                  <div>
+                    <p className="font-semibold">Welcome!</p>
+                    <p>Create credentials for managing your InfiniDysk server.</p>
+                  </div>
                 </Alert>
               )}
 
               <fieldset className="fieldset space-y-3">
-                <label className="floating-label">
-                  <span>Username</span>
-                  <Input
-                    className="validator w-full"
-                    autoFocus
-                    name="username"
-                    type="text"
-                    required
-                    placeholder="Choose a username"
-                    autoComplete="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.currentTarget.value)}
-                  />
+                <div className="space-y-1">
+                  <label className="floating-label validator w-full">
+                    <Input
+                      className="w-full"
+                      autoFocus
+                      name="username"
+                      type="text"
+                      required
+                      placeholder="Choose a username"
+                      autoComplete="username"
+                      value={username}
+                      onChange={(e) => setUsername(e.currentTarget.value)}
+                    />
+                    <span>Username</span>
+                  </label>
                   <p className="validator-hint">Username is required.</p>
-                </label>
-                <label className="floating-label">
-                  <span>Password</span>
-                  <Input
-                    className="validator w-full"
-                    name="password"
-                    type="password"
-                    required
-                    minLength={1}
-                    placeholder="Choose a password"
-                    autoComplete="new-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.currentTarget.value)}
-                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="floating-label validator w-full">
+                    <Input
+                      className="w-full"
+                      name="password"
+                      type="password"
+                      required
+                      minLength={1}
+                      placeholder="Choose a password"
+                      autoComplete="new-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.currentTarget.value)}
+                    />
+                    <span>Password</span>
+                  </label>
                   <p className="validator-hint">Password is required.</p>
-                </label>
-                <label className="floating-label">
-                  <span>Confirm password</span>
-                  <Input
-                    className={`w-full ${password !== confirmPassword ? "input-error" : ""}`}
-                    name="confirmPassword"
-                    type="password"
-                    required
-                    placeholder="Repeat your password"
-                    autoComplete="new-password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.currentTarget.value)}
-                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="floating-label w-full">
+                    <Input
+                      className={`w-full ${password !== confirmPassword ? "input-error" : ""}`}
+                      name="confirmPassword"
+                      type="password"
+                      required
+                      placeholder="Repeat your password"
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.currentTarget.value)}
+                    />
+                    <span>Confirm password</span>
+                  </label>
                   {password !== "" && confirmPassword === "" && (
-                    <p className="mt-1 text-xs text-error">Confirm your password.</p>
+                    <p className="text-xs text-error">Confirm your password.</p>
                   )}
                   {password !== confirmPassword && confirmPassword !== "" && (
-                    <p className="mt-1 text-xs text-error">Passwords must match.</p>
+                    <p className="text-xs text-error">Passwords must match.</p>
                   )}
-                </label>
+                </div>
               </fieldset>
 
               <Button

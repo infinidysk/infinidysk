@@ -3,6 +3,7 @@ import {
   Alert,
   Badge,
   Input,
+  InputGroup,
   Label,
   ManagedSetting,
   Select,
@@ -62,7 +63,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             {!isAutoMaxDownloadConnections(config["usenet.max-download-connections"]) && (
               <Input
                 {...className([
-                  "w-full",
+                  "w-full max-w-48",
                   !isValidMaxDownloadConnections(config["usenet.max-download-connections"]) &&
                     "input-error",
                 ])}
@@ -145,27 +146,23 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             >
               Streaming Priority (vs Queue)
             </label>
-            <div className="flex w-full">
-              <Input
-                className={
-                  !isValidStreamingPriority(config["usenet.streaming-priority"] ?? "")
-                    ? "input-error"
-                    : undefined
-                }
-                type="text"
-                inputMode="numeric"
-                id="streaming-priority-input"
-                aria-describedby="streaming-priority-help"
-                placeholder="80"
-                value={config["usenet.streaming-priority"]}
-                onChange={(e) =>
-                  setNewConfig({ ...config, "usenet.streaming-priority": e.target.value })
-                }
-              />
-              <span className="flex items-center rounded-r border border-l-0 border-base-content/20 bg-base-200 px-2 text-sm text-base-content/80">
-                %
-              </span>
-            </div>
+            <InputGroup
+              className={`w-full max-w-48 ${
+                !isValidStreamingPriority(config["usenet.streaming-priority"] ?? "")
+                  ? "input-error"
+                  : ""
+              }`}
+              suffix="%"
+              type="text"
+              inputMode="numeric"
+              id="streaming-priority-input"
+              aria-describedby="streaming-priority-help"
+              placeholder="80"
+              value={config["usenet.streaming-priority"]}
+              onChange={(e) =>
+                setNewConfig({ ...config, "usenet.streaming-priority": e.target.value })
+              }
+            />
             <p
               className="text-[11px] leading-relaxed text-base-content/45"
               id="streaming-priority-help"
@@ -219,7 +216,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </Alert>
             {config["usenet.segment-cache.enabled"] === "true" && (
               <div className="grid gap-4 border-l border-base-content/10 pl-4 sm:grid-cols-2">
-                <label className="space-y-2 text-sm text-base-content/80">
+                <label className="flex flex-col gap-2 text-sm text-base-content/80">
                   <span>Cache path</span>
                   <Input
                     className={`w-full ${!isValidSegmentCachePath(config["usenet.segment-cache.path"] ?? "") ? "input-error" : ""}`}
@@ -230,10 +227,10 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
                     }
                   />
                 </label>
-                <label className="space-y-2 text-sm text-base-content/80">
+                <label className="flex flex-col gap-2 text-sm text-base-content/80">
                   <span>Maximum size (GB)</span>
                   <Input
-                    className={`w-full ${!isPositiveInteger(config["usenet.segment-cache.max-gb"] ?? "") ? "input-error" : ""}`}
+                    className={`w-full max-w-48 ${!isPositiveInteger(config["usenet.segment-cache.max-gb"] ?? "") ? "input-error" : ""}`}
                     inputMode="numeric"
                     value={config["usenet.segment-cache.max-gb"]}
                     onChange={(e) =>
@@ -254,32 +251,28 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             >
               Streaming Segment Timeout
             </label>
-            <div className="flex w-full">
-              <Input
-                className={
-                  !isValidStreamingSegmentTimeout(
-                    config["usenet.streaming-segment-timeout-seconds"] ?? "",
-                  )
-                    ? "input-error"
-                    : undefined
-                }
-                type="text"
-                inputMode="numeric"
-                id="streaming-segment-timeout-input"
-                aria-describedby="streaming-segment-timeout-help"
-                placeholder="8"
-                value={config["usenet.streaming-segment-timeout-seconds"]}
-                onChange={(e) =>
-                  setNewConfig({
-                    ...config,
-                    "usenet.streaming-segment-timeout-seconds": e.target.value,
-                  })
-                }
-              />
-              <span className="flex items-center rounded-r border border-l-0 border-base-content/20 bg-base-200 px-2 text-sm text-base-content/80">
-                sec
-              </span>
-            </div>
+            <InputGroup
+              className={`w-full max-w-48 ${
+                !isValidStreamingSegmentTimeout(
+                  config["usenet.streaming-segment-timeout-seconds"] ?? "",
+                )
+                  ? "input-error"
+                  : ""
+              }`}
+              suffix="sec"
+              type="text"
+              inputMode="numeric"
+              id="streaming-segment-timeout-input"
+              aria-describedby="streaming-segment-timeout-help"
+              placeholder="8"
+              value={config["usenet.streaming-segment-timeout-seconds"]}
+              onChange={(e) =>
+                setNewConfig({
+                  ...config,
+                  "usenet.streaming-segment-timeout-seconds": e.target.value,
+                })
+              }
+            />
             <p
               className="text-[11px] leading-relaxed text-base-content/45"
               id="streaming-segment-timeout-help"
@@ -298,32 +291,26 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             >
               Streaming Read Timeout
             </label>
-            <div className="flex w-full">
-              <Input
-                className={
-                  !isValidStreamingReadTimeout(
-                    config["usenet.streaming-read-timeout-seconds"] ?? "",
-                  )
-                    ? "input-error"
-                    : undefined
-                }
-                type="text"
-                inputMode="numeric"
-                id="streaming-read-timeout-input"
-                aria-describedby="streaming-read-timeout-help"
-                placeholder="30"
-                value={config["usenet.streaming-read-timeout-seconds"]}
-                onChange={(e) =>
-                  setNewConfig({
-                    ...config,
-                    "usenet.streaming-read-timeout-seconds": e.target.value,
-                  })
-                }
-              />
-              <span className="flex items-center rounded-r border border-l-0 border-base-content/20 bg-base-200 px-2 text-sm text-base-content/80">
-                sec
-              </span>
-            </div>
+            <InputGroup
+              className={`w-full max-w-48 ${
+                !isValidStreamingReadTimeout(config["usenet.streaming-read-timeout-seconds"] ?? "")
+                  ? "input-error"
+                  : ""
+              }`}
+              suffix="sec"
+              type="text"
+              inputMode="numeric"
+              id="streaming-read-timeout-input"
+              aria-describedby="streaming-read-timeout-help"
+              placeholder="30"
+              value={config["usenet.streaming-read-timeout-seconds"]}
+              onChange={(e) =>
+                setNewConfig({
+                  ...config,
+                  "usenet.streaming-read-timeout-seconds": e.target.value,
+                })
+              }
+            />
             <p
               className="text-[11px] leading-relaxed text-base-content/45"
               id="streaming-read-timeout-help"
@@ -342,32 +329,28 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             >
               Streaming Write Timeout
             </label>
-            <div className="flex w-full">
-              <Input
-                className={
-                  !isValidStreamingWriteTimeout(
-                    config["usenet.streaming-write-timeout-seconds"] ?? "",
-                  )
-                    ? "input-error"
-                    : undefined
-                }
-                type="text"
-                inputMode="numeric"
-                id="streaming-write-timeout-input"
-                aria-describedby="streaming-write-timeout-help"
-                placeholder="60"
-                value={config["usenet.streaming-write-timeout-seconds"]}
-                onChange={(e) =>
-                  setNewConfig({
-                    ...config,
-                    "usenet.streaming-write-timeout-seconds": e.target.value,
-                  })
-                }
-              />
-              <span className="flex items-center rounded-r border border-l-0 border-base-content/20 bg-base-200 px-2 text-sm text-base-content/80">
-                sec
-              </span>
-            </div>
+            <InputGroup
+              className={`w-full max-w-48 ${
+                !isValidStreamingWriteTimeout(
+                  config["usenet.streaming-write-timeout-seconds"] ?? "",
+                )
+                  ? "input-error"
+                  : ""
+              }`}
+              suffix="sec"
+              type="text"
+              inputMode="numeric"
+              id="streaming-write-timeout-input"
+              aria-describedby="streaming-write-timeout-help"
+              placeholder="60"
+              value={config["usenet.streaming-write-timeout-seconds"]}
+              onChange={(e) =>
+                setNewConfig({
+                  ...config,
+                  "usenet.streaming-write-timeout-seconds": e.target.value,
+                })
+              }
+            />
             <p
               className="text-[11px] leading-relaxed text-base-content/45"
               id="streaming-write-timeout-help"
@@ -389,11 +372,11 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
               Streaming Segment Retries
             </label>
             <Input
-              className={
+              className={`w-full max-w-48 ${
                 !isValidStreamingSegmentRetries(config["usenet.streaming-segment-retries"] ?? "")
                   ? "input-error"
-                  : undefined
-              }
+                  : ""
+              }`}
               type="text"
               inputMode="numeric"
               id="streaming-segment-retries-input"
@@ -427,7 +410,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </label>
             <Input
               {...className([
-                "w-full",
+                "w-full max-w-48",
                 !isValidArticleBufferSize(config["usenet.article-buffer-size"] ?? "") &&
                   "input-error",
               ])}
@@ -461,7 +444,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </label>
             <Input
               {...className([
-                "w-full",
+                "w-full max-w-48",
                 !isValidInFlightArticleBudget(config["usenet.in-flight-article-budget-mb"]) &&
                   "input-error",
               ])}
@@ -498,7 +481,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </label>
             <Input
               {...className([
-                "w-full",
+                "w-full max-w-48",
                 !isValidIdleConnectionTimeout(config["usenet.idle-connection-timeout-seconds"]) &&
                   "input-error",
               ])}
@@ -549,7 +532,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </Label>
             <Input
               {...className([
-                "w-full max-w-xs",
+                "w-full max-w-48",
                 !isValidStreamingBodyBatchWidth(config["usenet.streaming-body-batch-width"]) &&
                   "input-error",
               ])}
@@ -642,7 +625,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </Label>
             <Input
               {...className([
-                "w-full max-w-xs",
+                "w-full max-w-48",
                 !isValidSharedStreamsMaxEntries(config["usenet.shared-streams.max-entries"]) &&
                   "input-error",
               ])}
@@ -679,7 +662,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </Label>
             <Input
               {...className([
-                "w-full max-w-xs",
+                "w-full max-w-48",
                 !isValidSharedStreamsMaxEntriesPerFile(
                   config["usenet.shared-streams.max-entries-per-file"],
                 ) && "input-error",
@@ -713,7 +696,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </Label>
             <Input
               {...className([
-                "w-full max-w-xs",
+                "w-full max-w-48",
                 !isValidSharedStreamsRingMb(config["usenet.shared-streams.ring-mb"]) &&
                   "input-error",
               ])}
@@ -750,7 +733,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </Label>
             <Input
               {...className([
-                "w-full max-w-xs",
+                "w-full max-w-48",
                 !isValidSharedStreamsGraceSeconds(config["usenet.shared-streams.grace-seconds"]) &&
                   "input-error",
               ])}
@@ -787,7 +770,7 @@ export function StreamingSettings({ config, setNewConfig }: StreamingSettingsPro
             </Label>
             <Input
               {...className([
-                "w-full max-w-xs",
+                "w-full max-w-48",
                 !isValidSharedStreamsSmallRangeMaxMb(
                   config["usenet.shared-streams.small-range-max-mb"],
                 ) && "input-error",

@@ -543,7 +543,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                 Keep NZB backups for (days)
               </label>
               <Input
-                className="w-full"
+                className="w-full max-w-48"
                 type="number"
                 min={0}
                 id="nzb-backup-retention-days-input"

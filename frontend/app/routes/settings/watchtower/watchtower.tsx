@@ -191,7 +191,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
             <Form.Group className="flex flex-col gap-2">
               <Form.Label>Recent episode count</Form.Label>
               <Form.Control
-                className="w-full max-w-md"
+                className="w-full max-w-48"
                 type="number"
                 min={1}
                 max={100}
@@ -268,7 +268,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
                     <Form.Group className="flex flex-col gap-2">
                       <Form.Label>Recent season count</Form.Label>
                       <Form.Control
-                        className="w-full max-w-md"
+                        className="w-full max-w-48"
                         type="number"
                         min={1}
                         max={100}
@@ -287,7 +287,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
                   <Form.Group className="flex flex-col gap-2">
                     <Form.Label>Max fallback episodes per season</Form.Label>
                     <Form.Control
-                      className="w-full max-w-md"
+                      className="w-full max-w-48"
                       type="number"
                       min={1}
                       max={1000}
@@ -308,7 +308,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
               <Form.Group className="flex flex-col gap-2">
                 <Form.Label>Max items per series</Form.Label>
                 <Form.Control
-                  className="w-full max-w-md"
+                  className="w-full max-w-48"
                   type="number"
                   min={0}
                   max={1000}
@@ -349,7 +349,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Junk floor (GB)</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={0}
               step={0.1}
@@ -365,7 +365,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Bandwidth ceiling (GB)</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={0}
               step={0.5}
@@ -382,7 +382,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Minimum grabs</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={0}
               disabled={!enabled}
@@ -399,7 +399,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Active warm-set cap</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={1}
               max={100000}
@@ -431,7 +431,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Daily resolve budget</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={0}
               disabled={!enabled || autoThroughput}
@@ -452,7 +452,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Shortlist depth</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={1}
               max={5}
@@ -468,7 +468,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Grab cap per resolve</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={1}
               max={10}
@@ -485,7 +485,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Verify sample count</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={1}
               max={20}
@@ -502,7 +502,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Verify timeout (seconds)</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={2}
               max={120}
@@ -525,7 +525,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Re-check interval (seconds)</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={300}
               max={604800}
@@ -543,7 +543,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Max re-check interval (seconds)</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={600}
               max={2592000}
@@ -560,7 +560,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Dead-item retry interval (seconds)</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={600}
               max={604800}
@@ -577,7 +577,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>List sync interval (seconds)</Form.Label>
             <Form.Control
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={60}
               max={86400}

@@ -522,13 +522,21 @@ function LevelChip({
 }) {
   const activeClass = !active ? "btn-ghost opacity-55" : levelActiveBtnClass(level);
   return (
-    <input
-      type="checkbox"
+    <label
       className={`btn btn-sm join-item max-sm:min-h-11 uppercase tracking-wide ${activeClass}`}
-      aria-label={`${shortLevel(level)} ${count}`}
-      checked={active}
-      onChange={onClick}
-    />
+    >
+      <input
+        type="checkbox"
+        className="sr-only"
+        aria-label={`${shortLevel(level)} ${count}`}
+        checked={active}
+        onChange={onClick}
+      />
+      <span>{shortLevel(level)}</span>
+      <span className={`badge badge-xs ${active ? levelBadgeClass(level) : "badge-ghost"}`}>
+        {count}
+      </span>
+    </label>
   );
 }
 
