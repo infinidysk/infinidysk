@@ -1803,7 +1803,7 @@ public class MultiProviderNntpClientTests
         var idle = CreateProvider(idleConnection, host: "idle.example", maxConnections: 8, priority: 1);
         // Leave primary with a single spare connection (12.5% <= 25%) so thin-spare demotes it.
         for (var i = 0; i < 7; i++)
-            primary.ReservePending();
+            primary.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([primary, idle], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -1830,7 +1830,7 @@ public class MultiProviderNntpClientTests
         var secondary = CreateProvider(secondaryConnection, host: "secondary.example", maxConnections: 8, priority: 1);
         // 3/8 unreserved = 37.5% spare — just above the 25% thin-spare band.
         for (var i = 0; i < 5; i++)
-            primary.ReservePending();
+            primary.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([primary, secondary], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -1857,7 +1857,7 @@ public class MultiProviderNntpClientTests
         var secondary = CreateProvider(secondaryConnection, host: "secondary.example", maxConnections: 8, priority: 1);
         // 2/8 unreserved = exactly 25%, so the idle next-priority peer wins.
         for (var i = 0; i < 6; i++)
-            primary.ReservePending();
+            primary.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([primary, secondary], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -1886,9 +1886,9 @@ public class MultiProviderNntpClientTests
         // pick the larger pool (16 > 10). Fraction tie-break keeps list order, so the
         // smaller pool listed first must win.
         for (var i = 0; i < 16; i++)
-            larger.ReservePending();
+            larger.ReservePending(NntpOperation.Body);
         for (var i = 0; i < 10; i++)
-            smaller.ReservePending();
+            smaller.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([smaller, larger], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -1914,7 +1914,7 @@ public class MultiProviderNntpClientTests
         var primary = CreateProvider(primaryConnection, host: "primary.example", maxConnections: 4, priority: 0);
         var backup = CreateProvider(backupConnection, host: "backup.example", maxConnections: 4, priority: 1);
         for (var i = 0; i < 4; i++)
-            primary.ReservePending();
+            primary.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([primary, backup], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);

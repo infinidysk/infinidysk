@@ -134,8 +134,6 @@ public class MultiConnectionNntpClient(
     private int _pendingMetadataSelections;
     private int _retiredPoolWarningLogged;
     public int PendingSelections => Volatile.Read(ref _pendingSelections);
-    public void ReservePending() => Interlocked.Increment(ref _pendingSelections);
-    public void ReleasePending() => Interlocked.Decrement(ref _pendingSelections);
     internal void ReservePending(NntpOperation operation)
     {
         Interlocked.Increment(ref _pendingSelections);
