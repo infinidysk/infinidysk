@@ -51,7 +51,13 @@ export function parseHealthItemProgressMessage(message: string): {
   const parts = message.split("|");
   if (parts.length !== 2) return null;
   const [davItemId, progressValue] = parts;
-  if (!davItemId || progressValue.trim() === "" || progressValue === "done") return null;
+  if (
+    !davItemId ||
+    progressValue === undefined ||
+    progressValue.trim() === "" ||
+    progressValue === "done"
+  )
+    return null;
   const progress = Number(progressValue);
   if (!Number.isFinite(progress) || progress < 0 || progress > 100) return null;
   return { davItemId, progress };
@@ -65,7 +71,14 @@ export function parseHealthItemStatusMessage(message: string): {
   const parts = message.split("|");
   if (parts.length !== 3) return null;
   const [davItemId, healthResultValue, repairActionValue] = parts;
-  if (!davItemId || healthResultValue.trim() === "" || repairActionValue.trim() === "") return null;
+  if (
+    !davItemId ||
+    healthResultValue === undefined ||
+    repairActionValue === undefined ||
+    healthResultValue.trim() === "" ||
+    repairActionValue.trim() === ""
+  )
+    return null;
   const healthResult = Number(healthResultValue);
   const repairAction = Number(repairActionValue);
   if (
