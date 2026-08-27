@@ -149,7 +149,9 @@ public class ConnectionPoolWarmConnectionTests
         await sweep.WaitAsync(TimeSpan.FromSeconds(1));
 
         Assert.Equal(0, Volatile.Read(ref keepAliveCalls));
-        Assert.Equal(0, admission.GetSnapshot().WaitingMetadataOperations);
+        var snapshot = admission.GetSnapshot();
+        Assert.Equal(0, snapshot.ActiveMetadataOperations);
+        Assert.Equal(0, snapshot.WaitingMetadataOperations);
     }
 
     [Fact]
