@@ -11,6 +11,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      backend: ${{ steps.changes.outputs.backend }}
+      contracts: ${{ steps.changes.outputs.contracts }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect backend and contract inputs
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            backend=true
+            contracts=true
+          else
+            backend=false
+            contracts=false
+            changed_files="$RUNNER_TEMP/pr-changed-files"
+            git diff --name-only -z "${BASE_SHA}...${HEAD_SHA}" > "$changed_files"
+
+            # Only known documentation, release metadata, and frontend paths
+            # may bypass the backend lanes. Unknown paths fail closed.
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                frontend/*)
+                  contracts=true
+                  ;;
+                .cursor/*|.github/ISSUE_TEMPLATE/*|docs/*)
+                  ;;
+                .release-please-config.json|.release-please-manifest.json|AGENTS.md|CHANGELOG.md)
+                  ;;
+                CONTRIBUTING.md|LICENSE|README.md|docs-requirements.txt|version.txt|zensical.toml)
+                  ;;
+                *)
+                  backend=true
+                  contracts=true
+                  ;;
+              esac
+            done < "$changed_files"
+          fi
+
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          echo "contracts=$contracts" >> "$GITHUB_OUTPUT"
+
   frontend:
     runs-on: ubuntu-latest
     permissions:
@@ -126,7 +182,10 @@ jobs:
             frontend/coverage/coverage-summary.json
           if-no-files-found: error
 
-  backend:
+  backend-quality:
+    name: Backend quality
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -141,21 +200,11 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Install native build tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
+      - name: Verify native build tools
+        run: cmake --version && ninja --version
 
       - name: Build rapidyenc (linux-x64)
         run: scripts/build-rapidyenc.sh linux-x64
-
-      - name: Verify formatting
-        run: |
-          dotnet format whitespace --verify-no-changes --folder backend
-          dotnet format whitespace --verify-no-changes --folder backend.Benchmarks
-          dotnet format whitespace --verify-no-changes --folder tests/NzbWebDAV.Tests
-          dotnet format whitespace --verify-no-changes --folder tests/UsenetSharp.Tests
-          dotnet format whitespace --verify-no-changes --folder tests/RapidYencSharp.Tests
-          dotnet format whitespace --verify-no-changes --folder libs/UsenetSharp
-          dotnet format whitespace --verify-no-changes --folder libs/RapidYencSharp
 
       - name: Cache NuGet packages
         uses: actions/cache@v6
@@ -165,21 +214,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      - name: Restore backend and library tests
-        run: |
-          dotnet restore backend/NzbWebDAV.csproj
-          dotnet restore tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj
-          dotnet restore tests/NzbWebDAV.ArchitectureTests/NzbWebDAV.ArchitectureTests.csproj
-          dotnet restore tests/SharpCompress.Tests/SharpCompress.Tests.csproj
-          dotnet restore tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj
-          dotnet restore tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj
-          dotnet restore backend.Benchmarks/NzbWebDAV.Benchmarks.csproj
+      - name: Restore .NET solution
+        run: dotnet restore NzbWebDAV.sln
 
-      # Benchmarks are first-party code under the warnings-as-errors gate.
+      # Every first-party project, including tests and benchmarks, is compiled
+      # once under the warnings-as-errors analyzer gate. Parallel runtime/test
+      # jobs may then disable analyzers without reducing static-analysis coverage.
       # Deterministic streaming/SAB reports are compared in this job; timing
       # comparisons stay off the PR path (see performance.yml).
-      - name: Build benchmarks (warning gate)
-        run: dotnet build backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-restore
+      - name: Build solution (warning gate)
+        run: >
+          dotnet build NzbWebDAV.sln -c Release --no-restore
+          -p:SkipRapidYencNativeEnsure=true
 
       - name: Performance deterministic gate
         run: |
@@ -237,15 +283,10 @@ jobs:
             --allowlist scripts/nuget-vulnerability-allowlist.json \
             --summary "${GITHUB_STEP_SUMMARY}"
 
-      - name: Build backend
-        working-directory: backend
-        run: dotnet publish -c Release -o ./publish --no-restore
-
-      - name: Test backend
-        run: dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore --collect:"XPlat Code Coverage" --results-directory ./TestResults --blame-hang-timeout 2m --blame-hang-dump-type none
-
-      - name: Test architecture boundaries
-        run: dotnet test tests/NzbWebDAV.ArchitectureTests/NzbWebDAV.ArchitectureTests.csproj -c Release --no-restore
+      - name: Publish backend
+        run: >
+          dotnet publish backend/NzbWebDAV.csproj -c Release -o backend/publish
+          --no-build --no-restore
 
       - name: Upload admin OpenAPI contract
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -255,24 +296,67 @@ jobs:
           path: contracts/openapi/admin-v1.json
           if-no-files-found: error
 
-      - name: Test SharpCompress
-        timeout-minutes: 10
-        run: >
-          dotnet test tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release --no-restore
-          --blame-hang-timeout 120s
-          --filter "format!=stress"
+  backend-tests:
+    name: Backend tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
 
-      - name: Test RapidYencSharp
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify native build tools
+        run: cmake --version && ninja --version
+
+      - name: Build rapidyenc (linux-x64)
+        run: scripts/build-rapidyenc.sh linux-x64
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore .NET solution
+        run: dotnet restore NzbWebDAV.sln
+
+      - name: Build backend test projects
+        run: |
+          dotnet build tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore \
+            -p:RunAnalyzers=false \
+            -p:EnforceCodeStyleInBuild=false \
+            -p:SkipRapidYencNativeEnsure=true
+          dotnet build tests/NzbWebDAV.ArchitectureTests/NzbWebDAV.ArchitectureTests.csproj -c Release --no-restore \
+            -p:RunAnalyzers=false \
+            -p:EnforceCodeStyleInBuild=false \
+            -p:SkipRapidYencNativeEnsure=true
+
+      - name: Test backend
         env:
           RAPIDYENC_LIBRARY_PATH: ${{ github.workspace }}/libs/RapidYencSharp/runtimes/linux-x64/native/librapidyenc.so
-        run: dotnet test tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj -c Release --no-restore
-
-      - name: Test UsenetSharp (deterministic)
-        env:
-          RAPIDYENC_LIBRARY_PATH: ${{ github.workspace }}/libs/RapidYencSharp/runtimes/linux-x64/native/librapidyenc.so
         run: >
-          dotnet test tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj -c Release --no-restore
-          --filter "TestCategory!=Integration"
+          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
+          --no-build --no-restore
+          --collect:"XPlat Code Coverage"
+          --results-directory ./TestResults
+          --blame-hang-timeout 2m
+          --blame-hang-dump-type none
+
+      - name: Test architecture boundaries
+        run: >
+          dotnet test tests/NzbWebDAV.ArchitectureTests/NzbWebDAV.ArchitectureTests.csproj
+          -c Release --no-build --no-restore
 
       - name: Collect backend coverage
         run: |
@@ -292,8 +376,110 @@ jobs:
           path: coverage/coverage.cobertura.xml
           if-no-files-found: error
 
+  library-tests-linux:
+    name: Linux library tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify native build tools
+        run: cmake --version && ninja --version
+
+      - name: Build rapidyenc (linux-x64)
+        run: scripts/build-rapidyenc.sh linux-x64
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore .NET solution
+        run: dotnet restore NzbWebDAV.sln
+
+      - name: Build library test projects
+        run: |
+          dotnet build tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release --no-restore \
+            -p:RunAnalyzers=false \
+            -p:EnforceCodeStyleInBuild=false
+          dotnet build tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj -c Release --no-restore \
+            -p:RunAnalyzers=false \
+            -p:EnforceCodeStyleInBuild=false \
+            -p:SkipRapidYencNativeEnsure=true
+          dotnet build tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj -c Release --no-restore \
+            -p:RunAnalyzers=false \
+            -p:EnforceCodeStyleInBuild=false \
+            -p:SkipRapidYencNativeEnsure=true
+
+      - name: Test SharpCompress
+        timeout-minutes: 10
+        run: >
+          dotnet test tests/SharpCompress.Tests/SharpCompress.Tests.csproj -c Release
+          --no-build --no-restore
+          --blame-hang-timeout 120s
+          --filter "format!=stress"
+
+      - name: Test RapidYencSharp
+        env:
+          RAPIDYENC_LIBRARY_PATH: ${{ github.workspace }}/libs/RapidYencSharp/runtimes/linux-x64/native/librapidyenc.so
+        run: >
+          dotnet test tests/RapidYencSharp.Tests/RapidYencSharp.Tests.csproj -c Release
+          --no-build --no-restore
+
+      - name: Test UsenetSharp (deterministic)
+        env:
+          RAPIDYENC_LIBRARY_PATH: ${{ github.workspace }}/libs/RapidYencSharp/runtimes/linux-x64/native/librapidyenc.so
+        run: >
+          dotnet test tests/UsenetSharp.Tests/UsenetSharp.Tests.csproj -c Release
+          --no-build --no-restore
+          --filter "TestCategory!=Integration"
+
+  backend-format:
+    name: Backend formatting
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify formatting
+        run: >
+          dotnet format whitespace . --folder --verify-no-changes
+          --include
+          backend
+          backend.Benchmarks
+          tests/NzbWebDAV.Tests
+          tests/UsenetSharp.Tests
+          tests/RapidYencSharp.Tests
+          libs/UsenetSharp
+          libs/RapidYencSharp
+
   postgres-migrations:
     name: PostgreSQL migration tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -314,8 +500,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6.0.0
@@ -333,16 +517,26 @@ jobs:
       - name: Restore PostgreSQL migration tests
         run: dotnet restore tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj
 
+      - name: Build PostgreSQL migration tests
+        run: >
+          dotnet build tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore
+          -p:RunAnalyzers=false
+          -p:EnforceCodeStyleInBuild=false
+          -p:SkipRapidYencNativeEnsure=true
+
       - name: Test PostgreSQL migrations
         env:
           DATABASE_PROVIDER: postgres
           DATABASE_CONNECTION_STRING: Host=localhost;Port=5432;Database=nzbdav;Username=nzbdav;Password=nzbdav
         run: >
-          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore
+          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
+          --no-build --no-restore
           --filter "FullyQualifiedName~PostgresMigrationTests"
 
   contracts:
     name: HTTP contracts
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -350,8 +544,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v7.0.0
@@ -373,12 +565,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      - name: Install native build tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
-
-      - name: Build rapidyenc (linux-x64)
-        run: scripts/build-rapidyenc.sh linux-x64
-
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -390,16 +576,25 @@ jobs:
       - name: Restore contract tests
         run: dotnet restore tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj
 
+      - name: Build contract tests
+        run: >
+          dotnet build tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore
+          -p:RunAnalyzers=false
+          -p:EnforceCodeStyleInBuild=false
+          -p:SkipRapidYencNativeEnsure=true
+
       - name: Run SAB, admin, and WebDAV contract tests
         run: >
-          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore
+          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
+          --no-build --no-restore
           --filter "FullyQualifiedName~SabHttpContractTests|FullyQualifiedName~AdminContractTests|FullyQualifiedName~WebDavContractTests"
           --logger "trx;LogFileName=http-contracts.trx"
           --results-directory ./ContractResults
 
       - name: Run cross-stack frontend proxy contracts
         run: >
-          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-restore
+          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release
+          --no-build --no-restore
           --filter "Category=CrossStack"
           --logger "trx;LogFileName=cross-stack.trx"
           --results-directory ./ContractResults
@@ -414,6 +609,8 @@ jobs:
 
   macos-yenc:
     name: macOS yEnc / library tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: macos-latest
     permissions:
       contents: read
@@ -452,6 +649,8 @@ jobs:
           --filter "TestCategory!=Integration"
 
   alpine-yenc:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -490,13 +689,20 @@ jobs:
               cp "$lib_path" /out/linux-musl-x64/native/librapidyenc.so
             '
 
+      - name: Restore backend for linux-musl-x64
+        run: dotnet restore backend/NzbWebDAV.csproj -r linux-musl-x64
+
       - name: Publish backend for linux-musl-x64
         run: |
           dotnet publish backend/NzbWebDAV.csproj \
             -c Release \
             -r linux-musl-x64 \
             --self-contained false \
-            -o ./publish-musl
+            --no-restore \
+            -o ./publish-musl \
+            -p:RunAnalyzers=false \
+            -p:EnforceCodeStyleInBuild=false \
+            -p:SkipRapidYencNativeEnsure=true
           cp libs/RapidYencSharp/runtimes/linux-musl-x64/native/librapidyenc.so ./publish-musl/
 
       - name: yEnc native self-test on Alpine
@@ -611,8 +817,12 @@ jobs:
     name: Required quality gate
     if: always()
     needs:
+      - changes
       - frontend
-      - backend
+      - backend-quality
+      - backend-tests
+      - library-tests-linux
+      - backend-format
       - postgres-migrations
       - macos-yenc
       - alpine-yenc
@@ -628,13 +838,25 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           jq -e '
+            .changes.result == "success" and
             .frontend.result == "success" and
-            .backend.result == "success" and
-            ."postgres-migrations".result == "success" and
-            ."macos-yenc".result == "success" and
-            ."alpine-yenc".result == "success" and
             ."quality-ratchets".result == "success" and
-            .contracts.result == "success" and
+            (
+              .changes.outputs.backend != "true" or
+              (
+                ."backend-quality".result == "success" and
+                ."backend-tests".result == "success" and
+                ."library-tests-linux".result == "success" and
+                ."backend-format".result == "success" and
+                ."postgres-migrations".result == "success" and
+                ."macos-yenc".result == "success" and
+                ."alpine-yenc".result == "success"
+              )
+            ) and
+            (
+              .changes.outputs.contracts != "true" or
+              .contracts.result == "success"
+            ) and
             (."docker-runtime-smoke".result == "success" or ."docker-runtime-smoke".result == "skipped") and
             all(.[]; .result == "success" or .result == "skipped")
           ' <<<"$RESULTS"
@@ -659,8 +881,8 @@ jobs:
           label: code-coverage-agent
 
   upload-coverage-csharp:
-    needs: backend
-    if: ${{ !cancelled() && needs.backend.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    needs: backend-tests
+    if: ${{ !cancelled() && needs.backend-tests.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
