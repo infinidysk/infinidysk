@@ -1,3 +1,4 @@
+using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Tests.Utils;
@@ -35,14 +36,18 @@ public class LimitedReadStreamTests
     [Fact]
     public async Task Copy_Cancelled_ThrowsOperationCanceledNotLimit()
     {
-        // A repeating inner stream never ends; the read token must win over the
-        // limit accounting so cancellation stays cancellation.
-        await using var inner = new RepeatingByteStream(long.MaxValue);
+        // Deterministic cancellation after 64 KiB of reads (a timer races the
+        // MemoryStream's own size limit on fast machines). The stream limit sits
+        // far above the cancel point, so the copy must end via cancellation.
+        using var cts = new CancellationTokenSource();
+        await using var inner = TestStreams.CancelAfterBytes(
+            new RepeatingByteStream(long.MaxValue), cancelAfterBytes: 64 * 1024, cts);
         await using var limited = new LimitedReadStream(
             inner, long.MaxValue, () => new InvalidOperationException("limit"));
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
 
-        await Assert.ThrowsAsync<OperationCanceledException>(
+        // ThrowsAny: an OCE crossing async method boundaries resurfaces as
+        // TaskCanceledException; either proves cancellation beat the limit.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => limited.CopyToAsync(new MemoryStream(), cts.Token));
     }
 
