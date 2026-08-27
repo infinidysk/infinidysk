@@ -9,7 +9,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useRevalidator, useSearchParams } from "react-router";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
-import { Alert, Icon } from "~/components/ui";
+import { Alert, Icon, PageHeader } from "~/components/ui";
 import type {
   HealthCheckQueueResponse,
   HealthResult,
@@ -237,6 +237,16 @@ export default function Health({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="flex min-h-full min-w-full flex-col gap-8 px-4 py-4 text-sm text-base-content md:px-8">
+      <PageHeader
+        title="Health"
+        subtitle="Repair queue and history for files that fail Usenet article checks."
+        actions={
+          <a className="btn btn-sm" href="#repair-history">
+            <Icon name="history" className="!text-[16px]" />
+            Jump to history
+          </a>
+        }
+      />
       <HealthStats stats={historyStats} />
       {isEnabled && uncheckedCount > 20 && (
         <Alert className="alert-soft" variant="warning">
@@ -250,6 +260,10 @@ export default function Health({ loaderData }: Route.ComponentProps) {
           </div>
         </Alert>
       )}
+      <HealthTable
+        isEnabled={isEnabled}
+        healthCheckItems={queueItems.filter((_, index) => index < 10)}
+      />
       <HealthHistoryTable
         items={historyItems}
         totalCount={historyTotalCount}
@@ -262,10 +276,6 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         onPageSelected={(page) => setHistoryParams({ page })}
         onPageSizeSelected={onHistoryPageSizeSelected}
         onRefresh={() => void revalidator.revalidate()}
-      />
-      <HealthTable
-        isEnabled={isEnabled}
-        healthCheckItems={queueItems.filter((_, index) => index < 10)}
       />
     </div>
   );

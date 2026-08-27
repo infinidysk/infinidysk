@@ -94,6 +94,9 @@ describe("HealthHistoryTable", () => {
     const markup = render([], "degraded");
 
     expect(markup).toContain("No degraded items");
-    expect(markup).toMatch(/btn btn-sm join-item btn-primary[^>]*>\s*Degraded/);
+    expect(markup).toContain("focus-within:outline-primary");
+    expect(markup).toMatch(
+      /<label[^>]*btn-active[^>]*><input[^>]*checked=""[^>]*\/><span>Degraded<\/span><\/label>/,
+    );
   });
 });

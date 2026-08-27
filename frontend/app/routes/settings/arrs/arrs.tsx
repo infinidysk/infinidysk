@@ -256,7 +256,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
               title="Radarr instances"
               description="Movie managers that can search for replacement releases."
               action={
-                <Button variant="primary" size="small" onClick={addRadarrInstance}>
+                <Button size="small" onClick={addRadarrInstance}>
                   <Icon name="add" className="!text-[18px]" />
                   Add
                 </Button>
@@ -285,7 +285,7 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
               title="Sonarr instances"
               description="Series managers that can search for replacement releases."
               action={
-                <Button variant="primary" size="small" onClick={addSonarrInstance}>
+                <Button size="small" onClick={addSonarrInstance}>
                   <Icon name="add" className="!text-[18px]" />
                   Add
                 </Button>
@@ -511,10 +511,17 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
           </p>
         </div>
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-base-content">Host</label>
-          <div className="flex w-full">
+          <label
+            className="block text-sm font-medium text-base-content"
+            htmlFor={`${type}-${index}-host`}
+          >
+            Host
+          </label>
+          <div className="join w-full">
             <Input
+              id={`${type}-${index}-host`}
               type="text"
+              className="join-item min-w-0 flex-1"
               placeholder={type === "radarr" ? "http://localhost:7878" : "http://localhost:8989"}
               value={instance.Host}
               onChange={(e) => onUpdate(index, "Host", e.target.value)}
@@ -531,7 +538,7 @@ function InstanceForm({ instance, index, type, onUpdate, onRemove }: InstanceFor
                   }
                   onClick={() => void testConnection(instance.Host, instance.ApiKey)}
                   disabled={connectionState === "testing"}
-                  className={"shrink-0"}
+                  className="join-item shrink-0"
                 >
                   {connectionState === "testing" ? (
                     <Spinner />

@@ -66,7 +66,7 @@ export function PreflightSettings({ config, setNewConfig }: PreflightSettingsPro
             <Label htmlFor="preflight-max-attempts">Max candidates to try</Label>
             <Input
               id="preflight-max-attempts"
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={1}
               max={50}
@@ -87,7 +87,7 @@ export function PreflightSettings({ config, setNewConfig }: PreflightSettingsPro
             <Label htmlFor="preflight-ttl">Keep preflight state for (seconds)</Label>
             <Input
               id="preflight-ttl"
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={10}
               max={1800}
@@ -107,7 +107,7 @@ export function PreflightSettings({ config, setNewConfig }: PreflightSettingsPro
             <Label htmlFor="preflight-max-wait">Skip if indexer wait exceeds (seconds)</Label>
             <Input
               id="preflight-max-wait"
-              className="w-full max-w-md"
+              className="w-full max-w-48"
               type="number"
               min={0}
               max={120}

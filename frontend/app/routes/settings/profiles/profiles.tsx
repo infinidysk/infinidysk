@@ -15,6 +15,8 @@ import {
   Label,
   ManagedSetting,
   Select,
+  SettingsCard,
+  SettingsIntro,
   SettingsPage,
   Toggle,
   Tooltip,
@@ -168,34 +170,43 @@ export function ProfilesSettings({ config, setNewConfig }: ProfilesSettingsProps
 
   return (
     <SettingsPage>
+      <SettingsIntro>
+        Each search profile exposes a token-scoped search API over its own indexer selection. Enable
+        one or more output adapters (JSON, Newznab, or Addon) so *Arr and other clients can query
+        it.
+      </SettingsIntro>
       <ManagedSetting configKey="profiles.instances">
-        <div className="flex flex-col gap-2">
-          <div className="mb-[18px] flex items-center justify-between">
-            <div>Search Profiles</div>
+        <SettingsCard
+          icon="person_search"
+          title="Search profiles"
+          description="Add a profile, pick indexers, then copy an adapter URL into Prowlarr, Sonarr, or Radarr."
+          action={
             <Button size="xsmall" onClick={add}>
               <Icon name="add" className="!text-[16px]" />
               Add
             </Button>
-          </div>
+          }
+        >
           {profileConfig.Profiles.length === 0 ? (
-            <p className="rounded-lg border border-base-content/10 bg-base-100 p-5 italic text-base-content/60">
-              No search profiles configured. Each profile exposes a token-scoped search API over its
-              own indexer selection. Enable one or more output adapters (JSON / Newznab / Addon) to
-              make it consumable by external clients.
+            <p className="rounded-lg border border-dashed border-base-content/20 bg-base-200/40 p-5 text-base-content/60">
+              No search profiles yet. Add one to expose a token-scoped search API over a subset of
+              your indexers.
             </p>
           ) : (
-            profileConfig.Profiles.map((profile, index) => (
-              <ProfileForm
-                key={profile.Token}
-                profile={profile}
-                index={index}
-                availableIndexers={availableIndexers}
-                onChange={change}
-                onRemove={remove}
-              />
-            ))
+            <div className="flex flex-col gap-2">
+              {profileConfig.Profiles.map((profile, index) => (
+                <ProfileForm
+                  key={profile.Token}
+                  profile={profile}
+                  index={index}
+                  availableIndexers={availableIndexers}
+                  onChange={change}
+                  onRemove={remove}
+                />
+              ))}
+            </div>
           )}
-        </div>
+        </SettingsCard>
       </ManagedSetting>
     </SettingsPage>
   );
@@ -522,15 +533,16 @@ function AdapterRow({ token, origin, adapter, enabled, onToggle }: AdapterRowPro
         </Tooltip>
       </div>
       {enabled && (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="join mt-2 w-full">
           <Input
-            className="flex-1 font-mono text-xs"
+            className="join-item min-w-0 flex-1 font-mono text-xs"
             type="text"
             readOnly
             value={url}
             onFocus={(e) => e.currentTarget.select()}
           />
           <Button
+            className="join-item"
             variant={copied ? "success" : "secondary"}
             size="xsmall"
             onClick={() => void onCopy()}

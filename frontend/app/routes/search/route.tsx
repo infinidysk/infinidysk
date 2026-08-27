@@ -1,7 +1,7 @@
 import type { Route } from "./+types/route";
 import { Form, useFetcher, useNavigation } from "react-router";
 import { backendClient, type SearchIndexersResponse } from "~/clients/backend-client.server";
-import { Badge, Button, Input, Spinner } from "~/components/ui";
+import { Badge, Button, Input, PageHeader, Spinner } from "~/components/ui";
 import { formatFileSize } from "~/utils/file-size";
 import { useIsReadOnly } from "~/auth/authorization";
 
@@ -50,7 +50,10 @@ export default function Search({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-8 md:px-6">
-      <h1 className="sr-only">Search</h1>
+      <PageHeader
+        title="Search"
+        subtitle="Query your configured indexers and add an NZB to the queue."
+      />
       <Form method="get" className="join w-full">
         <Input
           name="q"
@@ -60,7 +63,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
           className="join-item min-w-0 flex-1"
           autoFocus
         />
-        <Button type="submit" disabled={isSearching} className="join-item">
+        <Button type="submit" variant="primary" disabled={isSearching} className="join-item">
           {isSearching ? <Spinner size="sm" /> : "Search"}
         </Button>
       </Form>

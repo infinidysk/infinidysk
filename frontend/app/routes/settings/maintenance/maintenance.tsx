@@ -1,5 +1,5 @@
 import { ManagedSetting, SettingsIntro, SettingsPage, Tooltip } from "~/components/ui";
-import { Input, Select, Toggle } from "~/components/ui/form";
+import { InputGroup, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { PruneCompletedHistory } from "./prune-completed-history/prune-completed-history";
@@ -76,23 +76,21 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                   >
                     SAB history retention
                   </label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      className="w-full"
-                      id="history-retention-days"
-                      type="number"
-                      min={0}
-                      aria-describedby="history-retention-days-help"
-                      value={config["database.history-retention-days"] ?? "90"}
-                      onChange={(e) =>
-                        setNewConfig({
-                          ...config,
-                          "database.history-retention-days": e.target.value,
-                        })
-                      }
-                    />
-                    <span className="text-xs text-base-content/45">days</span>
-                  </div>
+                  <InputGroup
+                    className="w-full max-w-48"
+                    id="history-retention-days"
+                    type="number"
+                    min={0}
+                    suffix="days"
+                    aria-describedby="history-retention-days-help"
+                    value={config["database.history-retention-days"] ?? "90"}
+                    onChange={(e) =>
+                      setNewConfig({
+                        ...config,
+                        "database.history-retention-days": e.target.value,
+                      })
+                    }
+                  />
                   <p
                     className="text-[11px] leading-relaxed text-base-content/45"
                     id="history-retention-days-help"
@@ -110,23 +108,21 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                   >
                     Health-check retention
                   </label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      className="w-full"
-                      id="healthcheck-retention-days"
-                      type="number"
-                      min={0}
-                      aria-describedby="healthcheck-retention-days-help"
-                      value={config["database.healthcheck-retention-days"] ?? "30"}
-                      onChange={(e) =>
-                        setNewConfig({
-                          ...config,
-                          "database.healthcheck-retention-days": e.target.value,
-                        })
-                      }
-                    />
-                    <span className="text-xs text-base-content/45">days</span>
-                  </div>
+                  <InputGroup
+                    className="w-full max-w-48"
+                    id="healthcheck-retention-days"
+                    type="number"
+                    min={0}
+                    suffix="days"
+                    aria-describedby="healthcheck-retention-days-help"
+                    value={config["database.healthcheck-retention-days"] ?? "30"}
+                    onChange={(e) =>
+                      setNewConfig({
+                        ...config,
+                        "database.healthcheck-retention-days": e.target.value,
+                      })
+                    }
+                  />
                   <p
                     className="text-[11px] leading-relaxed text-base-content/45"
                     id="healthcheck-retention-days-help"
@@ -144,24 +140,22 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                   >
                     Raw fetch-event retention
                   </label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      className="w-full max-w-xs"
-                      id="metrics-fetch-retention-hours"
-                      type="number"
-                      min={0}
-                      max={8760}
-                      aria-describedby="metrics-fetch-retention-hours-help"
-                      value={config["metrics.fetch-retention-hours"] ?? "24"}
-                      onChange={(e) =>
-                        setNewConfig({
-                          ...config,
-                          "metrics.fetch-retention-hours": e.target.value,
-                        })
-                      }
-                    />
-                    <span className="text-xs text-base-content/45">hours</span>
-                  </div>
+                  <InputGroup
+                    className="w-full max-w-48"
+                    id="metrics-fetch-retention-hours"
+                    type="number"
+                    min={0}
+                    max={8760}
+                    suffix="hours"
+                    aria-describedby="metrics-fetch-retention-hours-help"
+                    value={config["metrics.fetch-retention-hours"] ?? "24"}
+                    onChange={(e) =>
+                      setNewConfig({
+                        ...config,
+                        "metrics.fetch-retention-hours": e.target.value,
+                      })
+                    }
+                  />
                   <p
                     className="text-[11px] leading-relaxed text-base-content/45"
                     id="metrics-fetch-retention-hours-help"

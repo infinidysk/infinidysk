@@ -1,3 +1,4 @@
+import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { useCallback, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Alert } from "~/components/ui/feedback";
@@ -8,12 +9,10 @@ export function ResetHealthCheckStats() {
   const [isRunning, setIsRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const onReset = useCallback(async () => {
-    if (!window.confirm("Reset all health-check statistics and history? This cannot be undone.")) {
-      return;
-    }
-
+    setShowConfirm(false);
     setIsRunning(true);
     setMessage(null);
     setError(null);
@@ -61,7 +60,7 @@ export function ResetHealthCheckStats() {
             variant={isRunning ? "secondary" : "danger"}
             disabled={isRunning}
             className="shrink-0"
-            onClick={() => void onReset()}
+            onClick={() => setShowConfirm(true)}
           >
             <Icon
               name={isRunning ? "progress_activity" : "delete_sweep"}
@@ -79,6 +78,17 @@ export function ResetHealthCheckStats() {
           </div>
         </div>
       </div>
+      <ConfirmModal
+        show={showConfirm}
+        title="Reset health-check statistics?"
+        message="All accumulated health-check results and counters will be permanently removed. This cannot be undone."
+        confirmText="Reset statistics"
+        cancelText="Cancel"
+        requireCheckbox
+        checkboxMessage="I understand this cannot be undone"
+        onCancel={() => setShowConfirm(false)}
+        onConfirm={() => void onReset()}
+      />
     </div>
   );
 }

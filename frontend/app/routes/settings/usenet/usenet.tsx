@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
 } from "react";
+import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import {
   Alert,
   Badge,
@@ -516,6 +517,7 @@ export function UsenetSettings({
   const [searchParams] = useSearchParams();
   const isDemoPreview = searchParams.get("demoProviders") === "1";
   const [showModal, setShowModal] = useState(false);
+  const [resetUsageIndex, setResetUsageIndex] = useState<number | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [connections, setConnections] = useState<Record<string, ConnectionCounts>>({});
   const [usage, setUsage] = useState<Record<string, ProviderUsage>>({});
@@ -610,13 +612,6 @@ export function UsenetSettings({
     (index: number) => {
       const current = providerConfig.Providers[index];
       if (!current) return;
-      const label = current.Nickname?.trim() || current.Host;
-      if (
-        !confirm(
-          `Reset bytes-used counter for "${label}" to zero?\n\nThis only rewinds the gauge for this provider's data cap. Historical metrics and graphs are untouched. Takes effect after you save settings.`,
-        )
-      )
-        return;
       const updated: ConnectionDetails = {
         ...current,
         BytesUsedOffset: 0,
@@ -627,6 +622,7 @@ export function UsenetSettings({
         i === index ? updated : p,
       );
       setNewConfig({ ...config, "usenet.providers": serializeProviderConfig(newProviderConfig) });
+      setResetUsageIndex(null);
     },
     [config, providerConfig, setNewConfig],
   );
@@ -931,7 +927,7 @@ export function UsenetSettings({
                 <UsageRow
                   provider={provider}
                   usage={providerUsage}
-                  onReset={() => handleResetUsage(index)}
+                  onReset={() => setResetUsageIndex(index)}
                   resetDisabled={isDemoPreview}
                 />
               </div>
@@ -1033,7 +1029,7 @@ export function UsenetSettings({
                 />
               </Tooltip>
               <Tooltip content="Requests kept in flight per connection during queue imports (1–64). 8 is a good default. Each provider can override this.">
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-col items-start gap-1">
                   <Label
                     htmlFor="pipelining-depth"
                     className="mb-0 shrink-0 text-[11px] text-base-content/50"
@@ -1061,7 +1057,7 @@ export function UsenetSettings({
 
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
               <Tooltip content="After a provider (or storage group) reports a definitive article miss (430/451), skip re-probing that provider for the same article until the TTL expires. Default 300s (30–86400).">
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-col items-start gap-1">
                   <Label
                     htmlFor="article-miss-cache-ttl"
                     className="mb-0 shrink-0 text-[11px] text-base-content/50"
@@ -1084,7 +1080,7 @@ export function UsenetSettings({
                 </div>
               </Tooltip>
               <Tooltip content="Max negative-cache entries before oldest are evicted. Default 10000 (100–1000000).">
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-col items-start gap-1">
                   <Label
                     htmlFor="article-miss-cache-max"
                     className="mb-0 shrink-0 text-[11px] text-base-content/50"
@@ -1207,6 +1203,21 @@ export function UsenetSettings({
         onSave={handleSaveProvider}
         onApplyPipelining={handleApplyPipelining}
         defaultPipeliningDepth={config["usenet.queue-pipelining.depth"] || "8"}
+      />
+      <ConfirmModal
+        show={resetUsageIndex !== null}
+        title="Reset data-cap counter?"
+        message={
+          resetUsageIndex !== null
+            ? `Reset the bytes-used counter for "${providerConfig.Providers[resetUsageIndex]?.Nickname?.trim() || providerConfig.Providers[resetUsageIndex]?.Host}" to zero? This only rewinds the gauge for this provider's data cap. Historical metrics and graphs are untouched. Takes effect after you save settings.`
+            : ""
+        }
+        confirmText="Reset counter"
+        cancelText="Cancel"
+        onCancel={() => setResetUsageIndex(null)}
+        onConfirm={() => {
+          if (resetUsageIndex !== null) handleResetUsage(resetUsageIndex);
+        }}
       />
     </SettingsPage>
   );
@@ -2079,7 +2090,7 @@ function ProviderModal({
                 type="text"
                 inputMode="numeric"
                 id="provider-max-connections"
-                className={`w-full ${!isPositiveInteger(maxConnections) && maxConnections !== "" ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(maxConnections) && maxConnections !== "" ? "input-error" : ""}`}
                 placeholder="20"
                 value={maxConnections}
                 onChange={(e) => setMaxConnections(e.target.value)}
@@ -2154,7 +2165,7 @@ function ProviderModal({
               <Input
                 type="text"
                 id="provider-pipelining-depth"
-                className={`w-full ${!isPipeliningDepthValid ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPipeliningDepthValid ? "input-error" : ""}`}
                 placeholder={defaultPipeliningDepth || "8"}
                 value={pipeliningDepth}
                 onChange={(e) => setPipeliningDepth(e.target.value)}
@@ -2185,7 +2196,7 @@ function ProviderModal({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">
-                <Label>Data Cap</Label>
+                <Label htmlFor="provider-data-cap">Data Cap</Label>
                 <Tooltip
                   placement="bottom"
                   content="For block accounts: total bytes purchased. The provider auto-pauses near 95% of this value to absorb in-flight requests."
@@ -2193,17 +2204,19 @@ function ProviderModal({
                   <Icon name="info" className="!text-[15px] text-base-content/45" />
                 </Tooltip>
               </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-2">
+              <div className="join w-full max-w-72">
                 <Input
+                  id="provider-data-cap"
                   type="text"
                   inputMode="decimal"
-                  className="w-full"
+                  className="join-item min-w-0 flex-1"
                   placeholder="No cap"
                   value={limitValue}
                   onChange={(e) => setLimitValue(e.target.value)}
                 />
                 <Select
-                  className="w-full"
+                  className="join-item w-20"
+                  aria-label="Data cap unit"
                   value={limitUnit}
                   onChange={(e) => setLimitUnit(e.target.value as ByteUnitLabel)}
                 >
@@ -2217,7 +2230,7 @@ function ProviderModal({
             </div>
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">
-                <Label>Already Used</Label>
+                <Label htmlFor="provider-data-used">Already Used</Label>
                 <Tooltip
                   placement="bottom"
                   content="Seed the counter when migrating a partially-used block from another client. Leave empty for a fresh block."
@@ -2225,17 +2238,19 @@ function ProviderModal({
                   <Icon name="info" className="!text-[15px] text-base-content/45" />
                 </Tooltip>
               </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-2">
+              <div className="join w-full max-w-72">
                 <Input
+                  id="provider-data-used"
                   type="text"
                   inputMode="decimal"
-                  className="w-full"
+                  className="join-item min-w-0 flex-1"
                   placeholder="0"
                   value={initialUsedValue}
                   onChange={(e) => setInitialUsedValue(e.target.value)}
                 />
                 <Select
-                  className="w-full"
+                  className="join-item w-20"
+                  aria-label="Already used unit"
                   value={initialUsedUnit}
                   onChange={(e) => setInitialUsedUnit(e.target.value as ByteUnitLabel)}
                 >
@@ -2358,22 +2373,26 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
 
   return (
     <div className="rounded-lg border border-base-content/10 bg-base-200/40 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-[180px] flex-1">
-          <div className="text-sm font-semibold text-base-content">
-            Auto-tune transfer connections
-          </div>
-          <HelpText className="mt-0">
-            {pipeliningOnly
-              ? "Keeps your Transfer Connections and just measures the best NNTP pipelining depth at that count."
-              : "Runs a real speed & latency test, then recommends Transfer Connections and pipelining settings without changing your Provider Connection Limit. Speeds are megabytes/sec (MB/s), same as SABnzbd — not megabits (Mb/s). 1 Gb/s ≈ 125 MB/s max."}
-          </HelpText>
+      <div className="space-y-1">
+        <div className="text-sm font-semibold text-base-content">
+          Auto-tune transfer connections
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <HelpText>
+          {pipeliningOnly
+            ? "Keeps your Transfer Connections and measures the best NNTP pipelining depth at that count."
+            : "Runs a real speed and latency test, then recommends Transfer Connections and pipelining settings without changing your Provider Connection Limit. Speeds use megabytes per second (MB/s), matching SABnzbd. 1 Gb/s is about 125 MB/s."}
+        </HelpText>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-[auto_minmax(14rem,1fr)_auto] sm:items-end">
+        <fieldset className="fieldset gap-1 p-0">
+          <legend className="fieldset-legend mb-1 py-0 text-[11px] text-base-content/60">
+            Test depth
+          </legend>
           <div className="join" role="group" aria-label="Test intensity">
             <button
               type="button"
-              className={`btn btn-sm join-item ${intensity === "quick" ? "btn-primary" : "btn-ghost"}`}
+              className={`btn btn-sm join-item ${intensity === "quick" ? "btn-active" : "btn-ghost"}`}
               onClick={() => setIntensity("quick")}
               disabled={isBenchmarking}
               aria-pressed={intensity === "quick"}
@@ -2382,7 +2401,7 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
             </button>
             <button
               type="button"
-              className={`btn btn-sm join-item ${intensity === "thorough" ? "btn-primary" : "btn-ghost"}`}
+              className={`btn btn-sm join-item ${intensity === "thorough" ? "btn-active" : "btn-ghost"}`}
               onClick={() => setIntensity("thorough")}
               disabled={isBenchmarking}
               aria-pressed={intensity === "thorough"}
@@ -2390,11 +2409,15 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
               Thorough
             </button>
           </div>
+        </fieldset>
+        <div className="flex min-w-0 flex-col gap-1">
+          <Label htmlFor="benchmark-data-budget">Data budget</Label>
           <Select
+            id="benchmark-data-budget"
+            className="w-full"
             value={dataBudget}
             onChange={(e) => setDataBudget(e.target.value)}
             disabled={isBenchmarking}
-            aria-label="Data budget"
           >
             <option value="">Auto ({intensity === "quick" ? "up to 500 MB" : "up to 2 GB"})</option>
             <option value="100">100 MB</option>
@@ -2408,7 +2431,9 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
             <option value="35000">35 GB</option>
             <option value="50000">50 GB</option>
           </Select>
-          <Button variant="primary" onClick={onRun} disabled={!canBenchmark || isBenchmarking}>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={onRun} disabled={!canBenchmark || isBenchmarking}>
             {isBenchmarking && <span className="loading loading-spinner loading-xs" />}
             {isBenchmarking ? "Testing…" : pipeliningOnly ? "Test pipelining" : "Run speed test"}
           </Button>
@@ -2420,33 +2445,35 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
         </div>
       </div>
 
-      <Tooltip
-        className="mt-3 block"
-        content={
-          pipeliningOnly
-            ? "Won't change Transfer Connections — tests pipelining depth at that count, or at the Provider Connection Limit in legacy mode. Run idle for the cleanest read."
-            : "When off, also sweeps transfer connection counts. Prefer idle for the cleanest read."
-        }
-      >
-        <Toggle
-          id="bench-pipe-only"
-          className="cursor-pointer gap-2 p-0"
-          checked={pipeliningOnly}
-          disabled={isBenchmarking}
-          onChange={(e) => setPipeliningOnly(e.target.checked)}
-          label={
-            <span className="text-sm text-base-content">
-              Only tune pipelining (keep my Transfer Connections)
-            </span>
+      <div className="mt-4 border-t border-base-content/10 pt-3">
+        <Tooltip
+          className="block"
+          content={
+            pipeliningOnly
+              ? "Won't change Transfer Connections — tests pipelining depth at that count, or at the Provider Connection Limit in legacy mode. Run idle for the cleanest read."
+              : "When off, also sweeps transfer connection counts. Prefer idle for the cleanest read."
           }
-        />
-      </Tooltip>
+        >
+          <Toggle
+            id="bench-pipe-only"
+            className="cursor-pointer gap-2 p-0"
+            checked={pipeliningOnly}
+            disabled={isBenchmarking}
+            onChange={(e) => setPipeliningOnly(e.target.checked)}
+            label={
+              <span className="text-sm text-base-content">
+                Only tune pipelining (keep my Transfer Connections)
+              </span>
+            }
+          />
+        </Tooltip>
 
-      <HelpText>
-        {intensity === "quick"
-          ? "Quick sizes each step to your line speed, up to the data budget (default 500 MB) — light on metered / block accounts."
-          : "Thorough runs longer measurement windows for steadier numbers, up to the data budget (default 2 GB). Gigabit-class lines often need 10–20 GB for a full sweep."}
-      </HelpText>
+        <HelpText className="mt-1">
+          {intensity === "quick"
+            ? "Quick sizes each step to your line speed, up to the data budget (default 500 MB). It is lighter on metered or block accounts."
+            : "Thorough runs longer measurement windows for steadier numbers, up to the data budget (default 2 GB). Gigabit-class lines often need 10-20 GB for a full sweep."}
+        </HelpText>
+      </div>
 
       {error && (
         <Alert variant="danger" className="alert-soft mt-3 text-xs">

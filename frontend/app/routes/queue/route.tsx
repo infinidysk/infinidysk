@@ -8,7 +8,7 @@ import { useHistoryEvents, useQueueEvents } from "./controllers/events-controlle
 import { useQueueHistoryWebsocket } from "./controllers/websocket-controller";
 import { useUploadController } from "./controllers/nzb-upload-controller";
 import { useQueueDropzone } from "./controllers/dropzone-controller";
-import { Alert, Button } from "~/components/ui";
+import { Alert, Button, PageHeader } from "~/components/ui";
 import { SimpleDropdown } from "~/components/simple-dropdown/simple-dropdown";
 import { useIsReadOnly } from "~/auth/authorization";
 import { isDefaultList, parseHistoryListParams, parseQueueListParams } from "./list-params";
@@ -263,6 +263,10 @@ export default function Queue(props: Route.ComponentProps) {
   // view
   return (
     <div className="flex min-h-full min-w-full flex-col gap-8 px-4 py-4 text-sm text-base-content/70 md:px-8">
+      <PageHeader
+        title="Queue"
+        subtitle="Jobs from Sonarr, Radarr, or a manual NZB upload. Completed items move to History."
+      />
       {dropzone.rejectMessage && <Alert variant="warning">{dropzone.rejectMessage}</Alert>}
 
       {/* queue */}

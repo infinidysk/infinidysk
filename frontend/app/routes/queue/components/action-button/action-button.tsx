@@ -48,7 +48,7 @@ export function ActionButton({
   return (
     <Button
       variant={variant}
-      size="xsmall"
+      size="small"
       disabled={disabled}
       aria-pressed={type === "menu" ? selected : undefined}
       aria-label={

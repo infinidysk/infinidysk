@@ -4,6 +4,8 @@ export * from "./form";
 export * from "./icon";
 export * from "./managed-setting";
 export * from "./modal";
+export * from "./page-header";
+export * from "./radio-join-filter";
 export * from "./settings-card";
 export * from "./settings-nav";
 export * from "./tabs";

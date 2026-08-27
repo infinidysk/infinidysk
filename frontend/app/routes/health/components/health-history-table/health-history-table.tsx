@@ -1,5 +1,5 @@
 import type { HealthCheckResult } from "~/clients/backend-client.server";
-import { Badge, Icon } from "~/components/ui";
+import { Badge, Icon, RadioJoinFilter } from "~/components/ui";
 import { Pagination } from "~/components/pagination/pagination";
 import { Truncate } from "~/components/truncate/truncate";
 
@@ -44,7 +44,10 @@ export function HealthHistoryTable({
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   return (
-    <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
+    <section
+      id="repair-history"
+      className="card w-full scroll-mt-4 border border-base-content/10 bg-base-100 shadow-sm"
+    >
       <div className="card-body gap-0 p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-content/10 px-4 py-4 md:px-6">
           <div>
@@ -56,7 +59,7 @@ export function HealthHistoryTable({
           </div>
           <button
             type="button"
-            className="btn btn-primary btn-sm gap-2"
+            className="btn btn-sm gap-2"
             onClick={onRefresh}
             disabled={refreshing}
           >
@@ -66,26 +69,18 @@ export function HealthHistoryTable({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-content/10 px-4 py-3 md:px-6">
-          <div className="join flex-wrap">
-            <FilterButton active={filter === "all"} onClick={() => onFilterSelected("all")}>
-              Deleted &amp; repaired
-            </FilterButton>
-            <FilterButton active={filter === "deleted"} onClick={() => onFilterSelected("deleted")}>
-              Deleted
-            </FilterButton>
-            <FilterButton
-              active={filter === "repaired"}
-              onClick={() => onFilterSelected("repaired")}
-            >
-              Repaired
-            </FilterButton>
-            <FilterButton
-              active={filter === "degraded"}
-              onClick={() => onFilterSelected("degraded")}
-            >
-              Degraded
-            </FilterButton>
-          </div>
+          <RadioJoinFilter
+            name="health-history-filter"
+            aria-label="Repair history status filter"
+            value={filter}
+            onChange={onFilterSelected}
+            options={[
+              { id: "all", label: "Deleted & repaired" },
+              { id: "deleted", label: "Deleted" },
+              { id: "repaired", label: "Repaired" },
+              { id: "degraded", label: "Degraded" },
+            ]}
+          />
           {totalCount > 0 && (
             <Badge className="badge-ghost badge-sm font-mono tabular-nums">{totalCount}</Badge>
           )}
@@ -129,26 +124,6 @@ export function HealthHistoryTable({
         )}
       </div>
     </section>
-  );
-}
-
-function FilterButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      className={`btn btn-sm join-item ${active ? "btn-primary" : "btn-ghost"}`}
-      onClick={onClick}
-    >
-      {children}
-    </button>
   );
 }
 
