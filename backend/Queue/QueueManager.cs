@@ -265,7 +265,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         grace.CancelAfter(StuckCancelGracePeriod);
         foreach (var item in toCancel)
         {
-            if (await TryAwaitWorkerAsync(item, grace.Token).ConfigureAwait(false))
+            if (await TryAwaitWorkerAsync(item, grace.Token, ct).ConfigureAwait(false))
             {
                 await ObserveStoppedWorkerAsync(item).ConfigureAwait(false);
             }
@@ -305,15 +305,19 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
     /// <summary>
     /// Waits for a cancelled worker to stop until <paramref name="graceExpired"/>
     /// fires. Returns false when the worker is still running at that point.
+    /// Caller cancellation (<paramref name="callerCt"/>) aborts the wait instead of
+    /// reading as a stuck worker.
     /// </summary>
     private static async Task<bool> TryAwaitWorkerAsync(
         InProgressQueueItem item,
-        CancellationToken graceExpired)
+        CancellationToken graceExpired,
+        CancellationToken callerCt)
     {
         // WhenAny does not observe ProcessingTask exceptions — the reaper does.
         var finished = await Task.WhenAny(
                 item.ProcessingTask, Task.Delay(Timeout.InfiniteTimeSpan, graceExpired))
             .ConfigureAwait(false);
+        callerCt.ThrowIfCancellationRequested();
         return finished == item.ProcessingTask || item.ProcessingTask.IsCompleted;
     }
 
@@ -506,7 +510,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         grace.CancelAfter(StuckCancelGracePeriod);
         foreach (var item in toCancel)
         {
-            if (await TryAwaitWorkerAsync(item, grace.Token).ConfigureAwait(false))
+            if (await TryAwaitWorkerAsync(item, grace.Token, ct).ConfigureAwait(false))
             {
                 await ObserveStoppedWorkerAsync(item).ConfigureAwait(false);
             }

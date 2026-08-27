@@ -1012,6 +1012,71 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task RemoveQueueItemsAsync_CallerCancelDuringGrace_PropagatesCancellation()
+    {
+        // A caller abort during the grace wait must surface as cancellation, not
+        // as a "worker ignored the cancel" quarantine result.
+        _queueManager.StuckItemThreshold = TimeSpan.FromHours(1);
+        _queueManager.StuckCancelGracePeriod = TimeSpan.FromSeconds(30);
+        var hung = new HungStream();
+        var item = CreateQueueItem("hung-abort.nzb", "movies", "HungAbortJob");
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            ctx.QueueItems.Add(item);
+            await ctx.SaveChangesAsync();
+        }
+
+        _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
+        {
+            await using var ctx = new DavDatabaseContext(_options);
+            var client = new DavDatabaseClient(ctx);
+            var (claimed, _) = await client.GetTopQueueItem(exclude, ct);
+            if (claimed is null) return (null, null);
+            ctx.ChangeTracker.Clear();
+            return (claimed, hung);
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var loop = _queueManager.ProcessQueueAsync(cts.Token);
+        try
+        {
+            Assert.NotNull(await WaitForInProgress(item.Id, TimeSpan.FromSeconds(5)));
+
+            using var requestCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                    _queueManager.RemoveQueueItemsAsync(
+                        [item.Id], new DavDatabaseClient(ctx), requestCts.Token));
+            }
+
+            // The row and the quarantined slot survive the aborted request.
+            Assert.NotNull(FindInProgressItem(item.Id));
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                Assert.Equal(1, await ctx.QueueItems.CountAsync());
+                Assert.Equal(0, await ctx.HistoryItems.CountAsync());
+            }
+        }
+        finally
+        {
+            _queueManager.GetTopQueueItemOverride = (_, _) =>
+                Task.FromResult<(QueueItem? queueItem, Stream? queueNzbStream)>((null, null));
+            hung.Release();
+            await cts.CancelAsync();
+            try
+            {
+                await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                // Expected when shutdown cancels an in-flight claim.
+            }
+        }
+    }
+
     private async Task<object?> WaitForInProgress(Guid queueItemId, TimeSpan timeout, QueueManager? manager = null)
     {
         var deadline = DateTime.UtcNow + timeout;
