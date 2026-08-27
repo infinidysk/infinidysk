@@ -1,7 +1,7 @@
-import {
+import type {
+  HealthCheckQueueItem,
   HealthResult,
   RepairAction,
-  type HealthCheckQueueItem,
 } from "~/clients/backend-client.server";
 
 export type HealthQueueState = {
@@ -9,8 +9,13 @@ export type HealthQueueState = {
   uncheckedCount: number;
 };
 
-function isNumericEnumValue(enumType: Record<string, string | number>, value: number): boolean {
-  return Object.values(enumType).includes(value);
+// Numeric values mirror the backend enums in backend-client.server, which cannot be
+// value-imported into this client module.
+const healthResultValues: readonly HealthResult[] = [0, 1, 2];
+const repairActionValues: readonly RepairAction[] = [0, 1, 2, 3, 4];
+
+function includesNumericValue(values: readonly number[], value: number): boolean {
+  return values.includes(value);
 }
 
 export function completeHealthCheck(state: HealthQueueState, davItemId: string): HealthQueueState {
@@ -60,22 +65,17 @@ export function parseHealthItemStatusMessage(message: string): {
   const parts = message.split("|");
   if (parts.length !== 3) return null;
   const [davItemId, healthResultValue, repairActionValue] = parts;
-  if (!davItemId || healthResultValue.trim() === "" || repairActionValue.trim() === "")
-    return null;
+  if (!davItemId || healthResultValue.trim() === "" || repairActionValue.trim() === "") return null;
   const healthResult = Number(healthResultValue);
   const repairAction = Number(repairActionValue);
   if (
     !Number.isInteger(healthResult) ||
-    !isNumericEnumValue(HealthResult, healthResult) ||
+    !includesNumericValue(healthResultValues, healthResult) ||
     !Number.isInteger(repairAction) ||
-    !isNumericEnumValue(RepairAction, repairAction)
+    !includesNumericValue(repairActionValues, repairAction)
   )
     return null;
-  return {
-    davItemId,
-    healthResult: healthResult as HealthResult,
-    repairAction: repairAction as RepairAction,
-  };
+  return { davItemId, healthResult, repairAction };
 }
 
 export function getVisibleHealthCheckItems(
