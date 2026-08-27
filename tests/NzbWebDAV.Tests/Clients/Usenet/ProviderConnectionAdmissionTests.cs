@@ -274,6 +274,38 @@ public class ProviderConnectionAdmissionTests
         Assert.Equal(7, reduced.MaxMetadataCapacity);
     }
 
+    [Fact]
+    public async Task RoutingStateUsesCachedBudgetAndVolatileActivityCounts()
+    {
+        var providerLimit = 5;
+        using var admission = new ProviderConnectionAdmission(
+            () => Volatile.Read(ref providerLimit),
+            configuredTransferLimit: 2);
+        using var transfer = await AcquireTransfer(admission);
+        using var metadata = await AcquireMetadata(admission);
+
+        var initial = admission.GetRoutingState();
+        Volatile.Write(ref providerLimit, 3);
+        var reduced = admission.GetRoutingState();
+
+        Assert.Equal(
+            new ProviderConnectionRoutingState(
+                EffectiveProviderLimit: 5,
+                EffectiveTransferLimit: 2,
+                MaxMetadataCapacity: 4,
+                ActiveTransferOperations: 1,
+                ActiveMetadataOperations: 1),
+            initial);
+        Assert.Equal(
+            new ProviderConnectionRoutingState(
+                EffectiveProviderLimit: 3,
+                EffectiveTransferLimit: 2,
+                MaxMetadataCapacity: 2,
+                ActiveTransferOperations: 1,
+                ActiveMetadataOperations: 1),
+            reduced);
+    }
+
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(5);
 
     private static ProviderConnectionAdmission CreateAdmission(

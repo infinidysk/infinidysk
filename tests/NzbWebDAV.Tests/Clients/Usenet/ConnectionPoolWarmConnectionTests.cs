@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 
@@ -31,15 +32,17 @@ public class ConnectionPoolWarmConnectionTests
     [Fact]
     public async Task Sweeper_KeepsExpiredFloorAndPingsIt()
     {
-        var keepAliveCalls = 0;
+        var created = 0;
+        var pingedIds = new ConcurrentBag<int>();
         await using var pool = new ConnectionPool<TestConnection>(
             maxConnections: 3,
-            connectionFactory: _ => ValueTask.FromResult(new TestConnection(0)),
+            connectionFactory: _ => ValueTask.FromResult(
+                new TestConnection(Interlocked.Increment(ref created))),
             idleTimeout: TimeSpan.FromMinutes(1),
             warmConnectionFloor: 2,
-            keepAlive: (_, _) =>
+            keepAlive: (connection, _) =>
             {
-                Interlocked.Increment(ref keepAliveCalls);
+                pingedIds.Add(connection.Id);
                 return Task.CompletedTask;
             });
 
@@ -49,7 +52,8 @@ public class ConnectionPoolWarmConnectionTests
 
         Assert.Equal(2, pool.LiveConnections);
         Assert.Equal(2, pool.IdleConnections);
-        Assert.Equal(2, keepAliveCalls);
+        Assert.Equal(2, pingedIds.Count);
+        Assert.Equal(2, pingedIds.Distinct().Count());
     }
 
     [Fact]
@@ -111,7 +115,7 @@ public class ConnectionPoolWarmConnectionTests
     }
 
     [Fact]
-    public async Task KeepAliveUsesMetadataAdmission()
+    public async Task KeepAliveAdmissionTimeoutDoesNotPinSweeper()
     {
         using var admission = new ProviderConnectionAdmission(
             getEffectiveProviderLimit: () => 1,
@@ -130,7 +134,8 @@ public class ConnectionPoolWarmConnectionTests
             keepAliveAdmission: async ct => await admission.AcquireAsync(
                 ProviderConnectionKind.Metadata,
                 SemaphorePriority.Low,
-                ct));
+                ct),
+            keepAliveBorrowTimeout: TimeSpan.FromMilliseconds(200));
 
         await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1);
         using var transfer = await admission.AcquireAsync(
@@ -141,11 +146,61 @@ public class ConnectionPoolWarmConnectionTests
         var sweep = pool.SweepOnceForTestsAsync();
         await WaitUntilAsync(
             () => admission.GetSnapshot().WaitingMetadataOperations == 1);
-        Assert.False(sweep.IsCompleted);
-        Assert.Equal(0, Volatile.Read(ref keepAliveCalls));
-
-        transfer.Dispose();
         await sweep.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(0, Volatile.Read(ref keepAliveCalls));
+        Assert.Equal(0, admission.GetSnapshot().WaitingMetadataOperations);
+    }
+
+    [Fact]
+    public async Task KeepAliveSkipsWhenHighPriorityBorrowerConsumesRestoredIdleConnection()
+    {
+        var created = 0;
+        var keepAliveCalls = 0;
+        var admissionEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseAdmission = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 1,
+            connectionFactory: _ => ValueTask.FromResult(
+                new TestConnection(Interlocked.Increment(ref created))),
+            idleTimeout: TimeSpan.FromMinutes(1),
+            priorityOdds: new SemaphorePriorityOdds { HighPriorityOdds = 100 },
+            warmConnectionFloor: 1,
+            keepAlive: (_, _) =>
+            {
+                Interlocked.Increment(ref keepAliveCalls);
+                return Task.CompletedTask;
+            },
+            keepAliveAdmission: async ct =>
+            {
+                admissionEntered.TrySetResult();
+                await releaseAdmission.Task.WaitAsync(ct);
+                return null;
+            },
+            keepAliveBorrowTimeout: TimeSpan.FromMilliseconds(200));
+
+        await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1);
+        var sweep = pool.SweepOnceForTestsAsync();
+        await admissionEntered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var borrower = await pool.GetConnectionLockAsync(
+            SemaphorePriority.High).WaitAsync(TimeSpan.FromSeconds(1));
+        var queuedHighPriorityBorrower = pool.GetConnectionLockAsync(SemaphorePriority.High);
+        Assert.False(queuedHighPriorityBorrower.IsCompleted);
+        releaseAdmission.TrySetResult();
+
+        await sweep.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(0, Volatile.Read(ref keepAliveCalls));
+        Assert.Equal(1, created);
+        Assert.Equal(1, pool.ActiveConnections);
+
+        borrower.Dispose();
+        using var nextBorrower = await queuedHighPriorityBorrower.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(1, created);
+        nextBorrower.Dispose();
+
+        await pool.SweepOnceForTestsAsync().WaitAsync(TimeSpan.FromSeconds(1));
         Assert.Equal(1, Volatile.Read(ref keepAliveCalls));
     }
 

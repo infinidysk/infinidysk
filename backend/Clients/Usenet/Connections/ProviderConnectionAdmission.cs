@@ -8,6 +8,13 @@ internal enum ProviderConnectionKind
     Metadata,
 }
 
+internal readonly record struct ProviderConnectionRoutingState(
+    int EffectiveProviderLimit,
+    int EffectiveTransferLimit,
+    int MaxMetadataCapacity,
+    int ActiveTransferOperations,
+    int ActiveMetadataOperations);
+
 /// <summary>
 /// Operation-aware admission in front of a single physical provider pool.
 /// Transfers have a hard cap; metadata can use its base allocation plus a bounded
@@ -22,11 +29,13 @@ internal sealed class ProviderConnectionAdmission : IDisposable
     private readonly Func<int> _getEffectiveProviderLimit;
     private readonly int _configuredTransferLimit;
     private readonly Lock _lock = new();
+    private readonly Lock _budgetCacheLock = new();
     private readonly LinkedList<Waiter> _transferHighWaiters = [];
     private readonly LinkedList<Waiter> _transferLowWaiters = [];
     private readonly LinkedList<Waiter> _metadataHighWaiters = [];
     private readonly LinkedList<Waiter> _metadataLowWaiters = [];
 
+    private CachedBudget _cachedBudget;
     private SemaphorePriorityOdds _priorityOdds;
     private int _activeTransfers;
     private int _activeMetadata;
@@ -54,6 +63,7 @@ internal sealed class ProviderConnectionAdmission : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(configuredTransferLimit);
         _configuredTransferLimit = configuredTransferLimit;
         _priorityOdds = priorityOdds ?? new SemaphorePriorityOdds { HighPriorityOdds = 100 };
+        _cachedBudget = CreateCachedBudget();
     }
 
     public Task<Lease> AcquireAsync(
@@ -106,9 +116,7 @@ internal sealed class ProviderConnectionAdmission : IDisposable
     {
         lock (_lock)
         {
-            var budget = ProviderConnectionBudget.Calculate(
-                _getEffectiveProviderLimit(),
-                _configuredTransferLimit);
+            var budget = GetBudget();
             return new ProviderConnectionAdmissionSnapshot(
                 _configuredTransferLimit,
                 budget.EffectiveTransferLimit,
@@ -120,6 +128,17 @@ internal sealed class ProviderConnectionAdmission : IDisposable
                 _transferHighWaiters.Count + _transferLowWaiters.Count,
                 _metadataHighWaiters.Count + _metadataLowWaiters.Count);
         }
+    }
+
+    internal ProviderConnectionRoutingState GetRoutingState()
+    {
+        var budget = GetBudget();
+        return new ProviderConnectionRoutingState(
+            budget.EffectiveProviderLimit,
+            budget.EffectiveTransferLimit,
+            budget.MaxMetadataCapacity,
+            Volatile.Read(ref _activeTransfers),
+            Volatile.Read(ref _activeMetadata));
     }
 
     private bool CanEnterImmediately(ProviderConnectionKind kind)
@@ -137,9 +156,7 @@ internal sealed class ProviderConnectionAdmission : IDisposable
 
     private bool CanEnter(ProviderConnectionKind kind)
     {
-        var budget = ProviderConnectionBudget.Calculate(
-            _getEffectiveProviderLimit(),
-            _configuredTransferLimit);
+        var budget = GetBudget();
         if (_activeTransfers + _activeMetadata >= budget.EffectiveProviderLimit)
             return false;
 
@@ -156,9 +173,9 @@ internal sealed class ProviderConnectionAdmission : IDisposable
     private void Enter(ProviderConnectionKind kind)
     {
         if (kind == ProviderConnectionKind.Transfer)
-            _activeTransfers++;
+            Interlocked.Increment(ref _activeTransfers);
         else
-            _activeMetadata++;
+            Interlocked.Increment(ref _activeMetadata);
     }
 
     private void Release(ProviderConnectionKind kind)
@@ -167,15 +184,50 @@ internal sealed class ProviderConnectionAdmission : IDisposable
         lock (_lock)
         {
             if (kind == ProviderConnectionKind.Transfer)
-                _activeTransfers--;
+                Interlocked.Decrement(ref _activeTransfers);
             else
-                _activeMetadata--;
+                Interlocked.Decrement(ref _activeMetadata);
 
             if (_disposed) return;
             ready = DispatchWaiters();
         }
 
         CompleteReadyWaiters(ready);
+    }
+
+    private ProviderConnectionBudget GetBudget()
+    {
+        var effectiveProviderLimit = Math.Max(1, _getEffectiveProviderLimit());
+        var cached = Volatile.Read(ref _cachedBudget);
+        if (cached.EffectiveProviderLimit == effectiveProviderLimit)
+            return cached.Budget;
+
+        lock (_budgetCacheLock)
+        {
+            effectiveProviderLimit = Math.Max(1, _getEffectiveProviderLimit());
+            cached = _cachedBudget;
+            if (cached.EffectiveProviderLimit != effectiveProviderLimit)
+            {
+                cached = new CachedBudget(
+                    effectiveProviderLimit,
+                    ProviderConnectionBudget.Calculate(
+                        effectiveProviderLimit,
+                        _configuredTransferLimit));
+                Volatile.Write(ref _cachedBudget, cached);
+            }
+
+            return cached.Budget;
+        }
+    }
+
+    private CachedBudget CreateCachedBudget()
+    {
+        var effectiveProviderLimit = Math.Max(1, _getEffectiveProviderLimit());
+        return new CachedBudget(
+            effectiveProviderLimit,
+            ProviderConnectionBudget.Calculate(
+                effectiveProviderLimit,
+                _configuredTransferLimit));
     }
 
     private void CancelWaiter(Waiter waiter, CancellationToken cancellationToken)
@@ -330,6 +382,10 @@ internal sealed class ProviderConnectionAdmission : IDisposable
         public TaskCompletionSource<Lease> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
+
+    private sealed record CachedBudget(
+        int EffectiveProviderLimit,
+        ProviderConnectionBudget Budget);
 
     internal sealed class Lease : IDisposable
     {

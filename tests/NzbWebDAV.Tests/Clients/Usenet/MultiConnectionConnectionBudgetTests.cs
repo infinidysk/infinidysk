@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
@@ -35,6 +36,109 @@ public class MultiConnectionConnectionBudgetTests
         state.ReleaseAll();
         await Task.WhenAll(requests).WaitAsync(TestTimeout);
         Assert.Equal(4, Volatile.Read(ref state.Entered));
+    }
+
+    [Fact]
+    public async Task SuccessfulOperationReleasesAdmissionAndPhysicalPermit()
+    {
+        var state = new BlockingStatState();
+        using var client = CreateClient(state, maxTransferConnections: 4);
+        state.ReleaseAll();
+
+        await client.StatAsync(new SegmentId("success"), CancellationToken.None);
+
+        var admission = Assert.IsType<ProviderConnectionAdmissionSnapshot>(
+            client.GetConnectionAdmissionSnapshot());
+        Assert.Equal(0, admission.ActiveMetadataOperations);
+        Assert.Equal(0, admission.WaitingMetadataOperations);
+        Assert.Equal(0, client.ActiveConnections);
+        Assert.Equal(1, client.IdleConnections);
+    }
+
+    [Fact]
+    public async Task CancelledOperationReleasesAdmissionAndPhysicalPermit()
+    {
+        var state = new BlockingStatState();
+        using var client = CreateClient(state, maxTransferConnections: 4);
+        using var cancellation = new CancellationTokenSource();
+        var request = client.StatAsync(
+            new SegmentId("cancelled"),
+            cancellation.Token);
+        await WaitForEnteredCount(state, expected: 1);
+
+        await cancellation.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+
+        var admission = Assert.IsType<ProviderConnectionAdmissionSnapshot>(
+            client.GetConnectionAdmissionSnapshot());
+        Assert.Equal(0, admission.ActiveMetadataOperations);
+        Assert.Equal(0, admission.WaitingMetadataOperations);
+        Assert.Equal(0, client.ActiveConnections);
+
+        state.ReleaseAll();
+        await client.StatAsync(new SegmentId("after-cancellation"), CancellationToken.None)
+            .WaitAsync(TestTimeout);
+    }
+
+    [Fact]
+    public async Task CancellationWhilePhysicalPoolIsBusyReleasesUnattachedAdmissionLease()
+    {
+        var state = new BlockingStatState();
+        var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(new BlockingStatClient(state)));
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("budget-pool-wait-test"),
+            "budget-pool-wait-test",
+            maxTransferConnections: 1);
+        using var heldConnection = await pool.GetConnectionLockAsync(
+            SemaphorePriority.Low);
+        using var cancellation = new CancellationTokenSource();
+
+        var request = client.StatAsync(
+            new SegmentId("pool-wait-cancelled"),
+            cancellation.Token);
+        await WaitUntilAsync(() =>
+            client.GetConnectionAdmissionSnapshot()?.ActiveMetadataOperations == 1);
+        Assert.Equal(0, Volatile.Read(ref state.Entered));
+
+        await cancellation.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+
+        var admission = Assert.IsType<ProviderConnectionAdmissionSnapshot>(
+            client.GetConnectionAdmissionSnapshot());
+        Assert.Equal(0, admission.ActiveMetadataOperations);
+        Assert.Equal(0, admission.WaitingMetadataOperations);
+        Assert.Equal(1, client.ActiveConnections);
+    }
+
+    [Fact]
+    public async Task PoolAcquisitionFailureReleasesAdmissionLease()
+    {
+        var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromException<INntpClient>(
+                new IOException("connection factory failed")));
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("budget-failure-test"),
+            "budget-failure-test",
+            maxTransferConnections: 1);
+
+        await Assert.ThrowsAsync<IOException>(
+            () => client.StatAsync(
+                new SegmentId("pool-failure"),
+                CancellationToken.None));
+
+        var admission = Assert.IsType<ProviderConnectionAdmissionSnapshot>(
+            client.GetConnectionAdmissionSnapshot());
+        Assert.Equal(0, admission.ActiveMetadataOperations);
+        Assert.Equal(0, admission.WaitingMetadataOperations);
+        Assert.Equal(0, client.ActiveConnections);
+        Assert.Equal(1, client.AvailableConnections);
     }
 
     [Fact]
@@ -99,6 +203,17 @@ public class MultiConnectionConnectionBudgetTests
         {
             if (DateTime.UtcNow >= deadline)
                 throw new TimeoutException($"Only {state.Entered} STAT operations entered; expected {expected}.");
+            await Task.Delay(10);
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TestTimeout;
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException("Timed out waiting for connection-budget state.");
             await Task.Delay(10);
         }
     }

@@ -1502,14 +1502,28 @@ public class MultiProviderNntpClient(
             // Reading state here must not claim the half-open probe slot. IsTripped claims
             // it, so one selection ends up holding a probe it may never dispatch while
             // every other selection treats the provider as tripped.
-            var circuitStates = new Dictionary<MultiConnectionNntpClient, ProviderCircuitState>(enabled.Count);
+            var selectionStates =
+                new Dictionary<
+                    MultiConnectionNntpClient,
+                    (ProviderCircuitState CircuitState, int UnreservedConnections)>(
+                    enabled.Count);
             foreach (var provider in enabled)
-                circuitStates[provider] = provider.GetCircuitBreakerSnapshot().State;
+            {
+                selectionStates[provider] = (
+                    provider.GetCircuitBreakerSnapshot().State,
+                    UnreservedConnections: 0);
+            }
 
             var selectable = enabled
-                .Where(x => circuitStates[x] != ProviderCircuitState.Open)
+                .Where(x => selectionStates[x].CircuitState != ProviderCircuitState.Open)
                 .ToList();
             var pool = selectable.Count > 0 ? selectable : enabled;
+            foreach (var provider in pool)
+            {
+                selectionStates[provider] = (
+                    selectionStates[provider].CircuitState,
+                    provider.UnreservedConnectionsFor(operation));
+            }
 
             // Half-open sorts behind the healthy providers of its own tier and keeps that
             // tier, so a recovering primary is still tried ahead of a backup or block
@@ -1518,10 +1532,11 @@ public class MultiProviderNntpClient(
             // completes resets the breaker.
             var byTier = pool.OrderBy(x => x.ProviderType);
             var byRecovery = byTier.ThenBy(x =>
-                circuitStates[x] == ProviderCircuitState.HalfOpen ? 1 : 0);
+                selectionStates[x].CircuitState == ProviderCircuitState.HalfOpen ? 1 : 0);
             var cascade = cascadeEnabled?.Invoke() == true;
             var prioritized = cascade
-                ? byRecovery.ThenBy(x => EffectivePriority(x, operation))
+                ? byRecovery.ThenBy(x =>
+                    EffectivePriority(x, selectionStates[x].UnreservedConnections))
                 : byRecovery;
             var byUsage = prioritized.ThenByDescending(x => GetRemainingBytes(x));
             // Prefer providers with more spare capacity. In cascade mode this is a
@@ -1529,8 +1544,10 @@ public class MultiProviderNntpClient(
             // MaxConnections cannot outweigh Priority. In pool mode absolute spare
             // outranks learned speed so a full pool cannot monopolize.
             var capacityBalanced = cascade
-                ? byUsage.ThenByDescending(x => x.SpareFractionFor(operation))
-                : byUsage.ThenByDescending(x => x.UnreservedConnectionsFor(operation));
+                ? byUsage.ThenByDescending(x =>
+                    (double)selectionStates[x].UnreservedConnections
+                    / Math.Max(1, x.MaxConnections))
+                : byUsage.ThenByDescending(x => selectionStates[x].UnreservedConnections);
             var ordered = capacityBalanced
                 .ThenBy(EstimatedDeliveryScore)
                 .ToList();
@@ -1539,6 +1556,13 @@ public class MultiProviderNntpClient(
             reserved?.ReservePending(operation);
             return ordered;
         }
+    }
+
+    internal MultiConnectionNntpClient? SelectProviderForBenchmark(NntpOperation operation)
+    {
+        var ordered = SelectOrderedProviders(operation, out var reserved);
+        reserved?.ReleasePending(operation);
+        return ordered.FirstOrDefault();
     }
 
     /// <summary>
@@ -1550,10 +1574,9 @@ public class MultiProviderNntpClient(
     /// </summary>
     private static int EffectivePriority(
         MultiConnectionNntpClient provider,
-        NntpOperation operation)
+        int unreservedConnections)
     {
         const int saturationDemotion = 1 << 20;
-        var unreservedConnections = provider.UnreservedConnectionsFor(operation);
         if (unreservedConnections == 0)
             return provider.Priority + saturationDemotion;
 

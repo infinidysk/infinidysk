@@ -160,30 +160,26 @@ public class MultiConnectionNntpClient(
     internal int UnreservedConnectionsFor(NntpOperation operation)
     {
         var physicalSpare = UnreservedConnections;
-        var admission = GetConnectionAdmissionSnapshot();
+        var admission = _connectionAdmission?.GetRoutingState();
         if (admission is null)
             return physicalSpare;
 
+        var routingState = admission.Value;
         var kind = ClassifyConnectionKind(operation);
         var pendingForKind = Volatile.Read(ref PendingSelectionsFor(kind));
         var kindSpare = kind == ProviderConnectionKind.Transfer
-            ? admission.EffectiveTransferLimit
-              - admission.ActiveTransferOperations
+            ? routingState.EffectiveTransferLimit
+              - routingState.ActiveTransferOperations
               - pendingForKind
-            : admission.MaxMetadataCapacity
-              - admission.ActiveMetadataOperations
+            : routingState.MaxMetadataCapacity
+              - routingState.ActiveMetadataOperations
               - pendingForKind;
-        var effectiveProviderLimit =
-            admission.EffectiveTransferLimit + admission.BaseMetadataCapacity;
-        var combinedSpare = effectiveProviderLimit
-                            - admission.ActiveTransferOperations
-                            - admission.ActiveMetadataOperations
+        var combinedSpare = routingState.EffectiveProviderLimit
+                            - routingState.ActiveTransferOperations
+                            - routingState.ActiveMetadataOperations
                             - PendingSelections;
         return Math.Max(0, Math.Min(physicalSpare, Math.Min(kindSpare, combinedSpare)));
     }
-
-    internal double SpareFractionFor(NntpOperation operation) =>
-        (double)UnreservedConnectionsFor(operation) / Math.Max(1, MaxConnections);
 
     internal async Task<IDisposable?> AcquireKeepAliveAdmissionAsync(CancellationToken ct)
     {
@@ -912,24 +908,33 @@ public class MultiConnectionNntpClient(
     {
         var traceRange = MultiProviderNntpClient.CurrentStreamTraceRange;
         var started = Stopwatch.GetTimestamp();
-        ConnectionLock<INntpClient> connectionLock;
-        ProviderConnectionAdmission.Lease? admissionLease = null;
+        ConnectionLock<INntpClient>? connectionLock = null;
+        OperationLeaseGroup? operationLeases = null;
+        var returnConnectionLock = false;
         try
         {
             if (_connectionAdmission is not null)
             {
-                admissionLease = await _connectionAdmission.AcquireAsync(
-                        ClassifyConnectionKind(operation), priority, ct)
-                    .ConfigureAwait(false);
+                operationLeases = new OperationLeaseGroup();
+                operationLeases.Add(
+                    await _connectionAdmission.AcquireAsync(
+                            ClassifyConnectionKind(operation), priority, ct)
+                        .ConfigureAwait(false));
             }
 
             connectionLock = await connectionPool.GetConnectionLockAsync(priority, ct)
                 .ConfigureAwait(false);
-            if (admissionLease is not null)
+            if (operationLeases is not null)
             {
-                connectionLock.AttachDisposeCallback(admissionLease.Dispose);
-                admissionLease = null;
+                connectionLock.AttachDisposeCallback(operationLeases.Dispose);
+                operationLeases = null;
             }
+
+            var elapsed = Stopwatch.GetElapsedTime(started);
+            latencyTracker?.Record(MetricsKey, LatencyPhase.PoolWait, workload, operation, elapsed);
+            StreamTrace.TryConnectionAcquired(traceRange, elapsed, connectionLock.WasReused);
+            returnConnectionLock = true;
+            return connectionLock;
         }
         catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e) && e is not OutOfMemoryException)
         {
@@ -937,12 +942,52 @@ public class MultiConnectionNntpClient(
         }
         finally
         {
-            admissionLease?.Dispose();
+            try
+            {
+                if (!returnConnectionLock)
+                    connectionLock?.Dispose();
+            }
+            finally
+            {
+                operationLeases?.Dispose();
+            }
         }
-        var elapsed = Stopwatch.GetElapsedTime(started);
-        latencyTracker?.Record(MetricsKey, LatencyPhase.PoolWait, workload, operation, elapsed);
-        StreamTrace.TryConnectionAcquired(traceRange, elapsed, connectionLock.WasReused);
-        return connectionLock;
+    }
+
+    /// <summary>
+    /// Owns operation gates in acquisition order and releases them in reverse order.
+    /// Disposal is idempotent so a failed callback attachment can safely fall back to
+    /// local cleanup.
+    /// </summary>
+    internal sealed class OperationLeaseGroup : IDisposable
+    {
+        private IDisposable? _first;
+        private IDisposable? _second;
+        private int _disposed;
+
+        public void Add(IDisposable lease)
+        {
+            ArgumentNullException.ThrowIfNull(lease);
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
+            if (_first is null)
+                _first = lease;
+            else if (_second is null)
+                _second = lease;
+            else
+                throw new InvalidOperationException(
+                    "A connection operation cannot own more than two admission leases.");
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1)
+                return;
+
+            var second = Interlocked.Exchange(ref _second, null);
+            var first = Interlocked.Exchange(ref _first, null);
+            LogException(() => second?.Dispose());
+            LogException(() => first?.Dispose());
+        }
     }
 
     internal static ProviderConnectionKind ClassifyConnectionKind(NntpOperation operation) =>
