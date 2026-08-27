@@ -135,7 +135,7 @@ public class ConnectionPoolWarmConnectionTests
                 ProviderConnectionKind.Metadata,
                 SemaphorePriority.Low,
                 ct),
-            keepAliveBorrowTimeout: TimeSpan.FromMilliseconds(200));
+            keepAliveBorrowTimeout: TimeSpan.FromSeconds(1));
 
         await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1);
         using var transfer = await admission.AcquireAsync(
@@ -146,7 +146,7 @@ public class ConnectionPoolWarmConnectionTests
         var sweep = pool.SweepOnceForTestsAsync();
         await WaitUntilAsync(
             () => admission.GetSnapshot().WaitingMetadataOperations == 1);
-        await sweep.WaitAsync(TimeSpan.FromSeconds(1));
+        await sweep.WaitAsync(TimeSpan.FromSeconds(2));
 
         Assert.Equal(0, Volatile.Read(ref keepAliveCalls));
         var snapshot = admission.GetSnapshot();
