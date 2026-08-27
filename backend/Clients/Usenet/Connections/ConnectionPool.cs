@@ -48,13 +48,6 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private static readonly TimeSpan DefaultKeepAliveBorrowTimeout =
         TimeSpan.FromMilliseconds(250);
 
-    private enum ConnectionAcquisitionMode
-    {
-        PreferIdle,
-        RequireIdle,
-        CreateNew,
-    }
-
     public TimeSpan IdleTimeout { get; }
     public int MaxConnections => _maxConnections;
     public int WarmConnectionFloor => _warmConnectionFloor;
@@ -166,24 +159,13 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     (
         SemaphorePriority priority,
         CancellationToken cancellationToken = default
-    ) => GetRequiredConnectionLockAsync(priority, cancellationToken);
+    ) => GetConnectionLockCoreAsync(priority, preferIdle: true, cancellationToken);
 
-    private async Task<ConnectionLock<T>> GetRequiredConnectionLockAsync(
-        SemaphorePriority priority,
-        CancellationToken cancellationToken) =>
-        await GetConnectionLockCoreAsync(
-                priority,
-                ConnectionAcquisitionMode.PreferIdle,
-                cancellationToken)
-            .ConfigureAwait(false)
-        ?? throw new InvalidOperationException("A normal pool borrow did not return a connection.");
-
-    private async Task<ConnectionLock<T>?> GetConnectionLockCoreAsync
+    private async Task<ConnectionLock<T>> GetConnectionLockCoreAsync
     (
         SemaphorePriority priority,
-        ConnectionAcquisitionMode mode,
-        CancellationToken cancellationToken,
-        ISet<object>? excludedConnections = null
+        bool preferIdle,
+        CancellationToken cancellationToken
     )
     {
         // Make caller cancellation also cancel the wait on the gate.
@@ -203,11 +185,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             if (_disposed == 1)
                 ThrowDisposed();
 
-            if (mode != ConnectionAcquisitionMode.CreateNew)
+            if (preferIdle)
             {
-                reusedConnection = TryTakeIdleConnection(
-                    out reused!,
-                    excludedConnections);
+                reusedConnection = TryTakeIdleConnection(out reused!);
                 if (reusedConnection)
                     Interlocked.Increment(ref _connectionsReused);
             }
@@ -216,11 +196,6 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             TriggerConnectionPoolChangedEvent();
             return BuildLock(reused!, wasReused: true);
-        }
-        if (mode == ConnectionAcquisitionMode.RequireIdle)
-        {
-            ReleaseGateIfActive();
-            return null;
         }
 
         // Need a fresh connection. Pace handshakes so a cold burst of borrowers
@@ -247,7 +222,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 if (_disposed == 1)
                     ThrowDisposed();
 
-                if (mode == ConnectionAcquisitionMode.PreferIdle)
+                if (preferIdle)
                 {
                     reusedConnection = TryTakeIdleConnection(out reused!);
                     if (reusedConnection)
@@ -310,6 +285,51 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
         static void ThrowDisposed()
             => throw new ObjectDisposedException(nameof(ConnectionPool<T>));
+    }
+
+    private async Task<ConnectionLock<T>?> TryGetIdleConnectionLockAsync(
+        SemaphorePriority priority,
+        ISet<object> excludedConnections,
+        CancellationToken cancellationToken)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _sweepCts.Token);
+
+        var gateWaitStarted = Stopwatch.GetTimestamp();
+        await _gate.WaitAsync(priority, linked.Token).ConfigureAwait(false);
+        Interlocked.Add(ref _gateWaitTicks, Stopwatch.GetElapsedTime(gateWaitStarted).Ticks);
+
+        var releaseGate = true;
+        try
+        {
+            T? reused = default;
+            var reusedConnection = false;
+            lock (_lifecycleLock)
+            {
+                ObjectDisposedException.ThrowIf(_disposed == 1, this);
+                reusedConnection = TryTakeIdleConnection(
+                    out reused!,
+                    excludedConnections);
+                if (reusedConnection)
+                    Interlocked.Increment(ref _connectionsReused);
+            }
+
+            if (!reusedConnection)
+                return null;
+
+            releaseGate = false;
+            TriggerConnectionPoolChangedEvent();
+            return new ConnectionLock<T>(
+                reused!,
+                Return,
+                Destroy,
+                wasReused: true);
+        }
+        finally
+        {
+            if (releaseGate)
+                ReleaseGateIfActive();
+        }
     }
 
     private void ReleaseGateIfActive()
@@ -542,11 +562,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                                 .ConfigureAwait(false);
                         }
 
-                        connection = await GetConnectionLockCoreAsync(
+                        connection = await TryGetIdleConnectionLockAsync(
                                 SemaphorePriority.Low,
-                                ConnectionAcquisitionMode.RequireIdle,
-                                borrowCts.Token,
-                                pingedConnections)
+                                pingedConnections,
+                                borrowCts.Token)
                             .ConfigureAwait(false);
                     }
 
@@ -616,10 +635,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 // returned immediately. Cached warm connections never retain a gate permit.
                 using (await GetConnectionLockCoreAsync(
                            SemaphorePriority.Low,
-                           ConnectionAcquisitionMode.CreateNew,
-                           cancellationToken).ConfigureAwait(false)
-                       ?? throw new InvalidOperationException(
-                           "A warm-floor connection could not be created."))
+                           preferIdle: false,
+                           cancellationToken: cancellationToken).ConfigureAwait(false))
                 {
                     // Returning the lock to the pool establishes one idle warm connection.
                 }
