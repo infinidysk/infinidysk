@@ -1815,9 +1815,10 @@ function ProviderModal({
     Number(maxTransferConnections) > Number(maxConnections);
   const isTransferLimitValid =
     !hasTransferLimit || (transferLimitIsPositiveInteger && !transferLimitExceedsProvider);
-  const budgetPreview = hasTransferLimit
-    ? calculateProviderConnectionBudget(Number(maxConnections), Number(maxTransferConnections))
-    : null;
+  const budgetPreview =
+    hasTransferLimit && isTransferLimitValid && isPositiveInteger(maxConnections)
+      ? calculateProviderConnectionBudget(Number(maxConnections), Number(maxTransferConnections))
+      : null;
   const transferLimitHelp =
     hasTransferLimit && !transferLimitIsPositiveInteger
       ? "Enter a positive whole number."
