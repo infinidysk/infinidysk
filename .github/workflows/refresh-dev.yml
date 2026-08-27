@@ -74,6 +74,23 @@ jobs:
             -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false \
             -p:SkipRapidYencNativeEnsure=true
 
+      - name: Package compiled C# libraries
+        if: github.ref == 'refs/heads/main'
+        run: |
+          tar -czf release-csharp-libraries.tar.gz \
+            libs/SharpCompress/bin libs/SharpCompress/obj \
+            libs/UsenetSharp/bin libs/UsenetSharp/obj \
+            libs/RapidYencSharp/bin libs/RapidYencSharp/obj
+
+      - name: Stage compiled C# libraries
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: release-csharp-libraries
+          path: release-csharp-libraries.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   build:
     needs: resolve
     uses: ./.github/workflows/docker-build-push.yml
@@ -132,6 +149,7 @@ jobs:
       checkout_ref: ${{ github.sha }}
       release_tag: dev
       rolling_tag: dev
+      library_cache_artifact: ${{ github.ref == 'refs/heads/main' && 'release-csharp-libraries' || '' }}
 
   tag-dev:
     needs: [build, publish-release]

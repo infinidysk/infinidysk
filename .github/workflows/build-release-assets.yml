@@ -20,6 +20,11 @@ on:
         required: false
         default: ""
         type: string
+      library_cache_artifact:
+        description: Optional same-run artifact containing trusted compiled C# libraries
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -64,67 +69,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  library-cache:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      cache-hit: ${{ steps.library-build-cache.outputs.cache-hit }}
-    steps:
-      - name: Skip cache outside the triggering commit
-        if: inputs.checkout_ref != github.sha
-        run: echo "Compiled library cache is used only when building the triggering commit."
-
-      - name: Checkout triggering commit
-        if: inputs.checkout_ref == github.sha
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Set up .NET
-        if: inputs.checkout_ref == github.sha
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Resolve .NET SDK version
-        if: inputs.checkout_ref == github.sha
-        id: dotnet-sdk
-        run: echo "version=$(dotnet --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore compiled C# library cache
-        if: inputs.checkout_ref == github.sha
-        id: library-build-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
-        with:
-          path: |
-            libs/SharpCompress/bin
-            libs/SharpCompress/obj
-            libs/UsenetSharp/bin
-            libs/UsenetSharp/obj
-            libs/RapidYencSharp/bin
-            libs/RapidYencSharp/obj
-          key: library-build-v1-${{ runner.os }}-Release-${{ steps.dotnet-sdk.outputs.version }}-${{ hashFiles('Directory.Build.props', 'Directory.Packages.props', '.editorconfig', 'libs/SharpCompress.snk', 'libs/SharpCompress/**/*.cs', 'libs/SharpCompress/*.csproj', 'libs/SharpCompress/.editorconfig', 'libs/UsenetSharp/**/*.cs', 'libs/UsenetSharp/*.csproj', 'libs/UsenetSharp/.editorconfig', 'libs/RapidYencSharp/**/*.cs', 'libs/RapidYencSharp/*.csproj', 'libs/RapidYencSharp/.editorconfig') }}
-
-      - name: Package compiled C# libraries
-        if: steps.library-build-cache.outputs.cache-hit == 'true'
-        run: |
-          tar -czf release-csharp-libraries.tar.gz \
-            libs/SharpCompress/bin libs/SharpCompress/obj \
-            libs/UsenetSharp/bin libs/UsenetSharp/obj \
-            libs/RapidYencSharp/bin libs/RapidYencSharp/obj
-
-      - name: Stage compiled C# library cache
-        if: steps.library-build-cache.outputs.cache-hit == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
-        with:
-          name: release-csharp-libraries
-          path: release-csharp-libraries.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-
   package:
-    needs: [frontend, library-cache]
+    needs: frontend
     strategy:
       fail-fast: false
       matrix:
@@ -149,14 +95,14 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore compiled C# libraries
-        if: needs.library-cache.outputs.cache-hit == 'true'
+        if: inputs.library_cache_artifact != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
         with:
-          name: release-csharp-libraries
+          name: ${{ inputs.library_cache_artifact }}
           path: release-csharp-libraries
 
       - name: Extract compiled C# libraries
-        if: needs.library-cache.outputs.cache-hit == 'true'
+        if: inputs.library_cache_artifact != ''
         run: tar -xzf release-csharp-libraries/release-csharp-libraries.tar.gz
 
       - name: Install native build tools
@@ -172,7 +118,7 @@ jobs:
 
       - name: Publish backend
         env:
-          LIBRARY_CACHE_HIT: ${{ needs.library-cache.outputs.cache-hit }}
+          LIBRARY_CACHE_HIT: ${{ inputs.library_cache_artifact != '' }}
           RID: ${{ matrix.rid }}
         run: |
           set -euo pipefail
