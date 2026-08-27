@@ -85,6 +85,7 @@ public class GetFileInfosStepTests
         Assert.Equal(releaseDate, result.ReleaseDate);
         Assert.True(result.IsRar);
         Assert.Null(result.FileSize);
+        Assert.Same(rarHeader, result.First16KB);
     }
 
     [Fact]

@@ -11,11 +11,11 @@ using SharpCompress.Common.Rar.Headers;
 
 namespace NzbWebDAV.Queue.FileProcessors;
 
-// Altmount-style lazy RAR processor: parses only the first volume at import
-// to learn the inner file name + size, and defers parsing of trailing
-// volumes to first read (see LazyRarResolver). Returns null whenever the
-// archive doesn't match the supported shape — caller falls back to the
-// per-part eager RarProcessor in that case.
+// Altmount-style lazy RAR processor: parses the first volume to learn the
+// inner file name + size, validates cached first-header prefixes across the
+// continuation chain, and defers full trailing-volume resolution to first
+// read (see LazyRarResolver). Returns null whenever the archive doesn't
+// match the supported shape, so the caller falls back to eager parsing.
 public class LazyRarProcessor(
     List<GetFileInfosStep.FileInfo> fileInfos,
     INntpClient usenetClient,
@@ -137,6 +137,14 @@ public class LazyRarProcessor(
         }
 
         var aesParams = fileHeader.GetAesParams(password);
+        if (fileHeader.IsEncrypted && aesParams is null)
+        {
+            Log.Information(
+                "LazyRarProcessor: {File} is encrypted but no usable password was supplied, falling back to eager",
+                firstInfo.FileName);
+            return null;
+        }
+
         var totalFileSize = aesParams?.DecodedSize ?? fileHeader.UncompressedSize;
         if (totalFileSize <= 0)
         {
@@ -181,6 +189,7 @@ public class LazyRarProcessor(
             FilePartByteRange = firstPartByteRange,
             SegmentByteRanges = firstInfo.NzbFile.GetSegmentByteRanges(),
             SegmentFallbackIds = firstInfo.NzbFile.GetSegmentFallbackIds(),
+            IsSplitAfter = fileHeader.IsSplitAfter,
         };
 
         var trailingInfos = sorted.Skip(1).ToList();
@@ -242,6 +251,17 @@ public class LazyRarProcessor(
             last.EstimatedDataSize = adjusted;
         }
 
+        if (!await ValidateContinuationChainAsync(
+                fileHeader,
+                trailingInfos,
+                pathInArchive,
+                totalFileSize,
+                fileHeader.IsEncrypted)
+                .ConfigureAwait(false))
+        {
+            return null;
+        }
+
         return new Result
         {
             PathInArchive = pathInArchive,
@@ -254,6 +274,192 @@ public class LazyRarProcessor(
             ArchiveName = GetArchiveName(firstInfo.FileName),
             SniffedVideoExtension = sniffedVideoExtension,
         };
+    }
+
+    private async Task<bool> ValidateContinuationChainAsync(
+        IRarFileHeader firstHeader,
+        IReadOnlyList<GetFileInfosStep.FileInfo> trailingInfos,
+        string pathInArchive,
+        long expectedFileSize,
+        bool isEncrypted)
+    {
+        if (firstHeader.IsSplitBefore)
+        {
+            Log.Information(
+                "LazyRarProcessor: first header for {Inner} continues from an earlier volume, falling back to eager",
+                pathInArchive);
+            return false;
+        }
+
+        if (trailingInfos.Count == 0)
+        {
+            if (!firstHeader.IsSplitAfter)
+            {
+                return ValidateResolvedSize(
+                    firstHeader.AdditionalDataSize,
+                    expectedFileSize,
+                    isEncrypted,
+                    pathInArchive);
+            }
+
+            Log.Information(
+                "LazyRarProcessor: {Inner} continues past the final RAR volume, falling back to eager",
+                pathInArchive);
+            return false;
+        }
+
+        if (!firstHeader.IsSplitAfter)
+        {
+            Log.Information(
+                "LazyRarProcessor: {Inner} ends before {Count} trailing RAR volume(s), falling back to eager",
+                pathInArchive, trailingInfos.Count);
+            return false;
+        }
+
+        var resolvedSize = firstHeader.AdditionalDataSize;
+        for (var i = 0; i < trailingInfos.Count; i++)
+        {
+            var info = trailingInfos[i];
+            IRarFileHeader? continuation;
+            try
+            {
+                continuation = await ReadFirstFileHeaderAsync(info).ConfigureAwait(false);
+            }
+            catch (RetryableDownloadException)
+            {
+                throw;
+            }
+            catch (Exception e) when (
+                !ct.IsCancellationRequested &&
+                e.IsTransientTransportException() &&
+                e is not OutOfMemoryException)
+            {
+                throw new RetryableDownloadException(
+                    $"Transient provider failure while validating RAR continuation headers for {info.FileName}.",
+                    e);
+            }
+            catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+            {
+                Log.Information(
+                    "LazyRarProcessor: could not validate continuation volume {Volume} for {Inner}; " +
+                    "falling back to eager. Reason: {Reason}",
+                    i + 2, pathInArchive, e.Message);
+                return false;
+            }
+
+            if (continuation is null)
+            {
+                Log.Information(
+                    "LazyRarProcessor: no file header in continuation volume {Volume} for {Inner}, " +
+                    "falling back to eager",
+                    i + 2, pathInArchive);
+                return false;
+            }
+
+            if (!string.Equals(continuation.FileName, pathInArchive, StringComparison.Ordinal)
+                || !continuation.IsSplitBefore
+                || continuation.IsSolid
+                || continuation.IsEncrypted != isEncrypted)
+            {
+                Log.Information(
+                    "LazyRarProcessor: continuation volume {Volume} for {Inner} contains {Found} " +
+                    "(split-before: {SplitBefore}, solid: {Solid}, encrypted: {Encrypted}); " +
+                    "falling back to eager",
+                    i + 2,
+                    pathInArchive,
+                    continuation.FileName,
+                    continuation.IsSplitBefore,
+                    continuation.IsSolid,
+                    continuation.IsEncrypted);
+                return false;
+            }
+
+            try
+            {
+                resolvedSize = checked(resolvedSize + continuation.AdditionalDataSize);
+            }
+            catch (OverflowException)
+            {
+                Log.Information(
+                    "LazyRarProcessor: continuation sizes overflow for {Inner}, falling back to eager",
+                    pathInArchive);
+                return false;
+            }
+
+            var shouldContinue = i < trailingInfos.Count - 1;
+            if (continuation.IsSplitAfter == shouldContinue) continue;
+
+            if (continuation.IsSplitAfter)
+            {
+                Log.Information(
+                    "LazyRarProcessor: {Inner} continues past final RAR volume {Volume}, falling back to eager",
+                    pathInArchive,
+                    i + 2);
+            }
+            else
+            {
+                Log.Information(
+                    "LazyRarProcessor: {Inner} ends at RAR volume {Volume} with trailing volumes remaining; " +
+                    "falling back to eager",
+                    pathInArchive,
+                    i + 2);
+            }
+            return false;
+        }
+
+        return ValidateResolvedSize(resolvedSize, expectedFileSize, isEncrypted, pathInArchive);
+    }
+
+    private static bool ValidateResolvedSize(
+        long resolvedSize,
+        long expectedFileSize,
+        bool isEncrypted,
+        string pathInArchive)
+    {
+        long expectedStoredSize;
+        try
+        {
+            expectedStoredSize = isEncrypted
+                ? checked((expectedFileSize + 15) / 16 * 16)
+                : expectedFileSize;
+        }
+        catch (OverflowException)
+        {
+            Log.Information(
+                "LazyRarProcessor: expected stored size overflows for {Inner}, falling back to eager",
+                pathInArchive);
+            return false;
+        }
+
+        const long tolerance = 16; // matches RarAggregator.ValidateVolumes
+        if (Math.Abs((decimal)resolvedSize - expectedStoredSize) <= tolerance) return true;
+
+        Log.Information(
+            "LazyRarProcessor: resolved continuation size {Resolved} does not match expected {Expected} " +
+            "for {Inner}; falling back to eager",
+            resolvedSize,
+            expectedStoredSize,
+            pathInArchive);
+        return false;
+    }
+
+    private async Task<IRarFileHeader?> ReadFirstFileHeaderAsync(GetFileInfosStep.FileInfo info)
+    {
+        if (info.First16KB is { Length: > 0 } prefix)
+        {
+            await using var prefixStream = new MemoryStream(prefix, writable: false);
+            var prefixHeaders = await RarUtil
+                .ReadHeadersUntilFirstFileAsync(prefixStream, password, ct)
+                .ConfigureAwait(false);
+            return prefixHeaders.OfType<IRarFileHeader>().LastOrDefault(h => !h.IsDirectory);
+        }
+
+        var streamLength = info.FileSize ?? info.NzbFile.GetTotalYencodedSize();
+        await using var stream = usenetClient.GetFileStream(
+            info.NzbFile, streamLength, articleBufferSize: 0);
+        var headers = await RarUtil.ReadHeadersUntilFirstFileAsync(stream, password, ct)
+            .ConfigureAwait(false);
+        return headers.OfType<IRarFileHeader>().LastOrDefault(h => !h.IsDirectory);
     }
 
     private static string GetArchiveName(string firstFileName)

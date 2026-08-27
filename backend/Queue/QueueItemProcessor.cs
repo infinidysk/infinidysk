@@ -455,10 +455,10 @@ public class QueueItemProcessor(
         }
 
         // step 2a -- try altmount-style lazy RAR mounting for the rar group
-        // when enabled. On success, the entire rar group is handled here
-        // (only the first volume gets parsed) and skipped in step 2b. On
-        // ineligibility — multi-file, compressed, solid, or first-volume
-        // parse failure — fall through to the per-part eager pipeline.
+        // when enabled. On success, the first volume is parsed and cached
+        // continuation-header prefixes are validated before the rar group is
+        // skipped in step 2b. On ineligibility — multi-file, compressed,
+        // solid, or header-parse failure — fall through to the eager pipeline.
         LazyRarProcessor.Result? lazyRarResult = null;
         var rarFiles = fileInfos.Where(x => GetGroupName(x) == "rar").ToList();
         if (configManager.IsLazyRarParsingEnabled() && rarFiles.Count > 0)

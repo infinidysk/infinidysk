@@ -40,6 +40,11 @@ public partial class DavMultipartFile
 
         [MemoryPackOrder(5)]
         public PendingPart[] PendingParts { get; set; } = [];
+
+        // Stable logical member size captured from the first RAR header.
+        // Null only for blobs written before continuation-chain validation.
+        [MemoryPackOrder(6)]
+        public long? ExpectedFileSize { get; set; }
     }
 
     [MemoryPackable(GenerateType.VersionTolerant)]
@@ -63,6 +68,11 @@ public partial class DavMultipartFile
 
         [MemoryPackOrder(4)]
         public string[][]? SegmentFallbackIds { get; set; }
+
+        // Whether this RAR member continues into the next physical volume.
+        // Null for non-RAR parts and blobs written before split-aware resolution.
+        [MemoryPackOrder(5)]
+        public bool? IsSplitAfter { get; set; }
     }
 
     // A RAR part whose internal byte range hasn't been parsed yet.

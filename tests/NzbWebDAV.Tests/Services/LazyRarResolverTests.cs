@@ -64,6 +64,7 @@ public class LazyRarResolverTests
                         SegmentIds = ["vol1-seg0"],
                         SegmentIdByteRange = LongRange.FromStartAndSize(0, 100),
                         FilePartByteRange = LongRange.FromStartAndSize(10, 90),
+                        IsSplitAfter = true,
                     }
                 ],
                 PendingParts =
@@ -75,6 +76,7 @@ public class LazyRarResolverTests
                         EstimatedDataSize = underestimatedSize - 80,
                     }
                 ],
+                ExpectedFileSize = 90 + packedSize,
             }
         };
 
@@ -123,6 +125,7 @@ public class LazyRarResolverTests
                             SegmentIds = ["vol1-seg0"],
                             SegmentIdByteRange = LongRange.FromStartAndSize(0, 100),
                             FilePartByteRange = LongRange.FromStartAndSize(10, 90),
+                            IsSplitAfter = true,
                         }
                     ],
                     PendingParts =
@@ -134,6 +137,7 @@ public class LazyRarResolverTests
                             EstimatedDataSize = packedSize,
                         }
                     ],
+                    ExpectedFileSize = 90 + packedSize,
                 }
             };
 
@@ -168,9 +172,220 @@ public class LazyRarResolverTests
         }
     }
 
+    [Fact]
+    public async Task EnsureResolvedThroughAsync_TerminalPartDropsUnrelatedTrailingVolumes()
+    {
+        const string pathInArchive = "movie.mkv";
+        var finalMemberBytes = BuildRar4ContinuationVolume(pathInArchive, packedSize: 800);
+        var extraBytes = BuildRar4Volume(
+            "extra.srt",
+            packedSize: 100,
+            splitBefore: false,
+            splitAfter: false);
+        var volumes = new Dictionary<string, byte[]>
+        {
+            ["vol2-seg0"] = finalMemberBytes,
+            ["vol3-seg0"] = extraBytes,
+        };
+        using var client = new MeasuringNntpClient("unused", 0);
+        var resolver = new LazyRarResolver(client, new ConfigManager())
+        {
+            VolumeStreamFactory = (ids, size) => new BoundedLengthStream(volumes[ids[0]], size),
+        };
+        var mpf = MultipartFile(
+            pathInArchive,
+            Pending("vol2-seg0", finalMemberBytes.Length, 780),
+            Pending("vol3-seg0", extraBytes.Length, 20));
+
+        var meta = await resolver.EnsureResolvedThroughAsync(
+            mpf, long.MaxValue, CancellationToken.None);
+
+        Assert.False(meta.IsLazy);
+        Assert.Empty(meta.PendingParts);
+        Assert.Equal(2, meta.FileParts.Length);
+        Assert.Equal(800, meta.FileParts[1].FilePartByteRange.Count);
+    }
+
+    [Fact]
+    public async Task EnsureResolvedThroughAsync_LegacyResolvedTerminalDropsPendingTail()
+    {
+        const string pathInArchive = "movie.mkv";
+        var finalMemberBytes = BuildRar4ContinuationVolume(pathInArchive, packedSize: 800);
+        var volumes = new Dictionary<string, byte[]>
+        {
+            ["vol2-seg0"] = finalMemberBytes,
+        };
+        using var client = new MeasuringNntpClient("unused", 0);
+        var resolver = new LazyRarResolver(client, new ConfigManager())
+        {
+            VolumeStreamFactory = (ids, size) => new BoundedLengthStream(volumes[ids[0]], size),
+        };
+        var mpf = MultipartFile(
+            pathInArchive,
+            Pending("vol3-seg0", volumeLength: 200, estimatedDataSize: 20));
+        mpf.Metadata.FileParts =
+        [
+            mpf.Metadata.FileParts[0],
+            new DavMultipartFile.FilePart
+            {
+                SegmentIds = ["vol2-seg0"],
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, finalMemberBytes.Length),
+                FilePartByteRange = LongRange.FromStartAndSize(
+                    finalMemberBytes.Length - 800,
+                    800),
+                IsSplitAfter = null,
+            }
+        ];
+        mpf.Metadata.ExpectedFileSize = 1_740;
+
+        var meta = await resolver.EnsureResolvedThroughAsync(
+            mpf, long.MaxValue, CancellationToken.None);
+
+        Assert.False(meta.IsLazy);
+        Assert.Empty(meta.PendingParts);
+        Assert.Equal(2, meta.FileParts.Length);
+        Assert.Equal(false, meta.FileParts[1].IsSplitAfter);
+    }
+
+    [Fact]
+    public async Task EnsureResolvedThroughAsync_TerminalSizeMismatchDoesNotDropTail()
+    {
+        const string pathInArchive = "movie.mkv";
+        var finalMemberBytes = BuildRar4ContinuationVolume(pathInArchive, packedSize: 800);
+        var extraBytes = BuildRar4Volume(
+            "extra.srt",
+            packedSize: 100,
+            splitBefore: false,
+            splitAfter: false);
+        var volumes = new Dictionary<string, byte[]>
+        {
+            ["vol2-seg0"] = finalMemberBytes,
+            ["vol3-seg0"] = extraBytes,
+        };
+        using var client = new MeasuringNntpClient("unused", 0);
+        var resolver = new LazyRarResolver(client, new ConfigManager())
+        {
+            VolumeStreamFactory = (ids, size) => new BoundedLengthStream(volumes[ids[0]], size),
+        };
+        var mpf = MultipartFile(
+            pathInArchive,
+            Pending("vol2-seg0", finalMemberBytes.Length, 780),
+            Pending("vol3-seg0", extraBytes.Length, 20));
+        mpf.Metadata.ExpectedFileSize = 2_000;
+
+        var failure = await Assert.ThrowsAsync<NzbWebDAV.Exceptions.CorruptRarException>(
+            () => resolver.EnsureResolvedThroughAsync(
+                mpf, long.MaxValue, CancellationToken.None));
+
+        Assert.Contains("resolves 1740 stored bytes, expected 2000", failure.Message);
+        Assert.True(mpf.Metadata.IsLazy);
+        Assert.Equal(2, mpf.Metadata.PendingParts.Length);
+    }
+
+    [Fact]
+    public async Task EnsureResolvedThroughAsync_ChainContinuesPastLastVolume_Throws()
+    {
+        const string pathInArchive = "movie.mkv";
+        var continuationBytes = BuildRar4ContinuationVolume(
+            pathInArchive, packedSize: 800, splitAfter: true);
+        using var client = new MeasuringNntpClient("unused", 0);
+        var resolver = new LazyRarResolver(client, new ConfigManager())
+        {
+            VolumeStreamFactory = (_, size) => new BoundedLengthStream(continuationBytes, size),
+        };
+        var mpf = MultipartFile(
+            pathInArchive,
+            Pending("vol2-seg0", continuationBytes.Length, 800));
+
+        var failure = await Assert.ThrowsAsync<NzbWebDAV.Exceptions.CorruptRarException>(
+            () => resolver.EnsureResolvedThroughAsync(
+                mpf, long.MaxValue, CancellationToken.None));
+
+        Assert.Contains("continues beyond the final available volume", failure.Message);
+        Assert.True(mpf.Metadata.IsLazy);
+        Assert.Single(mpf.Metadata.PendingParts);
+    }
+
+    [Fact]
+    public async Task EnsureResolvedThroughAsync_MismatchedContinuationReportsVolumeAndHeader()
+    {
+        var wrongMemberBytes = BuildRar4Volume(
+            "extra.srt",
+            packedSize: 100,
+            splitBefore: true,
+            splitAfter: false);
+        using var client = new MeasuringNntpClient("unused", 0);
+        var resolver = new LazyRarResolver(client, new ConfigManager())
+        {
+            VolumeStreamFactory = (_, size) => new BoundedLengthStream(wrongMemberBytes, size),
+        };
+        var mpf = MultipartFile(
+            "movie.mkv",
+            Pending("vol2-seg0", wrongMemberBytes.Length, 100));
+
+        var failure = await Assert.ThrowsAsync<NzbWebDAV.Exceptions.CorruptRarException>(
+            () => resolver.EnsureResolvedThroughAsync(
+                mpf, long.MaxValue, CancellationToken.None));
+
+        Assert.Contains("volume 2 of 2", failure.Message);
+        Assert.Contains("'extra.srt'", failure.Message);
+        Assert.Contains("split-before: True", failure.Message);
+    }
+
+    private static DavMultipartFile MultipartFile(
+        string pathInArchive,
+        params DavMultipartFile.PendingPart[] pending) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                IsLazy = true,
+                PathInArchive = pathInArchive,
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["vol1-seg0"],
+                        SegmentIdByteRange = LongRange.FromStartAndSize(0, 1_000),
+                        FilePartByteRange = LongRange.FromStartAndSize(60, 940),
+                        IsSplitAfter = true,
+                    }
+                ],
+                PendingParts = pending,
+                ExpectedFileSize = 940 + pending.Sum(part => part.EstimatedDataSize),
+            }
+        };
+
+    private static DavMultipartFile.PendingPart Pending(
+        string segmentId, long volumeLength, long estimatedDataSize) =>
+        new()
+        {
+            SegmentIds = [segmentId],
+            SegmentIdByteRange = LongRange.FromStartAndSize(0, volumeLength),
+            EstimatedDataSize = estimatedDataSize,
+        };
+
     // Minimal RAR4 multi-volume continuation: mark + archive(VOLUME) +
     // stored file header (HAS_DATA|SPLIT_BEFORE) + packed payload.
-    private static byte[] BuildRar4ContinuationVolume(string fileName, int packedSize, int trailingBytes = 0)
+    private static byte[] BuildRar4ContinuationVolume(
+        string fileName,
+        int packedSize,
+        int trailingBytes = 0,
+        bool splitAfter = false)
+        => BuildRar4Volume(
+            fileName,
+            packedSize,
+            splitBefore: true,
+            splitAfter: splitAfter,
+            trailingBytes: trailingBytes);
+
+    private static byte[] BuildRar4Volume(
+        string fileName,
+        int packedSize,
+        bool splitBefore,
+        bool splitAfter,
+        int trailingBytes = 0)
     {
         using var ms = new MemoryStream();
         ms.Write([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
@@ -192,7 +407,10 @@ public class LazyRarResolverTests
             var body = new byte[headSize - 2];
             var o = 0;
             body[o++] = 0x74;
-            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), 0x8001); // HAS_DATA|SPLIT_BEFORE
+            var fileFlags = (ushort)(0x8000
+                                     | (splitBefore ? 0x0001 : 0)
+                                     | (splitAfter ? 0x0002 : 0));
+            BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), fileFlags);
             o += 2;
             BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), headSize);
             o += 2;

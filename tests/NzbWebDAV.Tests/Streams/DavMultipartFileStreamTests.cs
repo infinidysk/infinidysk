@@ -279,6 +279,41 @@ public class DavMultipartFileStreamTests
     }
 
     [Fact]
+    public async Task ReadAsync_ExpectedFileSizeKeepsRecoveredLegacyLengthStable()
+    {
+        using var client = new FakeNntpClient(new Dictionary<string, byte[]>
+        {
+            ["segment"] = Enumerable.Range(0, 8).Select(x => (byte)x).ToArray(),
+        }, useCachedYencStreams: true);
+        var multipart = MultipartFile(
+            segmentRange: LongRange.FromStartAndSize(0, 8),
+            fileRange: LongRange.FromStartAndSize(0, 8));
+        multipart.Metadata.IsLazy = true;
+        multipart.Metadata.ExpectedFileSize = 8;
+        multipart.Metadata.PendingParts =
+        [
+            new DavMultipartFile.PendingPart
+            {
+                SegmentIds = ["unrelated-tail"],
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, 8),
+                EstimatedDataSize = 8,
+            }
+        ];
+        await using var stream = new DavMultipartFileStream(
+            multipart,
+            client,
+            articleBufferSize: 0,
+            resolver: null,
+            usePipelinedBodyRequests: false,
+            fileName: "movie.mkv");
+
+        var buffer = new byte[8];
+        Assert.Equal(8, await stream.ReadAsync(buffer));
+        Assert.Equal(0, await stream.ReadAsync(new byte[1]));
+        Assert.Equal(8, stream.Length);
+    }
+
+    [Fact]
     public async Task ReadAsync_UnresolvableTrailingVolume_DoesNotLookLikeEndOfFile()
     {
         using var client = new FakeNntpClient(new Dictionary<string, byte[]>

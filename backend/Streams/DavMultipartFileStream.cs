@@ -49,7 +49,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
         _fileName = fileName;
         _inFlightArticleBudget = inFlightArticleBudget;
         _streamingBodyBatchWidth = streamingBodyBatchWidth;
-        _length = ComputeLength(mpf.Metadata);
+        _length = mpf.Metadata.AesParams is null
+                  && mpf.Metadata.ExpectedFileSize is >= 0 and < long.MaxValue
+            ? mpf.Metadata.ExpectedFileSize.Value
+            : ComputeLength(mpf.Metadata);
 
         if (_resolver != null
             && _mpf.Metadata.IsLazy
@@ -171,10 +174,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
         set => Seek(value, SeekOrigin.Begin);
     }
 
-    // Walks resolved FileParts + pending estimates so HEAD/Length-aware
-    // clients see the stable inner-file size from the moment of mount. The
-    // estimates are adjusted at import time so this matches the real
-    // uncompressed size byte-exact.
+    // Fallback for legacy/non-RAR metadata without ExpectedFileSize. Walks
+    // resolved FileParts + pending estimates so HEAD/Length-aware clients see
+    // a stable inner-file size from the moment of mount. The estimates are
+    // adjusted at import time to match the real uncompressed size byte-exact.
     // Old MemoryPack blobs predate the lazy fields, so PendingParts can be
     // null after deserialization despite the property initializer. Guard
     // every iteration with ?? [] to stay safe.
