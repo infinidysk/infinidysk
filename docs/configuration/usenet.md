@@ -35,7 +35,7 @@ Persisted as `usenet.providers` JSON.
 
     Disabling SSL stores/sends credentials in cleartext on the wire — only for trusted networks.
 
-## Connection budgets [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
+## Connection budgets [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
 **Provider Connection Limit** is the absolute number of connections InfiniDysk may use for the
 provider account. Set it no higher than the provider allows, or lower when the account is shared
@@ -72,14 +72,18 @@ admitted after at most eight consecutive transfer grants so health and control w
 
 !!! info "Existing providers stay in legacy mode"
 
-    A blank `MaxTransferConnections` value preserves the original shared-pool behavior. Merely
-    opening or saving an existing provider does not enable budgeting. Enter **Transfer Connections**
-    or apply an Auto-tune recommendation to opt in.
+    A blank `MaxTransferConnections` value preserves the original shared-pool admission scheduling.
+    Merely opening or saving an existing provider does not enable split budgeting. Enter **Transfer
+    Connections** or apply an Auto-tune recommendation to opt in. Auto-tune's provider ceiling and
+    the busy-pool keep-alive safeguards below apply in both scheduling modes.
 
 Auto-tune finds the transfer-throughput knee and applies its recommendation only to **Transfer
-Connections**. It never rewrites **Provider Connection Limit**. If the provider later refuses its
-configured ceiling, InfiniDysk lowers the effective runtime limit without changing either saved
-value; provider cards and metrics then show capacities based on that learned limit.
+Connections**. It never rewrites or probes above **Provider Connection Limit**. Releases before
+1.3.0 could sweep above the saved connection count; raise Provider Connection Limit first if you
+want Auto-tune to test a higher count. When the result says speed was still climbing at the ceiling,
+the provider may benefit from a higher limit if the account permits it. If the provider later
+refuses its configured ceiling, InfiniDysk lowers the effective runtime limit without changing
+either saved value; provider cards and metrics then show capacities based on that learned limit.
 
 ## Invalid provider certificates [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 
