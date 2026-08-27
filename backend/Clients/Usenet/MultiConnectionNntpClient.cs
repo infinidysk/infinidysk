@@ -57,6 +57,8 @@ public class MultiConnectionNntpClient(
                 transferLimit,
                 priorityOdds)
             : null;
+    internal Action<ConnectionLock<INntpClient>, Action>? AttachDisposeCallbackForTests
+    { get; set; }
 
     public ProviderType ProviderType { get; } = type;
     public int Priority { get; } = priority;
@@ -940,7 +942,10 @@ public class MultiConnectionNntpClient(
                 .ConfigureAwait(false);
             if (operationLeases is not null)
             {
-                connectionLock.AttachDisposeCallback(operationLeases.Dispose);
+                if (AttachDisposeCallbackForTests is { } attachForTests)
+                    attachForTests(connectionLock, operationLeases.Dispose);
+                else
+                    connectionLock.AttachDisposeCallback(operationLeases.Dispose);
                 operationLeases = null;
             }
 

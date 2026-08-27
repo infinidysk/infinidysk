@@ -47,9 +47,115 @@ public class MultiConnectionHealthAdmissionTests
         Assert.Equal(0, gate.GetSnapshot().Active);
     }
 
+    [Fact]
+    public async Task CombinedAdmission_SuccessReleasesBothLeasesAndPhysicalPermit()
+    {
+        var config = CreateGateConfig();
+        using var gate = new HealthCheckConnectionGate(config);
+        var state = new BlockingStatState();
+        state.ReleaseAll();
+        using var client = CreateClient(state, maxTransferConnections: 4);
+        using var cts = new CancellationTokenSource();
+        using var healthContext = cts.Token.SetContext(
+            new HealthCheckAdmissionContext(gate, HealthCheckAdmissionPriority.Background));
+
+        await client.StatAsync(new SegmentId("combined-success"), cts.Token);
+
+        AssertCombinedAdmissionReleased(client, gate);
+        Assert.Equal(1, client.IdleConnections);
+    }
+
+    [Fact]
+    public async Task CombinedAdmission_CancellationReleasesBothLeasesAndPhysicalPermit()
+    {
+        var config = CreateGateConfig();
+        using var gate = new HealthCheckConnectionGate(config);
+        var state = new BlockingStatState();
+        using var client = CreateClient(state, maxTransferConnections: 4);
+        using var cts = new CancellationTokenSource();
+        using var healthContext = cts.Token.SetContext(
+            new HealthCheckAdmissionContext(gate, HealthCheckAdmissionPriority.Background));
+        var request = client.StatAsync(new SegmentId("combined-cancelled"), cts.Token);
+        await WaitForEnteredCount(state, expected: 1);
+
+        await cts.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+
+        AssertCombinedAdmissionReleased(client, gate);
+    }
+
+    [Fact]
+    public async Task CombinedAdmission_PoolFailureReleasesBothUnattachedLeases()
+    {
+        var config = CreateGateConfig();
+        using var gate = new HealthCheckConnectionGate(config);
+        var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromException<INntpClient>(
+                new IOException("combined connection factory failed")));
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("combined-pool-failure"),
+            "combined-pool-failure",
+            maxTransferConnections: 1);
+        using var cts = new CancellationTokenSource();
+        using var healthContext = cts.Token.SetContext(
+            new HealthCheckAdmissionContext(gate, HealthCheckAdmissionPriority.Background));
+
+        await Assert.ThrowsAsync<IOException>(
+            () => client.StatAsync(new SegmentId("combined-pool-failure"), cts.Token));
+
+        AssertCombinedAdmissionReleased(client, gate);
+        Assert.Equal(1, client.AvailableConnections);
+    }
+
+    [Fact]
+    public async Task CombinedAdmission_CallbackAttachmentFailureReleasesEveryLeaseOnce()
+    {
+        var config = CreateGateConfig();
+        using var gate = new HealthCheckConnectionGate(config);
+        var state = new BlockingStatState();
+        state.ReleaseAll();
+        using var client = CreateClient(state, maxTransferConnections: 4);
+        var physicalReleases = 0;
+        client.AttachDisposeCallbackForTests = (connectionLock, callback) =>
+        {
+            connectionLock.AttachDisposeCallback(
+                () => Interlocked.Increment(ref physicalReleases));
+            connectionLock.AttachDisposeCallback(callback);
+        };
+        using var cts = new CancellationTokenSource();
+        using var healthContext = cts.Token.SetContext(
+            new HealthCheckAdmissionContext(gate, HealthCheckAdmissionPriority.Background));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.StatAsync(new SegmentId("combined-attach-failure"), cts.Token));
+
+        Assert.Equal(2, Volatile.Read(ref physicalReleases));
+        Assert.Equal(0, Volatile.Read(ref state.Entered));
+        AssertCombinedAdmissionReleased(client, gate);
+        Assert.Equal(1, client.IdleConnections);
+    }
+
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(5);
 
-    private static MultiConnectionNntpClient CreateClient(BlockingStatState state)
+    private static ConfigManager CreateGateConfig()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues([
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RepairHealthcheckConcurrency,
+                ConfigValue = "1",
+            },
+        ]);
+        return config;
+    }
+
+    private static MultiConnectionNntpClient CreateClient(
+        BlockingStatState state,
+        int? maxTransferConnections = null)
     {
         var pool = new ConnectionPool<INntpClient>(
             maxConnections: 4,
@@ -58,7 +164,21 @@ public class MultiConnectionHealthAdmissionTests
             pool,
             ProviderType.Pooled,
             new ProviderCircuitBreaker("health-admission-test"),
-            "health-admission-test");
+            "health-admission-test",
+            maxTransferConnections: maxTransferConnections);
+    }
+
+    private static void AssertCombinedAdmissionReleased(
+        MultiConnectionNntpClient client,
+        HealthCheckConnectionGate gate)
+    {
+        var admission = Assert.IsType<ProviderConnectionAdmissionSnapshot>(
+            client.GetConnectionAdmissionSnapshot());
+        Assert.Equal(0, admission.ActiveMetadataOperations);
+        Assert.Equal(0, admission.WaitingMetadataOperations);
+        Assert.Equal(0, gate.GetSnapshot().Active);
+        Assert.Equal(0, gate.GetSnapshot().WaitingBackground);
+        Assert.Equal(0, client.ActiveConnections);
     }
 
     private static Task<UsenetStatResponse>[] StartStats(
