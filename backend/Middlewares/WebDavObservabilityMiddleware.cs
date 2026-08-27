@@ -244,14 +244,16 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
     /// </summary>
     private sealed class FirstByteRecordingStream(Stream inner, Stopwatch stopwatch) : Stream
     {
-        private long _firstByteMs = -1;
+        private long _firstByteMs;
+        private int _firstByteRecorded;
 
         public long? FirstByteElapsedMilliseconds
         {
             get
             {
-                var value = Interlocked.Read(ref _firstByteMs);
-                return value >= 0 ? value : null;
+                if (Volatile.Read(ref _firstByteRecorded) == 0)
+                    return null;
+                return Interlocked.Read(ref _firstByteMs);
             }
         }
 
@@ -260,7 +262,11 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
             // Zero-length writes carry no body byte; recording them would mark a
             // first byte that never went out and misclassify the request.
             if (count <= 0) return;
-            Interlocked.CompareExchange(ref _firstByteMs, stopwatch.ElapsedMilliseconds, -1);
+            if (Volatile.Read(ref _firstByteRecorded) != 0) return;
+            // Value before the flag so a reader that observes the flag also
+            // observes the timestamp (release/acquire pairing).
+            Interlocked.Exchange(ref _firstByteMs, stopwatch.ElapsedMilliseconds);
+            Volatile.Write(ref _firstByteRecorded, 1);
         }
 
         public override void Write(byte[] buffer, int offset, int count)
