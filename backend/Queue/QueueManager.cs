@@ -255,26 +255,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
                 .ToList();
         }, ct).ConfigureAwait(false);
 
-        // Cancel every worker first, then wait on one shared grace budget:
-        // per-item waits would multiply the worst case to N × grace period.
-        foreach (var item in toCancel)
-            await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
-
-        List<Guid> stillRunning = [];
-        using var grace = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        grace.CancelAfter(StuckCancelGracePeriod);
-        foreach (var item in toCancel)
-        {
-            if (await TryAwaitWorkerAsync(item, grace.Token, ct).ConfigureAwait(false))
-            {
-                await ObserveStoppedWorkerAsync(item).ConfigureAwait(false);
-            }
-            else
-            {
-                stillRunning.Add(item.QueueItem.Id);
-                _ = WatchForIgnoredCancelAsync(item);
-            }
-        }
+        var stillRunning = await CancelAndAwaitWorkersAsync(toCancel, ct).ConfigureAwait(false);
 
         var removableIds = queueItemIds.Where(id => !stillRunning.Contains(id)).ToList();
         if (removableIds.Count > 0)
@@ -501,11 +482,27 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
                 .ToList();
         }, ct).ConfigureAwait(false);
 
-        // Cancel every worker first, then wait on one shared grace budget:
-        // per-item waits would multiply the worst case to N × grace period.
+        // The row is already paused in the database; a worker that ignores
+        // cancellation keeps its slot until it stops, and the observer logs if
+        // it never does.
+        await CancelAndAwaitWorkersAsync(toCancel, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Cancels every worker first, then waits on one shared grace budget: per-item
+    /// waits would multiply the worst case to N × grace period. Workers that stop
+    /// in time are observed; workers that ignore cancellation past
+    /// <see cref="StuckCancelGracePeriod"/> get a watchdog and their ids are
+    /// returned so callers can quarantine or report them.
+    /// </summary>
+    private async Task<List<Guid>> CancelAndAwaitWorkersAsync(
+        List<InProgressQueueItem> toCancel,
+        CancellationToken ct)
+    {
         foreach (var item in toCancel)
             await item.CancellationTokenSource.CancelAsync().ConfigureAwait(false);
 
+        List<Guid> stillRunning = [];
         using var grace = CancellationTokenSource.CreateLinkedTokenSource(ct);
         grace.CancelAfter(StuckCancelGracePeriod);
         foreach (var item in toCancel)
@@ -516,11 +513,12 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
             }
             else
             {
-                // The row is already paused in the database; the worker keeps its
-                // slot until it stops, and the observer logs if it never does.
+                stillRunning.Add(item.QueueItem.Id);
                 _ = WatchForIgnoredCancelAsync(item);
             }
         }
+
+        return stillRunning;
     }
 
 
