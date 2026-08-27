@@ -234,6 +234,14 @@ public sealed class SupportPackService(
         the last 500 warnings and errors separately for that reason - check it first
         when the main log looks like it only contains routine activity.
 
+        environment.json → webdavCounters summarizes WebDAV request health since
+        startup: total, failed (5xx), aborted (client closed early, normal on seeks),
+        slowFirstByte (GETs whose first byte took over five seconds - genuine
+        server-side latency), slowMetadata (PROPFIND/HEAD over five seconds),
+        stalledStreams (streams still open after a minute), and longStreams (healthy
+        client-paced reads that simply outlived five seconds - not a server problem).
+        slow is the sum of the three attention-worthy kinds.
+
         environment.json → queue.inProgress lists every in-flight import with its
         current stage, how long that stage has been running, and cumulative queue
         semaphore wait. Use it to tell NNTP work apart from finalize-lock wait,
