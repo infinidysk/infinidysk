@@ -43,7 +43,7 @@ Please add feature requests and bug reports to the [issue tracker](https://githu
 - **Virtual WebDAV filesystem** — Mount, browse, stream, and seek through NZB content without downloading complete media files first.
 - **Archive streaming** — Read RAR and 7z archives on demand, including password-protected content.
 - **Fast, resilient NNTP** — Pipeline article requests and cascade across multiple providers with automatic failover and circuit breakers.
-- **Provider routing and limits** — Set provider priorities, data caps, usage resets, and connection limits, then benchmark them from the UI.
+- **Provider routing and limits** — Separate provider-wide and article-transfer connection budgets, reserve burstable metadata capacity, set priorities and data caps, then Auto-tune transfers from the UI.
 - **Container-aware gap handling** — Preserve MPEG-TS timing across missing article ranges to reduce playback desynchronization.
 
 ### Search and playback readiness

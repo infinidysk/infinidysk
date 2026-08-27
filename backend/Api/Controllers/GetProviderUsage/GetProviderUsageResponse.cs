@@ -38,5 +38,27 @@ public class GetProviderUsageResponse : BaseApiResponse
         /// Equals configured MaxConnections when no shrink has occurred.
         /// </summary>
         public int? EffectiveMaxConnections { get; set; }
+        /// <summary>
+        /// Configured provider-wide connection ceiling used to create the live pool.
+        /// </summary>
+        public int? ConfiguredMaxConnections { get; set; }
+        /// <summary>
+        /// Live operation-aware connection budget. Null means the provider is using
+        /// legacy shared-pool scheduling or has no active runtime snapshot.
+        /// </summary>
+        public ProviderConnectionBudgetItem? ConnectionBudget { get; set; }
+    }
+
+    public class ProviderConnectionBudgetItem
+    {
+        public int ConfiguredTransferLimit { get; set; }
+        public int EffectiveTransferLimit { get; set; }
+        public int BaseMetadataCapacity { get; set; }
+        public int MetadataBurstAllowance { get; set; }
+        public int MaxMetadataCapacity { get; set; }
+        public int ActiveTransferOperations { get; set; }
+        public int ActiveMetadataOperations { get; set; }
+        public int WaitingTransferOperations { get; set; }
+        public int WaitingMetadataOperations { get; set; }
     }
 }

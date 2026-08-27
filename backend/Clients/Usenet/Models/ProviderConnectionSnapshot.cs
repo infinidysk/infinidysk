@@ -18,4 +18,6 @@ public sealed record ProviderConnectionSnapshot(
     int PendingSelections,
     ConnectionPoolChurn Churn,
     int? LearnedConnectionLimit,
-    int EffectiveMaxConnections);
+    int ConfiguredMaxConnections,
+    int EffectiveMaxConnections,
+    ProviderConnectionAdmissionSnapshot? Admission);

@@ -1631,6 +1631,108 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task PoolMode_RoutesAroundTransferAdmissionSaturatedProvider()
+    {
+        var saturatedConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            DeferSingularCompletion = true,
+        };
+        var idleConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var saturatedProvider = CreateProvider(
+            saturatedConnection,
+            host: "saturated.example",
+            maxConnections: 4,
+            maxTransferConnections: 1);
+        using var client = new MultiProviderNntpClient(
+        [
+            saturatedProvider,
+            CreateProvider(
+                idleConnection,
+                host: "idle.example",
+                maxConnections: 4,
+                maxTransferConnections: 1),
+        ], cascadeEnabled: () => false);
+
+        UsenetDecodedBodyResponse? heldResponse = null;
+        try
+        {
+            heldResponse = await saturatedProvider.DecodedBodyAsync(
+                "held-segment",
+                CancellationToken.None);
+            var routedResponse = await client.DecodedBodyAsync(
+                "routed-segment",
+                CancellationToken.None);
+            await routedResponse.Stream!.DisposeAsync();
+
+            Assert.Equal(1, saturatedConnection.SingularRequests);
+            Assert.Equal(1, idleConnection.SingularRequests);
+        }
+        finally
+        {
+            saturatedConnection.CompletePendingSingularRequests();
+            if (heldResponse?.Stream is not null)
+                await heldResponse.Stream.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task PoolMode_UsesMetadataCapacityOnTransferSaturatedProvider()
+    {
+        var primaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            StatResponseCode = (int)UsenetResponseType.ArticleExists,
+            DeferSingularCompletion = true,
+        };
+        var peerConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            StatResponseCode = (int)UsenetResponseType.ArticleExists,
+        };
+        var primaryProvider = CreateProvider(
+            primaryConnection,
+            host: "primary.example",
+            maxConnections: 4,
+            maxTransferConnections: 1);
+        using var client = new MultiProviderNntpClient(
+        [
+            primaryProvider,
+            CreateProvider(
+                peerConnection,
+                host: "peer.example",
+                maxConnections: 1,
+                maxTransferConnections: 1),
+        ], cascadeEnabled: () => false);
+
+        UsenetDecodedBodyResponse? heldResponse = null;
+        try
+        {
+            heldResponse = await primaryProvider.DecodedBodyAsync(
+                "held-segment",
+                CancellationToken.None);
+            var stat = await client.StatAsync("metadata-segment", CancellationToken.None);
+
+            Assert.True(stat.ArticleExists);
+            Assert.Equal(2, primaryConnection.SingularRequests);
+            Assert.Equal(0, peerConnection.SingularRequests);
+        }
+        finally
+        {
+            primaryConnection.CompletePendingSingularRequests();
+            if (heldResponse?.Stream is not null)
+                await heldResponse.Stream.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task CascadeMode_PreservesPriorityWhenSpareCapacityIsComparable()
     {
         var primaryConnection = new ScriptedNntpClient
@@ -1701,7 +1803,7 @@ public class MultiProviderNntpClientTests
         var idle = CreateProvider(idleConnection, host: "idle.example", maxConnections: 8, priority: 1);
         // Leave primary with a single spare connection (12.5% <= 25%) so thin-spare demotes it.
         for (var i = 0; i < 7; i++)
-            primary.ReservePending();
+            primary.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([primary, idle], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -1728,7 +1830,7 @@ public class MultiProviderNntpClientTests
         var secondary = CreateProvider(secondaryConnection, host: "secondary.example", maxConnections: 8, priority: 1);
         // 3/8 unreserved = 37.5% spare — just above the 25% thin-spare band.
         for (var i = 0; i < 5; i++)
-            primary.ReservePending();
+            primary.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([primary, secondary], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -1755,7 +1857,7 @@ public class MultiProviderNntpClientTests
         var secondary = CreateProvider(secondaryConnection, host: "secondary.example", maxConnections: 8, priority: 1);
         // 2/8 unreserved = exactly 25%, so the idle next-priority peer wins.
         for (var i = 0; i < 6; i++)
-            primary.ReservePending();
+            primary.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([primary, secondary], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -1784,9 +1886,9 @@ public class MultiProviderNntpClientTests
         // pick the larger pool (16 > 10). Fraction tie-break keeps list order, so the
         // smaller pool listed first must win.
         for (var i = 0; i < 16; i++)
-            larger.ReservePending();
+            larger.ReservePending(NntpOperation.Body);
         for (var i = 0; i < 10; i++)
-            smaller.ReservePending();
+            smaller.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([smaller, larger], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -1812,7 +1914,7 @@ public class MultiProviderNntpClientTests
         var primary = CreateProvider(primaryConnection, host: "primary.example", maxConnections: 4, priority: 0);
         var backup = CreateProvider(backupConnection, host: "backup.example", maxConnections: 4, priority: 1);
         for (var i = 0; i < 4; i++)
-            primary.ReservePending();
+            primary.ReservePending(NntpOperation.Body);
         using var client = new MultiProviderNntpClient([primary, backup], cascadeEnabled: () => true);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -2177,7 +2279,8 @@ public class MultiProviderNntpClientTests
         ProviderCircuitBreaker? circuitBreaker = null,
         ProviderType providerType = ProviderType.Pooled,
         int maxConnections = 1,
-        int priority = 0)
+        int priority = 0,
+        int? maxTransferConnections = null)
     {
         var pool = new ConnectionPool<INntpClient>(
             maxConnections, _ => ValueTask.FromResult(connection));
@@ -2187,7 +2290,8 @@ public class MultiProviderNntpClientTests
             circuitBreaker ?? new ProviderCircuitBreaker(host),
             host,
             priority: priority,
-            storageGroup: storageGroup);
+            storageGroup: storageGroup,
+            maxTransferConnections: maxTransferConnections);
     }
 
     /// <summary>Trips a breaker and lets its cooldown lapse so it lands half-open.</summary>
@@ -2215,6 +2319,7 @@ public class MultiProviderNntpClientTests
     {
         public required int BatchResponseCode { get; init; }
         public int SingularResponseCode { get; init; } = 222;
+        public int? StatResponseCode { get; init; }
         public Func<int, Exception?>? BatchException { get; init; }
         public Func<Exception>? FaultBatchResponsesWith { get; init; }
         public Func<string, Exception>? SingularException { get; init; }
@@ -2308,11 +2413,12 @@ public class MultiProviderNntpClientTests
             if (SingularException != null)
                 throw SingularException(segmentId.ToString());
 
+            var responseCode = StatResponseCode ?? SingularResponseCode;
             return Task.FromResult(new UsenetStatResponse
             {
-                ResponseCode = SingularResponseCode,
-                ResponseMessage = $"{SingularResponseCode} scripted stat <{segmentId}>",
-                ArticleExists = SingularResponseCode == (int)UsenetResponseType.ArticleExists,
+                ResponseCode = responseCode,
+                ResponseMessage = $"{responseCode} scripted stat <{segmentId}>",
+                ArticleExists = responseCode == (int)UsenetResponseType.ArticleExists,
             });
         }
 

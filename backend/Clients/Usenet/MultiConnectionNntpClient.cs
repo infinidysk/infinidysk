@@ -45,9 +45,19 @@ public class MultiConnectionNntpClient(
     int? pipeliningDepth = null,
     string storageGroup = "",
     string? metricsKey = null,
-    ProviderLatencyTracker? latencyTracker = null
+    ProviderLatencyTracker? latencyTracker = null,
+    int? maxTransferConnections = null,
+    SemaphorePriorityOdds? priorityOdds = null
 ) : NntpClient
 {
+    private readonly ProviderConnectionAdmission? _connectionAdmission =
+        maxTransferConnections is { } transferLimit
+            ? new ProviderConnectionAdmission(
+                () => connectionPool.EffectiveMaxConnections,
+                transferLimit,
+                priorityOdds)
+            : null;
+
     public ProviderType ProviderType { get; } = type;
     public int Priority { get; } = priority;
     public string Host { get; } = providerName;
@@ -105,6 +115,8 @@ public class MultiConnectionNntpClient(
     public int IdleConnections => connectionPool.IdleConnections;
     public int ActiveConnections => connectionPool.ActiveConnections;
     public int AvailableConnections => connectionPool.AvailableConnections;
+    public ProviderConnectionAdmissionSnapshot? GetConnectionAdmissionSnapshot() =>
+        _connectionAdmission?.GetSnapshot();
     public int InFlightConnections => ActiveConnections + PendingSelections;
     public ConnectionPoolChurn GetConnectionChurn() => connectionPool.GetChurn();
 
@@ -112,13 +124,28 @@ public class MultiConnectionNntpClient(
     /// Applies new Streaming Priority odds to this provider's connection gate without
     /// rebuilding the pool.
     /// </summary>
-    public void UpdatePriorityOdds(SemaphorePriorityOdds odds) => connectionPool.UpdatePriorityOdds(odds);
+    public void UpdatePriorityOdds(SemaphorePriorityOdds odds)
+    {
+        connectionPool.UpdatePriorityOdds(odds);
+        _connectionAdmission?.UpdatePriorityOdds(odds);
+    }
 
     private int _pendingSelections;
+    private int _pendingTransferSelections;
+    private int _pendingMetadataSelections;
     private int _retiredPoolWarningLogged;
     public int PendingSelections => Volatile.Read(ref _pendingSelections);
-    public void ReservePending() => Interlocked.Increment(ref _pendingSelections);
-    public void ReleasePending() => Interlocked.Decrement(ref _pendingSelections);
+    internal void ReservePending(NntpOperation operation)
+    {
+        Interlocked.Increment(ref _pendingSelections);
+        Interlocked.Increment(ref PendingSelectionsFor(ClassifyConnectionKind(operation)));
+    }
+
+    internal void ReleasePending(NntpOperation operation)
+    {
+        Interlocked.Decrement(ref PendingSelectionsFor(ClassifyConnectionKind(operation)));
+        Interlocked.Decrement(ref _pendingSelections);
+    }
 
     public int UnreservedConnections => Math.Max(0, AvailableConnections - PendingSelections);
     public bool HasSpareConnection => UnreservedConnections > 0;
@@ -128,6 +155,49 @@ public class MultiConnectionNntpClient(
     /// </summary>
     public double SpareFraction =>
         (double)UnreservedConnections / Math.Max(1, MaxConnections);
+
+    internal int UnreservedConnectionsFor(NntpOperation operation)
+    {
+        var physicalSpare = UnreservedConnections;
+        var admission = _connectionAdmission?.GetRoutingState();
+        if (admission is null)
+            return physicalSpare;
+
+        var routingState = admission.Value;
+        var kind = ClassifyConnectionKind(operation);
+        var pendingForKind = Volatile.Read(ref PendingSelectionsFor(kind));
+        var kindSpare = kind == ProviderConnectionKind.Transfer
+            ? routingState.EffectiveTransferLimit
+              - routingState.ActiveTransferOperations
+              - pendingForKind
+            : routingState.MaxMetadataCapacity
+              - routingState.ActiveMetadataOperations
+              - pendingForKind;
+        var combinedSpare = routingState.EffectiveProviderLimit
+                            - routingState.ActiveTransferOperations
+                            - routingState.ActiveMetadataOperations
+                            - PendingSelections;
+        return Math.Max(0, Math.Min(physicalSpare, Math.Min(kindSpare, combinedSpare)));
+    }
+
+    internal async Task<IDisposable?> AcquireKeepAliveAdmissionAsync(CancellationToken ct)
+    {
+        if (_connectionAdmission is null)
+            return null;
+
+        return await _connectionAdmission.AcquireAsync(
+                ProviderConnectionKind.Metadata,
+                SemaphorePriority.Low,
+                ct)
+            .ConfigureAwait(false);
+    }
+
+    private ref int PendingSelectionsFor(ProviderConnectionKind kind)
+    {
+        if (kind == ProviderConnectionKind.Transfer)
+            return ref _pendingTransferSelections;
+        return ref _pendingMetadataSelections;
+    }
 
     public override Task ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken)
     {
@@ -843,25 +913,42 @@ public class MultiConnectionNntpClient(
     {
         var traceRange = MultiProviderNntpClient.CurrentStreamTraceRange;
         var started = Stopwatch.GetTimestamp();
-        ConnectionLock<INntpClient> connectionLock;
-        HealthCheckConnectionGate.Lease? healthCheckLease = null;
+        ConnectionLock<INntpClient>? connectionLock = null;
+        OperationLeaseGroup? operationLeases = null;
+        var returnConnectionLock = false;
         try
         {
             if (ct.GetContext<HealthCheckAdmissionContext>() is { } healthCheckContext)
             {
-                healthCheckLease = await healthCheckContext.Gate
-                    .AcquireAsync(healthCheckContext.Priority, ct)
-                    .ConfigureAwait(false);
+                operationLeases = new OperationLeaseGroup();
+                operationLeases.Add(
+                    await healthCheckContext.Gate
+                        .AcquireAsync(healthCheckContext.Priority, ct)
+                        .ConfigureAwait(false));
+            }
+
+            if (_connectionAdmission is not null)
+            {
+                operationLeases ??= new OperationLeaseGroup();
+                operationLeases.Add(
+                    await _connectionAdmission.AcquireAsync(
+                            ClassifyConnectionKind(operation), priority, ct)
+                        .ConfigureAwait(false));
             }
 
             connectionLock = await connectionPool.GetConnectionLockAsync(priority, ct)
                 .ConfigureAwait(false);
-            if (healthCheckLease is not null)
+            if (operationLeases is not null)
             {
-                var attachedHealthCheckLease = healthCheckLease;
-                connectionLock.AttachDisposeCallback(attachedHealthCheckLease.Dispose);
-                healthCheckLease = null;
+                connectionLock.AttachDisposeCallback(operationLeases.Dispose);
+                operationLeases = null;
             }
+
+            var elapsed = Stopwatch.GetElapsedTime(started);
+            latencyTracker?.Record(MetricsKey, LatencyPhase.PoolWait, workload, operation, elapsed);
+            StreamTrace.TryConnectionAcquired(traceRange, elapsed, connectionLock.WasReused);
+            returnConnectionLock = true;
+            return connectionLock;
         }
         catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e) && e is not OutOfMemoryException)
         {
@@ -869,13 +956,61 @@ public class MultiConnectionNntpClient(
         }
         finally
         {
-            healthCheckLease?.Dispose();
+            try
+            {
+                if (!returnConnectionLock)
+                    connectionLock?.Dispose();
+            }
+            finally
+            {
+                operationLeases?.Dispose();
+            }
         }
-        var elapsed = Stopwatch.GetElapsedTime(started);
-        latencyTracker?.Record(MetricsKey, LatencyPhase.PoolWait, workload, operation, elapsed);
-        StreamTrace.TryConnectionAcquired(traceRange, elapsed, connectionLock.WasReused);
-        return connectionLock;
     }
+
+    /// <summary>
+    /// Owns operation gates in acquisition order and releases them in reverse order.
+    /// Disposal is idempotent so a failed callback attachment can safely fall back to
+    /// local cleanup.
+    /// </summary>
+    internal sealed class OperationLeaseGroup : IDisposable
+    {
+        private IDisposable? _first;
+        private IDisposable? _second;
+        private int _disposed;
+
+        public void Add(IDisposable lease)
+        {
+            ArgumentNullException.ThrowIfNull(lease);
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
+            if (_first is null)
+                _first = lease;
+            else if (_second is null)
+                _second = lease;
+            else
+                throw new InvalidOperationException(
+                    "A connection operation cannot own more than two admission leases.");
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1)
+                return;
+
+            var second = Interlocked.Exchange(ref _second, null);
+            var first = Interlocked.Exchange(ref _first, null);
+            LogException(() => second?.Dispose());
+            LogException(() => first?.Dispose());
+        }
+    }
+
+    internal static ProviderConnectionKind ClassifyConnectionKind(NntpOperation operation) =>
+        operation is NntpOperation.Body
+            or NntpOperation.Article
+            or NntpOperation.PipelinedBody
+            or NntpOperation.PipelinedArticle
+            ? ProviderConnectionKind.Transfer
+            : ProviderConnectionKind.Metadata;
 
     /// <summary>
     /// Acquisition wrapper for the pipelined enumerable paths, which have no retry loop
@@ -950,7 +1085,8 @@ public class MultiConnectionNntpClient(
     /// Stale requests must abandon without retrying the same dead pool or feeding the breaker.
     /// </summary>
     private bool IsRetiredPoolAcquisitionFailure(Exception e) =>
-        connectionPool.IsDisposed && e is ObjectDisposedException or OperationCanceledException;
+        (connectionPool.IsDisposed || _connectionAdmission?.IsDisposed == true)
+        && e is ObjectDisposedException or OperationCanceledException;
 
     private NntpClientRetiredException CreateRetiredPoolException(Exception inner)
     {
@@ -999,6 +1135,7 @@ public class MultiConnectionNntpClient(
 
     public override void Dispose()
     {
+        _connectionAdmission?.Dispose();
         connectionPool.Dispose();
         GC.SuppressFinalize(this);
     }

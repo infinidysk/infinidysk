@@ -20,6 +20,34 @@ authenticated InfiniDysk UI session and automatically receive the internal key.
 Do not publish the backend port to untrusted networks when direct scraping is
 anonymous.
 
+## Provider connection budgets
+
+Operation-aware providers expose their live budget through the existing bounded-label
+NNTP gauge families:
+
+| Metric | Label | Values |
+|--------|-------|--------|
+| `nzbdav_nntp_pool_connections` | `state` | `transfer_active`, `metadata_active`, `transfer_waiting`, `metadata_waiting` |
+| `nzbdav_nntp_pool_max_connections` | `limit` | `transfer_configured`, `transfer_effective`, `metadata_base`, `metadata_burst`, `metadata_max` |
+
+Both metric families also carry `provider_key`, the provider's stable normalized identifier.
+The existing pool states (`live`, `idle`, `active`, `available`, and `pending`) and limits
+(`configured`, `effective`, and optional `learned`) remain available alongside the budget labels.
+
+Providers with no configured `MaxTransferConnections` remain in legacy shared-pool mode and do
+not export the transfer/metadata label values. Their absence means “budgeting disabled,” not zero
+capacity.
+
+For example, these queries compare current operation admission with its effective limits:
+
+```promql
+nzbdav_nntp_pool_connections{state=~"transfer_active|metadata_active"}
+```
+
+```promql
+nzbdav_nntp_pool_max_connections{limit=~"transfer_effective|metadata_max"}
+```
+
 ## Prometheus configuration
 
 For the normal frontend endpoint:

@@ -114,6 +114,11 @@ public sealed class BenchmarkResult
     /// <summary>True when the run only measured pipelining depth (connection count left untouched).</summary>
     public bool PipeliningOnly { get; set; }
     public List<BenchmarkSweepPoint> Sweep { get; set; } = [];
+
+    /// <summary>
+    /// Recommended BODY/ARTICLE transfer concurrency. The property name is retained
+    /// for wire compatibility; applying it must not rewrite the provider-wide limit.
+    /// </summary>
     public int? RecommendedConnections { get; set; }
 
     /// <summary>The connection count the provider refused to exceed, if we hit it.</summary>

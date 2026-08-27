@@ -139,7 +139,7 @@ services:
       NZBDAV_CONFIG__USENET__PIPELINING__ENABLED: "false"
       NZBDAV_CONFIG__USENET__CASCADE__ENABLED: "true"
       NZBDAV_CONFIG__USENET__PROVIDERS: >-
-        {"Providers":[{"Type":1,"Host":"news.example.com","Port":563,"UseSsl":true,"User":"${USENET_USER:?set USENET_USER}","Pass":"${USENET_PASS:?set USENET_PASS}","MaxConnections":20,"Nickname":"primary"}]}
+        {"Providers":[{"Type":1,"Host":"news.example.com","Port":563,"UseSsl":true,"User":"${USENET_USER:?set USENET_USER}","Pass":"${USENET_PASS:?set USENET_PASS}","MaxConnections":50,"MaxTransferConnections":20,"Nickname":"primary"}]}
 
       NZBDAV_CONFIG__ARR__INSTANCES: >-
         {"RadarrInstances":[{"Host":"http://radarr:7878","ApiKey":"${RADARR_API_KEY:?set RADARR_API_KEY}"}],"SonarrInstances":[{"Host":"http://sonarr:8989","ApiKey":"${SONARR_API_KEY:?set SONARR_API_KEY}"}],"QueueRules":[]}
@@ -186,6 +186,11 @@ services:
     Use **PascalCase** property names exactly as the Settings UI persists them (`Providers`, `Type`, `Host`, `RadarrInstances`, `Indexers`, `Profiles`, …). camelCase or misspelled keys abort startup with an error naming the JSON path of the offending property, so a typo cannot leave you with empty or partial configuration.
 
     Provider `Type` for **Pool Connections** is `1` (`0` = Disabled, `2` = BackupAndStats, `3` = BackupOnly — see [Usenet](usenet.md)). Omit `ProviderId` in ENV JSON — InfiniDysk preserves matching SQLite ids by host/port/user, and otherwise derives one from host, port and user, so a pure ENV-only install keeps the same ids across restarts.
+
+    Provider `MaxConnections` is the provider-wide connection ceiling. Optional
+    `MaxTransferConnections` enables operation-aware budgeting and must be between `1` and
+    `MaxConnections`; omit it to preserve legacy shared-pool scheduling. See
+    [Usenet connection budgets](usenet.md).
 
     Passwords containing `"`, `\`, or `$` can break JSON after Compose substitution; prefer `.env` values without those characters or inject secrets outside inline JSON.
 

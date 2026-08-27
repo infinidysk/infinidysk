@@ -684,7 +684,22 @@ public sealed class SupportPackService(
                     snapshot.AvailableConnections,
                     snapshot.PendingSelections,
                     snapshot.LearnedConnectionLimit,
+                    snapshot.ConfiguredMaxConnections,
                     snapshot.EffectiveMaxConnections,
+                    admission = snapshot.Admission is null
+                        ? null
+                        : new
+                        {
+                            snapshot.Admission.ConfiguredTransferLimit,
+                            snapshot.Admission.EffectiveTransferLimit,
+                            snapshot.Admission.BaseMetadataCapacity,
+                            snapshot.Admission.MetadataBurstAllowance,
+                            snapshot.Admission.MaxMetadataCapacity,
+                            snapshot.Admission.ActiveTransferOperations,
+                            snapshot.Admission.ActiveMetadataOperations,
+                            snapshot.Admission.WaitingTransferOperations,
+                            snapshot.Admission.WaitingMetadataOperations,
+                        },
                     churn = new
                     {
                         snapshot.Churn.ConnectionsOpened,

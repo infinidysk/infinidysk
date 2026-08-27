@@ -79,8 +79,8 @@ public sealed class PrometheusMetrics
             "Article RAM lease requests that encountered budget backpressure.");
         _metricsQueueLength = metrics.CreateGauge("nzbdav_metrics_queue_length", "Queued internal metric rows.", new GaugeConfiguration { LabelNames = ["queue"] });
         _metricsDropped = metrics.CreateCounter("nzbdav_metrics_dropped_total", "Dropped internal metric rows.", new CounterConfiguration { LabelNames = ["queue"] });
-        _poolConnections = metrics.CreateGauge("nzbdav_nntp_pool_connections", "NNTP pool connection state.", new GaugeConfiguration { LabelNames = ["provider_key", "state"] });
-        _poolMaxConnections = metrics.CreateGauge("nzbdav_nntp_pool_max_connections", "NNTP pool connection limits.", new GaugeConfiguration { LabelNames = ["provider_key", "limit"] });
+        _poolConnections = metrics.CreateGauge("nzbdav_nntp_pool_connections", "NNTP pool connection and admitted-operation state.", new GaugeConfiguration { LabelNames = ["provider_key", "state"] });
+        _poolMaxConnections = metrics.CreateGauge("nzbdav_nntp_pool_max_connections", "NNTP pool and operation-admission limits.", new GaugeConfiguration { LabelNames = ["provider_key", "limit"] });
         _poolChurn = metrics.CreateGauge("nzbdav_nntp_pool_churn_total", "NNTP pool lifetime churn.", new GaugeConfiguration { LabelNames = ["provider_key", "event"] });
         _circuitState = metrics.CreateGauge("nzbdav_circuit_state", "Circuit state: 0=closed, 1=open, 2=half_open.", new GaugeConfiguration { LabelNames = ["provider_key"] });
         _circuitCooldownSeconds = metrics.CreateGauge("nzbdav_circuit_cooldown_remaining_seconds", "Circuit cooldown remaining.", new GaugeConfiguration { LabelNames = ["provider_key"] });
@@ -272,7 +272,7 @@ public sealed class PrometheusMetrics
         _providerKeys.UnionWith(currentKeys);
     }
 
-    private void SetPool(ProviderConnectionSnapshot pool)
+    internal void SetPool(ProviderConnectionSnapshot pool)
     {
         var key = pool.MetricsKey;
         _poolConnections.WithLabels(key, "live").Set(pool.LiveConnections);
@@ -280,9 +280,29 @@ public sealed class PrometheusMetrics
         _poolConnections.WithLabels(key, "active").Set(pool.ActiveConnections);
         _poolConnections.WithLabels(key, "available").Set(pool.AvailableConnections);
         _poolConnections.WithLabels(key, "pending").Set(pool.PendingSelections);
+        _poolMaxConnections.WithLabels(key, "configured").Set(pool.ConfiguredMaxConnections);
         _poolMaxConnections.WithLabels(key, "effective").Set(pool.EffectiveMaxConnections);
         if (pool.LearnedConnectionLimit is { } learned)
             _poolMaxConnections.WithLabels(key, "learned").Set(learned);
+        else
+            _poolMaxConnections.RemoveLabelled(key, "learned");
+
+        if (pool.Admission is { } admission)
+        {
+            _poolConnections.WithLabels(key, "transfer_active").Set(admission.ActiveTransferOperations);
+            _poolConnections.WithLabels(key, "metadata_active").Set(admission.ActiveMetadataOperations);
+            _poolConnections.WithLabels(key, "transfer_waiting").Set(admission.WaitingTransferOperations);
+            _poolConnections.WithLabels(key, "metadata_waiting").Set(admission.WaitingMetadataOperations);
+            _poolMaxConnections.WithLabels(key, "transfer_configured").Set(admission.ConfiguredTransferLimit);
+            _poolMaxConnections.WithLabels(key, "transfer_effective").Set(admission.EffectiveTransferLimit);
+            _poolMaxConnections.WithLabels(key, "metadata_base").Set(admission.BaseMetadataCapacity);
+            _poolMaxConnections.WithLabels(key, "metadata_burst").Set(admission.MetadataBurstAllowance);
+            _poolMaxConnections.WithLabels(key, "metadata_max").Set(admission.MaxMetadataCapacity);
+        }
+        else
+        {
+            RemoveAdmissionMetrics(key);
+        }
         _poolChurn.WithLabels(key, "opened").Set(pool.Churn.ConnectionsOpened);
         _poolChurn.WithLabels(key, "reused").Set(pool.Churn.ConnectionsReused);
         _poolChurn.WithLabels(key, "destroyed").Set(pool.Churn.ConnectionsDestroyed);
@@ -307,9 +327,17 @@ public sealed class PrometheusMetrics
 
     private void RemoveProvider(string key)
     {
-        foreach (var state in new[] { "live", "idle", "active", "available", "pending" })
+        foreach (var state in new[]
+                 {
+                     "live", "idle", "active", "available", "pending",
+                     "transfer_active", "metadata_active", "transfer_waiting", "metadata_waiting",
+                 })
             _poolConnections.RemoveLabelled(key, state);
-        foreach (var limit in new[] { "effective", "learned" })
+        foreach (var limit in new[]
+                 {
+                     "configured", "effective", "learned", "transfer_configured",
+                     "transfer_effective", "metadata_base", "metadata_burst", "metadata_max",
+                 })
             _poolMaxConnections.RemoveLabelled(key, limit);
         foreach (var churn in new[] { "opened", "reused", "destroyed", "stale_eviction", "handshake_failure" })
             _poolChurn.RemoveLabelled(key, churn);
@@ -318,5 +346,20 @@ public sealed class PrometheusMetrics
         _circuitTrips.RemoveLabelled(key);
         _circuitFailures.RemoveLabelled(key);
         _circuitArticleMisses.RemoveLabelled(key);
+    }
+
+    private void RemoveAdmissionMetrics(string key)
+    {
+        foreach (var state in new[]
+                 {
+                     "transfer_active", "metadata_active", "transfer_waiting", "metadata_waiting",
+                 })
+            _poolConnections.RemoveLabelled(key, state);
+        foreach (var limit in new[]
+                 {
+                     "transfer_configured", "transfer_effective", "metadata_base",
+                     "metadata_burst", "metadata_max",
+                 })
+            _poolMaxConnections.RemoveLabelled(key, limit);
     }
 }
