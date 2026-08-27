@@ -297,6 +297,26 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
     }
 
     [Fact]
+    public async Task AbortedGet_WhenBodyWriteThrows_StillCountsAbortedBeforeFirstByte()
+    {
+        // A failed write never put a byte on the wire, so it must not mark the
+        // first byte: the abort happened before any response byte.
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Request.Path = "/content/tv/show.mkv";
+        context.RequestAborted = new CancellationToken(canceled: true);
+        context.Response.Body = new ThrowingWriteStream();
+        var middleware = new WebDavObservabilityMiddleware(async ctx =>
+            await ctx.Response.Body.WriteAsync(new byte[] { 1 }));
+
+        await Assert.ThrowsAsync<IOException>(() => middleware.InvokeAsync(context));
+
+        var counters = WebDavObservabilityMiddleware.Snapshot();
+        Assert.Equal(1, counters["aborted"]);
+        Assert.Equal(1, counters["abortedBeforeFirstByte"]);
+    }
+
+    [Fact]
     public async Task SlowWarnings_AreThrottledPerCategory()
     {
         WebDavObservabilityMiddleware.SlowThresholdOverride = TimeSpan.Zero;
@@ -339,6 +359,31 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
         context.Request.Method = "GET";
         context.Request.Path = "/content/tv/show.mkv";
         return context;
+    }
+
+    private sealed class ThrowingWriteStream : Stream
+    {
+        public override bool CanWrite => true;
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new IOException("simulated client disconnect");
+
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+            throw new IOException("simulated client disconnect");
+
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 
     // firstByteOrMinusOne stands in for long? because InlineData cannot convert int

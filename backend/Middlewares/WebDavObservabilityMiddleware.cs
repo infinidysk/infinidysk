@@ -275,24 +275,26 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
             Volatile.Write(ref _firstByteRecorded, 1);
         }
 
+        // Record only after the inner write succeeds: a failed write (client
+        // disconnect, timeout) never put a byte on the wire.
         public override void Write(byte[] buffer, int offset, int count)
         {
-            RecordFirstByte(count);
             inner.Write(buffer, offset, count);
+            RecordFirstByte(count);
         }
 
         public override async Task WriteAsync(
             byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            RecordFirstByte(count);
             await inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
+            RecordFirstByte(count);
         }
 
         public override async ValueTask WriteAsync(
             ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            RecordFirstByte(buffer.Length);
             await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+            RecordFirstByte(buffer.Length);
         }
 
         public override void Flush() => inner.Flush();
