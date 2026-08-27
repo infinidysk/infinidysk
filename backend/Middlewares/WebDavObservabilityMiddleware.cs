@@ -112,7 +112,7 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
                     method, path, status, elapsedMs);
             }
 
-            switch (ClassifySlow(isGet, firstByteMs, elapsedMs))
+            switch (ClassifySlow(method, firstByteMs, elapsedMs))
             {
                 case SlowKind.FirstByte:
                     Increment("slowFirstByte");
@@ -152,13 +152,13 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
     }
 
     // Pure classification so the timing tiers are testable without clock-dependent tests.
-    internal static SlowKind ClassifySlow(bool isGet, long? firstByteMs, long elapsedMs)
+    internal static SlowKind ClassifySlow(string method, long? firstByteMs, long elapsedMs)
     {
         var slowMs = (SlowThresholdOverride ?? SlowThreshold).TotalMilliseconds;
         var stallMs = (StallThresholdOverride ?? StallThreshold).TotalMilliseconds;
 
-        if (!isGet)
-            return elapsedMs >= slowMs ? SlowKind.Metadata : SlowKind.None;
+        if (!HttpMethods.IsGet(method))
+            return IsMetadataMethod(method) && elapsedMs >= slowMs ? SlowKind.Metadata : SlowKind.None;
 
         if (firstByteMs is not long firstByte)
             return elapsedMs >= slowMs ? SlowKind.FirstByte : SlowKind.None;
@@ -166,11 +166,17 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
         if (firstByte >= slowMs)
             return SlowKind.FirstByte;
 
-        if (elapsedMs >= stallMs)
+        // Stalled means strictly over the threshold; a stream ending exactly at
+        // the boundary is still a healthy long stream.
+        if (elapsedMs > stallMs)
             return SlowKind.Stalled;
 
         return elapsedMs >= slowMs ? SlowKind.LongStream : SlowKind.None;
     }
+
+    private static bool IsMetadataMethod(string method) =>
+        HttpMethods.IsHead(method)
+        || string.Equals(method, "PROPFIND", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsWebDavRequest(HttpContext context)
     {
