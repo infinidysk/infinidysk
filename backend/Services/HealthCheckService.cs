@@ -50,6 +50,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     internal const int RepairRecurrenceLimit = 3;
     internal static readonly TimeSpan RepairRecurrenceWindow = TimeSpan.FromHours(6);
     internal static readonly TimeSpan InfrastructureFailureCooldown = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan WorkerDrainTimeout = TimeSpan.FromSeconds(5);
     private const int MaximumTrackedRepairPaths = 10_000;
 
     internal static bool IsMissingPayloadMessage(string? message) =>
@@ -124,6 +125,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private readonly SemaphoreSlim _workerAdmissionGate = new(1, 1);
     private TaskCompletionSource _workerStateChanged = CreateWorkerStateSignal();
     private long _infrastructureBackoffUntilUtcTicks;
+    private int _disposed;
 
     private static readonly HashSet<string> _missingSegmentIds = [];
     private static readonly Queue<string> _missingSegmentOrder = [];
@@ -236,8 +238,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
         finally
         {
-            CancelAllActiveWorkers();
-            await DrainActiveWorkersAsync().ConfigureAwait(false);
+            var drainDeadline = Task.Delay(WorkerDrainTimeout, CancellationToken.None);
+            await CancelAllActiveWorkersAsync(drainDeadline).ConfigureAwait(false);
+            await DrainActiveWorkersAsync(drainDeadline).ConfigureAwait(false);
         }
     }
 
@@ -322,15 +325,29 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
     private bool TryStartWorker(Guid id, CancellationToken ct)
     {
+#pragma warning disable CA2000 // cancellation ownership transfers to the registered worker and is disposed by the coordinator reaper
         var worker = new InProgressHealthCheck(
             ContextualCancellationTokenSource.CreateLinkedTokenSource(ct));
+#pragma warning restore CA2000
         if (!_inProgress.TryAdd(id, worker))
         {
             worker.Dispose();
             return false;
         }
 
-        worker.ProcessingTask = RunHealthCheckWorkerAsync(id, worker);
+        try
+        {
+#pragma warning disable CA2025 // the coordinator owns this task, observes it in ReapCompletedWorkersAsync, and only then disposes the worker
+            worker.ProcessingTask = RunHealthCheckWorkerAsync(id, worker);
+#pragma warning restore CA2025
+        }
+        catch
+        {
+            _inProgress.TryRemove(id, out _);
+            worker.Dispose();
+            SignalWorkerStateChanged();
+            throw;
+        }
         SignalWorkerStateChanged();
         return true;
     }
@@ -432,49 +449,161 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
     internal async Task ReapCompletedWorkersAsync()
     {
-        foreach (var (davItemId, worker) in _inProgress.ToArray())
+        var completed = _inProgress
+            .Where(entry => entry.Value.ProcessingTask?.IsCompleted == true)
+            .ToArray();
+        ExceptionDispatchInfo? fatalFailure = null;
+        ExceptionDispatchInfo? otherFailure = null;
+        foreach (var (davItemId, worker) in completed)
         {
-            var task = worker.ProcessingTask;
-            if (task is null || !task.IsCompleted) continue;
-
-            ExceptionDispatchInfo? failure = null;
             try
             {
-                await task.ConfigureAwait(false);
+                await worker.ProcessingTask!.ConfigureAwait(false);
             }
             catch (Exception e)
             {
-                CompleteHealthProgressIfStarted(davItemId, worker);
                 if (e is OutOfMemoryException)
-                    CancelAllActiveWorkers();
-                failure = ExceptionDispatchInfo.Capture(e);
+                {
+                    fatalFailure ??= ExceptionDispatchInfo.Capture(e);
+                }
+                else
+                {
+                    otherFailure ??= ExceptionDispatchInfo.Capture(e);
+                }
             }
             finally
             {
+                CompleteHealthProgressIfStarted(davItemId, worker);
                 if (_inProgress.TryGetValue(davItemId, out var current)
                     && ReferenceEquals(current, worker))
                     _inProgress.TryRemove(davItemId, out _);
                 worker.Dispose();
                 SignalWorkerStateChanged();
             }
+        }
 
-            failure?.Throw();
+        if (fatalFailure is not null)
+            RequestCancellationForAllWorkers();
+        (fatalFailure ?? otherFailure)?.Throw();
+    }
+
+    private async Task DrainActiveWorkersAsync(Task deadline)
+    {
+        ExceptionDispatchInfo? failure = null;
+        var timedOut = false;
+        var detachedWorkerCount = 0;
+        try
+        {
+            while (!_inProgress.IsEmpty)
+            {
+                try
+                {
+                    await ReapCompletedWorkersAsync().ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    failure = ExceptionDispatchInfo.Capture(e);
+                    break;
+                }
+
+                var workers = _inProgress.Values
+                    .Select(worker => worker.ProcessingTask)
+                    .Where(task => task is not null)
+                    .Cast<Task>()
+                    .ToArray();
+                if (workers.Length == 0)
+                {
+                    var stateChanged = Volatile.Read(ref _workerStateChanged).Task;
+                    if (ReferenceEquals(
+                            await Task.WhenAny(stateChanged, deadline).ConfigureAwait(false),
+                            deadline))
+                    {
+                        timedOut = true;
+                        break;
+                    }
+                    continue;
+                }
+                if (ReferenceEquals(
+                        await Task.WhenAny([.. workers, deadline]).ConfigureAwait(false),
+                        deadline))
+                {
+                    timedOut = true;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            if (!_inProgress.IsEmpty)
+            {
+                detachedWorkerCount = _inProgress.Count;
+                ObserveRemainingWorkers();
+            }
+        }
+
+        if (timedOut)
+        {
+            Log.Warning(
+                "Background health worker drain exceeded {Timeout}; " +
+                "{Count} worker(s) will be observed asynchronously",
+                WorkerDrainTimeout,
+                detachedWorkerCount);
+        }
+
+        failure?.Throw();
+    }
+
+    private void ObserveRemainingWorkers()
+    {
+        foreach (var (davItemId, worker) in _inProgress.ToArray())
+        {
+            if (worker.ProcessingTask is not { } task)
+            {
+                if (_inProgress.TryGetValue(davItemId, out var current)
+                    && ReferenceEquals(current, worker))
+                    _inProgress.TryRemove(davItemId, out _);
+                worker.Dispose();
+                SignalWorkerStateChanged();
+                continue;
+            }
+#pragma warning disable CA2025 // this continuation is the explicit owner/observer after the bounded coordinator drain expires
+            _ = task.ContinueWith(
+                static (completedTask, state) =>
+                {
+                    var (service, id, detachedWorker) =
+                        ((HealthCheckService, Guid, InProgressHealthCheck))state!;
+                    service.CompleteDetachedWorker(id, detachedWorker, completedTask);
+                },
+                (this, davItemId, worker),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+#pragma warning restore CA2025
         }
     }
 
-    private async Task DrainActiveWorkersAsync()
+    private void CompleteDetachedWorker(
+        Guid davItemId,
+        InProgressHealthCheck worker,
+        Task completedTask)
     {
-        while (!_inProgress.IsEmpty)
+        CompleteHealthProgressIfStarted(davItemId, worker);
+        if (completedTask.Exception is { } aggregate)
         {
-            await ReapCompletedWorkersAsync().ConfigureAwait(false);
-            var workers = _inProgress.Values
-                .Select(worker => worker.ProcessingTask)
-                .Where(task => task is not null)
-                .Cast<Task>()
-                .ToArray();
-            if (workers.Length == 0) continue;
-            await Task.WhenAny(workers).ConfigureAwait(false);
+            foreach (var exception in aggregate.Flatten().InnerExceptions)
+            {
+                if (exception is OutOfMemoryException)
+                    Log.Fatal(exception, "Detached health worker {DavItemId} ran out of memory", davItemId);
+                else
+                    Log.Error(exception, "Detached health worker {DavItemId} faulted", davItemId);
+            }
         }
+
+        if (_inProgress.TryGetValue(davItemId, out var current)
+            && ReferenceEquals(current, worker))
+            _inProgress.TryRemove(davItemId, out _);
+        worker.Dispose();
+        SignalWorkerStateChanged();
     }
 
     private async Task WaitForCoordinatorWakeAsync(
@@ -511,13 +640,43 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         await _healthCheckConnectionGate.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public override void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+        base.Dispose();
+        _workerAdmissionGate.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
     private bool HasCompletedWorker() =>
         _inProgress.Values.Any(worker => worker.ProcessingTask?.IsCompleted == true);
 
-    private void CancelAllActiveWorkers()
+    private void RequestCancellationForAllWorkers()
     {
         foreach (var worker in _inProgress.Values)
-            worker.Cancel();
+            _ = worker.CancelAsync();
+    }
+
+    private async Task CancelAllActiveWorkersAsync(Task deadline)
+    {
+        var cancellations = _inProgress.Values
+            .Select(worker => worker.CancelAsync())
+            .ToArray();
+        if (cancellations.Length == 0) return;
+
+        var allCancellations = Task.WhenAll(cancellations);
+        if (ReferenceEquals(
+                await Task.WhenAny(allCancellations, deadline).ConfigureAwait(false),
+                deadline))
+        {
+            Log.Warning(
+                "Background health worker cancellation exceeded {Timeout}; " +
+                "continuing the bounded drain",
+                WorkerDrainTimeout);
+            return;
+        }
+
+        await allCancellations.ConfigureAwait(false);
     }
 
     private HashSet<Guid> GetReservedHealthCheckIds()
@@ -592,18 +751,72 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private sealed class InProgressHealthCheck(
         ContextualCancellationTokenSource cancellation) : IDisposable
     {
+        private const int ProgressStartedFlag = 1;
+        private const int ProgressClosedFlag = 2;
+        private readonly Lock _cancellationLock = new();
+        private readonly Lock _progressLock = new();
+        private Task? _cancellationTask;
         private int _disposed;
+        private int _progressState;
 
         public ContextualCancellationTokenSource Cancellation { get; } = cancellation;
         public Task? ProcessingTask { get; set; }
-        public int ProgressStarted;
-        public int ProgressCompleted;
 
-        public void Cancel()
+        public bool TryStartProgress()
+        {
+            lock (_progressLock)
+            {
+                if ((_progressState & ProgressClosedFlag) != 0) return false;
+                _progressState |= ProgressStartedFlag;
+                return true;
+            }
+        }
+
+        public bool TryPublishProgress(Action publish)
+        {
+            lock (_progressLock)
+            {
+                if ((_progressState & ProgressClosedFlag) != 0) return false;
+                publish();
+                return true;
+            }
+        }
+
+        public bool TryCloseProgress(out bool wasStarted)
+        {
+            lock (_progressLock)
+            {
+                wasStarted = (_progressState & ProgressStartedFlag) != 0;
+                if ((_progressState & ProgressClosedFlag) != 0) return false;
+                _progressState |= ProgressClosedFlag;
+                return true;
+            }
+        }
+
+        public Task CancelAsync()
+        {
+            lock (_cancellationLock)
+                return _cancellationTask ??= CancelCoreAsync();
+        }
+
+        private async Task CancelCoreAsync()
         {
             if (Volatile.Read(ref _disposed) == 1) return;
-            try { Cancellation.Cancel(); }
-            catch (ObjectDisposedException) { }
+            try
+            {
+                await Cancellation.CancelAsync().ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // A completed worker can be reaped while a fatal sibling requests cancellation.
+            }
+            catch (Exception e)
+            {
+                if (e is OutOfMemoryException)
+                    Log.Fatal(e, "Health worker cancellation callback ran out of memory");
+                else
+                    Log.Error(e, "Health worker cancellation callback failed");
+            }
         }
 
         public void Dispose()
@@ -812,6 +1025,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             // setup progress tracking
             var progressHook = new Progress<int>();
             var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
+            _inProgress.TryGetValue(davItem.Id, out var progressWorker);
             progressHook.ProgressChanged += (_, progress) =>
             {
                 try { statCts?.CancelAfter(HealthCheckProgressTimeout); }
@@ -819,9 +1033,20 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 {
                     // statCts may already be disposed when a progress event races teardown.
                 }
-                if (!MarkHealthProgressStarted(davItem.Id)) return;
+                if (!MarkHealthProgressStarted(davItem.Id, progressWorker)) return;
                 var message = $"{davItem.Id}|{progress}";
-                debounce(() => _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, message));
+                debounce(() =>
+                {
+                    if (progressWorker is null
+                        || !_inProgress.TryGetValue(davItem.Id, out var currentWorker)
+                        || !ReferenceEquals(currentWorker, progressWorker))
+                        return;
+
+                    _ = progressWorker.TryPublishProgress(
+                        () => _ = _websocketManager.SendMessage(
+                            WebsocketTopic.HealthItemProgress,
+                            message));
+                });
             };
 
             // Only cancel a STAT sweep after it has made no progress for a sustained
@@ -1401,29 +1626,42 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
     internal bool MarkHealthProgressStarted(Guid davItemId)
     {
-        if (!_inProgress.TryGetValue(davItemId, out var worker))
-            return true;
-        if (Volatile.Read(ref worker.ProgressCompleted) == 1)
-            return false;
+        _inProgress.TryGetValue(davItemId, out var worker);
+        return MarkHealthProgressStarted(davItemId, worker);
+    }
 
-        Interlocked.Exchange(ref worker.ProgressStarted, 1);
-        return true;
+    private bool MarkHealthProgressStarted(
+        Guid davItemId,
+        InProgressHealthCheck? worker)
+    {
+        if (worker is null)
+            return false;
+        if (!_inProgress.TryGetValue(davItemId, out var currentWorker)
+            || !ReferenceEquals(currentWorker, worker))
+            return false;
+        return worker.TryStartProgress();
     }
 
     private void CompleteHealthProgressIfStarted(
         Guid davItemId,
         InProgressHealthCheck worker)
     {
-        if (Volatile.Read(ref worker.ProgressStarted) == 1)
-            CompleteHealthProgress(davItemId);
+        if (!worker.TryCloseProgress(out var wasStarted) || !wasStarted)
+            return;
+        SendHealthProgressCompletion(davItemId);
     }
 
     private void CompleteHealthProgress(Guid davItemId)
     {
         if (_inProgress.TryGetValue(davItemId, out var worker)
-            && Interlocked.Exchange(ref worker.ProgressCompleted, 1) == 1)
+            && !worker.TryCloseProgress(out _))
             return;
 
+        SendHealthProgressCompletion(davItemId);
+    }
+
+    private void SendHealthProgressCompletion(Guid davItemId)
+    {
         _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItemId}|100");
         _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItemId}|done");
     }

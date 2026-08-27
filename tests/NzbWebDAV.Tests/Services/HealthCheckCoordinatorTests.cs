@@ -324,6 +324,58 @@ public sealed class HealthCheckCoordinatorTests
     }
 
     [Fact]
+    public async Task MultipleOutOfMemoryWorkers_AreObservedAndRemovedBeforePropagation()
+    {
+        using var harness = new Harness(workers: 2, fullySplit: false);
+        var ids = new Queue<Guid>([Guid.NewGuid(), Guid.NewGuid()]);
+        harness.Service.SelectCandidateOverride = (_, _, _) =>
+            Task.FromResult<Guid?>(ids.Count > 0 ? ids.Dequeue() : null);
+        harness.Service.ProcessCandidateOverride = (id, _) =>
+            Task.FromException(new OutOfMemoryException($"synthetic OOM for {id}"));
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        await Assert.ThrowsAsync<OutOfMemoryException>(
+            () => harness.Service.ReapCompletedWorkersAsync());
+
+        Assert.Empty(harness.Service.InProgressHealthCheckIds);
+    }
+
+    [Fact]
+    public async Task FatalWorkerCancellation_TerminalizesSiblingProgress()
+    {
+        using var harness = new Harness(workers: 2, fullySplit: false);
+        var fatal = Guid.NewGuid();
+        var sibling = Guid.NewGuid();
+        var ids = new Queue<Guid>([fatal, sibling]);
+        var siblingStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.SelectCandidateOverride = (_, _, _) =>
+            Task.FromResult<Guid?>(ids.Count > 0 ? ids.Dequeue() : null);
+        harness.Service.ProcessCandidateOverride = async (id, ct) =>
+        {
+            if (id == fatal)
+            {
+                await siblingStarted.Task.WaitAsync(ct);
+                throw new OutOfMemoryException("synthetic fatal worker");
+            }
+
+            Assert.True(harness.Service.MarkHealthProgressStarted(id));
+            siblingStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        };
+
+        await Assert.ThrowsAsync<OutOfMemoryException>(
+            () => harness.Service.RunCoordinatorIterationAsync(CancellationToken.None));
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
+
+        Assert.Equal(
+            $"{sibling}|done",
+            harness.WebsocketManager.PeekLastMessage(WebsocketTopic.HealthItemProgress));
+    }
+
+    [Fact]
     public async Task CandidateQueryFailure_IsAttemptedAtMostOncePerCooldownWindow()
     {
         using var harness = new Harness(workers: 1, fullySplit: false);

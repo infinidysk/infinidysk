@@ -22,6 +22,7 @@ public sealed class HealthCheckConnectionGate : IDisposable
 {
     private readonly ConfigManager _configManager;
     private readonly Lock _lock = new();
+    private readonly Lock _limitRefreshLock = new();
     private readonly LinkedList<Waiter> _queueWaiters = [];
     private readonly LinkedList<Waiter> _backgroundWaiters = [];
     private TaskCompletionSource _idleCompletion = CreateIdleCompletion(completed: true);
@@ -32,8 +33,9 @@ public sealed class HealthCheckConnectionGate : IDisposable
     public HealthCheckConnectionGate(ConfigManager configManager)
     {
         _configManager = configManager;
-        _effectiveLimit = _configManager.GetHealthCheckConcurrency();
         _configManager.OnConfigChanged += OnConfigChanged;
+        lock (_limitRefreshLock)
+            _effectiveLimit = _configManager.GetHealthCheckConcurrency();
     }
 
     public Task<Lease> AcquireAsync(
@@ -103,17 +105,16 @@ public sealed class HealthCheckConnectionGate : IDisposable
     private void Release()
     {
         List<(TaskCompletionSource<Lease> Completion, Lease Lease)> ready;
-        TaskCompletionSource? idleCompletion;
         lock (_lock)
         {
             if (_disposed) return;
             _active--;
             ready = DispatchWaiters();
-            idleCompletion = _active == 0 ? _idleCompletion : null;
+            if (_active == 0)
+                _idleCompletion.TrySetResult();
         }
 
         CompleteReadyWaiters(ready);
-        idleCompletion?.TrySetResult();
     }
 
     private void CancelWaiter(Waiter waiter, CancellationToken cancellationToken)
@@ -135,13 +136,16 @@ public sealed class HealthCheckConnectionGate : IDisposable
         if (!args.ChangedConfig.ContainsKey(ConfigKeys.RepairHealthcheckConcurrency)
             && !args.ChangedConfig.ContainsKey(ConfigKeys.UsenetProviders)) return;
 
-        var effectiveLimit = _configManager.GetHealthCheckConcurrency();
         List<(TaskCompletionSource<Lease> Completion, Lease Lease)> ready;
-        lock (_lock)
+        lock (_limitRefreshLock)
         {
-            if (_disposed) return;
-            _effectiveLimit = effectiveLimit;
-            ready = DispatchWaiters();
+            var effectiveLimit = _configManager.GetHealthCheckConcurrency();
+            lock (_lock)
+            {
+                if (_disposed) return;
+                _effectiveLimit = effectiveLimit;
+                ready = DispatchWaiters();
+            }
         }
 
         CompleteReadyWaiters(ready);
@@ -194,7 +198,6 @@ public sealed class HealthCheckConnectionGate : IDisposable
     public void Dispose()
     {
         List<Waiter> waiters;
-        TaskCompletionSource idleCompletion;
         lock (_lock)
         {
             if (_disposed) return;
@@ -203,10 +206,9 @@ public sealed class HealthCheckConnectionGate : IDisposable
             waiters = _queueWaiters.Concat(_backgroundWaiters).ToList();
             _queueWaiters.Clear();
             _backgroundWaiters.Clear();
-            idleCompletion = _idleCompletion;
+            _idleCompletion.TrySetResult();
         }
 
-        idleCompletion.TrySetResult();
         foreach (var waiter in waiters)
         {
             waiter.Completion.TrySetException(
