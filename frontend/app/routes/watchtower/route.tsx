@@ -10,6 +10,7 @@ import {
   type WatchtowerItem,
   type WatchtowerSource,
 } from "~/clients/backend-client.server";
+import { getSessionUser } from "~/auth/authentication.server";
 import { useIsReadOnly } from "~/auth/authorization";
 
 const POLL_INTERVAL_MS = 5000;
@@ -42,6 +43,11 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export async function action({ request }: Route.ActionArgs) {
+  const sessionUser = await getSessionUser(request);
+  if (sessionUser?.role === "readonly") {
+    return { ok: false as const, error: "Read-only users cannot change Watchtower." };
+  }
+
   const form = await request.formData();
   const fields: Record<string, string> = {};
   for (const [k, v] of form.entries()) fields[k] = typeof v === "string" ? v : v.name;
@@ -428,8 +434,8 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
 
       {!enabled && (
         <Alert variant="warning" className="text-xs">
-          Watchtower is off. Enable it under Settings, Watchtower to start readying these items. You
-          can still add lists and items now.
+          Watchtower is off. Enable it under Settings, Watchtower to start readying these items.
+          {!isReadOnly && " You can still add lists and items now."}
         </Alert>
       )}
 
@@ -450,7 +456,9 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
           </div>
 
           {sources.length === 0 ? (
-            <p className="text-xs text-base-content/50">No lists yet. Add one below.</p>
+            <p className="text-xs text-base-content/50">
+              {isReadOnly ? "No lists yet." : "No lists yet. Add one below."}
+            </p>
           ) : (
             <div className="divide-y divide-base-content/10 rounded-lg border border-base-content/10">
               {sources.map((s) => (
@@ -662,7 +670,10 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
             <h3 className="text-sm font-semibold text-base-content">Wanted</h3>
             <p className="text-xs leading-relaxed text-base-content/50">
               Each item is searched once, the biggest healthy release is verified, then re-checked
-              over time. Add one manually by imdb id, or let your lists fill it.
+              over time.
+              {isReadOnly
+                ? " Lists fill this set over time."
+                : " Add one manually by imdb id, or let your lists fill it."}
             </p>
           </div>
 

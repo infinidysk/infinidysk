@@ -625,7 +625,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
                 <Button
                   className="shrink-0"
                   variant="outline"
-                  disabled={busy === "upload"}
+                  disabled={busy === "upload" || taskRunning}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   {busy === "upload" ? (

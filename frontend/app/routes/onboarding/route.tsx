@@ -152,8 +152,11 @@ export async function action({ request }: Route.ActionArgs) {
     const formData = await request.formData();
     const username = formData.get("username");
     const password = formData.get("password");
+    const confirmPassword = formData.get("confirmPassword");
     if (typeof username !== "string" || typeof password !== "string" || !username || !password)
       throw new Error("username and password required");
+    if (typeof confirmPassword !== "string" || confirmPassword !== password)
+      throw new Error("Passwords must match.");
     const isSuccess = await backendClient.createAccount(username, password);
     if (!isSuccess) throw new Error("Unknown error creating account");
     const responseInit = await setSessionUser(request, username);
