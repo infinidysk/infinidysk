@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -112,6 +113,46 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
         Assert.Null(historyItem.FailMessage);
         Assert.Equal(HistoryItem.DownloadStatusOption.Completed, historyItem.DownloadStatus);
         Assert.Empty(Directory.GetFiles(_strmDir, "*.strm", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task StrmMetadataSave_TransientBusy_RetriesAndPublishes()
+    {
+        var interceptor = new ThrowOnStrmMetadataSaveInterceptor(maxThrows: 1, transientFault: true);
+        await using var context = CreateContext(interceptor);
+        var queueItem = await SeedQueueItemAsync(context);
+
+        await ProcessAsync(context, CreateConfig(), queueItem);
+
+        // One faulted attempt plus one successful in-place retry.
+        Assert.Equal(2, interceptor.Attempts);
+        context.ChangeTracker.Clear();
+        var historyItem = Assert.Single(await context.HistoryItems.AsNoTracking().ToListAsync());
+        Assert.Null(historyItem.FailMessage);
+        var strmPath = Path.Join(_strmDir, Category, JobName, VideoFileName + ".strm");
+        Assert.True(File.Exists(strmPath), $"expected sidecar at {strmPath}");
+        var videoItem = await context.Items.AsNoTracking().SingleAsync(x => x.Name == VideoFileName);
+        Assert.Equal(strmPath, videoItem.GeneratedStrmPath);
+    }
+
+    [Fact]
+    public async Task StrmMetadataSaveFailure_RollsBackPublishedSidecars()
+    {
+        var interceptor = new ThrowOnStrmMetadataSaveInterceptor(maxThrows: int.MaxValue, transientFault: false);
+        await using var context = CreateContext(interceptor);
+        var queueItem = await SeedQueueItemAsync(context);
+
+        await ProcessAsync(context, CreateConfig(), queueItem);
+
+        // The import stays committed, but sidecars whose ownership metadata could
+        // not be persisted must not be left behind for cleanup to miss.
+        context.ChangeTracker.Clear();
+        var historyItem = Assert.Single(await context.HistoryItems.AsNoTracking().ToListAsync());
+        Assert.Null(historyItem.FailMessage);
+        Assert.Equal(HistoryItem.DownloadStatusOption.Completed, historyItem.DownloadStatus);
+        Assert.Empty(Directory.GetFiles(_strmDir, "*.strm", SearchOption.AllDirectories));
+        var videoItem = await context.Items.AsNoTracking().SingleAsync(x => x.Name == VideoFileName);
+        Assert.Null(videoItem.GeneratedStrmPath);
     }
 
     [Fact]
@@ -231,6 +272,37 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
             if (eventData.Context!.ChangeTracker.Entries<QueueItem>()
                     .Any(e => e.State == EntityState.Deleted))
                 throw new DbUpdateException("simulated finalize commit failure");
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Faults the post-commit STRM metadata save — the only save in the import flow
+    /// that modifies existing DavItems — while leaving the finalize commit untouched.
+    /// A transient fault wraps SQLITE_BUSY so the in-place retry engages; a
+    /// non-transient fault exhausts nothing and propagates immediately.
+    /// </summary>
+    private sealed class ThrowOnStrmMetadataSaveInterceptor(int maxThrows, bool transientFault)
+        : SaveChangesInterceptor
+    {
+        private int _attempts;
+        public int Attempts => Volatile.Read(ref _attempts);
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            var isStrmMetadataSave = eventData.Context!.ChangeTracker.Entries<DavItem>()
+                .Any(e => e.State == EntityState.Modified);
+            if (isStrmMetadataSave && Interlocked.Increment(ref _attempts) <= maxThrows)
+            {
+                throw transientFault
+                    ? new DbUpdateException(
+                        "simulated busy", new SqliteException("SQLite Error 5.", 5))
+                    : new DbUpdateException("simulated metadata save failure");
+            }
+
             return base.SavingChangesAsync(eventData, result, cancellationToken);
         }
     }

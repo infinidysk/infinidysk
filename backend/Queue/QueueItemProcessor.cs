@@ -916,18 +916,21 @@ public class QueueItemProcessor(
             // files land before the Arr refresh below, preserving scan order.
             if (error is null && configManager.GetImportStrategy() == "strm")
             {
+                var strmPostProcessor = new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id);
                 try
                 {
-                    await new CreateStrmFilesPostProcessor(configManager, dbClient, queueItem.Id)
-                        .CreateStrmFilesAsync(finalizeCt)
-                        .ConfigureAwait(false);
+                    await strmPostProcessor.CreateStrmFilesAsync(finalizeCt).ConfigureAwait(false);
                     if (dbClient.Ctx.ChangeTracker.HasChanges())
-                        await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
+                        await SaveStrmMetadataWithTransientRetryAsync(finalizeCt).ConfigureAwait(false);
                 }
-                catch (Exception strmError)
+                catch (Exception strmError) when (strmError is not OutOfMemoryException)
                 {
                     // The import is already committed; a sidecar failure must not
-                    // re-finalize it as failed. Operators can run Recreate STRM Files.
+                    // re-finalize it as failed. Sidecars whose ownership metadata
+                    // could not be persisted are rolled back so they do not outlive
+                    // the metadata later cleanup relies on. Operators can run
+                    // Recreate STRM Files.
+                    strmPostProcessor.RollbackPublishedWrites();
                     strmError.LogWarningKnownOrStack(
                         "STRM publish failed for {JobName} after the import committed",
                         queueItem.JobName);
@@ -990,6 +993,38 @@ public class QueueItemProcessor(
             {
                 Log.Warning(
                     "Queue finalize commit deferred for {JobName} (attempt {Attempt}/{MaxAttempts}). Reason: {Reason}",
+                    queueItem.JobName,
+                    attempt + 1,
+                    MaxFinalizeCommitRetries + 1,
+                    ex.GetBaseException().Message);
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), finalizeCt)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Retries the post-commit STRM ownership-metadata save on SQLITE_BUSY/LOCKED
+    /// contention only, mirroring the finalize commit retry. The ChangeTracker is
+    /// left intact so each attempt re-runs the same save; cancellation and
+    /// non-transient failures propagate to the caller's rollback path.
+    /// </summary>
+    private async Task SaveStrmMetadataWithTransientRetryAsync(CancellationToken finalizeCt)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await dbClient.Ctx.SaveChangesAsync(finalizeCt).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex) when (
+                attempt < MaxFinalizeCommitRetries
+                && ex.IsTransientDatabaseException()
+                && !finalizeCt.IsCancellationRequested)
+            {
+                Log.Warning(
+                    "STRM metadata save deferred for {JobName} (attempt {Attempt}/{MaxAttempts}). Reason: {Reason}",
                     queueItem.JobName,
                     attempt + 1,
                     MaxFinalizeCommitRetries + 1,

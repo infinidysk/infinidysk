@@ -24,6 +24,9 @@ public class CreateStrmFilesPostProcessor(
     /// </summary>
     internal sealed record StrmWrite(string Path, string? PreviousContent);
 
+    private List<DavItem>? _publishedCreated;
+    private List<StrmWrite>? _publishedRewritten;
+
     public async Task CreateStrmFilesAsync(CancellationToken cancellationToken = default)
     {
         var candidates = CollectVideoItems();
@@ -44,12 +47,35 @@ public class CreateStrmFilesPostProcessor(
         }
         catch
         {
-            foreach (var createdItem in created)
-                TryDeleteStrmFile(createdItem);
-            foreach (var rewrite in rewritten)
-                TryRestorePreviousContent(rewrite);
+            RollbackWrites(created, rewritten);
             throw;
         }
+
+        _publishedCreated = created;
+        _publishedRewritten = rewritten;
+    }
+
+    /// <summary>
+    /// Undoes the sidecars of a successful <see cref="CreateStrmFilesAsync"/> when the
+    /// follow-up ownership-metadata save fails: newly created files are deleted and
+    /// rewritten files get their pre-write content back, so no sidecar outlives the
+    /// metadata later cleanup relies on. No-op when the publish itself already failed
+    /// (and already rolled back) or wrote nothing.
+    /// </summary>
+    internal void RollbackPublishedWrites()
+    {
+        if (_publishedCreated is null || _publishedRewritten is null) return;
+        RollbackWrites(_publishedCreated, _publishedRewritten);
+        _publishedCreated = null;
+        _publishedRewritten = null;
+    }
+
+    private static void RollbackWrites(List<DavItem> created, List<StrmWrite> rewritten)
+    {
+        foreach (var createdItem in created)
+            TryDeleteStrmFile(createdItem);
+        foreach (var rewrite in rewritten)
+            TryRestorePreviousContent(rewrite);
     }
 
     private static void TryDeleteStrmFile(DavItem davItem)
