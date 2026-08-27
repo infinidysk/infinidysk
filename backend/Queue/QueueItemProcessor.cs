@@ -105,7 +105,8 @@ public class QueueItemProcessor(
             .Where(result => result.RepairStatus == HealthCheckResult.RepairAction.Repaired)
             .Where(result => result.CreatedAt >= cutoff)
             .Where(result =>
-                result.NzbFileName == queueItem.FileName
+                (result.NzbFileName != null
+                    && result.NzbFileName == queueItem.FileName)
                 || (result.NzbFileName == null
                     && result.JobName != null
                     && result.JobName == queueItem.JobName))

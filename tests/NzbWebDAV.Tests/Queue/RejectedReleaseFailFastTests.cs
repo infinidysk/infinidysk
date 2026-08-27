@@ -209,6 +209,20 @@ public sealed class RejectedReleaseFailFastTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task NullQueueFileName_DoesNotMatchNullPersistedNzbFileName()
+    {
+        await SeedRejectionAsync(
+            HealthCheckResult.RepairAction.Repaired,
+            Now.AddDays(-1),
+            nzbFileName: null,
+            jobName: "other-release");
+        var queueItem = NewQueueItem(jobName: "queue-release");
+        queueItem.FileName = null!;
+
+        await AssertDoesNotThrowAsync(queueItem);
+    }
+
+    [Fact]
     public async Task DifferentReleaseIdentity_DoesNotThrow()
     {
         await SeedRejectionAsync(
