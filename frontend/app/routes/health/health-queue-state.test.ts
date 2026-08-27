@@ -3,6 +3,7 @@ import type { HealthCheckQueueItem } from "~/clients/backend-client.server";
 import {
   completeHealthCheck,
   getVisibleHealthCheckItems,
+  mergeHealthCheckQueue,
   parseHealthItemProgressMessage,
   parseHealthItemStatusMessage,
   type HealthQueueState,
@@ -92,6 +93,27 @@ describe("updateHealthCheckProgress", () => {
   });
 });
 
+describe("mergeHealthCheckQueue", () => {
+  it("preserves live progress while applying refreshed queue data", () => {
+    const current: HealthQueueState = {
+      items: [{ ...queueItem("active", null), progress: 45 }, queueItem("removed", null)],
+      uncheckedCount: 2,
+    };
+    const refreshed: HealthQueueState = {
+      items: [queueItem("active", "2026-08-27T12:00:00Z"), queueItem("new", null)],
+      uncheckedCount: 7,
+    };
+
+    expect(mergeHealthCheckQueue(current, refreshed)).toEqual({
+      items: [
+        { ...queueItem("active", "2026-08-27T12:00:00Z"), progress: 45 },
+        queueItem("new", null),
+      ],
+      uncheckedCount: 7,
+    });
+  });
+});
+
 describe("health websocket payload parsing", () => {
   it("accepts valid progress and status payloads", () => {
     expect(parseHealthItemProgressMessage("item-id|42")).toEqual({
@@ -99,6 +121,15 @@ describe("health websocket payload parsing", () => {
       progress: 42,
     });
     expect(parseHealthItemStatusMessage("item-id|1|2")).toEqual({
+      davItemId: "item-id",
+      healthResult: 1,
+      repairAction: 2,
+    });
+    expect(parseHealthItemProgressMessage(" item-id |42")).toEqual({
+      davItemId: "item-id",
+      progress: 42,
+    });
+    expect(parseHealthItemStatusMessage(" item-id |1|2")).toEqual({
       davItemId: "item-id",
       healthResult: 1,
       repairAction: 2,
@@ -112,12 +143,14 @@ describe("health websocket payload parsing", () => {
     expect(parseHealthItemProgressMessage("item-id|NaN")).toBeNull();
     expect(parseHealthItemProgressMessage("item-id|101")).toBeNull();
     expect(parseHealthItemProgressMessage("item-id|done")).toBeNull();
+    expect(parseHealthItemProgressMessage(" |42")).toBeNull();
     expect(parseHealthItemStatusMessage("item-id||2")).toBeNull();
     expect(parseHealthItemStatusMessage("item-id|1| ")).toBeNull();
     expect(parseHealthItemStatusMessage("item-id|not-a-result|2")).toBeNull();
     expect(parseHealthItemStatusMessage("item-id|3|2")).toBeNull();
     expect(parseHealthItemStatusMessage("item-id|1|5")).toBeNull();
     expect(parseHealthItemStatusMessage("|1|2")).toBeNull();
+    expect(parseHealthItemStatusMessage(" |1|2")).toBeNull();
   });
 });
 

@@ -9,6 +9,23 @@ export type HealthQueueState = {
   uncheckedCount: number;
 };
 
+export function mergeHealthCheckQueue(
+  state: HealthQueueState,
+  refreshed: HealthQueueState,
+): HealthQueueState {
+  const progressById = new Map(
+    state.items.flatMap((item) =>
+      item.progress === undefined ? [] : [[item.id, item.progress] as const],
+    ),
+  );
+  return {
+    items: refreshed.items.map((item) =>
+      progressById.has(item.id) ? { ...item, progress: progressById.get(item.id)! } : item,
+    ),
+    uncheckedCount: refreshed.uncheckedCount,
+  };
+}
+
 // Numeric values mirror the backend enums in backend-client.server, which cannot be
 // value-imported into this client module.
 const healthResultValues: readonly HealthResult[] = [0, 1, 2];
@@ -51,8 +68,9 @@ export function parseHealthItemProgressMessage(message: string): {
   const parts = message.split("|");
   if (parts.length !== 2) return null;
   const [davItemId, progressValue] = parts;
+  const normalizedDavItemId = davItemId?.trim();
   if (
-    !davItemId ||
+    !normalizedDavItemId ||
     progressValue === undefined ||
     progressValue.trim() === "" ||
     progressValue === "done"
@@ -60,7 +78,7 @@ export function parseHealthItemProgressMessage(message: string): {
     return null;
   const progress = Number(progressValue);
   if (!Number.isFinite(progress) || progress < 0 || progress > 100) return null;
-  return { davItemId, progress };
+  return { davItemId: normalizedDavItemId, progress };
 }
 
 export function parseHealthItemStatusMessage(message: string): {
@@ -71,8 +89,9 @@ export function parseHealthItemStatusMessage(message: string): {
   const parts = message.split("|");
   if (parts.length !== 3) return null;
   const [davItemId, healthResultValue, repairActionValue] = parts;
+  const normalizedDavItemId = davItemId?.trim();
   if (
-    !davItemId ||
+    !normalizedDavItemId ||
     healthResultValue === undefined ||
     repairActionValue === undefined ||
     healthResultValue.trim() === "" ||
@@ -88,7 +107,7 @@ export function parseHealthItemStatusMessage(message: string): {
     !includesNumericValue(repairActionValues, repairAction)
   )
     return null;
-  return { davItemId, healthResult, repairAction };
+  return { davItemId: normalizedDavItemId, healthResult, repairAction };
 }
 
 export function getVisibleHealthCheckItems(

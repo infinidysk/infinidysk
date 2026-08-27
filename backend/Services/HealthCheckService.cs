@@ -530,7 +530,14 @@ public class HealthCheckService : BackgroundService
             var nzbFile = payload.NzbFile;
 
             // update the release date, if null
-            if (davItem.ReleaseDate == null) await UpdateReleaseDate(davItem, segments, ct).ConfigureAwait(false);
+            if (davItem.ReleaseDate == null)
+            {
+                using var healthAdmissionScope = ct.SetContext(
+                    new HealthCheckAdmissionContext(
+                        _healthCheckConnectionGate,
+                        HealthCheckAdmissionPriority.Background));
+                await UpdateReleaseDate(davItem, segments, ct).ConfigureAwait(false);
+            }
 
             // Sample large files to reduce NNTP load while keeping head/tail/stride coverage.
             // SegmentIndexView retains source indices, so later repair logic does not need to

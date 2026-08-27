@@ -96,6 +96,23 @@ public sealed class HealthCheckConnectionGateTests
     }
 
     [Fact]
+    public async Task ProviderCapacityIncrease_WakesWaitingWorkImmediately()
+    {
+        var config = CreateConfig(limit: 2, providerCapacity: 1);
+        using var gate = new HealthCheckConnectionGate(config);
+        using var active = await gate.AcquireAsync(
+            HealthCheckAdmissionPriority.Background, CancellationToken.None);
+        var waiting = gate.AcquireAsync(
+            HealthCheckAdmissionPriority.Background, CancellationToken.None);
+        Assert.False(waiting.IsCompleted);
+
+        SetProviderCapacity(config, 2);
+
+        using var admitted = await waiting.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(2, gate.GetSnapshot().Active);
+    }
+
+    [Fact]
     public async Task AcquireAsync_CancelsWaitingAdmissionCleanly()
     {
         var config = CreateConfig(1);
@@ -172,9 +189,16 @@ public sealed class HealthCheckConnectionGateTests
         Assert.Equal(0, gate.GetSnapshot().Active);
     }
 
-    private static ConfigManager CreateConfig(int limit)
+    private static ConfigManager CreateConfig(int limit, int providerCapacity = 200)
     {
         var config = new ConfigManager();
+        SetProviderCapacity(config, providerCapacity);
+        SetLimit(config, limit);
+        return config;
+    }
+
+    private static void SetProviderCapacity(ConfigManager config, int providerCapacity)
+    {
         config.UpdateValues([
             new ConfigItem
             {
@@ -192,14 +216,12 @@ public sealed class HealthCheckConnectionGateTests
                             UseSsl = true,
                             User = "user",
                             Pass = "pass",
-                            MaxConnections = 200,
+                            MaxConnections = providerCapacity,
                         },
                     ],
                 }),
             },
         ]);
-        SetLimit(config, limit);
-        return config;
     }
 
     private static void SetLimit(ConfigManager config, int limit)

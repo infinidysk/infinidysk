@@ -74,6 +74,34 @@ describe("Repairs settings helpers", () => {
         "repair.healthcheck-workers": "9",
       }),
     ).toBe(false);
+    expect(
+      isRepairsSettingsValid({
+        ...baseConfig,
+        "repair.healthcheck-workers": "",
+      }),
+    ).toBe(false);
+    const withoutWorkers = { ...baseConfig };
+    delete withoutWorkers["repair.healthcheck-workers"];
+    expect(isRepairsSettingsValid(withoutWorkers)).toBe(true);
+  });
+
+  it("accepts only signed 64-bit health concurrency values", () => {
+    for (const value of ["-9223372036854775808", "9223372036854775807"]) {
+      expect(
+        isRepairsSettingsValid({
+          ...baseConfig,
+          "repair.healthcheck-concurrency": value,
+        }),
+      ).toBe(true);
+    }
+    for (const value of ["-9223372036854775809", "9223372036854775808"]) {
+      expect(
+        isRepairsSettingsValid({
+          ...baseConfig,
+          "repair.healthcheck-concurrency": value,
+        }),
+      ).toBe(false);
+    }
   });
 
   it("rejects invalid PAR2 numeric settings", () => {

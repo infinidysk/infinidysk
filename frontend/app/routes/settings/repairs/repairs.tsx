@@ -28,7 +28,9 @@ function isIntegerInRange(value: string, minimum: number, maximum: number) {
 
 function isWholeNumber(value: string) {
   const trimmed = value.trim();
-  return trimmed !== "" && /^[-+]?\d+$/.test(trimmed);
+  if (!/^[-+]?\d+$/.test(trimmed)) return false;
+  const parsed = BigInt(trimmed);
+  return parsed >= -9_223_372_036_854_775_808n && parsed <= 9_223_372_036_854_775_807n;
 }
 
 export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) {
@@ -155,7 +157,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Concurrent Health Checks
               </label>
               <Input
-                className={`w-full ${!isIntegerInRange(config["repair.healthcheck-workers"] || "1", 1, 8) ? "input-error" : ""}`}
+                className={`w-full ${!isIntegerInRange(config["repair.healthcheck-workers"] ?? "1", 1, 8) ? "input-error" : ""}`}
                 type="text"
                 id="healthcheck-workers-input"
                 aria-describedby="healthcheck-workers-help"
@@ -688,7 +690,7 @@ export function isRepairsSettingsValid(newConfig: Record<string, string>) {
   ] as const;
   const concurrencyOk =
     concurrency === undefined || concurrency === "" || isWholeNumber(concurrency);
-  const workersOk = workers === undefined || workers === "" || isIntegerInRange(workers, 1, 8);
+  const workersOk = workers === undefined || isIntegerInRange(workers, 1, 8);
   const autoRemoveOk =
     autoRemove === undefined || autoRemove === "" || isNonNegativeInteger(autoRemove);
   const bytePercentOk =

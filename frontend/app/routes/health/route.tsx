@@ -18,6 +18,7 @@ import type {
 import {
   completeHealthCheck,
   getVisibleHealthCheckItems,
+  mergeHealthCheckQueue,
   parseHealthItemProgressMessage,
   parseHealthItemStatusMessage,
   type HealthQueueState,
@@ -163,14 +164,16 @@ export default function Health({ loaderData }: Route.ComponentProps) {
       if (response.ok) {
         // /api/get-health-check-queue returns HealthCheckQueueResponse
         const healthCheckQueue = (await response.json()) as HealthCheckQueueResponse;
-        setQueueState({
-          items: healthCheckQueue.items,
-          uncheckedCount: healthCheckQueue.uncheckedCount,
-        });
+        setQueueState((state) =>
+          mergeHealthCheckQueue(state, {
+            items: healthCheckQueue.items,
+            uncheckedCount: healthCheckQueue.uncheckedCount,
+          }),
+        );
       }
     };
     void refetchData(); // fire-and-forget queue refill
-  }, [queueItems, setQueueState]);
+  }, [queueItems.length]);
 
   // events
   const onHealthItemStatus = useCallback(

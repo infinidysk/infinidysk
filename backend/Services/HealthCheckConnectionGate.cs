@@ -116,7 +116,8 @@ public sealed class HealthCheckConnectionGate : IDisposable
 
     private void OnConfigChanged(object? sender, ConfigManager.ConfigEventArgs args)
     {
-        if (!args.ChangedConfig.ContainsKey(ConfigKeys.RepairHealthcheckConcurrency)) return;
+        if (!args.ChangedConfig.ContainsKey(ConfigKeys.RepairHealthcheckConcurrency)
+            && !args.ChangedConfig.ContainsKey(ConfigKeys.UsenetProviders)) return;
 
         List<(TaskCompletionSource<Lease> Completion, Lease Lease)> ready;
         lock (_lock)
