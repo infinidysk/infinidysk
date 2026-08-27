@@ -161,10 +161,22 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
     {
         _metadataCache.Remove(id);
         var blobPath = GetBlobPath(id);
-        var deleted = File.Exists(blobPath);
+        var deleted = false;
 
-        if (deleted)
+        try
+        {
+            File.GetAttributes(blobPath);
             File.Delete(blobPath);
+            deleted = true;
+        }
+        catch (FileNotFoundException)
+        {
+            // The blob is already absent; the cleanup operation is idempotent.
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // The blob's sharded directory is already absent.
+        }
 
         lock (_lockObj)
         {
