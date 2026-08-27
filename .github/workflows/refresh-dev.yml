@@ -20,6 +20,70 @@ jobs:
           echo "short_sha=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
           echo "dev_label=dev-$(date -u +%y%m%d.%H%M)" >> "$GITHUB_OUTPUT"
 
+  seed-library-cache:
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Skip cache seed outside main
+        if: github.ref != 'refs/heads/main'
+        run: echo "Compiled library caches are written only from main."
+
+      - name: Checkout repository
+        if: github.ref == 'refs/heads/main'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+
+      - name: Set up .NET
+        if: github.ref == 'refs/heads/main'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Resolve .NET SDK version
+        if: github.ref == 'refs/heads/main'
+        id: dotnet-sdk
+        run: echo "version=$(dotnet --version)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache NuGet packages
+        if: github.ref == 'refs/heads/main'
+        id: nuget-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-release-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props', 'nuget.config') }}
+          restore-keys: |
+            ${{ runner.os }}-release-nuget-
+
+      - name: Cache compiled C# libraries
+        if: github.ref == 'refs/heads/main'
+        id: library-build-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
+        with:
+          path: |
+            libs/SharpCompress/bin
+            libs/SharpCompress/obj
+            libs/UsenetSharp/bin
+            libs/UsenetSharp/obj
+            libs/RapidYencSharp/bin
+            libs/RapidYencSharp/obj
+          key: library-build-v1-${{ runner.os }}-Release-${{ steps.dotnet-sdk.outputs.version }}-${{ hashFiles('Directory.Build.props', 'Directory.Packages.props', '.editorconfig', 'libs/SharpCompress.snk', 'libs/SharpCompress/**/*.cs', 'libs/SharpCompress/*.csproj', 'libs/SharpCompress/.editorconfig', 'libs/UsenetSharp/**/*.cs', 'libs/UsenetSharp/*.csproj', 'libs/UsenetSharp/.editorconfig', 'libs/RapidYencSharp/**/*.cs', 'libs/RapidYencSharp/*.csproj', 'libs/RapidYencSharp/.editorconfig') }}
+
+      - name: Restore C# libraries
+        if: github.ref == 'refs/heads/main' && (steps.library-build-cache.outputs.cache-hit != 'true' || steps.nuget-cache.outputs.cache-hit != 'true')
+        run: |
+          dotnet restore libs/SharpCompress/SharpCompress.csproj
+          dotnet restore libs/UsenetSharp/UsenetSharp.csproj
+
+      - name: Build C# libraries
+        if: github.ref == 'refs/heads/main' && steps.library-build-cache.outputs.cache-hit != 'true'
+        run: |
+          dotnet build libs/SharpCompress/SharpCompress.csproj -c Release --no-restore \
+            -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false
+          dotnet build libs/UsenetSharp/UsenetSharp.csproj -c Release --no-restore \
+            -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false \
+            -p:SkipRapidYencNativeEnsure=true
+
   build:
     needs: resolve
     uses: ./.github/workflows/docker-build-push.yml
@@ -69,7 +133,7 @@ jobs:
           fi
 
   assets:
-    needs: [resolve, publish-release]
+    needs: [resolve, seed-library-cache, publish-release]
     uses: ./.github/workflows/build-release-assets.yml
     permissions:
       contents: write

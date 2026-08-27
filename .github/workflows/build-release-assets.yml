@@ -114,7 +114,7 @@ jobs:
             libs/UsenetSharp/obj
             libs/RapidYencSharp/bin
             libs/RapidYencSharp/obj
-          key: library-build-v1-${{ runner.os }}-${{ matrix.rid }}-Release-${{ steps.dotnet-sdk.outputs.version }}-${{ hashFiles('Directory.Build.props', 'Directory.Packages.props', '.editorconfig', 'libs/SharpCompress.snk', 'libs/SharpCompress/**/*.cs', 'libs/SharpCompress/*.csproj', 'libs/SharpCompress/.editorconfig', 'libs/UsenetSharp/**/*.cs', 'libs/UsenetSharp/*.csproj', 'libs/UsenetSharp/.editorconfig', 'libs/RapidYencSharp/**/*.cs', 'libs/RapidYencSharp/*.csproj', 'libs/RapidYencSharp/.editorconfig') }}
+          key: library-build-v1-${{ runner.os }}-Release-${{ steps.dotnet-sdk.outputs.version }}-${{ hashFiles('Directory.Build.props', 'Directory.Packages.props', '.editorconfig', 'libs/SharpCompress.snk', 'libs/SharpCompress/**/*.cs', 'libs/SharpCompress/*.csproj', 'libs/SharpCompress/.editorconfig', 'libs/UsenetSharp/**/*.cs', 'libs/UsenetSharp/*.csproj', 'libs/UsenetSharp/.editorconfig', 'libs/RapidYencSharp/**/*.cs', 'libs/RapidYencSharp/*.csproj', 'libs/RapidYencSharp/.editorconfig') }}
 
       - name: Install native build tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
@@ -192,26 +192,6 @@ jobs:
           compat_name="nzbdav-${prefix}${VERSION}-${RID}"
           cp -a "$archive_name" "$compat_name"
           tar -czf "${compat_name}.tar.gz" "$compat_name"
-
-      - name: Save NuGet package cache
-        if: github.ref_protected && inputs.checkout_ref == github.sha && steps.nuget-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
-        with:
-          path: ~/.nuget/packages
-          key: ${{ steps.nuget-cache.outputs.cache-primary-key }}
-
-      - name: Save compiled C# library cache
-        if: github.ref_protected && inputs.checkout_ref == github.sha && steps.library-build-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.0
-        with:
-          path: |
-            libs/SharpCompress/bin
-            libs/SharpCompress/obj
-            libs/UsenetSharp/bin
-            libs/UsenetSharp/obj
-            libs/RapidYencSharp/bin
-            libs/RapidYencSharp/obj
-          key: ${{ steps.library-build-cache.outputs.cache-primary-key }}
 
       - name: Attach archives to releases
         env:
