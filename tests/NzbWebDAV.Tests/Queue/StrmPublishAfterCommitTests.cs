@@ -9,6 +9,7 @@ using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Websocket;
@@ -233,6 +234,7 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
     private async Task ProcessAsync(DavDatabaseContext context, ConfigManager config, QueueItem queueItem)
     {
         await using var nzbStream = new MemoryStream(CreateNzbBytes());
+        using var healthCheckConnectionGate = new HealthCheckConnectionGate(config);
         var processor = new QueueItemProcessor(
             queueItem,
             nzbStream,
@@ -241,6 +243,7 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
             config,
             new WebsocketManager(),
             new Progress<int>(),
+            healthCheckConnectionGate,
             CancellationToken.None);
         await processor.ProcessAsync();
     }

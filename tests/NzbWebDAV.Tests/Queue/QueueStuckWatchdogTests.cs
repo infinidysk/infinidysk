@@ -86,7 +86,7 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             new ActiveReadRegistry());
 
         _queueManagerUsageTracker = new ProviderUsageTracker();
-        _queueManager = new QueueManager(
+        _queueManager = QueueManager.CreateForTests(
             usenet,
             _configManager,
             new WebsocketManager(),
@@ -94,13 +94,11 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             new WatchdogLog(),
             new QueueItemSourceTracker(),
             new BenchmarkGate(),
-            startLoop: false)
-        {
-            CreateDbContextOverride = () => new DavDatabaseContext(_options),
-            StuckItemCheckInterval = TimeSpan.FromMilliseconds(50),
-            StuckItemThreshold = TimeSpan.FromMilliseconds(250),
-            StuckCancelGracePeriod = TimeSpan.FromMilliseconds(400),
-        };
+            startLoop: false);
+        _queueManager.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        _queueManager.StuckItemCheckInterval = TimeSpan.FromMilliseconds(50);
+        _queueManager.StuckItemThreshold = TimeSpan.FromMilliseconds(250);
+        _queueManager.StuckCancelGracePeriod = TimeSpan.FromMilliseconds(400);
     }
 
     private void WireStallingClaimOverride(StallStream stall)

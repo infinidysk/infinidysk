@@ -69,7 +69,7 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
             new ProviderBytesTracker(),
             new StreamTraceBuffer(100),
             new ActiveReadRegistry());
-        _queueManager = new QueueManager(
+        _queueManager = QueueManager.CreateForTests(
             usenet,
             _configManager,
             _websocketManager,

@@ -42,6 +42,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     private RepairPatchStore _patchStore = null!;
     private UsenetStreamingClient _usenet = null!;
     private QueueManager _queueManager = null!;
+    private HealthCheckConnectionGate _healthCheckConnectionGate = null!;
 
     public async Task InitializeAsync()
     {
@@ -78,6 +79,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Directory.CreateDirectory(Path.Join(_configRoot, "library"));
 
         _failureTracker = new StreamingFailureTracker();
+        _healthCheckConnectionGate = new HealthCheckConnectionGate(_configManager);
         _patchStore = new RepairPatchStore(Path.Join(_configRoot, "patches"), 1024 * 1024);
         await _patchStore.CatalogLoadTask;
 
@@ -90,7 +92,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             new ProviderBytesTracker(),
             new StreamTraceBuffer(100),
             new ActiveReadRegistry());
-        _queueManager = new QueueManager(
+        _queueManager = QueueManager.CreateForTests(
             _usenet,
             _configManager,
             websocketManager,
@@ -98,12 +100,14 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             new WatchdogLog(),
             new QueueItemSourceTracker(),
             new BenchmarkGate(),
-            startLoop: false);
+            startLoop: false,
+            healthCheckConnectionGate: _healthCheckConnectionGate);
     }
 
     public async Task DisposeAsync()
     {
         _queueManager.Dispose();
+        _healthCheckConnectionGate.Dispose();
         _usenet.Dispose();
         await _context.DisposeAsync();
         Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
@@ -811,7 +815,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             _queueManager,
             par2,
             _patchStore,
-            new ArrReplacementSearchBudget());
+            new ArrReplacementSearchBudget(),
+            _healthCheckConnectionGate);
         return (service, par2);
     }
 

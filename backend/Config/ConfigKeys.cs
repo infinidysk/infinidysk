@@ -90,6 +90,7 @@ public static class ConfigKeys
     public const string MediaLibraryDir = "media.library-dir";
     public const string RepairEnable = "repair.enable";
     public const string RepairHealthcheckConcurrency = "repair.healthcheck-concurrency";
+    public const string RepairHealthcheckWorkers = "repair.healthcheck-workers";
     public const string RepairHealthcheckDepth = "repair.healthcheck-depth";
     public const string RepairHealthcheckAging = "repair.healthcheck-aging";
     public const string RepairAutoRemoveAfterFailures = "repair.auto-remove-after-failures";

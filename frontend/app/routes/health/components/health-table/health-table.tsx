@@ -68,9 +68,13 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
                           <MetaChip
                             label="Next"
                             value={
-                              item.progress > 0 ? null : formatWhen(item.nextHealthCheck, "ASAP")
+                              item.progress != null && item.progress > 0
+                                ? null
+                                : formatWhen(item.nextHealthCheck, "ASAP")
                             }
-                            {...(item.progress > 0 ? { progress: item.progress } : {})}
+                            {...(item.progress != null && item.progress > 0
+                              ? { progress: item.progress }
+                              : {})}
                           />
                         </div>
                       </div>
@@ -78,7 +82,7 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
                     <td className={desktopCellClass}>{formatAge(item.releaseDate, "Unknown")}</td>
                     <td className={desktopCellClass}>{formatAge(item.lastHealthCheck, "Never")}</td>
                     <td className={`${desktopCellClass} pr-4 md:pr-6`}>
-                      {item.progress > 0 ? (
+                      {item.progress != null && item.progress > 0 ? (
                         <HealthProgressBadge percentage={item.progress} />
                       ) : (
                         formatWhen(item.nextHealthCheck, "ASAP")

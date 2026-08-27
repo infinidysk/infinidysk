@@ -326,6 +326,7 @@ public partial class Program
                     new ProviderUsageTracker(sp.GetRequiredService<ActiveReadRegistry>()))
                 .AddSingleton<QueueItemSourceTracker>()
                 .AddSingleton<StreamingFailureTracker>()
+                .AddSingleton<HealthCheckConnectionGate>()
                 .AddSingleton<UsenetStreamingClient>()
                 .AddHostedService<ProviderRecoveryProbeService>()
                 // LazyRarResolver takes INntpClient (for testability) but must

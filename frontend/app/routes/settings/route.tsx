@@ -153,6 +153,7 @@ const defaultConfig = {
   "preflight.indexer-max-wait-seconds": "5",
   "repair.enable": "false",
   "repair.healthcheck-concurrency": "50",
+  "repair.healthcheck-workers": "1",
   "repair.healthcheck-depth": "standard",
   "repair.healthcheck-aging": "false",
   "repair.auto-remove-after-failures": "0",
