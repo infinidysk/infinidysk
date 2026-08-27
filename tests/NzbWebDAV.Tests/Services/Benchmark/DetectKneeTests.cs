@@ -163,7 +163,7 @@ public class DetectKneeTests
     }
 
     [Theory]
-    [InlineData(BenchmarkIntensity.Auto)]
+    [InlineData(BenchmarkIntensity.Quick)]
     [InlineData(BenchmarkIntensity.Thorough)]
     public void BuildLevels_NeverProbesAboveConfiguredProviderLimit(
         BenchmarkIntensity intensity)
