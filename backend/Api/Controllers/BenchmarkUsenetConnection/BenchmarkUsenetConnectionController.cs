@@ -15,6 +15,7 @@ public class BenchmarkUsenetConnectionController(
     BenchmarkRunControl runControl,
     ActiveReadRegistry activeReads,
     QueueManager queueManager,
+    IHealthCheckQuiescence healthCheckQuiescence,
     ConfigManager configManager
 ) : BaseApiController
 {
@@ -48,6 +49,11 @@ public class BenchmarkUsenetConnectionController(
             // the test gets the provider's full connection budget. The gate is
             // released on dispose — including on cancel or error.
             using var pause = benchmarkGate.Enter();
+
+            // Entering the pause prevents new health workers. Wait for workers admitted
+            // immediately before the pause to return both admission and physical leases
+            // before the benchmark opens its direct connection ladder.
+            await healthCheckQuiescence.WaitForQuiescenceAsync(ct).ConfigureAwait(false);
 
             // Activity we can't pause — a download already mid-flight or live
             // streams — still uses connections; capture it so we can flag it.

@@ -24,12 +24,15 @@ public sealed class HealthCheckConnectionGate : IDisposable
     private readonly Lock _lock = new();
     private readonly LinkedList<Waiter> _queueWaiters = [];
     private readonly LinkedList<Waiter> _backgroundWaiters = [];
+    private TaskCompletionSource _idleCompletion = CreateIdleCompletion(completed: true);
+    private int _effectiveLimit;
     private int _active;
     private bool _disposed;
 
     public HealthCheckConnectionGate(ConfigManager configManager)
     {
         _configManager = configManager;
+        _effectiveLimit = _configManager.GetHealthCheckConcurrency();
         _configManager.OnConfigChanged += OnConfigChanged;
     }
 
@@ -45,6 +48,7 @@ public sealed class HealthCheckConnectionGate : IDisposable
 
             if (CanEnterImmediately(priority))
             {
+                BeginBusyPeriodIfIdle();
                 _active++;
                 return Task.FromResult(new Lease(this));
             }
@@ -79,7 +83,16 @@ public sealed class HealthCheckConnectionGate : IDisposable
         }
     }
 
-    private int GetLimit() => _configManager.GetHealthCheckConcurrency();
+    public Task WaitForIdleAsync(CancellationToken cancellationToken)
+    {
+        lock (_lock)
+        {
+            if (_active == 0) return Task.CompletedTask;
+            return _idleCompletion.Task.WaitAsync(cancellationToken);
+        }
+    }
+
+    private int GetLimit() => _effectiveLimit;
 
     private bool CanEnterImmediately(HealthCheckAdmissionPriority priority)
     {
@@ -90,14 +103,17 @@ public sealed class HealthCheckConnectionGate : IDisposable
     private void Release()
     {
         List<(TaskCompletionSource<Lease> Completion, Lease Lease)> ready;
+        TaskCompletionSource? idleCompletion;
         lock (_lock)
         {
             if (_disposed) return;
             _active--;
             ready = DispatchWaiters();
+            idleCompletion = _active == 0 ? _idleCompletion : null;
         }
 
         CompleteReadyWaiters(ready);
+        idleCompletion?.TrySetResult();
     }
 
     private void CancelWaiter(Waiter waiter, CancellationToken cancellationToken)
@@ -119,10 +135,12 @@ public sealed class HealthCheckConnectionGate : IDisposable
         if (!args.ChangedConfig.ContainsKey(ConfigKeys.RepairHealthcheckConcurrency)
             && !args.ChangedConfig.ContainsKey(ConfigKeys.UsenetProviders)) return;
 
+        var effectiveLimit = _configManager.GetHealthCheckConcurrency();
         List<(TaskCompletionSource<Lease> Completion, Lease Lease)> ready;
         lock (_lock)
         {
             if (_disposed) return;
+            _effectiveLimit = effectiveLimit;
             ready = DispatchWaiters();
         }
 
@@ -136,11 +154,18 @@ public sealed class HealthCheckConnectionGate : IDisposable
         {
             var waiter = TakeFirst(_queueWaiters) ?? TakeFirst(_backgroundWaiters);
             if (waiter is null) break;
+            BeginBusyPeriodIfIdle();
             _active++;
             ready.Add((waiter.Completion, new Lease(this)));
         }
 
         return ready;
+    }
+
+    private void BeginBusyPeriodIfIdle()
+    {
+        if (_active == 0 && _idleCompletion.Task.IsCompleted)
+            _idleCompletion = CreateIdleCompletion(completed: false);
     }
 
     private LinkedList<Waiter> GetQueue(HealthCheckAdmissionPriority priority) => priority switch
@@ -169,6 +194,7 @@ public sealed class HealthCheckConnectionGate : IDisposable
     public void Dispose()
     {
         List<Waiter> waiters;
+        TaskCompletionSource idleCompletion;
         lock (_lock)
         {
             if (_disposed) return;
@@ -177,13 +203,23 @@ public sealed class HealthCheckConnectionGate : IDisposable
             waiters = _queueWaiters.Concat(_backgroundWaiters).ToList();
             _queueWaiters.Clear();
             _backgroundWaiters.Clear();
+            idleCompletion = _idleCompletion;
         }
 
+        idleCompletion.TrySetResult();
         foreach (var waiter in waiters)
         {
             waiter.Completion.TrySetException(
                 new ObjectDisposedException(nameof(HealthCheckConnectionGate)));
         }
+    }
+
+    private static TaskCompletionSource CreateIdleCompletion(bool completed)
+    {
+        var completion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        if (completed) completion.SetResult();
+        return completion;
     }
 
     private sealed class Waiter(HealthCheckAdmissionPriority priority)

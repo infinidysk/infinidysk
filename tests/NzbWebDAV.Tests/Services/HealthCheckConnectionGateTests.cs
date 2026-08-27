@@ -144,6 +144,28 @@ public sealed class HealthCheckConnectionGateTests
     }
 
     [Fact]
+    public async Task WaitForIdleAsync_WaitsThroughQueuedLeaseHandoff()
+    {
+        var config = CreateConfig(1);
+        using var gate = new HealthCheckConnectionGate(config);
+        using var active = await gate.AcquireAsync(
+            HealthCheckAdmissionPriority.Background,
+            CancellationToken.None);
+        var queued = gate.AcquireAsync(
+            HealthCheckAdmissionPriority.Queue,
+            CancellationToken.None);
+        var idle = gate.WaitForIdleAsync(CancellationToken.None);
+
+        active.Dispose();
+        using var queuedLease = await queued.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.False(idle.IsCompleted);
+
+        queuedLease.Dispose();
+        await idle.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(0, gate.GetSnapshot().Active);
+    }
+
+    [Fact]
     public async Task Dispose_FaultsPendingWaiters()
     {
         var config = CreateConfig(1);

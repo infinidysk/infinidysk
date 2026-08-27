@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.RadarrSonarr;
@@ -13,6 +14,7 @@ using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Tests.Database;
+using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.Websocket;
 using Xunit.Sdk;
 
@@ -36,7 +38,9 @@ public sealed class HealthCheckCoordinatorTests
         Assert.Single(harness.Service.InProgressHealthCheckIds);
         Assert.Single(ids);
         blocker.TrySetResult();
-        await WaitUntilAsync(() => harness.Service.InProgressHealthCheckIds.Count == 0);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
     }
 
     [Fact]
@@ -58,14 +62,18 @@ public sealed class HealthCheckCoordinatorTests
         Assert.Equal(2, harness.Service.InProgressHealthCheckIds.Count);
 
         blockers[first].TrySetResult();
-        await WaitUntilAsync(() => !harness.Service.InProgressHealthCheckIds.Contains(first));
+        await ReapUntilAsync(
+            harness.Service,
+            () => !harness.Service.InProgressHealthCheckIds.Contains(first));
         await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
 
         Assert.Contains(second, harness.Service.InProgressHealthCheckIds);
         Assert.Contains(third, harness.Service.InProgressHealthCheckIds);
         blockers[second].TrySetResult();
         blockers[third].TrySetResult();
-        await WaitUntilAsync(() => harness.Service.InProgressHealthCheckIds.Count == 0);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
     }
 
     [Fact]
@@ -83,11 +91,15 @@ public sealed class HealthCheckCoordinatorTests
             : blocker.Task.WaitAsync(ct);
 
         await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
-        await WaitUntilAsync(() => !harness.Service.InProgressHealthCheckIds.Contains(failed));
+        await ReapUntilAsync(
+            harness.Service,
+            () => !harness.Service.InProgressHealthCheckIds.Contains(failed));
 
         Assert.Contains(running, harness.Service.InProgressHealthCheckIds);
         blocker.TrySetResult();
-        await WaitUntilAsync(() => harness.Service.InProgressHealthCheckIds.Count == 0);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
     }
 
     [Fact]
@@ -105,7 +117,9 @@ public sealed class HealthCheckCoordinatorTests
         Assert.Equal(2, harness.Service.InProgressHealthCheckIds.Count);
 
         await cancellation.CancelAsync();
-        await WaitUntilAsync(() => harness.Service.InProgressHealthCheckIds.Count == 0);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
     }
 
     [Fact]
@@ -121,7 +135,9 @@ public sealed class HealthCheckCoordinatorTests
 
         Assert.Equal(id, Assert.Single(harness.Service.InProgressHealthCheckIds));
         blocker.TrySetResult();
-        await WaitUntilAsync(() => harness.Service.InProgressHealthCheckIds.Count == 0);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
     }
 
     [Fact]
@@ -142,7 +158,9 @@ public sealed class HealthCheckCoordinatorTests
 
         Assert.Equal(2, harness.Service.InProgressHealthCheckIds.Count);
         blocker.TrySetResult();
-        await WaitUntilAsync(() => harness.Service.InProgressHealthCheckIds.Count == 0);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
     }
 
     [Fact]
@@ -161,14 +179,18 @@ public sealed class HealthCheckCoordinatorTests
         var running = harness.Service.InProgressHealthCheckIds.ToArray();
         harness.SetWorkers(1);
         blockers[running[0]].TrySetResult();
-        await WaitUntilAsync(() => harness.Service.InProgressHealthCheckIds.Count == 1);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 1);
 
         await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
 
         Assert.Single(harness.Service.InProgressHealthCheckIds);
         Assert.Single(ids);
         blockers[running[1]].TrySetResult();
-        await WaitUntilAsync(() => harness.Service.InProgressHealthCheckIds.Count == 0);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
     }
 
     [Fact]
@@ -183,10 +205,238 @@ public sealed class HealthCheckCoordinatorTests
             return Task.FromResult<Guid?>(Guid.NewGuid());
         };
 
-        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        var outcome = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
 
+        Assert.Equal(HealthCheckRefillOutcome.Blocked, outcome);
+        Assert.Equal(
+            harness.Service.CoordinatorIdleInterval,
+            harness.Service.GetCoordinatorWaitInterval(outcome));
         Assert.False(selectorCalled);
         Assert.Empty(harness.Service.InProgressHealthCheckIds);
+    }
+
+    [Fact]
+    public async Task BenchmarkPause_UsesIdleCoordinatorIntervalWhenNoWorkerIsActive()
+    {
+        using var harness = new Harness(workers: 2, fullySplit: false);
+        using var pause = harness.BenchmarkGate.Enter();
+
+        var outcome = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        Assert.Equal(HealthCheckRefillOutcome.Blocked, outcome);
+        Assert.Equal(
+            harness.Service.CoordinatorIdleInterval,
+            harness.Service.GetCoordinatorWaitInterval(outcome));
+    }
+
+    [Fact]
+    public async Task DisabledRepairJob_UsesIdleCoordinatorInterval()
+    {
+        using var harness = new Harness(workers: 2, fullySplit: false);
+        harness.SetRepairEnabled(false);
+
+        var outcome = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        Assert.Equal(HealthCheckRefillOutcome.Blocked, outcome);
+        Assert.Equal(
+            harness.Service.CoordinatorIdleInterval,
+            harness.Service.GetCoordinatorWaitInterval(outcome));
+    }
+
+    [Fact]
+    public async Task BlockedRefill_UsesShortIntervalWhileAWorkerIsStillActive()
+    {
+        using var harness = new Harness(workers: 2, fullySplit: false);
+        var id = Guid.NewGuid();
+        var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(id);
+        harness.Service.ProcessCandidateOverride = (_, ct) => blocker.Task.WaitAsync(ct);
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        harness.Service.HasActiveQueueItemsOverride = () => true;
+
+        var outcome = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        Assert.Equal(HealthCheckRefillOutcome.Blocked, outcome);
+        Assert.Equal(
+            harness.Service.CoordinatorPollInterval,
+            harness.Service.GetCoordinatorWaitInterval(outcome));
+        blocker.TrySetResult();
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
+    }
+
+    [Fact]
+    public async Task WorkerOutOfMemoryBeforeFirstSuspension_FaultsCoordinator()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        await using var database = await harness.ConfigureEmptyDatabaseAsync();
+        var id = Guid.NewGuid();
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(id);
+        harness.Service.ProcessCandidateOverride = (_, _) =>
+            throw new OutOfMemoryException("synthetic pre-suspension OOM");
+        var previousGrace = HealthCheckService.StartupGracePeriod;
+        HealthCheckService.StartupGracePeriod = TimeSpan.Zero;
+
+        try
+        {
+            await Assert.ThrowsAsync<OutOfMemoryException>(
+                () => harness.Service.ExecuteHostedServiceForTests(CancellationToken.None));
+        }
+        finally
+        {
+            HealthCheckService.StartupGracePeriod = previousGrace;
+        }
+
+        Assert.Empty(harness.Service.InProgressHealthCheckIds);
+    }
+
+    [Fact]
+    public async Task WorkerOutOfMemoryAfterProgress_ClearsProgressAndFaultsCoordinator()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        await using var database = await harness.ConfigureEmptyDatabaseAsync();
+        var id = Guid.NewGuid();
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(id);
+        harness.Service.ProcessCandidateOverride = (candidateId, _) =>
+        {
+            Assert.True(harness.Service.MarkHealthProgressStarted(candidateId));
+            return Task.FromException(
+                new OutOfMemoryException("synthetic post-progress OOM"));
+        };
+        var previousGrace = HealthCheckService.StartupGracePeriod;
+        HealthCheckService.StartupGracePeriod = TimeSpan.Zero;
+
+        try
+        {
+            await Assert.ThrowsAsync<OutOfMemoryException>(
+                () => harness.Service.ExecuteHostedServiceForTests(CancellationToken.None));
+        }
+        finally
+        {
+            HealthCheckService.StartupGracePeriod = previousGrace;
+        }
+
+        Assert.Equal(
+            $"{id}|done",
+            harness.WebsocketManager.PeekLastMessage(WebsocketTopic.HealthItemProgress));
+        Assert.Empty(harness.Service.InProgressHealthCheckIds);
+    }
+
+    [Fact]
+    public async Task CandidateQueryFailure_IsAttemptedAtMostOncePerCooldownWindow()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        var attempts = 0;
+        harness.Service.SelectCandidateOverride = (_, _, _) =>
+        {
+            Interlocked.Increment(ref attempts);
+            throw new InvalidOperationException("synthetic candidate query failure");
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => harness.Service.RefillWorkerSlotsAsync(CancellationToken.None));
+        var blocked = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        Assert.Equal(1, Volatile.Read(ref attempts));
+        Assert.Equal(HealthCheckRefillOutcome.Blocked, blocked);
+
+        harness.TimeProvider.Advance(HealthCheckService.InfrastructureFailureCooldown);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => harness.Service.RefillWorkerSlotsAsync(CancellationToken.None));
+        Assert.Equal(2, Volatile.Read(ref attempts));
+    }
+
+    [Fact]
+    public async Task WorkerSetupFailure_CoolsDownTheItemAndCoordinator()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        var id = Guid.NewGuid();
+        var contextAttempts = 0;
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(id);
+        harness.Service.CreateDbContextOverride = () =>
+        {
+            Interlocked.Increment(ref contextAttempts);
+            throw new InvalidOperationException("synthetic context creation failure");
+        };
+
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        var blocked = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        Assert.True(harness.Service.IsWorkerFailureCooldownActive(id));
+        Assert.Equal(1, Volatile.Read(ref contextAttempts));
+        Assert.Equal(HealthCheckRefillOutcome.Blocked, blocked);
+
+        harness.TimeProvider.Advance(HealthCheckService.InfrastructureFailureCooldown);
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        Assert.Equal(2, Volatile.Read(ref contextAttempts));
+    }
+
+    [Fact]
+    public async Task DeferredScheduleDoubleFailure_CoolsDownTheItem()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        var candidate = NewCandidate("schedule-failure.mkv", null);
+        await using (var setup = new DavDatabaseContext(options))
+        {
+            await setup.Database.EnsureCreatedAsync();
+            setup.Items.Add(candidate);
+            await setup.SaveChangesAsync();
+        }
+
+        await using var failingContext = new FailingSaveDavDatabaseContext(options, failureCount: 2);
+        var trackedCandidate = await failingContext.Items.SingleAsync(item => item.Id == candidate.Id);
+        await harness.Service.DeferHealthCheck(
+            trackedCandidate,
+            new DavDatabaseClient(failingContext),
+            new InvalidOperationException("synthetic health failure"),
+            CancellationToken.None);
+
+        Assert.Equal(2, failingContext.SaveAttempts);
+        Assert.True(harness.Service.IsWorkerFailureCooldownActive(candidate.Id));
+    }
+
+    [Fact]
+    public async Task BenchmarkDrain_WaitsForActiveHealthAdmissionToRelease()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: true);
+        var id = Guid.NewGuid();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(id);
+        harness.Service.ProcessCandidateOverride = async (_, ct) =>
+        {
+            using var lease = await harness.ConnectionGate.AcquireAsync(
+                HealthCheckAdmissionPriority.Background,
+                ct);
+            entered.TrySetResult();
+            await release.Task.WaitAsync(ct);
+        };
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        using var pause = harness.BenchmarkGate.Enter();
+
+        var drain = harness.Service.WaitForQuiescenceAsync(CancellationToken.None);
+
+        Assert.False(drain.IsCompleted);
+        Assert.Equal(1, harness.ConnectionGate.GetSnapshot().Active);
+        release.TrySetResult();
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        await drain.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(0, harness.ConnectionGate.GetSnapshot().Active);
     }
 
     [Fact]
@@ -249,7 +499,9 @@ public sealed class HealthCheckCoordinatorTests
             harness.Service.CreateDbContextOverride = () => new DavDatabaseContext(options);
 
             await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
-            await WaitUntilAsync(() => harness.Service.InProgressHealthCheckIds.Count == 0);
+            await ReapUntilAsync(
+                harness.Service,
+                () => harness.Service.InProgressHealthCheckIds.Count == 0);
 
             await using var verificationDb = new DavDatabaseContext(options);
             var result = Assert.Single(await verificationDb.HealthCheckResults.ToListAsync());
@@ -262,13 +514,18 @@ public sealed class HealthCheckCoordinatorTests
         }
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
+    private static async Task ReapUntilAsync(
+        HealthCheckService service,
+        Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         try
         {
             while (!condition())
+            {
+                await service.ReapCompletedWorkersAsync();
                 await Task.Delay(10, timeout.Token);
+            }
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
@@ -292,6 +549,27 @@ public sealed class HealthCheckCoordinatorTests
         };
     }
 
+    private sealed class FailingSaveDavDatabaseContext(
+        DbContextOptions<DavDatabaseContext> options,
+        int failureCount) : DavDatabaseContext(options)
+    {
+        private int _remainingFailures = failureCount;
+
+        public int SaveAttempts { get; private set; }
+
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            SaveAttempts++;
+            if (Interlocked.Decrement(ref _remainingFailures) >= 0)
+            {
+                return Task.FromException<int>(
+                    new InvalidOperationException("synthetic schedule persistence failure"));
+            }
+
+            return base.SaveChangesAsync(cancellationToken);
+        }
+    }
+
     private sealed class Harness : IDisposable
     {
         private readonly string _root = Path.Join(
@@ -304,6 +582,11 @@ public sealed class HealthCheckCoordinatorTests
 
         public ConfigManager Config { get; }
         public HealthCheckService Service { get; }
+        public BenchmarkGate BenchmarkGate { get; }
+        public HealthCheckConnectionGate ConnectionGate => _gate;
+        public ControllableTimeProvider TimeProvider { get; } =
+            new(DateTimeOffset.UtcNow);
+        public WebsocketManager WebsocketManager { get; }
 
         public Harness(int? workers, bool fullySplit)
         {
@@ -360,11 +643,11 @@ public sealed class HealthCheckCoordinatorTests
             }
             Config.UpdateValues(values);
 
-            var websocketManager = new WebsocketManager();
+            WebsocketManager = new WebsocketManager();
             _patchStore = new RepairPatchStore(Path.Join(_root, "patches"), 1024 * 1024);
             _usenet = new UsenetStreamingClient(
                 Config,
-                websocketManager,
+                WebsocketManager,
                 new ProviderUsageTracker(),
                 new MetricsWriter(),
                 new ProviderBytesTracker(),
@@ -372,28 +655,29 @@ public sealed class HealthCheckCoordinatorTests
                 new ActiveReadRegistry(),
                 repairPatchStore: _patchStore);
             _gate = new HealthCheckConnectionGate(Config);
-            var benchmarkGate = new BenchmarkGate();
+            BenchmarkGate = new BenchmarkGate();
             _queueManager = QueueManager.CreateForTests(
                 _usenet,
                 Config,
-                websocketManager,
+                WebsocketManager,
                 new ProviderUsageTracker(),
                 new WatchdogLog(),
                 new QueueItemSourceTracker(),
-                benchmarkGate,
+                BenchmarkGate,
                 startLoop: false,
                 healthCheckConnectionGate: _gate);
             Service = new HealthCheckService(
                 Config,
                 _usenet,
-                websocketManager,
-                benchmarkGate,
+                WebsocketManager,
+                BenchmarkGate,
                 new StreamingFailureTracker(),
                 _queueManager,
                 new Par2RepairService(Config, _usenet, _patchStore),
                 _patchStore,
                 new ArrReplacementSearchBudget(),
-                _gate);
+                _gate,
+                timeProvider: TimeProvider);
         }
 
         public void SetWorkers(int count)
@@ -405,6 +689,33 @@ public sealed class HealthCheckCoordinatorTests
                     ConfigValue = count.ToString(),
                 },
             ]);
+        }
+
+        public void SetRepairEnabled(bool enabled)
+        {
+            Config.UpdateValues([
+                new ConfigItem
+                {
+                    ConfigName = ConfigKeys.RepairEnable,
+                    ConfigValue = enabled.ToString(),
+                },
+            ]);
+        }
+
+        public async Task<SqliteConnection> ConfigureEmptyDatabaseAsync()
+        {
+            var connection = new SqliteConnection("Data Source=:memory:");
+            await connection.OpenAsync();
+            var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+                .UseSqlite(connection)
+                .Options;
+            await using (var context = new DavDatabaseContext(options))
+            {
+                await context.Database.EnsureCreatedAsync();
+            }
+
+            Service.CreateDbContextOverride = () => new DavDatabaseContext(options);
+            return connection;
         }
 
         public void Dispose()

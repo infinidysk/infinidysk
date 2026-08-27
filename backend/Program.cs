@@ -405,7 +405,10 @@ public partial class Program
                 .AddHostedService(sp => sp.GetRequiredService<LiveStatsBroadcaster>())
                 .AddSingleton<ArrReplacementSearchBudget>()
                 .AddSingleton<NzbWebDAV.Clients.RadarrSonarr.ArrInstanceBackoff>()
-                .AddHostedService<HealthCheckService>()
+                .AddSingleton<HealthCheckService>()
+                .AddSingleton<IHealthCheckQuiescence>(
+                    sp => sp.GetRequiredService<HealthCheckService>())
+                .AddHostedService(sp => sp.GetRequiredService<HealthCheckService>())
                 .AddHostedService<HealthCheckRetentionService>()
                 .AddHostedService<ArrMonitoringService>()
                 .AddSingleton<ArrHealthService>()
