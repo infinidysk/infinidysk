@@ -99,7 +99,9 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
             if (context.RequestAborted.IsCancellationRequested)
             {
                 Increment("aborted");
-                if (isGet && firstByteMs is null)
+                // recordingStream exists exactly for GETs; a null first-byte mark
+                // means the client left before any body byte went out.
+                if (recordingStream is not null && firstByteMs is null)
                     Increment("abortedBeforeFirstByte");
             }
 
@@ -253,26 +255,31 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
             }
         }
 
-        private void RecordFirstByte() =>
+        private void RecordFirstByte(int count)
+        {
+            // Zero-length writes carry no body byte; recording them would mark a
+            // first byte that never went out and misclassify the request.
+            if (count <= 0) return;
             Interlocked.CompareExchange(ref _firstByteMs, stopwatch.ElapsedMilliseconds, -1);
+        }
 
         public override void Write(byte[] buffer, int offset, int count)
         {
-            RecordFirstByte();
+            RecordFirstByte(count);
             inner.Write(buffer, offset, count);
         }
 
         public override async Task WriteAsync(
             byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            RecordFirstByte();
+            RecordFirstByte(count);
             await inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
         }
 
         public override async ValueTask WriteAsync(
             ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            RecordFirstByte();
+            RecordFirstByte(buffer.Length);
             await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
         }
 

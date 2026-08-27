@@ -257,6 +257,25 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
     }
 
     [Fact]
+    public async Task AbortedGet_AfterZeroLengthWrite_StillCountsAbortedBeforeFirstByte()
+    {
+        // A zero-length write carries no body byte: it must not mark the first
+        // byte, or an aborted-before-first-byte request would go uncounted.
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Request.Path = "/content/tv/show.mkv";
+        context.RequestAborted = new CancellationToken(canceled: true);
+        var middleware = new WebDavObservabilityMiddleware(async ctx =>
+            await ctx.Response.Body.WriteAsync(ReadOnlyMemory<byte>.Empty));
+
+        await middleware.InvokeAsync(context);
+
+        var counters = WebDavObservabilityMiddleware.Snapshot();
+        Assert.Equal(1, counters["aborted"]);
+        Assert.Equal(1, counters["abortedBeforeFirstByte"]);
+    }
+
+    [Fact]
     public async Task SlowWarnings_AreThrottledPerCategory()
     {
         WebDavObservabilityMiddleware.SlowThresholdOverride = TimeSpan.Zero;
@@ -266,8 +285,15 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
         await middleware.InvokeAsync(NewSlowGet());
         await middleware.InvokeAsync(NewSlowGet());
 
+        // A different category owns a separate throttle, so it must still emit.
+        var propfind = new DefaultHttpContext();
+        propfind.Request.Method = "PROPFIND";
+        propfind.Request.Path = "/content/tv";
+        await middleware.InvokeAsync(propfind);
+
         var counters = WebDavObservabilityMiddleware.Snapshot();
         Assert.Equal(2, counters["slowFirstByte"]);
+        Assert.Equal(1, counters["slowMetadata"]);
         Assert.Equal(1, counters["suppressedSlowWarnings"]);
     }
 
