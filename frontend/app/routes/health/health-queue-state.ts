@@ -1,9 +1,17 @@
-import type { HealthCheckQueueItem } from "~/clients/backend-client.server";
+import {
+  HealthResult,
+  RepairAction,
+  type HealthCheckQueueItem,
+} from "~/clients/backend-client.server";
 
 export type HealthQueueState = {
   items: HealthCheckQueueItem[];
   uncheckedCount: number;
 };
+
+function isNumericEnumValue(enumType: Record<string, string | number>, value: number): boolean {
+  return Object.values(enumType).includes(value);
+}
 
 export function completeHealthCheck(state: HealthQueueState, davItemId: string): HealthQueueState {
   const completedItem = state.items.find((item) => item.id === davItemId);
@@ -38,7 +46,7 @@ export function parseHealthItemProgressMessage(message: string): {
   const parts = message.split("|");
   if (parts.length !== 2) return null;
   const [davItemId, progressValue] = parts;
-  if (!davItemId || progressValue === "done") return null;
+  if (!davItemId || progressValue.trim() === "" || progressValue === "done") return null;
   const progress = Number(progressValue);
   if (!Number.isFinite(progress) || progress < 0 || progress > 100) return null;
   return { davItemId, progress };
@@ -46,16 +54,28 @@ export function parseHealthItemProgressMessage(message: string): {
 
 export function parseHealthItemStatusMessage(message: string): {
   davItemId: string;
-  healthResult: number;
-  repairAction: number;
+  healthResult: HealthResult;
+  repairAction: RepairAction;
 } | null {
   const parts = message.split("|");
   if (parts.length !== 3) return null;
   const [davItemId, healthResultValue, repairActionValue] = parts;
+  if (!davItemId || healthResultValue.trim() === "" || repairActionValue.trim() === "")
+    return null;
   const healthResult = Number(healthResultValue);
   const repairAction = Number(repairActionValue);
-  if (!davItemId || !Number.isInteger(healthResult) || !Number.isInteger(repairAction)) return null;
-  return { davItemId, healthResult, repairAction };
+  if (
+    !Number.isInteger(healthResult) ||
+    !isNumericEnumValue(HealthResult, healthResult) ||
+    !Number.isInteger(repairAction) ||
+    !isNumericEnumValue(RepairAction, repairAction)
+  )
+    return null;
+  return {
+    davItemId,
+    healthResult: healthResult as HealthResult,
+    repairAction: repairAction as RepairAction,
+  };
 }
 
 export function getVisibleHealthCheckItems(

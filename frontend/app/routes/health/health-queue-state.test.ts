@@ -107,10 +107,16 @@ describe("health websocket payload parsing", () => {
 
   it("ignores malformed payloads", () => {
     expect(parseHealthItemProgressMessage("missing-progress")).toBeNull();
+    expect(parseHealthItemProgressMessage("item-id|")).toBeNull();
+    expect(parseHealthItemProgressMessage("item-id| ")).toBeNull();
     expect(parseHealthItemProgressMessage("item-id|NaN")).toBeNull();
     expect(parseHealthItemProgressMessage("item-id|101")).toBeNull();
     expect(parseHealthItemProgressMessage("item-id|done")).toBeNull();
+    expect(parseHealthItemStatusMessage("item-id||2")).toBeNull();
+    expect(parseHealthItemStatusMessage("item-id|1| ")).toBeNull();
     expect(parseHealthItemStatusMessage("item-id|not-a-result|2")).toBeNull();
+    expect(parseHealthItemStatusMessage("item-id|3|2")).toBeNull();
+    expect(parseHealthItemStatusMessage("item-id|1|5")).toBeNull();
     expect(parseHealthItemStatusMessage("|1|2")).toBeNull();
   });
 });
