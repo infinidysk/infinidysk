@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { applyAutoTuneTransferRecommendation } from "./provider-autotune";
+import {
+  applyAutoTuneTransferRecommendation,
+  resolveBenchmarkConnectionLimits,
+} from "./provider-autotune";
 
 describe("applyAutoTuneTransferRecommendation", () => {
   const draft = {
@@ -39,6 +42,68 @@ describe("applyAutoTuneTransferRecommendation", () => {
     "ignores a non-applicable recommendation (%s)",
     (recommendation) => {
       expect(applyAutoTuneTransferRecommendation(draft, recommendation, false, false)).toBe(draft);
+    },
+  );
+});
+
+describe("resolveBenchmarkConnectionLimits", () => {
+  it("uses the provider ceiling for a full sweep even when the transfer draft is invalid", () => {
+    expect(
+      resolveBenchmarkConnectionLimits(
+        { providerConnectionLimit: "5", transferConnections: "10" },
+        false,
+      ),
+    ).toEqual({
+      providerConnectionLimit: "5",
+      testConnections: "5",
+    });
+  });
+
+  it.each(["", "0", "-1", "not-a-number"])(
+    "rejects an invalid provider ceiling (%s)",
+    (providerConnectionLimit) => {
+      expect(
+        resolveBenchmarkConnectionLimits(
+          { providerConnectionLimit, transferConnections: "" },
+          false,
+        ),
+      ).toBeNull();
+    },
+  );
+
+  it("uses valid transfer connections for a pipelining-only run", () => {
+    expect(
+      resolveBenchmarkConnectionLimits(
+        { providerConnectionLimit: "20", transferConnections: "8" },
+        true,
+      ),
+    ).toEqual({
+      providerConnectionLimit: "20",
+      testConnections: "8",
+    });
+  });
+
+  it("falls back to the valid provider ceiling when transfer connections are blank", () => {
+    expect(
+      resolveBenchmarkConnectionLimits(
+        { providerConnectionLimit: "20", transferConnections: "" },
+        true,
+      ),
+    ).toEqual({
+      providerConnectionLimit: "20",
+      testConnections: "20",
+    });
+  });
+
+  it.each(["0", "-1", "not-a-number", "21"])(
+    "rejects invalid pipelining-only transfer connections (%s)",
+    (transferConnections) => {
+      expect(
+        resolveBenchmarkConnectionLimits(
+          { providerConnectionLimit: "20", transferConnections },
+          true,
+        ),
+      ).toBeNull();
     },
   );
 });

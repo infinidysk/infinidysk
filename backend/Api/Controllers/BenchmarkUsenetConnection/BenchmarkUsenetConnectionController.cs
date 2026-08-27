@@ -57,6 +57,7 @@ public class BenchmarkUsenetConnectionController(
             var result = await benchmarkService.RunAsync(
                 request.ToConnectionDetails(),
                 request.MaxConnections,
+                request.TransferTestConnections,
                 request.Intensity,
                 request.PipeliningOnly,
                 request.DataBudgetBytes,

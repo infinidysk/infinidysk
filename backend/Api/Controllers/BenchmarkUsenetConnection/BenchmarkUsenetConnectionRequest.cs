@@ -17,6 +17,9 @@ public class BenchmarkUsenetConnectionRequest
     /// <summary>The provider's configured connection ceiling, which the benchmark never exceeds.</summary>
     public int MaxConnections { get; init; }
 
+    /// <summary>The transfer connection count used by a pipelining-only run.</summary>
+    public int TransferTestConnections { get; init; }
+
     public BenchmarkIntensity Intensity { get; init; }
 
     /// <summary>When true, skip the connection sweep and only tune pipelining depth.</summary>
@@ -47,6 +50,7 @@ public class BenchmarkUsenetConnectionRequest
             UseSsl = false;
             SkipTlsVerification = false;
             MaxConnections = 1;
+            TransferTestConnections = 1;
             Intensity = BenchmarkIntensity.Quick;
             return;
         }
@@ -79,9 +83,26 @@ public class BenchmarkUsenetConnectionRequest
         SkipTlsVerification = bool.TryParse(skipTlsVerification, out var skipTlsVerificationValue)
                               && skipTlsVerificationValue;
 
-        // Optional knobs — fall back to sensible defaults rather than rejecting.
         var maxConnections = context.Request.Form["max-connections"].FirstOrDefault();
-        MaxConnections = int.TryParse(maxConnections, out var mc) && mc > 0 ? mc : 10;
+        MaxConnections = !int.TryParse(maxConnections, out var mc) || mc < 1
+            ? throw new BadHttpRequestException(
+                "Provider connection limit must be a positive whole number")
+            : mc;
+
+        var transferConnections =
+            context.Request.Form["transfer-connections"].FirstOrDefault();
+        TransferTestConnections = string.IsNullOrWhiteSpace(transferConnections)
+            ? MaxConnections
+            : !int.TryParse(transferConnections, out var transferLimit)
+              || transferLimit < 1
+                ? throw new BadHttpRequestException(
+                    "Transfer test connections must be a positive whole number")
+                : transferLimit;
+        if (TransferTestConnections > MaxConnections)
+        {
+            throw new BadHttpRequestException(
+                "Transfer test connections must not exceed the provider connection limit");
+        }
 
         var intensity = context.Request.Form["intensity"].FirstOrDefault();
         Intensity = string.Equals(intensity, "thorough", StringComparison.OrdinalIgnoreCase)
@@ -97,7 +118,16 @@ public class BenchmarkUsenetConnectionRequest
             : null;
 
         var verify = context.Request.Form["verify-connections"].FirstOrDefault();
-        VerifyConnections = int.TryParse(verify, out var vc) && vc > 0 ? vc : null;
+        if (!string.IsNullOrWhiteSpace(verify))
+        {
+            if (!int.TryParse(verify, out var vc) || vc < 1)
+                throw new BadHttpRequestException(
+                    "Verification connections must be a positive whole number");
+            if (vc > MaxConnections)
+                throw new BadHttpRequestException(
+                    "Verification connections must not exceed the provider connection limit");
+            VerifyConnections = vc;
+        }
     }
 
     public UsenetProviderConfig.ConnectionDetails ToConnectionDetails()

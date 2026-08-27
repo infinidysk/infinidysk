@@ -55,7 +55,8 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
 
     public async Task<BenchmarkResult> RunAsync(
         UsenetProviderConfig.ConnectionDetails provider,
-        int configuredMaxConnections,
+        int configuredProviderConnectionLimit,
+        int requestedTransferConnections,
         BenchmarkIntensity intensity,
         bool pipeliningOnly,
         long? dataBudgetBytes,
@@ -64,9 +65,12 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
     {
         var profile = BenchmarkProfile.For(intensity);
         var configuredProviderLimit = Math.Clamp(
-            configuredMaxConnections,
+            configuredProviderConnectionLimit,
             1,
             HardConnectionCeiling);
+        var transferTestConnections = BoundBenchmarkConnections(
+            requestedTransferConnections,
+            configuredProviderLimit);
         var budget = Math.Max(50_000_000, dataBudgetBytes ?? profile.HardTotalBytes);
         var result = new BenchmarkResult { PipeliningOnly = pipeliningOnly, DataBudgetBytes = budget };
         var runClock = Stopwatch.StartNew();
@@ -109,7 +113,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         // the best pipelining depth at the count the user already runs.
         if (pipeliningOnly)
         {
-            var conns = configuredProviderLimit;
+            var conns = transferTestConnections;
             Report("pipelining", $"Testing pipelining at {conns} connection{(conns == 1 ? "" : "s")}…", 30, result, conns);
             await ladder.EnsureAsync(conns, ct).ConfigureAwait(false);
             result.Pipelining = await MeasurePipeliningAsync(
@@ -245,7 +249,12 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
 
             result.ProviderConnectionCap = providerCap;
             result.RecommendedConnections = CapTransferRecommendation(
-                DetectKnee(result.Sweep, providerCap, result.Warnings, out var stillClimbing),
+                DetectKnee(
+                    result.Sweep,
+                    providerCap,
+                    result.Warnings,
+                    out var stillClimbing,
+                    configuredProviderLimit),
                 configuredProviderLimit,
                 result.Warnings);
             result.StillClimbing = stillClimbing;
@@ -281,7 +290,12 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                         point.MegaBytesPerSec = Math.Round((point.MegaBytesPerSec + confirm.MegaBytesPerSec) / 2, 2);
                         point.Cv = Math.Round(Math.Max(point.Cv, confirm.Cv), 3);
                         result.RecommendedConnections = CapTransferRecommendation(
-                            DetectKnee(result.Sweep, providerCap, [], out stillClimbing),
+                            DetectKnee(
+                                result.Sweep,
+                                providerCap,
+                                [],
+                                out stillClimbing,
+                                configuredProviderLimit),
                             configuredProviderLimit,
                             result.Warnings);
                         result.StillClimbing = stillClimbing;
@@ -752,7 +766,8 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
 
     internal static int? DetectKnee(
         List<BenchmarkSweepPoint> sweep, int? providerCap, List<string> warnings,
-        out bool stillClimbing)
+        out bool stillClimbing,
+        int? configuredProviderLimit = null)
     {
         stillClimbing = false;
         if (sweep.Count == 0) return null;
@@ -789,7 +804,11 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             if (prev.MegaBytesPerSec > 0 && (peak.MegaBytesPerSec - prev.MegaBytesPerSec) / prev.MegaBytesPerSec > 0.08)
             {
                 stillClimbing = true;
-                warnings.Add("Speed was still climbing at the highest level tested — a faster line or even more connections may help.");
+                warnings.Add(
+                    configuredProviderLimit is { } limit && peak.Connections >= limit
+                        ? $"Speed was still climbing at your Provider Connection Limit ({limit}). " +
+                          "Raise that limit and re-run Auto-tune to test higher transfer counts."
+                        : "Speed was still climbing at the highest level tested — a faster line or even more connections may help.");
             }
         }
 

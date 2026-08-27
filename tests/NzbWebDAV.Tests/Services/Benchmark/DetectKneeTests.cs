@@ -102,6 +102,25 @@ public class DetectKneeTests
     }
 
     [Fact]
+    public void DetectKnee_StillClimbingAtConfiguredCeilingNamesProviderLimit()
+    {
+        var sweep = Sweep((1, 10), (2, 20), (4, 40), (8, 80));
+        var warnings = new List<string>();
+
+        UsenetBenchmarkService.DetectKnee(
+            sweep,
+            providerCap: null,
+            warnings,
+            out var stillClimbing,
+            configuredProviderLimit: 8);
+
+        Assert.True(stillClimbing);
+        var warning = Assert.Single(warnings);
+        Assert.Contains("Provider Connection Limit (8)", warning, StringComparison.Ordinal);
+        Assert.Contains("re-run Auto-tune", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DetectKnee_StillClimbingFalseOnPlateau()
     {
         var sweep = Sweep((1, 10), (2, 20), (4, 35), (8, 40), (16, 41));
@@ -160,6 +179,23 @@ public class DetectKneeTests
             UsenetBenchmarkService.BoundBenchmarkConnections(
                 requestedConnections: 40,
                 configuredProviderLimit: 20));
+    }
+
+    [Theory]
+    [InlineData(8, 20, 8)]
+    [InlineData(40, 20, 20)]
+    [InlineData(0, 20, 1)]
+    [InlineData(-1, 20, 1)]
+    public void PipeliningOnlyConnectionsAreBoundedByProviderLimit(
+        int requestedTransferConnections,
+        int providerConnectionLimit,
+        int expected)
+    {
+        Assert.Equal(
+            expected,
+            UsenetBenchmarkService.BoundBenchmarkConnections(
+                requestedTransferConnections,
+                providerConnectionLimit));
     }
 
     [Theory]

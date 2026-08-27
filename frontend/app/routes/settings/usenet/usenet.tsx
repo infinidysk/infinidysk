@@ -30,7 +30,10 @@ import { subscribeWebsocketTopics, useWebsocketTopic } from "~/utils/shared-webs
 import { isMaskedSecret } from "~/utils/config-mask";
 import { generateUuid } from "~/utils/uuid";
 import { shouldWarnCleartextCredentials } from "./cleartext-credentials";
-import { applyAutoTuneTransferRecommendation } from "./provider-autotune";
+import {
+  applyAutoTuneTransferRecommendation,
+  resolveBenchmarkConnectionLimits,
+} from "./provider-autotune";
 import {
   calculateProviderConnectionBudget,
   formatMetadataCapacity,
@@ -86,6 +89,7 @@ type BenchmarkResult = {
   contentionWarnings?: string[];
   verificationRun?: boolean;
   budgetLimited?: boolean;
+  stillClimbing?: boolean;
   wrappedPool?: boolean;
   warnings: string[];
 };
@@ -1535,6 +1539,20 @@ function ProviderModal({
 
   const handleAutoTune = useCallback(
     async (verifyConnections?: number) => {
+      const benchmarkLimits = resolveBenchmarkConnectionLimits(
+        {
+          providerConnectionLimit: maxConnections,
+          transferConnections: maxTransferConnections,
+        },
+        pipeliningOnly,
+      );
+      if (benchmarkLimits === null) {
+        setBenchmarkError(
+          "Enter a valid Provider Connection Limit and, for a pipelining-only test, valid Transfer Connections.",
+        );
+        return;
+      }
+
       // Abort any previous run still in flight before starting a new one.
       benchmarkAbortRef.current?.abort();
       await fetch(withUrlBase("/api/benchmark-usenet-connection"), {
@@ -1608,10 +1626,10 @@ function ProviderModal({
         formData.append("skip-tls-verification", skipTlsVerification.toString());
         formData.append("user", user);
         formData.append("pass", pass);
-        formData.append(
-          "max-connections",
-          (pipeliningOnly ? maxTransferConnections : maxConnections) || maxConnections || "10",
-        );
+        formData.append("max-connections", benchmarkLimits.providerConnectionLimit);
+        if (pipeliningOnly) {
+          formData.append("transfer-connections", benchmarkLimits.testConnections);
+        }
         formData.append("intensity", intensity);
         formData.append("pipelining-only", pipeliningOnly ? "true" : "false");
         if (dataBudget) formData.append("data-budget-mb", dataBudget);
@@ -1818,10 +1836,21 @@ function ProviderModal({
     isTransferLimitValid &&
     isPipeliningDepthValid;
 
-  // The speed test only needs a reachable provider; the configured provider
-  // ceiling scopes any transfer recommendation it produces.
+  const benchmarkConnectionLimits = resolveBenchmarkConnectionLimits(
+    {
+      providerConnectionLimit: maxConnections,
+      transferConnections: maxTransferConnections,
+    },
+    pipeliningOnly,
+  );
+  // Credentials and the provider ceiling are always required. Pipelining-only
+  // runs additionally require a valid transfer count (blank uses the ceiling).
   const canBenchmark =
-    host.trim() !== "" && isPositiveInteger(port) && user.trim() !== "" && pass.trim() !== "";
+    host.trim() !== "" &&
+    isPositiveInteger(port) &&
+    user.trim() !== "" &&
+    pass.trim() !== "" &&
+    benchmarkConnectionLimits !== null;
 
   const canSave =
     isFormValid && (connectionTested || passIsMasked || type == ProviderType.Disabled);
@@ -2175,6 +2204,7 @@ function ProviderModal({
 
           <BenchmarkPanel
             canBenchmark={canBenchmark}
+            providerConnectionLimit={maxConnections}
             isBenchmarking={isBenchmarking}
             intensity={intensity}
             setIntensity={setIntensity}
@@ -2294,6 +2324,7 @@ function ProviderModalSection({ title, children }: { title: string; children: Re
 
 type BenchmarkPanelProps = {
   canBenchmark: boolean;
+  providerConnectionLimit: string;
   isBenchmarking: boolean;
   intensity: BenchmarkIntensity;
   setIntensity: (value: BenchmarkIntensity) => void;
@@ -2321,6 +2352,7 @@ const BENCH_PHASES = [
 function BenchmarkPanel(props: BenchmarkPanelProps) {
   const {
     canBenchmark,
+    providerConnectionLimit,
     isBenchmarking,
     intensity,
     setIntensity,
@@ -2370,6 +2402,11 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
       )
     : -1;
   const elapsedLabel = formatElapsed(result?.elapsedSeconds);
+  const highestTestedConnections =
+    result?.sweep.reduce((highest, point) => Math.max(highest, point.connections), 0) ?? 0;
+  const reachedProviderCeiling =
+    isPositiveInteger(providerConnectionLimit) &&
+    highestTestedConnections >= Number(providerConnectionLimit);
 
   return (
     <div className="rounded-lg border border-base-content/10 bg-base-200/40 p-4">
@@ -2521,6 +2558,22 @@ function BenchmarkPanel(props: BenchmarkPanelProps) {
               {warning}
             </Alert>
           ))}
+
+          {result.stillClimbing &&
+            reachedProviderCeiling &&
+            !result.pipeliningOnly &&
+            !result.verificationRun &&
+            result.throughputTested && (
+              <Alert variant="warning" className="alert-soft mt-3 text-xs">
+                <span className="leading-relaxed">
+                  <strong className="font-semibold">
+                    Speed was still climbing at your Provider Connection Limit.
+                  </strong>{" "}
+                  Auto-tune does not probe above that ceiling. If your account permits more
+                  connections, raise the limit and run Auto-tune again.
+                </span>
+              </Alert>
+            )}
 
           {result.confidence && (
             <div className="mt-3">
