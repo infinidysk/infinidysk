@@ -53,15 +53,26 @@ COPY ./libs/UsenetSharp/UsenetSharp.csproj ./libs/UsenetSharp/
 COPY ./libs/RapidYencSharp/RapidYencSharp.csproj ./libs/RapidYencSharp/
 RUN dotnet restore backend/NzbWebDAV.csproj -r linux-musl-${TARGETARCH}
 
-COPY ./backend ./backend
-COPY ./libs ./libs
+# Keep library compilation independent from backend-only source changes.
+COPY ./libs/SharpCompress ./libs/SharpCompress
+COPY ./libs/UsenetSharp ./libs/UsenetSharp
+COPY ./libs/RapidYencSharp ./libs/RapidYencSharp
+COPY ./libs/SharpCompress.snk ./libs/SharpCompress.snk
 
 # Place the musl native where RapidYencSharp copies runtimes into the publish output.
 RUN mkdir -p libs/RapidYencSharp/runtimes/linux-musl-${TARGETARCH}/native
 COPY --from=rapidyenc-musl /out/librapidyenc.so \
     libs/RapidYencSharp/runtimes/linux-musl-${TARGETARCH}/native/librapidyenc.so
 
+RUN dotnet build libs/SharpCompress/SharpCompress.csproj -c Release -r linux-musl-${TARGETARCH} --no-restore \
+        -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false \
+    && dotnet build libs/UsenetSharp/UsenetSharp.csproj -c Release -r linux-musl-${TARGETARCH} --no-restore \
+        -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false
+
+COPY ./backend ./backend
+
 RUN dotnet publish backend/NzbWebDAV.csproj -c Release -r linux-musl-${TARGETARCH} -o ./backend/publish --no-restore \
+        -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false \
     && cp libs/RapidYencSharp/runtimes/linux-musl-${TARGETARCH}/native/librapidyenc.so ./backend/publish/
 
 # -------- Stage 3: Combined runtime image --------
