@@ -241,6 +241,11 @@ public sealed class SupportPackService(
         stalledStreams (streams still open after a minute), and longStreams (healthy
         client-paced reads that simply outlived five seconds - not a server problem).
         slow is the sum of the three attention-worthy kinds.
+        abortedBeforeFirstByte is the subset of aborted GETs that produced no body
+        byte - those point at server-side latency, unlike an ordinary seek abort.
+        suppressedSlowWarnings counts slow-warning log lines dropped by the
+        per-category throttle, not requests; a high value means the counters above
+        are more complete than logs/warnings.log.
 
         environment.json → queue.inProgress lists every in-flight import with its
         current stage, how long that stage has been running, and cumulative queue
