@@ -12,11 +12,13 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Websocket;
 using Xunit.Sdk;
 
 namespace NzbWebDAV.Tests.Services;
 
+[Collection(nameof(ConfigPathCollection))]
 public sealed class HealthCheckCoordinatorTests
 {
     [Fact]

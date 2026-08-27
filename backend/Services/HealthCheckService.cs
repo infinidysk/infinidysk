@@ -77,6 +77,7 @@ public class HealthCheckService : BackgroundService
     private readonly TimeProvider _timeProvider;
     private readonly HealthCheckConnectionGate _healthCheckConnectionGate;
     private readonly ConcurrentDictionary<Guid, InProgressHealthCheck> _inProgress = new();
+    private bool _candidateSweepWasEmpty;
 
     private static readonly HashSet<string> _missingSegmentIds = [];
     private static readonly Queue<string> _missingSegmentOrder = [];
@@ -84,6 +85,7 @@ public class HealthCheckService : BackgroundService
     private static readonly ConcurrentDictionary<string, List<DateTimeOffset>> _recentRepairRemovalsByPath = new();
 
     internal TimeSpan CoordinatorPollInterval { get; set; } = TimeSpan.FromSeconds(1);
+    internal TimeSpan CoordinatorIdleInterval { get; set; } = TimeSpan.FromSeconds(5);
     internal Func<DavDatabaseContext>? CreateDbContextOverride { get; set; }
     internal Func<HashSet<Guid>, bool, CancellationToken, Task<Guid?>>? SelectCandidateOverride
     { get; set; }
@@ -205,6 +207,7 @@ public class HealthCheckService : BackgroundService
 
     internal async Task RefillWorkerSlotsAsync(CancellationToken ct)
     {
+        _candidateSweepWasEmpty = false;
         while (_inProgress.Count < _configManager.GetHealthCheckWorkers())
         {
             if (_benchmarkGate.IsPaused || !_configManager.IsRepairJobEnabled()) return;
@@ -219,7 +222,12 @@ public class HealthCheckService : BackgroundService
             if (SelectCandidateOverride is { } selector)
             {
                 var candidateId = await selector(activeIds, allowUrgentRepair, ct).ConfigureAwait(false);
-                if (candidateId is not { } id || !TryStartWorker(id, ct)) return;
+                if (candidateId is not { } id)
+                {
+                    _candidateSweepWasEmpty = true;
+                    return;
+                }
+                if (!TryStartWorker(id, ct)) return;
                 continue;
             }
 
@@ -230,7 +238,11 @@ public class HealthCheckService : BackgroundService
                     availableSlots,
                     ct)
                 .ConfigureAwait(false);
-            if (candidateIds.Count == 0) return;
+            if (candidateIds.Count == 0)
+            {
+                _candidateSweepWasEmpty = true;
+                return;
+            }
 
             foreach (var id in candidateIds)
             {
@@ -343,12 +355,15 @@ public class HealthCheckService : BackgroundService
 
     private async Task WaitForCoordinatorWakeAsync(CancellationToken ct)
     {
-        var delay = Task.Delay(CoordinatorPollInterval, _timeProvider, ct);
         var workers = _inProgress.Values
             .Select(worker => worker.ProcessingTask)
             .Where(task => task is not null)
             .Cast<Task>()
             .ToArray();
+        var interval = workers.Length == 0 && _candidateSweepWasEmpty
+            ? CoordinatorIdleInterval
+            : CoordinatorPollInterval;
+        var delay = Task.Delay(interval, _timeProvider, ct);
         if (workers.Length == 0)
         {
             await delay.ConfigureAwait(false);
@@ -907,6 +922,10 @@ public class HealthCheckService : BackgroundService
         // One bounded head read per file, ever: the probed class is persisted with the
         // hole record. Runs inside the caller's maintenance download context (attribution)
         // and cancellation scope; early disposal of the body stream is by design.
+        using var healthAdmissionScope = ct.SetContext(
+            new HealthCheckAdmissionContext(
+                _healthCheckConnectionGate,
+                HealthCheckAdmissionPriority.Background));
         var response = await _usenetClient.DecodedBodyAsync(segments[0], ct).ConfigureAwait(false);
         if (response.Stream is not { } headStream)
             throw new UsenetUnexpectedResponseException(segments[0], response.ResponseMessage);
@@ -1027,6 +1046,10 @@ public class HealthCheckService : BackgroundService
         IReadOnlyList<int> recorded,
         CancellationToken ct)
     {
+        using var healthAdmissionScope = ct.SetContext(
+            new HealthCheckAdmissionContext(
+                _healthCheckConnectionGate,
+                HealthCheckAdmissionPriority.Background));
         var remaining = new List<int>();
         var cap = _configManager.GetDegradedMaxTotalMissing();
         var probed = 0;
