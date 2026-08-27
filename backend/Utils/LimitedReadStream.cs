@@ -19,8 +19,13 @@ internal sealed class LimitedReadStream(
     public override long Length => throw new NotSupportedException();
     public override long Position { get => _read; set => throw new NotSupportedException(); }
     public override void Flush() => throw new NotSupportedException();
-    public override int Read(byte[] buffer, int offset, int count) =>
-        Count(inner.Read(buffer, offset, CapCount(count)));
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        // Validate the caller's original arguments before capping: an out-of-range
+        // offset/count must throw, not shrink into a valid smaller read.
+        ValidateBufferArguments(buffer, offset, count);
+        return Count(inner.Read(buffer, offset, CapCount(count)));
+    }
     public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) =>
         ReadAndCountAsync(buffer[..CapCount(buffer.Length)], ct);
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();

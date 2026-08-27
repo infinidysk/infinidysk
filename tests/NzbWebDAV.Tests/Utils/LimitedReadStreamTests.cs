@@ -64,6 +64,20 @@ public class LimitedReadStreamTests
     }
 
     [Fact]
+    public void Read_InvalidOffsetCount_ThrowsBeforeCapping()
+    {
+        using var inner = new MemoryStream(new byte[1 << 20]);
+        using var limited = new LimitedReadStream(
+            inner, 1024, () => new InvalidDataException("limit"));
+        var buffer = new byte[1024];
+        Assert.Equal(1024, limited.Read(buffer, 0, buffer.Length));
+
+        // offset 9 + count 2 exceeds a 10-byte buffer; the cap must not silently
+        // shrink the invalid request into a valid one-byte read.
+        Assert.ThrowsAny<ArgumentException>(() => limited.Read(new byte[10], 9, 2));
+    }
+
+    [Fact]
     public async Task Copy_Cancelled_ThrowsOperationCanceledNotLimit()
     {
         // Deterministic cancellation after 64 KiB of reads (a timer races the
