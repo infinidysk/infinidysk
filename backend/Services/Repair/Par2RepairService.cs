@@ -24,6 +24,13 @@ using UsenetSharp.Models;
 
 namespace NzbWebDAV.Services.Repair;
 
+public enum Par2RepairOutcome
+{
+    NotRepaired = 0,
+    Repaired = 1,
+    VerifiedClean = 2,
+}
+
 public class Par2RepairService : BackgroundService
 {
     private const int MaxQueueLength = 50;
@@ -98,7 +105,7 @@ public class Par2RepairService : BackgroundService
     {
         _queuedOrRunning.TryRemove(davItemId, out _);
         if (_repairFlights.TryRemove(davItemId, out var flight))
-            flight.Completion.TrySetResult(false);
+            flight.Completion.TrySetResult(Par2RepairOutcome.NotRepaired);
     }
 
     internal Task RequeueRetainedForTestsAsync(Guid davItemId, CancellationToken ct) =>
@@ -190,16 +197,16 @@ public class Par2RepairService : BackgroundService
 
     /// <summary>
     /// Attempts PAR2 repair synchronously for health-check and urgent paths.
-    /// Returns true when reconstruction succeeded and patches were committed.
+    /// Returns the outcome of the repair or verification attempt.
     /// Virtual so health-check classification tests can script the outcome.
     /// </summary>
-    public virtual async Task<bool> TryPar2RepairAsync(
+    public virtual async Task<Par2RepairOutcome> TryPar2RepairAsync(
         DavItem davItem,
         IReadOnlyList<string>? missingSegmentIds,
         CancellationToken ct)
     {
         if (!_configManager.IsPar2RepairEnabled())
-            return false;
+            return Par2RepairOutcome.NotRepaired;
 
         var mine = new RepairFlight();
         var flight = _repairFlights.GetOrAdd(davItem.Id, mine);
@@ -215,7 +222,7 @@ public class Par2RepairService : BackgroundService
         {
             // The repair owner stopped; callers should follow their normal safe fallback
             // rather than surfacing a cancellation that they did not request.
-            return false;
+            return Par2RepairOutcome.NotRepaired;
         }
     }
 
@@ -299,13 +306,13 @@ public class Par2RepairService : BackgroundService
                 catch (Exception e) when (e is not OutOfMemoryException)
                 {
                     _queuedOrRunning.TryRemove(item.DavItemId, out _);
-                    CompleteFlight(item.DavItemId, item.Flight, false);
+                    CompleteFlight(item.DavItemId, item.Flight, Par2RepairOutcome.NotRepaired);
                     e.LogWarningKnownOrStack("PAR2 background repair worker failed for {Path}", item.Path);
                 }
                 catch (OutOfMemoryException oom)
                 {
                     _queuedOrRunning.TryRemove(item.DavItemId, out _);
-                    CompleteFlight(item.DavItemId, item.Flight, false);
+                    CompleteFlight(item.DavItemId, item.Flight, Par2RepairOutcome.NotRepaired);
                     OomDiagnostics.LogHeapStateOnOom(oom, "PAR2 background repair worker");
                     Log.Warning("PAR2 background repair worker deferred after exhausting managed memory. Path: {Path}", item.Path);
                 }
@@ -491,7 +498,7 @@ public class Par2RepairService : BackgroundService
         {
             _queuedOrRunning.TryRemove(item.DavItemId, out _);
             _retainedSegmentIds.TryRemove(item.DavItemId, out _);
-            CompleteFlight(item.DavItemId, item.Flight, false);
+            CompleteFlight(item.DavItemId, item.Flight, Par2RepairOutcome.NotRepaired);
             return;
         }
 
@@ -499,7 +506,7 @@ public class Par2RepairService : BackgroundService
             .ConfigureAwait(false);
     }
 
-    private async Task<bool> RunFlightAsync(
+    private async Task<Par2RepairOutcome> RunFlightAsync(
         RepairFlight flight,
         DavItem davItem,
         IReadOnlyList<string>? missingSegmentIds,
@@ -537,7 +544,10 @@ public class Par2RepairService : BackgroundService
         }
     }
 
-    private void CompleteFlight(Guid davItemId, RepairFlight flight, bool result)
+    private void CompleteFlight(
+        Guid davItemId,
+        RepairFlight flight,
+        Par2RepairOutcome result)
     {
         flight.Completion.TrySetResult(result);
         _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItemId, flight));
@@ -549,7 +559,7 @@ public class Par2RepairService : BackgroundService
         _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItemId, flight));
     }
 
-    private async Task<bool> RunRepairAsync(
+    private async Task<Par2RepairOutcome> RunRepairAsync(
         DavItem davItem,
         IReadOnlyList<string>? missingSegmentIds,
         bool queueGuard,
@@ -558,7 +568,7 @@ public class Par2RepairService : BackgroundService
         if (!_configManager.IsPar2RepairEnabled())
         {
             if (queueGuard) _queuedOrRunning.TryRemove(davItem.Id, out _);
-            return false;
+            return Par2RepairOutcome.NotRepaired;
         }
 
         Par2RepairJob? job = null;
@@ -569,7 +579,7 @@ public class Par2RepairService : BackgroundService
             if (job == null)
             {
                 if (queueGuard) _queuedOrRunning.TryRemove(davItem.Id, out _);
-                return false;
+                return Par2RepairOutcome.NotRepaired;
             }
 
             job.State = Par2RepairJob.RepairJobState.Running;
@@ -601,12 +611,21 @@ public class Par2RepairService : BackgroundService
                 Interlocked.Add(ref _totalBytesRead, result.BytesRead);
                 Interlocked.Add(ref _totalSlicesReconstructed, result.SlicesReconstructed);
                 Interlocked.Add(ref _totalSegmentsCommitted, result.SegmentsCommitted);
+                if (result.VerifiedClean)
+                {
+                    Log.Information(
+                        "PAR2 verification succeeded for {Path}: all slices matched, " +
+                        "{Bytes} bytes read in {Elapsed}",
+                        davItem.Path, result.BytesRead, stopwatch.Elapsed);
+                    return Par2RepairOutcome.VerifiedClean;
+                }
+
                 Log.Information(
                     "PAR2 repair succeeded for {Path}: {Slices} slice(s) reconstructed, "
                     + "{Segments} segment(s) committed, {Bytes} bytes read in {Elapsed}",
                     davItem.Path, result.SlicesReconstructed, result.SegmentsCommitted,
                     result.BytesRead, stopwatch.Elapsed);
-                return true;
+                return Par2RepairOutcome.Repaired;
             }
 
             job.State = result.IsInfeasible
@@ -627,7 +646,7 @@ public class Par2RepairService : BackgroundService
             Log.Warning(
                 "PAR2 repair {Outcome} for {Path}. Reason: {Reason}",
                 result.IsInfeasible ? "infeasible" : "failed", davItem.Path, result.FailureReason);
-            return false;
+            return Par2RepairOutcome.NotRepaired;
         }
         catch (OutOfMemoryException oom)
         {
@@ -638,7 +657,7 @@ public class Par2RepairService : BackgroundService
             PrometheusMetrics.Current?.ObservePar2RepairDuration(stopwatch.Elapsed);
             Interlocked.Increment(ref _totalFailed);
             Log.Warning("PAR2 repair deferred after exhausting managed memory. Path: {Path}", davItem.Path);
-            return false;
+            return Par2RepairOutcome.NotRepaired;
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -649,7 +668,7 @@ public class Par2RepairService : BackgroundService
             e.LogWarningKnownOrStack("PAR2 repair error for {Path}", davItem.Path);
             PrometheusMetrics.Current?.RecordPar2RepairJob("failed");
             PrometheusMetrics.Current?.ObservePar2RepairDuration(stopwatch.Elapsed);
-            return false;
+            return Par2RepairOutcome.NotRepaired;
         }
         finally
         {
@@ -738,13 +757,11 @@ public class Par2RepairService : BackgroundService
         unavailableSegments.UnionWith(persistedMissing);
         unavailableSegments.UnionWith(persistedCorrupt);
 
-        if (unavailableSegments.Count == 0 && job.MissingSegmentIds.Length == 0
-            && persistedMissing.Count == 0 && persistedCorrupt.Count == 0)
-        {
-            unavailableSegments.UnionWith(Enumerable.Range(0, segmentIds.Length));
-        }
+        var verifyAll = job.MissingSegmentIds.Length == 0
+                        && persistedMissing.Count == 0
+                        && persistedCorrupt.Count == 0;
 
-        if (unavailableSegments.Count == 0)
+        if (!verifyAll && unavailableSegments.Count == 0)
             return RepairExecutionResult.NotFeasible("No missing or corrupt segments to repair.");
 
         var unavailableSlices = new HashSet<int>();
@@ -761,7 +778,7 @@ public class Par2RepairService : BackgroundService
             return RepairExecutionResult.NotFeasible("Segment-to-slice mapping overflowed.");
         }
 
-        if (unavailableSlices.Count == 0)
+        if (!verifyAll && unavailableSlices.Count == 0)
             return RepairExecutionResult.NotFeasible("Missing or corrupt segments do not map to PAR2 slices.");
 
         var maxMissingSlices = _configManager.GetPar2MaxMissingSlices();
@@ -855,6 +872,9 @@ public class Par2RepairService : BackgroundService
                     $"Missing slice count {unavailableSlices.Count} exceeds cap {maxMissingSlices}.",
                     bytesRead);
             }
+
+            if (verifyAll && unavailableSlices.Count == 0)
+                return RepairExecutionResult.Verified(bytesRead);
 
             var patchTargets = SegmentsOverlappingSlices(sliceMap, unavailableSlices, segmentIds);
             var stagedPatchBytes = patchTargets.Sum(target => segmentRanges[target.Index].Count);
@@ -1813,10 +1833,10 @@ public class Par2RepairService : BackgroundService
 
     private sealed class RepairFlight
     {
-        public TaskCompletionSource<bool> Completion { get; } =
+        public TaskCompletionSource<Par2RepairOutcome> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task<bool> Task => Completion.Task;
+        public Task<Par2RepairOutcome> Task => Completion.Task;
     }
 
     private void RetainSegmentIds(Guid davItemId, string path, IEnumerable<string> segmentIds)
@@ -1927,6 +1947,7 @@ public class Par2RepairService : BackgroundService
 
     private sealed record RepairExecutionResult(
         bool Success,
+        bool VerifiedClean,
         bool IsInfeasible,
         string? FailureReason,
         long BytesRead,
@@ -1934,13 +1955,16 @@ public class Par2RepairService : BackgroundService
         int SegmentsCommitted)
     {
         public static RepairExecutionResult Succeeded(long bytesRead, int slices, int segmentsCommitted)
-            => new(true, false, null, bytesRead, slices, segmentsCommitted);
+            => new(true, false, false, null, bytesRead, slices, segmentsCommitted);
+
+        public static RepairExecutionResult Verified(long bytesRead)
+            => new(true, true, false, null, bytesRead, 0, 0);
 
         public static RepairExecutionResult NotFeasible(string reason, long bytesRead = 0)
-            => new(false, true, reason, bytesRead, 0, 0);
+            => new(false, false, true, reason, bytesRead, 0, 0);
 
         public static RepairExecutionResult Failed(string reason, long bytesRead = 0)
-            => new(false, false, reason, bytesRead, 0, 0);
+            => new(false, false, false, reason, bytesRead, 0, 0);
     }
 
     private sealed class SliceSegmentAccessor

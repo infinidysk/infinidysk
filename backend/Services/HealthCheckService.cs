@@ -556,8 +556,11 @@ public class HealthCheckService : BackgroundService
             }
 
             // When no Arr replacement is available, PAR2 remains the only automatic recovery path.
-            if (ShouldAttemptPar2Repair()
-                && await _par2RepairService.TryPar2RepairAsync(davItem, [e.SegmentId], ct).ConfigureAwait(false))
+            var par2Outcome = ShouldAttemptPar2Repair()
+                ? await _par2RepairService.TryPar2RepairAsync(
+                    davItem, [e.SegmentId], ct).ConfigureAwait(false)
+                : Par2RepairOutcome.NotRepaired;
+            if (par2Outcome is not Par2RepairOutcome.NotRepaired)
             {
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
@@ -567,8 +570,13 @@ public class HealthCheckService : BackgroundService
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Healthy,
-                    HealthCheckResult.RepairAction.RepairedViaPar2,
-                    "Missing segment repaired from PAR2 parity.", ct).ConfigureAwait(false);
+                    par2Outcome is Par2RepairOutcome.Repaired
+                        ? HealthCheckResult.RepairAction.RepairedViaPar2
+                        : HealthCheckResult.RepairAction.None,
+                    par2Outcome is Par2RepairOutcome.Repaired
+                        ? "Missing segment repaired from PAR2 parity."
+                        : "PAR2 verified every file slice and found no damage.",
+                    ct).ConfigureAwait(false);
                 return;
             }
 
@@ -639,8 +647,11 @@ public class HealthCheckService : BackgroundService
 
         // PAR2 first, with the full hole list: reconstruct from parity before any verdict.
         // It is also the only automatic recovery path when no Arr replacement is available.
-        if (ShouldAttemptPar2Repair()
-            && await _par2RepairService.TryPar2RepairAsync(davItem, holeSegmentIds, ct).ConfigureAwait(false))
+        var par2Outcome = ShouldAttemptPar2Repair()
+            ? await _par2RepairService.TryPar2RepairAsync(
+                davItem, holeSegmentIds, ct).ConfigureAwait(false)
+            : Par2RepairOutcome.NotRepaired;
+        if (par2Outcome is not Par2RepairOutcome.NotRepaired)
         {
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
@@ -648,14 +659,20 @@ public class HealthCheckService : BackgroundService
             _failureTracker.ClearFailure(davItem.Id);
             _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
             // The patched segments are served locally now; any earlier hole/corrupt record is obsolete.
-            if (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null)
+            if (par2Outcome is Par2RepairOutcome.Repaired
+                && (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
                 await SwapNzbFileBlobAsync(davItem, nzbFile, null, null, replaceCorruptRecord: true)
                     .ConfigureAwait(false);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
-                HealthCheckResult.RepairAction.RepairedViaPar2,
-                "Missing segment(s) repaired from PAR2 parity.", ct).ConfigureAwait(false);
+                par2Outcome is Par2RepairOutcome.Repaired
+                    ? HealthCheckResult.RepairAction.RepairedViaPar2
+                    : HealthCheckResult.RepairAction.None,
+                par2Outcome is Par2RepairOutcome.Repaired
+                    ? "Missing segment(s) repaired from PAR2 parity."
+                    : "PAR2 verified every file slice and found no damage.",
+                ct).ConfigureAwait(false);
             return;
         }
 
@@ -1652,11 +1669,13 @@ public class HealthCheckService : BackgroundService
             return;
         }
 
-        if (ShouldAttemptPar2Repair()
-            && await _par2RepairService.TryPar2RepairAsync(
+        var par2Outcome = ShouldAttemptPar2Repair()
+            ? await _par2RepairService.TryPar2RepairAsync(
                 davItem,
                 failureSnapshot.HasTargetableSegmentIds ? failureSnapshot.SegmentIds : null,
-                ct).ConfigureAwait(false))
+                ct).ConfigureAwait(false)
+            : Par2RepairOutcome.NotRepaired;
+        if (par2Outcome is not Par2RepairOutcome.NotRepaired)
         {
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
@@ -1666,8 +1685,13 @@ public class HealthCheckService : BackgroundService
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
-                HealthCheckResult.RepairAction.RepairedViaPar2,
-                "Missing segment(s) repaired from PAR2 parity after streaming failure.", ct)
+                par2Outcome is Par2RepairOutcome.Repaired
+                    ? HealthCheckResult.RepairAction.RepairedViaPar2
+                    : HealthCheckResult.RepairAction.None,
+                par2Outcome is Par2RepairOutcome.Repaired
+                    ? "Missing segment(s) repaired from PAR2 parity after streaming failure."
+                    : "PAR2 verified every file slice and found no damage.",
+                ct)
                 .ConfigureAwait(false);
             return;
         }

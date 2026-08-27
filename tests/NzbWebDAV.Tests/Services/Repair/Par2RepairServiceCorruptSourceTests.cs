@@ -109,7 +109,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var ok = await release.Service.TryPar2RepairAsync(
             release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
 
-        Assert.True(ok);
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
         Assert.True(release.Store.Contains(release.ContentSegmentIds[0]));
         Assert.False(release.Fake.BodyRequestCounts.ContainsKey(release.ContentSegmentIds[0]));
         Assert.Equal(
@@ -127,7 +127,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var ok = await release.Service.TryPar2RepairAsync(
             release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
 
-        Assert.True(ok);
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
         // Discovery, Reed-Solomon reduction, and whole-file MD5 are independent
         // sequential passes. The test client has no disk segment cache, proving
         // source bytes are discarded rather than retained for the lifetime of repair.
@@ -145,7 +145,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var ok = await release.Service.TryPar2RepairAsync(
             release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
 
-        Assert.True(ok);
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
         Assert.True(release.Store.Contains(release.ContentSegmentIds[0]));
         Assert.True(release.Store.Contains(release.ContentSegmentIds[1]));
         Assert.Equal(
@@ -171,7 +171,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
             [release.ContentSegmentIds[0], release.ContentSegmentIds[2]],
             CancellationToken.None);
 
-        Assert.True(ok);
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
         Assert.True(release.Store.Contains(release.ContentSegmentIds[0]));
         Assert.True(release.Store.Contains(release.ContentSegmentIds[2]));
         Assert.False(release.Store.Contains(release.ContentSegmentIds[1]));
@@ -188,7 +188,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var ok = await release.Service.TryPar2RepairAsync(
             release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
 
-        Assert.True(ok);
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
         Assert.True(release.Store.Contains(release.ContentSegmentIds[0]));
         Assert.True(release.Store.Contains(release.ContentSegmentIds[1]));
         Assert.Equal(Slice(fileData, 0, sizes[0]), await ReadPatchAsync(release.Store, release.ContentSegmentIds[0]));
@@ -206,7 +206,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var ok = await release.Service.TryPar2RepairAsync(
             release.Item, [release.ContentSegmentIds[2]], CancellationToken.None);
 
-        Assert.True(ok);
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
         Assert.True(release.Store.Contains(release.ContentSegmentIds[2]));
         Assert.Equal(
             Slice(fileData, sizes[0] + sizes[1], sizes[2]),
@@ -228,7 +228,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var ok = await release.Service.TryPar2RepairAsync(
             release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
 
-        Assert.True(ok);
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
         Assert.True(release.Store.Contains(release.ContentSegmentIds[0]));
         Assert.Equal(
             target.AsSpan(0, SliceSize).ToArray(),
@@ -250,7 +250,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var ok = await release.Service.TryPar2RepairAsync(
             release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
 
-        Assert.True(ok);
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
         Assert.Equal(1, release.Fake.BodyRequestCounts[release.ContentSegmentIds[1]]);
         Assert.Equal(1, release.Fake.CompletionCallbackCounts[release.ContentSegmentIds[1]]);
         Assert.True(release.Store.Contains(release.ContentSegmentIds[1]));
@@ -314,7 +314,9 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
             Assert.False(successfulJoiner.IsCompleted);
 
             allowSourceRead.TrySetResult(true);
-            Assert.True(await successfulJoiner.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(
+                Par2RepairOutcome.Repaired,
+                await successfulJoiner.WaitAsync(TimeSpan.FromSeconds(10)));
             Assert.True(release.Store.Contains(release.ContentSegmentIds[0]));
             Assert.Equal(1, release.Service.GetDiagnosticSnapshot().TotalSucceeded);
 
@@ -341,7 +343,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
             [release.ContentSegmentIds[0], release.ContentSegmentIds[1]],
             CancellationToken.None);
 
-        Assert.False(ok);
+        Assert.Equal(Par2RepairOutcome.NotRepaired, ok);
         Assert.False(release.Store.Contains(release.ContentSegmentIds[0]));
         Assert.False(release.Store.Contains(release.ContentSegmentIds[1]));
         var job = await ReadJobAsync(release.Item.Id);
@@ -361,7 +363,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
             [release.ContentSegmentIds[0], release.ContentSegmentIds[1]],
             CancellationToken.None);
 
-        Assert.False(ok);
+        Assert.Equal(Par2RepairOutcome.NotRepaired, ok);
         Assert.False(release.Store.Contains(release.ContentSegmentIds[0]));
         var job = await ReadJobAsync(release.Item.Id);
         Assert.Equal(Par2RepairJob.RepairJobState.Infeasible, job.State);
@@ -380,7 +382,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var ok = await release.Service.TryPar2RepairAsync(
             release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
 
-        Assert.False(ok);
+        Assert.Equal(Par2RepairOutcome.NotRepaired, ok);
         Assert.False(release.Store.Contains(release.ContentSegmentIds[0]));
         var job = await ReadJobAsync(release.Item.Id);
         Assert.Equal(Par2RepairJob.RepairJobState.Failed, job.State);
@@ -397,10 +399,63 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var ok = await release.Service.TryPar2RepairAsync(
             release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
 
-        Assert.True(ok);
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
         Assert.Equal(release.Fake.BodyRequestCount, release.Fake.CompletionCallbackCount);
         foreach (var (id, count) in release.Fake.BodyRequestCounts)
             Assert.Equal(count, release.Fake.CompletionCallbackCounts.GetValueOrDefault(id));
+    }
+
+    [Fact]
+    public async Task VerifyAll_CleanFileAboveCap_ReturnsVerifiedClean()
+    {
+        var fileData = PatternBytes(SliceSize * 3, 0xBC);
+        await using var release = await SeedAsync(
+            fileData, EqualSegments(3), recoveryExponents: [0u], maxMissingSlices: "1");
+
+        var outcome = await release.Service.TryPar2RepairAsync(
+            release.Item, null, CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.VerifiedClean, outcome);
+        var job = await ReadJobAsync(release.Item.Id);
+        Assert.Equal(Par2RepairJob.RepairJobState.Succeeded, job.State);
+        Assert.Equal(0, job.SlicesReconstructed);
+        Assert.False(release.Store.Contains(release.ContentSegmentIds[0]));
+        Assert.False(release.Store.Contains(release.ContentSegmentIds[1]));
+        Assert.False(release.Store.Contains(release.ContentSegmentIds[2]));
+    }
+
+    [Fact]
+    public async Task VerifyAll_DamageAboveCap_UsesActualDamagedSliceCount()
+    {
+        var fileData = PatternBytes(SliceSize * 3, 0xBD);
+        await using var release = await SeedAsync(
+            fileData, EqualSegments(3), recoveryExponents: [0u, 1u],
+            corruptOnRead: [0, 1], maxMissingSlices: "1");
+
+        var outcome = await release.Service.TryPar2RepairAsync(
+            release.Item, null, CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.NotRepaired, outcome);
+        var job = await ReadJobAsync(release.Item.Id);
+        Assert.Equal(Par2RepairJob.RepairJobState.Infeasible, job.State);
+        Assert.Equal("Missing slice count 2 exceeds cap 1.", job.FailureReason);
+    }
+
+    [Fact]
+    public async Task VerifyAll_DamageWithinCap_ReconstructsOnlyDamagedSegment()
+    {
+        var fileData = PatternBytes(SliceSize * 3, 0xBE);
+        await using var release = await SeedAsync(
+            fileData, EqualSegments(3), recoveryExponents: [0u, 1u],
+            corruptOnRead: [0], maxMissingSlices: "1");
+
+        var outcome = await release.Service.TryPar2RepairAsync(
+            release.Item, null, CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, outcome);
+        Assert.True(release.Store.Contains(release.ContentSegmentIds[0]));
+        Assert.False(release.Store.Contains(release.ContentSegmentIds[1]));
+        Assert.False(release.Store.Contains(release.ContentSegmentIds[2]));
     }
 
     private async Task<SeededRelease> SeedAsync(
