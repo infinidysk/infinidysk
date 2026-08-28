@@ -41,7 +41,7 @@
     "isbot": "^5.1.0",
     "material-symbols": "^0.46.0",
     "mime-types": "^3.0.2",
-    "openid-client": "^6.8.6",
+    "openid-client": "^6.8.7",
     "picocolors": "^1.1.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -69,8 +69,8 @@
     "@types/react-dom": "^19.2.4",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.11",
-    "daisyui": "^5.7.19",
-    "eslint": "^10.8.1",
+    "daisyui": "^5.7.20",
+    "eslint": "^10.9.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "^30.0.1",
     "openapi-typescript": "7.13.0",
@@ -79,7 +79,7 @@
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.67.0",
-    "vite": "^8.2.1",
+    "vite": "^8.2.2",
     "vitest": "^4.1.10"
   },
   "overrides": {
