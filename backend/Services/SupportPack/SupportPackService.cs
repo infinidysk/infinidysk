@@ -36,6 +36,7 @@ public sealed class SupportPackService(
     GcDiagnosticsStore gcDiagnosticsStore,
     Repair.Par2RepairService par2RepairService,
     Repair.RepairPatchStore repairPatchStore,
+    HealthCheckConnectionGate healthCheckConnectionGate,
     ConcurrentReadTracker? concurrentReadTracker = null,
     IQueueCoordinator? queueCoordinator = null)
 {
@@ -261,6 +262,11 @@ public sealed class SupportPackService(
         startup, a queue import or a health sweep. cpu.onDemandSample is a half-second
         window measured while this pack was written - packs are usually collected
         after the symptom has passed, so treat it as a footnote, not the headline.
+
+        environment.json → healthCheckGate reports the process-wide verification
+        budget: its effective limit, active operations, and queue/background waiters.
+        Use it to distinguish a saturated health budget from provider latency.
+
         Prefer the cumulative GC counters (totalPauseDurationMs, totalAllocatedBytes,
         collection counts) over pauseTimePercentage, which reflects only the most
         recent collection.
@@ -469,6 +475,7 @@ public sealed class SupportPackService(
                 processThreadCount = ProcessThreadCount(),
             },
             connections = BuildConnectionDiagnostics(),
+            healthCheckGate = BuildHealthCheckGateDiagnostics(),
             storage = new
             {
                 configPath,
@@ -684,7 +691,22 @@ public sealed class SupportPackService(
                     snapshot.AvailableConnections,
                     snapshot.PendingSelections,
                     snapshot.LearnedConnectionLimit,
+                    snapshot.ConfiguredMaxConnections,
                     snapshot.EffectiveMaxConnections,
+                    admission = snapshot.Admission is null
+                        ? null
+                        : new
+                        {
+                            snapshot.Admission.ConfiguredTransferLimit,
+                            snapshot.Admission.EffectiveTransferLimit,
+                            snapshot.Admission.BaseMetadataCapacity,
+                            snapshot.Admission.MetadataBurstAllowance,
+                            snapshot.Admission.MaxMetadataCapacity,
+                            snapshot.Admission.ActiveTransferOperations,
+                            snapshot.Admission.ActiveMetadataOperations,
+                            snapshot.Admission.WaitingTransferOperations,
+                            snapshot.Admission.WaitingMetadataOperations,
+                        },
                     churn = new
                     {
                         snapshot.Churn.ConnectionsOpened,
@@ -703,6 +725,18 @@ public sealed class SupportPackService(
             Log.Debug(e, "Support pack: could not read connection-pool diagnostics");
             return Array.Empty<object>();
         }
+    }
+
+    private object BuildHealthCheckGateDiagnostics()
+    {
+        var snapshot = healthCheckConnectionGate.GetSnapshot();
+        return new
+        {
+            snapshot.Limit,
+            snapshot.Active,
+            snapshot.WaitingQueue,
+            snapshot.WaitingBackground,
+        };
     }
 
     private static int? ProcessThreadCount()

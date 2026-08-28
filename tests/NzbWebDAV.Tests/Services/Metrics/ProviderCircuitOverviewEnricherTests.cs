@@ -22,6 +22,10 @@ public class ProviderCircuitOverviewEnricherTests
                 Spark = [1, 2],
                 ErrorSpark = [0, 1],
                 RetrySpark = [2, 0],
+                SpeedSeries =
+                [
+                    new() { Bucket = 10, SpeedMbPerSec = 1.5, BytesFetched = 1500 },
+                ],
             },
         };
         var snapshots = new List<ProviderCircuitRuntimeSnapshot>
@@ -46,11 +50,16 @@ public class ProviderCircuitOverviewEnricherTests
         Assert.Equal(10, primary.Articles);
         Assert.Equal([0L, 1L], primary.ErrorSpark);
         Assert.Equal([2L, 0L], primary.RetrySpark);
+        var seriesPoint = Assert.Single(primary.SpeedSeries);
+        Assert.Equal(10, seriesPoint.Bucket);
+        Assert.Equal(1.5, seriesPoint.SpeedMbPerSec);
+        Assert.Equal(1500, seriesPoint.BytesFetched);
 
         var backup = enriched.Single(p => p.Provider == KeyB);
         Assert.Equal("closed", backup.CircuitState);
         Assert.Equal(0, backup.Articles);
         Assert.Equal("Backup", backup.Nickname);
         Assert.Equal(2, backup.ArticleMissCount);
+        Assert.Empty(backup.SpeedSeries);
     }
 }

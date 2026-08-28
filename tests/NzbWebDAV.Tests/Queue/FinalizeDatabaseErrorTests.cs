@@ -9,6 +9,7 @@ using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Websocket;
@@ -180,14 +181,17 @@ public sealed class FinalizeDatabaseErrorTests : IAsyncLifetime
     private async Task ProcessAsync(DavDatabaseContext context, QueueItem queueItem, string segmentId)
     {
         await using var nzbStream = new MemoryStream(CreateNzbBytes(segmentId));
+        var config = CreateConfig();
+        using var healthCheckConnectionGate = new HealthCheckConnectionGate(config);
         var processor = new QueueItemProcessor(
             queueItem,
             nzbStream,
             new DavDatabaseClient(context),
             new ScriptedVideoNntpClient(VideoFileName, _segmentId, _payload),
-            CreateConfig(),
+            config,
             new WebsocketManager(),
             new Progress<int>(),
+            healthCheckConnectionGate,
             CancellationToken.None);
         await processor.ProcessAsync();
     }

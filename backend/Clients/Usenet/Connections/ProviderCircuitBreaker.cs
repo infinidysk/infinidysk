@@ -27,20 +27,22 @@ public class ProviderCircuitBreaker
     private const int MinFailuresToTrip = 3;
     private const double TripFailureRate = 0.5;
 
-    private static readonly TimeSpan InitialCooldown = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan MaxCooldown = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DefaultInitialCooldown = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DefaultMaxCooldown = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan FailureBurstCoalesceWindow = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan DefaultProbeAbandonTimeout = TimeSpan.FromSeconds(60);
 
     private readonly string _providerName;
     private readonly Action<ProviderCircuitTransition>? _onTransition;
     private readonly bool _coalesceFailureBursts;
+    private readonly TimeSpan _initialCooldown;
+    private readonly TimeSpan _maxCooldown;
     private readonly object _lock = new();
     private readonly Queue<(long AtMs, bool Failed)> _window = new();
 
     private long _trippedUntilMs;
     private long _failureBurstStartedAtMs = long.MinValue;
-    private TimeSpan _currentCooldown = InitialCooldown;
+    private TimeSpan _currentCooldown;
     private int _halfOpenProbeInFlight; // 0/1
     private long _probeStartedMs;
     private string? _lastFailureReason;
@@ -51,11 +53,24 @@ public class ProviderCircuitBreaker
     public ProviderCircuitBreaker(
         string providerName,
         Action<ProviderCircuitTransition>? onTransition = null,
-        bool coalesceFailureBursts = false)
+        bool coalesceFailureBursts = false,
+        TimeSpan? initialCooldown = null,
+        TimeSpan? maxCooldown = null)
     {
         _providerName = providerName;
         _onTransition = onTransition;
         _coalesceFailureBursts = coalesceFailureBursts;
+        // A non-positive initial cooldown would trip straight into half-open and the
+        // doubling ladder would never grow, silently disabling the breaker.
+        var configuredInitial = initialCooldown ?? DefaultInitialCooldown;
+        _initialCooldown = configuredInitial > TimeSpan.Zero
+            ? configuredInitial
+            : DefaultInitialCooldown;
+        // A ceiling under the initial cooldown would shorten the first trip instead of
+        // bounding the ladder, so keep it at or above the value it caps.
+        var ceiling = maxCooldown ?? DefaultMaxCooldown;
+        _maxCooldown = ceiling < _initialCooldown ? _initialCooldown : ceiling;
+        _currentCooldown = _initialCooldown;
     }
 
     /// <summary>How long an unanswered half-open probe may hold the slot. For tests.</summary>
@@ -163,7 +178,7 @@ public class ProviderCircuitBreaker
             _failureBurstStartedAtMs = long.MinValue;
             _trippedUntilMs = 0;
             if (resetsCooldownLadder)
-                _currentCooldown = InitialCooldown;
+                _currentCooldown = _initialCooldown;
             _lastFailureReason = null;
             Volatile.Write(ref _halfOpenProbeInFlight, 0);
             Volatile.Write(ref _probeStartedMs, 0);
@@ -347,7 +362,7 @@ public class ProviderCircuitBreaker
         _window.Clear();
         _failureBurstStartedAtMs = long.MinValue;
         _currentCooldown = TimeSpan.FromMilliseconds(
-            Math.Min(_currentCooldown.TotalMilliseconds * 2, MaxCooldown.TotalMilliseconds));
+            Math.Min(_currentCooldown.TotalMilliseconds * 2, _maxCooldown.TotalMilliseconds));
     }
 
     private void NotifyTransition(

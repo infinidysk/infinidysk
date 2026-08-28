@@ -5,15 +5,27 @@ import type {
 } from "~/clients/backend-client.server";
 import { formatBytes, formatNumber, formatPercent, formatSpeed } from "../../utils/format";
 import { settingsPath } from "~/navigation/settings-tabs";
-import { Tooltip } from "~/components/ui";
+import { Icon, Tooltip } from "~/components/ui";
 import { WidgetLink } from "../widget-link/widget-link";
+import { ProviderSpeedChart } from "../provider-speed-chart/provider-speed-chart";
 
 export type ProviderScoreboardProps = {
   providers: ProviderRow[];
   window: OverviewWindow;
+  selectedProvider?: string | null;
+  onSelectProvider?: (provider: string | null) => void;
+  providerSpeedBucketSizeMs?: number;
+  providerSpeedHistoryTruncated?: boolean;
 };
 
-export function ProviderScoreboard({ providers, window }: ProviderScoreboardProps) {
+export function ProviderScoreboard({
+  providers,
+  window,
+  selectedProvider = null,
+  onSelectProvider,
+  providerSpeedBucketSizeMs = 900_000,
+  providerSpeedHistoryTruncated = false,
+}: ProviderScoreboardProps) {
   const total = providers.reduce((s, p) => s + p.articles, 0);
   const hasOpenCircuit = providers.some(
     (p) => p.circuitState === "open" || p.circuitState === "halfOpen",
@@ -21,6 +33,7 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
   const outageHelp = `Circuit-open time per ${outageIntervalLabel(window)} interval on a fixed 0–100% scale. Brief trips use a minimum-height tick.`;
   const speedHelp =
     "Historical average: bytes fetched divided by summed successful fetch durations over the selected window. Durations include connection-pool wait and overlap across concurrent fetches, so this is not wall-clock aggregate bandwidth. Use the provider benchmark for line-rate calibration.";
+  const selected = providers.find((p) => p.provider === selectedProvider);
 
   return (
     <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
@@ -46,119 +59,150 @@ export function ProviderScoreboard({ providers, window }: ProviderScoreboardProp
         {providers.length === 0 ? (
           <p className="py-6 text-center text-xs text-base-content/50">No providers configured.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table table-pin-cols table-sm min-w-[800px]">
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th className="w-[120px]">Activity</th>
-                  <th className="w-[120px]">
-                    <Tooltip content={outageHelp}>
-                      <span>Outages</span>
-                    </Tooltip>
-                  </th>
-                  <th>Articles</th>
-                  <th>Read</th>
-                  <th>Share</th>
-                  <th className="w-[120px]">
-                    <Tooltip content={speedHelp}>
-                      <span>MB/s</span>
-                    </Tooltip>
-                  </th>
-                  <th className="w-[120px]">Errors</th>
-                  <th className="w-[120px]">Retries</th>
-                  <th>
-                    <Tooltip content="Mean duration of successful fetches only. Includes connection-pool wait inside the provider call — not pure wire RTT. Misses and errors are excluded.">
-                      <span>Avg ok ms</span>
-                    </Tooltip>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {providers.map((p) => {
-                  const share = total > 0 ? (p.articles / total) * 100 : 0;
-                  const circuitState = p.circuitState ?? "closed";
-                  return (
-                    <tr key={p.provider}>
-                      <th scope="row" className="bg-base-100 font-medium">
-                        <Tooltip content={buildProviderTooltip(p, circuitState)}>
-                          <div className="flex max-w-[240px] min-w-0 items-center gap-2 font-medium">
-                            <span
-                              className={`status status-xs shrink-0 ${statusClass(circuitState)}`}
-                            />
-                            <span className="min-w-0 truncate">
-                              {p.nickname?.trim() || p.provider}
-                            </span>
-                            {circuitState !== "closed" && (
-                              <span
-                                className={`badge badge-sm shrink-0 ${badgeClass(circuitState)}`}
+          <>
+            <div className="overflow-x-auto">
+              <table className="table table-pin-cols table-sm min-w-[800px]">
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th className="w-[120px]">Activity</th>
+                    <th className="w-[120px]">
+                      <Tooltip content={outageHelp}>
+                        <span>Outages</span>
+                      </Tooltip>
+                    </th>
+                    <th>Articles</th>
+                    <th>Read</th>
+                    <th>Share</th>
+                    <th className="w-[120px]">
+                      <Tooltip content={speedHelp}>
+                        <span>MB/s</span>
+                      </Tooltip>
+                    </th>
+                    <th className="w-[120px]">Errors</th>
+                    <th className="w-[120px]">Retries</th>
+                    <th>
+                      <Tooltip content="Mean duration of successful fetches only. Includes connection-pool wait inside the provider call — not pure wire RTT. Misses and errors are excluded.">
+                        <span>Avg ok ms</span>
+                      </Tooltip>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {providers.map((p) => {
+                    const share = total > 0 ? (p.articles / total) * 100 : 0;
+                    const circuitState = p.circuitState ?? "closed";
+                    return (
+                      <tr key={p.provider}>
+                        <th scope="row" className="bg-base-100 font-medium">
+                          <div className="flex max-w-[260px] min-w-0 items-center gap-1">
+                            <Tooltip content={buildProviderTooltip(p, circuitState)}>
+                              <div className="flex min-w-0 items-center gap-2 font-medium">
+                                <span
+                                  className={`status status-xs shrink-0 ${statusClass(circuitState)}`}
+                                />
+                                <span className="min-w-0 truncate">
+                                  {p.nickname?.trim() || p.provider}
+                                </span>
+                                {circuitState !== "closed" && (
+                                  <span
+                                    className={`badge badge-sm shrink-0 ${badgeClass(circuitState)}`}
+                                  >
+                                    {circuitLabel(circuitState, p.cooldownRemainingSeconds)}
+                                  </span>
+                                )}
+                              </div>
+                            </Tooltip>
+                            {onSelectProvider && (
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-xs shrink-0"
+                                aria-expanded={selectedProvider === p.provider}
+                                aria-controls="provider-speed-chart"
+                                aria-label={`Show speed history for ${p.nickname?.trim() || p.provider}`}
+                                onClick={() =>
+                                  onSelectProvider(
+                                    selectedProvider === p.provider ? null : p.provider,
+                                  )
+                                }
                               >
-                                {circuitLabel(circuitState, p.cooldownRemainingSeconds)}
-                              </span>
+                                <Icon name="monitoring" className="!text-[16px]" />
+                              </button>
                             )}
                           </div>
-                        </Tooltip>
-                      </th>
-                      <td>
-                        <Sparkline values={p.spark} tone="success" />
-                      </td>
-                      <td>
-                        <Tooltip content={outageHelp}>
-                          <OutageBuckets values={p.outageSpark ?? []} />
-                        </Tooltip>
-                      </td>
-                      <td className="font-mono tabular-nums">{formatNumber(p.articles)}</td>
-                      <td className="font-mono tabular-nums">{formatBytes(p.bytesFetched)}</td>
-                      <td>
-                        <ShareBar share={share} />
-                      </td>
-                      <td>
-                        <Tooltip content={speedHelp}>
+                        </th>
+                        <td>
+                          <Sparkline values={p.spark} tone="success" />
+                        </td>
+                        <td>
+                          <Tooltip content={outageHelp}>
+                            <OutageBuckets values={p.outageSpark ?? []} />
+                          </Tooltip>
+                        </td>
+                        <td className="font-mono tabular-nums">{formatNumber(p.articles)}</td>
+                        <td className="font-mono tabular-nums">{formatBytes(p.bytesFetched)}</td>
+                        <td>
+                          <ShareBar share={share} />
+                        </td>
+                        <td>
+                          <Tooltip content={speedHelp}>
+                            <div className="flex flex-col gap-0.5">
+                              <Sparkline values={p.speedSpark ?? []} tone="success" />
+                              <div className="font-mono text-[11px] tabular-nums text-base-content/60">
+                                {formatSpeed(p.speedMbPerSec)}
+                              </div>
+                            </div>
+                          </Tooltip>
+                        </td>
+                        <td>
                           <div className="flex flex-col gap-0.5">
-                            <Sparkline values={p.speedSpark ?? []} tone="success" />
-                            <div className="font-mono text-[11px] tabular-nums text-base-content/60">
-                              {formatSpeed(p.speedMbPerSec)}
+                            <Sparkline values={p.errorSpark ?? []} tone="error" eventsOnly />
+                            <div
+                              className={`font-mono text-[11px] tabular-nums ${p.errorRate > 0.05 ? "text-error" : "text-base-content/60"}`}
+                            >
+                              {formatNumber(p.errors)}
+                              {p.errorRate > 0 && (
+                                <span className="text-base-content/50">
+                                  {" "}
+                                  ({formatPercent(p.errorRate * 100, 1)})
+                                </span>
+                              )}
                             </div>
                           </div>
-                        </Tooltip>
-                      </td>
-                      <td>
-                        <div className="flex flex-col gap-0.5">
-                          <Sparkline values={p.errorSpark ?? []} tone="error" eventsOnly />
-                          <div
-                            className={`font-mono text-[11px] tabular-nums ${p.errorRate > 0.05 ? "text-error" : "text-base-content/60"}`}
-                          >
-                            {formatNumber(p.errors)}
-                            {p.errorRate > 0 && (
-                              <span className="text-base-content/50">
-                                {" "}
-                                ({formatPercent(p.errorRate * 100, 1)})
-                              </span>
-                            )}
+                        </td>
+                        <td>
+                          <div className="flex flex-col gap-0.5">
+                            <Sparkline values={p.retrySpark ?? []} tone="warning" eventsOnly />
+                            <div
+                              className={`font-mono text-[11px] tabular-nums ${p.retries > 0 ? "text-warning" : "text-base-content/60"}`}
+                            >
+                              {formatNumber(p.retries)}
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="flex flex-col gap-0.5">
-                          <Sparkline values={p.retrySpark ?? []} tone="warning" eventsOnly />
-                          <div
-                            className={`font-mono text-[11px] tabular-nums ${p.retries > 0 ? "text-warning" : "text-base-content/60"}`}
-                          >
-                            {formatNumber(p.retries)}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="font-mono tabular-nums">
-                        <Tooltip content="Successful fetches only (includes pool wait)">
-                          <span>{p.avgDurationMs.toFixed(0)}</span>
-                        </Tooltip>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="font-mono tabular-nums">
+                          <Tooltip content="Successful fetches only (includes pool wait)">
+                            <span>{p.avgDurationMs.toFixed(0)}</span>
+                          </Tooltip>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {selected && (
+              <div id="provider-speed-chart">
+                <ProviderSpeedChart
+                  providerLabel={selected.nickname?.trim() || selected.provider}
+                  points={selected.speedSeries ?? []}
+                  bucketSizeMs={providerSpeedBucketSizeMs}
+                  historyTruncated={providerSpeedHistoryTruncated}
+                  window={window}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
     </section>

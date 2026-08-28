@@ -68,6 +68,10 @@ public class GetOverviewStatsController(
         var throughput = new List<GetOverviewStatsResponse.ThroughputPoint>();
         long throughputBucketSizeMs = 0;
         var providers = new List<GetOverviewStatsResponse.ProviderRow>();
+        long providerSpeedBucketSizeMs = 0;
+        long providerSpeedWindowStartMs = 0;
+        long providerSpeedWindowEndMs = 0;
+        var providerSpeedHistoryTruncated = false;
         var sessionsBlock = new GetOverviewStatsResponse.SessionsBlock();
         var heatmap = new GetOverviewStatsResponse.HeatmapBlock();
         var failover = new GetOverviewStatsResponse.FailoverBlock();
@@ -106,6 +110,10 @@ public class GetOverviewStatsController(
             throughput = w.Throughput;
             throughputBucketSizeMs = w.ThroughputBucketSizeMs;
             providers = w.Providers;
+            providerSpeedBucketSizeMs = w.ProviderSpeedBucketSizeMs;
+            providerSpeedWindowStartMs = w.ProviderSpeedWindowStartMs;
+            providerSpeedWindowEndMs = w.ProviderSpeedWindowEndMs;
+            providerSpeedHistoryTruncated = w.ProviderSpeedHistoryTruncated;
             sessionsBlock = w.Sessions;
             heatmap = w.Heatmap;
             failover = w.Failover;
@@ -151,6 +159,10 @@ public class GetOverviewStatsController(
             TotalErrors = totalErrors,
             TotalBytesFetched = totalBytesFetched,
             Providers = providers,
+            ProviderSpeedBucketSizeMs = providerSpeedBucketSizeMs,
+            ProviderSpeedWindowStartMs = providerSpeedWindowStartMs,
+            ProviderSpeedWindowEndMs = providerSpeedWindowEndMs,
+            ProviderSpeedHistoryTruncated = providerSpeedHistoryTruncated,
             Catalogue = catalogue,
             Sessions = sessionsBlock,
             Heatmap = heatmap,
@@ -176,7 +188,11 @@ public class GetOverviewStatsController(
         long TotalArticles,
         long TotalMisses,
         long TotalErrors,
-        long TotalBytesFetched);
+        long TotalBytesFetched,
+        long ProviderSpeedBucketSizeMs,
+        long ProviderSpeedWindowStartMs,
+        long ProviderSpeedWindowEndMs,
+        bool ProviderSpeedHistoryTruncated);
 
     private sealed record DetailSectionResult(
         GetOverviewStatsResponse.LatencyBlock Latency,
@@ -294,6 +310,7 @@ public class GetOverviewStatsController(
                 bucketSize,
                 nowMs,
                 labelsByMetricsKey,
+                window,
                 window == GetOverviewStatsRequest.OverviewWindow.AllTime ? lifetimeTotals : null);
             totalArticles = hours.Sum(h => h.Articles);
             totalMisses = hours.Sum(h => h.Misses);
@@ -353,7 +370,7 @@ public class GetOverviewStatsController(
                 bucketSize);
             providers = BuildProvidersFromMinutes(
                 minutes.Select(m => (m.Minute, m.Provider, m.Articles, m.BytesFetched, m.Misses, m.Errors, m.Retries, m.SumDurationMs)),
-                windowStart, window, labelsByMetricsKey);
+                windowStart, window, labelsByMetricsKey, nowMs);
             totalArticles = minutes.Sum(m => m.Articles);
             totalMisses = minutes.Sum(m => m.Misses);
             totalErrors = minutes.Sum(m => m.Errors);
@@ -406,9 +423,14 @@ public class GetOverviewStatsController(
             nowMs,
             useRollups);
 
+        var series = ResolveProviderSeriesGeometry(window, windowStart, nowMs);
+        var truncated = series.Truncated
+                        || (window == GetOverviewStatsRequest.OverviewWindow.AllTime
+                            && lifetimeTotals.Count > 0);
         return new WindowSectionResult(
             tiles, throughput, bucketSize, providers, sessionsBlock, heatmap, failover,
-            totalArticles, totalMisses, totalErrors, totalBytesFetched);
+            totalArticles, totalMisses, totalErrors, totalBytesFetched,
+            series.BucketSize, series.Start, series.End, truncated);
     }
 
     private static void ApplyOutageSparks(
@@ -441,6 +463,16 @@ public class GetOverviewStatsController(
         if (useRollups)
         {
             const long sparkSize = OneDay;
+            if (windowStart <= 0)
+            {
+                // All-time sparks are capped at 60 daily buckets. End-align on the
+                // current day so the latest hour is not clipped (windowStart=0 used
+                // to index from the Unix epoch).
+                const int allTimeSparkBuckets = 60;
+                var sparkEnd = nowMs - (nowMs % sparkSize) + sparkSize;
+                return (allTimeSparkBuckets, sparkSize, sparkEnd - allTimeSparkBuckets * sparkSize);
+            }
+
             var totalSpan = nowMs - windowStart;
             var sparkBuckets = Math.Max(1, (int)Math.Min(60, totalSpan / sparkSize + 1));
             return (sparkBuckets, sparkSize, windowStart - windowStart % sparkSize);
@@ -807,12 +839,53 @@ public class GetOverviewStatsController(
             .ToList();
     }
 
+    internal static (long Start, long End, long BucketSize, bool Truncated) ResolveProviderSeriesGeometry(
+        GetOverviewStatsRequest.OverviewWindow window,
+        long windowStart,
+        long nowMs)
+    {
+        const long fifteenMinutes = 15 * OneMinute;
+        const long sixHours = 6 * OneHour;
+        const long oneWeek = 7 * OneDay;
+        var (bucketSize, count, truncated) = window switch
+        {
+            GetOverviewStatsRequest.OverviewWindow.Last1Hour => (OneMinute, 60, false),
+            GetOverviewStatsRequest.OverviewWindow.Last24Hours => (fifteenMinutes, 96, false),
+            GetOverviewStatsRequest.OverviewWindow.Last7Days => (OneHour, 168, false),
+            GetOverviewStatsRequest.OverviewWindow.Last30Days => (sixHours, 120, false),
+            _ => (oneWeek, 0, true),
+        };
+
+        if (window == GetOverviewStatsRequest.OverviewWindow.AllTime)
+        {
+            var start = nowMs - 365 * OneDay;
+            start -= start % bucketSize;
+            var end = nowMs - (nowMs % bucketSize) + bucketSize;
+            if (end <= start) end = start + bucketSize;
+            return (start, end, bucketSize, true);
+        }
+
+        var alignedStart = windowStart - windowStart % bucketSize;
+        return (alignedStart, alignedStart + (long)count * bucketSize, bucketSize, truncated);
+    }
+
     internal static List<GetOverviewStatsResponse.ProviderRow> BuildProvidersFromMinutes(
         IEnumerable<(long Minute, string Provider, long Articles, long BytesFetched, long Misses, long Errors, long Retries, long SumDurationMs)> minutes,
         long windowStart,
         GetOverviewStatsRequest.OverviewWindow window,
-        IReadOnlyDictionary<string, string?> labelsByMetricsKey)
+        IReadOnlyDictionary<string, string?> labelsByMetricsKey,
+        long nowMs = 0)
     {
+        if (nowMs <= 0)
+        {
+            nowMs = windowStart + window switch
+            {
+                GetOverviewStatsRequest.OverviewWindow.Last1Hour => OneHour,
+                GetOverviewStatsRequest.OverviewWindow.Last7Days => 7 * OneDay,
+                _ => OneDay,
+            };
+        }
+
         var (sparkBuckets, sparkSize) = window switch
         {
             GetOverviewStatsRequest.OverviewWindow.Last1Hour => (60, OneMinute),
@@ -820,12 +893,14 @@ public class GetOverviewStatsController(
             _ => (24, OneHour),
         };
         var sparkStart = windowStart - (windowStart % sparkSize);
+        var series = ResolveProviderSeriesGeometry(window, windowStart, nowMs);
+        var seriesBuckets = (int)((series.End - series.Start) / series.BucketSize);
 
         var byProvider = new Dictionary<string, ProviderAccumulator>();
         foreach (var m in minutes)
         {
             if (!byProvider.TryGetValue(m.Provider, out var acc))
-                acc = new ProviderAccumulator(sparkBuckets);
+                acc = new ProviderAccumulator(sparkBuckets, seriesBuckets);
             acc.Articles += m.Articles;
             acc.Misses += m.Misses;
             acc.Errors += m.Errors;
@@ -840,6 +915,12 @@ public class GetOverviewStatsController(
                 acc.RetrySpark[idx] += m.Retries;
                 acc.BytesSpark[idx] += m.BytesFetched;
                 acc.DurationSpark[idx] += m.SumDurationMs;
+            }
+            var seriesIdx = (int)((m.Minute - series.Start) / series.BucketSize);
+            if (seriesIdx >= 0 && seriesIdx < seriesBuckets)
+            {
+                acc.SeriesBytes[seriesIdx] += m.BytesFetched;
+                acc.SeriesDurations[seriesIdx] += m.SumDurationMs;
             }
             byProvider[m.Provider] = acc;
         }
@@ -859,6 +940,7 @@ public class GetOverviewStatsController(
                     Retries = kv.Value.Retries,
                     SpeedMbPerSec = CalculateSpeedMbPerSec(kv.Value.Bytes, kv.Value.SumDurationMs),
                     SpeedSpark = BuildSpeedSpark(kv.Value.BytesSpark, kv.Value.DurationSpark),
+                    SpeedSeries = BuildSpeedSeries(kv.Value.SeriesBytes, kv.Value.SeriesDurations, series.Start, series.BucketSize),
                     // SumDurationMs is Ok-only from rollup; divide by Ok count, not all attempts.
                     AvgDurationMs = okArticles > 0 ? (double)kv.Value.SumDurationMs / okArticles : 0,
                     ErrorRate = kv.Value.Articles > 0 ? (double)kv.Value.Errors / kv.Value.Articles : 0,
@@ -877,19 +959,20 @@ public class GetOverviewStatsController(
         long bucketSize,
         long nowMs,
         IReadOnlyDictionary<string, string?> labelsByMetricsKey,
+        GetOverviewStatsRequest.OverviewWindow window = GetOverviewStatsRequest.OverviewWindow.Last30Days,
         IEnumerable<ProviderLifetimeTotal>? foldedLifetimeTotals = null)
     {
-        var totalSpan = nowMs - windowStart;
-        var sparkSize = OneDay;
-        var sparkBuckets = Math.Max(1, (int)Math.Min(60, totalSpan / sparkSize + 1));
-        var sparkStart = windowStart - (windowStart % sparkSize);
+        var (sparkBuckets, sparkSize, sparkStart) = ResolveProviderSparkGeometry(
+            windowStart, window, nowMs, useRollups: true);
+        var series = ResolveProviderSeriesGeometry(window, windowStart, nowMs);
+        var seriesBuckets = (int)((series.End - series.Start) / series.BucketSize);
 
         var byProvider = new Dictionary<string, ProviderAccumulator>();
         foreach (var h in hours)
         {
             var host = h.Provider;
             if (!byProvider.TryGetValue(host, out var acc))
-                acc = new ProviderAccumulator(sparkBuckets);
+                acc = new ProviderAccumulator(sparkBuckets, seriesBuckets);
             acc.Articles += h.Articles;
             acc.Misses += h.Misses;
             acc.Errors += h.Errors;
@@ -905,6 +988,12 @@ public class GetOverviewStatsController(
                 acc.BytesSpark[idx] += h.BytesFetched;
                 acc.DurationSpark[idx] += h.SumDurationMs;
             }
+            var seriesIdx = (int)((h.Hour - series.Start) / series.BucketSize);
+            if (seriesIdx >= 0 && seriesIdx < seriesBuckets)
+            {
+                acc.SeriesBytes[seriesIdx] += h.BytesFetched;
+                acc.SeriesDurations[seriesIdx] += h.SumDurationMs;
+            }
             byProvider[host] = acc;
         }
 
@@ -914,7 +1003,7 @@ public class GetOverviewStatsController(
                          .Where(lt => IsConfiguredMetricsKey(lt.Provider, labelsByMetricsKey)))
             {
                 if (!byProvider.TryGetValue(lifetime.Provider, out var acc))
-                    acc = new ProviderAccumulator(sparkBuckets);
+                    acc = new ProviderAccumulator(sparkBuckets, seriesBuckets);
                 acc.Articles += lifetime.Articles;
                 acc.Misses += lifetime.Misses;
                 acc.Errors += lifetime.Errors;
@@ -940,6 +1029,7 @@ public class GetOverviewStatsController(
                     Retries = kv.Value.Retries,
                     SpeedMbPerSec = CalculateSpeedMbPerSec(kv.Value.Bytes, kv.Value.SumDurationMs),
                     SpeedSpark = BuildSpeedSpark(kv.Value.BytesSpark, kv.Value.DurationSpark),
+                    SpeedSeries = BuildSpeedSeries(kv.Value.SeriesBytes, kv.Value.SeriesDurations, series.Start, series.BucketSize),
                     AvgDurationMs = okArticles > 0 ? (double)kv.Value.SumDurationMs / okArticles : 0,
                     ErrorRate = kv.Value.Articles > 0 ? (double)kv.Value.Errors / kv.Value.Articles : 0,
                     Spark = kv.Value.Spark.ToList(),
@@ -973,6 +1063,25 @@ public class GetOverviewStatsController(
                 CalculateSpeedMbPerSec(value, durations[index]) ?? 0)
             .ToList();
 
+    private static List<GetOverviewStatsResponse.ProviderSpeedPoint> BuildSpeedSeries(
+        long[] bytes,
+        long[] durations,
+        long start,
+        long bucketSize)
+    {
+        var points = new List<GetOverviewStatsResponse.ProviderSpeedPoint>(bytes.Length);
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            points.Add(new GetOverviewStatsResponse.ProviderSpeedPoint
+            {
+                Bucket = start + i * bucketSize,
+                BytesFetched = bytes[i],
+                SpeedMbPerSec = CalculateSpeedMbPerSec(bytes[i], durations[i]) ?? 0,
+            });
+        }
+        return points;
+    }
+
     private sealed class ProviderAccumulator
     {
         public long Articles, Misses, Errors, Retries, SumDurationMs, Bytes;
@@ -981,13 +1090,17 @@ public class GetOverviewStatsController(
         public readonly long[] RetrySpark;
         public readonly long[] BytesSpark;
         public readonly long[] DurationSpark;
-        public ProviderAccumulator(int n)
+        public readonly long[] SeriesBytes;
+        public readonly long[] SeriesDurations;
+        public ProviderAccumulator(int sparkBuckets, int seriesBuckets)
         {
-            Spark = new long[n];
-            ErrorSpark = new long[n];
-            RetrySpark = new long[n];
-            BytesSpark = new long[n];
-            DurationSpark = new long[n];
+            Spark = new long[sparkBuckets];
+            ErrorSpark = new long[sparkBuckets];
+            RetrySpark = new long[sparkBuckets];
+            BytesSpark = new long[sparkBuckets];
+            DurationSpark = new long[sparkBuckets];
+            SeriesBytes = new long[seriesBuckets];
+            SeriesDurations = new long[seriesBuckets];
         }
     }
 

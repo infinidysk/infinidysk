@@ -97,6 +97,10 @@ jobs:
         ghcr.io/nzbdav/nzbdav:v${{ needs.release-please.outputs.major }}
         ghcr.io/nzbdav/nzbdav:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
       nzbdav_version: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
+      dev_image_description: InfiniDysk development build ${{ needs.release-please.outputs.dev_label }}
+      dev_tags: |
+        ghcr.io/${{ github.repository }}:dev
+        docker.io/infinidysk/infinidysk:dev
       checkout_ref: ${{ needs.release-please.outputs.sha }}
       dockerhub_username: infinidysk
     secrets:
@@ -178,6 +182,10 @@ jobs:
         ghcr.io/nzbdav/nzbdav:v${{ needs.resolve-version.outputs.major }}
         ghcr.io/nzbdav/nzbdav:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
       nzbdav_version: ${{ needs.resolve-version.outputs.version }}
+      dev_image_description: InfiniDysk development build ${{ needs.resolve-version.outputs.dev_label }}
+      dev_tags: |
+        ghcr.io/${{ github.repository }}:dev
+        docker.io/infinidysk/infinidysk:dev
       checkout_ref: ${{ needs.resolve-version.outputs.ref }}
       dockerhub_username: infinidysk
     secrets:

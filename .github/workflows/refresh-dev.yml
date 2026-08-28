@@ -94,6 +94,7 @@ jobs:
         ghcr.io/${{ github.repository }}:dev
         docker.io/infinidysk/infinidysk:dev
       nzbdav_version: ${{ needs.resolve.outputs.dev_label }}
+      image_description: InfiniDysk development build ${{ needs.resolve.outputs.dev_label }}
       dockerhub_username: infinidysk
     secrets:
       registry_token: ${{ secrets.GITHUB_TOKEN }}

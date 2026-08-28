@@ -40,6 +40,7 @@ public class QueueItemProcessor(
     IProgress<int> progress,
     ConcurrentDictionary<Guid, int> retryAttempts,
     SemaphoreSlim? finalizeLock,
+    HealthCheckConnectionGate healthCheckConnectionGate,
     CancellationToken ct,
     Action<string>? stageReporter = null
 )
@@ -53,6 +54,7 @@ public class QueueItemProcessor(
         ConfigManager configManager,
         WebsocketManager websocketManager,
         IProgress<int> progress,
+        HealthCheckConnectionGate healthCheckConnectionGate,
         CancellationToken ct)
         : this(
             queueItem,
@@ -67,7 +69,8 @@ public class QueueItemProcessor(
             progress,
             new ConcurrentDictionary<Guid, int>(),
             finalizeLock: null,
-            ct)
+            healthCheckConnectionGate,
+            ct: ct)
     {
     }
 
@@ -138,6 +141,61 @@ public class QueueItemProcessor(
             ? files.SelectMany(segments =>
                 HealthCheckService.SampleSegments(segments.ToList())).ToList()
             : files.SelectMany(segments => segments).ToList();
+    }
+
+    /// <summary>
+    /// Picks one strategically distant segment to probe before a full existence sweep:
+    /// the midpoint of the largest eligible file. Returns null when no file has at
+    /// least two segments (step 1 already verified every first segment).
+    /// </summary>
+    internal static string? SelectMidpointPreflightSegment(
+        IReadOnlyList<IReadOnlyList<string>> segmentsByFile)
+    {
+        var candidate = segmentsByFile
+            .Where(file => file.Count >= 2)
+            .MaxBy(file => file.Count);
+        return candidate?[candidate.Count / 2];
+    }
+
+    /// <summary>
+    /// Full-mode dead-NZB preflight (#897): one serial STAT on the midpoint of the
+    /// largest file, then the remaining sweep. A definitive miss throws
+    /// <see cref="UsenetArticleNotFoundException"/>, which the outer failure handler
+    /// already caches and fails non-retryably. Sampled mode skips the extra probe.
+    /// </summary>
+    internal static async Task CheckExistenceWithOptionalMidpointPreflightAsync(
+        INntpClient usenetClient,
+        IReadOnlyList<IReadOnlyList<string>> segmentsByFile,
+        IReadOnlyList<string> articlesToCheck,
+        string checkMode,
+        int healthCheckConcurrency,
+        IProgress<int>? part3Progress,
+        CancellationToken ct)
+    {
+        var remaining = articlesToCheck;
+        var completedBeforeSweep = 0;
+
+        if (checkMode == "full" &&
+            SelectMidpointPreflightSegment(segmentsByFile) is { } probeId &&
+            articlesToCheck.Contains(probeId))
+        {
+            await ArticleExistenceChecker.CheckAsync(
+                    usenetClient, [probeId], concurrency: 1, progress: null, ct)
+                .ConfigureAwait(false);
+            completedBeforeSweep = 1;
+            part3Progress?.Report(completedBeforeSweep);
+            remaining = articlesToCheck.Where(id => id != probeId).ToList();
+        }
+
+        var sweepProgress = new OffsetProgress(part3Progress, completedBeforeSweep);
+        await ArticleExistenceChecker.CheckAsync(
+                usenetClient, remaining, healthCheckConcurrency, sweepProgress, ct)
+            .ConfigureAwait(false);
+    }
+
+    private sealed class OffsetProgress(IProgress<int>? inner, int offset) : IProgress<int>
+    {
+        public void Report(int value) => inner?.Report(offset + value);
     }
 
     private static TimeSpan GetProviderRetryBackoff(int attempt)
@@ -576,10 +634,19 @@ public class QueueItemProcessor(
             var healthCheckConcurrency = Math.Min(
                 configManager.GetHealthCheckConcurrency(),
                 QueueFanOut.GetConcurrency(configManager, ct));
+            using var healthAdmissionScope = ct.SetContext(new HealthCheckAdmissionContext(
+                healthCheckConnectionGate,
+                    HealthCheckAdmissionPriority.Queue));
             await RunStageAsync(
                     "health",
-                    () => ArticleExistenceChecker
-                        .CheckAsync(usenetClient, articlesToCheck, healthCheckConcurrency, part3Progress, ct))
+                    () => CheckExistenceWithOptionalMidpointPreflightAsync(
+                        usenetClient,
+                        segmentsByFile,
+                        articlesToCheck,
+                        checkMode,
+                        healthCheckConcurrency,
+                        part3Progress,
+                        ct))
                 .ConfigureAwait(false);
             checkedFullHealth = true;
         }

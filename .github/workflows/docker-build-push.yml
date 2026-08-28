@@ -11,6 +11,21 @@ on:
         description: NZBDAV_VERSION build arg
         required: true
         type: string
+      image_description:
+        description: OCI image description (applied to the image and multi-arch manifest)
+        required: false
+        type: string
+        default: ""
+      dev_image_description:
+        description: OCI description for rolling dev image manifests
+        required: false
+        type: string
+        default: ""
+      dev_tags:
+        description: Rolling dev image tags to annotate (newline-separated)
+        required: false
+        type: string
+        default: ""
       checkout_ref:
         description: Git ref to build (defaults to triggering commit)
         required: false
@@ -79,8 +94,27 @@ jobs:
             NZBDAV_VERSION=${{ inputs.nzbdav_version }}
             NZBDAV_COMMIT_SHA=${{ inputs.checkout_ref || github.sha }}
             REPO_URL=https://github.com/${{ github.repository }}
+          labels: ${{ inputs.image_description != '' && format('org.opencontainers.image.description={0}', inputs.image_description) || '' }}
+          annotations: ${{ inputs.image_description != '' && format('index:org.opencontainers.image.description={0}', inputs.image_description) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Annotate rolling dev image manifests
+        if: inputs.dev_image_description != '' && inputs.dev_tags != ''
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          DEV_IMAGE_DESCRIPTION: ${{ inputs.dev_image_description }}
+          DEV_TAGS: ${{ inputs.dev_tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            image="${tag%:*}"
+            docker buildx imagetools create \
+              --annotation "index:org.opencontainers.image.description=${DEV_IMAGE_DESCRIPTION}" \
+              --tag "$tag" \
+              "${image}@${BUILD_DIGEST}"
+          done <<< "$DEV_TAGS"
 
       # The legacy namespace lives in the old org, which this repo's
       # GITHUB_TOKEN cannot write to; re-login with an old-org PAT. Docker

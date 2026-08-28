@@ -4,12 +4,15 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
@@ -42,6 +45,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     private RepairPatchStore _patchStore = null!;
     private UsenetStreamingClient _usenet = null!;
     private QueueManager _queueManager = null!;
+    private HealthCheckConnectionGate _healthCheckConnectionGate = null!;
 
     public async Task InitializeAsync()
     {
@@ -78,6 +82,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Directory.CreateDirectory(Path.Join(_configRoot, "library"));
 
         _failureTracker = new StreamingFailureTracker();
+        _healthCheckConnectionGate = new HealthCheckConnectionGate(_configManager);
         _patchStore = new RepairPatchStore(Path.Join(_configRoot, "patches"), 1024 * 1024);
         await _patchStore.CatalogLoadTask;
 
@@ -90,7 +95,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             new ProviderBytesTracker(),
             new StreamTraceBuffer(100),
             new ActiveReadRegistry());
-        _queueManager = new QueueManager(
+        _queueManager = QueueManager.CreateForTests(
             _usenet,
             _configManager,
             websocketManager,
@@ -98,12 +103,32 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             new WatchdogLog(),
             new QueueItemSourceTracker(),
             new BenchmarkGate(),
-            startLoop: false);
+            startLoop: false,
+            healthCheckConnectionGate: _healthCheckConnectionGate);
+    }
+
+    [Fact]
+    public async Task MissingReleaseDate_HeadUsesSharedHealthAdmission()
+    {
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item.ReleaseDate = null;
+        await _context.SaveChangesAsync();
+        var headClient = new CapturingHeadNntpClient(NewFakeClient(segments, missing: []));
+        var (service, _) = await NewServiceAsync(headClient, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var admission = Assert.IsType<HealthCheckAdmissionContext>(headClient.AdmissionContext);
+        Assert.Same(_healthCheckConnectionGate, admission.Gate);
+        Assert.Equal(HealthCheckAdmissionPriority.Background, admission.Priority);
     }
 
     public async Task DisposeAsync()
     {
         _queueManager.Dispose();
+        _healthCheckConnectionGate.Dispose();
         _usenet.Dispose();
         await _context.DisposeAsync();
         Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
@@ -789,6 +814,31 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             });
     }
 
+    private sealed class CapturingHeadNntpClient(INntpClient inner) : WrappingNntpClient(inner)
+    {
+        public HealthCheckAdmissionContext? AdmissionContext { get; private set; }
+
+        public override Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken)
+        {
+            AdmissionContext = cancellationToken.GetContext<HealthCheckAdmissionContext>();
+            return Task.FromResult(new UsenetHeadResponse
+            {
+                SegmentId = segmentId.ToString(),
+                ResponseCode = (int)UsenetResponseType.ArticleRetrievedHeadFollows,
+                ResponseMessage = "221 article headers follow",
+                ArticleHeaders = new UsenetArticleHeader
+                {
+                    Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["Date"] = DateTimeOffset.UtcNow.AddDays(-1).ToString("R"),
+                    },
+                },
+            });
+        }
+    }
+
     private sealed class ThrowingReadStream(string segmentId) : MemoryStream
     {
         private UsenetCorruptArticleException CreateException() =>
@@ -820,7 +870,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     private async Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(
-        FakeNntpClient fake,
+        INntpClient fake,
         Par2RepairOutcome par2Outcome)
     {
         await _usenet.ReplaceUnderlyingClientForTestsAsync(fake);
@@ -834,12 +884,13 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             _queueManager,
             par2,
             _patchStore,
-            new ArrReplacementSearchBudget());
+            new ArrReplacementSearchBudget(),
+            _healthCheckConnectionGate);
         return (service, par2);
     }
 
     private Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(
-        FakeNntpClient fake,
+        INntpClient fake,
         bool par2Outcome) =>
         NewServiceAsync(
             fake,

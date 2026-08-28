@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.RadarrSonarr;
@@ -23,10 +24,17 @@ using UsenetSharp.Models;
 
 namespace NzbWebDAV.Services;
 
+internal enum HealthCheckRefillOutcome
+{
+    Started,
+    NoCandidate,
+    Blocked,
+}
+
 /// <summary>
 /// This service monitors for health checks
 /// </summary>
-public class HealthCheckService : BackgroundService
+public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 {
     private const int MaximumMissingSegmentIds = 100_000;
     private const int NoMatchConfirmationsRequired = 2;
@@ -41,6 +49,8 @@ public class HealthCheckService : BackgroundService
     // After the limit is hit, further repairs at that path are deferred instead of deleting again.
     internal const int RepairRecurrenceLimit = 3;
     internal static readonly TimeSpan RepairRecurrenceWindow = TimeSpan.FromHours(6);
+    internal static readonly TimeSpan InfrastructureFailureCooldown = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan WorkerDrainTimeout = TimeSpan.FromSeconds(5);
     private const int MaximumTrackedRepairPaths = 10_000;
 
     internal static bool IsMissingPayloadMessage(string? message) =>
@@ -109,11 +119,27 @@ public class HealthCheckService : BackgroundService
     private readonly RepairPatchStore _repairPatchStore;
     private readonly IDbContextFactory<DavDatabaseContext>? _dbContextFactory;
     private readonly TimeProvider _timeProvider;
+    private readonly HealthCheckConnectionGate _healthCheckConnectionGate;
+    private readonly ConcurrentDictionary<Guid, InProgressHealthCheck> _inProgress = new();
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _workerFailureCooldowns = new();
+    private readonly SemaphoreSlim _workerAdmissionGate = new(1, 1);
+    private TaskCompletionSource _workerStateChanged = CreateWorkerStateSignal();
+    private long _infrastructureBackoffUntilUtcTicks;
+    private int _disposed;
 
     private static readonly HashSet<string> _missingSegmentIds = [];
     private static readonly Queue<string> _missingSegmentOrder = [];
     private static readonly ConcurrentDictionary<Guid, int> _arrNoMatchConfirmations = new();
     private static readonly ConcurrentDictionary<string, List<DateTimeOffset>> _recentRepairRemovalsByPath = new();
+
+    internal TimeSpan CoordinatorPollInterval { get; set; } = TimeSpan.FromSeconds(1);
+    internal TimeSpan CoordinatorIdleInterval { get; set; } = TimeSpan.FromSeconds(5);
+    internal Func<DavDatabaseContext>? CreateDbContextOverride { get; set; }
+    internal Func<HashSet<Guid>, bool, CancellationToken, Task<Guid?>>? SelectCandidateOverride
+    { get; set; }
+    internal Func<Guid, CancellationToken, Task>? ProcessCandidateOverride { get; set; }
+    internal Func<bool>? HasActiveQueueItemsOverride { get; set; }
+    internal IReadOnlyCollection<Guid> InProgressHealthCheckIds => _inProgress.Keys.ToArray();
 
     public HealthCheckService
     (
@@ -126,6 +152,7 @@ public class HealthCheckService : BackgroundService
         Par2RepairService par2RepairService,
         RepairPatchStore repairPatchStore,
         ArrReplacementSearchBudget replacementSearchBudget,
+        HealthCheckConnectionGate healthCheckConnectionGate,
         IDbContextFactory<DavDatabaseContext>? dbContextFactory = null,
         TimeProvider? timeProvider = null,
         ArrInstanceBackoff? arrBackoff = null
@@ -143,6 +170,7 @@ public class HealthCheckService : BackgroundService
         _repairPatchStore = repairPatchStore;
         _dbContextFactory = dbContextFactory;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _healthCheckConnectionGate = healthCheckConnectionGate;
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
@@ -169,88 +197,632 @@ public class HealthCheckService : BackgroundService
 
         await ClearNonMediaHealthCheckEntriesAsync(stoppingToken).ConfigureAwait(false);
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await RunCoordinatorIterationAsync(stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (
+                    stoppingToken.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
+                {
+                    break;
+                }
+                catch (Exception e) when (e is not OutOfMemoryException)
+                {
+                    RecordInfrastructureBackoff();
+                    if (e.TryGetKnownErrorMessage(out var reason))
+                    {
+                        Log.Warning("Background health coordinator deferred. Reason: {Reason}", reason);
+                        Log.Debug(e, "Background health coordinator known failure stack");
+                    }
+                    else
+                    {
+                        Log.Error(
+                            e,
+                            "Unexpected error coordinating background health checks: {Message}",
+                            e.Message);
+                    }
+
+                    await Task.Delay(CoordinatorIdleInterval, _timeProvider, stoppingToken)
+                        .ConfigureAwait(false);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (
+            stoppingToken.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
+        {
+            // Normal hosted-service shutdown.
+        }
+        finally
+        {
+            var drainDeadline = Task.Delay(WorkerDrainTimeout, CancellationToken.None);
+            await CancelAllActiveWorkersAsync(drainDeadline).ConfigureAwait(false);
+            await DrainActiveWorkersAsync(drainDeadline).ConfigureAwait(false);
+        }
+    }
+
+    internal Task ExecuteHostedServiceForTests(CancellationToken stoppingToken) =>
+        ExecuteAsync(stoppingToken);
+
+    internal async Task RunCoordinatorIterationAsync(CancellationToken ct)
+    {
+        await ReapCompletedWorkersAsync().ConfigureAwait(false);
+        var outcome = await RefillWorkerSlotsAsync(ct).ConfigureAwait(false);
+        await WaitForCoordinatorWakeAsync(outcome, ct).ConfigureAwait(false);
+        await ReapCompletedWorkersAsync().ConfigureAwait(false);
+    }
+
+    internal async Task<HealthCheckRefillOutcome> RefillWorkerSlotsAsync(CancellationToken ct)
+    {
+        await _workerAdmissionGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (IsInfrastructureBackoffActive())
+                return HealthCheckRefillOutcome.Blocked;
+
+            while (_inProgress.Count < _configManager.GetHealthCheckWorkers())
+            {
+                if (_benchmarkGate.IsPaused || !_configManager.IsRepairJobEnabled())
+                    return HealthCheckRefillOutcome.Blocked;
+
+                // Preserve current-main admission semantics: do not start another library check
+                // while queue work is active. A check already in flight may overlap with newly
+                // admitted queue work, where the shared gate gives queue verification priority.
+                if (HasActiveQueueItems)
+                    return HealthCheckRefillOutcome.Blocked;
+
+                const bool allowUrgentRepair = true;
+                var reservedIds = GetReservedHealthCheckIds();
+                if (SelectCandidateOverride is { } selector)
+                {
+                    var candidateId = await selector(reservedIds, allowUrgentRepair, ct)
+                        .ConfigureAwait(false);
+                    if (candidateId is not { } id)
+                        return HealthCheckRefillOutcome.NoCandidate;
+                    if (IsWorkerFailureCooldownActive(id))
+                        return HealthCheckRefillOutcome.Blocked;
+                    if (!TryStartWorker(id, ct))
+                        return _inProgress.IsEmpty
+                            ? HealthCheckRefillOutcome.Blocked
+                            : HealthCheckRefillOutcome.Started;
+                    continue;
+                }
+
+                var availableSlots = _configManager.GetHealthCheckWorkers() - _inProgress.Count;
+                var candidateIds = await SelectNextHealthCheckIdsAsync(
+                        reservedIds,
+                        allowUrgentRepair,
+                        availableSlots,
+                        ct)
+                    .ConfigureAwait(false);
+                if (candidateIds.Count == 0)
+                    return HealthCheckRefillOutcome.NoCandidate;
+
+                foreach (var id in candidateIds)
+                {
+                    if (_inProgress.Count >= _configManager.GetHealthCheckWorkers()) break;
+                    _ = TryStartWorker(id, ct);
+                }
+
+                return HealthCheckRefillOutcome.Started;
+            }
+
+            return HealthCheckRefillOutcome.Started;
+        }
+        catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
+        {
+            RecordInfrastructureBackoff();
+            throw;
+        }
+        finally
+        {
+            _workerAdmissionGate.Release();
+        }
+    }
+
+    private bool TryStartWorker(Guid id, CancellationToken ct)
+    {
+#pragma warning disable CA2000 // cancellation ownership transfers to the registered worker and is disposed by the coordinator reaper
+        var worker = new InProgressHealthCheck(
+            ContextualCancellationTokenSource.CreateLinkedTokenSource(ct));
+#pragma warning restore CA2000
+        if (!_inProgress.TryAdd(id, worker))
+        {
+            worker.Dispose();
+            return false;
+        }
+
+        try
+        {
+#pragma warning disable CA2025 // the coordinator owns this task, observes it in ReapCompletedWorkersAsync, and only then disposes the worker
+            worker.ProcessingTask = RunHealthCheckWorkerAsync(id, worker);
+#pragma warning restore CA2025
+        }
+        catch
+        {
+            _inProgress.TryRemove(id, out _);
+            worker.Dispose();
+            SignalWorkerStateChanged();
+            throw;
+        }
+        SignalWorkerStateChanged();
+        return true;
+    }
+
+    internal async Task<IReadOnlyList<Guid>> SelectNextHealthCheckIdsAsync(
+        HashSet<Guid> activeIds,
+        bool allowUrgentRepair,
+        int maximumCount,
+        CancellationToken ct)
+    {
+        if (maximumCount <= 0) return [];
+
+        await using var dbContext = CreateContext();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var currentDateTime = _timeProvider.GetUtcNow();
+        IQueryable<DavItem> queue = GetHealthCheckQueueItems(dbClient)
+            .Where(item => item.NextHealthCheck == null || item.NextHealthCheck < currentDateTime);
+        if (activeIds.Count > 0)
+            queue = queue.Where(item => !activeIds.Contains(item.Id));
+        if (!allowUrgentRepair)
+            queue = queue.Where(item => item.NextHealthCheck != DateTimeOffset.UnixEpoch);
+
+        var selected = new List<Guid>(maximumCount);
+        await foreach (var item in queue
+            .AsAsyncEnumerable()
+            .WithCancellation(ct)
+            .ConfigureAwait(false))
+        {
+            var isUrgent = item.NextHealthCheck == DateTimeOffset.UnixEpoch;
+            if ((allowUrgentRepair && isUrgent)
+                || (!isUrgent && FilenameUtil.IsHealthCheckCandidate(item.Name)))
+            {
+                selected.Add(item.Id);
+                if (selected.Count == maximumCount) break;
+            }
+        }
+
+        return selected;
+    }
+
+    private async Task RunHealthCheckWorkerAsync(
+        Guid davItemId,
+        InProgressHealthCheck worker)
+    {
+        var workerToken = worker.Cancellation.Token;
+        try
+        {
+            if (ProcessCandidateOverride is { } processCandidate)
+            {
+                await processCandidate(davItemId, workerToken).ConfigureAwait(false);
+                return;
+            }
+
+            await using var dbContext = CreateContext();
+            var dbClient = new DavDatabaseClient(dbContext);
+            var davItem = await dbContext.Items
+                .SingleOrDefaultAsync(item => item.Id == davItemId, workerToken)
+                .ConfigureAwait(false);
+            if (davItem is null) return;
+
+            var concurrency = _configManager.GetHealthCheckConcurrency();
+            await PerformHealthCheck(
+                    davItem,
+                    dbClient,
+                    concurrency,
+                    workerToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (workerToken.IsCancellationRequested)
+        {
+            // Normal hosted-service shutdown.
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            RecordWorkerInfrastructureFailure(davItemId);
+            CompleteHealthProgressIfStarted(davItemId, worker);
+            if (e.TryGetKnownErrorMessage(out var reason))
+            {
+                Log.Warning(
+                    "Background health check for {DavItemId} deferred. Reason: {Reason}",
+                    davItemId,
+                    reason);
+                Log.Debug(e, "Background health check known failure stack for {DavItemId}", davItemId);
+            }
+            else
+            {
+                Log.Error(
+                    e,
+                    "Unexpected error performing background health check for {DavItemId}: {Message}",
+                    davItemId,
+                    e.Message);
+            }
+        }
+        finally
+        {
+            SignalWorkerStateChanged();
+        }
+    }
+
+    internal async Task ReapCompletedWorkersAsync()
+    {
+        var completed = _inProgress
+            .Where(entry => entry.Value.ProcessingTask?.IsCompleted == true)
+            .ToArray();
+        ExceptionDispatchInfo? fatalFailure = null;
+        ExceptionDispatchInfo? otherFailure = null;
+        foreach (var (davItemId, worker) in completed)
         {
             try
             {
-                // pause verification while a connection speed-test is running
-                if (_benchmarkGate.IsPaused)
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, stoppingToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                // if the repair-job is disabled, then don't do anything
-                if (!_configManager.IsRepairJobEnabled())
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, stoppingToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                // Defer new background library health checks while the NZB queue
-                // is actively processing. An already-running check finishes normally;
-                // queue-item article validation inside QueueItemProcessor is separate.
-                if (_queueManager.HasActiveQueueItems)
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, stoppingToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                // get concurrency (capped to avoid saturating the NNTP pool)
-                var concurrency = _configManager.GetHealthCheckConcurrency();
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-
-                // get the davItem to health-check
-                await using var dbContext = CreateContext();
-                var dbClient = new DavDatabaseClient(dbContext);
-                var currentDateTime = DateTimeOffset.UtcNow;
-
-                // Stream the ordered queue and take the first media candidate.
-                // Urgent repairs (UnixEpoch sentinel) always run regardless of file type.
-                DavItem? davItem = null;
-                await foreach (var item in GetHealthCheckQueueItems(dbClient)
-                    .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
-                    .AsAsyncEnumerable()
-                    .WithCancellation(cts.Token)
-                    .ConfigureAwait(false))
-                {
-                    if (item.NextHealthCheck == DateTimeOffset.UnixEpoch ||
-                        FilenameUtil.IsHealthCheckCandidate(item.Name))
-                    {
-                        davItem = item;
-                        break;
-                    }
-                }
-
-                // if there is no item to health-check, don't do anything
-                if (davItem == null)
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, cts.Token).ConfigureAwait(false);
-                    continue;
-                }
-
-                // perform the health check
-                await PerformHealthCheck(davItem, dbClient, concurrency, cts.Token).ConfigureAwait(false);
+                await worker.ProcessingTask!.ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
+            catch (Exception e)
             {
-                // OperationCanceledException is expected on sigterm
-                return;
-            }
-            catch (Exception e) when (e is not OutOfMemoryException)
-            {
-                if (e.TryGetKnownErrorMessage(out var reason))
+                if (e is OutOfMemoryException)
                 {
-                    Log.Warning("Background health check deferred. Reason: {Reason}", reason);
-                    Log.Debug(e, "Background health check known failure stack");
+                    fatalFailure ??= ExceptionDispatchInfo.Capture(e);
                 }
                 else
                 {
-                    Log.Error(e, "Unexpected error performing background health checks: {Message}", e.Message);
+                    otherFailure ??= ExceptionDispatchInfo.Capture(e);
+                }
+            }
+            finally
+            {
+                CompleteHealthProgressIfStarted(davItemId, worker);
+                if (_inProgress.TryGetValue(davItemId, out var current)
+                    && ReferenceEquals(current, worker))
+                    _inProgress.TryRemove(davItemId, out _);
+                worker.Dispose();
+                SignalWorkerStateChanged();
+            }
+        }
+
+        if (fatalFailure is not null)
+            RequestCancellationForAllWorkers();
+        (fatalFailure ?? otherFailure)?.Throw();
+    }
+
+    private async Task DrainActiveWorkersAsync(Task deadline)
+    {
+        ExceptionDispatchInfo? failure = null;
+        var timedOut = false;
+        var detachedWorkerCount = 0;
+        try
+        {
+            while (!_inProgress.IsEmpty)
+            {
+                try
+                {
+                    await ReapCompletedWorkersAsync().ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    failure = ExceptionDispatchInfo.Capture(e);
+                    break;
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, stoppingToken).ConfigureAwait(false);
+                var workers = _inProgress.Values
+                    .Select(worker => worker.ProcessingTask)
+                    .Where(task => task is not null)
+                    .Cast<Task>()
+                    .ToArray();
+                if (workers.Length == 0)
+                {
+                    var stateChanged = Volatile.Read(ref _workerStateChanged).Task;
+                    if (ReferenceEquals(
+                            await Task.WhenAny(stateChanged, deadline).ConfigureAwait(false),
+                            deadline))
+                    {
+                        timedOut = true;
+                        break;
+                    }
+                    continue;
+                }
+                if (ReferenceEquals(
+                        await Task.WhenAny([.. workers, deadline]).ConfigureAwait(false),
+                        deadline))
+                {
+                    timedOut = true;
+                    break;
+                }
             }
+        }
+        finally
+        {
+            if (!_inProgress.IsEmpty)
+            {
+                detachedWorkerCount = _inProgress.Count;
+                ObserveRemainingWorkers();
+            }
+        }
+
+        if (timedOut)
+        {
+            Log.Warning(
+                "Background health worker drain exceeded {Timeout}; " +
+                "{Count} worker(s) will be observed asynchronously",
+                WorkerDrainTimeout,
+                detachedWorkerCount);
+        }
+
+        failure?.Throw();
+    }
+
+    private void ObserveRemainingWorkers()
+    {
+        foreach (var (davItemId, worker) in _inProgress.ToArray())
+        {
+            if (worker.ProcessingTask is not { } task)
+            {
+                if (_inProgress.TryGetValue(davItemId, out var current)
+                    && ReferenceEquals(current, worker))
+                    _inProgress.TryRemove(davItemId, out _);
+                worker.Dispose();
+                SignalWorkerStateChanged();
+                continue;
+            }
+#pragma warning disable CA2025 // this continuation is the explicit owner/observer after the bounded coordinator drain expires
+            _ = task.ContinueWith(
+                static (completedTask, state) =>
+                {
+                    var (service, id, detachedWorker) =
+                        ((HealthCheckService, Guid, InProgressHealthCheck))state!;
+                    service.CompleteDetachedWorker(id, detachedWorker, completedTask);
+                },
+                (this, davItemId, worker),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+#pragma warning restore CA2025
+        }
+    }
+
+    private void CompleteDetachedWorker(
+        Guid davItemId,
+        InProgressHealthCheck worker,
+        Task completedTask)
+    {
+        CompleteHealthProgressIfStarted(davItemId, worker);
+        if (completedTask.Exception is { } aggregate)
+        {
+            foreach (var exception in aggregate.Flatten().InnerExceptions)
+            {
+                if (exception is OutOfMemoryException)
+                    Log.Fatal(exception, "Detached health worker {DavItemId} ran out of memory", davItemId);
+                else
+                    Log.Error(exception, "Detached health worker {DavItemId} faulted", davItemId);
+            }
+        }
+
+        if (_inProgress.TryGetValue(davItemId, out var current)
+            && ReferenceEquals(current, worker))
+            _inProgress.TryRemove(davItemId, out _);
+        worker.Dispose();
+        SignalWorkerStateChanged();
+    }
+
+    private async Task WaitForCoordinatorWakeAsync(
+        HealthCheckRefillOutcome outcome,
+        CancellationToken ct)
+    {
+        var stateChanged = Volatile.Read(ref _workerStateChanged).Task;
+        if (HasCompletedWorker()) return;
+
+        var interval = GetCoordinatorWaitInterval(outcome);
+        var delay = Task.Delay(interval, _timeProvider, ct);
+        await Task.WhenAny(stateChanged, delay).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+    }
+
+    internal TimeSpan GetCoordinatorWaitInterval(HealthCheckRefillOutcome outcome) =>
+        _inProgress.IsEmpty
+        && outcome is HealthCheckRefillOutcome.NoCandidate or HealthCheckRefillOutcome.Blocked
+            ? CoordinatorIdleInterval
+            : CoordinatorPollInterval;
+
+    public async Task WaitForQuiescenceAsync(CancellationToken cancellationToken)
+    {
+        await _workerAdmissionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        _workerAdmissionGate.Release();
+
+        while (!_inProgress.IsEmpty)
+        {
+            var stateChanged = Volatile.Read(ref _workerStateChanged).Task;
+            if (_inProgress.IsEmpty) break;
+            await stateChanged.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await _healthCheckConnectionGate.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public override void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+        base.Dispose();
+        _workerAdmissionGate.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private bool HasCompletedWorker() =>
+        _inProgress.Values.Any(worker => worker.ProcessingTask?.IsCompleted == true);
+
+    private void RequestCancellationForAllWorkers()
+    {
+        foreach (var worker in _inProgress.Values)
+            _ = worker.CancelAsync();
+    }
+
+    private async Task CancelAllActiveWorkersAsync(Task deadline)
+    {
+        var cancellations = _inProgress.Values
+            .Select(worker => worker.CancelAsync())
+            .ToArray();
+        if (cancellations.Length == 0) return;
+
+        var allCancellations = Task.WhenAll(cancellations);
+        if (ReferenceEquals(
+                await Task.WhenAny(allCancellations, deadline).ConfigureAwait(false),
+                deadline))
+        {
+            Log.Warning(
+                "Background health worker cancellation exceeded {Timeout}; " +
+                "continuing the bounded drain",
+                WorkerDrainTimeout);
+            return;
+        }
+
+        await allCancellations.ConfigureAwait(false);
+    }
+
+    private HashSet<Guid> GetReservedHealthCheckIds()
+    {
+        var utcNow = _timeProvider.GetUtcNow();
+        var reserved = _inProgress.Keys.ToHashSet();
+        foreach (var (id, cooldownUntil) in _workerFailureCooldowns)
+        {
+            if (cooldownUntil > utcNow)
+                reserved.Add(id);
+            else if (_workerFailureCooldowns.TryGetValue(id, out var current)
+                     && current == cooldownUntil)
+                _workerFailureCooldowns.TryRemove(id, out _);
+        }
+
+        return reserved;
+    }
+
+    internal bool IsWorkerFailureCooldownActive(Guid davItemId)
+    {
+        if (!_workerFailureCooldowns.TryGetValue(davItemId, out var cooldownUntil))
+            return false;
+        if (cooldownUntil > _timeProvider.GetUtcNow())
+            return true;
+
+        if (_workerFailureCooldowns.TryGetValue(davItemId, out var current)
+            && current == cooldownUntil)
+            _workerFailureCooldowns.TryRemove(davItemId, out _);
+        return false;
+    }
+
+    private void RecordWorkerInfrastructureFailure(Guid davItemId)
+    {
+        var cooldownUntil = _timeProvider.GetUtcNow() + InfrastructureFailureCooldown;
+        _workerFailureCooldowns.AddOrUpdate(
+            davItemId,
+            cooldownUntil,
+            (_, current) => current >= cooldownUntil ? current : cooldownUntil);
+        RecordInfrastructureBackoff();
+    }
+
+    private bool IsInfrastructureBackoffActive() =>
+        _timeProvider.GetUtcNow().UtcTicks
+        < Interlocked.Read(ref _infrastructureBackoffUntilUtcTicks);
+
+    private void RecordInfrastructureBackoff()
+    {
+        var nextAttempt = (_timeProvider.GetUtcNow() + InfrastructureFailureCooldown).UtcTicks;
+        while (true)
+        {
+            var current = Interlocked.Read(ref _infrastructureBackoffUntilUtcTicks);
+            if (current >= nextAttempt) return;
+            if (Interlocked.CompareExchange(
+                    ref _infrastructureBackoffUntilUtcTicks,
+                    nextAttempt,
+                    current) == current)
+                return;
+        }
+    }
+
+    private static TaskCompletionSource CreateWorkerStateSignal() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private void SignalWorkerStateChanged()
+    {
+        var previous = Interlocked.Exchange(
+            ref _workerStateChanged,
+            CreateWorkerStateSignal());
+        previous.TrySetResult();
+    }
+
+    private sealed class InProgressHealthCheck(
+        ContextualCancellationTokenSource cancellation) : IDisposable
+    {
+        private const int ProgressStartedFlag = 1;
+        private const int ProgressClosedFlag = 2;
+        private readonly Lock _cancellationLock = new();
+        private readonly Lock _progressLock = new();
+        private Task? _cancellationTask;
+        private int _disposed;
+        private int _progressState;
+
+        public ContextualCancellationTokenSource Cancellation { get; } = cancellation;
+        public Task? ProcessingTask { get; set; }
+
+        public bool TryStartProgress()
+        {
+            lock (_progressLock)
+            {
+                if ((_progressState & ProgressClosedFlag) != 0) return false;
+                _progressState |= ProgressStartedFlag;
+                return true;
+            }
+        }
+
+        public bool TryPublishProgress(Action publish)
+        {
+            lock (_progressLock)
+            {
+                if ((_progressState & ProgressClosedFlag) != 0) return false;
+                publish();
+                return true;
+            }
+        }
+
+        public bool TryCloseProgress(out bool wasStarted)
+        {
+            lock (_progressLock)
+            {
+                wasStarted = (_progressState & ProgressStartedFlag) != 0;
+                if ((_progressState & ProgressClosedFlag) != 0) return false;
+                _progressState |= ProgressClosedFlag;
+                return true;
+            }
+        }
+
+        public Task CancelAsync()
+        {
+            lock (_cancellationLock)
+                return _cancellationTask ??= CancelCoreAsync();
+        }
+
+        private async Task CancelCoreAsync()
+        {
+            if (Volatile.Read(ref _disposed) == 1) return;
+            try
+            {
+                await Cancellation.CancelAsync().ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // A completed worker can be reaped while a fatal sibling requests cancellation.
+            }
+            catch (Exception e)
+            {
+                if (e is OutOfMemoryException)
+                    Log.Fatal(e, "Health worker cancellation callback ran out of memory");
+                else
+                    Log.Error(e, "Health worker cancellation callback failed");
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+            Cancellation.Dispose();
         }
     }
 
@@ -280,7 +852,10 @@ public class HealthCheckService : BackgroundService
     }
 
     private DavDatabaseContext CreateContext() =>
-        _dbContextFactory?.CreateDbContext() ?? new DavDatabaseContext();
+        DavDatabaseContexts.Create(CreateDbContextOverride, _dbContextFactory);
+
+    private bool HasActiveQueueItems =>
+        HasActiveQueueItemsOverride?.Invoke() ?? _queueManager.HasActiveQueueItems;
 
     /// <summary>
     /// One-shot cleanup: clear <c>NextHealthCheck</c>/<c>LastHealthCheck</c> for non-media files
@@ -402,7 +977,14 @@ public class HealthCheckService : BackgroundService
             var nzbFile = payload.NzbFile;
 
             // update the release date, if null
-            if (davItem.ReleaseDate == null) await UpdateReleaseDate(davItem, segments, ct).ConfigureAwait(false);
+            if (davItem.ReleaseDate == null)
+            {
+                using var healthAdmissionScope = ct.SetContext(
+                    new HealthCheckAdmissionContext(
+                        _healthCheckConnectionGate,
+                        HealthCheckAdmissionPriority.Background));
+                await UpdateReleaseDate(davItem, segments, ct).ConfigureAwait(false);
+            }
 
             // Sample large files to reduce NNTP load while keeping head/tail/stride coverage.
             // SegmentIndexView retains source indices, so later repair logic does not need to
@@ -443,6 +1025,7 @@ public class HealthCheckService : BackgroundService
             // setup progress tracking
             var progressHook = new Progress<int>();
             var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
+            _inProgress.TryGetValue(davItem.Id, out var progressWorker);
             progressHook.ProgressChanged += (_, progress) =>
             {
                 try { statCts?.CancelAfter(HealthCheckProgressTimeout); }
@@ -450,8 +1033,20 @@ public class HealthCheckService : BackgroundService
                 {
                     // statCts may already be disposed when a progress event races teardown.
                 }
+                if (!MarkHealthProgressStarted(davItem.Id, progressWorker)) return;
                 var message = $"{davItem.Id}|{progress}";
-                debounce(() => _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, message));
+                debounce(() =>
+                {
+                    if (progressWorker is null
+                        || !_inProgress.TryGetValue(davItem.Id, out var currentWorker)
+                        || !ReferenceEquals(currentWorker, progressWorker))
+                        return;
+
+                    _ = progressWorker.TryPublishProgress(
+                        () => _ = _websocketManager.SendMessage(
+                            WebsocketTopic.HealthItemProgress,
+                            message));
+                });
             };
 
             // Only cancel a STAT sweep after it has made no progress for a sustained
@@ -460,6 +1055,10 @@ public class HealthCheckService : BackgroundService
             List<int>? confirmedHoles = null;
             using (statCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(ct))
             {
+                using var healthAdmissionScope = statCts.Token.SetContext(
+                    new HealthCheckAdmissionContext(
+                        _healthCheckConnectionGate,
+                        HealthCheckAdmissionPriority.Background));
                 statCts.CancelAfter(HealthCheckProgressTimeout);
                 var progress = progressHook.ToPercentage(statSegments.Count);
                 if (!canClassify)
@@ -823,6 +1422,10 @@ public class HealthCheckService : BackgroundService
         // One bounded head read per file, ever: the probed class is persisted with the
         // hole record. Runs inside the caller's maintenance download context (attribution)
         // and cancellation scope; early disposal of the body stream is by design.
+        using var healthAdmissionScope = ct.SetContext(
+            new HealthCheckAdmissionContext(
+                _healthCheckConnectionGate,
+                HealthCheckAdmissionPriority.Background));
         var response = await _usenetClient.DecodedBodyAsync(segments[0], ct).ConfigureAwait(false);
         if (response.Stream is not { } headStream)
             throw new UsenetUnexpectedResponseException(segments[0], response.ResponseMessage);
@@ -943,6 +1546,10 @@ public class HealthCheckService : BackgroundService
         IReadOnlyList<int> recorded,
         CancellationToken ct)
     {
+        using var healthAdmissionScope = ct.SetContext(
+            new HealthCheckAdmissionContext(
+                _healthCheckConnectionGate,
+                HealthCheckAdmissionPriority.Background));
         var remaining = new List<int>();
         var cap = _configManager.GetDegradedMaxTotalMissing();
         var probed = 0;
@@ -1017,7 +1624,43 @@ public class HealthCheckService : BackgroundService
         }
     }
 
+    internal bool MarkHealthProgressStarted(Guid davItemId)
+    {
+        _inProgress.TryGetValue(davItemId, out var worker);
+        return MarkHealthProgressStarted(davItemId, worker);
+    }
+
+    private bool MarkHealthProgressStarted(
+        Guid davItemId,
+        InProgressHealthCheck? worker)
+    {
+        if (worker is null)
+            return false;
+        if (!_inProgress.TryGetValue(davItemId, out var currentWorker)
+            || !ReferenceEquals(currentWorker, worker))
+            return false;
+        return worker.TryStartProgress();
+    }
+
+    private void CompleteHealthProgressIfStarted(
+        Guid davItemId,
+        InProgressHealthCheck worker)
+    {
+        if (!worker.TryCloseProgress(out var wasStarted) || !wasStarted)
+            return;
+        SendHealthProgressCompletion(davItemId);
+    }
+
     private void CompleteHealthProgress(Guid davItemId)
+    {
+        if (_inProgress.TryGetValue(davItemId, out var worker)
+            && !worker.TryCloseProgress(out _))
+            return;
+
+        SendHealthProgressCompletion(davItemId);
+    }
+
+    private void SendHealthProgressCompletion(Guid davItemId)
     {
         _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItemId}|100");
         _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItemId}|done");
@@ -1045,14 +1688,14 @@ public class HealthCheckService : BackgroundService
             ct).ConfigureAwait(false);
     }
 
-    private async Task DeferHealthCheck(
+    internal async Task DeferHealthCheck(
         DavItem davItem,
         DavDatabaseClient dbClient,
         Exception exception,
         CancellationToken ct)
     {
         var isKnownFailure = exception.TryGetKnownErrorMessage(out var reason);
-        var utcNow = DateTimeOffset.UtcNow;
+        var utcNow = _timeProvider.GetUtcNow();
         davItem.LastHealthCheck = utcNow;
         davItem.NextHealthCheck = ComputeFailureNextHealthCheck(utcNow, isKnownFailure);
 
@@ -1109,6 +1752,7 @@ public class HealthCheckService : BackgroundService
             }
             catch (Exception scheduleException) when (scheduleException is DbUpdateException or InvalidOperationException)
             {
+                RecordWorkerInfrastructureFailure(davItem.Id);
                 Log.Error(
                     scheduleException,
                     "Could not persist deferred health-check schedule for {Path}",
