@@ -36,7 +36,11 @@ import {
 import { isMaintenanceSettingsUpdated, Maintenance } from "./maintenance/maintenance";
 import { isBackupSettingsUpdated, BackupSettings } from "./backup/backup";
 import { Migration } from "./migration/migration";
-import { isRepairsSettingsUpdated, RepairsSettings } from "./repairs/repairs";
+import {
+  isRepairsSettingsUpdated,
+  isRepairsSettingsValid,
+  RepairsSettings,
+} from "./repairs/repairs";
 import { isWatchdogSettingsUpdated, WatchdogSettings } from "./watchdog/watchdog";
 import { isPreflightSettingsUpdated, PreflightSettings } from "./preflight/preflight";
 import { isWatchtowerSettingsUpdated, WatchtowerSettings } from "./watchtower/watchtower";
@@ -60,6 +64,7 @@ const defaultConfig = {
   "api.manual-category": "uncategorized",
   "api.ensure-importable-video": "true",
   "api.sample-filter-enabled": "true",
+  "api.rename-single-video-to-release": "true",
   "api.skip-non-video-on-missing-articles": "true",
   "api.ensure-article-existence-categories": "",
   "api.article-existence-check-mode": "full",
@@ -154,6 +159,7 @@ const defaultConfig = {
   "preflight.indexer-max-wait-seconds": "5",
   "repair.enable": "false",
   "repair.healthcheck-concurrency": "50",
+  "repair.healthcheck-workers": "1",
   "repair.healthcheck-depth": "standard",
   "repair.healthcheck-aging": "false",
   "repair.auto-remove-after-failures": "0",
@@ -340,7 +346,9 @@ function Body(props: BodyProps) {
                     ? "Invalid Indexers settings"
                     : isProfilesUpdated && !isProfilesSettingsValid(newConfig)
                       ? "Invalid Search Profiles settings"
-                      : "Save";
+                      : isRepairsUpdated && !isRepairsSettingsValid(newConfig)
+                        ? "Invalid Repairs settings"
+                        : "Save";
   const saveButtonVariant =
     saveButtonLabel === "Save" ? "primary" : saveButtonLabel === "Saved" ? "success" : "secondary";
   const isSaveButtonDisabled = saveButtonLabel !== "Save";

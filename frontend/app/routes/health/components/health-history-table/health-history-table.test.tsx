@@ -66,7 +66,7 @@ describe("HealthHistoryTable", () => {
   it("explains empty repair history", () => {
     const markup = render();
 
-    expect(markup).toContain("No deleted or repaired items");
+    expect(markup).toContain("No deleted, repaired, or action needed items");
     expect(markup).toContain("health-check retention");
   });
 
@@ -98,5 +98,29 @@ describe("HealthHistoryTable", () => {
     expect(markup).toMatch(
       /<label[^>]*btn-active[^>]*><input[^>]*checked=""[^>]*\/><span>Degraded<\/span><\/label>/,
     );
+  });
+
+  it("shows action-needed rows with a warning badge", () => {
+    const markup = render(
+      [
+        {
+          id: "1",
+          createdAt: "2026-08-17T12:00:00Z",
+          davItemId: "dav-1",
+          path: "/content/tv/Example/episode.mkv",
+          nzbFileName: "Example.Release.nzb",
+          jobName: "Example.Release",
+          result: 1,
+          repairStatus: 3,
+          message: "Streaming payload missing.",
+        },
+      ],
+      "action-needed",
+    );
+
+    expect(markup).toContain("Action needed");
+    expect(markup).toContain("badge-warning");
+    expect(markup).toContain("Streaming payload missing.");
+    expect(markup).not.toContain("badge-info");
   });
 });

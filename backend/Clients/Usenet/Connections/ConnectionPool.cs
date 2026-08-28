@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using Serilog;
 
 namespace NzbWebDAV.Clients.Usenet.Connections;
 
@@ -44,6 +45,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     /// ramps the pool instead of slamming dozens of TLS handshakes at once.
     /// </summary>
     private const int MaxConcurrentHandshakes = 3;
+    private static readonly TimeSpan DefaultKeepAliveBorrowTimeout =
+        TimeSpan.FromMilliseconds(250);
 
     public TimeSpan IdleTimeout { get; }
     public int MaxConnections => _maxConnections;
@@ -62,6 +65,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private readonly int _maxConnections;
     private readonly int _warmConnectionFloor;
     private readonly Func<T, CancellationToken, Task>? _keepAlive;
+    private readonly Func<CancellationToken, Task<IDisposable?>>? _keepAliveAdmission;
+    private readonly TimeSpan _keepAliveBorrowTimeout;
     private readonly Func<Exception, int?>? _connectionLimitDetector;
     private readonly Action<int, int>? _onConnectionLimitLearned;
 
@@ -109,7 +114,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         Func<Exception, int?>? connectionLimitDetector = null,
         Action<int, int>? onConnectionLimitLearned = null,
         int warmConnectionFloor = 0,
-        Func<T, CancellationToken, Task>? keepAlive = null)
+        Func<T, CancellationToken, Task>? keepAlive = null,
+        Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null,
+        TimeSpan? keepAliveBorrowTimeout = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
 
@@ -124,6 +131,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         _maxConnections = maxConnections;
         _warmConnectionFloor = Math.Clamp(warmConnectionFloor, 0, maxConnections);
         _keepAlive = _warmConnectionFloor > 0 ? keepAlive : null;
+        _keepAliveAdmission = _warmConnectionFloor > 0 ? keepAliveAdmission : null;
+        _keepAliveBorrowTimeout = keepAliveBorrowTimeout ?? DefaultKeepAliveBorrowTimeout;
+        if (_keepAliveBorrowTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(keepAliveBorrowTimeout));
         _effectiveMaxConnections = maxConnections;
         _connectionLimitDetector = connectionLimitDetector;
         _onConnectionLimitLearned = onConnectionLimitLearned;
@@ -276,6 +287,51 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             => throw new ObjectDisposedException(nameof(ConnectionPool<T>));
     }
 
+    private async Task<ConnectionLock<T>?> TryGetIdleConnectionLockAsync(
+        SemaphorePriority priority,
+        ISet<object> excludedConnections,
+        CancellationToken cancellationToken)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _sweepCts.Token);
+
+        var gateWaitStarted = Stopwatch.GetTimestamp();
+        await _gate.WaitAsync(priority, linked.Token).ConfigureAwait(false);
+        Interlocked.Add(ref _gateWaitTicks, Stopwatch.GetElapsedTime(gateWaitStarted).Ticks);
+
+        var releaseGate = true;
+        try
+        {
+            T? reused = default;
+            var reusedConnection = false;
+            lock (_lifecycleLock)
+            {
+                ObjectDisposedException.ThrowIf(_disposed == 1, this);
+                reusedConnection = TryTakeIdleConnection(
+                    out reused!,
+                    excludedConnections);
+                if (reusedConnection)
+                    Interlocked.Increment(ref _connectionsReused);
+            }
+
+            if (!reusedConnection)
+                return null;
+
+            releaseGate = false;
+            TriggerConnectionPoolChangedEvent();
+            return new ConnectionLock<T>(
+                reused!,
+                Return,
+                Destroy,
+                wasReused: true);
+        }
+        finally
+        {
+            if (releaseGate)
+                ReleaseGateIfActive();
+        }
+    }
+
     private void ReleaseGateIfActive()
     {
         lock (_lifecycleLock)
@@ -285,21 +341,42 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         }
     }
 
-    private bool TryTakeIdleConnection(out T connection)
+    private bool TryTakeIdleConnection(
+        out T connection,
+        ISet<object>? excludedConnections = null)
     {
-        while (_idleConnections.TryPop(out var item))
+        List<Pooled>? excluded = null;
+        try
         {
-            if (!item.IsExpired(IdleTimeout))
+            while (_idleConnections.TryPop(out var item))
             {
+                if (item.IsExpired(IdleTimeout))
+                {
+                    // Stale – destroy and continue looking.
+                    DisposeConnection(item.Connection);
+                    Interlocked.Decrement(ref _live);
+                    Interlocked.Increment(ref _staleEvictions);
+                    TriggerConnectionPoolChangedEvent();
+                    continue;
+                }
+
+                if (excludedConnections?.Contains(item.Connection!) == true)
+                {
+                    (excluded ??= []).Add(item);
+                    continue;
+                }
+
                 connection = item.Connection;
                 return true;
             }
-
-            // Stale – destroy and continue looking.
-            DisposeConnection(item.Connection);
-            Interlocked.Decrement(ref _live);
-            Interlocked.Increment(ref _staleEvictions);
-            TriggerConnectionPoolChangedEvent();
+        }
+        finally
+        {
+            if (excluded is not null)
+            {
+                for (var i = excluded.Count - 1; i >= 0; i--)
+                    _idleConnections.Push(excluded[i]);
+            }
         }
 
         connection = default!;
@@ -455,42 +532,91 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             }
         }
 
-        // Ping idle warm connections before they reach their provider's own idle timeout.
-        // These connections are popped from the stack while the ping is in flight, so no
-        // borrower can receive a connection with a command already on the wire.
+        // Restore survivors before borrowing warm sockets through the normal gate. This
+        // prevents hidden keepalive sockets from making the pool open above its ceiling.
+        // Preserve original LIFO order.
+        for (var i = survivors.Count - 1; i >= 0; i--)
+            _idleConnections.Push(survivors[i]);
+
+        // Keep-alive only borrows an already-idle socket and gives up quickly under real
+        // traffic. Returned sockets are excluded from the rest of this sweep so each DATE
+        // still targets a distinct connection without retaining physical permits.
         if (_keepAlive is not null)
         {
             var warmCount = Math.Min(effectiveWarmFloor, survivors.Count);
-            for (var i = 0; i < warmCount;)
+            var pingedConnections = new HashSet<object>(
+                ReferenceEqualityComparer.Instance);
+            for (var i = 0; i < warmCount; i++)
             {
-                var item = survivors[i];
+                IDisposable? admission = null;
+                ConnectionLock<T>? connection = null;
                 try
                 {
-                    await _keepAlive(item.Connection, cancellationToken).ConfigureAwait(false);
-                    survivors[i] = item with { LastTouchedMillis = Environment.TickCount64 };
-                    i++;
+                    using (var borrowCts = CancellationTokenSource.CreateLinkedTokenSource(
+                               cancellationToken))
+                    {
+                        borrowCts.CancelAfter(_keepAliveBorrowTimeout);
+                        if (_keepAliveAdmission is not null)
+                        {
+                            admission = await _keepAliveAdmission(borrowCts.Token)
+                                .ConfigureAwait(false);
+                        }
+
+                        connection = await TryGetIdleConnectionLockAsync(
+                                SemaphorePriority.Low,
+                                pingedConnections,
+                                borrowCts.Token)
+                            .ConfigureAwait(false);
+                    }
+
+                    if (connection is null)
+                    {
+                        Log.Debug(
+                            "Skipping connection-pool keep-alive because no unpinged idle connection remained.");
+                        break;
+                    }
+
+                    pingedConnections.Add(connection.Connection!);
+                    try
+                    {
+                        await _keepAlive(connection.Connection, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception e) when (e is not OutOfMemoryException)
+                    {
+                        // An idle DATE failure only proves this socket is stale. Replace
+                        // it without recording a provider-traffic failure.
+                        connection.Replace();
+                    }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     throw;
                 }
+                catch (OperationCanceledException)
+                {
+                    Log.Debug(
+                        "Skipping connection-pool keep-alive because its idle borrow timed out.");
+                    break;
+                }
                 catch (Exception e) when (e is not OutOfMemoryException)
                 {
-                    // An idle DATE failure only proves this socket is stale. Dispose it
-                    // and let the floor refill; it is deliberately not provider traffic.
-                    DisposeConnection(item.Connection);
-                    Interlocked.Decrement(ref _live);
-                    Interlocked.Increment(ref _connectionsDestroyed);
-                    survivors.RemoveAt(i);
-                    warmCount--;
-                    isAnyConnectionFreed = true;
+                    Log.Debug(
+                        e,
+                        "Skipping connection-pool keep-alive because admission or idle acquisition failed.");
+                    break;
+                }
+                finally
+                {
+                    connection?.Dispose();
+                    admission?.Dispose();
                 }
             }
         }
-
-        // Preserve original LIFO order.
-        for (var i = survivors.Count - 1; i >= 0; i--)
-            _idleConnections.Push(survivors[i]);
 
         if (isAnyConnectionFreed)
             TriggerConnectionPoolChangedEvent();
@@ -508,7 +634,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 // A warm connection is borrowed only while it is being opened, then
                 // returned immediately. Cached warm connections never retain a gate permit.
                 using (await GetConnectionLockCoreAsync(
-                           SemaphorePriority.Low, preferIdle: false, cancellationToken: cancellationToken).ConfigureAwait(false))
+                           SemaphorePriority.Low,
+                           preferIdle: false,
+                           cancellationToken: cancellationToken).ConfigureAwait(false))
                 {
                     // Returning the lock to the pool establishes one idle warm connection.
                 }

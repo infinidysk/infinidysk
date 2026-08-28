@@ -16,15 +16,22 @@ internal static class AddressSpaceDiagnostics
         long? GcRegionSizeBytes,
         long? GcHeapHardLimitBytes,
         long? GcHeapHardLimitPercent,
-        long? GcCommittedBytes);
+        long? GcCommittedBytes)
+    {
+        public long? GcHeapHardLimitLohBytes { get; init; }
+        public long? GcHeapHardLimitLohPercent { get; init; }
+        public long? WorkingSetBytes { get; init; }
+    }
 
     internal static Snapshot Capture()
     {
         long? virtualMemoryBytes = null;
+        long? workingSetBytes = null;
         try
         {
             using var process = Process.GetCurrentProcess();
             virtualMemoryBytes = process.VirtualMemorySize64;
+            workingSetBytes = process.WorkingSet64;
         }
         catch (Exception e) when (e is InvalidOperationException or PlatformNotSupportedException)
         {
@@ -50,7 +57,12 @@ internal static class AddressSpaceDiagnostics
             GetConfigurationValue(config, "GCRegionSize"),
             GetConfigurationValue(config, "GCHeapHardLimit"),
             GetConfigurationValue(config, "GCHeapHardLimitPercent"),
-            committedBytes);
+            committedBytes)
+        {
+            GcHeapHardLimitLohBytes = GetConfigurationValue(config, "GCHeapHardLimitLOH"),
+            GcHeapHardLimitLohPercent = GetConfigurationValue(config, "GCHeapHardLimitLOHPercent"),
+            WorkingSetBytes = workingSetBytes,
+        };
     }
 
     internal static long? ParseLinuxAddressSpaceLimit(string limits)

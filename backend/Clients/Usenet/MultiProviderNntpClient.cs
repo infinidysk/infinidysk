@@ -84,7 +84,9 @@ public class MultiProviderNntpClient(
                 p.PendingSelections,
                 p.GetConnectionChurn(),
                 p.LearnedConnectionLimit,
-                p.EffectiveMaxConnections))
+                p.MaxConnections,
+                p.EffectiveMaxConnections,
+                p.GetConnectionAdmissionSnapshot()))
             .ToList();
     }
 
@@ -379,8 +381,9 @@ public class MultiProviderNntpClient(
         async Task<UsenetDecodedBodyBatch> DecodedBodiesCoreAsync()
         {
             ExceptionDispatchInfo? lastException = null;
-            var orderedProviders = SelectOrderedProviders(out var reserved);
-            using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending());
+            var orderedProviders = SelectOrderedProviders(NntpOperation.PipelinedBody, out var reserved);
+            using var releasePending = new ScopeReleaser(
+                () => reserved?.ReleasePending(NntpOperation.PipelinedBody));
             for (var providerIndex = 0; providerIndex < orderedProviders.Count; providerIndex++)
             {
                 var provider = orderedProviders[providerIndex];
@@ -821,8 +824,8 @@ public class MultiProviderNntpClient(
         var lastOutcomeWasException = false;
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses = null;
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var orderedProviders = SelectOrderedProviders(out var reserved);
-        using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending());
+        var orderedProviders = SelectOrderedProviders(operation, out var reserved);
+        using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending(operation));
         var walk = new ProviderWalkSummary(orderedProviders.Count);
         MultiConnectionNntpClient? lastAttemptedProvider = null;
         var attemptIndex = 0;
@@ -956,8 +959,8 @@ public class MultiProviderNntpClient(
         MultiConnectionNntpClient? lastAttemptedProvider = null;
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses = null;
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var orderedProviders = SelectOrderedProviders(out var reserved);
-        using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending());
+        var orderedProviders = SelectOrderedProviders(operation, out var reserved);
+        using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending(operation));
         var walk = new ProviderWalkSummary(orderedProviders.Count);
         var attemptIndex = 0;
         foreach (var provider in orderedProviders)
@@ -1485,7 +1488,9 @@ public class MultiProviderNntpClient(
 
     private static string NormalizeStorageGroup(string? value) => value?.Trim() ?? "";
 
-    private List<MultiConnectionNntpClient> SelectOrderedProviders(out MultiConnectionNntpClient? reserved)
+    private List<MultiConnectionNntpClient> SelectOrderedProviders(
+        NntpOperation operation,
+        out MultiConnectionNntpClient? reserved)
     {
         lock (_selectLock)
         {
@@ -1497,14 +1502,28 @@ public class MultiProviderNntpClient(
             // Reading state here must not claim the half-open probe slot. IsTripped claims
             // it, so one selection ends up holding a probe it may never dispatch while
             // every other selection treats the provider as tripped.
-            var circuitStates = new Dictionary<MultiConnectionNntpClient, ProviderCircuitState>(enabled.Count);
+            var selectionStates =
+                new Dictionary<
+                    MultiConnectionNntpClient,
+                    (ProviderCircuitState CircuitState, int UnreservedConnections)>(
+                    enabled.Count);
             foreach (var provider in enabled)
-                circuitStates[provider] = provider.GetCircuitBreakerSnapshot().State;
+            {
+                selectionStates[provider] = (
+                    provider.GetCircuitBreakerSnapshot().State,
+                    UnreservedConnections: 0);
+            }
 
             var selectable = enabled
-                .Where(x => circuitStates[x] != ProviderCircuitState.Open)
+                .Where(x => selectionStates[x].CircuitState != ProviderCircuitState.Open)
                 .ToList();
             var pool = selectable.Count > 0 ? selectable : enabled;
+            foreach (var provider in pool)
+            {
+                selectionStates[provider] = (
+                    selectionStates[provider].CircuitState,
+                    provider.UnreservedConnectionsFor(operation));
+            }
 
             // Half-open sorts behind the healthy providers of its own tier and keeps that
             // tier, so a recovering primary is still tried ahead of a backup or block
@@ -1513,10 +1532,11 @@ public class MultiProviderNntpClient(
             // completes resets the breaker.
             var byTier = pool.OrderBy(x => x.ProviderType);
             var byRecovery = byTier.ThenBy(x =>
-                circuitStates[x] == ProviderCircuitState.HalfOpen ? 1 : 0);
+                selectionStates[x].CircuitState == ProviderCircuitState.HalfOpen ? 1 : 0);
             var cascade = cascadeEnabled?.Invoke() == true;
             var prioritized = cascade
-                ? byRecovery.ThenBy(EffectivePriority)
+                ? byRecovery.ThenBy(x =>
+                    EffectivePriority(x, selectionStates[x].UnreservedConnections))
                 : byRecovery;
             var byUsage = prioritized.ThenByDescending(x => GetRemainingBytes(x));
             // Prefer providers with more spare capacity. In cascade mode this is a
@@ -1524,16 +1544,25 @@ public class MultiProviderNntpClient(
             // MaxConnections cannot outweigh Priority. In pool mode absolute spare
             // outranks learned speed so a full pool cannot monopolize.
             var capacityBalanced = cascade
-                ? byUsage.ThenByDescending(x => x.SpareFraction)
-                : byUsage.ThenByDescending(x => x.UnreservedConnections);
+                ? byUsage.ThenByDescending(x =>
+                    (double)selectionStates[x].UnreservedConnections
+                    / Math.Max(1, x.MaxConnections))
+                : byUsage.ThenByDescending(x => selectionStates[x].UnreservedConnections);
             var ordered = capacityBalanced
                 .ThenBy(EstimatedDeliveryScore)
                 .ToList();
 
             reserved = ordered.Count > 0 ? ordered[0] : null;
-            reserved?.ReservePending();
+            reserved?.ReservePending(operation);
             return ordered;
         }
+    }
+
+    internal MultiConnectionNntpClient? SelectProviderForBenchmark(NntpOperation operation)
+    {
+        var ordered = SelectOrderedProviders(operation, out var reserved);
+        reserved?.ReleasePending(operation);
+        return ordered.FirstOrDefault();
     }
 
     /// <summary>
@@ -1543,16 +1572,18 @@ public class MultiProviderNntpClient(
     /// outrank a healthier Priority-0 primary while idle. Thin-spare still lets a
     /// Priority-0 pool with 1/8 free yield to an idle Priority-1 peer (#650).
     /// </summary>
-    private static int EffectivePriority(MultiConnectionNntpClient provider)
+    private static int EffectivePriority(
+        MultiConnectionNntpClient provider,
+        int unreservedConnections)
     {
         const int saturationDemotion = 1 << 20;
-        if (!provider.HasSpareConnection)
+        if (unreservedConnections == 0)
             return provider.Priority + saturationDemotion;
 
         // At most 25% of the configured pool remains unreserved (integer form of
         // spare/max <= 1/4 so boundary cases like 2/8 do not depend on float rounding).
         var max = Math.Max(1, provider.MaxConnections);
-        var thinSpareDemotion = provider.UnreservedConnections * 4 <= max ? 1 : 0;
+        var thinSpareDemotion = unreservedConnections * 4 <= max ? 1 : 0;
         return provider.Priority + thinSpareDemotion;
     }
 
@@ -1595,8 +1626,9 @@ public class MultiProviderNntpClient(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         if (segmentIds.Count == 0) yield break;
-        var orderedProviders = SelectOrderedProviders(out var reserved);
-        using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending());
+        var orderedProviders = SelectOrderedProviders(NntpOperation.PipelinedStat, out var reserved);
+        using var releasePending = new ScopeReleaser(
+            () => reserved?.ReleasePending(NntpOperation.PipelinedStat));
         var primary = orderedProviders.Count > 0 ? orderedProviders[0] : null;
         if (primary == null) yield break;
 
@@ -1619,8 +1651,9 @@ public class MultiProviderNntpClient(
         // already records metrics / wraps streams for byte counting.
         int effectiveDepth;
         {
-            var orderedProviders = SelectOrderedProviders(out var reserved);
-            using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending());
+            var orderedProviders = SelectOrderedProviders(NntpOperation.PipelinedBody, out var reserved);
+            using var releasePending = new ScopeReleaser(
+                () => reserved?.ReleasePending(NntpOperation.PipelinedBody));
             var primary = orderedProviders.Count > 0 ? orderedProviders[0] : null;
             if (primary == null) yield break;
             effectiveDepth = ResolveDepth(primary, depth);

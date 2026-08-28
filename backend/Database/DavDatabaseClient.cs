@@ -8,7 +8,7 @@ using Serilog;
 
 namespace NzbWebDAV.Database;
 
-public sealed class DavDatabaseClient(DavDatabaseContext ctx)
+public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobStore = null)
 {
     public DavDatabaseContext Ctx => ctx;
 
@@ -115,6 +115,31 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     }
 
     // usenet files
+    public async Task<bool> StreamingPayloadExistsAsync(
+        DavItem davItem,
+        CancellationToken ct = default)
+    {
+        if (davItem.FileBlobId is { } blobId && (blobStore ?? BlobStore.Current).Exists(blobId))
+            return true;
+
+        return davItem.SubType switch
+        {
+            DavItem.ItemSubType.NzbFile =>
+                await ctx.NzbFiles.AsNoTracking()
+                    .AnyAsync(x => x.Id == davItem.Id, ct)
+                    .ConfigureAwait(false),
+            DavItem.ItemSubType.RarFile =>
+                await ctx.RarFiles.AsNoTracking()
+                    .AnyAsync(x => x.Id == davItem.Id, ct)
+                    .ConfigureAwait(false),
+            DavItem.ItemSubType.MultipartFile =>
+                await ctx.MultipartFiles.AsNoTracking()
+                    .AnyAsync(x => x.Id == davItem.Id, ct)
+                    .ConfigureAwait(false),
+            _ => false,
+        };
+    }
+
     public async Task<DavNzbFile?> GetDavNzbFileAsync(DavItem davItem, CancellationToken ct = default)
     {
         // attempt to read from blob-store

@@ -16,7 +16,9 @@ public abstract class BaseApiController : ControllerBase
 
     [HttpGet]
     [HttpPost]
-    public async Task<IActionResult> HandleApiRequest()
+    public virtual Task<IActionResult> HandleApiRequest() => ExecuteApiRequest();
+
+    protected async Task<IActionResult> ExecuteApiRequest()
     {
         try
         {
@@ -70,4 +72,22 @@ public abstract class BaseApiController : ControllerBase
             });
         }
     }
+}
+
+public abstract class PostOnlyApiController : BaseApiController
+{
+    [NonAction]
+    public sealed override Task<IActionResult> HandleApiRequest() => ExecuteApiRequest();
+
+    [HttpPost]
+    public Task<IActionResult> HandlePostApiRequest() => ExecuteApiRequest();
+}
+
+public abstract class GetOnlyApiController : BaseApiController
+{
+    [NonAction]
+    public sealed override Task<IActionResult> HandleApiRequest() => ExecuteApiRequest();
+
+    [HttpGet]
+    public Task<IActionResult> HandleGetApiRequest() => ExecuteApiRequest();
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isBackendApiDocsPath,
   isBackendApiPath,
+  isReadOnlyDeniedBackendMutation,
   matchesBackendPathPrefix,
   safeDecodePath,
   shouldProxyToBackend,
@@ -49,6 +50,28 @@ describe("isBackendApiPath", () => {
   it("rejects /apifoo and non-api paths", () => {
     expect(isBackendApiPath("/apifoo")).toBe(false);
     expect(isBackendApiPath("/view")).toBe(false);
+  });
+});
+
+describe("isReadOnlyDeniedBackendMutation", () => {
+  it.each([
+    "/api/delete-webdav-item",
+    "/api/delete-webdav-item/preview",
+    "/api/remove-missing-payloads",
+    "/api/remove-missing-payloads/",
+    "/api/remove-missing-payloads%2F",
+    "/%61pi/remove-missing-payloads",
+  ])("blocks read-only POST access to %s", (path) => {
+    expect(isReadOnlyDeniedBackendMutation("POST", path)).toBe(true);
+  });
+
+  it.each([
+    ["GET", "/api/remove-missing-payloads"],
+    ["POST", "/api/remove-missing-payloads/dry-run"],
+    ["POST", "/api/remove-missing-payloads/audit"],
+    ["POST", "/api/remove-unlinked-files"],
+  ])("allows %s %s", (method, path) => {
+    expect(isReadOnlyDeniedBackendMutation(method, path)).toBe(false);
   });
 });
 

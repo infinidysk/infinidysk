@@ -504,7 +504,7 @@ public sealed class Step6LifecycleTests
             new ProviderBytesTracker(),
             new StreamTraceBuffer(100),
             new ActiveReadRegistry());
-        return new QueueManager(
+        return QueueManager.CreateForTests(
             usenet,
             config,
             websocket,

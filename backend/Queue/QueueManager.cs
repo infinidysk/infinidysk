@@ -37,6 +37,8 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
     private readonly WatchdogLog _watchdogLog;
     private readonly QueueItemSourceTracker _sourceTracker;
     private readonly BenchmarkGate _benchmarkGate;
+    private readonly HealthCheckConnectionGate _healthCheckConnectionGate;
+    private readonly bool _ownsHealthCheckConnectionGate;
 
     private CancellationTokenSource _sleepingQueueToken = new();
     private readonly Lock _sleepingQueueLock = new();
@@ -86,10 +88,13 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         WatchdogLog watchdogLog,
         QueueItemSourceTracker sourceTracker,
         BenchmarkGate benchmarkGate,
+        HealthCheckConnectionGate healthCheckConnectionGate,
         IDbContextFactory<DavDatabaseContext> dbContextFactory
     ) : this(
         usenetClient, configManager, websocketManager, providerUsageTracker,
-        watchdogLog, sourceTracker, benchmarkGate, startLoop: false, dbContextFactory)
+        watchdogLog, sourceTracker, benchmarkGate, startLoop: false,
+        healthCheckConnectionGate, ownsHealthCheckConnectionGate: false,
+        dbContextFactory: dbContextFactory)
     {
     }
 
@@ -101,9 +106,62 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         WatchdogLog watchdogLog,
         QueueItemSourceTracker sourceTracker,
         BenchmarkGate benchmarkGate,
+        bool startLoop
+    ) : this(
+        usenetClient,
+        configManager,
+        websocketManager,
+        providerUsageTracker,
+        watchdogLog,
+        sourceTracker,
+        benchmarkGate,
+        startLoop,
+        new HealthCheckConnectionGate(configManager),
+        ownsHealthCheckConnectionGate: true,
+        dbContextFactory: null)
+    {
+    }
+
+    internal static QueueManager CreateForTests(
+        UsenetStreamingClient usenetClient,
+        ConfigManager configManager,
+        WebsocketManager websocketManager,
+        ProviderUsageTracker providerUsageTracker,
+        WatchdogLog watchdogLog,
+        QueueItemSourceTracker sourceTracker,
+        BenchmarkGate benchmarkGate,
         bool startLoop,
+        HealthCheckConnectionGate? healthCheckConnectionGate = null,
         IDbContextFactory<DavDatabaseContext>? dbContextFactory = null
     )
+    {
+        var gate = healthCheckConnectionGate ?? new HealthCheckConnectionGate(configManager);
+        return new QueueManager(
+            usenetClient,
+            configManager,
+            websocketManager,
+            providerUsageTracker,
+            watchdogLog,
+            sourceTracker,
+            benchmarkGate,
+            startLoop,
+            gate,
+            ownsHealthCheckConnectionGate: healthCheckConnectionGate is null,
+            dbContextFactory: dbContextFactory);
+    }
+
+    private QueueManager(
+        UsenetStreamingClient usenetClient,
+        ConfigManager configManager,
+        WebsocketManager websocketManager,
+        ProviderUsageTracker providerUsageTracker,
+        WatchdogLog watchdogLog,
+        QueueItemSourceTracker sourceTracker,
+        BenchmarkGate benchmarkGate,
+        bool startLoop,
+        HealthCheckConnectionGate healthCheckConnectionGate,
+        bool ownsHealthCheckConnectionGate,
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory)
     {
         _usenetClient = usenetClient;
         _configManager = configManager;
@@ -113,6 +171,8 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         _sourceTracker = sourceTracker;
         _benchmarkGate = benchmarkGate;
         _dbContextFactory = dbContextFactory;
+        _healthCheckConnectionGate = healthCheckConnectionGate;
+        _ownsHealthCheckConnectionGate = ownsHealthCheckConnectionGate;
         _cancellationTokenSource = CancellationTokenSource
             .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
         if (startLoop)
@@ -976,7 +1036,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
             queueItem, queueNzbStream, dbClient, cachingUsenetClient,
             _configManager, _websocketManager, _providerUsageTracker,
             _watchdogLog, _sourceTracker, progressHook, _retryAttempts,
-            _finalizeLock, cts.Token,
+            _finalizeLock, _healthCheckConnectionGate, cts.Token,
             stageReporter: stage =>
             {
                 inProgressQueueItem.CurrentStage = stage;
@@ -1360,6 +1420,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         }
 
         _sleepingQueueToken.Dispose();
+        if (_ownsHealthCheckConnectionGate) _healthCheckConnectionGate.Dispose();
     }
 
     public readonly record struct InProgressQueueItemSnapshot(

@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.7](https://github.com/infinidysk/infinidysk/compare/v1.2.6...v1.2.7) (2026-08-28)
+
+
+### Bug Fixes
+
+* **deps:** Bump the npm-minor-and-patch group ([#1202](https://github.com/infinidysk/infinidysk/issues/1202)) ([de13c67](https://github.com/infinidysk/infinidysk/commit/de13c67b5e8365bd8ab82750c511481da4058862))
+* **deps:** Bump zensical from 0.0.55 to 0.0.56 in the docs-python group ([#1201](https://github.com/infinidysk/infinidysk/issues/1201)) ([d5c2f23](https://github.com/infinidysk/infinidysk/commit/d5c2f23bac1f3c8b909ff7cf511003b5dc24bad3))
+* **health:** classify persistently missing streaming payloads as orphaned ([#1215](https://github.com/infinidysk/infinidysk/issues/1215)) ([70323ff](https://github.com/infinidysk/infinidysk/commit/70323fffaacb128d691bf24bebb6726dec27b034))
+* **health:** verify PAR2 slices before applying the damage cap ([#1213](https://github.com/infinidysk/infinidysk/issues/1213)) ([017eb23](https://github.com/infinidysk/infinidysk/commit/017eb23dc69381065d7549c47f9cad607117d1f1))
+* **queue:** accept NZBs with up to 1,302,083 segments ([#1220](https://github.com/infinidysk/infinidysk/issues/1220)) ([a7b0256](https://github.com/infinidysk/infinidysk/commit/a7b0256f4edce6a7fd0e6b091b3d1bbd977912ea))
+* **queue:** busy database no longer marks completed downloads as failed ([#1197](https://github.com/infinidysk/infinidysk/issues/1197)) ([63b3ddd](https://github.com/infinidysk/infinidysk/commit/63b3ddd93658b729cdccd940c6bada395ab3c886)), closes [#1180](https://github.com/infinidysk/infinidysk/issues/1180)
+* **queue:** cancelled imports no longer keep parsing huge NZB files ([#1192](https://github.com/infinidysk/infinidysk/issues/1192)) ([946637d](https://github.com/infinidysk/infinidysk/commit/946637d42226638887fea0195f66bd80cbb5f7a4))
+* **queue:** deleting or pausing a stuck download no longer hangs forever ([#1198](https://github.com/infinidysk/infinidysk/issues/1198)) ([4df9040](https://github.com/infinidysk/infinidysk/commit/4df9040c03f25a15896f119a1f8904b0247a199a))
+* **queue:** failed imports no longer leave orphaned STRM files on disk ([#1196](https://github.com/infinidysk/infinidysk/issues/1196)) ([80cf116](https://github.com/infinidysk/infinidysk/commit/80cf11666ef2e41726d45174c0332894ea8b9ef7))
+* **queue:** stop reprocessing releases that already failed health validation ([#1216](https://github.com/infinidysk/infinidysk/issues/1216)) ([a08b848](https://github.com/infinidysk/infinidysk/commit/a08b8484ce5b279d7f311634c90d9c5a4ab60cd7))
+* **sab:** oversize NZBs and stalled indexer fetches are rejected before they fill the disk ([#1195](https://github.com/infinidysk/infinidysk/issues/1195)) ([133cd42](https://github.com/infinidysk/infinidysk/commit/133cd4277042e78cf2bbb3b607204429b9c89b66))
+* **ui:** align the admin UI with daisyUI defaults and accessible controls ([#1206](https://github.com/infinidysk/infinidysk/issues/1206)) ([b34f994](https://github.com/infinidysk/infinidysk/commit/b34f994e416104c5b90b22146924bc87b23d57b0))
+* **webdav:** play multipart RARs with unrelated trailing volumes ([#1212](https://github.com/infinidysk/infinidysk/issues/1212)) ([65bc6d7](https://github.com/infinidysk/infinidysk/commit/65bc6d7c5943b0e2e63c7ae9b6171488a260c0ae))
+* **webdav:** stop counting healthy streaming playback as slow WebDAV requests ([#1204](https://github.com/infinidysk/infinidysk/issues/1204)) ([150d185](https://github.com/infinidysk/infinidysk/commit/150d185931220f0330f0edf60eee784a28602f17))
+
 ## [1.2.6](https://github.com/infinidysk/infinidysk/compare/v1.2.5...v1.2.6) (2026-08-26)
 
 

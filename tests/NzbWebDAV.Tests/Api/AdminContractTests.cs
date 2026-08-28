@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Api;
@@ -81,7 +82,12 @@ public sealed class AdminContractTests
         var resetItem = Assert.Single(
             afterJson.RootElement.GetProperty("items").EnumerateArray(),
             item => item.GetProperty("id").GetString() == scheduled.Id.ToString());
-        Assert.Equal(JsonValueKind.Null, resetItem.GetProperty("nextHealthCheck").ValueKind);
+        // The reset marks files with the forced-recheck sentinel (not null) so the re-check
+        // also covers files still linked to SAB history; the queue API surfaces that marker.
+        Assert.Equal(JsonValueKind.String, resetItem.GetProperty("nextHealthCheck").ValueKind);
+        Assert.Equal(
+            HealthCheckService.ForcedRecheckSentinel,
+            resetItem.GetProperty("nextHealthCheck").GetDateTimeOffset());
         Assert.True(afterJson.RootElement.GetProperty("uncheckedCount").GetInt32() >= 1);
     }
 

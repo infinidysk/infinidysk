@@ -51,6 +51,7 @@ public sealed class HealthCheckMissingPayloadTests : IAsyncLifetime
         await _context.SaveChangesAsync();
 
         Assert.Null(await _dbClient.GetDavNzbFileAsync(item));
+        Assert.False(await _dbClient.StreamingPayloadExistsAsync(item));
     }
 
     [Fact]
@@ -62,6 +63,7 @@ public sealed class HealthCheckMissingPayloadTests : IAsyncLifetime
 
         // Dangling blob reference: no blob file and no legacy row.
         Assert.Null(await _dbClient.GetDavMultipartFileAsync(item));
+        Assert.False(await _dbClient.StreamingPayloadExistsAsync(item));
     }
 
     [Fact]
@@ -75,6 +77,27 @@ public sealed class HealthCheckMissingPayloadTests : IAsyncLifetime
         var file = await _dbClient.GetDavNzbFileAsync(item);
         Assert.NotNull(file);
         Assert.Single(file.SegmentIds);
+        Assert.True(await _dbClient.StreamingPayloadExistsAsync(item));
+    }
+
+    [Theory]
+    [InlineData(DavItem.ItemSubType.RarFile)]
+    [InlineData(DavItem.ItemSubType.MultipartFile)]
+    public async Task ArchiveFile_WithLegacyRow_HasStreamingPayload(DavItem.ItemSubType subType)
+    {
+        var item = NewUsenetFile(subType, fileBlobId: Guid.NewGuid());
+        _context.Items.Add(item);
+        if (subType == DavItem.ItemSubType.RarFile)
+            _context.RarFiles.Add(new DavRarFile { Id = item.Id });
+        else
+            _context.MultipartFiles.Add(new DavMultipartFile
+            {
+                Id = item.Id,
+                Metadata = new DavMultipartFile.Meta(),
+            });
+        await _context.SaveChangesAsync();
+
+        Assert.True(await _dbClient.StreamingPayloadExistsAsync(item));
     }
 
     [Fact]

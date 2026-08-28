@@ -4,6 +4,27 @@ namespace NzbWebDAV.Tests.Services.Metrics;
 
 public class ProviderLatencyTrackerTests
 {
+    [Theory]
+    [InlineData("BODY", (int)NntpOperation.Body, "body")]
+    [InlineData("ARTICLE", (int)NntpOperation.Article, "article")]
+    [InlineData("STAT", (int)NntpOperation.Stat, "stat")]
+    [InlineData("HEAD", (int)NntpOperation.Head, "head")]
+    [InlineData("DATE", (int)NntpOperation.Date, "date")]
+    [InlineData("GROUP", (int)NntpOperation.Control, "control")]
+    public void CommandNamesUseRoundTrippableOperationSemantics(
+        string command,
+        int expected,
+        string expectedWireName)
+    {
+        var operation = LatencyNames.FromCommandName(command);
+        var wireName = LatencyNames.ToWireName(operation);
+
+        Assert.Equal((NntpOperation)expected, operation);
+        Assert.Equal(expectedWireName, wireName);
+        Assert.True(LatencyNames.TryParseOperation(wireName, out var parsed));
+        Assert.Equal((NntpOperation)expected, parsed);
+    }
+
     [Fact]
     public void Record_AccumulatesCountSumAndMax()
     {

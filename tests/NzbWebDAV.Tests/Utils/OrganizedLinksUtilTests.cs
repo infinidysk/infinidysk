@@ -57,6 +57,19 @@ public class OrganizedLinksUtilTests
     }
 
     [Fact]
+    public void GetDavItemLink_Symlink_RejectsIdsPrefixLookalike()
+    {
+        var id = Guid.NewGuid();
+        var symlink = new SymlinkAndStrmUtil.SymlinkInfo
+        {
+            SymlinkPath = "/library/movie.mkv",
+            TargetPath = $"/mnt/nzbdav/.ids-foreign/{id}.mkv",
+        };
+
+        Assert.Null(OrganizedLinksUtil.GetDavItemLink(symlink, "/mnt/nzbdav"));
+    }
+
+    [Fact]
     public void GetDavItemLink_Strm_SkipsMalformedUrl()
     {
         var strm = new SymlinkAndStrmUtil.StrmInfo
@@ -100,5 +113,18 @@ public class OrganizedLinksUtilTests
         var parsed = link ?? throw new InvalidOperationException("expected link");
         Assert.Equal(id, parsed.DavItemId);
         Assert.Equal("/library/movie.strm", parsed.LinkPath);
+    }
+
+    [Fact]
+    public void GetDavItemLink_Strm_RejectsIdsPrefixLookalike()
+    {
+        var id = Guid.NewGuid();
+        var strm = new SymlinkAndStrmUtil.StrmInfo
+        {
+            StrmPath = "/library/movie.strm",
+            TargetUrl = $"http://localhost:3000/view/.ids-foreign/{id}.mkv",
+        };
+
+        Assert.Null(OrganizedLinksUtil.GetDavItemLink(strm));
     }
 }

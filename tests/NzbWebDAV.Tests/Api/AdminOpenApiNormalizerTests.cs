@@ -26,7 +26,7 @@ public sealed class AdminOpenApiNormalizerTests
             {
               "info": {
                 "title": "t",
-                "version": "1.0.0"
+                "version": "2.0.0"
               },
               "openapi": "3.1.0",
               "paths": {

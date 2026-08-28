@@ -319,6 +319,75 @@ public class RadarrSonarrClientTests
     }
 
     [Fact]
+    public async Task RadarrMissingPayloadCleanup_DeletesAndSearchesWithoutBlocklisting()
+    {
+        const string filePath = "/library/movies/Lost Blob/Lost Blob.mkv";
+        var handler = CreateHandler(
+            ("GET /api/v3/movie",
+                JsonResponse($"[{{\"id\":111,\"movieFile\":{{\"id\":211,\"path\":\"{filePath}\"}}}}]")),
+            ("DELETE /api/v3/moviefile/211", Status(HttpStatusCode.NoContent)),
+            ("POST /api/v3/command", JsonResponse("{}")));
+        using var httpClient = new HttpClient(handler);
+        var client = new TestRadarrClient("http://radarr-missing-payload.test", httpClient);
+
+        var match = await client.FindMediaFileAsync(filePath);
+        Assert.NotNull(match);
+        IReadOnlyList<string>? mediaKeys = null;
+        var outcome = await client.RemoveMissingPayloadAndSearchAsync(
+            match!,
+            keys =>
+            {
+                mediaKeys = keys;
+                return true;
+            });
+
+        Assert.Equal(ArrMissingPayloadCleanupOutcome.RemovedSearchRequested, outcome);
+        Assert.Equal(["movie:111"], mediaKeys);
+        Assert.Contains("DELETE /api/v3/moviefile/211", handler.Requests);
+        Assert.Contains("POST /api/v3/command", handler.Requests);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.StartsWith("POST /api/v3/history/failed/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SonarrMissingPayloadCleanup_WithholdsSearchWithoutBlocklisting()
+    {
+        const string seriesPath = "/library/tv/Lost Blob Show";
+        const string filePath = seriesPath + "/Lost Blob Show S01E01-E02.mkv";
+        var handler = CreateHandler(
+            ("GET /api/v3/series", JsonResponse($"[{{\"id\":112,\"path\":\"{seriesPath}\"}}]")),
+            ("GET /api/v3/episodefile?seriesId=112",
+                JsonResponse($"[{{\"id\":212,\"seriesId\":112,\"path\":\"{filePath}\"}}]")),
+            ("GET /api/v3/episode?episodeFileId=212",
+                JsonResponse("""[{"id":312,"seriesId":112},{"id":313,"seriesId":112}]""")),
+            ("DELETE /api/v3/episodefile/212", Status(HttpStatusCode.OK)));
+        using var httpClient = new HttpClient(handler);
+        var client = new TestSonarrClient("http://sonarr-missing-payload.test", httpClient);
+
+        var match = await client.FindMediaFileAsync(filePath);
+        Assert.NotNull(match);
+        IReadOnlyList<string>? mediaKeys = null;
+        var outcome = await client.RemoveMissingPayloadAndSearchAsync(
+            match!,
+            keys =>
+            {
+                mediaKeys = keys;
+                return false;
+            });
+
+        Assert.Equal(ArrMissingPayloadCleanupOutcome.RemovedSearchWithheld, outcome);
+        Assert.Equal(["episode:312", "episode:313"], mediaKeys);
+        Assert.Contains("DELETE /api/v3/episodefile/212", handler.Requests);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.StartsWith("POST /api/v3/history/failed/", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.StartsWith("POST /api/v3/command", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task GetQueueCountAsync_HonorsCancellationToken()
     {
         using var httpClient = new HttpClient(new HangUntilCancelledHandler());

@@ -9,6 +9,7 @@ public class WebsocketTopic
     public static readonly WebsocketTopic ActiveReads = new("ar", TopicType.State);
     public static readonly WebsocketTopic SymlinkTaskProgress = new("stp", TopicType.State);
     public static readonly WebsocketTopic CleanupTaskProgress = new("ctp", TopicType.State);
+    public static readonly WebsocketTopic MissingPayloadCleanupProgress = new("mpcp", TopicType.State);
     public static readonly WebsocketTopic PruneCompletedHistoryTaskProgress = new("pchp", TopicType.State);
     public static readonly WebsocketTopic RenameWindowsInvalidPathsProgress = new("rwip", TopicType.State);
     public static readonly WebsocketTopic StrmToSymlinksTaskProgress = new("st2sy", TopicType.State);

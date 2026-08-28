@@ -27,6 +27,10 @@ export const EMPTY_OVERVIEW_STATS: OverviewStatsResponse = {
   totalErrors: 0,
   totalBytesFetched: 0,
   providers: [],
+  providerSpeedBucketSizeMs: 900_000,
+  providerSpeedWindowStartMs: 0,
+  providerSpeedWindowEndMs: 0,
+  providerSpeedHistoryTruncated: false,
   catalogue: { fileCount: 0, totalBytes: 0, largestFileBytes: 0, addedLast7Days: 0 },
   sessions: {
     count: 0,
@@ -100,6 +104,14 @@ export function mergeOverviewStats(
     next.totalErrors = partial.totalErrors;
     next.totalBytesFetched = partial.totalBytesFetched;
     next.providers = partial.providers;
+    next.providerSpeedBucketSizeMs =
+      partial.providerSpeedBucketSizeMs ?? prev.providerSpeedBucketSizeMs ?? 900_000;
+    next.providerSpeedWindowStartMs =
+      partial.providerSpeedWindowStartMs ?? prev.providerSpeedWindowStartMs ?? 0;
+    next.providerSpeedWindowEndMs =
+      partial.providerSpeedWindowEndMs ?? prev.providerSpeedWindowEndMs ?? 0;
+    next.providerSpeedHistoryTruncated =
+      partial.providerSpeedHistoryTruncated ?? prev.providerSpeedHistoryTruncated ?? false;
     next.sessions = partial.sessions;
     next.heatmap = partial.heatmap;
     next.failover = partial.failover;
@@ -146,6 +158,7 @@ export function mergeProviderCircuitBreakers(
         errorSpark: [],
         retrySpark: [],
         outageSpark: [],
+        speedSeries: [],
       }),
       circuitState: breaker.circuitState,
       cooldownRemainingSeconds: breaker.cooldownRemainingSeconds,

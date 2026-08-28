@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Net;
+using System.Text.Json;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.RadarrSonarr.SonarrModels;
 using NzbWebDAV.Utils;
@@ -45,6 +46,83 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 
     public Task<HttpStatusCode> DeleteEpisodeFile(int episodeFileId, CancellationToken ct = default) =>
         Delete($"/episodefile/{episodeFileId}", ct: ct);
+
+    public override async Task<ArrMediaFileMatch?> FindMediaFileAsync(
+        string symlinkOrStrmPath,
+        CancellationToken ct = default)
+    {
+        var episodeFileId = await GetEpisodeFileId(symlinkOrStrmPath, ct).ConfigureAwait(false);
+        if (episodeFileId is null)
+            return null;
+
+        var episodeIds = (await GetEpisodesFromEpisodeFileId(episodeFileId.Value, ct).ConfigureAwait(false))
+            .Select(episode => episode.Id)
+            .Distinct()
+            .ToArray();
+        return new ArrMediaFileMatch(
+            ArrMediaKind.Episode,
+            episodeFileId.Value,
+            episodeIds);
+    }
+
+    public override async Task<ArrMissingPayloadCleanupOutcome> RemoveMissingPayloadAndSearchAsync(
+        ArrMediaFileMatch match,
+        Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+        CancellationToken ct = default)
+    {
+        if (match.Kind != ArrMediaKind.Episode)
+            throw new ArgumentException("Sonarr cleanup requires an episode match.", nameof(match));
+
+        if (!Is2xx(await DeleteEpisodeFile(match.FileId, ct).ConfigureAwait(false)))
+            throw new InvalidOperationException(
+                $"Failed to delete episode file {match.FileId} from sonarr instance '{Host}'.");
+
+        if (match.MediaIds.Count == 0)
+            return ArrMissingPayloadCleanupOutcome.RemovedNoSearchTargets;
+        if (shouldRequestSearch is not null && !shouldRequestSearch(match.MediaKeys))
+            return ArrMissingPayloadCleanupOutcome.RemovedSearchWithheld;
+
+        try
+        {
+            await ExecuteWithTransientRetryAsync(
+                token => CommandAsync(
+                    new { name = "EpisodeSearch", episodeIds = match.MediaIds },
+                    token),
+                ct).ConfigureAwait(false);
+            return ArrMissingPayloadCleanupOutcome.RemovedSearchRequested;
+        }
+        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            return LogMissingPayloadSearchFailure(ex, match.FileId);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (HttpRequestException ex)
+        {
+            return LogMissingPayloadSearchFailure(ex, match.FileId);
+        }
+        catch (InvalidDataException ex)
+        {
+            return LogMissingPayloadSearchFailure(ex, match.FileId);
+        }
+        catch (JsonException ex)
+        {
+            return LogMissingPayloadSearchFailure(ex, match.FileId);
+        }
+    }
+
+    private ArrMissingPayloadCleanupOutcome LogMissingPayloadSearchFailure(
+        Exception exception,
+        int episodeFileId)
+    {
+        Log.Warning(
+            "Sonarr missing-payload cleanup on {Host}: episode file {EpisodeFileId} was removed, " +
+            "but replacement search failed. Reason: {Reason}",
+            Host,
+            episodeFileId,
+            exception.Message);
+        Log.Debug(exception, "Sonarr missing-payload replacement-search failure stack");
+        return ArrMissingPayloadCleanupOutcome.RemovedSearchFailed;
+    }
 
     public override async Task<ArrRepairOutcome> RemoveAndBlocklist(
         string symlinkOrStrmPath,

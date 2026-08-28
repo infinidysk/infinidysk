@@ -37,6 +37,17 @@ public class ArrClient(string host, string apiKey)
         CancellationToken ct = default) =>
         throw new InvalidOperationException();
 
+    public virtual Task<ArrMediaFileMatch?> FindMediaFileAsync(
+        string symlinkOrStrmPath,
+        CancellationToken ct = default) =>
+        throw new InvalidOperationException();
+
+    public virtual Task<ArrMissingPayloadCleanupOutcome> RemoveMissingPayloadAndSearchAsync(
+        ArrMediaFileMatch match,
+        Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+        CancellationToken ct = default) =>
+        throw new InvalidOperationException();
+
     public virtual Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct = default) =>
         Get<List<ArrRootFolder>>($"/rootfolder", ct);
 

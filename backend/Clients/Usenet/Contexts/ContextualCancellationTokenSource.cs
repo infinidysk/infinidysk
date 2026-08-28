@@ -25,6 +25,7 @@ public sealed class ContextualCancellationTokenSource : IDisposable
         contextualCts.SetContext(linkedToken.GetContext<StreamingTimeoutContext>());
         contextualCts.SetContext(linkedToken.GetContext<QueueDownloadContext>());
         contextualCts.SetContext(linkedToken.GetContext<MaintenanceDownloadContext>());
+        contextualCts.SetContext(linkedToken.GetContext<HealthCheckAdmissionContext>());
         return contextualCts;
     }
 
@@ -44,6 +45,8 @@ public sealed class ContextualCancellationTokenSource : IDisposable
         contextualCts.SetContext(linkedToken2.GetContext<QueueDownloadContext>());
         contextualCts.SetContext(linkedToken1.GetContext<MaintenanceDownloadContext>());
         contextualCts.SetContext(linkedToken2.GetContext<MaintenanceDownloadContext>());
+        contextualCts.SetContext(linkedToken1.GetContext<HealthCheckAdmissionContext>());
+        contextualCts.SetContext(linkedToken2.GetContext<HealthCheckAdmissionContext>());
         return contextualCts;
     }
 

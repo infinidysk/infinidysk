@@ -52,7 +52,7 @@ public sealed class QueueManagerPauseResumeTests : IAsyncLifetime
             new ProviderBytesTracker(),
             new StreamTraceBuffer(100),
             new ActiveReadRegistry());
-        _queueManager = new QueueManager(
+        _queueManager = QueueManager.CreateForTests(
             usenet,
             configManager,
             websocketManager,

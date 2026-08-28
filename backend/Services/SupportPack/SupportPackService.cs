@@ -36,6 +36,7 @@ public sealed class SupportPackService(
     GcDiagnosticsStore gcDiagnosticsStore,
     Repair.Par2RepairService par2RepairService,
     Repair.RepairPatchStore repairPatchStore,
+    HealthCheckConnectionGate healthCheckConnectionGate,
     ConcurrentReadTracker? concurrentReadTracker = null,
     IQueueCoordinator? queueCoordinator = null)
 {
@@ -261,6 +262,11 @@ public sealed class SupportPackService(
         startup, a queue import or a health sweep. cpu.onDemandSample is a half-second
         window measured while this pack was written - packs are usually collected
         after the symptom has passed, so treat it as a footnote, not the headline.
+
+        environment.json → healthCheckGate reports the process-wide verification
+        budget: its effective limit, active operations, and queue/background waiters.
+        Use it to distinguish a saturated health budget from provider latency.
+
         Prefer the cumulative GC counters (totalPauseDurationMs, totalAllocatedBytes,
         collection counts) over pauseTimePercentage, which reflects only the most
         recent collection.
@@ -433,18 +439,38 @@ public sealed class SupportPackService(
             segmentBufferPool = segmentPool is null ? null : new
             {
                 idleBytes = segmentPool.Value.IdleBytes,
+                maxIdleBytes = segmentPool.Value.MaxIdleBytes,
                 trimmedBytes = segmentPool.Value.TrimmedBytes,
+                staleExpiredBytes = segmentPool.Value.StaleExpiredBytes,
+                classLimitDroppedBytes = segmentPool.Value.ClassLimitDroppedBytes,
+                capacityEvictedBytes = segmentPool.Value.CapacityEvictedBytes,
+                droppedTooLargeBytes = segmentPool.Value.DroppedTooLargeBytes,
                 checkedOutBytes = segmentPool.Value.CheckedOutBytes,
                 rentCount = segmentPool.Value.RentCount,
                 returnCount = segmentPool.Value.ReturnCount,
                 rejectedReturnCount = segmentPool.Value.RejectedReturnCount,
                 reuseCount = segmentPool.Value.ReuseCount,
                 allocationCount = segmentPool.Value.AllocationCount,
+                allocationAttemptCount = segmentPool.Value.AllocationAttemptCount,
+                allocationFailureCount = segmentPool.Value.AllocationFailureCount,
                 sizeClasses = segmentPool.Value.SizeClasses.Select(c => new
                 {
                     bufferSize = c.BufferSize,
                     bufferCount = c.BufferCount,
                     idleBytes = c.IdleBytes,
+                }),
+                lifetimeSizeClasses = segmentPool.Value.LifetimeSizeClasses.Select(c => new
+                {
+                    bufferSize = c.BufferSize,
+                    rentCount = c.RentCount,
+                    returnCount = c.ReturnCount,
+                    reuseCount = c.ReuseCount,
+                    allocationAttemptCount = c.AllocationAttemptCount,
+                    allocationCount = c.AllocationCount,
+                    allocationFailureCount = c.AllocationFailureCount,
+                    staleExpiredBytes = c.StaleExpiredBytes,
+                    classLimitDroppedBytes = c.ClassLimitDroppedBytes,
+                    capacityEvictedBytes = c.CapacityEvictedBytes,
                 }),
             },
             runtimeSampler = BuildRuntimeSamplerDiagnostics(usage),
@@ -469,6 +495,7 @@ public sealed class SupportPackService(
                 processThreadCount = ProcessThreadCount(),
             },
             connections = BuildConnectionDiagnostics(),
+            healthCheckGate = BuildHealthCheckGateDiagnostics(),
             storage = new
             {
                 configPath,
@@ -613,6 +640,16 @@ public sealed class SupportPackService(
         try
         {
             var info = GC.GetGCMemoryInfo();
+            IReadOnlyDictionary<string, object>? gcConfig = null;
+            try
+            {
+                gcConfig = GC.GetConfigurationVariables();
+            }
+            catch (Exception e) when (e is InvalidOperationException or NotSupportedException)
+            {
+                // GC configuration variables are optional on unsupported runtimes.
+            }
+
             var generations = new List<object>(info.GenerationInfo.Length);
             for (var generation = 0; generation < info.GenerationInfo.Length; generation++)
             {
@@ -630,6 +667,13 @@ public sealed class SupportPackService(
                 isServerGc = GCSettings.IsServerGC,
                 latencyMode = GCSettings.LatencyMode.ToString(),
                 rolling,
+                index = info.Index,
+                generation = info.Generation,
+                compacted = info.Compacted,
+                concurrent = info.Concurrent,
+                memoryLoadBytes = info.MemoryLoadBytes,
+                highMemoryLoadThresholdBytes = info.HighMemoryLoadThresholdBytes,
+                totalAvailableMemoryBytes = info.TotalAvailableMemoryBytes,
                 gen0Collections = GC.CollectionCount(0),
                 gen1Collections = GC.CollectionCount(1),
                 gen2Collections = GC.CollectionCount(2),
@@ -639,10 +683,15 @@ public sealed class SupportPackService(
                 heapLimitBytes = MemoryBudget.HeapLimitBytes,
                 heapHardLimitBytes = addressSpace.GcHeapHardLimitBytes,
                 heapHardLimitPercent = addressSpace.GcHeapHardLimitPercent,
+                heapHardLimitLohBytes = addressSpace.GcHeapHardLimitLohBytes,
+                heapHardLimitLohPercent = addressSpace.GcHeapHardLimitLohPercent,
                 regionRangeBytes = addressSpace.GcRegionRangeBytes,
                 regionSizeBytes = addressSpace.GcRegionSizeBytes,
                 heapSizeBytes = info.HeapSizeBytes,
                 committedBytes = info.TotalCommittedBytes,
+                conserveMemory = ReadGcConfigurationNumber(gcConfig, "GCConserveMem"),
+                highMemoryPercent = ReadGcConfigurationNumber(gcConfig, "GCHighMemPercent"),
+                lohThresholdBytes = ReadGcConfigurationNumber(gcConfig, "LOHThreshold"),
                 generations,
             };
         }
@@ -660,6 +709,24 @@ public sealed class SupportPackService(
             3 => "loh",
             4 => "poh",
             _ => $"gen{generation}",
+        };
+    }
+
+    private static long? ReadGcConfigurationNumber(
+        IReadOnlyDictionary<string, object>? config,
+        string name)
+    {
+        if (config is null || !config.TryGetValue(name, out var value)) return null;
+        return value switch
+        {
+            long l => l,
+            ulong ul => ul > long.MaxValue ? long.MaxValue : (long)ul,
+            int i => i,
+            uint ui => ui,
+            string s when long.TryParse(
+                s, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => null,
         };
     }
 
@@ -684,7 +751,22 @@ public sealed class SupportPackService(
                     snapshot.AvailableConnections,
                     snapshot.PendingSelections,
                     snapshot.LearnedConnectionLimit,
+                    snapshot.ConfiguredMaxConnections,
                     snapshot.EffectiveMaxConnections,
+                    admission = snapshot.Admission is null
+                        ? null
+                        : new
+                        {
+                            snapshot.Admission.ConfiguredTransferLimit,
+                            snapshot.Admission.EffectiveTransferLimit,
+                            snapshot.Admission.BaseMetadataCapacity,
+                            snapshot.Admission.MetadataBurstAllowance,
+                            snapshot.Admission.MaxMetadataCapacity,
+                            snapshot.Admission.ActiveTransferOperations,
+                            snapshot.Admission.ActiveMetadataOperations,
+                            snapshot.Admission.WaitingTransferOperations,
+                            snapshot.Admission.WaitingMetadataOperations,
+                        },
                     churn = new
                     {
                         snapshot.Churn.ConnectionsOpened,
@@ -703,6 +785,18 @@ public sealed class SupportPackService(
             Log.Debug(e, "Support pack: could not read connection-pool diagnostics");
             return Array.Empty<object>();
         }
+    }
+
+    private object BuildHealthCheckGateDiagnostics()
+    {
+        var snapshot = healthCheckConnectionGate.GetSnapshot();
+        return new
+        {
+            snapshot.Limit,
+            snapshot.Active,
+            snapshot.WaitingQueue,
+            snapshot.WaitingBackground,
+        };
     }
 
     private static int? ProcessThreadCount()

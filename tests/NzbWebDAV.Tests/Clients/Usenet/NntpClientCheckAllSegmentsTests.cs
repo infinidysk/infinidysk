@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
@@ -46,6 +47,28 @@ public class NntpClientCheckAllSegmentsTests
         var client = new StatCodeClient(223);
 
         await client.CheckAllSegmentsAsync(["seg@example"], 1, null, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task CheckAllSegmentsAsync_MidpointMissCancelsInFlightAndStartsNoFurtherStats()
+    {
+        var slowIds = new[] { "slow-0", "slow-1", "slow-2" };
+        const string failId = "fail-mid";
+        var extraIds = new[] { "extra-0", "extra-1", "extra-2" };
+        var client = new CoordinatedStatClient(failId, expectedSlowStarts: slowIds.Length);
+        var ids = slowIds.Concat([failId]).Concat(extraIds).ToArray();
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        var exception = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
+            client.CheckAllSegmentsAsync(ids, concurrency: 4, progress: null, timeoutCts.Token));
+
+        Assert.Equal(failId, exception.SegmentId);
+        Assert.Equal(0, client.StatStartsAfterFailure);
+        foreach (var extraId in extraIds)
+            Assert.False(client.StatStartCounts.ContainsKey(extraId), extraId);
+        foreach (var slowId in slowIds)
+            Assert.True(client.StatStartCounts.ContainsKey(slowId), slowId);
+        Assert.True(client.AllStartedStatsCompleted);
     }
 
     [Fact]
@@ -421,6 +444,123 @@ public class NntpClientCheckAllSegmentsTests
                 ResponseMessage = $"{responseCode} <{segmentId}>",
                 ArticleExists = responseCode == (int)UsenetResponseType.ArticleExists,
             });
+
+        public override Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override void Dispose()
+        {
+        }
+    }
+
+    private sealed class CoordinatedStatClient(string failingId, int expectedSlowStarts) : NntpClient
+    {
+        private readonly TaskCompletionSource _slowReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _slowStarted;
+        private int _failureObserved;
+        private int _statStartsAfterFailure;
+        private int _started;
+        private int _completed;
+
+        public ConcurrentDictionary<string, int> StatStartCounts { get; } = new(StringComparer.Ordinal);
+        public int StatStartsAfterFailure => Volatile.Read(ref _statStartsAfterFailure);
+        public bool AllStartedStatsCompleted => Volatile.Read(ref _started) == Volatile.Read(ref _completed);
+
+        public override Task ConnectAsync(
+            string host, int port, bool useSsl, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public override Task<UsenetResponse> AuthenticateAsync(
+            string user, string pass, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override async Task<UsenetStatResponse> StatAsync(
+            SegmentId segmentId, CancellationToken cancellationToken)
+        {
+            var id = segmentId.ToString();
+            Interlocked.Increment(ref _started);
+            try
+            {
+                if (Volatile.Read(ref _failureObserved) == 1)
+                    Interlocked.Increment(ref _statStartsAfterFailure);
+
+                StatStartCounts.AddOrUpdate(id, 1, (_, n) => n + 1);
+
+                if (id == failingId)
+                {
+                    await _slowReady.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    Interlocked.Exchange(ref _failureObserved, 1);
+                    return new UsenetStatResponse
+                    {
+                        ResponseCode = 430,
+                        ResponseMessage = $"430 <{id}>",
+                        ArticleExists = false,
+                    };
+                }
+
+                if (id.StartsWith("slow-", StringComparison.Ordinal))
+                {
+                    if (Interlocked.Increment(ref _slowStarted) >= expectedSlowStarts)
+                        _slowReady.TrySetResult();
+                    try
+                    {
+                        await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // cancelled after the miss; still complete so WithConcurrencyAsync can drain
+                    }
+
+                    return new UsenetStatResponse
+                    {
+                        ResponseCode = 223,
+                        ResponseMessage = $"223 <{id}>",
+                        ArticleExists = true,
+                    };
+                }
+
+                return new UsenetStatResponse
+                {
+                    ResponseCode = 223,
+                    ResponseMessage = $"223 <{id}>",
+                    ArticleExists = true,
+                };
+            }
+            finally
+            {
+                Interlocked.Increment(ref _completed);
+            }
+        }
 
         public override Task<UsenetHeadResponse> HeadAsync(
             SegmentId segmentId, CancellationToken cancellationToken) =>

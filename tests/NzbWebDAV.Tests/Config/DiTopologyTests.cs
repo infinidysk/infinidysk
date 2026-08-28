@@ -3,6 +3,7 @@ using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.Websocket;
 
@@ -32,5 +33,8 @@ public sealed class DiTopologyTests
         Assert.Same(
             services.GetRequiredService<QueueManager>(),
             services.GetRequiredService<IQueueCoordinator>());
+        Assert.Same(
+            services.GetRequiredService<HealthCheckService>(),
+            services.GetRequiredService<IHealthCheckQuiescence>());
     }
 }

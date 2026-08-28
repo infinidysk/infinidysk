@@ -53,6 +53,9 @@ public static class BlobStore
     public static Task<T?> ReadBlob<T>(Guid id)
         => Current.ReadBlob<T>(id);
 
+    public static bool Exists(Guid id)
+        => Current.Exists(id);
+
     public static bool Delete(Guid id)
         => Current.Delete(id);
 }

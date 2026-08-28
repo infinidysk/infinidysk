@@ -194,26 +194,7 @@ public partial class Program
                 return;
             }
 
-            var poolOverride = EnvironmentUtil.GetEnvironmentVariable("NZBDAV_SEGMENT_BUFFER_POOL");
-            if (string.Equals(poolOverride, "shared", StringComparison.OrdinalIgnoreCase))
-            {
-                // Explicit assignment is deliberate: DefaultPool is documented as
-                // set-once-at-startup, and this is the one sanctioned alternate
-                // assignment so tests or later refactors cannot leave it on the
-                // custom pool despite NZBDAV_SEGMENT_BUFFER_POOL=shared.
-                PooledBufferStream.DefaultPool = SharedArrayPoolAdapter.Instance;
-                Log.Information(
-                    "Segment buffer pool override active: using ArrayPool<byte>.Shared " +
-                    "(NZBDAV_SEGMENT_BUFFER_POOL=shared).");
-            }
-            else
-            {
-                PooledBufferStream.DefaultPool = new SegmentBufferPool(
-                    maxIdleBytes: Math.Clamp(
-                        configManager.GetInFlightArticleBudgetBytes() / 2,
-                        32L * 1024 * 1024,
-                        256L * 1024 * 1024));
-            }
+            ConfigureSegmentBufferPool(configManager);
 
             // WebApplicationFactory runs from the test output directory, where the
             // backend's published rapidyenc native asset is not present.
@@ -333,12 +314,14 @@ public partial class Program
                 .AddSingleton<SharedStreamRegistry>()
                 .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())
-                .AddSingleton<GcDiagnosticsStore>()
+                .AddSingleton(sp => new GcDiagnosticsStore(TimeProvider.System))
+                .AddSingleton<IGcDiagnosticsExecutor, AggressiveGcDiagnosticsExecutor>()
                 .AddHostedService<RuntimeUsageSampler>()
                 .AddSingleton<ProviderUsageTracker>(sp =>
                     new ProviderUsageTracker(sp.GetRequiredService<ActiveReadRegistry>()))
                 .AddSingleton<QueueItemSourceTracker>()
                 .AddSingleton<StreamingFailureTracker>()
+                .AddSingleton<HealthCheckConnectionGate>()
                 .AddSingleton<UsenetStreamingClient>()
                 .AddHostedService<ProviderRecoveryProbeService>()
                 // LazyRarResolver takes INntpClient (for testability) but must
@@ -419,7 +402,10 @@ public partial class Program
                 .AddHostedService(sp => sp.GetRequiredService<BandwidthLimitBroadcaster>())
                 .AddSingleton<ArrReplacementSearchBudget>()
                 .AddSingleton<NzbWebDAV.Clients.RadarrSonarr.ArrInstanceBackoff>()
-                .AddHostedService<HealthCheckService>()
+                .AddSingleton<HealthCheckService>()
+                .AddSingleton<IHealthCheckQuiescence>(
+                    sp => sp.GetRequiredService<HealthCheckService>())
+                .AddHostedService(sp => sp.GetRequiredService<HealthCheckService>())
                 .AddHostedService<HealthCheckRetentionService>()
                 .AddHostedService<ArrMonitoringService>()
                 .AddSingleton<ArrHealthService>()
@@ -1016,6 +1002,47 @@ public partial class Program
 
             throw;
         }
+    }
+
+    private static void ConfigureSegmentBufferPool(ConfigManager configManager)
+    {
+        var poolOverride = EnvironmentUtil.GetEnvironmentVariable(
+            SegmentBufferPoolSelector.EnvironmentVariableName);
+        var poolMode = SegmentBufferPoolSelector.Resolve(poolOverride, out var unknownValue);
+        if (unknownValue)
+        {
+            Log.Warning(
+                "Unknown {Variable} value {Value}; using {Default}.",
+                SegmentBufferPoolSelector.EnvironmentVariableName,
+                poolOverride,
+                SegmentBufferPoolSelector.BoundedLegacyValue);
+        }
+
+        if (poolMode == SegmentBufferPoolSelector.Mode.Shared)
+        {
+            // Explicit assignment is deliberate: DefaultPool is documented as
+            // set-once-at-startup, and this is the one sanctioned alternate
+            // assignment so tests or later refactors cannot leave it on the
+            // custom pool despite NZBDAV_SEGMENT_BUFFER_POOL=shared.
+            PooledBufferStream.DefaultPool = SharedArrayPoolAdapter.Instance;
+            Log.Information(
+                "Segment buffer pool override active: using ArrayPool<byte>.Shared " +
+                "(NZBDAV_SEGMENT_BUFFER_POOL=shared).");
+            return;
+        }
+
+        var maxIdleBytes = Math.Clamp(
+            configManager.GetInFlightArticleBudgetBytes() / 2,
+            32L * 1024 * 1024,
+            256L * 1024 * 1024);
+        var retention = poolMode == SegmentBufferPoolSelector.Mode.BoundedCapacity
+            ? SegmentBufferRetentionPolicy.CapacityOnly
+            : SegmentBufferRetentionPolicy.Legacy;
+        PooledBufferStream.DefaultPool = new SegmentBufferPool(maxIdleBytes, retention);
+        Log.Information(
+            "Segment buffer pool mode={Mode} maxIdleBytes={MaxIdleBytes}",
+            SegmentBufferPoolSelector.ToLogValue(poolMode),
+            maxIdleBytes);
     }
 
     private static async Task<bool> IsDatabaseStartupVacuumEnabledAsync()

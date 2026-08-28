@@ -28,6 +28,7 @@ internal sealed class FakeNntpClient(
     public Dictionary<string, int> BodyRequestCounts { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, int> CompletionCallbackCounts { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, int> StatRequestCounts { get; } = new(StringComparer.Ordinal);
+    public List<string> StatRequestOrder { get; } = [];
     public HashSet<string> RequestedSegmentIds { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Adds or restores an article (e.g. provider-side recovery between checks).</summary>
@@ -53,6 +54,7 @@ internal sealed class FakeNntpClient(
         cancellationToken.ThrowIfCancellationRequested();
         var key = segmentId.ToString();
         StatRequestCounts[key] = StatRequestCounts.GetValueOrDefault(key) + 1;
+        StatRequestOrder.Add(key);
         var exists = _segments.ContainsKey(key);
         return Task.FromResult(new UsenetStatResponse
         {

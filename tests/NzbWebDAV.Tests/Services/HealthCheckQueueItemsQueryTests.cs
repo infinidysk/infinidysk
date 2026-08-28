@@ -37,19 +37,23 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Query_ExcludesHistoryLinkedNonUrgent_AndIncludesUrgentAndUnlinked()
+    public async Task Query_ExcludesHistoryLinkedNonUrgent_AndIncludesUrgentForcedAndUnlinked()
     {
         var historyId = Guid.NewGuid();
         var scheduledAt = DateTimeOffset.UtcNow.AddHours(1);
 
         var historyLinkedNonUrgent = NewUsenetFile("history-linked-non-urgent.mkv", historyId, scheduledAt);
+        var historyLinkedUnchecked = NewUsenetFile("history-linked-unchecked.mkv", historyId, null);
         var historyLinkedUrgent = NewUsenetFile("history-linked-urgent.mkv", historyId, DateTimeOffset.UnixEpoch);
+        var historyLinkedForced = NewUsenetFile("history-linked-forced.mkv", historyId, HealthCheckService.ForcedRecheckSentinel);
         var unlinkedUrgent = NewUsenetFile("unlinked-urgent.mkv", null, DateTimeOffset.UnixEpoch);
         var unlinkedScheduled = NewUsenetFile("unlinked-scheduled.mkv", null, scheduledAt);
 
         _context.Items.AddRange(
             historyLinkedNonUrgent,
+            historyLinkedUnchecked,
             historyLinkedUrgent,
+            historyLinkedForced,
             unlinkedUrgent,
             unlinkedScheduled);
         await _context.SaveChangesAsync();
@@ -60,7 +64,9 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
             .ToListAsync();
 
         Assert.DoesNotContain(historyLinkedNonUrgent.Id, ids);
+        Assert.DoesNotContain(historyLinkedUnchecked.Id, ids);
         Assert.Contains(historyLinkedUrgent.Id, ids);
+        Assert.Contains(historyLinkedForced.Id, ids);
         Assert.Contains(unlinkedUrgent.Id, ids);
         Assert.Contains(unlinkedScheduled.Id, ids);
     }
@@ -116,34 +122,38 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
         var subtitleFile = NewUsenetFile("subs.srt", null, nextHealthCheck: null);
         var nfoFile = NewUsenetFile("info.nfo", null, nextHealthCheck: null);
         var scheduledMedia = NewUsenetFile("already-checked.mkv", null, DateTimeOffset.UtcNow.AddHours(1));
+        var forcedMedia = NewUsenetFile("forced-recheck.mkv", Guid.NewGuid(), HealthCheckService.ForcedRecheckSentinel);
+        var forcedImage = NewUsenetFile("forced-cover.jpg", null, HealthCheckService.ForcedRecheckSentinel);
 
         _context.Items.AddRange(
-            videoFile, audioFile, archiveFile, imageFile, subtitleFile, nfoFile, scheduledMedia);
+            videoFile, audioFile, archiveFile, imageFile, subtitleFile, nfoFile, scheduledMedia,
+            forcedMedia, forcedImage);
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
-        // Mirror GetHealthCheckQueueController uncheckedCount: never-checked files that
-        // HealthCheckService will actually process.
+        // Mirror GetHealthCheckQueueController uncheckedCount: never-checked and operator-forced
+        // files that HealthCheckService will actually process.
         var uncheckedCount = (await HealthCheckService.GetHealthCheckQueueItemsQuery(_dbClient)
-            .Where(x => x.NextHealthCheck == null)
+            .Where(x => x.NextHealthCheck == null || x.NextHealthCheck == HealthCheckService.ForcedRecheckSentinel)
             .Select(x => x.Name)
             .ToListAsync())
             .Count(FilenameUtil.IsHealthCheckCandidate);
 
-        Assert.Equal(3, uncheckedCount);
+        Assert.Equal(4, uncheckedCount);
     }
 
     [Fact]
-    public async Task OrderedQuery_PrioritizesUrgentThenUncheckedThenScheduledItems()
+    public async Task OrderedQuery_PrioritizesUrgentThenUncheckedThenForcedThenScheduledItems()
     {
         var historyId = Guid.NewGuid();
         var scheduledAt = DateTimeOffset.UtcNow.AddHours(-2);
 
         var historyLinkedUrgent = NewUsenetFile("urgent-first.mkv", historyId, DateTimeOffset.UnixEpoch);
         var uncheckedItem = NewUsenetFile("unchecked-second.mkv", null, nextHealthCheck: null);
-        var unlinkedScheduled = NewUsenetFile("scheduled-third.mkv", null, scheduledAt);
+        var historyLinkedForced = NewUsenetFile("forced-third.mkv", historyId, HealthCheckService.ForcedRecheckSentinel);
+        var unlinkedScheduled = NewUsenetFile("scheduled-fourth.mkv", null, scheduledAt);
 
-        _context.Items.AddRange(historyLinkedUrgent, uncheckedItem, unlinkedScheduled);
+        _context.Items.AddRange(historyLinkedUrgent, uncheckedItem, historyLinkedForced, unlinkedScheduled);
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
@@ -152,7 +162,7 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
             .ToListAsync();
 
         Assert.Equal(
-            [historyLinkedUrgent.Id, uncheckedItem.Id, unlinkedScheduled.Id],
+            [historyLinkedUrgent.Id, uncheckedItem.Id, historyLinkedForced.Id, unlinkedScheduled.Id],
             orderedIds);
     }
 

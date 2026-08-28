@@ -3,12 +3,14 @@ import { InputGroup, Select, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { PruneCompletedHistory } from "./prune-completed-history/prune-completed-history";
+import { RemoveMissingPayloads } from "./remove-missing-payloads/remove-missing-payloads";
 import { RemoveUnlinkedFiles } from "./remove-unlinked-files/remove-unlinked-files";
 import { RenameWindowsInvalidDavPaths } from "./rename-windows-invalid-dav-paths/rename-windows-invalid-dav-paths";
 import { ConvertStrmToSymlinks } from "./strm-to-symlinks/strm-to-symlinks";
 import { RecreateStrmFiles } from "./recreate-strm-files/recreate-strm-files";
 import { MigrateDatabaseFilesToBlobstore } from "./migrate-database-files-to-blobstore/migrate-database-files-to-blobstore";
 import { ResetHealthCheckStats } from "./reset-health-check-stats/reset-health-check-stats";
+import { ResetHealthCheckQueue } from "./reset-health-check-queue/reset-health-check-queue";
 import { ResetOverviewStats } from "./reset-overview-stats/reset-overview-stats";
 
 type MaintenanceProps = {
@@ -309,9 +311,12 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
               Run repair, migration, and destructive cleanup tools on demand.
             </p>
           </div>
-          <span className="badge badge-ghost badge-sm shrink-0">8 tools</span>
+          <span className="badge badge-ghost badge-sm shrink-0">9 tools</span>
         </div>
         <div className="space-y-3">
+          <MaintenanceTaskDetails title="Clean Missing Payloads">
+            <RemoveMissingPayloads savedConfig={savedConfig} />
+          </MaintenanceTaskDetails>
           <MaintenanceTaskDetails title="Remove Orphaned Files">
             <RemoveUnlinkedFiles savedConfig={savedConfig} />
           </MaintenanceTaskDetails>
@@ -329,6 +334,9 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
           </MaintenanceTaskDetails>
           <MaintenanceTaskDetails title="Migrate Large Database Blobs to Blobstore">
             <MigrateDatabaseFilesToBlobstore savedConfig={savedConfig} />
+          </MaintenanceTaskDetails>
+          <MaintenanceTaskDetails title="Re-run Library Health Checks">
+            <ResetHealthCheckQueue />
           </MaintenanceTaskDetails>
           <MaintenanceTaskDetails title="Reset Health-Check Statistics">
             <ResetHealthCheckStats />

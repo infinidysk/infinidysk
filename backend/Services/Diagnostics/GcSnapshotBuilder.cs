@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace NzbWebDAV.Services.Diagnostics;
 
 internal static class GcSnapshotBuilder
@@ -25,7 +27,29 @@ internal static class GcSnapshotBuilder
             info.TotalCommittedBytes,
             info.TotalAvailableMemoryBytes,
             info.FragmentedBytes,
-            info.PauseTimePercentage);
+            info.PauseTimePercentage)
+        {
+            Index = info.Index,
+            Generation = info.Generation,
+            Compacted = info.Compacted,
+            Concurrent = info.Concurrent,
+            MemoryLoadBytes = info.MemoryLoadBytes,
+            HighMemoryLoadThresholdBytes = info.HighMemoryLoadThresholdBytes,
+            WorkingSetBytes = TryGetWorkingSetBytes(),
+        };
+    }
+
+    private static long? TryGetWorkingSetBytes()
+    {
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            return process.WorkingSet64;
+        }
+        catch (Exception e) when (e is InvalidOperationException or PlatformNotSupportedException)
+        {
+            return null;
+        }
     }
 
     private static string GenerationName(int generation) => generation switch

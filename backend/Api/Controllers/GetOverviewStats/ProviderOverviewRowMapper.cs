@@ -14,6 +14,14 @@ internal static class ProviderOverviewRowMapper
         Retries = row.Retries,
         SpeedMbPerSec = row.SpeedMbPerSec,
         SpeedSpark = row.SpeedSpark,
+        SpeedSeries = row.SpeedSeries
+            .Select(p => new ProviderSpeedPoint
+            {
+                Bucket = p.Bucket,
+                SpeedMbPerSec = p.SpeedMbPerSec,
+                BytesFetched = p.BytesFetched,
+            })
+            .ToList(),
         AvgDurationMs = row.AvgDurationMs,
         ErrorRate = row.ErrorRate,
         Spark = row.Spark,
@@ -38,6 +46,14 @@ internal static class ProviderOverviewRowMapper
         Retries = row.Retries,
         SpeedMbPerSec = row.SpeedMbPerSec,
         SpeedSpark = row.SpeedSpark,
+        SpeedSeries = row.SpeedSeries
+            .Select(p => new GetOverviewStatsResponse.ProviderSpeedPoint
+            {
+                Bucket = p.Bucket,
+                SpeedMbPerSec = p.SpeedMbPerSec,
+                BytesFetched = p.BytesFetched,
+            })
+            .ToList(),
         AvgDurationMs = row.AvgDurationMs,
         ErrorRate = row.ErrorRate,
         Spark = row.Spark,

@@ -94,6 +94,28 @@ public sealed class GetHealthCheckHistoryControllerTests : IAsyncLifetime
         Assert.Equal(2, response.Items.Count);
     }
 
+    [Fact]
+    public async Task GetAsync_ActionNeededFilterReturnsMissingPayloadResults()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var actionNeeded = NewResult(now, HealthCheckResult.RepairAction.ActionNeeded);
+        actionNeeded.Message = HealthCheckService.MissingPayloadMessagePrefix + " details";
+        var otherActionNeeded = NewResult(
+            now.AddMilliseconds(-500),
+            HealthCheckResult.RepairAction.ActionNeeded);
+        otherActionNeeded.Message = "NNTP transport failure.";
+        var repaired = NewResult(now.AddSeconds(-1), HealthCheckResult.RepairAction.Repaired);
+        _context.HealthCheckResults.AddRange(actionNeeded, otherActionNeeded, repaired);
+        await _context.SaveChangesAsync();
+
+        var response = await InvokeAsync("?repairStatus=action-needed");
+
+        Assert.Equal(2, response.TotalCount);
+        Assert.Contains(response.Items, item => item.Id == actionNeeded.Id);
+        Assert.Contains(response.Items, item => item.Id == otherActionNeeded.Id);
+        Assert.DoesNotContain(response.Items, item => item.Id == repaired.Id);
+    }
+
     [Theory]
     [InlineData("?repairStatus=unknown")]
     [InlineData("?page=0")]

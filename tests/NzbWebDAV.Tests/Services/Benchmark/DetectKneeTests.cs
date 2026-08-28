@@ -102,6 +102,46 @@ public class DetectKneeTests
     }
 
     [Fact]
+    public void DetectKnee_StillClimbingAtConfiguredCeilingNamesProviderLimit()
+    {
+        var sweep = Sweep((1, 10), (2, 20), (4, 40), (8, 80));
+        var warnings = new List<string>();
+
+        UsenetBenchmarkService.DetectKnee(
+            sweep,
+            providerCap: null,
+            warnings,
+            out var stillClimbing,
+            configuredProviderLimit: 8);
+
+        Assert.True(stillClimbing);
+        var warning = Assert.Single(warnings);
+        Assert.Contains("Provider Connection Limit (8)", warning, StringComparison.Ordinal);
+        Assert.Contains("re-run Auto-tune", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetectKnee_StillClimbingAtHardCeilingDoesNotMisstateConfiguredLimit()
+    {
+        var sweep = Sweep((1, 10), (10, 20), (25, 40), (50, 80));
+        var warnings = new List<string>();
+
+        UsenetBenchmarkService.DetectKnee(
+            sweep,
+            providerCap: null,
+            warnings,
+            out var stillClimbing,
+            configuredProviderLimit: 51,
+            benchmarkConnectionCeiling: 50);
+
+        Assert.True(stillClimbing);
+        var warning = Assert.Single(warnings);
+        Assert.Contains("benchmark ceiling (50)", warning, StringComparison.Ordinal);
+        Assert.Contains("configured Provider Connection Limit (51)", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("Raise that limit", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DetectKnee_StillClimbingFalseOnPlateau()
     {
         var sweep = Sweep((1, 10), (2, 20), (4, 35), (8, 40), (16, 41));
@@ -109,6 +149,88 @@ public class DetectKneeTests
         UsenetBenchmarkService.DetectKnee(sweep, null, [], out var stillClimbing);
 
         Assert.False(stillClimbing);
+    }
+
+    [Fact]
+    public void CapTransferRecommendation_LeavesRecommendationWithinProviderLimit()
+    {
+        var warnings = new List<string>();
+
+        var recommendation = UsenetBenchmarkService.CapTransferRecommendation(20, 50, warnings);
+
+        Assert.Equal(20, recommendation);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void CapTransferRecommendation_DoesNotRecommendChangingProviderLimit()
+    {
+        var warnings = new List<string>();
+
+        var recommendation = UsenetBenchmarkService.CapTransferRecommendation(40, 20, warnings);
+
+        Assert.Equal(20, recommendation);
+        var warning = Assert.Single(warnings);
+        Assert.Contains("Provider Connection Limit (20)", warning, StringComparison.Ordinal);
+        Assert.Contains("re-run Auto-tune", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CapTransferRecommendation_DoesNotDuplicateWarningOnConfirmationRun()
+    {
+        var warnings = new List<string>();
+
+        UsenetBenchmarkService.CapTransferRecommendation(40, 20, warnings);
+        UsenetBenchmarkService.CapTransferRecommendation(35, 20, warnings);
+
+        Assert.Single(warnings);
+    }
+
+    [Fact]
+    public void CapTransferRecommendation_PreservesMissingRecommendation()
+    {
+        Assert.Null(UsenetBenchmarkService.CapTransferRecommendation(null, 20));
+    }
+
+    [Fact]
+    public void VerificationConnections_CannotExceedConfiguredProviderLimit()
+    {
+        Assert.Equal(
+            20,
+            UsenetBenchmarkService.BoundBenchmarkConnections(
+                requestedConnections: 40,
+                configuredProviderLimit: 20));
+    }
+
+    [Theory]
+    [InlineData(8, 20, 8)]
+    [InlineData(40, 20, 20)]
+    [InlineData(0, 20, 1)]
+    [InlineData(-1, 20, 1)]
+    public void PipeliningOnlyConnectionsAreBoundedByProviderLimit(
+        int requestedTransferConnections,
+        int providerConnectionLimit,
+        int expected)
+    {
+        Assert.Equal(
+            expected,
+            UsenetBenchmarkService.BoundBenchmarkConnections(
+                requestedTransferConnections,
+                providerConnectionLimit));
+    }
+
+    [Theory]
+    [InlineData(BenchmarkIntensity.Quick)]
+    [InlineData(BenchmarkIntensity.Thorough)]
+    public void BuildLevels_NeverProbesAboveConfiguredProviderLimit(
+        BenchmarkIntensity intensity)
+    {
+        var levels = UsenetBenchmarkService.BuildLevels(
+            configuredProviderLimit: 7,
+            BenchmarkProfile.For(intensity));
+
+        Assert.Contains(7, levels);
+        Assert.All(levels, level => Assert.InRange(level, 1, 7));
     }
 
     private static List<BenchmarkSweepPoint> Sweep(params (int Connections, double MegaBytesPerSec)[] points) =>

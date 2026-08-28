@@ -14,5 +14,6 @@ public interface IBlobStore
     Task WriteBlob<T>(Guid id, T blob, CancellationToken cancellationToken = default);
     Stream? ReadBlob(Guid id);
     Task<T?> ReadBlob<T>(Guid id);
+    bool Exists(Guid id);
     bool Delete(Guid id);
 }

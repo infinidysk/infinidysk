@@ -56,4 +56,13 @@ describe("SABnzbd import strategy", () => {
       true,
     );
   });
+
+  it("tracks rename-single-video-to-release as a saveable change", () => {
+    expect(
+      isSabnzbdSettingsUpdated(config, {
+        ...config,
+        "api.rename-single-video-to-release": "false",
+      }),
+    ).toBe(true);
+  });
 });

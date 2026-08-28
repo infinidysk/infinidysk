@@ -10,6 +10,10 @@ const BACKEND_PATH_PREFIXES = [
   "/adapters/",
   "/README",
 ];
+const READ_ONLY_DENIED_POST_PATHS = new Set([
+  "/api/delete-webdav-item",
+  "/api/remove-missing-payloads",
+]);
 
 /** Decode a path; return null on malformed percent-encoding instead of throwing. */
 export function safeDecodePath(path: string): string | null {
@@ -33,6 +37,17 @@ export function isBackendApiPath(pathname: string): boolean {
   const decodedPath = safeDecodePath(pathname);
   if (decodedPath === null) return false;
   return decodedPath === "/api" || decodedPath.startsWith("/api/");
+}
+
+export function isReadOnlyDeniedBackendMutation(method: string, pathname: string): boolean {
+  if (method.toUpperCase() !== "POST") return false;
+  const decodedPath = safeDecodePath(pathname);
+  if (decodedPath === null) return false;
+  const normalizedPath = decodedPath.length > 1 ? decodedPath.replace(/\/+$/, "") : decodedPath;
+  return (
+    READ_ONLY_DENIED_POST_PATHS.has(normalizedPath) ||
+    normalizedPath.startsWith("/api/delete-webdav-item/")
+  );
 }
 
 /** True when the path is the Prometheus metrics endpoint. */

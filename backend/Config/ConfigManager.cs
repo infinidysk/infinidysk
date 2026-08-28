@@ -359,6 +359,8 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.UsenetInFlightArticleBudgetMb:
                 case ConfigKeys.UsenetIdleConnectionTimeoutSeconds:
                 case ConfigKeys.UsenetWarmConnectionsFloor:
+                case ConfigKeys.UsenetCircuitBreakerInitialCooldownSeconds:
+                case ConfigKeys.UsenetCircuitBreakerMaxCooldownSeconds:
                 case ConfigKeys.UsenetArticleMissCacheTtlSeconds:
                 case ConfigKeys.UsenetArticleMissCacheMaxEntries:
                 case ConfigKeys.UsenetSegmentCacheMaxGb:
@@ -405,7 +407,6 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.WatchtowerSeriesRecentCount:
                 case ConfigKeys.WatchtowerSeasonBundleFallbackRecentCount:
                 case ConfigKeys.WatchtowerSeasonBundleFallbackMaxEpisodes:
-                case ConfigKeys.RepairHealthcheckConcurrency:
                 case ConfigKeys.RepairAutoRemoveAfterFailures:
                 case ConfigKeys.DatabaseHistoryRetentionDays:
                 case ConfigKeys.DatabaseHealthcheckRetentionDays:
@@ -419,6 +420,17 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
                 case ConfigKeys.UsenetBandwidthLimitMbps:
                     RequireNonNegativeFiniteDouble(item.ConfigName, value);
+                    break;
+
+                case ConfigKeys.RepairHealthcheckConcurrency:
+                    // Keep accepting values persisted by earlier releases. The getter
+                    // applies the current safe runtime bounds without making upgrades
+                    // fail configuration validation.
+                    RequireLong(item.ConfigName, value);
+                    break;
+
+                case ConfigKeys.RepairHealthcheckWorkers:
+                    RequireLongInRange(item.ConfigName, value, 1, 8);
                     break;
 
                 case ConfigKeys.ProwlarrSyncIntervalMinutes:
@@ -455,6 +467,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
                 case ConfigKeys.ApiEnsureImportableVideo:
                 case ConfigKeys.ApiSampleFilterEnabled:
+                case ConfigKeys.ApiRenameSingleVideoToRelease:
                 case ConfigKeys.ApiIgnoreHistoryLimit:
                 case ConfigKeys.ApiLazyRarParsing:
                 case ConfigKeys.ApiNzbBackupEnabled:
@@ -671,6 +684,13 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                     throw new ArgumentException($"Provider '{label}': port must be between 1 and 65535, but was {p.Port}.");
                 if (p.MaxConnections < 1)
                     throw new ArgumentException($"Provider '{label}': max connections must be at least 1, but was {p.MaxConnections}.");
+                if (p.MaxTransferConnections is < 1)
+                    throw new ArgumentException(
+                        $"Provider '{label}': transfer connections must be at least 1, but was {p.MaxTransferConnections}.");
+                if (p.MaxTransferConnections > p.MaxConnections)
+                    throw new ArgumentException(
+                        $"Provider '{label}': transfer connections must not exceed max connections " +
+                        $"({p.MaxConnections}), but was {p.MaxTransferConnections}.");
                 if (p.ByteLimit is < 0)
                     throw new ArgumentException($"Provider '{label}': byte limit must not be negative.");
             }
@@ -1075,6 +1095,34 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         if (configured is null || !int.TryParse(configured, out var value))
             return Math.Clamp(maxConnections / 6, 1, 8);
         return Math.Clamp(value, 1, maxConnections);
+    }
+
+    /// <summary>
+    /// Cooldown applied the first time a provider's circuit trips. Each consecutive trip
+    /// doubles it up to the ceiling, and a successful body fetch resets it back to this
+    /// value. Defaults to 60s and is clamped to 5 through 300. The connection pools read
+    /// it when they are built, so a change applies on the next restart or provider save.
+    /// </summary>
+    public TimeSpan GetCircuitBreakerInitialCooldown()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetCircuitBreakerInitialCooldownSeconds));
+        if (configured is null || !long.TryParse(configured, out var seconds))
+            return TimeSpan.FromSeconds(60);
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 5L, 300L));
+    }
+
+    /// <summary>
+    /// Ceiling the doubling cooldown stops at, so a provider that stays down is re-probed
+    /// on a bounded interval instead of an ever-growing one. Defaults to 300s and is
+    /// clamped to 5 through 3600. The connection pools read it when they are built, so a
+    /// change applies on the next restart or provider save.
+    /// </summary>
+    public TimeSpan GetCircuitBreakerMaxCooldown()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetCircuitBreakerMaxCooldownSeconds));
+        if (configured is null || !long.TryParse(configured, out var seconds))
+            return TimeSpan.FromSeconds(300);
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 5L, 3600L));
     }
 
     /// <summary>
@@ -1907,17 +1955,26 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     }
 
     /// <summary>
-    /// Max concurrent NNTP STAT connections for health checks.
-    /// Capped at the configured provider pool size to avoid pool starvation.
+    /// Maximum aggregate NNTP verification connections shared by background health
+    /// checks and queue article-existence validation.
     /// </summary>
     public int GetHealthCheckConcurrency()
     {
-        var poolSize = GetUsenetProviderConfig().TotalPooledConnections;
-        var configured = int.Parse(
-            StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairHealthcheckConcurrency))
-            ?? "50"
-        );
-        return Math.Clamp(configured, 1, Math.Max(1, poolSize));
+        var poolSize = Math.Max(1, GetUsenetProviderConfig().TotalPooledConnections);
+        var maximum = Math.Min(200, poolSize);
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairHealthcheckConcurrency));
+        var value = long.TryParse(configured, out var parsed) ? parsed : 50;
+        return (int)Math.Clamp(value, 1L, maximum);
+    }
+
+    /// <summary>
+    /// Maximum number of library files that may be health-checked concurrently.
+    /// Each worker shares the aggregate health connection limit above.
+    /// </summary>
+    public int GetHealthCheckWorkers()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairHealthcheckWorkers));
+        return int.TryParse(configured, out var value) ? Math.Clamp(value, 1, 8) : 1;
     }
 
     /// <summary>
@@ -2023,6 +2080,16 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var defaultValue = true;
         var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiSampleFilterEnabled));
         return configValue != null ? bool.Parse(configValue) : defaultValue;
+    }
+
+    /// <summary>
+    /// When a completed job mounts exactly one video, rename it to the release
+    /// (mount folder) name. Default enabled; see issue #1090.
+    /// </summary>
+    public bool IsRenameSingleVideoToReleaseEnabled()
+    {
+        var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.ApiRenameSingleVideoToRelease));
+        return configValue == null || bool.Parse(configValue);
     }
 
     public string GetImportStrategy()

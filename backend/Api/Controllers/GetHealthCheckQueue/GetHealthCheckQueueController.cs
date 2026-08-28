@@ -29,10 +29,11 @@ public class GetHealthCheckQueueController(DavDatabaseClient dbClient) : BaseApi
 
         // Match HealthCheckService.ExecuteAsync: only media/archive candidates are ever
         // processed, so non-media files (nfo/srt/jpg/…) must not inflate this count or
-        // the Health UI "initial scan pending" banner never clears.
+        // the Health UI "initial scan pending" banner never clears. Operator-forced rechecks
+        // (ForcedRecheckSentinel) count as pending alongside never-checked files.
         var uncheckedCount = 0;
         await foreach (var name in HealthCheckService.GetHealthCheckQueueItemsQuery(dbClient)
-            .Where(x => x.NextHealthCheck == null)
+            .Where(x => x.NextHealthCheck == null || x.NextHealthCheck == HealthCheckService.ForcedRecheckSentinel)
             .Select(x => x.Name)
             .AsAsyncEnumerable()
             .ConfigureAwait(false))
