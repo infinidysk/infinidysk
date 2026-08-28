@@ -37,7 +37,6 @@ internal enum HealthCheckRefillOutcome
 public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 {
     private const int MaximumMissingSegmentIds = 100_000;
-    private const int NoMatchConfirmationsRequired = 2;
     internal const string MissingPayloadMessagePrefix = "Streaming payload missing.";
     private const int MissingPayloadConfirmationsRequired = 3;
     private static readonly TimeSpan MissingPayloadInitialRecheck = TimeSpan.FromDays(1);
@@ -137,7 +136,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
     private static readonly HashSet<string> _missingSegmentIds = [];
     private static readonly Queue<string> _missingSegmentOrder = [];
-    private static readonly ConcurrentDictionary<Guid, int> _arrNoMatchConfirmations = new();
     private static readonly ConcurrentDictionary<string, List<DateTimeOffset>> _recentRepairRemovalsByPath = new();
 
     internal TimeSpan CoordinatorPollInterval { get; set; } = TimeSpan.FromSeconds(1);
@@ -1123,7 +1121,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
             _failureTracker.ClearFailure(davItem.Id);
-            _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
 
             // A previously degraded file that now sweeps clean has recovered (provider-side
             // restoration): drop the stale hole and corrupt records. The probed container
@@ -1228,7 +1225,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 davItem.LastHealthCheck = utcNow;
                 davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
                 _failureTracker.ClearFailure(davItem.Id);
-                _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Healthy,
@@ -1319,7 +1315,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
             _failureTracker.ClearFailure(davItem.Id);
-            _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
             // The patched segments are served locally now; any earlier hole/corrupt record is obsolete.
             if (par2Outcome is Par2RepairOutcome.Repaired
                 && (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
@@ -2150,9 +2145,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             : LibraryLinkRepairDisposition.RepairLinked;
     }
 
-    internal static bool ShouldDeleteAfterArrNoMatch(int confirmationCount) =>
-        confirmationCount >= NoMatchConfirmationsRequired;
-
     /// <summary>
     /// True when the linked library path has already had <see cref="RepairRecurrenceLimit"/>
     /// downloads removed by repair within <see cref="RepairRecurrenceWindow"/>. The path is the
@@ -2220,8 +2212,48 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         /// Leave it in place rather than searching again without blocklisting the failed release.
         /// </summary>
         DeferMissingDownloadHistory,
-        /// <summary>No reachable Arr instance confirmed ownership; leave the organized link in place.</summary>
+        /// <summary>
+        /// At least one Arr root folder contained the organized path, but no instance returned an
+        /// exact media-file match. Leave the organized link in place.
+        /// </summary>
         DeferNoMatchingMediaItem,
+        /// <summary>
+        /// Arr was reachable, but no reported root folder contains the organized path seen by
+        /// InfiniDysk. The containers may expose the same host directory under different paths.
+        /// </summary>
+        DeferRootPathMismatch,
+    }
+
+    /// <summary>
+    /// True when <paramref name="candidatePath"/> is the same as <paramref name="rootPath"/> or a
+    /// child of it at a directory boundary. Arr paths are compared as opaque strings: no filesystem
+    /// resolution, separator rewriting, or case folding.
+    /// </summary>
+    internal static bool IsPathWithinRoot(string candidatePath, string rootPath)
+    {
+        if (string.IsNullOrEmpty(candidatePath) || string.IsNullOrEmpty(rootPath))
+            return false;
+
+        var normalizedRoot = rootPath.Length > 1
+            ? rootPath.TrimEnd('/', '\\')
+            : rootPath;
+
+        // Fail closed on degenerate roots such as "//" that trim to nothing;
+        // an empty prefix would otherwise match every path.
+        if (normalizedRoot.Length == 0)
+            return false;
+
+        if (string.Equals(candidatePath, normalizedRoot, StringComparison.Ordinal))
+            return true;
+
+        if (!candidatePath.StartsWith(normalizedRoot, StringComparison.Ordinal))
+            return false;
+
+        if (normalizedRoot is "/" or "\\")
+            return true;
+
+        return candidatePath.Length > normalizedRoot.Length &&
+               candidatePath[normalizedRoot.Length] is '/' or '\\';
     }
 
     /// <summary>
@@ -2237,13 +2269,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         Func<ArrClient, IReadOnlyList<string>, bool>? shouldRequestSearch = null,
         ArrInstanceBackoff? arrBackoff = null)
     {
-        // Track whether a no-owner result is authoritative enough to explain to the operator.
-        // Neither outcome permits deletion: a successful-but-incomplete library/Arr view is
-        // indistinguishable from a genuine orphan at this point.
         var anInstanceFailed = false;
+        var sawConfiguredClient = false;
+        var matchedArrRootFolder = false;
 
         foreach (var arrClient in arrClients)
         {
+            sawConfiguredClient = true;
             ct.ThrowIfCancellationRequested();
 
             // Skip the root-folder query for an instance that is timing out or refusing
@@ -2276,15 +2308,21 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 continue;
             }
 
-            // Skip null/empty paths: StartsWith(null) throws, and StartsWith("") matches everything.
-            // A null/empty path is a malformed response we can't rule this instance in or out
-            // with, so if nothing else matches, treat it like an unreachable instance rather
-            // than falling through to a delete this instance may not have sanctioned.
-            if (!rootFolders.Any(x => !string.IsNullOrEmpty(x.Path) && symlinkOrStrmPath.StartsWith(x.Path, StringComparison.Ordinal)))
+            var hasMatchingRoot = rootFolders.Any(root =>
+                !string.IsNullOrEmpty(root.Path) &&
+                IsPathWithinRoot(symlinkOrStrmPath, root.Path));
+
+            if (!hasMatchingRoot)
             {
-                if (rootFolders.Any(x => string.IsNullOrEmpty(x.Path))) anInstanceFailed = true;
+                // A null/empty root path is a malformed response: this instance can be
+                // neither ruled in nor ruled out, so it must defer as unreachable rather
+                // than count toward a path-mismatch diagnosis.
+                if (rootFolders.Any(x => string.IsNullOrEmpty(x.Path)))
+                    anInstanceFailed = true;
                 continue;
             }
+
+            matchedArrRootFolder = true;
 
             if (downloadId == null)
                 return ArrLinkedRepairDecision.DeferMissingDownloadHistory;
@@ -2319,11 +2357,14 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
             // A root-folder match with no exact media-item match may be caused by path
             // normalization, stale Arr data, or a transient partial response. Keep checking
-            // other configured instances, but never use this single miss to authorize deletion.
+            // other configured instances, but never use this miss to authorize deletion.
         }
 
         if (anInstanceFailed)
             return ArrLinkedRepairDecision.DeferUnreachable;
+
+        if (sawConfiguredClient && !matchedArrRootFolder)
+            return ArrLinkedRepairDecision.DeferRootPathMismatch;
 
         return ArrLinkedRepairDecision.DeferNoMatchingMediaItem;
     }
@@ -2388,7 +2429,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
             _failureTracker.ClearFailure(davItem.Id);
-            _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
@@ -2484,8 +2524,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var linkDisposition = GetLibraryLinkRepairDisposition(
                 symlinkOrStrmPath,
                 forceDelete || (forceDeleteIfUnlinked && symlinkOrStrmPath == null));
-            if (linkDisposition != LibraryLinkRepairDisposition.RepairLinked)
-                _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
             if (linkDisposition == LibraryLinkRepairDisposition.ForceDelete)
             {
                 if (symlinkOrStrmPath != null)
@@ -2622,9 +2660,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     arrConfig.EffectiveQueueReplacementSearchWindow()),
                 _arrBackoff).ConfigureAwait(false);
 
-            if (arrDecision != ArrLinkedRepairDecision.DeferNoMatchingMediaItem)
-                _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
-
             if (arrDecision is ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded
                 or ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld)
             {
@@ -2691,20 +2726,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 return;
             }
 
-            // A reachable Arr returning no exact media-item match is inconclusive once, because
-            // path normalization or a partial Arr response can produce a false miss. Require a
-            // second consecutive fully reachable miss before deliberately removing a confirmed
-            // Arr orphan. This also gives genuine orphan links a cleanup path; the maintenance
-            // task cannot see them as unlinked while the organized link still exists.
-            var noMatchConfirmations = _arrNoMatchConfirmations.AddOrUpdate(
-                davItem.Id,
-                1,
-                (_, previous) => previous + 1);
-            if (!ShouldDeleteAfterArrNoMatch(noMatchConfirmations))
+            if (arrDecision == ArrLinkedRepairDecision.DeferRootPathMismatch)
             {
-                var noMatchUtcNow = DateTimeOffset.UtcNow;
-                davItem.LastHealthCheck = noMatchUtcNow;
-                davItem.NextHealthCheck = noMatchUtcNow + TimeSpan.FromDays(1);
+                var utcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = utcNow;
+                davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Unhealthy,
@@ -2712,32 +2738,28 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     string.Join(" ", [
                         "File failed health validation.",
                         $"Corresponding {linkType} found within Library Dir.",
-                        "No configured Radarr/Sonarr instance confirmed a matching media-item.",
-                        $"Leaving the webdav-file and {linkType} in place after no-match confirmation {noMatchConfirmations}/{NoMatchConfirmationsRequired}."
+                        "No enabled Radarr/Sonarr root folder contains the library path reported by InfiniDysk.",
+                        "The containers may expose the same host library under different absolute paths; configure InfiniDysk and Arr to use the same absolute container path.",
+                        $"The webdav-file and {linkType} were left in place, and replacement search was skipped because the Arr media item could not be identified safely."
                     ]), ct).ConfigureAwait(false);
                 return;
             }
 
-            _arrNoMatchConfirmations.TryRemove(davItem.Id, out _);
-            await Task.Run(() => File.Delete(linkedPath)).ConfigureAwait(false);
-            DeletionAuditLog.Record(
-                "health-repair",
-                davItem,
-                "health validation failed; no Arr media-item after repeated reachable confirmations");
-            RemoveDavItemWithGeneratedSidecars(dbClient, davItem);
-            _failureTracker.ClearFailure(davItem.Id);
-            var confirmedOrphanUtcNow = DateTimeOffset.UtcNow;
-            davItem.LastHealthCheck = confirmedOrphanUtcNow;
-            davItem.NextHealthCheck = confirmedOrphanUtcNow + TimeSpan.FromDays(1);
+            // A containing Arr root existed, but no instance confirmed an exact media-file match.
+            // That miss is inconclusive (path mapping, stale Arr data, or a genuine orphan) and
+            // must never authorize deletion of a still-linked library file.
+            var noMatchUtcNow = DateTimeOffset.UtcNow;
+            davItem.LastHealthCheck = noMatchUtcNow;
+            davItem.NextHealthCheck = noMatchUtcNow + TimeSpan.FromDays(1);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Unhealthy,
-                HealthCheckResult.RepairAction.Deleted,
+                HealthCheckResult.RepairAction.ActionNeeded,
                 string.Join(" ", [
                     "File failed health validation.",
                     $"Corresponding {linkType} found within Library Dir.",
-                    "No configured Radarr/Sonarr instance confirmed a matching media-item.",
-                    $"Deleted the webdav-file and {linkType} after {noMatchConfirmations} consecutive confirmations."
+                    "An Arr root folder contains the library path, but no configured Radarr/Sonarr instance confirmed an exact matching media item.",
+                    $"The webdav-file and {linkType} were left in place because an inconclusive lookup cannot authorize automatic deletion."
                 ]), ct).ConfigureAwait(false);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
