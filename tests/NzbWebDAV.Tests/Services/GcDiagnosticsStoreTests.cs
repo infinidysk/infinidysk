@@ -30,13 +30,8 @@ public sealed class GcDiagnosticsStoreTests
     public void TryBegin_ConcurrentCallers_AdmitExactlyOnce()
     {
         using var store = new GcDiagnosticsStore(new ControllableTimeProvider());
-        var barrier = new Barrier(2);
         var results = new GcDiagnosticsAdmission[2];
-        Parallel.For(0, 2, i =>
-        {
-            barrier.SignalAndWait();
-            results[i] = store.TryBegin().Status;
-        });
+        BarrierThreads.Run(2, i => results[i] = store.TryBegin().Status);
 
         Assert.Equal(1, results.Count(status => status == GcDiagnosticsAdmission.Started));
         Assert.Equal(1, results.Count(status => status == GcDiagnosticsAdmission.AlreadyRunning));

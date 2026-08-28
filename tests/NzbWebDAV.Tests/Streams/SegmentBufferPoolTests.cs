@@ -1,4 +1,5 @@
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Streams;
 
@@ -320,6 +321,14 @@ public class SegmentBufferPoolTests
     }
 
     [Fact]
+    public void DefaultSnapshot_LifetimeSizeClassesIsEmpty()
+    {
+        var snapshot = default(SegmentBufferPoolSnapshot);
+        Assert.NotNull(snapshot.LifetimeSizeClasses);
+        Assert.Empty(snapshot.LifetimeSizeClasses);
+    }
+
+    [Fact]
     public void Return_DropsBufferLargerThanEntireCap()
     {
         var pool = new SegmentBufferPool(maxIdleBytes: 100_000);
@@ -406,12 +415,7 @@ public class SegmentBufferPoolTests
             maxIdleBytes: capCount * (long)size,
             retentionPolicy: SegmentBufferRetentionPolicy.CapacityOnly);
         var buffers = Enumerable.Range(0, count).Select(_ => pool.Rent(size)).ToArray();
-        var barrier = new Barrier(count);
-        Parallel.For(0, count, i =>
-        {
-            barrier.SignalAndWait();
-            pool.Return(buffers[i]);
-        });
+        BarrierThreads.Run(count, i => pool.Return(buffers[i]));
 
         var snapshot = pool.Snapshot();
         Assert.Equal(capCount * (long)size, snapshot.IdleBytes);
@@ -430,12 +434,7 @@ public class SegmentBufferPoolTests
     {
         var pool = new SegmentBufferPool(maxIdleBytes: 1024 * 1024);
         var buffer = pool.Rent(256 * 1024);
-        var barrier = new Barrier(2);
-        Parallel.For(0, 2, _ =>
-        {
-            barrier.SignalAndWait();
-            pool.Return(buffer);
-        });
+        BarrierThreads.Run(2, _ => pool.Return(buffer));
 
         var snapshot = pool.Snapshot();
         Assert.Equal(1, snapshot.ReturnCount);

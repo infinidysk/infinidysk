@@ -32,6 +32,7 @@ environment:
   DOTNET_GCHeapHardLimit: "20000000"
   # 1 GiB regions reservation (2× the heap ceiling)
   DOTNET_GCRegionRange: "40000000"
+  # Upper bound (0–9). Prefer 5–7 as a first measured canary; see below.
   DOTNET_GCConserveMemory: "9"
   # Bound worker growth separately from the GC heap.
   THREADPOOL_MAX_THREADS: "200"

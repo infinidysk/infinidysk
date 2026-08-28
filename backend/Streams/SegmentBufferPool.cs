@@ -492,8 +492,14 @@ public readonly record struct SegmentBufferPoolSnapshot(
     public long DroppedTooLargeBytes { get; init; }
     public long AllocationAttemptCount { get; init; }
     public long AllocationFailureCount { get; init; }
-    public IReadOnlyList<SegmentBufferPoolLifetimeClassSnapshot> LifetimeSizeClasses { get; init; } =
-        [];
+
+    private readonly IReadOnlyList<SegmentBufferPoolLifetimeClassSnapshot>? _lifetimeSizeClasses;
+
+    public IReadOnlyList<SegmentBufferPoolLifetimeClassSnapshot> LifetimeSizeClasses
+    {
+        get => _lifetimeSizeClasses ?? [];
+        init => _lifetimeSizeClasses = value;
+    }
 }
 
 public readonly record struct SegmentBufferPoolClassSnapshot(

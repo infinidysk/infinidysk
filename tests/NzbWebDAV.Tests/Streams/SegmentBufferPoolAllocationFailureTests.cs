@@ -106,6 +106,8 @@ public sealed class SegmentBufferPoolSelectorTests
     [Theory]
     [InlineData(null, "bounded-legacy", false)]
     [InlineData("", "bounded-legacy", false)]
+    [InlineData(" ", "bounded-legacy", false)]
+    [InlineData(" bounded-capacity ", "bounded-capacity", false)]
     [InlineData("bounded-legacy", "bounded-legacy", false)]
     [InlineData("BOUNDED-LEGACY", "bounded-legacy", false)]
     [InlineData("bounded-capacity", "bounded-capacity", false)]

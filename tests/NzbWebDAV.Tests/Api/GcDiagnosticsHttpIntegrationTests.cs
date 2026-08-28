@@ -74,18 +74,24 @@ public sealed class GcDiagnosticsHttpIntegrationTests(NzbDavWebApplicationFactor
         using var client = host.CreateClient();
 
         var firstTask = client.SendAsync(AuthenticatedPost());
-        await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        using var concurrent = await client.SendAsync(AuthenticatedPost());
-        Assert.Equal(HttpStatusCode.TooManyRequests, concurrent.StatusCode);
-        using var concurrentJson = await JsonDocument.ParseAsync(await concurrent.Content.ReadAsStreamAsync());
-        Assert.Equal(StatusCodes.Status429TooManyRequests, concurrentJson.RootElement.GetProperty("status").GetInt32());
-        Assert.Contains(
-            "already in progress",
-            concurrentJson.RootElement.GetProperty("detail").GetString(),
-            StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var concurrent = await client.SendAsync(AuthenticatedPost());
+            Assert.Equal(HttpStatusCode.TooManyRequests, concurrent.StatusCode);
+            using var concurrentJson = await JsonDocument.ParseAsync(await concurrent.Content.ReadAsStreamAsync());
+            Assert.Equal(StatusCodes.Status429TooManyRequests, concurrentJson.RootElement.GetProperty("status").GetInt32());
+            Assert.Contains(
+                "already in progress",
+                concurrentJson.RootElement.GetProperty("detail").GetString(),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            executor.Release.TrySetResult();
+        }
 
-        executor.Release.TrySetResult();
-        using var first = await firstTask;
+        using var first = await firstTask.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
     }
 

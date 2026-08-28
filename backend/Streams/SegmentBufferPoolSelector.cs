@@ -17,9 +17,10 @@ internal static class SegmentBufferPoolSelector
     internal static Mode Resolve(string? value, out bool unknownValue)
     {
         unknownValue = false;
-        if (string.IsNullOrEmpty(value))
+        if (string.IsNullOrWhiteSpace(value))
             return Mode.BoundedLegacy;
 
+        value = value.Trim();
         if (value.Equals(SharedValue, StringComparison.OrdinalIgnoreCase))
             return Mode.Shared;
         if (value.Equals(BoundedLegacyValue, StringComparison.OrdinalIgnoreCase))
