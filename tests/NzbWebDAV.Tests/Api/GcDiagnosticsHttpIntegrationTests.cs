@@ -77,7 +77,7 @@ public sealed class GcDiagnosticsHttpIntegrationTests(NzbDavWebApplicationFactor
         try
         {
             await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            using var concurrent = await client.SendAsync(AuthenticatedPost());
+            using var concurrent = await client.SendAsync(AuthenticatedPost()).WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(HttpStatusCode.TooManyRequests, concurrent.StatusCode);
             using var concurrentJson = await JsonDocument.ParseAsync(await concurrent.Content.ReadAsStreamAsync());
             Assert.Equal(StatusCodes.Status429TooManyRequests, concurrentJson.RootElement.GetProperty("status").GetInt32());
