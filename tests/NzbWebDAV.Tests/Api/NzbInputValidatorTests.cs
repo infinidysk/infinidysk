@@ -8,6 +8,12 @@ namespace NzbWebDAV.Tests.Api;
 public class NzbInputValidatorTests
 {
     [Fact]
+    public void DefaultTotalSegmentLimitMatchesSupportedMaximum()
+    {
+        Assert.Equal(1_302_083, NzbInputLimits.Default.MaxTotalSegments);
+    }
+
+    [Fact]
     public void AcceptsDocumentAtSegmentLimit()
     {
         var xml = BuildNzb(fileCount: 1, segmentsPerFile: 2);
@@ -35,15 +41,15 @@ public class NzbInputValidatorTests
     [Fact]
     public void AcceptsLargeSingleFileRemux()
     {
-        const int segmentCount = 100_001;
+        var segmentCount = NzbInputLimits.Default.MaxTotalSegments;
         const long segmentBytes = 700_000;
-        var xml = BuildNzb(fileCount: 1, segmentsPerFile: segmentCount, segmentBytes);
-        using var stream = Bytes(xml);
+        using var stream = BuildNzbStream(fileCount: 1, segmentsPerFile: segmentCount, segmentBytes);
+
+        Assert.True(stream.Length < NzbInputLimits.Default.MaxXmlBytes);
 
         var bytes = NzbInputValidator.ValidateAndSumSegmentBytes(stream, NzbInputLimits.Default);
 
-        Assert.Equal(segmentCount * segmentBytes, bytes);
-        Assert.True(bytes > 70_000_000_000);
+        Assert.Equal(checked(segmentCount * segmentBytes), bytes);
     }
 
     [Fact]
@@ -211,6 +217,35 @@ public class NzbInputValidatorTests
 
         builder.Append("</nzb>");
         return builder.ToString();
+    }
+
+    private static MemoryStream BuildNzbStream(int fileCount, int segmentsPerFile, long segmentBytes)
+    {
+        var stream = new MemoryStream();
+        using (var writer = new StreamWriter(
+                         stream,
+                         new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                         bufferSize: 64 * 1024,
+                         leaveOpen: true))
+        {
+            writer.Write("<nzb>");
+            for (var file = 1; file <= fileCount; file++)
+            {
+                writer.Write($"<file subject=\"file-{file}\"><segments>");
+                for (var segment = 1; segment <= segmentsPerFile; segment++)
+                {
+                    writer.Write(
+                        $"<segment bytes=\"{segmentBytes}\" number=\"{segment}\">id-{file}-{segment}@example</segment>");
+                }
+
+                writer.Write("</segments></file>");
+            }
+
+            writer.Write("</nzb>");
+        }
+
+        stream.Position = 0;
+        return stream;
     }
 
     private static MemoryStream Bytes(string xml) => new(Encoding.UTF8.GetBytes(xml));
