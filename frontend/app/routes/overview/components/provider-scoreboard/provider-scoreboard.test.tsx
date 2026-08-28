@@ -60,6 +60,7 @@ describe("ProviderScoreboard", () => {
       markup.indexOf("overflow-x-auto"),
     );
     expect(markup).toContain("2.25 MB/s");
+    expect(markup).not.toContain("min-w-[800px]");
   });
 
   it("captions retained history when the series is truncated", () => {

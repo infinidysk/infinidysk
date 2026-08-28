@@ -60,13 +60,13 @@ export function ProviderScoreboard({
           <p className="py-6 text-center text-xs text-base-content/50">No providers configured.</p>
         ) : (
           <>
-            <div className="overflow-x-auto">
-              <table className="table table-pin-cols table-sm min-w-[800px]">
+            <div className="w-full min-w-0 overflow-x-auto">
+              <table className="table table-pin-cols table-sm w-full">
                 <thead>
                   <tr>
                     <th>Provider</th>
-                    <th className="w-[120px]">Activity</th>
-                    <th className="w-[120px]">
+                    <th className="w-[120px] min-w-0 px-1">Activity</th>
+                    <th className="w-[120px] min-w-0 px-1">
                       <Tooltip content={outageHelp}>
                         <span>Outages</span>
                       </Tooltip>
@@ -74,13 +74,13 @@ export function ProviderScoreboard({
                     <th>Articles</th>
                     <th>Read</th>
                     <th>Share</th>
-                    <th className="w-[120px]">
+                    <th className="w-[120px] min-w-0 px-1">
                       <Tooltip content={speedHelp}>
                         <span>MB/s</span>
                       </Tooltip>
                     </th>
-                    <th className="w-[120px]">Errors</th>
-                    <th className="w-[120px]">Retries</th>
+                    <th className="w-[120px] min-w-0 px-1">Errors</th>
+                    <th className="w-[120px] min-w-0 px-1">Retries</th>
                     <th>
                       <Tooltip content="Mean duration of successful fetches only. Includes connection-pool wait inside the provider call — not pure wire RTT. Misses and errors are excluded.">
                         <span>Avg ok ms</span>
@@ -131,10 +131,10 @@ export function ProviderScoreboard({
                             )}
                           </div>
                         </th>
-                        <td>
+                        <td className="min-w-0 px-1">
                           <Sparkline values={p.spark} tone="success" />
                         </td>
-                        <td>
+                        <td className="min-w-0 px-1">
                           <Tooltip content={outageHelp}>
                             <OutageBuckets values={p.outageSpark ?? []} />
                           </Tooltip>
@@ -144,7 +144,7 @@ export function ProviderScoreboard({
                         <td>
                           <ShareBar share={share} />
                         </td>
-                        <td>
+                        <td className="min-w-0 px-1">
                           <Tooltip content={speedHelp}>
                             <div className="flex flex-col gap-0.5">
                               <Sparkline values={p.speedSpark ?? []} tone="success" />
@@ -154,7 +154,7 @@ export function ProviderScoreboard({
                             </div>
                           </Tooltip>
                         </td>
-                        <td>
+                        <td className="min-w-0 px-1">
                           <div className="flex flex-col gap-0.5">
                             <Sparkline values={p.errorSpark ?? []} tone="error" eventsOnly />
                             <div
@@ -170,7 +170,7 @@ export function ProviderScoreboard({
                             </div>
                           </div>
                         </td>
-                        <td>
+                        <td className="min-w-0 px-1">
                           <div className="flex flex-col gap-0.5">
                             <Sparkline values={p.retrySpark ?? []} tone="warning" eventsOnly />
                             <div

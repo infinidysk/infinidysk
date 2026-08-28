@@ -196,7 +196,7 @@ export function ProviderSpeedChart({
                     y2={TOP_PAD.toFixed(1)}
                     className={styles.gridline}
                   />
-                  {maxSpeed > 0 && speedPath && (
+                  {speedPath && (
                     <path d={speedPath} className={styles.lineSpeed} data-series="speed" />
                   )}
                 </svg>
@@ -268,34 +268,16 @@ function buildSpeedPath(
   xStep: number,
   y: (v: number) => number,
 ): string {
-  const parts: string[] = [];
-  let inSegment = false;
-  for (let i = 0; i < points.length; i++) {
-    const p = points[i];
-    if (!p) continue;
-    const value = p.speedMbPerSec;
+  if (points.length === 0) return "";
+  const parts = points.map((p, i) => {
     const x = (i * xStep).toFixed(1);
-    const yy = y(value).toFixed(1);
-    if (value > 0) {
-      if (!inSegment) {
-        parts.push(`M${x},${yy}`);
-        inSegment = true;
-        const next = points[i + 1];
-        const nextZero = i === points.length - 1 || !next || next.speedMbPerSec <= 0;
-        if (nextZero) {
-          const extension = Math.max(xStep * 0.15, 1);
-          const x2 = Math.max(
-            0,
-            Math.min(VB_W, i * xStep + (i === points.length - 1 && i > 0 ? -extension : extension)),
-          ).toFixed(1);
-          parts.push(`L${x2},${yy}`);
-        }
-      } else {
-        parts.push(`L${x},${yy}`);
-      }
-    } else {
-      inSegment = false;
-    }
+    const yy = y(p?.speedMbPerSec ?? 0).toFixed(1);
+    return `${i === 0 ? "M" : "L"}${x},${yy}`;
+  });
+  if (points.length === 1) {
+    const yy = y(points[0]?.speedMbPerSec ?? 0).toFixed(1);
+    const x2 = Math.min(VB_W, Math.max(xStep * 0.15, 1)).toFixed(1);
+    parts.push(`L${x2},${yy}`);
   }
   return parts.join(" ");
 }

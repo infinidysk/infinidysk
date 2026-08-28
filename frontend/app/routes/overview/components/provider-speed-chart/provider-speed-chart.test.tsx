@@ -17,7 +17,7 @@ function speedPathD(markup: string): string {
 }
 
 describe("ProviderSpeedChart", () => {
-  it("does not connect positive runs through a single idle bucket", () => {
+  it("connects positive runs through idle buckets at the baseline", () => {
     const markup = renderToStaticMarkup(
       <ProviderSpeedChart
         providerLabel="Alpha"
@@ -30,9 +30,10 @@ describe("ProviderSpeedChart", () => {
     const d = speedPathD(markup);
 
     expect(d).not.toBe("");
-    expect((d.match(/M/g) ?? []).length).toBe(2);
+    expect((d.match(/M/g) ?? []).length).toBe(1);
     // Three buckets span 800 viewBox units, so the idle bucket is at x=400.
-    expect(d).not.toContain("400.0,");
+    expect(d).toContain("400.0,156.0");
+    expect(d.startsWith("M0.0,")).toBe(true);
   });
 
   it("keeps a terminal isolated sample inside the viewBox", () => {
@@ -53,5 +54,7 @@ describe("ProviderSpeedChart", () => {
     expect(Math.min(...xs)).toBeGreaterThanOrEqual(0);
     expect(Math.max(...xs)).toBeLessThanOrEqual(800);
     expect(Math.min(...xs)).toBeLessThan(800);
+    expect(d).toContain("0.0,156.0");
+    expect(d).toContain("400.0,156.0");
   });
 });
