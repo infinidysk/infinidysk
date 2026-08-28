@@ -95,7 +95,7 @@ jobs:
             NZBDAV_COMMIT_SHA=${{ inputs.checkout_ref || github.sha }}
             REPO_URL=https://github.com/${{ github.repository }}
           labels: ${{ inputs.image_description != '' && format('org.opencontainers.image.description={0}', inputs.image_description) || '' }}
-          annotations: ${{ inputs.image_description != '' && format('org.opencontainers.image.description={0}', inputs.image_description) || '' }}
+          annotations: ${{ inputs.image_description != '' && format('index:org.opencontainers.image.description={0}', inputs.image_description) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
