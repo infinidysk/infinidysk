@@ -269,17 +269,21 @@ function buildSpeedPath(
   y: (v: number) => number,
 ): string {
   if (points.length === 0) return "";
-  const parts = points.map((p, i) => {
-    const x = (i * xStep).toFixed(1);
-    const yy = y(p?.speedMbPerSec ?? 0).toFixed(1);
-    return `${i === 0 ? "M" : "L"}${x},${yy}`;
-  });
   if (points.length === 1) {
     const yy = y(points[0]?.speedMbPerSec ?? 0).toFixed(1);
-    const x2 = Math.min(VB_W, Math.max(xStep * 0.15, 1)).toFixed(1);
-    parts.push(`L${x2},${yy}`);
+    const mid = VB_W / 2;
+    const extension = 1;
+    const x1 = Math.max(0, mid - extension).toFixed(1);
+    const x2 = Math.min(VB_W, mid + extension).toFixed(1);
+    return `M${x1},${yy} L${x2},${yy}`;
   }
-  return parts.join(" ");
+  return points
+    .map((p, i) => {
+      const x = (i * xStep).toFixed(1);
+      const yy = y(p?.speedMbPerSec ?? 0).toFixed(1);
+      return `${i === 0 ? "M" : "L"}${x},${yy}`;
+    })
+    .join(" ");
 }
 
 function indexOfBucket(points: ProviderSpeedPoint[], bucket: number | null): number | null {

@@ -57,4 +57,25 @@ describe("ProviderSpeedChart", () => {
     expect(d).toContain("0.0,156.0");
     expect(d).toContain("400.0,156.0");
   });
+
+  it("centers a single-bucket sample on the chart", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderSpeedChart
+        providerLabel="Alpha"
+        points={[point(7)]}
+        bucketSizeMs={60_000}
+        historyTruncated={false}
+        window="1h"
+      />,
+    );
+    const d = speedPathD(markup);
+    const xs = [...d.matchAll(/[ML]([\d.]+),/g)].map((match) => Number(match[1]));
+
+    expect(d).not.toBe("");
+    expect(xs.length).toBe(2);
+    expect(Math.min(...xs)).toBeGreaterThan(0);
+    expect(Math.max(...xs)).toBeLessThan(800);
+    expect(xs.some((x) => x < 400)).toBe(true);
+    expect(xs.some((x) => x > 400)).toBe(true);
+  });
 });
