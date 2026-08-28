@@ -27,6 +27,8 @@ public class SegmentBufferPoolTests
         var snapshot = pool.Snapshot();
         Assert.Equal(512 * 1024, snapshot.IdleBytes);
         Assert.Equal(256 * 1024, snapshot.TrimmedBytes);
+        Assert.Equal(256 * 1024, snapshot.CapacityEvictedBytes);
+        Assert.Equal(snapshot.IdleBytes, snapshot.SizeClasses.Sum(c => c.IdleBytes));
         Assert.Equal(2, snapshot.SizeClasses.Single().BufferCount);
     }
 
@@ -65,6 +67,7 @@ public class SegmentBufferPoolTests
 
         Assert.NotSame(first, second);
         Assert.Equal(first.Length, pool.Snapshot().TrimmedBytes);
+        Assert.Equal(first.Length, pool.Snapshot().StaleExpiredBytes);
         pool.Return(second);
     }
 
@@ -84,6 +87,7 @@ public class SegmentBufferPoolTests
         var snapshot = pool.Snapshot();
         Assert.Equal(2 * 256 * 1024, snapshot.IdleBytes);
         Assert.Equal(256 * 1024, snapshot.TrimmedBytes);
+        Assert.Equal(256 * 1024, snapshot.ClassLimitDroppedBytes);
     }
 
     [Fact]
@@ -238,6 +242,237 @@ public class SegmentBufferPoolTests
         {
             custom.Return(customBuffer);
             SharedArrayPoolAdapter.Instance.Return(sharedBuffer);
+        }
+    }
+
+    [Fact]
+    public void Rent_ReusesIdleBufferAfterLongGap()
+    {
+        var clock = new ManualTimeProvider();
+        var pool = new SegmentBufferPool(
+            maxIdleBytes: 4 * 1024 * 1024,
+            retentionPolicy: SegmentBufferRetentionPolicy.CapacityOnly,
+            timeProvider: clock);
+        var first = pool.Rent(750_000);
+        pool.Return(first);
+        clock.Advance(TimeSpan.FromDays(1));
+
+        var second = pool.Rent(750_000);
+
+        Assert.Same(first, second);
+        var snapshot = pool.Snapshot();
+        Assert.Equal(1, snapshot.AllocationCount);
+        Assert.Equal(1, snapshot.ReuseCount);
+        Assert.Equal(0, snapshot.TrimmedBytes);
+        pool.Return(second);
+    }
+
+    [Fact]
+    public void Return_AllowsOneClassToExceedLegacy64BufferLimitWithinByteCap()
+    {
+        const int bufferSize = 256 * 1024;
+        const int count = 65;
+        var pool = new SegmentBufferPool(
+            maxIdleBytes: 32 * 1024 * 1024,
+            retentionPolicy: SegmentBufferRetentionPolicy.CapacityOnly);
+        var buffers = Enumerable.Range(0, count).Select(_ => pool.Rent(bufferSize)).ToArray();
+        foreach (var buffer in buffers)
+            pool.Return(buffer);
+
+        var idle = pool.Snapshot();
+        Assert.Equal(count, idle.SizeClasses.Single().BufferCount);
+        Assert.Equal(0, idle.TrimmedBytes);
+
+        var reused = Enumerable.Range(0, count).Select(_ => pool.Rent(bufferSize)).ToArray();
+        var snapshot = pool.Snapshot();
+        Assert.Equal(count, snapshot.AllocationCount);
+        Assert.Equal(count, snapshot.ReuseCount);
+        Assert.Equal(0, snapshot.TrimmedBytes);
+        foreach (var buffer in reused)
+            pool.Return(buffer);
+    }
+
+    [Fact]
+    public void Return_EvictsGloballyOldestClassForCapacity()
+    {
+        var pool = new SegmentBufferPool(
+            maxIdleBytes: 768 * 1024,
+            retentionPolicy: SegmentBufferRetentionPolicy.CapacityOnly);
+        var firstSmall = pool.Rent(256 * 1024);
+        var medium = pool.Rent(512 * 1024);
+        var secondSmall = pool.Rent(256 * 1024);
+        pool.Return(firstSmall);
+        pool.Return(medium);
+        pool.Return(secondSmall);
+
+        var snapshot = pool.Snapshot();
+        Assert.Equal(768 * 1024, snapshot.IdleBytes);
+        Assert.Equal(256 * 1024, snapshot.CapacityEvictedBytes);
+        Assert.Equal(256 * 1024, snapshot.TrimmedBytes);
+
+        var reusedMedium = pool.Rent(512 * 1024);
+        var reusedSmall = pool.Rent(256 * 1024);
+        Assert.Same(medium, reusedMedium);
+        Assert.Same(secondSmall, reusedSmall);
+        Assert.NotSame(firstSmall, reusedSmall);
+        pool.Return(reusedMedium);
+        pool.Return(reusedSmall);
+    }
+
+    [Fact]
+    public void Return_DropsBufferLargerThanEntireCap()
+    {
+        var pool = new SegmentBufferPool(maxIdleBytes: 100_000);
+        var buffer = pool.Rent(256 * 1024);
+        pool.Return(buffer);
+
+        var snapshot = pool.Snapshot();
+        Assert.Equal(0, snapshot.IdleBytes);
+        Assert.Equal(buffer.Length, snapshot.DroppedTooLargeBytes);
+        Assert.Equal(buffer.Length, snapshot.TrimmedBytes);
+        Assert.Empty(snapshot.SizeClasses);
+        Assert.Empty(snapshot.LifetimeSizeClasses);
+    }
+
+    [Fact]
+    public void LifetimeSnapshot_IncludesPoolableClassWithZeroIdleBuffers()
+    {
+        var pool = new SegmentBufferPool(maxIdleBytes: 4 * 1024 * 1024);
+        var first = pool.Rent(256 * 1024);
+        pool.Return(first);
+        var second = pool.Rent(256 * 1024);
+
+        var snapshot = pool.Snapshot();
+        Assert.Empty(snapshot.SizeClasses);
+        var lifetime = Assert.Single(snapshot.LifetimeSizeClasses);
+        Assert.Equal(first.Length, lifetime.BufferSize);
+        Assert.Equal(2, lifetime.RentCount);
+        Assert.Equal(1, lifetime.ReturnCount);
+        Assert.Equal(1, lifetime.ReuseCount);
+        Assert.Equal(1, lifetime.AllocationCount);
+        pool.Return(second);
+    }
+
+    [Fact]
+    public void Snapshot_ReasonCountersSumToTrimmedBytes()
+    {
+        var clock = new ManualTimeProvider();
+        var pool = new SegmentBufferPool(
+            maxIdleBytes: 512 * 1024,
+            staleAfter: TimeSpan.FromMinutes(1),
+            maxBuffersPerClass: 1,
+            timeProvider: clock);
+
+        var stale = pool.Rent(256 * 1024);
+        pool.Return(stale);
+        clock.Advance(TimeSpan.FromMinutes(2));
+        var replacement = pool.Rent(256 * 1024);
+        pool.Return(replacement);
+
+        var classKeep = pool.Rent(256 * 1024);
+        var classDrop = pool.Rent(256 * 1024);
+        pool.Return(classKeep);
+        pool.Return(classDrop);
+
+        var capacityIncoming = pool.Rent(512 * 1024);
+        pool.Return(capacityIncoming);
+
+        var tooLarge = pool.Rent(768 * 1024);
+        pool.Return(tooLarge);
+
+        var snapshot = pool.Snapshot();
+        Assert.Equal(replacement.Length, snapshot.StaleExpiredBytes);
+        Assert.Equal(classDrop.Length, snapshot.ClassLimitDroppedBytes);
+        Assert.Equal(classKeep.Length, snapshot.CapacityEvictedBytes);
+        Assert.Equal(tooLarge.Length, snapshot.DroppedTooLargeBytes);
+        Assert.Equal(
+            snapshot.StaleExpiredBytes
+            + snapshot.ClassLimitDroppedBytes
+            + snapshot.CapacityEvictedBytes
+            + snapshot.DroppedTooLargeBytes,
+            snapshot.TrimmedBytes);
+        Assert.Equal(512 * 1024, snapshot.MaxIdleBytes);
+        Assert.True(snapshot.IdleBytes <= snapshot.MaxIdleBytes);
+        Assert.DoesNotContain(snapshot.LifetimeSizeClasses, c => c.BufferSize > snapshot.MaxIdleBytes);
+    }
+
+    [Fact]
+    public void ConcurrentReturns_NeverExceedCapAndBalanceReasonCounters()
+    {
+        const int size = 256 * 1024;
+        const int count = 8;
+        const int capCount = 4;
+        var pool = new SegmentBufferPool(
+            maxIdleBytes: capCount * (long)size,
+            retentionPolicy: SegmentBufferRetentionPolicy.CapacityOnly);
+        var buffers = Enumerable.Range(0, count).Select(_ => pool.Rent(size)).ToArray();
+        var barrier = new Barrier(count);
+        Parallel.For(0, count, i =>
+        {
+            barrier.SignalAndWait();
+            pool.Return(buffers[i]);
+        });
+
+        var snapshot = pool.Snapshot();
+        Assert.Equal(capCount * (long)size, snapshot.IdleBytes);
+        Assert.Equal((count - capCount) * (long)size, snapshot.CapacityEvictedBytes);
+        Assert.Equal(0, snapshot.StaleExpiredBytes);
+        Assert.Equal(0, snapshot.ClassLimitDroppedBytes);
+        Assert.Equal(0, snapshot.DroppedTooLargeBytes);
+        Assert.Equal(snapshot.CapacityEvictedBytes, snapshot.TrimmedBytes);
+        Assert.Equal(snapshot.IdleBytes, snapshot.SizeClasses.Sum(c => c.IdleBytes));
+        Assert.True(snapshot.IdleBytes <= snapshot.MaxIdleBytes);
+        Assert.Equal(count, snapshot.ReturnCount);
+    }
+
+    [Fact]
+    public void ConcurrentDuplicateReturn_IsAcceptedExactlyOnce()
+    {
+        var pool = new SegmentBufferPool(maxIdleBytes: 1024 * 1024);
+        var buffer = pool.Rent(256 * 1024);
+        var barrier = new Barrier(2);
+        Parallel.For(0, 2, _ =>
+        {
+            barrier.SignalAndWait();
+            pool.Return(buffer);
+        });
+
+        var snapshot = pool.Snapshot();
+        Assert.Equal(1, snapshot.ReturnCount);
+        Assert.Equal(1, snapshot.RejectedReturnCount);
+        Assert.Equal(1, snapshot.SizeClasses.Single().BufferCount);
+        Assert.Equal(buffer.Length, snapshot.IdleBytes);
+    }
+
+    [Fact]
+    public void CapacityOnly_DoesNotReadWallClock()
+    {
+        var spy = new ThrowingUtcNowProvider();
+        var pool = new SegmentBufferPool(
+            maxIdleBytes: 512 * 1024,
+            retentionPolicy: SegmentBufferRetentionPolicy.CapacityOnly,
+            timeProvider: spy);
+        var first = pool.Rent(256 * 1024);
+        var second = pool.Rent(256 * 1024);
+        var third = pool.Rent(512 * 1024);
+        pool.Return(first);
+        pool.Return(second);
+        pool.Return(third);
+        var reused = pool.Rent(512 * 1024);
+        pool.Return(reused);
+
+        Assert.Equal(0, spy.UtcNowCalls);
+        Assert.Same(third, reused);
+        Assert.True(pool.Snapshot().CapacityEvictedBytes > 0);
+    }
+
+    private sealed class ThrowingUtcNowProvider : TimeProvider
+    {
+        public int UtcNowCalls;
+        public override DateTimeOffset GetUtcNow()
+        {
+            Interlocked.Increment(ref UtcNowCalls);
+            throw new InvalidOperationException("CapacityOnly must not read wall-clock time.");
         }
     }
 

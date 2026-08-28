@@ -47,7 +47,13 @@ memory rather than `RLIMIT_AS`.
 Set these values before the backend starts. Confirm the active values in
 Settings → Support → downloaded `environment.json`: `runtime.addressSpaceLimitBytes`
 is the finite `RLIMIT_AS` when Linux exposes one, and the `gc` section reports
-the region range, size, hard limit, committed heap, and detected heap limit.
+the region range, size, hard limit, committed heap, detected heap limit,
+collection identity, memory-load, and LOH-specific hard limits.
+
+`DOTNET_GCConserveMemory` is a restart-required runtime canary, not an
+InfiniDysk default. The image does not set it. A value in the 5–7 range can
+reduce LOH fragmentation at the cost of more frequent collections and longer
+pauses; measure playback and import latency before keeping it.
 
 ## Repeated 64 MiB `PROT_NONE` mappings
 

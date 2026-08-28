@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.Globalization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Services.Diagnostics;
@@ -10,44 +10,39 @@ namespace NzbWebDAV.Api.Controllers.GcDiagnostics;
 [Route("api/gc-diagnostics")]
 public sealed class GcDiagnosticsController(
     InFlightArticleBudget inFlightArticleBudget,
-    GcDiagnosticsStore store) : BaseApiController
+    GcDiagnosticsStore store,
+    IGcDiagnosticsExecutor executor) : PostOnlyApiController
 {
     protected override Task<IActionResult> HandleRequest()
     {
-        if (!HttpMethods.IsPost(HttpContext.Request.Method))
+        var admission = store.TryBegin();
+        if (admission.Status != GcDiagnosticsAdmission.Started)
         {
-            return Task.FromResult<IActionResult>(
-                StatusCode(StatusCodes.Status405MethodNotAllowed,
-                    new BaseApiResponse { Status = false, Error = "POST required" }));
-        }
+            if (admission.RetryAfterSeconds is { } retryAfter)
+                Response.Headers.RetryAfter = retryAfter.ToString(CultureInfo.InvariantCulture);
 
-        if (!store.TryBegin())
-        {
+            var error = admission.Status == GcDiagnosticsAdmission.AlreadyRunning
+                ? "A GC diagnostics run is already in progress."
+                : "A GC diagnostics run recently completed. Wait before retrying.";
             return Task.FromResult<IActionResult>(
                 StatusCode(StatusCodes.Status429TooManyRequests,
                     new BaseApiResponse
                     {
                         Status = false,
-                        Error = "A GC diagnostics run is already in progress.",
+                        Error = error,
                     }));
         }
 
         try
         {
-            var before = GcSnapshotBuilder.Capture();
-            var stopwatch = Stopwatch.StartNew();
-            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-            GC.WaitForPendingFinalizers();
-            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-            stopwatch.Stop();
-
+            var execution = executor.Execute();
             var bufferPool = BufferPoolDiagnostics.Shared.Snapshot();
             var segmentPool = (PooledBufferStream.DefaultPool as SegmentBufferPool)?.Snapshot();
             var result = new GcDiagnosticsResult(
                 DateTimeOffset.UtcNow,
-                before,
-                GcSnapshotBuilder.Capture(),
-                stopwatch.ElapsedMilliseconds,
+                execution.Before,
+                execution.After,
+                execution.PauseMs,
                 new GcBufferRetention(
                     inFlightArticleBudget.LeasedBytes,
                     inFlightArticleBudget.CapBytes,
@@ -59,7 +54,11 @@ public sealed class GcDiagnosticsController(
                     bufferPool.RequestedBytes,
                     bufferPool.RentedBytes,
                     bufferPool.BucketWasteBytes),
-                segmentPool);
+                segmentPool)
+            {
+                CollectionMode = "Aggressive",
+                FullBlockingCollectionsRequested = 2,
+            };
             store.Store(result);
 
             return Task.FromResult<IActionResult>(Ok(GcDiagnosticsResponse.FromResult(result)));

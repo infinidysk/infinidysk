@@ -30,6 +30,7 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
         if (!operation.Responses.ContainsKey("200"))
             operation.Responses["200"] = new OpenApiResponse { Description = "Success." };
         ApplyMissingPayloadContractOverrides(operation, route, verb);
+        ApplyGcDiagnosticsContractOverrides(operation, route, verb);
         AddProblemResponse(operation, "400", "Bad request.");
         AddProblemResponse(operation, "401", "Unauthorized.");
         AddProblemResponse(operation, "403", "Forbidden.");
@@ -135,6 +136,44 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
             Type = JsonSchemaType.Object,
             Properties = properties,
             Required = required,
+        };
+    }
+
+    private static void ApplyGcDiagnosticsContractOverrides(
+        OpenApiOperation operation,
+        string route,
+        string verb)
+    {
+        if (verb != "post" || route != "api/gc-diagnostics")
+            return;
+
+        operation.Responses ??= [];
+        operation.Responses["429"] = new OpenApiResponse
+        {
+            Description =
+                "Too many requests. Concurrent execution and the 10-minute cooldown both return 429. " +
+                "Retry-After is a non-negative integer number of seconds. Cooldown rejections always " +
+                "include it; concurrent rejections include it when a remaining wait is known.",
+            Headers = new Dictionary<string, IOpenApiHeader>
+            {
+                ["Retry-After"] = new OpenApiHeader
+                {
+                    Description = "Non-negative integer number of seconds to wait before retrying.",
+                    Required = false,
+                    Schema = new OpenApiSchema
+                    {
+                        Type = JsonSchemaType.Integer,
+                        Minimum = "0",
+                    },
+                },
+            },
+            Content = new Dictionary<string, OpenApiMediaType>
+            {
+                ["application/problem+json"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchemaReference("ProblemDetails"),
+                },
+            },
         };
     }
 

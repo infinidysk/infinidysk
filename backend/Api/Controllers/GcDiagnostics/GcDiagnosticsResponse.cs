@@ -12,6 +12,8 @@ public sealed class GcDiagnosticsResponse : BaseApiResponse
     public required GcBufferRetention Retention { get; init; }
     public SegmentBufferPoolSnapshot? SegmentBufferPool { get; init; }
     public required string Warning { get; init; }
+    public required string CollectionMode { get; init; }
+    public required int FullBlockingCollectionsRequested { get; init; }
 
     internal static GcDiagnosticsResponse FromResult(GcDiagnosticsResult result) => new()
     {
@@ -21,6 +23,10 @@ public sealed class GcDiagnosticsResponse : BaseApiResponse
         PauseMs = result.PauseMs,
         Retention = result.Retention,
         SegmentBufferPool = result.SegmentBufferPool,
-        Warning = "Forced a blocking compacting GC; managed threads were paused. Do not poll this endpoint.",
+        Warning =
+            "Forced two aggressive full blocking collections; .NET 10 compacts the SOH and LOH for this mode, " +
+            "and managed threads were paused. Do not poll this endpoint.",
+        CollectionMode = result.CollectionMode,
+        FullBlockingCollectionsRequested = result.FullBlockingCollectionsRequested,
     };
 }

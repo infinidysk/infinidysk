@@ -59,6 +59,15 @@ public sealed class AdminOpenApiIntegrationTests(NzbDavWebApplicationFactory fac
             Assert.False(paths.TryGetProperty("/api/search/{token}/lookup", out _));
             Assert.False(paths.TryGetProperty("/api/download-support-pack", out _));
 
+            Assert.True(paths.TryGetProperty("/api/gc-diagnostics", out var gcDiagnostics));
+            Assert.False(gcDiagnostics.TryGetProperty("get", out _));
+            var gcPost = gcDiagnostics.GetProperty("post");
+            Assert.True(gcPost.GetProperty("responses").TryGetProperty("429", out var tooMany));
+            Assert.True(tooMany.GetProperty("headers").TryGetProperty("Retry-After", out _));
+            Assert.Equal(
+                "application/problem+json",
+                tooMany.GetProperty("content").EnumerateObject().First().Name);
+
             var apiKey = root.GetProperty("components")
                 .GetProperty("securitySchemes")
                 .GetProperty("ApiKey");
