@@ -970,7 +970,7 @@ export function UsenetSettings({
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
               <Tooltip
                 content="Prefer providers in drag order. While off, all enabled providers share work in the pool. Thinly-spared primaries (at most 25% of their pool free) yield to idler same-tier peers; larger Provider Connection Limits alone do not outrank priority."
-                className="min-w-0"
+                className="min-w-0 tooltip-start"
               >
                 <Toggle
                   id="cascade-enabled"
@@ -1018,7 +1018,10 @@ export function UsenetSettings({
             />
 
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-              <Tooltip content="Batch first-segment BODY requests during queue imports and provider Auto-tune benchmarks. Does not affect WebDAV playback — streaming batching lives under Settings → Streaming.">
+              <Tooltip
+                className="tooltip-start"
+                content="Batch first-segment BODY requests during queue imports and provider Auto-tune benchmarks. Does not affect WebDAV playback — streaming batching lives under Settings → Streaming."
+              >
                 <Toggle
                   id="pipelining-enabled"
                   className="cursor-pointer gap-2 p-0"
@@ -1060,7 +1063,10 @@ export function UsenetSettings({
             />
 
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-              <Tooltip content="After a provider (or storage group) reports a definitive article miss (430/451), skip re-probing that provider for the same article until the TTL expires. Default 300s (30–86400).">
+              <Tooltip
+                className="tooltip-start"
+                content="After a provider (or storage group) reports a definitive article miss (430/451), skip re-probing that provider for the same article until the TTL expires. Default 300s (30–86400)."
+              >
                 <div className="flex flex-col items-start gap-1">
                   <Label
                     htmlFor="article-miss-cache-ttl"
@@ -1083,7 +1089,10 @@ export function UsenetSettings({
                   />
                 </div>
               </Tooltip>
-              <Tooltip content="Max negative-cache entries before oldest are evicted. Default 10000 (100–1000000).">
+              <Tooltip
+                className="tooltip-start"
+                content="Max negative-cache entries before oldest are evicted. Default 10000 (100–1000000)."
+              >
                 <div className="flex flex-col items-start gap-1">
                   <Label
                     htmlFor="article-miss-cache-max"
@@ -1974,7 +1983,10 @@ function ProviderModal({
 
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              <Tooltip content="Encrypt the NNTP connection. Prefer port 563 with SSL enabled; without SSL credentials are sent in cleartext.">
+              <Tooltip
+                className="tooltip-start"
+                content="Encrypt the NNTP connection. Prefer port 563 with SSL enabled; without SSL credentials are sent in cleartext."
+              >
                 <Toggle
                   id="provider-ssl"
                   className="cursor-pointer gap-2 p-0"

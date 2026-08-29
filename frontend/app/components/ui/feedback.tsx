@@ -48,10 +48,10 @@ export function Tooltip({
   className?: string;
 }) {
   return (
-    <span
-      className={`tooltip ${tooltipPlacementClass[placement]} ${className}`.trim()}
-      data-tip={content}
-    >
+    <span className={`tooltip ${tooltipPlacementClass[placement]} ${className}`.trim()}>
+      <span className="tooltip-content z-50 w-72 max-w-[calc(100vw-2rem)] whitespace-normal text-left text-xs leading-relaxed">
+        {content}
+      </span>
       {children}
     </span>
   );

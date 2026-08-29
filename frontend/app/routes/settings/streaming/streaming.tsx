@@ -121,7 +121,10 @@ export function StreamingSettings({
           ]}
         >
           <div className="space-y-2">
-            <Tooltip content="By default, the budget above is shared across streams. Enable this to give each concurrent stream its own budget, sized by the preset below. Provider limits still cap total connections.">
+            <Tooltip
+              className="tooltip-start"
+              content="By default, the budget above is shared across streams. Enable this to give each concurrent stream its own budget, sized by the preset below. Provider limits still cap total connections."
+            >
               <Toggle
                 id="max-download-connections-per-stream-checkbox"
                 className="cursor-pointer gap-2 p-0"
@@ -676,7 +679,10 @@ export function StreamingSettings({
         </ManagedSetting>
 
         <ManagedSetting configKey="usenet.pipelined-body-requests">
-          <Tooltip content="Fetch articles in small pipelined BODY batches for smoother WebDAV playback. Queue imports use the separate Queue pipelining toggle under Usenet settings.">
+          <Tooltip
+            className="tooltip-start"
+            content="Fetch articles in small pipelined BODY batches for smoother WebDAV playback. Queue imports use the separate Queue pipelining toggle under Usenet settings."
+          >
             <Toggle
               id="pipelined-body-requests-checkbox"
               className="cursor-pointer gap-2 p-0"

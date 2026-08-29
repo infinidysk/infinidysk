@@ -32,14 +32,14 @@ export function IndexerApiUsage({ rows }: IndexerApiUsageProps) {
             No enabled indexers configured.
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table table-sm min-w-[560px]">
+          <div className="overflow-x-auto max-sm:overflow-visible">
+            <table className="table table-sm w-full max-sm:table-fixed sm:min-w-[560px]">
               <thead>
                 <tr>
-                  <th>Indexer</th>
-                  <th className="min-w-[180px]">API hits</th>
-                  <th className="min-w-[180px]">Downloads</th>
-                  <th>Next reset</th>
+                  <th className="max-sm:w-[30%]">Indexer</th>
+                  <th className="min-w-[180px] max-sm:min-w-0">API hits</th>
+                  <th className="min-w-[180px] max-sm:min-w-0">Downloads</th>
+                  <th className="max-sm:hidden">Next reset</th>
                 </tr>
               </thead>
               <tbody>
@@ -66,7 +66,7 @@ export function IndexerApiUsage({ rows }: IndexerApiUsageProps) {
                         label={`${r.name} downloads`}
                       />
                     </td>
-                    <td className="whitespace-nowrap font-mono text-xs tabular-nums text-base-content/50">
+                    <td className="hidden whitespace-nowrap font-mono text-xs tabular-nums text-base-content/50 max-sm:hidden sm:table-cell">
                       {formatReset(r.resetAtMs, r.resetHourUtc, now)}
                     </td>
                   </tr>

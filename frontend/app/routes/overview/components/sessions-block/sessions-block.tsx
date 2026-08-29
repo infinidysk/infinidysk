@@ -25,7 +25,7 @@ export function SessionsBlock({ sessions, window }: SessionsBlockProps) {
       {sessions.count === 0 ? (
         <p className="text-sm text-base-content/50">No completed read sessions yet.</p>
       ) : (
-        <div className="stats stats-vertical w-full border border-base-content/10 bg-base-100 sm:stats-horizontal">
+        <div className="stats w-full border border-base-content/10 bg-base-content/10 max-lg:grid max-lg:grid-flow-row max-lg:grid-cols-2 max-lg:gap-px sm:max-lg:grid-cols-3 lg:bg-base-100">
           <Stat label="Sessions" value={formatNumber(sessions.count)} />
           <Stat label="Bytes served" value={formatBytes(sessions.totalBytesServed)} />
           <Stat label="Avg duration" value={formatDuration(sessions.avgDurationMs)} />
@@ -39,9 +39,9 @@ export function SessionsBlock({ sessions, window }: SessionsBlockProps) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="stat px-3 py-3">
-      <div className="stat-title text-xs">{label}</div>
-      <div className="stat-value font-mono text-xl md:text-2xl">{value}</div>
+    <div className="stat min-w-0 bg-base-100 px-3 py-3">
+      <div className="stat-title whitespace-normal text-xs">{label}</div>
+      <div className="stat-value break-words font-mono text-xl md:text-2xl">{value}</div>
     </div>
   );
 }

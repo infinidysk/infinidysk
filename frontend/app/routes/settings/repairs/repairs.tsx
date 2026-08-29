@@ -66,7 +66,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
           contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
         >
           <ManagedSetting configKey="repair.enable">
-            <Tooltip placement="bottom" content={helpText}>
+            <Tooltip placement="bottom" className="tooltip-start" content={helpText}>
               <Toggle
                 id="enable-repairs-checkbox"
                 className="cursor-pointer gap-2 p-0"
@@ -276,7 +276,10 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
             </div>
           </ManagedSetting>
           <ManagedSetting configKey="repair.auto-remove-unlinked-only">
-            <Tooltip content="When enabled (default), library-linked releases are removed and blocklisted through Radarr/Sonarr. Disable to force-delete linked files after the failure threshold.">
+            <Tooltip
+              className="tooltip-start"
+              content="When enabled (default), library-linked releases are removed and blocklisted through Radarr/Sonarr. Disable to force-delete linked files after the failure threshold."
+            >
               <Toggle
                 id="auto-remove-unlinked-only-checkbox"
                 className="cursor-pointer gap-2 p-0"

@@ -54,7 +54,7 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
           </div>
         </div>
 
-        <div className="stats stats-vertical w-full border border-base-content/10 sm:stats-horizontal">
+        <div className="stats w-full border border-base-content/10 bg-base-content/10 max-lg:grid max-lg:grid-flow-row max-lg:grid-cols-2 max-lg:gap-px sm:max-lg:grid-cols-3 lg:bg-base-100">
           <MiniStat label="Online" value={`${summary.instancesOnline}/${summary.instancesTotal}`} />
           <MiniStat label="Imports" value={formatNumber(summary.importsCompleted)} />
           <MiniStat label="Median handoff" value={formatDurationMs(summary.medianHandoffMs)} />
@@ -68,15 +68,14 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
         {instances.length === 0 ? (
           <p className="py-6 text-center text-xs text-base-content/50">No imports recorded yet.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table table-sm min-w-[720px]">
+          <div className="overflow-x-auto max-sm:overflow-visible">
+            <table className="table table-sm w-full max-sm:table-fixed sm:min-w-[640px]">
               <thead>
                 <tr>
-                  <th>Instance</th>
-                  <th>Status</th>
+                  <th className="max-sm:w-[32%]">Instance</th>
                   <th>Imports</th>
-                  <th>Median</th>
-                  <th>P95</th>
+                  <th className="max-sm:hidden">Median</th>
+                  <th className="max-sm:hidden">P95</th>
                   <th>
                     <Tooltip content="All items currently in this Arr instance's queue.">
                       <span className="cursor-help">Queue</span>
@@ -99,20 +98,18 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
                           {instance.name}
                         </span>
                       </Tooltip>
-                      <span className="mt-0.5 block text-[11px] font-normal capitalize text-base-content/45">
-                        {instance.appType}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge badge-sm ${STATUS_BADGE[instance.status]}`}>
-                        {instance.status}
+                      <span className="mt-0.5 flex items-center gap-1.5 text-[11px] font-normal text-base-content/45">
+                        <span className="capitalize">{instance.appType}</span>
+                        <span className={`badge badge-xs ${STATUS_BADGE[instance.status]}`}>
+                          {instance.status}
+                        </span>
                       </span>
                     </td>
                     <td className="font-mono tabular-nums">{formatNumber(instance.imports)}</td>
-                    <td className="font-mono tabular-nums">
+                    <td className="hidden font-mono tabular-nums sm:table-cell">
                       {formatDurationMs(instance.medianHandoffMs)}
                     </td>
-                    <td className="font-mono tabular-nums">
+                    <td className="hidden font-mono tabular-nums sm:table-cell">
                       {formatDurationMs(instance.p95HandoffMs)}
                     </td>
                     <td className="font-mono tabular-nums">{formatNumber(instance.queueCount)}</td>
@@ -179,9 +176,11 @@ function MiniStat({
   warning?: boolean;
 }) {
   return (
-    <div className="stat py-2">
-      <div className="stat-title text-xs">{label}</div>
-      <div className={`stat-value font-mono text-lg ${warning ? "text-warning" : ""}`}>{value}</div>
+    <div className="stat min-w-0 bg-base-100 px-3 py-2">
+      <div className="stat-title whitespace-normal text-xs">{label}</div>
+      <div className={`stat-value break-words font-mono text-lg ${warning ? "text-warning" : ""}`}>
+        {value}
+      </div>
     </div>
   );
 }
