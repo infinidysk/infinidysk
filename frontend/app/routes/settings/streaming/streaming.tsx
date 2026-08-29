@@ -522,7 +522,7 @@ export function StreamingSettings({
             </label>
             <Input
               {...className([
-                "w-full",
+                "w-full max-w-48",
                 !isValidUsenetBandwidthLimitMbps(bandwidthLimit) && "input-error",
               ])}
               type="text"
