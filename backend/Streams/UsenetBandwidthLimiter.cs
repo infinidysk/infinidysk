@@ -41,14 +41,17 @@ public sealed class UsenetBandwidthLimiter
                 return;
             }
 
-            _availableTokens = previous <= 0
-                ? BurstCapacityLocked()
-                : Math.Min(_availableTokens, BurstCapacityLocked());
+            var burst = BurstCapacityLocked();
+            _availableTokens = previous <= 0 ? burst : Math.Min(_availableTokens, burst);
             PumpLocked();
         }
     }
 
-    /// <summary>Waits until <paramref name="bytes"/> tokens are available, then charges them.</summary>
+    /// <summary>
+    /// Waits until <paramref name="bytes"/> tokens are available, then charges them.
+    /// Requests larger than the 250ms burst are granted in burst-sized chunks so a
+    /// low rate cap stays effective for a single payload.
+    /// </summary>
     public ValueTask AcquireAsync(int bytes, CancellationToken cancellationToken)
     {
         if (bytes <= 0 || Volatile.Read(ref _bytesPerSecond) <= 0)
@@ -63,13 +66,18 @@ public sealed class UsenetBandwidthLimiter
                 return ValueTask.CompletedTask;
 
             RefillLocked();
-            if (_waiters.Count == 0 && TryGrantLocked(bytes))
+            var burst = BurstCapacityLocked();
+            if (_waiters.Count == 0 && bytes <= burst && _availableTokens >= bytes
+                && TryGrantChunkLocked(bytes) == bytes)
                 return ValueTask.CompletedTask;
 
             waiter = new Waiter(this, bytes);
             waiter.Node = _waiters.AddLast(waiter);
             PumpLocked();
         }
+
+        if (waiter.Completion.Task.IsCompleted)
+            return new ValueTask(waiter.Completion.Task);
 
         if (cancellationToken.CanBeCanceled)
         {
@@ -80,21 +88,39 @@ public sealed class UsenetBandwidthLimiter
         return new ValueTask(waiter.Completion.Task);
     }
 
-    private bool TryGrantLocked(int bytes)
+    private int TryGrantChunkLocked(int remaining)
     {
         var rate = Volatile.Read(ref _bytesPerSecond);
         if (rate <= 0)
-            return true;
+            return remaining;
 
         var burst = BurstCapacityLocked();
-        if (_availableTokens >= bytes || (bytes > burst && _availableTokens >= burst - 0.001))
+        var grant = (int)Math.Min(remaining, Math.Min(_availableTokens, burst));
+        if (grant <= 0)
+            return 0;
+
+        _availableTokens -= grant;
+        Interlocked.Add(ref _totalChargedBytes, grant);
+        return grant;
+    }
+
+    private bool TryGrantWaiterLocked(Waiter waiter)
+    {
+        if (Volatile.Read(ref _bytesPerSecond) <= 0)
         {
-            _availableTokens -= bytes;
-            Interlocked.Add(ref _totalChargedBytes, bytes);
+            waiter.Remaining = 0;
             return true;
         }
 
-        return false;
+        while (waiter.Remaining > 0)
+        {
+            var granted = TryGrantChunkLocked(waiter.Remaining);
+            if (granted <= 0)
+                return false;
+            waiter.Remaining -= granted;
+        }
+
+        return true;
     }
 
     private void PumpLocked()
@@ -109,7 +135,7 @@ public sealed class UsenetBandwidthLimiter
                 continue;
             }
 
-            if (Volatile.Read(ref _bytesPerSecond) <= 0 || TryGrantLocked(waiter.Bytes))
+            if (Volatile.Read(ref _bytesPerSecond) <= 0 || TryGrantWaiterLocked(waiter))
             {
                 RemoveWaiterLocked(waiter);
                 waiter.TryComplete();
@@ -131,7 +157,7 @@ public sealed class UsenetBandwidthLimiter
             return;
         }
 
-        var needed = Math.Max(0, waiter.Bytes - _availableTokens);
+        var needed = Math.Max(0, Math.Min(waiter.Remaining, BurstCapacityLocked()) - _availableTokens);
         var seconds = needed / rate;
         var delay = TimeSpan.FromSeconds(Math.Clamp(seconds, 0.001, 60));
         _headTimer = _timeProvider.CreateTimer(
@@ -165,7 +191,7 @@ public sealed class UsenetBandwidthLimiter
     }
 
     private double BurstCapacityLocked() =>
-        Math.Max(64 * 1024, Volatile.Read(ref _bytesPerSecond) * 0.25);
+        Math.Max(1, Volatile.Read(ref _bytesPerSecond) * 0.25);
 
     private void CompleteAllWaitersLocked()
     {
@@ -207,7 +233,7 @@ public sealed class UsenetBandwidthLimiter
     private sealed class Waiter
     {
         private readonly UsenetBandwidthLimiter _owner;
-        public readonly int Bytes;
+        public int Remaining;
         public readonly TaskCompletionSource Completion = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
         public LinkedListNode<Waiter>? Node;
@@ -216,7 +242,7 @@ public sealed class UsenetBandwidthLimiter
         public Waiter(UsenetBandwidthLimiter owner, int bytes)
         {
             _owner = owner;
-            Bytes = bytes;
+            Remaining = bytes;
         }
 
         public void TryComplete()

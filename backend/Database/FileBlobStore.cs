@@ -108,6 +108,23 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         return File.Exists(blobPath) ? File.OpenRead(blobPath) : null;
     }
 
+    public bool Exists(Guid id)
+    {
+        try
+        {
+            var attributes = File.GetAttributes(GetBlobPath(id));
+            return !attributes.HasFlag(FileAttributes.Directory);
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return false;
+        }
+    }
+
     public async Task<T?> ReadBlob<T>(Guid id)
     {
         if (_metadataCache.TryGetValue(id, out T? cached)) return cached;

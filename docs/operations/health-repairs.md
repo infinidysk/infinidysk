@@ -39,3 +39,11 @@ through the API does not add a repair-history row.
 ## Manual checks
 
 Use the Health UI / repairs flows in the app to inspect failures. Known transport issues should appear as clear warnings in logs rather than opaque crashes — see [Logs](logs-crash-dumps.md).
+
+## Re-running health checks [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+
+**Settings → Maintenance → Re-run Library Health Checks** queues a fresh background health-check
+pass over every video, audio, and archive file in the library, including files still present in
+SAB history — no history rows are deleted, and existing health-check results are kept. Checks run
+a few files at a time, pause while the download queue is processing, and can generate significant
+Usenet (STAT) traffic on large libraries. Track progress on the **Health** page.

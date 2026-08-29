@@ -9,6 +9,91 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class MultiConnectionStatsPipelinedTests
 {
     [Fact]
+    public async Task StatsPipelinedAsync_HoldsOneAdmissionLeaseForFullEnumeration()
+    {
+        var inner = new ExistsStatClient();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1, _ => ValueTask.FromResult<INntpClient>(inner));
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("stat-pipeline-admission"),
+            "stat-pipeline-admission",
+            maxTransferConnections: 1);
+
+        await using var enumerator = client.StatsPipelinedAsync(
+                ["a@example", "b@example"], depth: 8, CancellationToken.None)
+            .GetAsyncEnumerator();
+
+        Assert.True(await enumerator.MoveNextAsync());
+        var whileEnumerating = Assert.IsType<ProviderConnectionAdmissionSnapshot>(
+            client.GetConnectionAdmissionSnapshot());
+        Assert.Equal(1, whileEnumerating.ActiveMetadataOperations);
+        Assert.Equal(0, client.AvailableConnections);
+
+        Assert.True(await enumerator.MoveNextAsync());
+        Assert.False(await enumerator.MoveNextAsync());
+
+        var afterEnumeration = Assert.IsType<ProviderConnectionAdmissionSnapshot>(
+            client.GetConnectionAdmissionSnapshot());
+        Assert.Equal(0, afterEnumeration.ActiveMetadataOperations);
+        Assert.Equal(1, client.AvailableConnections);
+    }
+
+    [Fact]
+    public async Task StatsPipelinedAsync_ReleasesAdmissionLeaseAfterEnumerationFailure()
+    {
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(new ExistsStatClient(failAfterFirst: true)));
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("stat-pipeline-failure"),
+            "stat-pipeline-failure",
+            maxTransferConnections: 1);
+        await using var enumerator = client.StatsPipelinedAsync(
+                ["a@example", "b@example"], depth: 8, CancellationToken.None)
+            .GetAsyncEnumerator();
+
+        Assert.True(await enumerator.MoveNextAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await enumerator.MoveNextAsync().AsTask());
+
+        var afterFailure = Assert.IsType<ProviderConnectionAdmissionSnapshot>(
+            client.GetConnectionAdmissionSnapshot());
+        Assert.Equal(0, afterFailure.ActiveMetadataOperations);
+    }
+
+    [Fact]
+    public async Task StatsPipelinedAsync_ReleasesAdmissionLeaseAfterCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(
+                new ExistsStatClient(waitForCancellationAfterFirst: true)));
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("stat-pipeline-cancellation"),
+            "stat-pipeline-cancellation",
+            maxTransferConnections: 1);
+        await using var enumerator = client.StatsPipelinedAsync(
+                ["a@example", "b@example"], depth: 8, cancellation.Token)
+            .GetAsyncEnumerator();
+
+        Assert.True(await enumerator.MoveNextAsync());
+        await cancellation.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await enumerator.MoveNextAsync().AsTask());
+
+        var afterCancellation = Assert.IsType<ProviderConnectionAdmissionSnapshot>(
+            client.GetConnectionAdmissionSnapshot());
+        Assert.Equal(0, afterCancellation.ActiveMetadataOperations);
+    }
+
+    [Fact]
     public async Task StatsPipelinedAsync_DoesNotRecordCircuitBreakerSuccess()
     {
         var inner = new ExistsStatClient();
@@ -40,7 +125,9 @@ public class MultiConnectionStatsPipelinedTests
         Assert.True(breaker.IsTripped);
     }
 
-    private sealed class ExistsStatClient : NntpClient
+    private sealed class ExistsStatClient(
+        bool failAfterFirst = false,
+        bool waitForCancellationAfterFirst = false) : NntpClient
     {
         public override async IAsyncEnumerable<PipelinedStatResult> StatsPipelinedAsync(
             IReadOnlyList<string> segmentIds,
@@ -48,11 +135,16 @@ public class MultiConnectionStatsPipelinedTests
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
-            foreach (var segmentId in segmentIds)
+            for (var index = 0; index < segmentIds.Count; index++)
             {
+                if (index > 0 && failAfterFirst)
+                    throw new InvalidOperationException("pipeline failure");
+                if (index > 0 && waitForCancellationAfterFirst)
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+
                 yield return new PipelinedStatResult
                 {
-                    SegmentId = segmentId,
+                    SegmentId = segmentIds[index],
                     Exists = true,
                 };
             }

@@ -24,12 +24,14 @@ Database housekeeping, scheduled orphan cleanup, and one-off tools.
 
 | Task | Purpose | Caution |
 |------|---------|---------|
+| Clean Missing Payloads [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | Remove mounts whose payload blob **and** legacy metadata are both absent, and request Arr replacements | Permanent; dry run and `/config` backup required; never blocklists the release |
 | Remove Orphaned Files | Drop WebDAV files not linked from library | Permanent; dry run available. Library Directory must be the organized library, not the rclone mount |
 | Prune Completed History | Remove completed SAB history rows | History-only; mounts stay; unlinked mounts become eligible for orphan cleanup |
 | Rename Windows-Invalid Paths | Sanitize existing names | Needs Windows-safe paths; backup + dry run |
 | Convert STRM → Symlinks | Strategy migration | Needs library dir + rclone mount |
 | Recreate STRM Files | Refresh sidecars | Needs STRM strategy + completed dir + base URL |
 | Migrate blobs to blobstore | Background optimization | Usually automatic |
+| Re-run Library Health Checks [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | Fresh health-check pass over every video, audio, and archive file, including items still in SAB history | Heavy Usenet STAT traffic on large libraries; runs in the background |
 | Reset Health-Check Statistics | Clear HC history | Cannot undo |
 | Reset Overview Statistics [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | Clear overview metrics | Cannot undo |
 

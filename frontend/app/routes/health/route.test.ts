@@ -81,7 +81,7 @@ describe("health route loader", () => {
     expect(getHealthCheckHistoryMock).toHaveBeenCalledWith({
       page: 1,
       pageSize: 25,
-      repairStatus: "deleted,repaired",
+      repairStatus: "deleted,repaired,action-needed",
     });
     expect(getConfigMock).toHaveBeenCalledWith(["repair.enable"]);
   });
@@ -138,6 +138,21 @@ describe("health route loader", () => {
     });
   });
 
+  it("maps the action-needed history filter to the repair-status query parameter", async () => {
+    getHealthCheckQueueMock.mockResolvedValue({ uncheckedCount: 0, items: [] });
+    getHealthCheckHistoryMock.mockResolvedValue({ stats: [], items: [], totalCount: 0 });
+    getConfigMock.mockResolvedValue([]);
+
+    await expect(loader(loaderArgs("/health?status=action-needed"))).resolves.toMatchObject({
+      historyFilter: "action-needed",
+    });
+    expect(getHealthCheckHistoryMock).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 25,
+      repairStatus: "action-needed",
+    });
+  });
+
   it("falls back to the default filter for unknown status values", async () => {
     getHealthCheckQueueMock.mockResolvedValue({ uncheckedCount: 0, items: [] });
     getHealthCheckHistoryMock.mockResolvedValue({ stats: [], items: [], totalCount: 0 });
@@ -149,7 +164,7 @@ describe("health route loader", () => {
     expect(getHealthCheckHistoryMock).toHaveBeenCalledWith({
       page: 1,
       pageSize: 25,
-      repairStatus: "deleted,repaired",
+      repairStatus: "deleted,repaired,action-needed",
     });
   });
 

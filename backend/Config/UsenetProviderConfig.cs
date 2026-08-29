@@ -29,6 +29,12 @@ public class UsenetProviderConfig
         public required string Pass { get; set; }
         public required int MaxConnections { get; set; }
 
+        /// <summary>
+        /// Optional per-provider ceiling for BODY/ARTICLE connection leases. Null keeps
+        /// the legacy shared-pool scheduling behavior.
+        /// </summary>
+        public int? MaxTransferConnections { get; set; }
+
         public int Priority { get; set; }
 
         public int? PipeliningDepth { get; set; }

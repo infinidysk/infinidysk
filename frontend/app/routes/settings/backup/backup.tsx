@@ -402,7 +402,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ManagedSetting configKeys={["backup.schedule-enabled", "backup.schedule-time"]}>
-          <section className="overflow-hidden rounded-lg border border-base-content/10 bg-base-100">
+          <section className="rounded-lg border border-base-content/10 bg-base-100">
             <div className="flex items-start gap-3 border-b border-base-content/10 p-4">
               <span className="rounded-lg bg-primary/10 p-2 text-primary">
                 <Icon name="event_repeat" className="!text-[20px]" />
@@ -418,6 +418,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
             <div className="space-y-4 p-4">
               <Tooltip
                 placement="bottom"
+                className="tooltip-start"
                 content="Writes a logical .sql dump of all databases under the config volume once per day."
               >
                 <Toggle

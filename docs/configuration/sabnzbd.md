@@ -19,6 +19,7 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | Base URL | `general.base-url` | `http://localhost:3000` | STRM / adapter absolute URLs |
 | Ignored Files | `api.download-file-blocklist` | `*.nfo, *.par2, …` | Glob blocklist for mounts (`*` and `?`) |
 | Filter sample videos [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `api.sample-filter-enabled` | on | Discard videos with whole-word `sample`/`samples` in the filename — or in a release subfolder such as `Sample/` [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } — under 20% of the largest video in the NZB |
+| Rename a single video to the release name [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `api.rename-single-video-to-release` | on | When a job mounts exactly one video, rename it to `{release-folder}{extension}`. Season packs and collisions keep the original name. New imports only. |
 | Behavior for Duplicate NZBs | `api.duplicate-nzb-behavior` | `increment` | increment / mark-failed |
 | Trusted local hosts [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `api.addurl-trusted-hosts` | env `TRUSTED_INTERNAL_HOSTS` | SSRF allowlist for private addurl |
 | Fail downloads without video or audio | `api.ensure-importable-video` | on | Reject NZBs with no media files |

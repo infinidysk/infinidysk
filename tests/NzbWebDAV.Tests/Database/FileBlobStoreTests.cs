@@ -31,6 +31,7 @@ public sealed class FileBlobStoreTests : IDisposable
         var payload = "blob-store-roundtrip"u8.ToArray();
         await using (var input = new MemoryStream(payload))
             await _store.WriteBlob(id, input);
+        Assert.True(_store.Exists(id));
 
         await using (var output = _store.ReadBlob(id))
         {
@@ -41,6 +42,7 @@ public sealed class FileBlobStoreTests : IDisposable
         }
 
         Assert.True(_store.Delete(id));
+        Assert.False(_store.Exists(id));
         Assert.False(_store.Delete(id));
         Assert.Null(_store.ReadBlob(id));
     }

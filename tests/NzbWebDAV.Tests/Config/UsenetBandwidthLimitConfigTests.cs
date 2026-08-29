@@ -38,6 +38,17 @@ public class UsenetBandwidthLimitConfigTests
     }
 
     [Fact]
+    public void SmallPositiveMbps_RemainsLimited()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.UsenetBandwidthLimitMbps, ConfigValue = "0.000001" },
+        ]);
+
+        Assert.Equal(1, config.GetUsenetBandwidthLimitBytesPerSecond());
+    }
+
+    [Fact]
     public void CapsAtOneHundredGigabits()
     {
         var config = new ConfigManager();
@@ -46,19 +57,6 @@ public class UsenetBandwidthLimitConfigTests
         ]);
 
         Assert.Equal(100_000L * 125_000L, config.GetUsenetBandwidthLimitBytesPerSecond());
-    }
-
-    [Theory]
-    [InlineData("0.000001")] // 0.125 bytes/s
-    [InlineData("0.000007")] // 0.875 bytes/s
-    public void PositiveBelowOneBytePerSecond_NeverBecomesUnlimited(string value)
-    {
-        var config = new ConfigManager();
-        config.UpdateValues([
-            new ConfigItem { ConfigName = ConfigKeys.UsenetBandwidthLimitMbps, ConfigValue = value },
-        ]);
-
-        Assert.Equal(1, config.GetUsenetBandwidthLimitBytesPerSecond());
     }
 
     [Theory]

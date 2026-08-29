@@ -34,5 +34,8 @@ public sealed class AddressSpaceDiagnosticsTests
 
         Assert.True(snapshot.VirtualMemoryBytes is null or >= 0);
         Assert.True(snapshot.GcCommittedBytes is null or >= 0);
+        Assert.True(snapshot.WorkingSetBytes is null or >= 0);
+        Assert.True(snapshot.GcHeapHardLimitLohBytes is null or >= 0);
+        Assert.True(snapshot.GcHeapHardLimitLohPercent is null or >= 0);
     }
 }

@@ -139,6 +139,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   const [detailRetry, setDetailRetry] = useState(0);
   const [staticRetry, setStaticRetry] = useState(0);
   const [arrHealthRetry, setArrHealthRetry] = useState(0);
+  const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const { order, save, reset } = useRowOrder(DEFAULT_ROW_ORDER);
   const editModeRef = useRef(editMode);
   editModeRef.current = editMode;
@@ -153,6 +154,15 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
 
   const liveTiles = stats.tiles;
   const isLongWindow = window === "7d" || window === "30d" || window === "all";
+
+  useEffect(() => {
+    if (
+      selectedProvider &&
+      !stats.providers.some((provider) => provider.provider === selectedProvider)
+    ) {
+      setSelectedProvider(null);
+    }
+  }, [stats.providers, selectedProvider]);
 
   const applyWindow = (next: OverviewWindow) => {
     if (next === window) return;
@@ -451,7 +461,14 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         windowError && !windowLoaded ? (
           <SectionLoadError label="providers" onRetry={() => setWindowRetry((n) => n + 1)} />
         ) : windowLoaded ? (
-          <ProviderScoreboard providers={stats.providers} window={window} />
+          <ProviderScoreboard
+            providers={stats.providers}
+            window={window}
+            selectedProvider={stats.window === window ? selectedProvider : null}
+            onSelectProvider={setSelectedProvider}
+            providerSpeedBucketSizeMs={stats.providerSpeedBucketSizeMs ?? 900_000}
+            providerSpeedHistoryTruncated={stats.providerSpeedHistoryTruncated ?? false}
+          />
         ) : (
           <Skeleton height={160} />
         ),
@@ -530,6 +547,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
       arrHealth,
       arrHealthLoaded,
       arrHealthError,
+      selectedProvider,
     ],
   );
 

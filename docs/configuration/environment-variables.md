@@ -97,11 +97,12 @@ or restrict backend capabilities when enforcement is required.
 | `USENET_DISABLE_CRC_VALIDATION` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | unset | `1` skips yEnc CRC checks (emergency) |
 | `THREADPOOL_MIN_THREADS` | `max(2×CPU, 50)` | Override min worker/IOCP threads |
 | `THREADPOOL_MAX_THREADS` | `max(50×CPU, 1000)` | Override max threads |
+| `NZBDAV_SEGMENT_BUFFER_POOL` [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `bounded-legacy` | Segment-buffer retention. Unset and `bounded-legacy` keep the production age-plus-per-class policy. `bounded-capacity` is a restart-only canary that keeps the same 32–256 MiB idle-byte cap without the two-minute expiry or 64-buffer class ceiling. `shared` uses `ArrayPool<byte>.Shared` as an emergency escape hatch. Unknown values log a Warning and use `bounded-legacy`. |
 | `DOTNET_GCHeapHardLimit` | runtime default | .NET managed-heap ceiling; hexadecimal bytes |
 | `DOTNET_GCHeapHardLimitPercent` | runtime/container default | .NET managed-heap ceiling as a hexadecimal percentage |
 | `DOTNET_GCRegionRange` | runtime default | .NET regions-GC virtual reservation; hexadecimal bytes |
 | `DOTNET_GCRegionSize` | runtime default | .NET SOH region size; hexadecimal bytes |
-| `DOTNET_GCConserveMemory` | `0` | .NET heap-conservation level (0–9) |
+| `DOTNET_GCConserveMemory` | `0` | .NET heap-conservation level (0–9). Read only at process start; a change requires a restart. Higher values compact the LOH more aggressively and can increase collection frequency and pause duration — start as a measured canary, not a fleet default. |
 | `DOTNET_gcServer` | image default (`1`) | Enables (`1`) or disables (`0`) server GC |
 | `MAX_REQUEST_BODY_SIZE` | 300 MiB | Max request body bytes |
 | `QUEUE_ITEM_STUCK_MINUTES` [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since } | `5` | Minutes without queue progress before the stuck-item watchdog pauses and cancels the worker |

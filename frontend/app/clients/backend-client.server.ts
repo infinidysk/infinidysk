@@ -896,7 +896,7 @@ export type HealthCheckQueueItem = {
   releaseDate: string | null;
   lastHealthCheck: string | null;
   nextHealthCheck: string | null;
-  progress: number;
+  progress?: number;
 };
 
 export type HealthCheckHistoryResponse = {
@@ -966,6 +966,10 @@ export type OverviewStatsResponse = {
   totalErrors: number;
   totalBytesFetched: number;
   providers: ProviderRow[];
+  providerSpeedBucketSizeMs: number;
+  providerSpeedWindowStartMs: number;
+  providerSpeedWindowEndMs: number;
+  providerSpeedHistoryTruncated: boolean;
   catalogue: {
     fileCount: number;
     totalBytes: number;
@@ -1115,6 +1119,12 @@ export type ThroughputPoint = {
 
 export type ProviderCircuitState = "closed" | "open" | "halfOpen";
 
+export type ProviderSpeedPoint = {
+  bucket: number;
+  speedMbPerSec: number;
+  bytesFetched: number;
+};
+
 export type ProviderRow = {
   provider: string;
   nickname?: string | null | undefined;
@@ -1124,6 +1134,7 @@ export type ProviderRow = {
   retries: number;
   speedMbPerSec?: number | null | undefined;
   speedSpark?: number[];
+  speedSeries?: ProviderSpeedPoint[];
   avgDurationMs: number;
   errorRate: number;
   spark: number[];

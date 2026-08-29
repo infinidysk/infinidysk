@@ -48,7 +48,7 @@ export function PageLayout(props: PageLayoutProps) {
           onChange={(event) => setIsHamburgerMenuOpen(event.target.checked)}
         />
         <div className="drawer-content flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-          <main className="yes-scrollbar relative h-full min-h-0 min-w-0 overflow-y-auto bg-base-300">
+          <main className="yes-scrollbar relative h-full min-h-0 min-w-0 overflow-x-hidden overflow-y-auto bg-base-300">
             <div className="flex min-h-full flex-col">
               <div className="min-h-0 flex-1">{props.bodyChild}</div>
               {props.serviceProvider?.name && (

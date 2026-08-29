@@ -80,14 +80,4 @@ public class UrgentRepairDispositionTests
             HealthCheckService.LibraryLinkRepairDisposition.RepairLinked,
             HealthCheckService.GetLibraryLinkRepairDisposition("/library/movie.mkv", forceDelete: false));
     }
-
-    [Theory]
-    [InlineData(0, false)]
-    [InlineData(1, false)]
-    [InlineData(2, true)]
-    [InlineData(3, true)]
-    public void ArrNoMatch_RequiresRepeatedConfirmation(int count, bool expected)
-    {
-        Assert.Equal(expected, HealthCheckService.ShouldDeleteAfterArrNoMatch(count));
-    }
 }

@@ -2,6 +2,7 @@
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Queue.PostProcessors;
 
 namespace NzbWebDAV.Utils;
 
@@ -65,6 +66,164 @@ public static class OrganizedLinksUtil
         return davItemLink?.DavItemId == targetDavItem.Id;
     }
 
+    internal static bool StillTargets(DavItemLink expected, ConfigManager configManager)
+        => PathStillTargets(expected.LinkPath, expected.DavItemId, configManager);
+
+    internal static bool PathStillTargets(
+        string linkPath,
+        Guid davItemId,
+        ConfigManager configManager)
+    {
+        try
+        {
+            var libraryRoot = configManager.GetLibraryDir();
+            if (string.IsNullOrWhiteSpace(libraryRoot))
+                return false;
+
+            var fullRoot = Path.GetFullPath(libraryRoot);
+            var fullPath = Path.GetFullPath(linkPath);
+            var relativePath = Path.GetRelativePath(fullRoot, fullPath);
+            if (relativePath == ".."
+                || relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                || Path.IsPathRooted(relativePath))
+            {
+                return false;
+            }
+
+            var current = SymlinkAndStrmUtil.GetSymlinkOrStrmInfo(new FileInfo(fullPath));
+            return current is not null
+                   && GetDavItemLink(current, configManager.GetRcloneMountDir())?.DavItemId
+                   == davItemId;
+        }
+        catch (Exception e) when (e is FileNotFoundException
+                                      or DirectoryNotFoundException
+                                      or ArgumentException
+                                      or NotSupportedException
+                                      or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    internal static QuarantinedLink QuarantineIfStillTargets(
+        DavItemLink expected,
+        ConfigManager configManager)
+    {
+        var libraryRoot = configManager.GetLibraryDir();
+        if (string.IsNullOrWhiteSpace(libraryRoot))
+            throw new InvalidOperationException("Library Directory is not configured.");
+
+        var fullRoot = Path.GetFullPath(libraryRoot);
+        var fullPath = Path.GetFullPath(expected.LinkPath);
+        if (!StillTargets(expected, configManager))
+            throw new InvalidOperationException($"Library link '{fullPath}' changed after it was scanned.");
+        if (HasSymlinkedAncestorBelowRoot(fullPath, fullRoot))
+        {
+            throw new InvalidOperationException(
+                $"Library link '{fullPath}' has a symlinked ancestor and cannot be removed safely.");
+        }
+
+        var extension = Path.GetExtension(fullPath);
+        var quarantinePath = Path.Join(
+            Path.GetDirectoryName(fullPath),
+            $".{Path.GetFileNameWithoutExtension(fullPath)}.infinidysk-cleanup-{Guid.NewGuid():N}{extension}");
+        File.Move(fullPath, quarantinePath);
+
+        try
+        {
+            var current = SymlinkAndStrmUtil.GetSymlinkOrStrmInfo(new FileInfo(quarantinePath));
+            if (current is null
+                || GetDavItemLink(current, configManager.GetRcloneMountDir())?.DavItemId
+                != expected.DavItemId)
+            {
+                throw new InvalidOperationException(
+                    $"Library link '{fullPath}' changed while it was being quarantined.");
+            }
+        }
+        catch
+        {
+            _ = TryRestoreQuarantinedLink(
+                new QuarantinedLink(expected, fullPath, quarantinePath));
+            throw;
+        }
+
+        Cache.TryRemove(expected.DavItemId, out _);
+        return new QuarantinedLink(expected, fullPath, quarantinePath);
+    }
+
+    private static bool HasSymlinkedAncestorBelowRoot(string path, string root)
+    {
+        var normalizedRoot = Path.GetFullPath(root)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var directoryPath = Path.GetDirectoryName(Path.GetFullPath(path));
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        while (directoryPath is not null)
+        {
+            var normalizedDirectory = directoryPath
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            // The scanner deliberately supports a configured library root that is itself
+            // a symlink (-H on Linux). Only descendants below that trusted root are rejected.
+            if (string.Equals(normalizedDirectory, normalizedRoot, comparison))
+                return false;
+            if (new DirectoryInfo(directoryPath).LinkTarget is not null)
+                return true;
+
+            directoryPath = Path.GetDirectoryName(directoryPath);
+        }
+
+        return true;
+    }
+
+    internal static bool TryRestoreQuarantinedLink(QuarantinedLink quarantined)
+    {
+        if (!PathEntryExists(quarantined.QuarantinePath))
+            return false;
+        if (PathEntryExists(quarantined.OriginalPath))
+            return false;
+
+        File.Move(quarantined.QuarantinePath, quarantined.OriginalPath);
+        return true;
+    }
+
+    internal static bool QuarantinedLinkExists(QuarantinedLink quarantined) =>
+        PathEntryExists(quarantined.QuarantinePath);
+
+    internal static void DeleteQuarantinedLink(
+        QuarantinedLink quarantined,
+        ConfigManager configManager)
+    {
+        var current = SymlinkAndStrmUtil.GetSymlinkOrStrmInfo(
+            new FileInfo(quarantined.QuarantinePath));
+        if (current is null
+            || GetDavItemLink(current, configManager.GetRcloneMountDir())?.DavItemId
+            != quarantined.Expected.DavItemId)
+        {
+            throw new InvalidOperationException(
+                $"Quarantined library link '{quarantined.QuarantinePath}' changed before deletion.");
+        }
+
+        File.Delete(quarantined.QuarantinePath);
+    }
+
+    internal static bool PathEntryExists(string path)
+    {
+        try
+        {
+            _ = File.GetAttributes(path);
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return false;
+        }
+    }
+
     private static string? SearchForLink(DavItem targetDavItem, ConfigManager configManager)
     {
         string? result = null;
@@ -113,7 +272,7 @@ public static class OrganizedLinksUtil
         if (!targetPath.StartsWith(mountDir, StringComparison.Ordinal)) return null;
         targetPath = targetPath.RemovePrefix(mountDir);
         targetPath = targetPath.StartsWith('/') ? targetPath : $"/{targetPath}";
-        if (!targetPath.StartsWith("/.ids", StringComparison.Ordinal)) return null;
+        if (!targetPath.StartsWith("/.ids/", StringComparison.Ordinal)) return null;
         var guid = Path.GetFileNameWithoutExtension(targetPath);
         // a foreign/hand-made symlink under the mount dir must not abort the library walk
         if (!Guid.TryParse(guid, out var davItemId)) return null;
@@ -131,7 +290,7 @@ public static class OrganizedLinksUtil
         // a malformed strm file must not abort the library walk
         if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)) return null;
         var absolutePath = uri.AbsolutePath;
-        if (!absolutePath.StartsWith("/view/.ids", StringComparison.Ordinal)) return null;
+        if (!absolutePath.StartsWith("/view/.ids/", StringComparison.Ordinal)) return null;
         var guid = Path.GetFileNameWithoutExtension(absolutePath);
         if (!Guid.TryParse(guid, out var davItemId)) return null;
         return new DavItemLink()
@@ -148,4 +307,10 @@ public static class OrganizedLinksUtil
         public Guid DavItemId;
         public SymlinkAndStrmUtil.ISymlinkOrStrmInfo SymlinkOrStrmInfo;
     }
+
+    internal sealed record QuarantinedLink(
+        DavItemLink Expected,
+        string OriginalPath,
+        string QuarantinePath);
+
 }

@@ -5,7 +5,12 @@ import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { websocketServer } from "./websocket.server";
-import { isBackendApiDocsPath, safeDecodePath, shouldProxyToBackend } from "./proxy-path";
+import {
+  isBackendApiDocsPath,
+  isReadOnlyDeniedBackendMutation,
+  safeDecodePath,
+  shouldProxyToBackend,
+} from "./proxy-path";
 import { logger } from "./logger";
 import { authMiddleware } from "~/auth/auth-middleware.server";
 import { getSessionUser, isAuthenticated } from "~/auth/authentication.server";
@@ -135,19 +140,12 @@ app.use(async (req, res, next) => {
 
     await setApiKeyForAuthenticatedRequests(req);
 
-    if (
-      decodedPath !== null &&
-      req.method.toUpperCase() === "POST" &&
-      (decodedPath === "/api/delete-webdav-item" ||
-        decodedPath.startsWith("/api/delete-webdav-item/") ||
-        decodedPath === "/api/trigger-health-check" ||
-        decodedPath.startsWith("/api/trigger-health-check/"))
-    ) {
+    if (isReadOnlyDeniedBackendMutation(req.method, req.path)) {
       const user = await getSessionUser(req);
       if (user?.role === "readonly") {
         res.status(403).json({
           status: false,
-          error: "Read-only users cannot delete files.",
+          error: "Read-only users cannot perform destructive maintenance.",
         });
         return;
       }

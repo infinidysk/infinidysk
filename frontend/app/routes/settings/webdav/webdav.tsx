@@ -84,6 +84,7 @@ export function WebdavSettings({ config, setNewConfig }: WebdavSettingsProps) {
           <ManagedSetting configKey="webdav.enforce-readonly">
             <Tooltip
               placement="bottom"
+              className="tooltip-start"
               content="Make the WebDAV /content folder read-only so clients cannot delete files there, and prevent clearing completed history by deleting release folders under /completed-symlinks. Symlink deletes needed for Radarr/Sonarr imports are always allowed."
             >
               <Toggle
@@ -102,7 +103,10 @@ export function WebdavSettings({ config, setNewConfig }: WebdavSettingsProps) {
           </ManagedSetting>
 
           <ManagedSetting configKey="webdav.windows-safe-paths">
-            <Tooltip content='Replace characters invalid on Windows (<>:"/\|?*), trim trailing dots and spaces, and prefix reserved device names. Applies to newly mounted content only.'>
+            <Tooltip
+              className="tooltip-start"
+              content='Replace characters invalid on Windows (<>:"/\|?*), trim trailing dots and spaces, and prefix reserved device names. Applies to newly mounted content only.'
+            >
               <Toggle
                 id="windows-safe-paths-checkbox"
                 className="cursor-pointer gap-2 p-0"

@@ -22,7 +22,7 @@ export function RecordsBlock({ records }: RecordsBlockProps) {
       {isEmpty ? (
         <p className="text-sm text-base-content/50">Records appear after some activity.</p>
       ) : (
-        <div className="stats stats-vertical w-full border border-base-content/10 bg-base-100 sm:stats-horizontal">
+        <div className="stats w-full border border-base-content/10 bg-base-100">
           <Stat
             label="Busiest day"
             value={formatBytes(records.bestDayBytes)}

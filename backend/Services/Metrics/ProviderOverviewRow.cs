@@ -1,6 +1,17 @@
 namespace NzbWebDAV.Services.Metrics;
 
 /// <summary>
+/// Timestamped effective MB/s point owned by Metrics so circuit enrichment
+/// does not depend on admin API response types.
+/// </summary>
+internal sealed class ProviderSpeedPoint
+{
+    public long Bucket { get; init; }
+    public double SpeedMbPerSec { get; init; }
+    public long BytesFetched { get; init; }
+}
+
+/// <summary>
 /// Provider overview row owned by Metrics so circuit enrichment does not depend
 /// on admin API response types.
 /// </summary>
@@ -14,6 +25,7 @@ internal sealed class ProviderOverviewRow
     public long Retries { get; init; }
     public double? SpeedMbPerSec { get; set; }
     public List<double> SpeedSpark { get; init; } = [];
+    public List<ProviderSpeedPoint> SpeedSeries { get; init; } = [];
     public double AvgDurationMs { get; init; }
     public double ErrorRate { get; init; }
     public List<long> Spark { get; init; } = [];

@@ -19,6 +19,10 @@ internal sealed class ScriptedNntpServer : IAsyncDisposable
     private readonly bool _useTls;
     private readonly X509Certificate2? _certificate;
     private readonly Task _acceptLoop;
+    private int _acceptedConnections;
+    private int _activeConnections;
+    private int _maxActiveConnections;
+    private int _closedConnections;
 
     public ScriptedNntpServer(Func<string, StreamWriter, CancellationToken, Task> commandHandler)
         : this(commandHandler, null, "200 scripted server ready")
@@ -66,6 +70,10 @@ internal sealed class ScriptedNntpServer : IAsyncDisposable
 
     public int Port { get; }
     public ConcurrentQueue<string> Commands { get; } = new();
+    public int AcceptedConnections => Volatile.Read(ref _acceptedConnections);
+    public int ActiveConnections => Volatile.Read(ref _activeConnections);
+    public int MaxActiveConnections => Volatile.Read(ref _maxActiveConnections);
+    public int ClosedConnections => Volatile.Read(ref _closedConnections);
 
     private async Task AcceptLoopAsync()
     {
@@ -74,6 +82,7 @@ internal sealed class ScriptedNntpServer : IAsyncDisposable
             while (!_cts.IsCancellationRequested)
             {
                 var client = await _listener.AcceptTcpClientAsync(_cts.Token);
+                Interlocked.Increment(ref _acceptedConnections);
                 _ = HandleClientAsync(client);
             }
         }
@@ -87,41 +96,62 @@ internal sealed class ScriptedNntpServer : IAsyncDisposable
 
     private async Task HandleClientAsync(TcpClient client)
     {
-        using (client)
-        await using (var networkStream = client.GetStream())
-        await using (var stream = await AuthenticateTlsIfNeededAsync(networkStream))
-        using (var reader = new StreamReader(stream, Encoding.Latin1, leaveOpen: true))
-        await using (var writer = new StreamWriter(stream, Encoding.Latin1, leaveOpen: true)
-        { AutoFlush = true, NewLine = "\r\n" })
+        var active = Interlocked.Increment(ref _activeConnections);
+        UpdateMaximum(ref _maxActiveConnections, active);
+        try
         {
-            if (_greeting != null)
+            using (client)
+            await using (var networkStream = client.GetStream())
+            await using (var stream = await AuthenticateTlsIfNeededAsync(networkStream))
+            using (var reader = new StreamReader(stream, Encoding.Latin1, leaveOpen: true))
+            await using (var writer = new StreamWriter(stream, Encoding.Latin1, leaveOpen: true)
+            { AutoFlush = true, NewLine = "\r\n" })
             {
-                await writer.WriteLineAsync(_greeting);
-            }
-
-            if (_connectionHandler != null)
-            {
-                await _connectionHandler(reader, writer, _cts.Token);
-                return;
-            }
-
-            while (!_cts.IsCancellationRequested)
-            {
-                var command = await reader.ReadLineAsync(_cts.Token);
-                if (command == null)
+                if (_greeting != null)
                 {
+                    await writer.WriteLineAsync(_greeting);
+                }
+
+                if (_connectionHandler != null)
+                {
+                    await _connectionHandler(reader, writer, _cts.Token);
                     return;
                 }
 
-                Commands.Enqueue(command);
-                if (command == "QUIT")
+                while (!_cts.IsCancellationRequested)
                 {
-                    await writer.WriteLineAsync("205 Connection closing");
-                    return;
-                }
+                    var command = await reader.ReadLineAsync(_cts.Token);
+                    if (command == null)
+                    {
+                        return;
+                    }
 
-                await _commandHandler!(command, writer, _cts.Token);
+                    Commands.Enqueue(command);
+                    if (command == "QUIT")
+                    {
+                        await writer.WriteLineAsync("205 Connection closing");
+                        return;
+                    }
+
+                    await _commandHandler!(command, writer, _cts.Token);
+                }
             }
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeConnections);
+            Interlocked.Increment(ref _closedConnections);
+        }
+    }
+
+    private static void UpdateMaximum(ref int maximum, int candidate)
+    {
+        var current = Volatile.Read(ref maximum);
+        while (candidate > current)
+        {
+            var observed = Interlocked.CompareExchange(ref maximum, candidate, current);
+            if (observed == current) return;
+            current = observed;
         }
     }
 

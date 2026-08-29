@@ -16,6 +16,15 @@ public class GetOverviewStatsResponse
     public long TotalErrors { get; init; }
     public long TotalBytesFetched { get; init; }
     public List<ProviderRow> Providers { get; init; } = new();
+    /// <summary>Detail-chart bucket width in ms for per-provider speed series.</summary>
+    public long ProviderSpeedBucketSizeMs { get; init; }
+    public long ProviderSpeedWindowStartMs { get; init; }
+    public long ProviderSpeedWindowEndMs { get; init; }
+    /// <summary>
+    /// True when the series is clipped to retained hourly history (all-time) or
+    /// when folded lifetime totals exist that cannot be placed on the chart.
+    /// </summary>
+    public bool ProviderSpeedHistoryTruncated { get; init; }
     public CatalogueBlock Catalogue { get; init; } = new();
     public SessionsBlock Sessions { get; init; } = new();
 
@@ -60,6 +69,14 @@ public class GetOverviewStatsResponse
         public long BytesFetched { get; init; }
     }
 
+    public class ProviderSpeedPoint
+    {
+        public long Bucket { get; init; }
+        /// <summary>Effective decimal MB/s: bytes ÷ summed successful-fetch duration in the bucket.</summary>
+        public double SpeedMbPerSec { get; init; }
+        public long BytesFetched { get; init; }
+    }
+
     public class ProviderRow
     {
         public string Provider { get; init; } = "";
@@ -71,6 +88,8 @@ public class GetOverviewStatsResponse
         /// <summary>Decimal megabytes fetched per second over the selected window.</summary>
         public double? SpeedMbPerSec { get; set; }
         public List<double> SpeedSpark { get; init; } = new();
+        /// <summary>Timestamped effective MB/s for the detail chart. Same metric as <see cref="SpeedMbPerSec"/>.</summary>
+        public List<ProviderSpeedPoint> SpeedSeries { get; init; } = new();
         /// <summary>
         /// Mean duration of successful (Ok) fetches only. Includes connection-pool wait
         /// inside the provider call; not pure wire RTT. Misses/errors are excluded.

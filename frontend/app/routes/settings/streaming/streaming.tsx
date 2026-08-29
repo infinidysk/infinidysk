@@ -121,7 +121,10 @@ export function StreamingSettings({
           ]}
         >
           <div className="space-y-2">
-            <Tooltip content="By default, the budget above is shared across streams. Enable this to give each concurrent stream its own budget, sized by the preset below. Provider limits still cap total connections.">
+            <Tooltip
+              className="tooltip-start"
+              content="By default, the budget above is shared across streams. Enable this to give each concurrent stream its own budget, sized by the preset below. Provider limits still cap total connections."
+            >
               <Toggle
                 id="max-download-connections-per-stream-checkbox"
                 className="cursor-pointer gap-2 p-0"
@@ -522,7 +525,7 @@ export function StreamingSettings({
             </label>
             <Input
               {...className([
-                "w-full",
+                "w-full max-w-48",
                 !isValidUsenetBandwidthLimitMbps(bandwidthLimit) && "input-error",
               ])}
               type="text"
@@ -542,9 +545,9 @@ export function StreamingSettings({
               className="text-[11px] leading-relaxed text-base-content/45"
               id="bandwidth-limit-help"
             >
-              Caps total download from all providers. 1 MB/s = 8 Mbit/s. Applies to queue downloads
-              and streaming. Cache hits and LAN delivery are never limited. Leave empty or 0 for
-              unlimited.
+              Caps live download from all providers. 1 MB/s = 8 Mbit/s. Applies to queue downloads
+              and streaming. Speed tests, cache hits, and LAN delivery are never limited. Leave
+              empty or 0 for unlimited.
             </p>
             {showLowLimitWarning && (
               <Alert className="alert-soft items-start text-xs" variant="warning">
@@ -597,8 +600,89 @@ export function StreamingSettings({
           </div>
         </ManagedSetting>
 
+        <ManagedSetting configKey="usenet.nntp-read-timeout-seconds">
+          <div className="space-y-2">
+            <label
+              className="block text-sm font-medium text-base-content"
+              htmlFor="nntp-read-timeout-input"
+            >
+              NNTP response timeout (seconds)
+            </label>
+            <Input
+              {...className([
+                "w-full max-w-48",
+                !isValidNntpReadTimeout(config["usenet.nntp-read-timeout-seconds"]) &&
+                  "input-error",
+              ])}
+              type="text"
+              inputMode="numeric"
+              id="nntp-read-timeout-input"
+              aria-describedby="nntp-read-timeout-help"
+              placeholder="30"
+              value={config["usenet.nntp-read-timeout-seconds"] ?? "30"}
+              onChange={(e) =>
+                setNewConfig({
+                  ...config,
+                  "usenet.nntp-read-timeout-seconds": e.target.value,
+                })
+              }
+            />
+            <p
+              className="text-[11px] leading-relaxed text-base-content/45"
+              id="nntp-read-timeout-help"
+            >
+              Maximum stalled wait for any NNTP response, including BODY, ARTICLE, and STAT (5–120s,
+              default 30). This is an inactivity timeout, not a total transfer deadline.
+              Connect/auth still uses a 15-second ceiling, and streaming budgets can expire first.
+              Takes effect after the next connection-pool rebuild or restart.
+            </p>
+          </div>
+        </ManagedSetting>
+
+        <ManagedSetting configKey="usenet.reconnect-delay-milliseconds">
+          <div className="space-y-2">
+            <label
+              className="block text-sm font-medium text-base-content"
+              htmlFor="reconnect-delay-input"
+            >
+              Replacement reconnect spacing (milliseconds)
+            </label>
+            <Input
+              {...className([
+                "w-full max-w-48",
+                !isValidReconnectDelay(config["usenet.reconnect-delay-milliseconds"]) &&
+                  "input-error",
+              ])}
+              type="text"
+              inputMode="numeric"
+              id="reconnect-delay-input"
+              aria-describedby="reconnect-delay-help"
+              placeholder="500"
+              value={config["usenet.reconnect-delay-milliseconds"] ?? "500"}
+              onChange={(e) =>
+                setNewConfig({
+                  ...config,
+                  "usenet.reconnect-delay-milliseconds": e.target.value,
+                })
+              }
+            />
+            <p
+              className="text-[11px] leading-relaxed text-base-content/45"
+              id="reconnect-delay-help"
+            >
+              Spaces replacement handshakes after a poisoned socket is closed (0–5000ms, default
+              500) so providers can release the old server-side session. Zero disables ordinary
+              spacing; failed TCP/TLS/AUTHINFO still back off from 500ms. Takes effect after the
+              next connection-pool rebuild or restart.
+            </p>
+          </div>
+        </ManagedSetting>
+
         <ManagedSetting configKey="usenet.pipelined-body-requests">
-          <Tooltip content="Fetch articles in small pipelined BODY batches for smoother WebDAV playback. Queue imports use the separate Queue pipelining toggle under Usenet settings.">
+          <Tooltip
+            className="tooltip-start"
+            content="Fetch articles in small pipelined BODY batches for smoother WebDAV playback. Queue imports use the separate Queue pipelining toggle under Usenet settings."
+          >
             <Toggle
               id="pipelined-body-requests-checkbox"
               className="cursor-pointer gap-2 p-0"
@@ -915,6 +999,9 @@ export function isStreamingSettingsUpdated(
     config["usenet.bandwidth-limit-mbps"] !== newConfig["usenet.bandwidth-limit-mbps"] ||
     config["usenet.idle-connection-timeout-seconds"] !==
       newConfig["usenet.idle-connection-timeout-seconds"] ||
+    config["usenet.nntp-read-timeout-seconds"] !== newConfig["usenet.nntp-read-timeout-seconds"] ||
+    config["usenet.reconnect-delay-milliseconds"] !==
+      newConfig["usenet.reconnect-delay-milliseconds"] ||
     config["usenet.pipelined-body-requests"] !== newConfig["usenet.pipelined-body-requests"] ||
     config["usenet.streaming-body-batch-width"] !==
       newConfig["usenet.streaming-body-batch-width"] ||
@@ -951,6 +1038,8 @@ export function isStreamingSettingsValid(config: Record<string, string>): boolea
     isValidInFlightArticleBudget(config["usenet.in-flight-article-budget-mb"]) &&
     isValidUsenetBandwidthLimitMbps(config["usenet.bandwidth-limit-mbps"]) &&
     isValidIdleConnectionTimeout(config["usenet.idle-connection-timeout-seconds"]) &&
+    isValidNntpReadTimeout(config["usenet.nntp-read-timeout-seconds"]) &&
+    isValidReconnectDelay(config["usenet.reconnect-delay-milliseconds"]) &&
     isValidStreamingBodyBatchWidth(config["usenet.streaming-body-batch-width"]) &&
     isValidSharedStreamsMaxEntries(config["usenet.shared-streams.max-entries"]) &&
     isValidSharedStreamsMaxEntriesPerFile(config["usenet.shared-streams.max-entries-per-file"]) &&
@@ -1024,6 +1113,14 @@ function isValidIdleConnectionTimeout(value: string | undefined): boolean {
   if (value == null || value.trim() === "") return true;
   const number = Number(value);
   return Number.isInteger(number) && number >= 15 && number <= 300;
+}
+
+function isValidNntpReadTimeout(value: string | undefined): boolean {
+  return isOptionalIntInRange(value, 5, 120);
+}
+
+function isValidReconnectDelay(value: string | undefined): boolean {
+  return isOptionalIntInRange(value, 0, 5000);
 }
 
 function isValidStreamingBodyBatchWidth(value: string | undefined): boolean {

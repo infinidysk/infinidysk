@@ -176,28 +176,58 @@ public class ArrLinkedRepairDecisionTests
     }
 
     [Fact]
-    public async Task NoMatchingRoot_DefersWithoutDelete()
+    public async Task NoMatchingRoot_ReturnsRootPathMismatchWithoutCallingArrRepair()
     {
+        const string localPath = "/mnt/data/tv/Example/Example.S01E01.mkv";
         var clients = new ArrClient[]
         {
             new ScriptedArrClient(
                 host: "http://sonarr",
                 rootFolders: () => Task.FromResult(new List<ArrRootFolder>
                 {
-                    new() { Path = "/media/tv" },
+                    new() { Path = "/data/media/tv" },
                 }),
-                removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.MediaItemNotFound)),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
         };
 
         var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
-            clients, LibraryPath, DownloadId, CancellationToken.None);
+            clients, localPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferRootPathMismatch, decision);
     }
 
     [Fact]
-    public async Task ExactMediaPathMiss_DefersWithoutDelete()
+    public async Task MultipleReachableClientsWithNoMatchingRoot_ReturnRootPathMismatch()
     {
+        const string localPath = "/mnt/data/tv/Example/Example.S01E01.mkv";
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://sonarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/data/media/tv" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/data/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
+        };
+
+        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, localPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferRootPathMismatch, decision);
+    }
+
+    [Fact]
+    public async Task MatchingRootWithExactMediaMiss_ReturnsNoMatchingMediaItem()
+    {
+        var removeCalls = 0;
         var clients = new ArrClient[]
         {
             new ScriptedArrClient(
@@ -206,13 +236,114 @@ public class ArrLinkedRepairDecisionTests
                 {
                     new() { Path = "/media/movies" },
                 }),
-                removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.MediaItemNotFound)),
+                removeAndBlocklist: (_, _) =>
+                {
+                    removeCalls++;
+                    return Task.FromResult(ArrRepairOutcome.MediaItemNotFound);
+                }),
         };
 
         var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
+        Assert.Equal(1, removeCalls);
         Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
+    }
+
+    [Fact]
+    public async Task OneMatchingRootAndOneUnrelatedRoot_ReturnsNoMatchingMediaItem()
+    {
+        var movieRemoveCalls = 0;
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://sonarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/tv" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("tv instance should not be called")),
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) =>
+                {
+                    movieRemoveCalls++;
+                    return Task.FromResult(ArrRepairOutcome.MediaItemNotFound);
+                }),
+        };
+
+        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(1, movieRemoveCalls);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
+    }
+
+    [Fact]
+    public async Task UnreachableClientTakesPrecedenceOverRootPathMismatch()
+    {
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://unreachable",
+                rootFolders: () => throw new HttpRequestException("connection refused"),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
+            new ScriptedArrClient(
+                host: "http://sonarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/tv" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
+        };
+
+        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, decision);
+    }
+
+    [Fact]
+    public async Task EmptyRootPathAmongNonMatchingRoots_DefersUnreachable()
+    {
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = null },
+                    new() { Path = "/media/tv" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
+        };
+
+        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, decision);
+    }
+
+    [Fact]
+    public async Task CancelledToken_ThrowsWithoutCallingArr()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => throw new InvalidOperationException("should not be called"),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            HealthCheckService.DecideArrLinkedRepairAsync(
+                clients, LibraryPath, DownloadId, cts.Token));
     }
 
     [Fact]
@@ -250,6 +381,23 @@ public class ArrLinkedRepairDecisionTests
             [], LibraryPath, DownloadId, CancellationToken.None);
 
         Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
+    }
+
+    [Theory]
+    [InlineData("/media/movies/title/file.mkv", "/media/movies", true)]
+    [InlineData("/media/movies/title/file.mkv", "/media/movies/", true)]
+    [InlineData("/media/movies", "/media/movies", true)]
+    [InlineData("/media/movies/title/file.mkv", "/", true)]
+    [InlineData("/media/movies-old/title/file.mkv", "/media/movies", false)]
+    [InlineData("/mnt/data/title/file.mkv", "/data/media", false)]
+    [InlineData("/Media/movies/title/file.mkv", "/media/movies", false)]
+    [InlineData("/media/movies/title/file.mkv", "//", false)]
+    public void IsPathWithinRoot_UsesOrdinalDirectoryBoundaries(
+        string candidate,
+        string root,
+        bool expected)
+    {
+        Assert.Equal(expected, HealthCheckService.IsPathWithinRoot(candidate, root));
     }
 
     private sealed class ScriptedArrClient(

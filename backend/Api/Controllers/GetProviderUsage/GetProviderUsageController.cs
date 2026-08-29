@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Services.Metrics;
@@ -51,7 +52,10 @@ public class GetProviderUsageController(
                     BytesPerDay = bytesPerDay,
                     DaysRemaining = daysRemaining,
                     LearnedConnectionLimit = snapshot?.LearnedConnectionLimit,
+                    ConfiguredMaxConnections = snapshot?.ConfiguredMaxConnections
+                        ?? provider.MaxConnections,
                     EffectiveMaxConnections = snapshot?.EffectiveMaxConnections,
+                    ConnectionBudget = ToBudgetItem(snapshot?.Admission),
                 };
             })
             .ToList();
@@ -62,6 +66,22 @@ public class GetProviderUsageController(
             Providers = items,
         };
     }
+
+    internal static GetProviderUsageResponse.ProviderConnectionBudgetItem? ToBudgetItem(
+        ProviderConnectionAdmissionSnapshot? admission) => admission is null
+        ? null
+        : new GetProviderUsageResponse.ProviderConnectionBudgetItem
+        {
+            ConfiguredTransferLimit = admission.ConfiguredTransferLimit,
+            EffectiveTransferLimit = admission.EffectiveTransferLimit,
+            BaseMetadataCapacity = admission.BaseMetadataCapacity,
+            MetadataBurstAllowance = admission.MetadataBurstAllowance,
+            MaxMetadataCapacity = admission.MaxMetadataCapacity,
+            ActiveTransferOperations = admission.ActiveTransferOperations,
+            ActiveMetadataOperations = admission.ActiveMetadataOperations,
+            WaitingTransferOperations = admission.WaitingTransferOperations,
+            WaitingMetadataOperations = admission.WaitingMetadataOperations,
+        };
 
     protected override async Task<IActionResult> HandleRequest()
     {

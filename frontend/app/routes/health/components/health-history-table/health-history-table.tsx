@@ -3,7 +3,7 @@ import { Badge, Icon, RadioJoinFilter } from "~/components/ui";
 import { Pagination } from "~/components/pagination/pagination";
 import { Truncate } from "~/components/truncate/truncate";
 
-export type HealthHistoryFilter = "all" | "deleted" | "repaired" | "degraded";
+export type HealthHistoryFilter = "all" | "deleted" | "repaired" | "degraded" | "action-needed";
 
 export type HealthHistoryTableProps = {
   items: HealthCheckResult[];
@@ -26,6 +26,7 @@ const desktopCellClass =
 // Numeric values mirror the backend HealthResult / RepairAction enums declared in
 // ~/clients/backend-client.server (a .server module, so its enums cannot be value-imported here).
 const RepairActionDeleted: HealthCheckResult["repairStatus"] = 2;
+const RepairActionNeeded: HealthCheckResult["repairStatus"] = 3;
 const HealthResultDegraded: HealthCheckResult["result"] = 2;
 
 export function HealthHistoryTable({
@@ -51,10 +52,10 @@ export function HealthHistoryTable({
       <div className="card-body gap-0 p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-content/10 px-4 py-4 md:px-6">
           <div>
-            <h2 className="card-title text-xl">Repair history</h2>
+            <h2 className="card-title text-xl">Health history</h2>
             <p className="mt-1 text-xs text-base-content/60">
-              Deleted and repaired items are retained according to your health-check retention
-              setting.
+              Repairs, deletions, degraded files, and items requiring action are retained according
+              to your health-check retention setting.
             </p>
           </div>
           <button
@@ -71,14 +72,15 @@ export function HealthHistoryTable({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-content/10 px-4 py-3 md:px-6">
           <RadioJoinFilter
             name="health-history-filter"
-            aria-label="Repair history status filter"
+            aria-label="Health history status filter"
             value={filter}
             onChange={onFilterSelected}
             options={[
-              { id: "all", label: "Deleted & repaired" },
+              { id: "all", label: "Deleted, repaired & action needed" },
               { id: "deleted", label: "Deleted" },
               { id: "repaired", label: "Repaired" },
               { id: "degraded", label: "Degraded" },
+              { id: "action-needed", label: "Action needed" },
             ]}
           />
           {totalCount > 0 && (
@@ -175,6 +177,9 @@ function StatusBadge({ item }: { item: HealthCheckResult }) {
   if (item.result === HealthResultDegraded) {
     return <Badge className="badge-sm badge-warning">Degraded</Badge>;
   }
+  if (item.repairStatus === RepairActionNeeded) {
+    return <Badge className="badge-sm badge-warning">Action needed</Badge>;
+  }
   const deleted = item.repairStatus === RepairActionDeleted;
   return (
     <Badge className={`badge-sm ${deleted ? "badge-error" : "badge-info"}`}>
@@ -195,7 +200,7 @@ function MetaChip({ label, value, title }: { label: string; value: string; title
 }
 
 function EmptyState({ filter }: { filter: HealthHistoryFilter }) {
-  const label = filter === "all" ? "deleted or repaired" : filter;
+  const label = filter === "all" ? "deleted, repaired, or action needed" : filter.replace("-", " ");
   return (
     <div className="hero min-h-[220px] py-8">
       <div className="hero-content">
@@ -203,8 +208,7 @@ function EmptyState({ filter }: { filter: HealthHistoryFilter }) {
           <Icon name="history" className="mb-3 !text-[48px] text-base-content/40" />
           <h3 className="text-base font-semibold text-base-content">No {label} items</h3>
           <p className="mt-1 text-xs leading-relaxed text-base-content/60">
-            New automatic health repairs and deletions will appear here until health-check retention
-            removes them.
+            New health actions will appear here until health-check retention removes them.
           </p>
         </div>
       </div>

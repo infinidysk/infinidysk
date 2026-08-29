@@ -23,6 +23,20 @@ function isNonNegativeInteger(value: string) {
   return Number.isInteger(num) && num >= 0 && value.trim() === num.toString();
 }
 
+function isIntegerInRange(value: string, minimum: number, maximum: number) {
+  const num = Number(value);
+  return (
+    Number.isInteger(num) && num >= minimum && num <= maximum && value.trim() === num.toString()
+  );
+}
+
+function isWholeNumber(value: string) {
+  const trimmed = value.trim();
+  if (!/^[-+]?\d+$/.test(trimmed)) return false;
+  const parsed = BigInt(trimmed);
+  return parsed >= -9_223_372_036_854_775_808n && parsed <= 9_223_372_036_854_775_807n;
+}
+
 export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) {
   const libraryDirConfig = config["media.library-dir"];
   // `arr.instances` config value shape (backend contract)
@@ -56,7 +70,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
           contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
         >
           <ManagedSetting configKey="repair.enable">
-            <Tooltip placement="bottom" content={helpText}>
+            <Tooltip placement="bottom" className="tooltip-start" content={helpText}>
               <Toggle
                 id="enable-repairs-checkbox"
                 className="cursor-pointer gap-2 p-0"
@@ -105,6 +119,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
           icon="monitor_heart"
           title="Health checks"
           description="Balance verification coverage against provider connection pressure."
+          contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
         >
           <ManagedSetting configKey="repair.healthcheck-concurrency">
             <div className="space-y-2">
@@ -112,10 +127,10 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 className="block text-sm font-medium text-base-content"
                 htmlFor="healthcheck-concurrency-input"
               >
-                Health Check Concurrency
+                Maximum Health Check Connections
               </label>
               <Input
-                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.healthcheck-concurrency"] || "50") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isWholeNumber(config["repair.healthcheck-concurrency"] || "50") ? "input-error" : ""}`}
                 type="text"
                 id="healthcheck-concurrency-input"
                 aria-describedby="healthcheck-concurrency-help"
@@ -129,15 +144,46 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 className="text-[11px] leading-relaxed text-base-content/45"
                 id="healthcheck-concurrency-help"
               >
-                The maximum number of concurrent NNTP connections used for health check STAT
-                commands. Lower values reduce connection pressure on your usenet providers during
-                health checks. Capped at your total provider pool size.
+                Maximum aggregate NNTP verification connections shared by background health checks
+                and queue article-existence validation. Actual use may be lower because provider
+                connection capacity and Transfer/Metadata admission remain authoritative. Existing
+                numeric values are accepted and safely limited at runtime to 1–200 and the total
+                pooled provider capacity.
+              </p>
+            </div>
+          </ManagedSetting>
+          <ManagedSetting configKey="repair.healthcheck-workers">
+            <div className="space-y-2">
+              <label
+                className="block text-sm font-medium text-base-content"
+                htmlFor="healthcheck-workers-input"
+              >
+                Concurrent Health Checks
+              </label>
+              <Input
+                className={`w-full ${!isIntegerInRange(config["repair.healthcheck-workers"] ?? "1", 1, 8) ? "input-error" : ""}`}
+                type="text"
+                id="healthcheck-workers-input"
+                aria-describedby="healthcheck-workers-help"
+                placeholder="1"
+                value={config["repair.healthcheck-workers"] ?? ""}
+                onChange={(e) =>
+                  setNewConfig({ ...config, "repair.healthcheck-workers": e.target.value })
+                }
+              />
+              <p
+                className="text-[11px] leading-relaxed text-base-content/45"
+                id="healthcheck-workers-help"
+              >
+                Maximum library files checked at the same time. Concurrent checks share the
+                connection limit above; for example, two checks share 50 connections rather than
+                receiving 50 each.
               </p>
             </div>
           </ManagedSetting>
           <ManagedSetting
             configKeys={["repair.healthcheck-depth", "repair.healthcheck-aging"]}
-            className="grid grid-cols-1 gap-4 lg:grid-cols-2"
+            className="grid grid-cols-1 gap-4 lg:col-span-2 lg:grid-cols-2"
           >
             <div className="space-y-2">
               <label
@@ -234,7 +280,10 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
             </div>
           </ManagedSetting>
           <ManagedSetting configKey="repair.auto-remove-unlinked-only">
-            <Tooltip content="When enabled (default), library-linked releases are removed and blocklisted through Radarr/Sonarr. Disable to force-delete linked files after the failure threshold.">
+            <Tooltip
+              className="tooltip-start"
+              content="When enabled (default), library-linked releases are removed and blocklisted through Radarr/Sonarr. Disable to force-delete linked files after the failure threshold."
+            >
               <Toggle
                 id="auto-remove-unlinked-only-checkbox"
                 className="cursor-pointer gap-2 p-0"
@@ -631,6 +680,7 @@ export function isRepairsSettingsUpdated(
   return (
     config["repair.enable"] !== newConfig["repair.enable"] ||
     config["repair.healthcheck-concurrency"] !== newConfig["repair.healthcheck-concurrency"] ||
+    config["repair.healthcheck-workers"] !== newConfig["repair.healthcheck-workers"] ||
     config["repair.healthcheck-depth"] !== newConfig["repair.healthcheck-depth"] ||
     config["repair.healthcheck-aging"] !== newConfig["repair.healthcheck-aging"] ||
     config["repair.auto-remove-after-failures"] !==
@@ -663,6 +713,7 @@ export function isRepairsSettingsUpdated(
 
 export function isRepairsSettingsValid(newConfig: Record<string, string>) {
   const concurrency = newConfig["repair.healthcheck-concurrency"];
+  const workers = newConfig["repair.healthcheck-workers"];
   const autoRemove = newConfig["repair.auto-remove-after-failures"];
   const bytePercent = newConfig["repair.degraded-max-missing-byte-percent"];
   const par2NumericKeys = [
@@ -678,7 +729,8 @@ export function isRepairsSettingsValid(newConfig: Record<string, string>) {
     "repair.degraded-max-total-missing",
   ] as const;
   const concurrencyOk =
-    concurrency === undefined || concurrency === "" || isPositiveInteger(concurrency);
+    concurrency === undefined || concurrency === "" || isWholeNumber(concurrency);
+  const workersOk = workers === undefined || isIntegerInRange(workers, 1, 8);
   const autoRemoveOk =
     autoRemove === undefined || autoRemove === "" || isNonNegativeInteger(autoRemove);
   const bytePercentOk =
@@ -693,6 +745,7 @@ export function isRepairsSettingsValid(newConfig: Record<string, string>) {
   });
   return (
     concurrencyOk &&
+    workersOk &&
     autoRemoveOk &&
     bytePercentOk &&
     par2Ok &&

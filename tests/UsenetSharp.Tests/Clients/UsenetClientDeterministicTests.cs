@@ -1373,6 +1373,123 @@ public class UsenetClientDeterministicTests
         Assert.That(date.ResponseCode, Is.EqualTo((int)UsenetResponseType.DateAndTime));
     }
 
+    [TestCase("BODY", ArticleBodyResult.NotFound)]
+    [TestCase("ARTICLE", ArticleBodyResult.NotFound)]
+    public async Task SingleArticleCommand_MissingArticleKeepsConnectionReusable(
+        string commandName,
+        ArticleBodyResult expectedCompletion)
+    {
+        await using var server = new ScriptedNntpServer(async (command, writer, _) =>
+        {
+            if (command.StartsWith(commandName, StringComparison.Ordinal))
+                await writer.WriteLineAsync("430 no article with that message-id");
+            else if (command == "DATE")
+                await writer.WriteLineAsync("111 20260709213000");
+        });
+        await using var client = new UsenetClient();
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        var completion = new TaskCompletionSource<ArticleBodyResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        if (commandName == "BODY")
+        {
+            var response = await client.BodyAsync(
+                "missing@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
+            Assert.That(response.ResponseType, Is.EqualTo(UsenetResponseType.NoArticleWithThatMessageId));
+        }
+        else
+        {
+            var response = await client.ArticleAsync(
+                "missing@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
+            Assert.That(response.ResponseType, Is.EqualTo(UsenetResponseType.NoArticleWithThatMessageId));
+        }
+
+        Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)), Is.EqualTo(expectedCompletion));
+        var date = await client.DateAsync(CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(date.ResponseType, Is.EqualTo(UsenetResponseType.DateAndTime));
+            Assert.That(client.IsHealthy, Is.True);
+            Assert.That(server.AcceptedConnections, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task DecodedBodyAsync_MissingArticleKeepsConnectionReusable()
+    {
+        await using var server = new ScriptedNntpServer(async (command, writer, _) =>
+        {
+            if (command.StartsWith("BODY", StringComparison.Ordinal))
+                await writer.WriteLineAsync("430 no article with that message-id");
+            else if (command == "DATE")
+                await writer.WriteLineAsync("111 20260709213000");
+        });
+        await using var client = new UsenetClient();
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        var callbackCount = 0;
+        var completion = new TaskCompletionSource<ArticleBodyResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var response = await client.DecodedBodyAsync(
+            "missing@example.com",
+            (result, _) =>
+            {
+                Interlocked.Increment(ref callbackCount);
+                completion.SetResult(result);
+            },
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.ResponseType, Is.EqualTo(UsenetResponseType.NoArticleWithThatMessageId));
+            Assert.That(response.ResponseCode, Is.EqualTo(430));
+            Assert.That(response.Stream, Is.Null);
+            Assert.That(callbackCount, Is.EqualTo(1));
+        });
+        Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
+            Is.EqualTo(ArticleBodyResult.NotFound));
+        var date = await client.DateAsync(CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(date.ResponseType, Is.EqualTo(UsenetResponseType.DateAndTime));
+            Assert.That(client.IsHealthy, Is.True);
+            Assert.That(server.AcceptedConnections, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task DecodedBodyAsync_UnexpectedConnectionResponse_ReportsNotRetrieved()
+    {
+        await using var server = new ScriptedNntpServer(async (command, writer, _) =>
+        {
+            if (command.StartsWith("BODY", StringComparison.Ordinal))
+                await writer.WriteLineAsync("502 connection limit (40) reached");
+        });
+        await using var client = new UsenetClient();
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        var callbackCount = 0;
+        var completion = new TaskCompletionSource<ArticleBodyResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var response = await client.DecodedBodyAsync(
+            "denied@example.com",
+            (result, _) =>
+            {
+                Interlocked.Increment(ref callbackCount);
+                completion.SetResult(result);
+            },
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.ResponseCode, Is.EqualTo(502));
+            Assert.That(response.Stream, Is.Null);
+            Assert.That(callbackCount, Is.EqualTo(1));
+        });
+        Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
+            Is.EqualTo(ArticleBodyResult.NotRetrieved));
+    }
+
     [Test]
     public async Task DecodedBodiesAsync_TruncatedBodyFailsRemainingBatch()
     {
@@ -3028,6 +3145,43 @@ public class UsenetClientDeterministicTests
         var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatAsync("other@example.com", CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("connection unusable"));
+    }
+
+    [TestCase("BODY")]
+    [TestCase("ARTICLE")]
+    [TestCase("STAT")]
+    public async Task CommandReadTimeout_DisposeClosesPhysicalSocket(string commandName)
+    {
+        await using var server = ScriptedNntpServer.StartConnectionScript(
+            async (reader, _, cancellationToken) =>
+            {
+                var command = await reader.ReadLineAsync(cancellationToken);
+                Assert.That(command, Does.StartWith(commandName));
+                Assert.That(await reader.ReadLineAsync(cancellationToken), Is.Null);
+            });
+        var client = new UsenetClient(new UsenetClientOptions
+        {
+            ReadTimeout = TimeSpan.FromMilliseconds(100)
+        });
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+
+        Task command = commandName switch
+        {
+            "BODY" => client.BodyAsync("article@example.com", CancellationToken.None),
+            "ARTICLE" => client.ArticleAsync("article@example.com", CancellationToken.None),
+            _ => client.StatAsync("article@example.com", CancellationToken.None),
+        };
+        Assert.ThrowsAsync<TimeoutException>(async () => await command);
+        Assert.That(client.IsHealthy, Is.False);
+
+        await client.DisposeAsync();
+        await WaitForConditionAsync(() => server.ActiveConnections == 0);
+        Assert.Multiple(() =>
+        {
+            Assert.That(server.AcceptedConnections, Is.EqualTo(1));
+            Assert.That(server.ClosedConnections, Is.EqualTo(1));
+            Assert.That(server.MaxActiveConnections, Is.EqualTo(1));
+        });
     }
 
     [Test]

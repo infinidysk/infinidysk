@@ -308,6 +308,31 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
           </Tooltip>
         </ManagedSetting>
 
+        <ManagedSetting configKey="api.rename-single-video-to-release">
+          <Toggle
+            id="rename-single-video-to-release-checkbox"
+            className="cursor-pointer gap-2 p-0"
+            checked={(config["api.rename-single-video-to-release"] ?? "true") !== "false"}
+            onChange={(e) =>
+              setNewConfig({
+                ...config,
+                "api.rename-single-video-to-release": String(e.target.checked),
+              })
+            }
+            label={
+              <span>
+                <span className="block text-sm font-medium text-base-content">
+                  Rename a single video to the release name
+                </span>
+                <span className="block text-[11px] leading-relaxed text-base-content/45">
+                  When a job mounts exactly one video, name it after the download folder.
+                  Multi-video jobs (season packs) are never renamed.
+                </span>
+              </span>
+            }
+          />
+        </ManagedSetting>
+
         <ManagedSetting configKey="api.duplicate-nzb-behavior">
           <div className="space-y-2">
             <label
@@ -647,6 +672,8 @@ export function isSabnzbdSettingsUpdated(
     config["rclone.mount-dir"] !== newConfig["rclone.mount-dir"] ||
     config["api.ensure-importable-video"] !== newConfig["api.ensure-importable-video"] ||
     config["api.sample-filter-enabled"] !== newConfig["api.sample-filter-enabled"] ||
+    config["api.rename-single-video-to-release"] !==
+      newConfig["api.rename-single-video-to-release"] ||
     config["api.skip-non-video-on-missing-articles"] !==
       newConfig["api.skip-non-video-on-missing-articles"] ||
     config["api.ensure-article-existence-categories"] !==

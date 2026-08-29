@@ -97,7 +97,7 @@ The committed admin OpenAPI contract lives at `contracts/openapi/admin-v1.json` 
 cd frontend && npm run generate:api
 ```
 
-The export command starts the test host, normalizes the document (stable key order, empty `servers`, contract version `1.0.0`), and fails if the result does not match the committed file unless you are rewriting it. Frontend `lint` / `typecheck` / `test` / `build` regenerate `app/generated/admin-api.ts` automatically (gitignored).
+The export command starts the test host, normalizes the document (stable key order, empty `servers`, contract version `2.0.0`), and fails if the result does not match the committed file unless you are rewriting it. Frontend `lint` / `typecheck` / `test` / `build` regenerate `app/generated/admin-api.ts` automatically (gitignored).
 
 Stream tracing is **opt-in** and off by default. Toggle it from **Settings → Support** for 15/30/60 minutes (no restart; it auto-expires and never survives a restart), or set `STREAM_TRACE_EVENTS` to a positive value for an always-on capture from startup. When tracing is off, no trace events are recorded and the trace APIs report `enabled: false`.
 

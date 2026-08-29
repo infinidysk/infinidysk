@@ -17,7 +17,7 @@ export function CatalogueBlock({ catalogue }: CatalogueBlockProps) {
         <p className="text-xs text-base-content/50">Your mounted library</p>
       </header>
 
-      <div className="stats stats-vertical w-full border border-base-content/10 bg-base-100 sm:stats-horizontal">
+      <div className="stats w-full border border-base-content/10 bg-base-100 max-lg:grid max-lg:grid-flow-row max-lg:grid-cols-2 max-lg:gap-px max-lg:bg-base-content/10 lg:stats-horizontal">
         <Stat label="Files" value={formatNumber(catalogue.fileCount)} />
         <Stat label="Total size" value={formatBytes(catalogue.totalBytes)} />
         <Stat label="Largest file" value={formatBytes(catalogue.largestFileBytes)} />
@@ -41,10 +41,10 @@ function Stat({
   accent?: "good" | undefined;
 }) {
   return (
-    <div className="stat py-3">
-      <div className="stat-title text-xs">{label}</div>
+    <div className="stat min-w-0 bg-base-100 px-3 py-2.5 sm:px-4 sm:py-4 lg:px-6">
+      <div className="stat-title whitespace-normal text-xs">{label}</div>
       <div
-        className={`stat-value font-mono text-xl md:text-2xl ${accent === "good" ? "text-success" : ""}`}
+        className={`stat-value break-words font-mono text-xl md:text-2xl ${accent === "good" ? "text-success" : ""}`}
       >
         {value}
       </div>

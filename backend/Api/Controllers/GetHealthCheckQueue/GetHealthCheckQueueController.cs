@@ -17,7 +17,7 @@ public class GetHealthCheckQueueController(
     private async Task<GetHealthCheckQueueResponse> GetHealthCheckQueue(GetHealthCheckQueueRequest request)
     {
         // Stream the ordered queue and filter non-media files so the Health UI focuses on
-        // playable media. Urgent repairs (UnixEpoch sentinel) are always included.
+        // playable media. Urgent and pending repairs are always included.
         var davItems = new List<Database.Models.DavItem>();
         await foreach (var item in HealthCheckService.GetHealthCheckQueueItems(dbClient)
             .AsAsyncEnumerable()
@@ -25,6 +25,7 @@ public class GetHealthCheckQueueController(
         {
             if (davItems.Count >= request.PageSize) break;
             if (item.NextHealthCheck == DateTimeOffset.UnixEpoch ||
+                item.HealthRepairPending ||
                 FilenameUtil.IsHealthCheckCandidate(item.Name))
             {
                 davItems.Add(item);
@@ -34,10 +35,13 @@ public class GetHealthCheckQueueController(
         // Match HealthCheckService.ExecuteAsync: only media/archive candidates are ever
         // processed, so non-media files (nfo/srt/jpg/…) must not inflate this count or
         // the Health UI "initial scan pending" banner never clears. Pending repairs are
-        // already counted separately on the schedule snapshot.
+        // counted separately on the schedule snapshot, while operator-forced rechecks
+        // count as pending alongside never-checked files.
         var uncheckedCount = 0;
         await foreach (var name in HealthCheckService.GetHealthCheckQueueItemsQuery(dbClient)
-            .Where(x => x.NextHealthCheck == null && !x.HealthRepairPending)
+            .Where(x => !x.HealthRepairPending &&
+                (x.NextHealthCheck == null ||
+                 x.NextHealthCheck == HealthCheckService.ForcedRecheckSentinel))
             .Select(x => x.Name)
             .AsAsyncEnumerable()
             .ConfigureAwait(false))

@@ -56,6 +56,60 @@ public class StreamingPriorityConfigTests
     }
 
     [Theory]
+    [InlineData("abc", 30)]
+    [InlineData("", 30)]
+    [InlineData(null, 30)]
+    [InlineData("2", 5)]
+    [InlineData("5", 5)]
+    [InlineData("300", 120)]
+    [InlineData("120", 120)]
+    [InlineData("45", 45)]
+    public void GetNntpReadTimeout_ClampsAndFallsBack(string? value, int expectedSeconds)
+    {
+        var config = new ConfigManager();
+        if (value is not null)
+        {
+            config.UpdateValues(
+            [
+                new ConfigItem
+                {
+                    ConfigName = ConfigKeys.UsenetNntpReadTimeoutSeconds,
+                    ConfigValue = value,
+                },
+            ]);
+        }
+
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), config.GetNntpReadTimeout());
+    }
+
+    [Theory]
+    [InlineData("abc", 500)]
+    [InlineData("", 500)]
+    [InlineData(null, 500)]
+    [InlineData("-1", 0)]
+    [InlineData("9000", 5000)]
+    [InlineData("750", 750)]
+    [InlineData("0", 0)]
+    [InlineData("5000", 5000)]
+    public void GetReconnectDelay_ClampsAndFallsBack(string? value, int expectedMilliseconds)
+    {
+        var config = new ConfigManager();
+        if (value is not null)
+        {
+            config.UpdateValues(
+            [
+                new ConfigItem
+                {
+                    ConfigName = ConfigKeys.UsenetReconnectDelayMilliseconds,
+                    ConfigValue = value,
+                },
+            ]);
+        }
+
+        Assert.Equal(TimeSpan.FromMilliseconds(expectedMilliseconds), config.GetReconnectDelay());
+    }
+
+    [Theory]
     [InlineData("abc", 10L * 1024 * 1024 * 1024)]
     [InlineData("0", 1L * 1024 * 1024 * 1024)]
     [InlineData("2", 2L * 1024 * 1024 * 1024)]

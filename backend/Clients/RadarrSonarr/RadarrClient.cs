@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Net;
+using System.Text.Json;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.RadarrSonarr.RadarrModels;
 using Serilog;
@@ -28,6 +29,78 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 
     public Task<HttpStatusCode> DeleteMovieFile(int id, CancellationToken ct = default) =>
         Delete($"/moviefile/{id}", ct: ct);
+
+    public override async Task<ArrMediaFileMatch?> FindMediaFileAsync(
+        string symlinkOrStrmPath,
+        CancellationToken ct = default)
+    {
+        var movieIds = await GetMovieFileIds(symlinkOrStrmPath, ct).ConfigureAwait(false);
+        return movieIds is null
+            ? null
+            : new ArrMediaFileMatch(
+                ArrMediaKind.Movie,
+                movieIds.MovieFileId,
+                [movieIds.MovieId]);
+    }
+
+    public override async Task<ArrMissingPayloadCleanupOutcome> RemoveMissingPayloadAndSearchAsync(
+        ArrMediaFileMatch match,
+        Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+        CancellationToken ct = default)
+    {
+        if (match.Kind != ArrMediaKind.Movie || match.MediaIds.Count != 1)
+            throw new ArgumentException("Radarr cleanup requires one movie match.", nameof(match));
+
+        if (!Is2xx(await DeleteMovieFile(match.FileId, ct).ConfigureAwait(false)))
+            throw new InvalidOperationException(
+                $"Failed to delete movie file {match.FileId} from radarr instance '{Host}'.");
+
+        if (match.MediaKeys.Count == 0)
+            return ArrMissingPayloadCleanupOutcome.RemovedNoSearchTargets;
+        if (shouldRequestSearch is not null && !shouldRequestSearch(match.MediaKeys))
+            return ArrMissingPayloadCleanupOutcome.RemovedSearchWithheld;
+
+        try
+        {
+            await ExecuteWithTransientRetryAsync(
+                token => CommandAsync(
+                    new { name = "MoviesSearch", movieIds = match.MediaIds },
+                    token),
+                ct).ConfigureAwait(false);
+            return ArrMissingPayloadCleanupOutcome.RemovedSearchRequested;
+        }
+        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            return LogMissingPayloadSearchFailure(ex, match.FileId);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (HttpRequestException ex)
+        {
+            return LogMissingPayloadSearchFailure(ex, match.FileId);
+        }
+        catch (InvalidDataException ex)
+        {
+            return LogMissingPayloadSearchFailure(ex, match.FileId);
+        }
+        catch (JsonException ex)
+        {
+            return LogMissingPayloadSearchFailure(ex, match.FileId);
+        }
+    }
+
+    private ArrMissingPayloadCleanupOutcome LogMissingPayloadSearchFailure(
+        Exception exception,
+        int movieFileId)
+    {
+        Log.Warning(
+            "Radarr missing-payload cleanup on {Host}: movie file {MovieFileId} was removed, " +
+            "but replacement search failed. Reason: {Reason}",
+            Host,
+            movieFileId,
+            exception.Message);
+        Log.Debug(exception, "Radarr missing-payload replacement-search failure stack");
+        return ArrMissingPayloadCleanupOutcome.RemovedSearchFailed;
+    }
 
     public override async Task<ArrRepairOutcome> RemoveAndBlocklist(
         string symlinkOrStrmPath,

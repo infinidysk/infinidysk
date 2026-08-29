@@ -132,6 +132,21 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_ReportsHealthCheckGateAdmissionState()
+    {
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)));
+
+        using var environment = JsonDocument.Parse(entries["environment.json"]);
+        var gate = environment.RootElement.GetProperty("healthCheckGate");
+        Assert.Equal(1, gate.GetProperty("limit").GetInt32());
+        Assert.Equal(0, gate.GetProperty("active").GetInt32());
+        Assert.Equal(0, gate.GetProperty("waitingQueue").GetInt32());
+        Assert.Equal(0, gate.GetProperty("waitingBackground").GetInt32());
+    }
+
+    [Fact]
     public async Task Pack_ReportsCpuGcAndThreadPoolCountersForBottleneckTriage()
     {
         var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));
@@ -157,6 +172,18 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.True(gc.GetProperty("heapLimitBytes").GetInt64() > 0);
         Assert.True(gc.TryGetProperty("regionRangeBytes", out _));
         Assert.True(gc.TryGetProperty("regionSizeBytes", out _));
+        Assert.True(gc.TryGetProperty("index", out _));
+        Assert.True(gc.TryGetProperty("generation", out _));
+        Assert.True(gc.TryGetProperty("compacted", out _));
+        Assert.True(gc.TryGetProperty("concurrent", out _));
+        Assert.True(gc.TryGetProperty("memoryLoadBytes", out _));
+        Assert.True(gc.TryGetProperty("highMemoryLoadThresholdBytes", out _));
+        Assert.True(gc.TryGetProperty("totalAvailableMemoryBytes", out _));
+        Assert.True(gc.TryGetProperty("conserveMemory", out _));
+        Assert.True(gc.TryGetProperty("lohThresholdBytes", out _));
+        Assert.True(gc.TryGetProperty("heapHardLimitLohBytes", out _));
+        Assert.True(gc.TryGetProperty("heapHardLimitLohPercent", out _));
+        Assert.False(gc.TryGetProperty("DOTNET_GCConserveMemory", out _));
         // Article buffers land on the large-object heap, so its size must be visible.
         var generations = gc.GetProperty("generations").EnumerateArray()
             .Select(entry => entry.GetProperty("name").GetString())
@@ -242,14 +269,28 @@ public sealed class SupportPackContentsTests : IDisposable
             Assert.Equal(1, snapshot.GetProperty("rentCount").GetInt64());
             Assert.Equal(1, snapshot.GetProperty("returnCount").GetInt64());
             Assert.True(snapshot.TryGetProperty("trimmedBytes", out _));
+            Assert.True(snapshot.TryGetProperty("maxIdleBytes", out var maxIdle));
+            Assert.Equal(4 * 1024 * 1024, maxIdle.GetInt64());
+            Assert.True(snapshot.TryGetProperty("staleExpiredBytes", out _));
+            Assert.True(snapshot.TryGetProperty("classLimitDroppedBytes", out _));
+            Assert.True(snapshot.TryGetProperty("capacityEvictedBytes", out _));
+            Assert.True(snapshot.TryGetProperty("droppedTooLargeBytes", out _));
             Assert.True(snapshot.TryGetProperty("rejectedReturnCount", out _));
             Assert.True(snapshot.TryGetProperty("reuseCount", out _));
             Assert.True(snapshot.TryGetProperty("allocationCount", out _));
+            Assert.True(snapshot.TryGetProperty("allocationAttemptCount", out _));
+            Assert.True(snapshot.TryGetProperty("allocationFailureCount", out _));
 
             var sizeClass = Assert.Single(snapshot.GetProperty("sizeClasses").EnumerateArray());
             Assert.Equal(buffer.Length, sizeClass.GetProperty("bufferSize").GetInt32());
             Assert.Equal(1, sizeClass.GetProperty("bufferCount").GetInt32());
             Assert.Equal(buffer.Length, sizeClass.GetProperty("idleBytes").GetInt64());
+
+            var lifetime = Assert.Single(snapshot.GetProperty("lifetimeSizeClasses").EnumerateArray());
+            Assert.Equal(buffer.Length, lifetime.GetProperty("bufferSize").GetInt32());
+            Assert.Equal(1, lifetime.GetProperty("rentCount").GetInt64());
+            Assert.Equal(1, lifetime.GetProperty("returnCount").GetInt64());
+            Assert.Equal(1, lifetime.GetProperty("allocationCount").GetInt64());
         }
         finally
         {
@@ -758,6 +799,7 @@ public sealed class SupportPackContentsTests : IDisposable
         var repairPatchStore = new RepairPatchStore(repairDir, 1024 * 1024);
         await repairPatchStore.CatalogLoadTask;
         var par2RepairService = new Par2RepairService(configManager, usenet, repairPatchStore);
+        using var healthCheckConnectionGate = new HealthCheckConnectionGate(configManager);
         var service = new SupportPackService(
             logBuffer,
             warningBuffer,
@@ -773,6 +815,7 @@ public sealed class SupportPackContentsTests : IDisposable
             gcDiagnosticsStore,
             par2RepairService,
             repairPatchStore,
+            healthCheckConnectionGate,
             concurrentReadTracker);
 
         using var memory = new MemoryStream();

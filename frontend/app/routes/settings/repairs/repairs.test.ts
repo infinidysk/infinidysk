@@ -4,6 +4,7 @@ import { isRepairsSettingsUpdated, isRepairsSettingsValid } from "./repairs";
 const baseConfig: Record<string, string> = {
   "repair.enable": "true",
   "repair.healthcheck-concurrency": "50",
+  "repair.healthcheck-workers": "1",
   "repair.healthcheck-depth": "standard",
   "repair.healthcheck-aging": "false",
   "repair.auto-remove-after-failures": "0",
@@ -35,6 +36,74 @@ describe("Repairs settings helpers", () => {
 
   it("accepts valid PAR2 numeric settings", () => {
     expect(isRepairsSettingsValid(baseConfig)).toBe(true);
+  });
+
+  it("detects and validates health scheduling changes", () => {
+    expect(
+      isRepairsSettingsUpdated(baseConfig, {
+        ...baseConfig,
+        "repair.healthcheck-workers": "2",
+      }),
+    ).toBe(true);
+    expect(
+      isRepairsSettingsValid({
+        ...baseConfig,
+        "repair.healthcheck-concurrency": "200",
+        "repair.healthcheck-workers": "8",
+      }),
+    ).toBe(true);
+    expect(
+      isRepairsSettingsValid({
+        ...baseConfig,
+        "repair.healthcheck-concurrency": "201",
+      }),
+    ).toBe(true);
+    expect(
+      isRepairsSettingsValid({
+        ...baseConfig,
+        "repair.healthcheck-concurrency": "0",
+      }),
+    ).toBe(true);
+    expect(
+      isRepairsSettingsValid({
+        ...baseConfig,
+        "repair.healthcheck-concurrency": "not-a-number",
+      }),
+    ).toBe(false);
+    expect(
+      isRepairsSettingsValid({
+        ...baseConfig,
+        "repair.healthcheck-workers": "9",
+      }),
+    ).toBe(false);
+    expect(
+      isRepairsSettingsValid({
+        ...baseConfig,
+        "repair.healthcheck-workers": "",
+      }),
+    ).toBe(false);
+    const withoutWorkers = { ...baseConfig };
+    delete withoutWorkers["repair.healthcheck-workers"];
+    expect(isRepairsSettingsValid(withoutWorkers)).toBe(true);
+  });
+
+  it("accepts only signed 64-bit health concurrency values", () => {
+    for (const value of ["-9223372036854775808", "9223372036854775807"]) {
+      expect(
+        isRepairsSettingsValid({
+          ...baseConfig,
+          "repair.healthcheck-concurrency": value,
+        }),
+      ).toBe(true);
+    }
+    for (const value of ["-9223372036854775809", "9223372036854775808"]) {
+      expect(
+        isRepairsSettingsValid({
+          ...baseConfig,
+          "repair.healthcheck-concurrency": value,
+        }),
+      ).toBe(false);
+    }
   });
 
   it("rejects invalid PAR2 numeric settings", () => {

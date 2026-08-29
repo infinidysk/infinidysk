@@ -20,7 +20,18 @@ public sealed class OomDiagnosticsTests
             e => e.MessageTemplate.Text.Contains("OutOfMemoryException during"));
         Assert.Equal(LogEventLevel.Warning, entry.Level);
         Assert.Contains("OutOfMemoryException during", entry.MessageTemplate.Text);
+        Assert.Contains("LastGcAvailableCeiling", entry.MessageTemplate.Text);
         Assert.Null(entry.Exception);
+        Assert.True(entry.Properties.ContainsKey("GcIndex"));
+        Assert.True(entry.Properties.ContainsKey("GcGeneration"));
+        Assert.True(entry.Properties.ContainsKey("LohSize"));
+        Assert.True(entry.Properties.ContainsKey("LohFragmentation"));
+        Assert.True(entry.Properties.ContainsKey("MemoryLoad"));
+        Assert.True(entry.Properties.ContainsKey("HighMemoryLoadThreshold"));
+        Assert.True(entry.Properties.ContainsKey("WorkingSet"));
+        Assert.True(entry.Properties.ContainsKey("LohHardLimit"));
+        Assert.True(entry.Properties.ContainsKey("LohHardLimitPercent"));
+        Assert.True(entry.Properties.ContainsKey("PoolOutstanding"));
         Assert.Contains(events, e =>
             e.Level == LogEventLevel.Debug &&
             e.MessageTemplate.Text.Contains("OutOfMemoryException stack") &&

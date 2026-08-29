@@ -7,7 +7,7 @@ internal enum DownloadWorkload { Streaming, Queue, Maintenance, Background }
 internal enum NntpOperation
 {
     Admission, Body, Article, Stat, Head, Date,
-    PipelinedBody, PipelinedArticle, PipelinedStat,
+    PipelinedBody, PipelinedArticle, PipelinedStat, Control,
 }
 
 /// <summary>
@@ -45,6 +45,7 @@ internal static class LatencyNames
         NntpOperation.PipelinedBody => "pipelined-body",
         NntpOperation.PipelinedArticle => "pipelined-article",
         NntpOperation.PipelinedStat => "pipelined-stat",
+        NntpOperation.Control => "control",
         _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, null),
     };
 
@@ -91,6 +92,7 @@ internal static class LatencyNames
             case "pipelined-body": operation = NntpOperation.PipelinedBody; return true;
             case "pipelined-article": operation = NntpOperation.PipelinedArticle; return true;
             case "pipelined-stat": operation = NntpOperation.PipelinedStat; return true;
+            case "control": operation = NntpOperation.Control; return true;
             default: return false;
         }
     }
@@ -102,7 +104,7 @@ internal static class LatencyNames
         "STAT" => NntpOperation.Stat,
         "HEAD" => NntpOperation.Head,
         "DATE" => NntpOperation.Date,
-        _ => NntpOperation.Body,
+        _ => NntpOperation.Control,
     };
 }
 

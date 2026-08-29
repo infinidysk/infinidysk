@@ -80,6 +80,7 @@ export function LiveReadsPanelContent({ rows }: { rows: LiveReadRow[] }) {
   const [copyNotice, setCopyNotice] = useState<{ seq: number; text: string } | null>(null);
   const copySeqRef = useRef(0);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const displayedRows = [...rows].sort((a, b) => b.read.startedAt - a.read.startedAt);
 
   useEffect(() => {
     return () => {
@@ -104,8 +105,8 @@ export function LiveReadsPanelContent({ rows }: { rows: LiveReadRow[] }) {
   };
 
   return (
-    <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
-      <div className="card-body gap-3 p-4">
+    <section className="card h-[30rem] w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
+      <div className="card-body flex min-h-0 flex-col gap-3 p-4">
         <div className="flex items-center gap-2.5">
           <span className="status status-success animate-pulse" aria-hidden="true" />
           <h3 className="card-title m-0 text-base">Right now</h3>
@@ -125,8 +126,8 @@ export function LiveReadsPanelContent({ rows }: { rows: LiveReadRow[] }) {
             No files are being read right now. Open a mounted file to see live progress here.
           </p>
         ) : (
-          <ul className="m-0 w-full list-none divide-y divide-base-content/10 p-0">
-            {rows.map(({ read, rate, history }) => (
+          <ul className="yes-scrollbar m-0 min-h-0 w-full flex-1 list-none divide-y divide-base-content/10 overflow-y-auto p-0">
+            {displayedRows.map(({ read, rate, history }) => (
               <ReadRow
                 key={read.id}
                 read={read}
@@ -196,7 +197,7 @@ function ReadRow({
             </span>
           </Tooltip>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs tabular-nums">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs tabular-nums">
           {history.length >= 2 && (
             <span className="hidden sm:block">
               <Sparkline values={history} tone="success" />

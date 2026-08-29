@@ -36,6 +36,48 @@ describe("ProviderScoreboard", () => {
     expect(active).toContain('aria-label="Article share: 100%"');
     expect(idle).toContain(">—<");
   });
+
+  it("places the speed chart after the horizontal scroll wrapper", () => {
+    const selected = {
+      ...provider(2),
+      speedSeries: [{ bucket: 1_700_000_000_000, speedMbPerSec: 2.25, bytesFetched: 4_000 }],
+    };
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProviderScoreboard
+          providers={[selected]}
+          window="1h"
+          selectedProvider="provider-1"
+          onSelectProvider={() => {}}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain('id="provider-speed-chart"');
+    expect(markup.indexOf("overflow-x-auto")).toBeGreaterThan(-1);
+    expect(markup.indexOf('id="provider-speed-chart"')).toBeGreaterThan(
+      markup.indexOf("overflow-x-auto"),
+    );
+    expect(markup).toContain("2.25 MB/s");
+    expect(markup).not.toContain("min-w-[800px]");
+  });
+
+  it("captions retained history when the series is truncated", () => {
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProviderScoreboard
+          providers={[provider(1)]}
+          window="all"
+          selectedProvider="provider-1"
+          onSelectProvider={() => {}}
+          providerSpeedHistoryTruncated
+        />
+      </MemoryRouter>,
+    );
+
+    expect(markup).toContain("retained provider history (last 365 days)");
+  });
 });
 
 describe("OutageBuckets", () => {

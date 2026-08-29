@@ -740,7 +740,10 @@ export function IndexersSettings({
         </ManagedSetting>
 
         <ManagedSetting configKey="prowlarr.sync-enabled">
-          <Tooltip content="Periodically refresh the Prowlarr-managed entries below. Manual Sync now works even when this is off.">
+          <Tooltip
+            className="tooltip-start"
+            content="Periodically refresh the Prowlarr-managed entries below. Manual Sync now works even when this is off."
+          >
             <Toggle
               id="prowlarr-sync-enabled"
               className="cursor-pointer gap-2 p-0"

@@ -75,7 +75,7 @@ public sealed class SabFailedDownloadIdentityTests : IAsyncLifetime
             new ProviderBytesTracker(),
             new StreamTraceBuffer(100),
             new ActiveReadRegistry());
-        _queueManager = new QueueManager(
+        _queueManager = QueueManager.CreateForTests(
             usenet,
             _configManager,
             _websocketManager,
@@ -145,6 +145,7 @@ public sealed class SabFailedDownloadIdentityTests : IAsyncLifetime
         _context.ChangeTracker.Clear();
         var queueItem = await _context.QueueItems.SingleAsync(q => q.Id == Guid.Parse(nzoId));
         await using var nzbStream = BlobStore.ReadBlob(queueItem.Id)!;
+        using var healthCheckConnectionGate = new HealthCheckConnectionGate(_configManager);
         var processor = new QueueItemProcessor(
             queueItem,
             nzbStream,
@@ -153,6 +154,7 @@ public sealed class SabFailedDownloadIdentityTests : IAsyncLifetime
             _configManager,
             _websocketManager,
             new Progress<int>(),
+            healthCheckConnectionGate,
             CancellationToken.None);
         await processor.ProcessAsync();
 

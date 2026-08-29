@@ -6,6 +6,7 @@ using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Services;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Websocket;
 
@@ -303,14 +304,17 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
+        var config = new ConfigManager();
+        using var healthCheckConnectionGate = new HealthCheckConnectionGate(config);
         var processor = new QueueItemProcessor(
             queueItem,
             queueNzbStream: null,
             _client,
             new FakeNntpClient(new Dictionary<string, byte[]>()),
-            new ConfigManager(),
+            config,
             new WebsocketManager(),
             new Progress<int>(),
+            healthCheckConnectionGate,
             CancellationToken.None);
         await processor.ProcessAsync();
 

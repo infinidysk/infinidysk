@@ -27,13 +27,17 @@ public class BaseNntpClient : NntpClient
     internal const int StatPipelinedSweepChunkSize = 512;
 
     private readonly IUsenetClient _client;
+    internal TimeSpan ReadTimeout { get; }
 
     public BaseNntpClient() : this(skipTlsVerification: false)
     {
     }
 
 #pragma warning disable CA2000 // the client is stored in _client and disposed with this instance
-    public BaseNntpClient(bool skipTlsVerification, bool applyBandwidthLimit = true)
+    public BaseNntpClient(
+        bool skipTlsVerification,
+        TimeSpan? readTimeout = null,
+        bool applyBandwidthLimit = true)
         : this(new UsenetClient(new UsenetClientOptions
 #pragma warning restore CA2000
         {
@@ -41,6 +45,7 @@ public class BaseNntpClient : NntpClient
             ? YencCrcValidationMode.Off
             : YencCrcValidationMode.WhenPresent,
             SkipTlsVerification = skipTlsVerification,
+            ReadTimeout = readTimeout ?? TimeSpan.FromSeconds(30),
             DecodedBodyBufferedBytesObserver = static delta =>
                 InFlightArticleBudget.Current?.AccountBufferedPipeBytes(delta),
             PayloadBandwidthAcquirer = applyBandwidthLimit
@@ -49,6 +54,7 @@ public class BaseNntpClient : NntpClient
             : null,
         }))
     {
+        ReadTimeout = readTimeout ?? TimeSpan.FromSeconds(30);
     }
 
     /// <summary>Test seam for injecting a scripted underlying client.</summary>
