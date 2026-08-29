@@ -92,7 +92,7 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
               <tbody>
                 {instances.map((instance) => (
                   <tr key={instance.key}>
-                    <td className="max-w-[220px] font-medium">
+                    <td className="min-w-0 max-w-[220px] font-medium">
                       <Tooltip content={instance.host}>
                         <span className="inline-block max-w-full truncate align-middle">
                           {instance.name}
@@ -116,7 +116,7 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
                     <td className="font-mono tabular-nums">
                       {formatNumber(instance.awaitingCount)}
                     </td>
-                    <td className="font-mono tabular-nums text-base-content/80">
+                    <td className="min-w-0 font-mono tabular-nums text-base-content/80 max-sm:whitespace-normal max-sm:break-words">
                       {instance.status === "offline" && !instance.lastImportAtMs
                         ? (instance.lastError ?? "Unreachable")
                         : formatTimeAgo(instance.lastImportAtMs)}

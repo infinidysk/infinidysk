@@ -1,4 +1,11 @@
-import type { HTMLAttributes, ReactNode } from "react";
+import {
+  cloneElement,
+  isValidElement,
+  useId,
+  useState,
+  type HTMLAttributes,
+  type ReactNode,
+} from "react";
 
 type AlertVariant = "info" | "success" | "warning" | "danger";
 
@@ -47,12 +54,42 @@ export function Tooltip({
   placement?: TooltipPlacement;
   className?: string;
 }) {
+  const tooltipId = useId();
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const open = hovered || focused;
+  const trigger = isValidElement<{ "aria-describedby"?: string }>(children)
+    ? cloneElement(children, {
+        "aria-describedby":
+          [children.props["aria-describedby"], open ? tooltipId : undefined]
+            .filter(Boolean)
+            .join(" ") || undefined,
+      })
+    : children;
+
   return (
-    <span className={`tooltip ${tooltipPlacementClass[placement]} ${className}`.trim()}>
-      <span className="tooltip-content z-50 w-72 max-w-[calc(100vw-2rem)] whitespace-normal text-left text-xs leading-relaxed">
+    <span
+      className={["tooltip", tooltipPlacementClass[placement], open ? "tooltip-open" : "", className]
+        .filter(Boolean)
+        .join(" ")}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setFocused(false);
+        }
+      }}
+    >
+      <span
+        id={tooltipId}
+        role="tooltip"
+        aria-hidden={!open}
+        className="tooltip-content z-50 w-72 max-w-[calc(100vw-2rem)] whitespace-normal text-left text-xs leading-relaxed"
+      >
         {content}
       </span>
-      {children}
+      {trigger}
     </span>
   );
 }

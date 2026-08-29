@@ -52,14 +52,14 @@ export function IndexerApiUsage({ rows }: IndexerApiUsageProps) {
                         </span>
                       </Tooltip>
                     </td>
-                    <td>
+                    <td className="min-w-0">
                       <UsageBar
                         used={r.apiHits}
                         limit={r.apiHitLimit}
                         label={`${r.name} API hits`}
                       />
                     </td>
-                    <td>
+                    <td className="min-w-0">
                       <UsageBar
                         used={r.downloadHits}
                         limit={r.downloadHitLimit}
@@ -91,16 +91,16 @@ function UsageBar({
 }) {
   if (!limit || limit <= 0) {
     return (
-      <div className="flex items-center gap-2.5">
-        <Tooltip content="No limit configured">
+      <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
+        <Tooltip className="min-w-0 flex-1" content="No limit configured">
           <progress
             aria-label={`${label}: ${formatNumber(used)}, unlimited`}
-            className="progress progress-success h-2 min-w-20 flex-1"
+            className="progress progress-success h-2 w-full min-w-0"
             value={0}
             max={100}
           />
         </Tooltip>
-        <span className="text-xs text-base-content tabular-nums whitespace-nowrap">
+        <span className="min-w-0 shrink-0 text-xs text-base-content tabular-nums whitespace-nowrap max-sm:shrink max-sm:whitespace-normal">
           {formatNumber(used)}
           <span className="text-base-content/50"> · unlimited</span>
         </span>
@@ -112,14 +112,14 @@ function UsageBar({
   const over = pct >= 100;
   const tone = over ? "progress-error" : near ? "progress-warning" : "progress-success";
   return (
-    <div className="flex items-center gap-2.5">
+    <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
       <progress
         aria-label={`${label}: ${formatNumber(used)} of ${formatNumber(limit)}`}
-        className={`progress h-2 min-w-20 flex-1 ${tone}`}
+        className={`progress h-2 min-w-0 flex-1 ${tone}`}
         value={pct}
         max={100}
       />
-      <span className="text-xs text-base-content tabular-nums whitespace-nowrap">
+      <span className="min-w-0 shrink-0 text-xs text-base-content tabular-nums whitespace-nowrap max-sm:shrink max-sm:whitespace-normal">
         {formatNumber(used)}
         <span className="text-base-content/50"> / {formatNumber(limit)}</span>
       </span>
