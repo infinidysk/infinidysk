@@ -27,6 +27,8 @@ const validConfig = {
   "usenet.in-flight-article-budget-mb": "",
   "usenet.bandwidth-limit-mbps": "",
   "usenet.idle-connection-timeout-seconds": "60",
+  "usenet.nntp-read-timeout-seconds": "30",
+  "usenet.reconnect-delay-milliseconds": "500",
   "usenet.pipelined-body-requests": "true",
   "usenet.streaming-body-batch-width": "",
   "usenet.container-aware-fill": "true",
@@ -124,6 +126,8 @@ describe("Streaming settings", () => {
       ["Article Buffer Size", "60"],
       ["In-flight article budget (MiB)", "256"],
       ["Idle connection timeout (seconds)", "90"],
+      ["NNTP response timeout (seconds)", "45"],
+      ["Replacement reconnect spacing (milliseconds)", "750"],
     ];
     for (const [name, value] of numericUpdates) {
       const input = screen.getByRole<HTMLInputElement>("textbox", { name });
@@ -268,6 +272,57 @@ describe("Streaming settings", () => {
         ...validConfig,
         "usenet.segment-cache.enabled": "true",
         "usenet.segment-cache.path": " ",
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts and rejects NNTP timeout and reconnect spacing boundaries", () => {
+    expect(
+      isStreamingSettingsValid({
+        ...validConfig,
+        "usenet.nntp-read-timeout-seconds": "5",
+      }),
+    ).toBe(true);
+    expect(
+      isStreamingSettingsValid({
+        ...validConfig,
+        "usenet.nntp-read-timeout-seconds": "120",
+      }),
+    ).toBe(true);
+    expect(
+      isStreamingSettingsValid({
+        ...validConfig,
+        "usenet.nntp-read-timeout-seconds": "4",
+      }),
+    ).toBe(false);
+    expect(
+      isStreamingSettingsValid({
+        ...validConfig,
+        "usenet.nntp-read-timeout-seconds": "121",
+      }),
+    ).toBe(false);
+    expect(
+      isStreamingSettingsValid({
+        ...validConfig,
+        "usenet.reconnect-delay-milliseconds": "0",
+      }),
+    ).toBe(true);
+    expect(
+      isStreamingSettingsValid({
+        ...validConfig,
+        "usenet.reconnect-delay-milliseconds": "5000",
+      }),
+    ).toBe(true);
+    expect(
+      isStreamingSettingsValid({
+        ...validConfig,
+        "usenet.reconnect-delay-milliseconds": "-1",
+      }),
+    ).toBe(false);
+    expect(
+      isStreamingSettingsValid({
+        ...validConfig,
+        "usenet.reconnect-delay-milliseconds": "5001",
       }),
     ).toBe(false);
   });

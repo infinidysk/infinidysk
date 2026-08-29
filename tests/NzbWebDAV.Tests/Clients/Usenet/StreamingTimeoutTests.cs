@@ -23,6 +23,32 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class StreamingTimeoutTests
 {
     [Fact]
+    public async Task MissingArticle_ReturnsCleanMissWithoutReplacingConnection()
+    {
+        var breaker = new ProviderCircuitBreaker("missing-article");
+        var inner = new FakeNntpClient(new Dictionary<string, byte[]>());
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(inner));
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "missing-article");
+        ArticleBodyResult? callbackResult = null;
+
+        await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
+            client.DecodedBodyAsync(
+                "missing",
+                (result, _) => callbackResult = result,
+                CancellationToken.None));
+
+        Assert.Equal(ArticleBodyResult.NotFound, callbackResult);
+        Assert.Equal(1, breaker.GetSnapshot().ArticleMissCount);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+        Assert.Equal(1, pool.LiveConnections);
+        Assert.Equal(1, pool.IdleConnections);
+        Assert.Equal(0, pool.GetChurn().ConnectionsDestroyed);
+    }
+
+    [Fact]
     public async Task RunWithConnection_DisposedPool_DoesNotRetryOrPenalizeProvider()
     {
         var breaker = new ProviderCircuitBreaker("retired-pool");
@@ -384,8 +410,9 @@ public class StreamingTimeoutTests
         breaker.RecordFailure();
         Assert.True(breaker.IsLatched);
 
-        await client.StatAsync("seg", CancellationToken.None);
-
+        var rejected = await Assert.ThrowsAnyAsync<RetryableDownloadException>(
+            () => client.StatAsync("seg", CancellationToken.None));
+        Assert.Contains("circuit", rejected.Message, StringComparison.OrdinalIgnoreCase);
         Assert.True(breaker.IsLatched);
         Assert.True(breaker.TrippedUntilMs > Environment.TickCount64);
 

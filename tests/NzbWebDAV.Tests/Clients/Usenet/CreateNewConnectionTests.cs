@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
@@ -187,6 +190,53 @@ public class CreateNewConnectionTests
 
         Assert.False(fake.Connected);
         Assert.Equal(0, fake.DisposeCount);
+    }
+
+    [Fact]
+    public async Task CreateNewConnection_AppliesConfiguredReadTimeoutToBaseClient()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var serverTask = Task.Run(async () =>
+        {
+            using var tcpClient = await listener.AcceptTcpClientAsync();
+            await using var stream = tcpClient.GetStream();
+            using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
+            await using var writer = new StreamWriter(stream, Encoding.ASCII, leaveOpen: true)
+            {
+                AutoFlush = true,
+                NewLine = "\r\n",
+            };
+
+            await writer.WriteLineAsync("200 test server ready");
+            Assert.StartsWith("AUTHINFO USER ", await reader.ReadLineAsync());
+            await writer.WriteLineAsync("381 password required");
+            Assert.StartsWith("AUTHINFO PASS ", await reader.ReadLineAsync());
+            await writer.WriteLineAsync("281 authentication accepted");
+            Assert.Equal("QUIT", await reader.ReadLineAsync());
+            await writer.WriteLineAsync("205 closing connection");
+        });
+
+        var details = MakeDetails();
+        details.Host = IPAddress.Loopback.ToString();
+        details.Port = port;
+        details.UseSsl = false;
+        var timeout = TimeSpan.FromSeconds(17);
+
+        var connection = await UsenetStreamingClient.CreateNewConnection(
+            details, timeout, CancellationToken.None);
+        try
+        {
+            var baseClient = Assert.IsType<BaseNntpClient>(connection);
+            Assert.Equal(timeout, baseClient.ReadTimeout);
+        }
+        finally
+        {
+            connection.Dispose();
+        }
+
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private static UsenetProviderConfig.ConnectionDetails MakeDetails() =>

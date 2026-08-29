@@ -47,7 +47,9 @@ public class MultiConnectionNntpClient(
     string? metricsKey = null,
     ProviderLatencyTracker? latencyTracker = null,
     int? maxTransferConnections = null,
-    SemaphorePriorityOdds? priorityOdds = null
+    SemaphorePriorityOdds? priorityOdds = null,
+    TimeSpan nntpReadTimeout = default,
+    TimeSpan reconnectDelay = default
 ) : NntpClient
 {
     private readonly ProviderConnectionAdmission? _connectionAdmission =
@@ -69,6 +71,8 @@ public class MultiConnectionNntpClient(
     /// </summary>
     public string MetricsKey { get; } = string.IsNullOrEmpty(metricsKey) ? providerName : metricsKey;
     public string StorageGroup { get; } = storageGroup;
+    internal TimeSpan NntpReadTimeout { get; } = nntpReadTimeout;
+    internal TimeSpan ReconnectDelay { get; } = reconnectDelay;
 
     private static readonly ConcurrentDictionary<string, int> TimeoutCounts = new();
     private static long _lastTimeoutFlushTicks = DateTime.UtcNow.Ticks;
@@ -310,15 +314,26 @@ public class MultiConnectionNntpClient(
     )
     {
         // Streaming reads carry a per-segment deadline so a stalled provider fails over
-        // instead of holding a playback stream open for UsenetSharp's ~40s read timeout.
+        // instead of holding a playback stream open for the raw NNTP stalled-read timeout
+        // (configurable, 30s default).
         // It applies to issuing the batch, which is the part that waits on the provider;
         // the response streams are drained by the caller afterwards.
         var workload = DownloadWorkloadClassifier.Classify(ct);
         var operation = NntpOperation.Body;
         var streamingTimeout = ct.GetContext<StreamingTimeoutContext>();
         var retryCount = streamingTimeout?.MaxRetries ?? 1;
+        var probeLease = CircuitProbeLease.None;
         while (true)
         {
+            // Claim circuit admission before touching the pool so a rejected caller
+            // never triggers a connect+auth handshake on a cold pool. Rejection is
+            // retryable: MultiProviderNntpClient fails over to the next provider.
+            if (!TryAdmitBeforeAcquisition(ref probeLease))
+            {
+                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
+                throw new CircuitAdmissionRejectedException();
+            }
+
             ConnectionLock<INntpClient>? connectionLock = null;
             var deferredCallback = new DeferredArticleBodyCallback();
             CancellationTokenSource? attemptCts = null;
@@ -354,10 +369,10 @@ public class MultiConnectionNntpClient(
                     switch (result)
                     {
                         case ArticleBodyResult.Retrieved:
-                            circuitBreaker.RecordSuccess();
+                            circuitBreaker.RecordSuccess(probe: probeLease);
                             break;
                         case ArticleBodyResult.NotFound:
-                            circuitBreaker.RecordArticleNotFound();
+                            circuitBreaker.RecordArticleNotFound(probeLease);
                             break;
                         case ArticleBodyResult.Cancelled:
                             break;
@@ -365,17 +380,17 @@ public class MultiConnectionNntpClient(
                             // Seek/abort cancels mid-pipeline; UsenetSharp reports NotRetrieved
                             // (socket unsafe to reuse). Replace the connection but do not treat
                             // client cancellation as provider health failure.
-                            LogException(connectionLock.Replace);
+                            LogException(() => connectionLock.Replace("pipelined-body-not-retrieved"));
                             if (!ct.IsCancellationRequested)
                                 RecordProviderFailure(failureReason is null
                                     ? $"pipeline-callback-{result}"
-                                    : $"pipeline-callback-{result} ({failureReason})");
+                                    : $"pipeline-callback-{result} ({failureReason})", probeLease);
                             break;
                         default:
                             RecordProviderFailure(failureReason is null
                                 ? $"pipeline-callback-{result}"
-                                : $"pipeline-callback-{result} ({failureReason})");
-                            LogException(connectionLock.Replace);
+                                : $"pipeline-callback-{result} ({failureReason})", probeLease);
+                            LogException(() => connectionLock.Replace($"pipelined-body-{result}"));
                             break;
                     }
 
@@ -394,7 +409,7 @@ public class MultiConnectionNntpClient(
                 // connection has an in-flight pipeline → replace it and try again, so a
                 // single slow provider does not decide what the stream delivers.
                 deferredCallback.Discard();
-                LogException(() => connectionLock?.Replace());
+                LogException(() => connectionLock?.Replace("streaming-timeout-pipelined-BODY"));
                 LogException(() => connectionLock?.Dispose());
                 if (retryCount > 0)
                 {
@@ -405,7 +420,7 @@ public class MultiConnectionNntpClient(
                     continue;
                 }
 
-                RecordProviderFailure("streaming-timeout-pipelined-BODY");
+                RecordProviderFailure("streaming-timeout-pipelined-BODY", probeLease);
                 Log.Warning(
                     "Streaming timeout executing pipelined nntp BODY commands for provider {Provider} after {Timeout}s. No retries left.",
                     Host, streamingTimeout.PerSegmentTimeout.TotalSeconds);
@@ -417,7 +432,9 @@ public class MultiConnectionNntpClient(
             catch (Exception e) when (e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
-                LogException(() => connectionLock?.Replace());
+                // Caller cancellation records no breaker outcome; free the probe slot.
+                circuitBreaker.ReleaseProbe(probeLease);
+                LogException(() => connectionLock?.Replace("caller-cancelled-pipelined-BODY"));
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
@@ -425,10 +442,11 @@ public class MultiConnectionNntpClient(
             catch (NntpClientRetiredException)
             {
                 deferredCallback.Discard();
+                circuitBreaker.ReleaseProbe(probeLease);
                 // Normally this branch is reached while waiting to acquire and the lock is
                 // null. Keep cleanup here for the concurrent-dispose edge where the command
                 // itself observes disposal after acquisition.
-                LogException(() => connectionLock?.Replace());
+                LogException(() => connectionLock?.Replace("retired-pipelined-BODY"));
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
@@ -437,8 +455,9 @@ public class MultiConnectionNntpClient(
             {
                 // Permanently missing / invalid segment ids are not connection failures.
                 deferredCallback.Discard();
+                circuitBreaker.RecordArticleNotFound(probeLease);
                 LogException(() => connectionLock?.Dispose());
-                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
+                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotFound));
                 throw;
             }
             catch (Exception e) when (e is not OutOfMemoryException)
@@ -451,9 +470,9 @@ public class MultiConnectionNntpClient(
                 }
                 else if (!wasReused)
                 {
-                    RecordProviderFailure($"pipeline-setup-{e.GetType().Name}");
+                    RecordProviderFailure($"pipeline-setup-{e.GetType().Name}", probeLease);
                 }
-                LogException(() => connectionLock?.Replace());
+                LogException(() => connectionLock?.Replace("pipelined-BODY-command-failure"));
                 LogException(() => connectionLock?.Dispose());
 
                 // A pooled connection may have been closed server-side while idle;
@@ -466,7 +485,9 @@ public class MultiConnectionNntpClient(
                     continue;
                 }
 
-                if (retryCount > 0)
+                // A failure that latched the breaker just proved the provider broken;
+                // surface the original error instead of retrying into a circuit rejection.
+                if (retryCount > 0 && !circuitBreaker.IsLatched)
                 {
                     Log.Debug(e,
                         "Error executing pipelined NNTP BODY commands for provider {Provider}. Retrying with a new connection.",
@@ -520,8 +541,18 @@ public class MultiConnectionNntpClient(
         if (streamingTimeout != null)
             retryCount = streamingTimeout.MaxRetries;
 
+        var probeLease = CircuitProbeLease.None;
         while (true)
         {
+            // Claim circuit admission before touching the pool so a rejected caller
+            // never triggers a connect+auth handshake on a cold pool. Rejection is
+            // retryable: MultiProviderNntpClient fails over to the next provider.
+            if (!TryAdmitBeforeAcquisition(ref probeLease))
+            {
+                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
+                throw new CircuitAdmissionRejectedException();
+            }
+
             ConnectionLock<INntpClient>? connectionLock = null;
             try
             {
@@ -530,21 +561,26 @@ public class MultiConnectionNntpClient(
             }
             catch (Exception e) when (e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
+                // Caller cancellation records no breaker outcome; free the probe slot.
+                circuitBreaker.ReleaseProbe(probeLease);
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
             catch (NntpClientRetiredException)
             {
+                circuitBreaker.ReleaseProbe(probeLease);
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
                 RecordConnectionAcquisitionFailure(e, "get-connection", ct);
-                LogException(() => connectionLock?.Replace());
+                LogException(() => connectionLock?.Replace($"connection-acquisition-failure-{name}"));
                 LogException(() => connectionLock?.Dispose());
-                if (retryCount > 0)
+                // A failure that latched the breaker just proved the provider broken;
+                // surface the original error instead of retrying into a circuit rejection.
+                if (retryCount > 0 && !circuitBreaker.IsLatched)
                 {
                     Log.Debug(e, "Error getting connection-lock for provider {Provider}. Retrying with a new connection.", Host);
                     retryCount--;
@@ -600,7 +636,7 @@ public class MultiConnectionNntpClient(
                 // Do not invoke onConnectionReadyAgain on retry: the outer download
                 // permit stays held across attempts (same pattern as other retries).
                 deferredCallback.Discard();
-                LogException(() => connectionLock?.Replace());
+                LogException(() => connectionLock?.Replace($"streaming-timeout-{name}"));
                 LogException(() => connectionLock?.Dispose());
                 if (retryCount > 0)
                 {
@@ -614,7 +650,7 @@ public class MultiConnectionNntpClient(
                 // Exhausted the streaming-timeout retry budget — count toward the
                 // breaker once per segment (not per attempt) so chronically-slow
                 // providers still trip without over-counting a single segment.
-                RecordProviderFailure($"streaming-timeout-{name}");
+                RecordProviderFailure($"streaming-timeout-{name}", probeLease);
                 Log.Warning(
                     "Streaming timeout executing nntp {Command} command for provider {Provider} after {Timeout}s. No retries left.",
                     name, Host, streamingTimeout.PerSegmentTimeout.TotalSeconds);
@@ -625,7 +661,9 @@ public class MultiConnectionNntpClient(
             catch (Exception e) when (e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
-                LogException(() => connectionLock?.Replace());
+                // Caller cancellation records no breaker outcome; free the probe slot.
+                circuitBreaker.ReleaseProbe(probeLease);
+                LogException(() => connectionLock?.Replace($"caller-cancelled-{name}"));
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
@@ -633,8 +671,9 @@ public class MultiConnectionNntpClient(
             catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _) && e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
+                circuitBreaker.RecordArticleNotFound(probeLease);
                 LogException(() => connectionLock?.Dispose());
-                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
+                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotFound));
                 throw;
             }
             catch (Exception e) when (IsBodyCommand(name) && e.TryGetCausingException(out TimeoutException? _) && e is not OutOfMemoryException)
@@ -647,8 +686,8 @@ public class MultiConnectionNntpClient(
                 // on the wire) and propagate so the outer provider loop moves on.
                 IncrementTimeoutCount(Host);
                 deferredCallback.Discard();
-                RecordProviderFailure($"read-timeout-{name}");
-                LogException(() => connectionLock?.Replace());
+                RecordProviderFailure($"read-timeout-{name}", probeLease);
+                LogException(() => connectionLock?.Replace($"read-timeout-{name}"));
                 LogException(() => connectionLock?.Dispose());
                 LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
                 throw;
@@ -660,8 +699,8 @@ public class MultiConnectionNntpClient(
                 // STAT, HEAD, and DATE failures do not feed a closed circuit because their
                 // successes intentionally do not reset its BODY failure sampling window.
                 if (!wasReused && IsBodyCommand(name))
-                    RecordProviderFailure($"cmd-setup-{name}-{e.GetType().Name}");
-                LogException(() => connectionLock?.Replace());
+                    RecordProviderFailure($"cmd-setup-{name}-{e.GetType().Name}", probeLease);
+                LogException(() => connectionLock?.Replace($"command-failure-{name}"));
                 LogException(() => connectionLock?.Dispose());
 
                 // A pooled connection may have been closed server-side while idle;
@@ -672,7 +711,9 @@ public class MultiConnectionNntpClient(
                     continue;
                 }
 
-                if (retryCount > 0)
+                // A failure that latched the breaker just proved the provider broken;
+                // surface the original error instead of retrying into a circuit rejection.
+                if (retryCount > 0 && !circuitBreaker.IsLatched)
                 {
                     Log.Debug(e, "Error executing nntp {Command} command for provider {Provider}. Retrying with a new connection.", name, Host);
                     retryCount--;
@@ -683,7 +724,7 @@ public class MultiConnectionNntpClient(
                 // recovery probe. Once its retries are exhausted, release the probe slot
                 // and reopen the circuit instead of leaving it claimed until timeout.
                 if (!IsBodyCommand(name) && circuitBreaker.IsLatched)
-                    RecordProviderFailure($"cmd-{name}-{e.GetType().Name}");
+                    RecordProviderFailure($"cmd-{name}-{e.GetType().Name}", probeLease);
 
                 e.LogWarningKnownOrStack(
                     "Error executing nntp {Command} command for provider {Provider}.", name, Host);
@@ -707,7 +748,7 @@ public class MultiConnectionNntpClient(
                 // ladder survives the close; only a BODY success resets it. Constant
                 // health-check STATs must not pin a BODY-broken provider at 60s forever.
                 if (circuitBreaker.IsLatched)
-                    circuitBreaker.RecordSuccess(resetsCooldownLadder: false);
+                    circuitBreaker.RecordSuccess(resetsCooldownLadder: false, probe: probeLease);
                 deferredCallback.Discard();
                 LogException(() => connectionLock?.Dispose());
             }
@@ -715,10 +756,26 @@ public class MultiConnectionNntpClient(
             // body and article
             else if (!(result?.Success ?? false))
             {
-                circuitBreaker.RecordArticleNotFound();
                 deferredCallback.Discard();
-                LogException(() => connectionLock?.Dispose());
-                LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
+                if (result is not null && UsenetArticleAvailability.IsDefinitiveMissing(result))
+                {
+                    // 430/451: the article is gone from this provider — a clean miss,
+                    // not a provider failure. The connection is safe to reuse.
+                    circuitBreaker.RecordArticleNotFound(probeLease);
+                    LogException(() => connectionLock?.Dispose());
+                    LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotFound));
+                }
+                else
+                {
+                    // Any other non-success (e.g. 500) is a provider-side failure, not a
+                    // missing article: replace the socket (the wire state is unknown) and
+                    // report NotRetrieved. MultiProviderNntpClient records the unexpected
+                    // response and the next attempt re-selects a provider.
+                    RecordProviderFailure($"cmd-{name}-unexpected-response", probeLease);
+                    LogException(() => connectionLock?.Replace($"unexpected-response-{name}"));
+                    LogException(() => connectionLock?.Dispose());
+                    LogException(() => onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved));
+                }
             }
             else
             {
@@ -729,20 +786,20 @@ public class MultiConnectionNntpClient(
 
                     if (articleBodyResult == ArticleBodyResult.NotRetrieved)
                     {
-                        LogException(() => connectionLock?.Replace());
+                        LogException(() => connectionLock?.Replace($"body-callback-{name}-NotRetrieved"));
                         // Client abort (seek) must not trip the provider circuit breaker.
                         if (!ct.IsCancellationRequested)
                             RecordProviderFailure(failureReason is null
                                 ? $"body-callback-{name}-NotRetrieved"
-                                : $"body-callback-{name}-NotRetrieved ({failureReason})");
+                                : $"body-callback-{name}-NotRetrieved ({failureReason})", probeLease);
                     }
                     else if (articleBodyResult == ArticleBodyResult.Retrieved)
                     {
-                        circuitBreaker.RecordSuccess();
+                        circuitBreaker.RecordSuccess(probe: probeLease);
                     }
                     else if (articleBodyResult == ArticleBodyResult.NotFound)
                     {
-                        circuitBreaker.RecordArticleNotFound();
+                        circuitBreaker.RecordArticleNotFound(probeLease);
                     }
 
                     LogException(() => connectionLock?.Dispose());
@@ -822,7 +879,7 @@ public class MultiConnectionNntpClient(
                 {
                     // Do not RecordFailure — STAT must not feed the breaker — but the
                     // connection is poisoned and must not return to the pool.
-                    connectionLock.Replace();
+                    connectionLock.Replace("pipelined-STAT-failure");
                     throw;
                 }
 
@@ -831,7 +888,7 @@ public class MultiConnectionNntpClient(
         }
         finally
         {
-            if (!completed) connectionLock.Replace();
+            if (!completed) connectionLock.Replace("pipelined-STAT-incomplete");
             connectionLock.Dispose();
         }
     }
@@ -843,9 +900,26 @@ public class MultiConnectionNntpClient(
     {
         var workload = DownloadWorkloadClassifier.Classify(cancellationToken);
         var priority = GetDownloadPriority(cancellationToken);
-        var connectionLock = await AcquireConnectionLockRecordingFailureAsync(
-                priority, workload, operation, cancellationToken)
-            .ConfigureAwait(false);
+        // Claim circuit admission before touching the pool so a rejected caller never
+        // triggers a connect+auth handshake on a cold pool. Rejection is retryable:
+        // MultiProviderNntpClient fails over to the next provider.
+        if (!circuitBreaker.TryAdmit(out var probeLease))
+            throw new CircuitAdmissionRejectedException();
+        ConnectionLock<INntpClient> connectionLock;
+        try
+        {
+            connectionLock = await AcquireConnectionLockRecordingFailureAsync(
+                    priority, workload, operation, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception e) when (e.IsCancellationException(cancellationToken) || e is NntpClientRetiredException)
+        {
+            // Cancellation and pool retirement record no breaker outcome; free the
+            // probe slot so the next caller can probe immediately.
+            circuitBreaker.ReleaseProbe(probeLease);
+            throw;
+        }
+
         var completed = false;
         try
         {
@@ -875,18 +949,21 @@ public class MultiConnectionNntpClient(
                 catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
 #pragma warning restore CA2016
                 {
-                    RecordProviderFailure($"pipelined-enum-{e.GetType().Name}");
-                    connectionLock.Replace();
+                    RecordProviderFailure($"pipelined-enum-{e.GetType().Name}", probeLease);
+                    connectionLock.Replace($"{operation}-failure");
                     throw;
                 }
 
-                circuitBreaker.RecordSuccess();
+                RecordPipelinedItemOutcome(current, probeLease);
                 yield return current;
             }
         }
         finally
         {
-            if (!completed) connectionLock.Replace();
+            if (!completed) connectionLock.Replace($"{operation}-incomplete");
+            // A no-op once an item outcome resolved the probe; frees the slot when the
+            // enumeration ended or was abandoned before any outcome was recorded.
+            circuitBreaker.ReleaseProbe(probeLease);
             connectionLock.Dispose();
         }
     }
@@ -1076,11 +1153,11 @@ public class MultiConnectionNntpClient(
             RecordProviderFailure(reason);
     }
 
-    private void RecordProviderConnectionFailure(string reason) =>
-        circuitBreaker.RecordConnectionFailure(reason, GetPoolDiagnostics());
+    private void RecordProviderConnectionFailure(string reason, CircuitProbeLease? probe = null) =>
+        circuitBreaker.RecordConnectionFailure(reason, GetPoolDiagnostics(), probe);
 
-    private void RecordProviderFailure(string reason) =>
-        circuitBreaker.RecordFailure(reason, GetPoolDiagnostics());
+    private void RecordProviderFailure(string reason, CircuitProbeLease? probe = null) =>
+        circuitBreaker.RecordFailure(reason, GetPoolDiagnostics(), probe);
 
     private ProviderCircuitPoolDiagnostics GetPoolDiagnostics() =>
         new(connectionPool.LiveConnections, connectionPool.IdleConnections, connectionPool.ActiveConnections);
@@ -1126,6 +1203,43 @@ public class MultiConnectionNntpClient(
         return response;
     }
 
+    /// <summary>
+    /// Claims circuit admission before any physical connection acquisition, so a
+    /// rejected caller never triggers a connect+auth handshake on a cold pool.
+    /// A closed-circuit admission (<see cref="CircuitProbeLease.None"/>) is not
+    /// exclusive, so it is re-verified on every attempt and a circuit that tripped
+    /// between attempts still rejects the retry. A half-open probe lease continues
+    /// only while it still owns the probe slot.
+    /// </summary>
+    private bool TryAdmitBeforeAcquisition(ref CircuitProbeLease probeLease)
+    {
+        if (probeLease.IsNone)
+            return circuitBreaker.TryAdmit(out probeLease);
+
+        return circuitBreaker.OwnsAdmittedProbe(probeLease);
+    }
+
+    private void RecordPipelinedItemOutcome<T>(T current, CircuitProbeLease probeLease)
+    {
+        switch (current)
+        {
+            // A definitive miss (430/451) is a clean answer, not provider damage.
+            case PipelinedBodyResult { Found: false, DefinitivelyMissing: true }
+                or PipelinedArticleResult { Found: false, DefinitivelyMissing: true }:
+                circuitBreaker.RecordArticleNotFound(probeLease);
+                break;
+            // A non-definitive not-found (e.g. a segment-id mismatch) is a protocol
+            // failure: it must not close a half-open circuit as if the article were
+            // absent, nor count as success.
+            case PipelinedBodyResult { Found: false } or PipelinedArticleResult { Found: false }:
+                RecordProviderFailure("pipelined-item-unexpected-miss", probeLease);
+                break;
+            default:
+                circuitBreaker.RecordSuccess(probe: probeLease);
+                break;
+        }
+    }
+
     private static void LogException(Action? action)
     {
         try
@@ -1137,6 +1251,15 @@ public class MultiConnectionNntpClient(
             Log.Warning(e, "Unhandled exception");
         }
     }
+
+    /// <summary>
+    /// Retryable so <see cref="MultiProviderNntpClient"/> failovers. Distinct from a
+    /// command/connect failure so local retry loops do not replace a healthy socket
+    /// or count this as provider-health damage.
+    /// </summary>
+    private sealed class CircuitAdmissionRejectedException()
+        : RetryableDownloadException(
+            "NNTP provider circuit is open or another half-open probe is already in flight.");
 
     public override void Dispose()
     {

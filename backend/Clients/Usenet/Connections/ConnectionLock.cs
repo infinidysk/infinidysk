@@ -9,17 +9,18 @@ namespace NzbWebDAV.Clients.Usenet.Connections;
 public sealed class ConnectionLock<T> : IDisposable
 {
     private readonly Action<T> _syncReturn;
-    private readonly Action<T> _syncDestroy;
+    private readonly Action<T, string?> _syncDestroy;
     private T? _connection;
     private Action? _onDisposed;
     private int _disposed; // 0 == false, 1 == true
     private int _replace; // 0 == false, 1 == true
+    private string? _replacementReason;
 
     internal ConnectionLock
     (
         T connection,
         Action<T> syncReturn,
-        Action<T> syncDestroy,
+        Action<T, string?> syncDestroy,
         bool wasReused
     )
     {
@@ -43,8 +44,9 @@ public sealed class ConnectionLock<T> : IDisposable
     /// Marks the underlying connection to be replaced. When this lock is disposed,
     /// the underlying connection will be destroyed instead of returned to the pool.
     /// </summary>
-    public void Replace()
+    public void Replace(string? reason = null)
     {
+        _replacementReason ??= reason;
         Volatile.Write(ref _replace, 1);
     }
 
@@ -74,7 +76,7 @@ public sealed class ConnectionLock<T> : IDisposable
             {
                 var replace = Volatile.Read(ref _replace) == 1;
                 if (replace)
-                    _syncDestroy(conn);
+                    _syncDestroy(conn, _replacementReason);
                 else
                     _syncReturn(conn);
             }

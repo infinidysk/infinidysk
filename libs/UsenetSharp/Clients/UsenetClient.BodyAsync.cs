@@ -36,6 +36,7 @@ public partial class UsenetClient
         }
 
         var isReadBodyToPipeAsyncStarted = false;
+        var completionResult = ArticleBodyResult.NotRetrieved;
         CancellationTokenSource? operationCts = null;
 
         try
@@ -80,6 +81,9 @@ public partial class UsenetClient
 
             await DrainUnexpectedMultiLineAsync(responseCode, operationCts.Token)
                 .ConfigureAwait(false);
+            completionResult = responseCode == (int)UsenetResponseType.NoArticleWithThatMessageId
+                ? ArticleBodyResult.NotFound
+                : ArticleBodyResult.NotRetrieved;
 
             return new UsenetBodyResponse()
             {
@@ -95,7 +99,7 @@ public partial class UsenetClient
             {
                 operationCts?.Dispose();
                 _commandLock.Release();
-                onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved);
+                onConnectionReadyAgain?.Invoke(completionResult);
             }
         }
     }
@@ -127,6 +131,7 @@ public partial class UsenetClient
         }
 
         var isReadBodyToPipeAsyncStarted = false;
+        var completionResult = ArticleBodyResult.NotRetrieved;
         CancellationTokenSource? operationCts = null;
 
         try
@@ -158,11 +163,11 @@ public partial class UsenetClient
 #pragma warning disable CA2025 // the background decode task owns and disposes the pipe writer, operationCts and decoded stream; completion is coordinated through headersCompletion and the response callbacks
                 _ = ReadDecodedBodyToPipeAsync(
                                     pipe.Writer,
-                    headersCompletion,
-                    operationCts,
-                    onConnectionReadyAgain,
-                    decodedStream,
-                    callerCancellationToken: cancellationToken);
+                                    headersCompletion,
+                                    operationCts,
+                                    onConnectionReadyAgain,
+                                    decodedStream,
+                                    callerCancellationToken: cancellationToken);
 #pragma warning restore CA2025
                 operationCts = null;
 
@@ -177,6 +182,9 @@ public partial class UsenetClient
 
             await DrainUnexpectedMultiLineAsync(responseCode, operationCts.Token)
                 .ConfigureAwait(false);
+            completionResult = responseCode == (int)UsenetResponseType.NoArticleWithThatMessageId
+                ? ArticleBodyResult.NotFound
+                : ArticleBodyResult.NotRetrieved;
 
             return new UsenetDecodedBodyResponse
             {
@@ -192,7 +200,7 @@ public partial class UsenetClient
             {
                 operationCts?.Dispose();
                 _commandLock.Release();
-                onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved);
+                onConnectionReadyAgain?.Invoke(completionResult);
             }
         }
     }

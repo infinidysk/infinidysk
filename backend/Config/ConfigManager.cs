@@ -358,6 +358,8 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.UsenetArticleBufferSize:
                 case ConfigKeys.UsenetInFlightArticleBudgetMb:
                 case ConfigKeys.UsenetIdleConnectionTimeoutSeconds:
+                case ConfigKeys.UsenetNntpReadTimeoutSeconds:
+                case ConfigKeys.UsenetReconnectDelayMilliseconds:
                 case ConfigKeys.UsenetWarmConnectionsFloor:
                 case ConfigKeys.UsenetCircuitBreakerInitialCooldownSeconds:
                 case ConfigKeys.UsenetCircuitBreakerMaxCooldownSeconds:
@@ -1072,6 +1074,35 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         if (configured is null || !int.TryParse(configured, out var value))
             return 60;
         return Math.Clamp(value, 15, 300);
+    }
+
+    /// <summary>
+    /// Per-command NNTP stalled-read timeout. This is an inactivity deadline for a
+    /// single protocol read, not a total transfer deadline. Caller-specific budgets
+    /// (streaming segment/read timeouts and the 15-second connect/auth ceiling) can
+    /// expire first. Unlike the streaming budgets, this applies consistently to
+    /// ARTICLE, BODY, STAT and all other protocol responses. Takes effect on the next
+    /// connection-pool rebuild (provider config save or restart).
+    /// </summary>
+    public TimeSpan GetNntpReadTimeout()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetNntpReadTimeoutSeconds));
+        var seconds = int.TryParse(configured, out var value) ? Math.Clamp(value, 5, 120) : 30;
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    /// <summary>
+    /// Minimum spacing between replacement handshakes after a poisoned socket is retired.
+    /// This gives providers time to release the old server-side session. Zero disables
+    /// ordinary replacement spacing, but TCP/TLS/AUTHINFO factory failures still back
+    /// off from a 500ms floor. Takes effect on the next connection-pool rebuild
+    /// (provider config save or restart).
+    /// </summary>
+    public TimeSpan GetReconnectDelay()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetReconnectDelayMilliseconds));
+        var milliseconds = int.TryParse(configured, out var value) ? Math.Clamp(value, 0, 5000) : 500;
+        return TimeSpan.FromMilliseconds(milliseconds);
     }
 
     /// <summary>

@@ -68,6 +68,7 @@ public class BenchmarkUsenetConnectionController(
                 request.PipeliningOnly,
                 request.DataBudgetBytes,
                 request.VerifyConnections,
+                configManager.GetNntpReadTimeout(),
                 ct
             ).ConfigureAwait(false);
 

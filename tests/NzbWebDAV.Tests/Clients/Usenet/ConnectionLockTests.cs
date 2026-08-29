@@ -13,7 +13,7 @@ public class ConnectionLockTests
         var connectionLock = new ConnectionLock<object>(
             new object(),
             _ => Interlocked.Increment(ref returned),
-            _ => throw new InvalidOperationException("Unexpected destroy"),
+            (_, _) => throw new InvalidOperationException("Unexpected destroy"),
             wasReused: true);
         connectionLock.AttachDisposeCallback(() => Interlocked.Increment(ref callback));
 
@@ -30,7 +30,7 @@ public class ConnectionLockTests
         var connectionLock = new ConnectionLock<object>(
             new object(),
             _ => { },
-            _ => throw new InvalidOperationException("Unexpected destroy"),
+            (_, _) => throw new InvalidOperationException("Unexpected destroy"),
             wasReused: false);
         connectionLock.AttachDisposeCallback(() => { });
 
@@ -45,7 +45,7 @@ public class ConnectionLockTests
         var connectionLock = new ConnectionLock<object>(
             new object(),
             _ => { },
-            _ => throw new InvalidOperationException("Unexpected destroy"),
+            (_, _) => throw new InvalidOperationException("Unexpected destroy"),
             wasReused: false);
         connectionLock.Dispose();
 
@@ -65,7 +65,7 @@ public class ConnectionLockTests
         var connectionLock = new ConnectionLock<object>(
             new object(),
             _ => events.Add("connection"),
-            _ => throw new InvalidOperationException("Unexpected destroy"),
+            (_, _) => throw new InvalidOperationException("Unexpected destroy"),
             wasReused: false);
         connectionLock.AttachDisposeCallback(leases.Dispose);
 

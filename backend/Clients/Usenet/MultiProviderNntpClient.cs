@@ -49,6 +49,8 @@ public class MultiProviderNntpClient(
     private readonly SemaphoreSlim _batchFallbackStartGate = new(MaxConcurrentFallbackStarts);
     public int InFlightConnections => providers.Sum(p => p.InFlightConnections);
 
+    internal IReadOnlyList<MultiConnectionNntpClient> Providers => providers;
+
     /// <summary>
     /// Applies Streaming Priority odds to every provider's connection gate so a settings
     /// save re-arbitrates playback against maintenance without reconnecting providers.

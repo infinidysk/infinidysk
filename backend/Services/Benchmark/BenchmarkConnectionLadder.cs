@@ -12,12 +12,20 @@ namespace NzbWebDAV.Services.Benchmark;
 /// refusals (no QUIT is sent on close) and keeps TCP windows warm, which is a
 /// large part of making back-to-back runs repeatable.
 /// </summary>
-internal sealed class BenchmarkConnectionLadder(UsenetProviderConfig.ConnectionDetails provider) : IDisposable
+internal sealed class BenchmarkConnectionLadder(
+    UsenetProviderConfig.ConnectionDetails provider,
+    TimeSpan nntpReadTimeout) : IDisposable
 {
     private readonly List<INntpClient> _connections = [];
 
     public int Count => _connections.Count;
     public IReadOnlyList<INntpClient> Connections => _connections;
+    internal TimeSpan NntpReadTimeout { get; } = nntpReadTimeout;
+
+    internal Func<UsenetProviderConfig.ConnectionDetails, TimeSpan, CancellationToken, ValueTask<INntpClient>>
+        CreateConnection { get; init; } =
+        static (details, timeout, ct) =>
+            UsenetStreamingClient.CreateNewConnection(details, timeout, ct, applyBandwidthLimit: false);
 
     /// <summary>Grows the ladder to <paramref name="target"/> connections; returns the achieved count.</summary>
     public async Task<int> EnsureAsync(int target, CancellationToken ct)
@@ -31,8 +39,7 @@ internal sealed class BenchmarkConnectionLadder(UsenetProviderConfig.ConnectionD
             {
                 try
                 {
-                    conn = await UsenetStreamingClient.CreateNewConnection(
-                        provider, ct, applyBandwidthLimit: false).ConfigureAwait(false);
+                    conn = await CreateConnection(provider, NntpReadTimeout, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -41,7 +48,9 @@ internal sealed class BenchmarkConnectionLadder(UsenetProviderConfig.ConnectionD
                 catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
                 {
                     failure = e;
-                    // Give the provider a beat to free a lingering slot before retrying.
+                    // Benchmark retry pacing is independent of pool replacement spacing
+                    // (usenet.reconnect-delay-milliseconds). The ladder probes the
+                    // provider ceiling with ad-hoc sockets, not poisoned pool replacements.
                     if (attempt == 0)
                         await SafeDelay(TimeSpan.FromMilliseconds(500), ct).ConfigureAwait(false);
                 }

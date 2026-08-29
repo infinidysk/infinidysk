@@ -61,6 +61,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         bool pipeliningOnly,
         long? dataBudgetBytes,
         int? verifyConnections,
+        TimeSpan nntpReadTimeout,
         CancellationToken ct)
     {
         var profile = BenchmarkProfile.For(intensity);
@@ -85,7 +86,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             Math.Max(0, Remaining() - PipeliningReserveBytes(profile, megaBytesPerSec, budget));
         void StampElapsed() => result.ElapsedSeconds = Math.Round(runClock.Elapsed.TotalSeconds, 1);
 
-        using var ladder = new BenchmarkConnectionLadder(provider);
+        using var ladder = new BenchmarkConnectionLadder(provider, nntpReadTimeout);
 
         // 1) Latency — also doubles as a connectivity/credentials check.
         Report("latency", "Measuring latency…", 5, result, null);

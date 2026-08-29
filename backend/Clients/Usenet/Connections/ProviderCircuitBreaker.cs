@@ -4,6 +4,16 @@ using Serilog;
 namespace NzbWebDAV.Clients.Usenet.Connections;
 
 /// <summary>
+/// Identifies the caller that claimed a half-open probe slot.
+/// Generation 0 means the caller is not the admitted probe.
+/// </summary>
+public readonly record struct CircuitProbeLease(long Generation)
+{
+    public static CircuitProbeLease None => default;
+    public bool IsNone => Generation == 0;
+}
+
+/// <summary>
 /// Tracks recent BODY/ARTICLE outcomes for an NNTP provider and temporarily
 /// disables it when a failure threshold is reached, preventing a single
 /// misbehaving provider from blocking the entire download pipeline.
@@ -45,6 +55,9 @@ public class ProviderCircuitBreaker
     private TimeSpan _currentCooldown;
     private int _halfOpenProbeInFlight; // 0/1
     private long _probeStartedMs;
+    private long _probeGeneration;
+    private long _admittedProbeGeneration;
+    private static readonly AsyncLocal<CircuitProbeLease> AmbientProbe = new();
     private string? _lastFailureReason;
     private long _tripCount;
     private long _failureCount;
@@ -79,23 +92,79 @@ public class ProviderCircuitBreaker
     /// <summary>Monotonic clock, injectable for tests.</summary>
     internal Func<long> Clock { get; set; } = () => Environment.TickCount64;
 
-    public bool IsTripped
-    {
-        get
-        {
-            var trippedUntil = Volatile.Read(ref _trippedUntilMs);
-            if (trippedUntil == 0) return false;
-            if (Clock() < trippedUntil) return true;
+    /// <summary>
+    /// True when this provider should not take new work. Reading this claims the
+    /// half-open probe slot as a side effect; prefer <see cref="TryAdmit"/> when the
+    /// caller will record an outcome.
+    /// </summary>
+    public bool IsTripped => !TryAdmit(out _);
 
-            // Cooldown expired → half-open: exactly one caller wins the probe slot.
-            TryReclaimAbandonedProbe();
-            if (Interlocked.CompareExchange(ref _halfOpenProbeInFlight, 1, 0) == 0)
+    /// <summary>
+    /// Admits a caller onto the provider. When the cooldown has lapsed, exactly one
+    /// caller receives a probe lease that can resolve half-open state.
+    /// Takes the same lock as <see cref="RecordFailure"/> so a new probe cannot be
+    /// claimed in the window after an in-flight probe is cleared and before the
+    /// circuit reopens.
+    /// </summary>
+    public bool TryAdmit(out CircuitProbeLease probe)
+    {
+        probe = CircuitProbeLease.None;
+        lock (_lock)
+        {
+            if (_trippedUntilMs == 0)
             {
-                Volatile.Write(ref _probeStartedMs, Clock());
-                return false; // this caller is the probe
+                AmbientProbe.Value = CircuitProbeLease.None;
+                return true;
             }
 
-            return true; // another probe is already in flight
+            if (Clock() < _trippedUntilMs)
+                return false;
+
+            TryReclaimAbandonedProbe();
+            if (_halfOpenProbeInFlight != 0)
+                return false;
+
+            _halfOpenProbeInFlight = 1;
+            var generation = ++_probeGeneration;
+            _admittedProbeGeneration = generation;
+            _probeStartedMs = Clock();
+            probe = new CircuitProbeLease(generation);
+            AmbientProbe.Value = probe;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="probe"/> is the currently admitted half-open lease.
+    /// Does not claim a slot. A <see cref="CircuitProbeLease.None"/> lease never owns
+    /// the probe, so a closed-circuit admission cannot continue into someone else's
+    /// half-open window.
+    /// </summary>
+    internal bool OwnsAdmittedProbe(CircuitProbeLease probe)
+    {
+        if (probe.IsNone)
+            return false;
+
+        lock (_lock)
+            return _halfOpenProbeInFlight == 1 && _admittedProbeGeneration == probe.Generation;
+    }
+
+    /// <summary>
+    /// Releases a half-open probe whose caller is abandoning it (caller cancellation,
+    /// pool retirement) without recording an outcome, so the next caller can probe
+    /// immediately instead of waiting out <see cref="ProbeAbandonTimeout"/>. Only the
+    /// owning generation can release; a stale or closed-circuit lease is ignored and
+    /// the latched trip is left untouched.
+    /// </summary>
+    internal void ReleaseProbe(CircuitProbeLease probe)
+    {
+        if (probe.IsNone)
+            return;
+
+        lock (_lock)
+        {
+            if (_halfOpenProbeInFlight == 1 && _admittedProbeGeneration == probe.Generation)
+                ClearAdmittedProbe();
         }
     }
 
@@ -157,7 +226,7 @@ public class ProviderCircuitBreaker
     /// otherwise close every latched breaker seconds after cooldown expiry and pin a
     /// provider with a persistently broken BODY path at the minimum cooldown forever.
     /// </param>
-    public void RecordSuccess(bool resetsCooldownLadder = true)
+    public void RecordSuccess(bool resetsCooldownLadder = true, CircuitProbeLease? probe = null)
     {
         lock (_lock)
         {
@@ -171,6 +240,8 @@ public class ProviderCircuitBreaker
             // are routine, and announcing a recovery for them implies an outage that never
             // happened. Matches the transition notification below.
             var wasCircuitActive = _trippedUntilMs > 0 || _halfOpenProbeInFlight != 0;
+            if (wasCircuitActive && !CanResolveHalfOpen(probe))
+                return;
             if (wasCircuitActive)
                 Log.Information("Provider {Provider} recovered — circuit breaker reset.", _providerName);
 
@@ -180,8 +251,7 @@ public class ProviderCircuitBreaker
             if (resetsCooldownLadder)
                 _currentCooldown = _initialCooldown;
             _lastFailureReason = null;
-            Volatile.Write(ref _halfOpenProbeInFlight, 0);
-            Volatile.Write(ref _probeStartedMs, 0);
+            ClearAdmittedProbe();
             if (wasCircuitActive)
                 NotifyTransition(ProviderCircuitTransitionState.Closed, cooldown: null);
         }
@@ -190,27 +260,40 @@ public class ProviderCircuitBreaker
     /// <summary>
     /// Article permanently missing from retention. A 430 is a clean server response and
     /// says nothing about provider health, so it counts as a miss for diagnostics and
-    /// nothing else: it must not undo a trip, reset the cooldown ladder, satisfy the
-    /// half-open probe, or emit a Closed transition. On a closed circuit it does clear the
+    /// nothing else: it must not undo an open trip or reset the cooldown ladder. On a
+    /// closed circuit it does clear the
     /// failure sampling window, because the provider demonstrably answered.
     /// <para>
-    /// A miss recorded during a half-open probe leaves the probe slot claimed. It is not
-    /// evidence of recovery, so the slot is released by <see cref="ProbeAbandonTimeout"/>
-    /// rather than here.
+    /// A clean 430 received by the admitted half-open probe closes the circuit without
+    /// resetting the cooldown ladder. A stale in-flight 430 cannot close another
+    /// caller's probe. When no probe has been claimed, a clean 430 after cooldown
+    /// still closes because production routing does not claim the slot at selection.
     /// </para>
     /// </summary>
-    public void RecordArticleNotFound()
+    public void RecordArticleNotFound(CircuitProbeLease? probe = null)
     {
         Interlocked.Increment(ref _articleMissCount);
+        var closesHalfOpenCircuit = false;
 
         lock (_lock)
         {
-            if (_trippedUntilMs != 0 || Volatile.Read(ref _halfOpenProbeInFlight) != 0)
+            if (_trippedUntilMs > Clock())
                 return;
 
-            _window.Clear();
-            _failureBurstStartedAtMs = long.MinValue;
+            if (_trippedUntilMs != 0 || Volatile.Read(ref _halfOpenProbeInFlight) != 0)
+            {
+                if (CanResolveHalfOpen(probe))
+                    closesHalfOpenCircuit = true;
+            }
+            else
+            {
+                _window.Clear();
+                _failureBurstStartedAtMs = long.MinValue;
+            }
         }
+
+        if (closesHalfOpenCircuit)
+            RecordSuccess(resetsCooldownLadder: false, probe);
     }
 
     /// <summary>Read-only snapshot for dashboards. Does not claim a half-open probe.</summary>
@@ -255,7 +338,8 @@ public class ProviderCircuitBreaker
     /// </summary>
     public void RecordConnectionFailure(
         string? reason = null,
-        ProviderCircuitPoolDiagnostics? pool = null)
+        ProviderCircuitPoolDiagnostics? pool = null,
+        CircuitProbeLease? probe = null)
     {
         lock (_lock)
         {
@@ -267,8 +351,10 @@ public class ProviderCircuitBreaker
 
             var wasHalfOpen = Volatile.Read(ref _halfOpenProbeInFlight) == 1
                               || _trippedUntilMs > 0;
-            Volatile.Write(ref _halfOpenProbeInFlight, 0);
-            Volatile.Write(ref _probeStartedMs, 0);
+            if (wasHalfOpen && !CanResolveHalfOpen(probe))
+                return;
+
+            ClearAdmittedProbe();
             Interlocked.Increment(ref _failureCount);
 
             var failureReason = wasHalfOpen
@@ -282,7 +368,8 @@ public class ProviderCircuitBreaker
 
     public void RecordFailure(
         string? reason = null,
-        ProviderCircuitPoolDiagnostics? pool = null)
+        ProviderCircuitPoolDiagnostics? pool = null,
+        CircuitProbeLease? probe = null)
     {
         lock (_lock)
         {
@@ -299,8 +386,10 @@ public class ProviderCircuitBreaker
             // still down to normal rotation until that window tripped again.
             if (Volatile.Read(ref _halfOpenProbeInFlight) == 1 || _trippedUntilMs > 0)
             {
-                Volatile.Write(ref _halfOpenProbeInFlight, 0);
-                Volatile.Write(ref _probeStartedMs, 0);
+                if (!CanResolveHalfOpen(probe))
+                    return;
+
+                ClearAdmittedProbe();
                 Interlocked.Increment(ref _failureCount);
                 Trip(now, reason is null
                     ? "half-open failure"
@@ -399,16 +488,35 @@ public class ProviderCircuitBreaker
             _window.Dequeue();
     }
 
+    private bool CanResolveHalfOpen(CircuitProbeLease? probe)
+    {
+        var admitted = Volatile.Read(ref _admittedProbeGeneration);
+        if (admitted == 0)
+            return true;
+
+        var lease = probe ?? AmbientProbe.Value;
+        return lease.Generation == admitted;
+    }
+
+    private void ClearAdmittedProbe()
+    {
+        Volatile.Write(ref _halfOpenProbeInFlight, 0);
+        Volatile.Write(ref _probeStartedMs, 0);
+        Volatile.Write(ref _admittedProbeGeneration, 0);
+        AmbientProbe.Value = CircuitProbeLease.None;
+    }
+
+    /// <summary>Must run while holding <see cref="_lock"/>.</summary>
     private void TryReclaimAbandonedProbe()
     {
-        if (Volatile.Read(ref _halfOpenProbeInFlight) != 1) return;
-        var started = Volatile.Read(ref _probeStartedMs);
-        if (started == 0) return;
-        if (Clock() - started < (long)ProbeAbandonTimeout.TotalMilliseconds) return;
+        if (_halfOpenProbeInFlight != 1) return;
+        if (_probeStartedMs == 0) return;
+        if (Clock() - _probeStartedMs < (long)ProbeAbandonTimeout.TotalMilliseconds) return;
 
         // Abandoned probe (cancelled request, etc.): free the slot so another
-        // caller can retry. CompareExchange so we don't clear a just-resolved probe.
-        if (Interlocked.CompareExchange(ref _halfOpenProbeInFlight, 0, 1) == 1)
-            Volatile.Write(ref _probeStartedMs, 0);
+        // caller can retry. Serialized with TryAdmit/Record* via _lock.
+        _halfOpenProbeInFlight = 0;
+        _probeStartedMs = 0;
+        _admittedProbeGeneration = 0;
     }
 }

@@ -414,6 +414,7 @@ public abstract class NntpClient : INntpClient
                     SegmentId = segmentId,
                     Found = false,
                     Stream = null,
+                    DefinitivelyMissing = true,
                 };
             }
 
