@@ -133,6 +133,8 @@ describe("LiveReadsPanel", () => {
     const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
 
     expect(markup).toContain("5 active");
+    expect(markup).toContain("h-[30rem]");
+    expect(markup).toContain("overflow-y-auto");
     expect(markup).toContain("The.Prestige.2006.1080p.BluRay.x264-GRP.mkv");
     expect(markup).toContain("Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-GRP.mkv");
     // Speed, progress, and computed time left
@@ -146,6 +148,14 @@ describe("LiveReadsPanel", () => {
     expect(markup).toContain("192.168.1.20");
     expect(markup).toContain("Eweka");
     expect(markup).toContain("a1b2c3d4");
+  });
+
+  it("places the newest read first", () => {
+    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
+
+    expect(
+      markup.indexOf("Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-GRP.mkv"),
+    ).toBeLessThan(markup.indexOf("The.Prestige.2006.1080p.BluRay.x264-GRP.mkv"));
   });
 
   it("labels media rows with MOVIE / EPISODE badges", () => {

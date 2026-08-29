@@ -60,7 +60,7 @@ export function ProviderScoreboard({
           <p className="py-6 text-center text-xs text-base-content/50">No providers configured.</p>
         ) : (
           <>
-            <div className="w-full min-w-0 overflow-x-auto">
+            <div className="w-full min-w-0 overflow-x-auto lg:overflow-x-hidden">
               <table className="table table-pin-cols table-sm w-full">
                 <thead>
                   <tr>
