@@ -153,9 +153,9 @@ describe("LiveReadsPanel", () => {
   it("places the newest read first", () => {
     const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
 
-    expect(
-      markup.indexOf("Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-GRP.mkv"),
-    ).toBeLessThan(markup.indexOf("The.Prestige.2006.1080p.BluRay.x264-GRP.mkv"));
+    expect(markup.indexOf("Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-GRP.mkv")).toBeLessThan(
+      markup.indexOf("The.Prestige.2006.1080p.BluRay.x264-GRP.mkv"),
+    );
   });
 
   it("labels media rows with MOVIE / EPISODE badges", () => {
