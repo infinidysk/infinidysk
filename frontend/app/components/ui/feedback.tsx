@@ -59,12 +59,16 @@ export function Tooltip({
   const [focused, setFocused] = useState(false);
   const open = hovered || focused;
   const trigger = isValidElement<{ "aria-describedby"?: string }>(children)
-    ? cloneElement(children, {
-        "aria-describedby":
-          [children.props["aria-describedby"], open ? tooltipId : undefined]
-            .filter(Boolean)
-            .join(" ") || undefined,
-      })
+    ? cloneElement(
+        children,
+        open
+          ? {
+              "aria-describedby": [children.props["aria-describedby"], tooltipId]
+                .filter(Boolean)
+                .join(" "),
+            }
+          : {},
+      )
     : children;
 
   return (
