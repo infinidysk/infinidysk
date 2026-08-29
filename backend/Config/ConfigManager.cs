@@ -1061,7 +1061,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         const double cap = 100_000d * 125_000d;
         if (bytesPerSecond > cap)
             bytesPerSecond = cap;
-        return (long)bytesPerSecond;
+        return Math.Max(1L, (long)bytesPerSecond);
     }
 
     /// <summary>

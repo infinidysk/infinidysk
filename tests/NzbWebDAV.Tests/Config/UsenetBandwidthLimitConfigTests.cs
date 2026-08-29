@@ -38,6 +38,17 @@ public class UsenetBandwidthLimitConfigTests
     }
 
     [Fact]
+    public void SmallPositiveMbps_RemainsLimited()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.UsenetBandwidthLimitMbps, ConfigValue = "0.000001" },
+        ]);
+
+        Assert.Equal(1, config.GetUsenetBandwidthLimitBytesPerSecond());
+    }
+
+    [Fact]
     public void CapsAtOneHundredGigabits()
     {
         var config = new ConfigManager();

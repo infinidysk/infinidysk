@@ -80,7 +80,11 @@ public sealed class BandwidthLimitBroadcaster(
             var limitBytesPerSecond = limiter.BytesPerSecond;
             var enabled = limitBytesPerSecond > 0;
             if (!force && enabled && !websocketManager.HasSubscribers(WebsocketTopic.BandwidthLimit))
+            {
+                _lastChargedBytes = limiter.TotalChargedBytes;
+                _lastSampleMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 return;
+            }
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var charged = limiter.TotalChargedBytes;
