@@ -91,7 +91,7 @@ function UsageBar({
 }) {
   if (!limit || limit <= 0) {
     return (
-      <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
+      <div className="flex min-w-0 items-center gap-2.5">
         <Tooltip className="min-w-0 flex-1" content="No limit configured">
           <progress
             aria-label={`${label}: ${formatNumber(used)}, unlimited`}
