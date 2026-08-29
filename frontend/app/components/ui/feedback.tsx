@@ -69,7 +69,12 @@ export function Tooltip({
 
   return (
     <span
-      className={["tooltip", tooltipPlacementClass[placement], open ? "tooltip-open" : "", className]
+      className={[
+        "tooltip",
+        tooltipPlacementClass[placement],
+        open ? "tooltip-open" : "",
+        className,
+      ]
         .filter(Boolean)
         .join(" ")}
       onPointerEnter={() => setHovered(true)}
