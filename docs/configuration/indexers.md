@@ -17,6 +17,7 @@ Newznab indexers/aggregators, global request defaults, and title exclude pattern
 | Default Retrieve User-Agent | `api.user-agent` | empty → `SABnzbd/5.1.0` or `NZB_GRAB_USER_AGENT` | Fetching `.nzb` |
 | Request timeout (seconds) | in instances | `30` | Per-request timeout |
 | Search results per indexer | in instances | `100` | Page size |
+| Max indexer response (bytes) [since 1.2.8](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.8){ .nzbdav-since } | in instances (`MaxResponseBytes`) | `4194304` (4 MiB) | Reject oversized Newznab caps/search XML before parse; counts HTTP-client bytes (no automatic decompression). Per-indexer override. Max `16777216` (16 MiB). |
 | Exclude result patterns | `search.exclude-patterns` | empty | JS regex per line (case-insensitive) |
 | Synced exclude URLs | `search.exclude-sync-urls` | empty | Auto-updating JSON lists |
 | Refresh every (minutes) | `search.exclude-sync-refresh-minutes` | `720` | Sync interval 15–10080 |
@@ -36,7 +37,7 @@ InfiniDysk can pull its indexer list from one Prowlarr instance. Configure the c
 
 Use **Test Connection** to verify the URL and API key, save the settings, then use **Sync now**. Automatic sync runs on the configured interval (5–10080 minutes). The URL may include a Prowlarr URL base such as `http://prowlarr:9696/prowlarr`; credentials, query strings, and fragments are not accepted.
 
-Sync imports searchable Usenet indexers and points each one at Prowlarr's per-indexer Newznab proxy (`{prowlarrUrl}/{indexerId}/api`). Prowlarr owns each managed entry's name, proxy URL, API key, and enabled state. InfiniDysk preserves local tuning such as rate limits, filters, category overrides, proxy, TLS, timeout, and user agents. Manually configured indexers are never changed or removed.
+Sync imports searchable Usenet indexers and points each one at Prowlarr's per-indexer Newznab proxy (`{prowlarrUrl}/{indexerId}/api`). Prowlarr owns each managed entry's name, proxy URL, API key, and enabled state. InfiniDysk preserves local tuning such as rate limits, filters, category overrides, proxy, TLS, timeout, max response, and user agents. Manually configured indexers are never changed or removed.
 
 Entries that disappear or become unsupported in Prowlarr are removed only when they are marked as Prowlarr-managed. Search profiles are updated in the same write for managed renames and removals. If Prowlarr is unavailable or returns an invalid response, InfiniDysk keeps the complete last-good indexer configuration and reports the failure in Settings.
 
@@ -51,6 +52,7 @@ Entries that disappear or become unsupported in Prowlarr are removed only when t
 | Name / URL / API Key | Newznab endpoint |
 | Search / Retrieve User-Agent | Optional overrides |
 | Proxy URL | Optional override |
+| Timeout / search result limit / max response | Optional overrides |
 | Skip TLS certificate verification | Accept an invalid HTTPS certificate; off by default |
 | Max requests / minute | `0` = unlimited |
 | API hit / download limits + reset hour | Cap usage; blank reset = rolling 24h |

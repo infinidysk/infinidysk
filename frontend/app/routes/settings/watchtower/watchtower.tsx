@@ -90,6 +90,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           "watchtower.keepfresh-base-seconds",
           "watchtower.keepfresh-max-seconds",
           "watchtower.unavailable-retry-seconds",
+          "watchtower.list-source-max-response-bytes",
           "watchtower.verbose-logging",
         ]}
       >
@@ -589,6 +590,24 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
               How often remote lists are re-fetched to catch additions/removals. Default 3600.
             </p>
           </Form.Group>
+
+          <Form.Group className="flex flex-col gap-2">
+            <Form.Label>Max list-source response (bytes)</Form.Label>
+            <Form.Control
+              className="w-full max-w-48"
+              type="number"
+              min={1}
+              max={16 * 1024 * 1024}
+              disabled={!enabled}
+              value={config["watchtower.list-source-max-response-bytes"] ?? "8388608"}
+              onChange={(e) => set("watchtower.list-source-max-response-bytes", e.target.value)}
+            />
+            <p className="m-0 text-[11px] leading-relaxed text-base-content/45">
+              Caps how large a Stremio manifest, catalog page, or URL-list body may be before it is
+              parsed. Counts the bytes the HTTP client delivers (not decompressed; automatic gzip is
+              off). Default 8,388,608 (8 MiB). Maximum 16,777,216 (16 MiB).
+            </p>
+          </Form.Group>
         </SettingsCard>
         <SettingsCard
           icon="bug_report"
@@ -644,6 +663,7 @@ export function isWatchtowerSettingsUpdated(
     "watchtower.keepfresh-base-seconds",
     "watchtower.keepfresh-max-seconds",
     "watchtower.unavailable-retry-seconds",
+    "watchtower.list-source-max-response-bytes",
     "watchtower.verbose-logging",
   ].some((k) => config[k] !== newConfig[k]);
 }

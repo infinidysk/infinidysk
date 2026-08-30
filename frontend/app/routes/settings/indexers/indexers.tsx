@@ -72,6 +72,7 @@ interface ConnectionDetails {
   ProxyUrl?: string;
   TimeoutSeconds?: number;
   SearchResultLimit?: number;
+  MaxResponseBytes?: number;
   HitLimit?: number;
   DownloadLimit?: number;
   HitLimitResetTime?: number;
@@ -86,6 +87,7 @@ interface IndexerConfig {
   ProxyUrl?: string;
   TimeoutSeconds?: number;
   SearchResultLimit?: number;
+  MaxResponseBytes?: number;
   Indexers: ConnectionDetails[];
 }
 
@@ -102,6 +104,10 @@ const DEFAULT_TIMEOUT_SECONDS = 30;
 // Hard fallback for results gathered per indexer per search; above this the indexer is paged.
 // Mirrors IndexerConfig.DefaultSearchResultLimit in the backend.
 const DEFAULT_SEARCH_RESULT_LIMIT = 100;
+
+// Mirrors IndexerConfig.DefaultMaxResponseBytes / ExternalMetadataResponseLimits.
+const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const MAX_RESPONSE_BYTES_HARD_CLAMP = 16 * 1024 * 1024;
 
 // Mirrors ConfigManager.DefaultProwlarrSyncIntervalMinutes and validation bounds.
 const DEFAULT_PROWLARR_SYNC_INTERVAL_MINUTES = 60;
@@ -264,6 +270,9 @@ function parseConfig(raw: string): IndexerConfig {
     if (typeof parsed.SearchResultLimit === "number") {
       config.SearchResultLimit = parsed.SearchResultLimit;
     }
+    if (typeof parsed.MaxResponseBytes === "number") {
+      config.MaxResponseBytes = parsed.MaxResponseBytes;
+    }
     return config;
   } catch {
     return { ProxyUrl: "", Indexers: [] };
@@ -277,6 +286,8 @@ function serializeConfig(c: IndexerConfig): string {
     out.TimeoutSeconds = c.TimeoutSeconds;
   if (typeof c.SearchResultLimit === "number" && c.SearchResultLimit > 0)
     out.SearchResultLimit = c.SearchResultLimit;
+  if (typeof c.MaxResponseBytes === "number" && c.MaxResponseBytes > 0)
+    out.MaxResponseBytes = c.MaxResponseBytes;
   return JSON.stringify(out);
 }
 
@@ -285,6 +296,17 @@ function isTimeoutValid(raw: string): boolean {
   if (!raw.trim()) return true;
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 && raw.trim() === n.toString();
+}
+
+function isMaxResponseBytesValid(raw: string): boolean {
+  if (!raw.trim()) return true;
+  const n = Number(raw);
+  return (
+    Number.isInteger(n) &&
+    n >= 1 &&
+    n <= MAX_RESPONSE_BYTES_HARD_CLAMP &&
+    raw.trim() === n.toString()
+  );
 }
 
 function isCategoryListValid(raw: string): boolean {
@@ -396,10 +418,21 @@ export function IndexersSettings({
     (value: string) => {
       const trimmed = value.replace(/[^0-9]/g, "");
       const n = trimmed === "" ? undefined : parseInt(trimmed, 10);
-      const next: IndexerConfig = {
-        ...indexerConfig,
-        ...(n && n > 0 ? { SearchResultLimit: n } : {}),
-      };
+      const next: IndexerConfig = { ...indexerConfig };
+      if (n && n > 0) next.SearchResultLimit = n;
+      else delete next.SearchResultLimit;
+      setNewConfig({ ...config, "indexers.instances": serializeConfig(next) });
+    },
+    [config, indexerConfig, setNewConfig],
+  );
+
+  const handleMaxResponseBytesChange = useCallback(
+    (value: string) => {
+      const trimmed = value.replace(/[^0-9]/g, "");
+      const n = trimmed === "" ? undefined : parseInt(trimmed, 10);
+      const next: IndexerConfig = { ...indexerConfig };
+      if (n && n > 0) next.MaxResponseBytes = n;
+      else delete next.MaxResponseBytes;
       setNewConfig({ ...config, "indexers.instances": serializeConfig(next) });
     },
     [config, indexerConfig, setNewConfig],
@@ -594,6 +627,10 @@ export function IndexersSettings({
     typeof indexerConfig.SearchResultLimit === "number" && indexerConfig.SearchResultLimit > 0
       ? indexerConfig.SearchResultLimit.toString()
       : "";
+  const globalMaxResponseBytesRaw =
+    typeof indexerConfig.MaxResponseBytes === "number" && indexerConfig.MaxResponseBytes > 0
+      ? indexerConfig.MaxResponseBytes.toString()
+      : "";
 
   return (
     <SettingsPage className="mb-6">
@@ -698,6 +735,27 @@ export function IndexersSettings({
               value={globalSearchLimitRaw}
               onChange={(e) => handleSearchLimitChange(e.target.value)}
             />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="indexers-default-max-response-bytes">
+              Max indexer response (bytes){" "}
+              <span className="text-[11px] font-normal text-base-content/45">
+                (blank = {DEFAULT_MAX_RESPONSE_BYTES.toLocaleString()} / 4 MiB; max{" "}
+                {MAX_RESPONSE_BYTES_HARD_CLAMP.toLocaleString()})
+              </span>
+            </Label>
+            <Input
+              type="text"
+              id="indexers-default-max-response-bytes"
+              className={`w-full max-w-48 ${!isMaxResponseBytesValid(globalMaxResponseBytesRaw) ? "input-error" : ""}`}
+              placeholder={DEFAULT_MAX_RESPONSE_BYTES.toString()}
+              value={globalMaxResponseBytesRaw}
+              onChange={(e) => handleMaxResponseBytesChange(e.target.value)}
+            />
+            <HelpText>
+              Caps how large a Newznab caps or search XML body may be before it is parsed. Counts
+              the bytes the HTTP client delivers (not decompressed; automatic gzip is off).
+            </HelpText>
           </div>
         </ManagedSetting>
       </SettingsCard>
@@ -1511,6 +1569,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
   const [proxyUrl, setProxyUrl] = useState("");
   const [timeoutSeconds, setTimeoutSeconds] = useState("");
   const [searchResultLimit, setSearchResultLimit] = useState("");
+  const [maxResponseBytes, setMaxResponseBytes] = useState("");
   const [maxRpm, setMaxRpm] = useState("0");
   const [hitLimit, setHitLimit] = useState("");
   const [downloadLimit, setDownloadLimit] = useState("");
@@ -1567,6 +1626,11 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
           ? indexer.SearchResultLimit.toString()
           : "",
       );
+      setMaxResponseBytes(
+        indexer?.MaxResponseBytes && indexer.MaxResponseBytes > 0
+          ? indexer.MaxResponseBytes.toString()
+          : "",
+      );
       setMaxRpm((indexer?.MaxRequestsPerMinute ?? 0).toString());
       setHitLimit(indexer?.HitLimit && indexer.HitLimit > 0 ? indexer.HitLimit.toString() : "");
       setDownloadLimit(
@@ -1602,7 +1666,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
 
   useEffect(() => {
     setTestState("idle");
-  }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, skipTlsVerification]);
+  }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, maxResponseBytes, skipTlsVerification]);
 
   const handleTest = useCallback(async () => {
     if (!url.trim() || !apiKey.trim()) return;
@@ -1614,6 +1678,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
       if (searchUserAgent.trim()) fd.append("userAgent", searchUserAgent);
       if (proxyUrl.trim()) fd.append("proxyUrl", proxyUrl);
       if (timeoutSeconds.trim()) fd.append("timeoutSeconds", timeoutSeconds);
+      if (maxResponseBytes.trim()) fd.append("maxResponseBytes", maxResponseBytes);
       fd.append("skipTlsVerification", skipTlsVerification.toString());
       const r = await fetch(withUrlBase("/api/test-indexer-connection"), {
         method: "POST",
@@ -1625,12 +1690,13 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
     } catch {
       setTestState("error");
     }
-  }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, skipTlsVerification]);
+  }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, maxResponseBytes, skipTlsVerification]);
 
   const handleSave = useCallback(() => {
     const rpm = parseInt(maxRpm || "0", 10);
     const timeout = parseInt(timeoutSeconds || "0", 10);
     const srl = parseInt(searchResultLimit || "0", 10);
+    const maxBytes = parseInt(maxResponseBytes || "0", 10);
     const hl = parseInt(hitLimit || "0", 10);
     const dl = parseInt(downloadLimit || "0", 10);
     const hr = hitResetTime.trim() === "" ? NaN : parseInt(hitResetTime, 10);
@@ -1672,6 +1738,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
       ...(proxyUrl.trim() ? { ProxyUrl: proxyUrl.trim() } : {}),
       ...(Number.isFinite(timeout) && timeout > 0 ? { TimeoutSeconds: timeout } : {}),
       ...(Number.isFinite(srl) && srl > 0 ? { SearchResultLimit: srl } : {}),
+      ...(Number.isFinite(maxBytes) && maxBytes > 0 ? { MaxResponseBytes: maxBytes } : {}),
       MaxRequestsPerMinute: Number.isFinite(rpm) && rpm > 0 ? rpm : 0,
       ...(Number.isFinite(hl) && hl > 0 ? { HitLimit: hl } : {}),
       ...(Number.isFinite(dl) && dl > 0 ? { DownloadLimit: dl } : {}),
@@ -1703,6 +1770,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
     proxyUrl,
     timeoutSeconds,
     searchResultLimit,
+    maxResponseBytes,
     maxRpm,
     hitLimit,
     downloadLimit,
@@ -1738,6 +1806,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
   })();
   const isProxyValid = isProxyUrlValid(proxyUrl);
   const isTimeoutFieldValid = isTimeoutValid(timeoutSeconds);
+  const isMaxResponseBytesFieldValid = isMaxResponseBytesValid(maxResponseBytes);
   const isNonNegIntOrBlank = (raw: string) => {
     if (!raw.trim()) return true;
     const n = Number(raw);
@@ -1760,6 +1829,7 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
     isRpmValid &&
     isProxyValid &&
     isTimeoutFieldValid &&
+    isMaxResponseBytesFieldValid &&
     isHitLimitValid &&
     isSearchResultLimitValid &&
     isDownloadLimitValid &&
@@ -1963,6 +2033,23 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
             placeholder="Use global default"
             value={searchResultLimit}
             onChange={(e) => setSearchResultLimit(e.target.value.replace(/[^0-9]/g, ""))}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="indexer-max-response-bytes">
+            Max indexer response (bytes){" "}
+            <span className="text-[11px] font-normal text-base-content/45">
+              (blank = use global default)
+            </span>
+          </Label>
+          <Input
+            type="text"
+            id="indexer-max-response-bytes"
+            className={`w-full max-w-48 ${!isMaxResponseBytesFieldValid && maxResponseBytes !== "" ? "input-error" : ""}`}
+            placeholder="Use global default"
+            value={maxResponseBytes}
+            onChange={(e) => setMaxResponseBytes(e.target.value.replace(/[^0-9]/g, ""))}
           />
         </div>
 
@@ -2274,6 +2361,13 @@ export function isIndexersSettingsValid(newConfig: Record<string, string>) {
       (!Number.isInteger(c.SearchResultLimit) || c.SearchResultLimit <= 0)
     )
       return false;
+    if (
+      c.MaxResponseBytes !== undefined &&
+      (!Number.isInteger(c.MaxResponseBytes) ||
+        c.MaxResponseBytes < 1 ||
+        c.MaxResponseBytes > MAX_RESPONSE_BYTES_HARD_CLAMP)
+    )
+      return false;
     for (const i of c.Indexers) {
       if (!i.Name.trim()) return false;
       if (!i.ApiKey.trim()) return false;
@@ -2291,6 +2385,13 @@ export function isIndexersSettingsValid(newConfig: Record<string, string>) {
       if (
         i.SearchResultLimit !== undefined &&
         (!Number.isInteger(i.SearchResultLimit) || i.SearchResultLimit <= 0)
+      )
+        return false;
+      if (
+        i.MaxResponseBytes !== undefined &&
+        (!Number.isInteger(i.MaxResponseBytes) ||
+          i.MaxResponseBytes < 1 ||
+          i.MaxResponseBytes > MAX_RESPONSE_BYTES_HARD_CLAMP)
       )
         return false;
       if (i.HitLimit !== undefined && (!Number.isInteger(i.HitLimit) || i.HitLimit < 0))

@@ -182,6 +182,7 @@ public static class ConfigKeys
     public const string WatchtowerGrabCapPerResolve = "watchtower.grab-cap-per-resolve";
     public const string WatchtowerKeepfreshBaseSeconds = "watchtower.keepfresh-base-seconds";
     public const string WatchtowerKeepfreshMaxSeconds = "watchtower.keepfresh-max-seconds";
+    public const string WatchtowerListSourceMaxResponseBytes = "watchtower.list-source-max-response-bytes";
     public const string WatchtowerMinGrabs = "watchtower.min-grabs";
     public const string WatchtowerProfileToken = "watchtower.profile-token";
     public const string WatchtowerRanking = "watchtower.ranking";

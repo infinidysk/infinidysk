@@ -1,21 +1,56 @@
+using System.Xml;
 using System.Xml.Linq;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Clients.Indexers;
 
-public class NewznabClient(
-    string baseUrl,
-    string apiKey,
-    string userAgent = "NzbDav",
-    string? proxyUrl = null,
-    int timeoutSeconds = 30,
-    bool skipTlsVerification = false)
+public class NewznabClient
 {
     private static readonly XNamespace Newznab = "http://www.newznab.com/DTD/2010/feeds/attributes/";
 
-    private readonly Uri _apiUri = NormalizeApiUri(baseUrl);
-    private readonly HttpClient _http = ProxyHttpClientPool.GetClient(proxyUrl, skipTlsVerification);
-    private readonly int _timeoutSeconds = timeoutSeconds > 0 ? timeoutSeconds : 30;
+    private readonly Uri _apiUri;
+    private readonly HttpClient _http;
+    private readonly string _apiKey;
+    private readonly string _userAgent;
+    private readonly int _timeoutSeconds;
+    private readonly long _maxResponseBytes;
+
+    public NewznabClient(
+        string baseUrl,
+        string apiKey,
+        long maxResponseBytes,
+        string userAgent = "NzbDav",
+        string? proxyUrl = null,
+        int timeoutSeconds = 30,
+        bool skipTlsVerification = false)
+        : this(
+            ProxyHttpClientPool.GetClient(proxyUrl, skipTlsVerification),
+            baseUrl,
+            apiKey,
+            maxResponseBytes,
+            userAgent,
+            timeoutSeconds)
+    {
+    }
+
+    internal NewznabClient(
+        HttpClient http,
+        string baseUrl,
+        string apiKey,
+        long maxResponseBytes,
+        string userAgent = "NzbDav",
+        int timeoutSeconds = 30)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResponseBytes);
+        _http = http;
+        _apiUri = NormalizeApiUri(baseUrl);
+        _apiKey = apiKey;
+        _userAgent = userAgent;
+        _timeoutSeconds = timeoutSeconds > 0 ? timeoutSeconds : 30;
+        _maxResponseBytes = maxResponseBytes;
+    }
 
     private static Uri NormalizeApiUri(string baseUrl)
     {
@@ -67,10 +102,12 @@ public class NewznabClient(
         for (var attempt = 0; ; attempt++)
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.UserAgent.ParseAdd(userAgent);
+            req.Headers.UserAgent.ParseAdd(_userAgent);
             try
             {
-                return await _http.SendAsync(req, ct).ConfigureAwait(false);
+                return await _http
+                    .SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct)
+                    .ConfigureAwait(false);
             }
             catch (Exception e) when (attempt == 0 && !ct.IsCancellationRequested
                                       && e is HttpRequestException or IOException)
@@ -80,6 +117,60 @@ public class NewznabClient(
         }
     }
 
+    private async Task<byte[]> ReadResponseBodyAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        try
+        {
+            return await HttpContentReadUtil
+                .ReadBoundedAsync(response.Content, _maxResponseBytes, ct)
+                .ConfigureAwait(false);
+        }
+        catch (NzbResponseTooLargeException e)
+        {
+            throw new RemoteResponseTooLargeException(e.MaxBytes, e.ContentLength, e);
+        }
+    }
+
+    private static async Task<XDocument> ParseXmlAsync(
+        byte[] body,
+        long maxResponseBytes,
+        CancellationToken ct)
+    {
+        var settings = new XmlReaderSettings
+        {
+            Async = true,
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersInDocument = maxResponseBytes,
+            CloseInput = false,
+        };
+
+        try
+        {
+            using var stream = new MemoryStream(body, writable: false);
+            using var reader = XmlReader.Create(stream, settings);
+            return await XDocument
+                .LoadAsync(reader, LoadOptions.None, ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (XmlException e)
+        {
+            throw new RemoteResponseFormatException("Indexer returned invalid XML.", e);
+        }
+    }
+
+    private static bool HasCapsElement(XDocument doc)
+    {
+        if (doc.Root?.Name.LocalName.Equals("caps", StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+        return doc.Descendants().Any(e =>
+            e.Name.LocalName.Equals("caps", StringComparison.OrdinalIgnoreCase));
+    }
+
     public Task<bool> TestAsync(CancellationToken ct = default)
     {
         return WithTimeoutAsync(async token =>
@@ -87,12 +178,13 @@ public class NewznabClient(
             var url = BuildUrl(new[]
             {
                 new KeyValuePair<string, string>("t", "caps"),
-                new KeyValuePair<string, string>("apikey", apiKey),
+                new KeyValuePair<string, string>("apikey", _apiKey),
             });
             using var resp = await GetAsync(url, token).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode) return false;
-            var body = await resp.Content.ReadAsStringAsync(token).ConfigureAwait(false);
-            return body.Contains("<caps", StringComparison.OrdinalIgnoreCase);
+            var body = await ReadResponseBodyAsync(resp, token).ConfigureAwait(false);
+            var doc = await ParseXmlAsync(body, _maxResponseBytes, token).ConfigureAwait(false);
+            return HasCapsElement(doc);
         }, ct);
     }
 
@@ -112,7 +204,7 @@ public class NewznabClient(
         {
             var extra = new List<KeyValuePair<string, string>>
             {
-                new("apikey", apiKey),
+                new("apikey", _apiKey),
                 new("extended", "1"),
             };
             foreach (var (k, v) in queryParams)
@@ -120,8 +212,8 @@ public class NewznabClient(
             var url = BuildUrl(extra);
             using var resp = await GetAsync(url, token).ConfigureAwait(false);
             resp.EnsureSuccessStatusCode();
-            await using var stream = await resp.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
-            var doc = await XDocument.LoadAsync(stream, LoadOptions.None, token).ConfigureAwait(false);
+            var body = await ReadResponseBodyAsync(resp, token).ConfigureAwait(false);
+            var doc = await ParseXmlAsync(body, _maxResponseBytes, token).ConfigureAwait(false);
             if (doc.Root?.Name.LocalName == "error")
             {
                 var code = doc.Root.Attribute("code")?.Value;

@@ -234,6 +234,7 @@ public static class ExceptionExtensions
             or IOException
             or UnauthorizedAccessException
             or StreamingReadTimeoutException
+            or RemoteResponseException
             || exception.IsRetryableDownloadException()
             || exception.IsNonRetryableDownloadException();
     }

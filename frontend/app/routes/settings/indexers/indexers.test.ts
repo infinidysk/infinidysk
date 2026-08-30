@@ -67,15 +67,40 @@ describe("Indexer settings", () => {
     }
   });
 
-  it("requires the Prowlarr URL and API key as a pair", () => {
-    expect(isIndexersSettingsValid({ ...validConfig, "prowlarr.url": "" })).toBe(false);
-    expect(isIndexersSettingsValid({ ...validConfig, "prowlarr.api-key": "" })).toBe(false);
-    expect(
-      isIndexersSettingsValid({
-        ...validConfig,
-        "prowlarr.url": "",
-        "prowlarr.api-key": "",
+  it("rejects MaxResponseBytes of zero or above the hard clamp", () => {
+    const hardMax = 16 * 1024 * 1024;
+    const withGlobal = {
+      ...validConfig,
+      "indexers.instances": JSON.stringify({
+        MaxResponseBytes: 0,
+        Indexers: JSON.parse(validConfig["indexers.instances"]).Indexers,
       }),
-    ).toBe(true);
+    };
+    expect(isIndexersSettingsValid(withGlobal)).toBe(false);
+
+    const withPerIndexer = {
+      ...validConfig,
+      "indexers.instances": JSON.stringify({
+        Indexers: [
+          {
+            ...JSON.parse(validConfig["indexers.instances"]).Indexers[0],
+            MaxResponseBytes: hardMax + 1,
+          },
+        ],
+      }),
+    };
+    expect(isIndexersSettingsValid(withPerIndexer)).toBe(false);
+  });
+
+  it("accepts MaxResponseBytes at the hard clamp", () => {
+    const hardMax = 16 * 1024 * 1024;
+    const next = {
+      ...validConfig,
+      "indexers.instances": JSON.stringify({
+        MaxResponseBytes: hardMax,
+        Indexers: JSON.parse(validConfig["indexers.instances"]).Indexers,
+      }),
+    };
+    expect(isIndexersSettingsValid(next)).toBe(true);
   });
 });

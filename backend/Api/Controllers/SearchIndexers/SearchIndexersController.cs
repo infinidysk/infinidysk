@@ -3,9 +3,11 @@ using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Clients.Indexers;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
+using Serilog;
 
 namespace NzbWebDAV.Api.Controllers.SearchIndexers;
 
@@ -47,7 +49,14 @@ public class SearchIndexersController(
                 var proxy = string.IsNullOrWhiteSpace(x.ProxyUrl) ? globalProxy : x.ProxyUrl;
                 var timeout = indexerConfig.GetEffectiveTimeoutSeconds(x);
                 await rateLimiter.WaitAsync(x.Name, x.MaxRequestsPerMinute, ct).ConfigureAwait(false);
-                var client = new NewznabClient(x.Url, x.ApiKey, ua, proxy, timeout, x.SkipTlsVerification);
+                var client = new NewznabClient(
+                    x.Url,
+                    x.ApiKey,
+                    indexerConfig.GetEffectiveMaxResponseBytes(x),
+                    ua,
+                    proxy,
+                    timeout,
+                    x.SkipTlsVerification);
                 var items = await client.SearchAsync(request.Query, request.Limit, ct).ConfigureAwait(false);
                 _ = hitTracker.RecordAsync(x.Name, IndexerApiHit.HitType.Search, CancellationToken.None);
                 var mapped = items
@@ -74,11 +83,23 @@ public class SearchIndexersController(
             }
             catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
+                if (e is RemoteResponseException)
+                {
+                    return (Status: new SearchIndexersResponse.IndexerStatus
+                    {
+                        Name = x.Name,
+                        Ok = false,
+                        Error = e.Message,
+                        ElapsedMs = sw.ElapsedMilliseconds,
+                    }, Results: new List<SearchIndexersResponse.Result>());
+                }
+
+                Log.Warning(e, "Indexer {Indexer} search failed unexpectedly.", x.Name);
                 return (Status: new SearchIndexersResponse.IndexerStatus
                 {
                     Name = x.Name,
                     Ok = false,
-                    Error = e.Message,
+                    Error = "Indexer search failed unexpectedly.",
                     ElapsedMs = sw.ElapsedMilliseconds,
                 }, Results: new List<SearchIndexersResponse.Result>());
             }

@@ -244,8 +244,12 @@ public partial class WatchtowerService(
             }
             catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
-                source.LastSyncError = e.Message;
-                Log.Warning(e, "Watchtower: sync failed for source {Name}", source.Name);
+                source.LastSyncError = e is RemoteResponseException
+                    ? e.Message
+                    : "Source synchronization failed unexpectedly.";
+                e.LogWarningKnownOrStack(
+                    "Watchtower: sync failed for source {Name}.",
+                    source.Name);
             }
             source.LastSyncedAtUnix = now;
             await TrySaveBatchItemAsync(ctx, ct).ConfigureAwait(false);

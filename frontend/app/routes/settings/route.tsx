@@ -192,6 +192,7 @@ const defaultConfig = {
   "watchtower.daily-resolve-budget": "60",
   "watchtower.auto-throughput": "false",
   "watchtower.sync-interval-seconds": "3600",
+  "watchtower.list-source-max-response-bytes": "8388608",
   "watchtower.series-scope": "latest-season",
   "watchtower.season-bundles": "true",
   "watchtower.series-max-episodes": "50",

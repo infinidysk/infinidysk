@@ -458,6 +458,14 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                     RequireLongInRange(item.ConfigName, value, 5, 10080);
                     break;
 
+                case ConfigKeys.WatchtowerListSourceMaxResponseBytes:
+                    RequireLongInRange(
+                        item.ConfigName,
+                        value,
+                        1,
+                        ExternalMetadataResponseLimits.HardMaxResponseBytes);
+                    break;
+
                 case ConfigKeys.UsenetStreamingBodyBatchWidth:
                     RequireLongInRange(item.ConfigName, value, 1, 8);
                     break;
@@ -560,6 +568,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
                 case ConfigKeys.IndexersInstances:
                     RequireJson<IndexerConfig>(item.ConfigName, value, jsonOptions);
+                    RequireIndexerMaxResponseBytes(value, jsonOptions);
                     break;
 
                 case ConfigKeys.ProfilesInstances:
@@ -609,6 +618,39 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             if (!long.TryParse(value, out var parsed) || parsed < minimum || parsed > maximum)
                 throw new ArgumentException(
                     $"Config value for '{key}' must be a whole number from {minimum} through {maximum}.");
+        }
+
+        void RequireIndexerMaxResponseBytes(string json, JsonSerializerOptions? options)
+        {
+            IndexerConfig? cfg;
+            try
+            {
+                cfg = JsonSerializer.Deserialize<IndexerConfig>(json, options);
+            }
+            catch (JsonException)
+            {
+                return;
+            }
+
+            if (cfg is null) return;
+            RequireOptionalMaxResponseBytes("indexers.instances MaxResponseBytes", cfg.MaxResponseBytes);
+            foreach (var indexer in cfg.Indexers)
+            {
+                var label = string.IsNullOrWhiteSpace(indexer.Name)
+                    ? "indexers.instances indexer MaxResponseBytes"
+                    : $"indexers.instances indexer '{indexer.Name}' MaxResponseBytes";
+                RequireOptionalMaxResponseBytes(label, indexer.MaxResponseBytes);
+            }
+        }
+
+        void RequireOptionalMaxResponseBytes(string label, long? value)
+        {
+            if (value is null) return;
+            if (value.Value < 1 || value.Value > ExternalMetadataResponseLimits.HardMaxResponseBytes)
+            {
+                throw new ArgumentException(
+                    $"Config value for '{label}' must be a whole number from 1 through {ExternalMetadataResponseLimits.HardMaxResponseBytes}.");
+            }
         }
 
         void RequireHttpUrl(string key, string value)
@@ -1958,6 +2000,15 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.WatchtowerSyncIntervalSeconds));
         if (v == null) return 3600;
         return int.TryParse(v, out var n) ? Math.Clamp(n, 60, 86400) : 3600;
+    }
+
+    public long GetWatchtowerListSourceMaxResponseBytes()
+    {
+        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.WatchtowerListSourceMaxResponseBytes));
+        if (v == null) return ExternalMetadataResponseLimits.WatchtowerDefaultMaxResponseBytes;
+        if (!long.TryParse(v, out var n) || n <= 0)
+            return ExternalMetadataResponseLimits.WatchtowerDefaultMaxResponseBytes;
+        return Math.Min(n, ExternalMetadataResponseLimits.HardMaxResponseBytes);
     }
 
     public int GetWatchtowerKeepFreshBaseSeconds()

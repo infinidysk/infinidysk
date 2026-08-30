@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using System.Xml;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Exceptions;
@@ -47,6 +48,39 @@ public class ExceptionExtensionsTests
         var io = new IOException("Unable to read data from the transport connection.");
         Assert.True(io.TryGetKnownErrorMessage(out var ioReason));
         Assert.Equal("Unable to read data from the transport connection.", ioReason);
+    }
+
+    [Fact]
+    public void TryGetKnownErrorMessage_RecognizesRemoteResponseTooLarge()
+    {
+        var inner = new NzbResponseTooLargeException(100);
+        var ex = new RemoteResponseTooLargeException(100, null, inner);
+
+        Assert.True(ex.TryGetKnownErrorMessage(out var reason));
+        Assert.Equal(ex.Message, reason);
+        Assert.DoesNotContain("NZB response", reason);
+        Assert.Contains("100", reason);
+    }
+
+    [Fact]
+    public void TryGetKnownErrorMessage_RecognizesRemoteResponseFormat()
+    {
+        var ex = new RemoteResponseFormatException(
+            "Indexer returned invalid XML.",
+            new XmlException("secret DO_NOT_LOG_BODY_MARKER at line 1"));
+
+        Assert.True(ex.TryGetKnownErrorMessage(out var reason));
+        Assert.Equal("Indexer returned invalid XML.", reason);
+        Assert.DoesNotContain("DO_NOT_LOG_BODY_MARKER", reason);
+    }
+
+    [Fact]
+    public void TryGetKnownErrorMessage_DoesNotTreatInvalidOperationAsKnownRemote()
+    {
+        var ex = new InvalidOperationException("unexpected bug DO_NOT_LOG_BODY_MARKER");
+
+        Assert.False(ex.TryGetKnownErrorMessage(out var reason));
+        Assert.Equal(string.Empty, reason);
     }
 
     [Fact]
