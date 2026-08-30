@@ -98,6 +98,8 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
                     icon="schedule"
                     tooltip="When this instance last completed an import."
                     className="max-sm:w-[25%] max-sm:px-1"
+                    tooltipClassName="tooltip-end"
+                    tooltipContentClassName="max-sm:w-52!"
                   />
                 </tr>
               </thead>
@@ -190,15 +192,23 @@ function MetricHeader({
   icon,
   tooltip,
   className = "",
+  tooltipClassName = "",
+  tooltipContentClassName = "",
 }: {
   label: string;
   icon: string;
   tooltip: string;
   className?: string;
+  tooltipClassName?: string;
+  tooltipContentClassName?: string;
 }) {
   return (
     <th className={className}>
-      <Tooltip content={tooltip}>
+      <Tooltip
+        content={tooltip}
+        className={tooltipClassName}
+        contentClassName={tooltipContentClassName}
+      >
         <span className="inline-flex cursor-help items-center">
           <Icon
             name={icon}

@@ -127,6 +127,8 @@ describe("ArrHealth", () => {
     expect(markup).toMatch(/max-sm:!inline-block[^>]*>queue</);
     expect(markup).toMatch(/max-sm:!inline-block[^>]*>pending</);
     expect(markup).toMatch(/max-sm:!inline-block[^>]*>schedule</);
+    expect(markup).toContain("tooltip-end");
+    expect(markup).toContain("max-sm:w-52!");
     expect(markup).toContain("max-sm:sr-only");
     expect(markup).not.toContain("overflow-x-auto");
     expect(markup).not.toContain("min-w-[640px]");

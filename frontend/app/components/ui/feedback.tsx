@@ -48,11 +48,13 @@ export function Tooltip({
   children,
   placement = "top",
   className = "",
+  contentClassName = "",
 }: {
   content: string;
   children: ReactNode;
   placement?: TooltipPlacement;
   className?: string;
+  contentClassName?: string;
 }) {
   const tooltipId = useId();
   const [hovered, setHovered] = useState(false);
@@ -95,7 +97,12 @@ export function Tooltip({
         id={tooltipId}
         role="tooltip"
         aria-hidden={!open}
-        className="tooltip-content z-50 w-72 max-w-[calc(100vw-2rem)] whitespace-normal text-left text-xs leading-relaxed"
+        className={[
+          "tooltip-content z-50 w-72 max-w-[calc(100vw-2rem)] whitespace-normal text-left text-xs leading-relaxed",
+          contentClassName,
+        ]
+          .filter(Boolean)
+          .join(" ")}
       >
         {content}
       </span>
