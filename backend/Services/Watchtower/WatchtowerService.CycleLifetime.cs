@@ -444,12 +444,16 @@ public partial class WatchtowerService
             await task.ConfigureAwait(false);
             return new TaskObservation(TaskObservationStatus.RanToCompletion, null);
         }
-        catch (OperationCanceledException ex)
+        catch (Exception ex)
         {
-            return new TaskObservation(TaskObservationStatus.Canceled, ExceptionDispatchInfo.Capture(ex));
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
+            // CancelAsync stores every callback failure on task.Exception. await
+            // unwraps only one inner exception, which would drop a later OOM.
+            if (task.Exception is { } aggregate)
+                return new TaskObservation(TaskObservationStatus.Faulted, ExceptionDispatchInfo.Capture(aggregate));
+
+            if (ex is OperationCanceledException oce)
+                return new TaskObservation(TaskObservationStatus.Canceled, ExceptionDispatchInfo.Capture(oce));
+
             return new TaskObservation(TaskObservationStatus.Faulted, ExceptionDispatchInfo.Capture(ex));
         }
     }

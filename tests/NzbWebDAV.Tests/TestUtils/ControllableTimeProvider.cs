@@ -58,10 +58,10 @@ internal sealed class ControllableTimeProvider : TimeProvider
     {
         get
         {
+            ManualTimer[] snapshot;
             lock (_gate)
-            {
-                return _timers.Any(timer => timer.NextDue is not null);
-            }
+                snapshot = _timers.ToArray();
+            return snapshot.Any(timer => timer.NextDue is not null);
         }
     }
 
@@ -130,6 +130,7 @@ internal sealed class ControllableTimeProvider : TimeProvider
 
         public bool Change(TimeSpan dueTime, TimeSpan period)
         {
+            var now = _provider.Now;
             var fireImmediately = false;
             lock (_gate)
             {
@@ -141,7 +142,7 @@ internal sealed class ControllableTimeProvider : TimeProvider
                     return true;
                 }
 
-                _nextDue = _provider.Now + dueTime;
+                _nextDue = now + dueTime;
                 fireImmediately = dueTime == TimeSpan.Zero;
             }
 

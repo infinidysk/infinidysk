@@ -293,6 +293,37 @@ public sealed class WatchtowerServiceTests
     }
 
     [Fact]
+    public async Task CancellationCallbackOomAfterSiblingFailure_PropagatesOom()
+    {
+        var clock = new ControllableTimeProvider();
+        var sibling = new InvalidOperationException("watchtower-callback-sibling");
+        var oom = new OutOfMemoryException("watchtower-callback-later-oom");
+        using var storedReg = new StoredRegistration();
+        using var oomReg = new StoredRegistration();
+        var firstReturned = NewSignal();
+        var starts = 0;
+        var sink = new CollectingSink();
+        using var logs = CaptureLogs(sink);
+
+        await using var run = Start(clock, (_, ct) =>
+        {
+            Interlocked.Increment(ref starts);
+            storedReg.Registration = ct.Register(() => throw oom);
+            oomReg.Registration = ct.Register(() => throw sibling);
+            firstReturned.TrySetResult();
+            return Task.CompletedTask;
+        });
+
+        await firstReturned.Task.WaitAsync(TestTimeout);
+        var thrown = await Assert.ThrowsAsync<OutOfMemoryException>(
+            () => run.ExecuteTask.WaitAsync(TestTimeout));
+        Assert.Same(oom, thrown);
+        Assert.Equal(1, Volatile.Read(ref starts));
+        Assert.DoesNotContain(sink.Events, e => e.MessageTemplate.Text.Contains("Watchtower loop error"));
+        Assert.Null(run.Service.ActiveCycleForTests);
+    }
+
+    [Fact]
     public async Task CancellationAndCycleOutOfMemory_PropagatesCancellationOom()
     {
         var clock = new ControllableTimeProvider();
