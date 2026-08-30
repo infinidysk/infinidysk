@@ -10,11 +10,11 @@
   background-size: 300% 100%;
   background-position: 0% 50%;
   background-clip: padding-box;
-  animation: updateAvailableShift 6s ease-in-out infinite;
+  animation: update-available-shift 6s ease-in-out infinite;
   box-shadow: none;
 }
 
-@keyframes updateAvailableShift {
+@keyframes update-available-shift {
   0%,
   100% {
     background-position: 0% 50%;

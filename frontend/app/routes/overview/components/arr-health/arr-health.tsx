@@ -135,7 +135,7 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
                     <td className="font-mono tabular-nums max-sm:px-1">
                       {formatNumber(instance.awaitingCount)}
                     </td>
-                    <td className="min-w-0 font-mono tabular-nums text-base-content/80 max-sm:px-1 max-sm:whitespace-nowrap">
+                    <td className="min-w-0 font-mono tabular-nums text-base-content/80 max-sm:truncate max-sm:px-1">
                       {instance.status === "offline" && !instance.lastImportAtMs
                         ? (instance.lastError ?? "Unreachable")
                         : formatTimeAgo(instance.lastImportAtMs)}
