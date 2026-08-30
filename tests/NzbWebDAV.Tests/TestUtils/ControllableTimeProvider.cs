@@ -54,6 +54,23 @@ internal sealed class ControllableTimeProvider : TimeProvider
         get { lock (_gate) return _now; }
     }
 
+    internal bool HasScheduledTimer
+    {
+        get
+        {
+            lock (_gate)
+            {
+                foreach (var timer in _timers)
+                {
+                    if (timer.NextDue is not null)
+                        return true;
+                }
+
+                return false;
+            }
+        }
+    }
+
     private void FireDueTimers()
     {
         while (true)

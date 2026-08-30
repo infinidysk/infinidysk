@@ -12,7 +12,7 @@ using Serilog;
 
 namespace NzbWebDAV.Services;
 
-public class WatchtowerService(
+public partial class WatchtowerService(
     ConfigManager configManager,
     SearchProfileService searchProfileService,
     PlaybackFastVerifier fastVerifier,
@@ -26,10 +26,16 @@ public class WatchtowerService(
     PreferredOrderStore preferredOrderStore,
     NzbFetchCoalescer nzbFetchCoalescer,
     BenchmarkGate benchmarkGate,
-    IDbContextFactory<DavDatabaseContext> dbContextFactory
+    IDbContextFactory<DavDatabaseContext> dbContextFactory,
+    TimeProvider? timeProvider = null
 ) : BackgroundService
 {
-    private static readonly TimeSpan Tick = TimeSpan.FromSeconds(20);
+    internal static readonly TimeSpan CycleWatchdogTimeout = TimeSpan.FromMinutes(15);
+    internal static readonly TimeSpan CycleInterval = TimeSpan.FromSeconds(20);
+    internal static readonly TimeSpan LoopErrorDelay = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan AdmissionPollInterval = TimeSpan.FromSeconds(10);
+
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private static readonly TimeSpan NzbFetchTimeout = TimeSpan.FromSeconds(15);
 
     // Heartbeat throttles. The cycle loop ticks every 20s forever, so logging each
@@ -42,7 +48,6 @@ public class WatchtowerService(
     private const int ResolvesPerTick = 3;
     private const int AutoResolveBatch = 25;
     private static readonly TimeSpan AutoStageBudget = TimeSpan.FromSeconds(120);
-    private static readonly TimeSpan CycleWatchdog = TimeSpan.FromMinutes(15);
     private const int KeepFreshPerTick = 5;
     private const int ExpandsPerTick = 5;
     private const long SeasonBundleGraceSeconds = 14L * 86400L;
@@ -50,10 +55,27 @@ public class WatchtowerService(
     private int _resolveDayKey = -1;
     private int _resolvesToday;
 
-    private readonly object _ctsLock = new();
-    private CancellationTokenSource? _disabledCts;
+    private readonly object _activeCycleLock = new();
+    private ActiveCycle? _activeCycle;
+    private int _nextCycleId;
 
     private readonly SemaphoreSlim _indexerGate = new(1, 1);
+
+    internal Func<Stopwatch, CancellationToken, Task>? RunCycleOverride { get; set; }
+
+    internal Task ExecuteHostedServiceForTests(CancellationToken stoppingToken) =>
+        ExecuteAsync(stoppingToken);
+
+    internal ActiveCycle? ActiveCycleForTests
+    {
+        get
+        {
+            lock (_activeCycleLock)
+                return _activeCycle;
+        }
+    }
+
+    internal ActiveCycle? LastClearedCycleForTests { get; private set; }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -67,20 +89,18 @@ public class WatchtowerService(
                     // pause verification while a connection speed-test is running
                     if (benchmarkGate.IsPaused)
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+                        await Task.Delay(AdmissionPollInterval, _timeProvider, stoppingToken)
+                            .ConfigureAwait(false);
                         continue;
                     }
 
                     if (!configManager.IsWatchtowerEnabled())
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+                        await Task.Delay(AdmissionPollInterval, _timeProvider, stoppingToken)
+                            .ConfigureAwait(false);
                         continue;
                     }
 
-                    using var cycleCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                    lock (_ctsLock) _disabledCts = cycleCts;
-                    var ct = cycleCts.Token;
-                    var cycleWatch = Stopwatch.StartNew();
                     if (_logThrottle.ShouldLog(CycleStartLogKey, CycleStartLogInterval, out var skippedCycles))
                     {
                         if (skippedCycles > 0)
@@ -89,45 +109,45 @@ public class WatchtowerService(
                         else
                             LogActivity("Watchtower: cycle starting");
                     }
-                    try
+
+                    var observation = await RunSupervisedCycleAsync(stoppingToken).ConfigureAwait(false);
+
+                    if (observation.Failure is not null)
+                        LogCycleFailure(observation);
+                    else if (observation.WatchdogWarningEmitted)
+                        LogWatchdogDrainComplete(observation);
+
+                    if (stoppingToken.IsCancellationRequested
+                        || observation.StopReason == CycleStopReason.HostStopping)
                     {
-                        var cycle = RunCycleAsync(cycleWatch, ct);
-                        var winner = await Task.WhenAny(cycle, Task.Delay(CycleWatchdog, stoppingToken)).ConfigureAwait(false);
-                        if (winner != cycle)
-                        {
-                            Log.Warning("Watchtower: cycle exceeded {Budget:n0}s watchdog; abandoning and restarting",
-                                CycleWatchdog.TotalSeconds);
-#pragma warning disable CA1849 // synchronous Cancel is required here -- CancelAsync cannot be awaited while holding _ctsLock, and the cancel must be ordered before the abandoned-cycle continuation
-                            lock (_ctsLock) cycleCts.Cancel();
-#pragma warning restore CA1849
-                            _ = cycle.ContinueWith(static t => _ = t.Exception, CancellationToken.None,
-                                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                                TaskScheduler.Default);
-                        }
-                        else
-                        {
-                            await cycle.ConfigureAwait(false);
-                        }
+                        return;
                     }
-                    catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+
+                    if (!configManager.IsWatchtowerEnabled()
+                        || observation.StopReason == CycleStopReason.Disabled)
                     {
                         continue;
                     }
-                    finally
-                    {
-                        lock (_ctsLock) _disabledCts = null;
-                    }
 
-                    await Task.Delay(Tick, stoppingToken).ConfigureAwait(false);
+                    if (stoppingToken.IsCancellationRequested)
+                        return;
+                    if (!configManager.IsWatchtowerEnabled())
+                        continue;
+
+                    var delay = observation.Failure is not null ? LoopErrorDelay : CycleInterval;
+                    await Task.Delay(delay, _timeProvider, stoppingToken).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered() || stoppingToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (
+                    SigtermUtil.IsSigtermTriggered() || stoppingToken.IsCancellationRequested)
                 {
                     return;
                 }
-                catch (Exception e) when (e is not OutOfMemoryException)
+                catch (Exception e) when (!ContainsOutOfMemory(e))
                 {
                     e.LogWarningKnownOrStack("Watchtower loop error.");
-                    await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+                    if (stoppingToken.IsCancellationRequested)
+                        return;
+                    await Task.Delay(LoopErrorDelay, _timeProvider, stoppingToken).ConfigureAwait(false);
                 }
             }
         }
@@ -161,7 +181,10 @@ public class WatchtowerService(
 
         if (!e.ChangedConfig.ContainsKey(ConfigKeys.WatchtowerEnabled)) return;
         if (configManager.IsWatchtowerEnabled()) return;
-        lock (_ctsLock) _disabledCts?.Cancel();
+        lock (_activeCycleLock)
+        {
+            _ = _activeCycle?.RequestCancellation(CycleStopReason.Disabled);
+        }
     }
 
     private void LogActivity(string template, params object?[] args)
@@ -1264,12 +1287,17 @@ public class WatchtowerService(
 
     public override void Dispose()
     {
-        lock (_ctsLock)
+        var disposeGate = false;
+        lock (_activeCycleLock)
         {
-            _disabledCts?.Dispose();
-            _disabledCts = null;
+            // The per-cycle source is disposed only by ExecuteAsync after both
+            // exact tasks are observed. A live cycle may still use _indexerGate.
+            disposeGate = _activeCycle is null;
         }
-        _indexerGate.Dispose();
+
+        if (disposeGate)
+            _indexerGate.Dispose();
+
         GC.SuppressFinalize(this);
         base.Dispose();
     }
