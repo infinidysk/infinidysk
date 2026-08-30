@@ -449,7 +449,12 @@ public partial class WatchtowerService
             // CancelAsync stores every callback failure on task.Exception. await
             // unwraps only one inner exception, which would drop a later OOM.
             if (task.Exception is { } aggregate)
-                return new TaskObservation(TaskObservationStatus.Faulted, ExceptionDispatchInfo.Capture(aggregate));
+            {
+                var status = IsOnlyOperationCanceled(aggregate)
+                    ? TaskObservationStatus.Canceled
+                    : TaskObservationStatus.Faulted;
+                return new TaskObservation(status, ExceptionDispatchInfo.Capture(aggregate));
+            }
 
             if (ex is OperationCanceledException oce)
                 return new TaskObservation(TaskObservationStatus.Canceled, ExceptionDispatchInfo.Capture(oce));
@@ -471,7 +476,17 @@ public partial class WatchtowerService
             return false;
         if (cycle.Status == TaskObservationStatus.Canceled)
             return true;
-        return cycle.Exception?.SourceException is OperationCanceledException;
+        return IsOnlyOperationCanceled(cycle.Exception?.SourceException);
+    }
+
+    private static bool IsOnlyOperationCanceled(Exception? exception)
+    {
+        if (exception is OperationCanceledException)
+            return true;
+        if (exception is not AggregateException aggregate)
+            return false;
+        var leaves = aggregate.Flatten().InnerExceptions;
+        return leaves.Count > 0 && leaves.All(inner => inner is OperationCanceledException);
     }
 
     private static OutOfMemoryException? SelectOutOfMemory(params ExceptionDispatchInfo?[] sources)

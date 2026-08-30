@@ -723,6 +723,33 @@ public sealed class WatchtowerServiceTests
             aggregate.ToString());
     }
 
+    [Fact]
+    public async Task SynchronousFromExceptionCancellation_OnDisable_IsExpected()
+    {
+        var clock = new ControllableTimeProvider();
+        var firstReturned = NewSignal();
+        var sink = new CollectingSink();
+        using var logs = CaptureLogs(sink);
+
+        await using var run = Start(clock, (_, ct) =>
+        {
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            ct.Register(() => tcs.TrySetException(new OperationCanceledException(ct)));
+            firstReturned.TrySetResult();
+            return tcs.Task;
+        });
+
+        await firstReturned.Task.WaitAsync(TestTimeout);
+        SetEnabled(run.Config, false);
+        await WaitClearedAsync(run.Service);
+
+        Assert.DoesNotContain(
+            sink.Events,
+            e => e.MessageTemplate.Text.Contains("unexpected cycle cancellation failure"));
+        Assert.DoesNotContain(sink.Events, e => e.MessageTemplate.Text.Contains("Watchtower loop error"));
+        Assert.False(run.ExecuteTask.IsFaulted);
+    }
+
     private static HostedRun Start(
         ControllableTimeProvider clock,
         Func<Stopwatch, CancellationToken, Task> runCycle)
