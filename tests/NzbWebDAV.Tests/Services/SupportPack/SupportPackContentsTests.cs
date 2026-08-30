@@ -797,7 +797,7 @@ public sealed class SupportPackContentsTests : IDisposable
         using var gcDiagnosticsStore = new GcDiagnosticsStore();
         var repairDir = Path.Join(Path.GetTempPath(), "nzbdav-support-test-" + Guid.NewGuid().ToString("N"));
         var repairPatchStore = new RepairPatchStore(repairDir, 1024 * 1024);
-        await repairPatchStore.CatalogLoadTask;
+        await repairPatchStore.EnsureCatalogLoadedAsync(CancellationToken.None);
         var par2RepairService = new Par2RepairService(configManager, usenet, repairPatchStore);
         using var healthCheckConnectionGate = new HealthCheckConnectionGate(configManager);
         var service = new SupportPackService(

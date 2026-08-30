@@ -17,7 +17,9 @@ public sealed class RepairPatchStore
     private readonly long _maxBytes;
     private readonly ConcurrentDictionary<string, CacheEntry> _index = new();
     private readonly object _evictLock = new();
-    private readonly Func<IEnumerable<string>> _enumerateCacheFiles;
+    private readonly object _catalogLoadSync = new();
+    private readonly Func<CancellationToken, IEnumerable<string>> _enumerateCacheFiles;
+    private Task? _catalogLoadInFlight;
     private long _currentBytes;
     private int _catalogReady;
     private long _hitCount;
@@ -33,19 +35,17 @@ public sealed class RepairPatchStore
     internal RepairPatchStore(
         string cacheDir,
         long maxBytes,
-        Func<IEnumerable<string>>? enumerateCacheFiles)
+        Func<CancellationToken, IEnumerable<string>>? enumerateCacheFiles)
     {
         _dir = cacheDir;
         _maxBytes = maxBytes;
         Directory.CreateDirectory(_dir);
         _enumerateCacheFiles = enumerateCacheFiles
-                               ?? (() => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
+            ?? (_ => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
         Log.Information("PAR2 repair patch store path: {Path}", _dir);
-        CatalogLoadTask = Task.Run(LoadIndex);
     }
 
     public bool IsCatalogReady => Volatile.Read(ref _catalogReady) != 0;
-    internal Task CatalogLoadTask { get; }
     internal long CurrentBytes => Interlocked.Read(ref _currentBytes);
     internal int EntryCount => _index.Count;
     internal long HitCount => Interlocked.Read(ref _hitCount);
@@ -213,54 +213,133 @@ public sealed class RepairPatchStore
         }
     }
 
-    private void LoadIndex()
+    internal Task EnsureCatalogLoadedAsync(CancellationToken ct)
     {
-        var stopwatch = Stopwatch.StartNew();
+        if (IsCatalogReady)
+            return Task.CompletedTask;
+
+        Task load;
+        lock (_catalogLoadSync)
+        {
+            if (IsCatalogReady)
+                return Task.CompletedTask;
+
+            if (_catalogLoadInFlight is { IsCompleted: false } inflight)
+            {
+                load = inflight;
+            }
+            else
+            {
+                load = LoadCatalogOnceAsync(ct);
+                _catalogLoadInFlight = load;
+            }
+        }
+
+        return AwaitCatalogLoadAsync(load, ct);
+    }
+
+    private async Task AwaitCatalogLoadAsync(Task load, CancellationToken ct)
+    {
         try
         {
-            foreach (var file in _enumerateCacheFiles())
-            {
-                if (file.EndsWith(".tmp", StringComparison.Ordinal))
-                {
-                    SafeDelete(file);
-                    continue;
-                }
-
-                if (file.EndsWith(".h", StringComparison.Ordinal)) continue;
-                var info = new FileInfo(file);
-                if (!info.Exists) continue;
-                var entry = new CacheEntry
-                {
-                    Size = info.Length,
-                    LastAccessTicks = info.LastWriteTimeUtc.Ticks,
-                };
-
-                lock (_evictLock)
-                {
-                    if (_index.TryAdd(Path.GetFileName(file), entry))
-                        _currentBytes += info.Length;
-                }
-            }
+            await load.WaitAsync(ct).ConfigureAwait(false);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch
         {
-            Log.Warning(e, "Repair patch store: failed to scan {Dir}; starting empty.", _dir);
+            lock (_catalogLoadSync)
+            {
+                if (ReferenceEquals(_catalogLoadInFlight, load) && load.IsCompleted)
+                    _catalogLoadInFlight = null;
+            }
+
+            throw;
         }
-        finally
+    }
+
+    private async Task LoadCatalogOnceAsync(CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var snapshot = await Task.Run(
+                () => BuildCatalogSnapshot(ct),
+                CancellationToken.None)
+            .ConfigureAwait(false);
+
+        ct.ThrowIfCancellationRequested();
+        PublishCatalog(snapshot);
+
+        stopwatch.Stop();
+        Log.Information(
+            "Repair patch store catalog loaded: {Count} entries, {Size} bytes in {Elapsed}ms.",
+            _index.Count,
+            Interlocked.Read(ref _currentBytes),
+            stopwatch.ElapsedMilliseconds);
+    }
+
+    private CatalogSnapshot BuildCatalogSnapshot(CancellationToken ct)
+    {
+        var entries = new Dictionary<string, CacheEntry>(StringComparer.Ordinal);
+        long bytes = 0;
+
+        foreach (var file in _enumerateCacheFiles(ct))
         {
-            try
+            ct.ThrowIfCancellationRequested();
+
+            if (file.EndsWith(".tmp", StringComparison.Ordinal))
             {
-                EvictIfNeeded();
+                SafeDelete(file);
+                continue;
             }
-            finally
+
+            if (file.EndsWith(".h", StringComparison.Ordinal))
+                continue;
+
+            var info = new FileInfo(file);
+            if (!info.Exists)
+                continue;
+
+            var entry = new CacheEntry
             {
-                Volatile.Write(ref _catalogReady, 1);
-                stopwatch.Stop();
-                Log.Information(
-                    "Repair patch store catalog loaded: {Count} entries, {Size} bytes in {Elapsed}ms.",
-                    _index.Count, Interlocked.Read(ref _currentBytes), stopwatch.ElapsedMilliseconds);
-            }
+                Size = info.Length,
+                LastAccessTicks = info.LastWriteTimeUtc.Ticks,
+            };
+
+            if (entries.TryAdd(Path.GetFileName(file), entry))
+                bytes = checked(bytes + info.Length);
         }
+
+        return new CatalogSnapshot(entries, bytes);
+    }
+
+    private void PublishCatalog(CatalogSnapshot snapshot)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(snapshot.Bytes);
+
+        lock (_evictLock)
+        {
+            foreach (var (hash, scannedEntry) in snapshot.Entries)
+            {
+                // A live entry finalized during scanning is newer and wins.
+                if (_index.TryAdd(hash, scannedEntry))
+                    _currentBytes = checked(_currentBytes + scannedEntry.Size);
+            }
+
+            EvictIfNeeded();
+
+            // Final release write: readers that observe ready also observe the index.
+            Volatile.Write(ref _catalogReady, 1);
+        }
+    }
+
+    private sealed class CatalogSnapshot
+    {
+        public CatalogSnapshot(IReadOnlyDictionary<string, CacheEntry> entries, long bytes)
+        {
+            Entries = entries;
+            Bytes = bytes;
+        }
+
+        public IReadOnlyDictionary<string, CacheEntry> Entries { get; }
+        public long Bytes { get; }
     }
 
     private string BlobPath(string hash) => Path.Join(_dir, hash[..2], hash);

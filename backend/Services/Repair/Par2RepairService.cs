@@ -12,6 +12,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Par2Recovery;
@@ -35,11 +36,15 @@ public class Par2RepairService : BackgroundService
 {
     private const int MaxQueueLength = 50;
     private const int MaxAttempts = 3;
+    private static readonly TimeSpan CatalogWarningInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan CatalogMaxRetryDelay = TimeSpan.FromMinutes(1);
 
     private readonly ConfigManager _configManager;
     private readonly UsenetStreamingClient _usenetClient;
     private readonly RepairPatchStore _patchStore;
     private readonly IDbContextFactory<DavDatabaseContext>? _dbContextFactory;
+    private readonly LogThrottle _catalogWarningThrottle = new();
+    private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly Channel<RepairWorkItem> _queue;
     private readonly Channel<ZeroFillEvent> _zeroFillQueue;
     private readonly ConcurrentDictionary<Guid, byte> _queuedOrRunning = new();
@@ -66,11 +71,22 @@ public class Par2RepairService : BackgroundService
         UsenetStreamingClient usenetClient,
         RepairPatchStore patchStore,
         IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
+        : this(configManager, usenetClient, patchStore, dbContextFactory, static (delay, ct) => Task.Delay(delay, ct))
+    {
+    }
+
+    internal Par2RepairService(
+        ConfigManager configManager,
+        UsenetStreamingClient usenetClient,
+        RepairPatchStore patchStore,
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory,
+        Func<TimeSpan, CancellationToken, Task> delayAsync)
     {
         _configManager = configManager;
         _usenetClient = usenetClient;
         _patchStore = patchStore;
         _dbContextFactory = dbContextFactory;
+        _delayAsync = delayAsync;
         // Wait mode makes non-blocking TryWrite report full queues as false so
         // callers can undo bookkeeping; DropWrite would return true and silently
         // discard the item, leaking _queuedOrRunning/_pendingZeroFillPaths entries.
@@ -90,6 +106,8 @@ public class Par2RepairService : BackgroundService
 
     private DavDatabaseContext CreateContext() =>
         _dbContextFactory?.CreateDbContext() ?? new DavDatabaseContext();
+
+    internal Action? OnWorkersStarting { get; set; }
 
     internal int PendingZeroFillCount => _pendingZeroFillPaths.Count;
 
@@ -228,7 +246,7 @@ public class Par2RepairService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await _patchStore.CatalogLoadTask.ConfigureAwait(false);
+        await WaitForPatchCatalogAsync(stoppingToken).ConfigureAwait(false);
         try
         {
             await ReconcileInterruptedJobsAsync(stoppingToken).ConfigureAwait(false);
@@ -247,9 +265,116 @@ public class Par2RepairService : BackgroundService
             e.LogWarningKnownOrStack("PAR2 interrupted-job reconciliation deferred");
         }
 
-        await Task.WhenAll(
+        await RunWorkersAsync(stoppingToken).ConfigureAwait(false);
+    }
+
+    internal Task RunWorkersAsync(CancellationToken stoppingToken)
+    {
+        OnWorkersStarting?.Invoke();
+        return Task.WhenAll(
             ProcessRepairQueueAsync(stoppingToken),
-            ProcessZeroFillQueueAsync(stoppingToken)).ConfigureAwait(false);
+            ProcessZeroFillQueueAsync(stoppingToken));
+    }
+
+    private async Task WaitForPatchCatalogAsync(CancellationToken stoppingToken)
+    {
+        var failures = 0;
+
+        while (true)
+        {
+            try
+            {
+                await _patchStore
+                    .EnsureCatalogLoadedAsync(stoppingToken)
+                    .ConfigureAwait(false);
+
+                if (failures > 0)
+                {
+                    _catalogWarningThrottle.Reset("par2-patch-catalog");
+                    Log.Information(
+                        "PAR2 patch catalog recovered after {FailureCount} failed load attempt(s).",
+                        failures);
+                }
+
+                return;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (IsKnownCatalogOperationalException(exception))
+            {
+                failures++;
+                var delay = exception.IsDatabaseCorruptionException()
+                    ? BackgroundServiceErrorHandler.CorruptionDelay
+                    : GetCatalogRetryDelay(failures);
+
+                LogKnownCatalogFailure(exception, failures, delay);
+                await _delayAsync(delay, stoppingToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static TimeSpan GetCatalogRetryDelay(int failureCount)
+    {
+        var shift = Math.Min(Math.Max(failureCount - 1, 0), 6);
+        var seconds = Math.Min(
+            CatalogMaxRetryDelay.TotalSeconds,
+            1 << shift);
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    private static bool IsFatalCatalogException(Exception exception)
+    {
+        return exception.TryGetCausingException<OutOfMemoryException>(out _)
+            || exception.TryGetCausingException<StackOverflowException>(out _)
+            || exception.TryGetCausingException<AccessViolationException>(out _);
+    }
+
+    private static bool IsKnownCatalogOperationalException(Exception exception)
+    {
+        if (IsFatalCatalogException(exception))
+            return false;
+
+        return exception.TryGetCausingException<IOException>(out _)
+            || exception.TryGetCausingException<UnauthorizedAccessException>(out _)
+            || exception.IsTransientDatabaseException()
+            || exception.IsKnownSqliteDiskException()
+            || exception.IsDatabaseCorruptionException();
+    }
+
+    private void LogKnownCatalogFailure(
+        Exception exception,
+        int failureCount,
+        TimeSpan retryDelay)
+    {
+        exception.TryGetKnownErrorMessage(out var reason);
+
+        if (!_catalogWarningThrottle.ShouldLog(
+                "par2-patch-catalog",
+                CatalogWarningInterval,
+                out var suppressed))
+            return;
+
+        if (suppressed > 0)
+        {
+            Log.Warning(
+                "PAR2 patch catalog load failed on attempt {Attempt}. " +
+                "Reason: {Reason} Retrying in {RetryDelay}. " +
+                "Suppressed {Suppressed} repeated warning(s).",
+                failureCount,
+                reason,
+                retryDelay,
+                suppressed);
+            return;
+        }
+
+        Log.Warning(
+            "PAR2 patch catalog load failed on attempt {Attempt}. " +
+            "Reason: {Reason} Retrying in {RetryDelay}.",
+            failureCount,
+            reason,
+            retryDelay);
     }
 
     private async Task ReconcileInterruptedJobsAsync(CancellationToken ct)

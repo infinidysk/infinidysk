@@ -28,7 +28,7 @@ public sealed class RepairedSegmentNntpClientTests
         try
         {
             var store = new RepairPatchStore(dir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             store.CommitPatch(segmentId, content, HeaderFor(content));
 
             var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
@@ -64,7 +64,7 @@ public sealed class RepairedSegmentNntpClientTests
         try
         {
             var store = new RepairPatchStore(dir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             var inner = new FakeNntpClient(new Dictionary<string, byte[]>
             {
                 [segmentId] = content,
