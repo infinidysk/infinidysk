@@ -99,10 +99,17 @@ public class ArrClient(string host, string apiKey)
                 .ConfigureAwait(false);
             var batch = history.Records;
             records.AddRange(batch);
-            if (batch.Count < MediaImportHistoryPageSize)
-                return new ArrImportHistoryCollection(records, Exhausted: true);
             if (history.TotalRecords > 0 && records.Count >= history.TotalRecords)
                 return new ArrImportHistoryCollection(records, Exhausted: true);
+            if (batch.Count < MediaImportHistoryPageSize)
+            {
+                // A short page is complete only when Arr did not report a larger total.
+                // Otherwise a truncated page would look exhausted and Unique recovery
+                // could blocklist from an incomplete history set.
+                return new ArrImportHistoryCollection(
+                    records,
+                    Exhausted: history.TotalRecords <= 0);
+            }
         }
 
         return new ArrImportHistoryCollection(records, Exhausted: false);

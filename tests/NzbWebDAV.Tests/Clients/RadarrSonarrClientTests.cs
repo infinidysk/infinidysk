@@ -567,6 +567,51 @@ public class RadarrSonarrClientTests
     }
 
     [Fact]
+    public async Task CollectMediaImportHistoryAsync_ShortPageWithLargerTotal_IsNotExhausted()
+    {
+        var match = new ArrMediaFileMatch(ArrMediaKind.Movie, FileId: 201, MediaIds: [101]);
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/history?movieId=101&eventType=3&page=1&pageSize=50&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[{"downloadId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}],"totalRecords":100}"""))));
+        var client = new TestRadarrClient(httpClient);
+
+        var collected = await client.CollectMediaImportHistoryAsync(match);
+
+        Assert.False(collected.Exhausted);
+        Assert.Single(collected.Records);
+    }
+
+    [Fact]
+    public async Task CollectMediaImportHistoryAsync_ShortPageWithoutTotal_IsExhausted()
+    {
+        var match = new ArrMediaFileMatch(ArrMediaKind.Movie, FileId: 201, MediaIds: [101]);
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/history?movieId=101&eventType=3&page=1&pageSize=50&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[{"downloadId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}]}"""))));
+        var client = new TestRadarrClient(httpClient);
+
+        var collected = await client.CollectMediaImportHistoryAsync(match);
+
+        Assert.True(collected.Exhausted);
+        Assert.Single(collected.Records);
+    }
+
+    [Fact]
+    public async Task CollectMediaImportHistoryAsync_ShortPageMatchingTotal_IsExhausted()
+    {
+        var match = new ArrMediaFileMatch(ArrMediaKind.Movie, FileId: 201, MediaIds: [101]);
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/history?movieId=101&eventType=3&page=1&pageSize=50&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[{"downloadId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}],"totalRecords":1}"""))));
+        var client = new TestRadarrClient(httpClient);
+
+        var collected = await client.CollectMediaImportHistoryAsync(match);
+
+        Assert.True(collected.Exhausted);
+        Assert.Single(collected.Records);
+    }
+
+    [Fact]
     public async Task SonarrRepair_LooksUpMediaBeforeGrabbedHistory()
     {
         const string seriesPath = "/library/tv/Order Show";
