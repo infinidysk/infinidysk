@@ -602,14 +602,8 @@ public sealed class Par2RepairServiceCatalogLoadTests
             finally
             {
                 allowThrow.TrySetResult();
-                try
-                {
+                if (service.ExecuteTask is not { IsFaulted: true })
                     await StopAsync(service);
-                }
-                catch (Exception)
-                {
-                    // Faulted ExecuteAsync may surface again during stop.
-                }
             }
         }
         finally

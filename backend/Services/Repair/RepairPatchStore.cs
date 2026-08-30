@@ -286,7 +286,11 @@ public sealed class RepairPatchStore
 
             if (file.EndsWith(".tmp", StringComparison.Ordinal))
             {
-                SafeDelete(file);
+                // Only reap orphans. A temp file that is still being staged by a
+                // concurrent CommitPatches call must survive the scan.
+                var temp = new FileInfo(file);
+                if (!temp.Exists || DateTime.UtcNow - temp.LastWriteTimeUtc > TimeSpan.FromHours(1))
+                    SafeDelete(file);
                 continue;
             }
 

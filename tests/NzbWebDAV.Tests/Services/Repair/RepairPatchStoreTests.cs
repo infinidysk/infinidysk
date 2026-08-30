@@ -135,9 +135,15 @@ public sealed class RepairPatchStoreTests
     {
         var dir = NewTempDir("catalog-cancel");
         var scanEntered = NewTcs();
+        var scanExited = NewTcs();
         using var releaseScan = new ManualResetEventSlim(false);
         Func<CancellationToken, IEnumerable<string>> enumerate = ct =>
-            YieldOneThenWait(WriteBlob(dir, "cancel-retry@test", "blob-bytes"u8.ToArray()), scanEntered, releaseScan, ct);
+            YieldOneThenWait(
+                WriteBlob(dir, "cancel-retry@test", "blob-bytes"u8.ToArray()),
+                scanEntered,
+                releaseScan,
+                scanExited,
+                ct);
 
         try
         {
@@ -148,6 +154,7 @@ public sealed class RepairPatchStoreTests
             cts.Cancel();
 
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => load);
+            await scanExited.Task.WaitAsync(Timeout);
             AssertUnpublished(store);
 
             enumerate = ct => Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories);
@@ -320,6 +327,53 @@ public sealed class RepairPatchStoreTests
         }
     }
 
+    [Fact]
+    public async Task CatalogScan_PreservesLiveTempFile()
+    {
+        var dir = NewTempDir("live-tmp");
+        try
+        {
+            var liveTmp = Path.Join(dir, "live.tmp");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(liveTmp, "staging");
+            var store = new RepairPatchStore(dir, 1024 * 1024, _ => [liveTmp]);
+
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+
+            Assert.True(File.Exists(liveTmp));
+            Assert.True(store.IsCatalogReady);
+            Assert.Equal(0, store.EntryCount);
+        }
+        finally
+        {
+            DeleteDir(dir);
+        }
+    }
+
+    [Fact]
+    public async Task CatalogScan_DeletesStaleTempFile()
+    {
+        var dir = NewTempDir("stale-tmp");
+        try
+        {
+            var staleTmp = Path.Join(dir, "stale.tmp");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(staleTmp, "orphan");
+            File.SetLastWriteTimeUtc(staleTmp, DateTime.UtcNow - TimeSpan.FromHours(2));
+            var store = new RepairPatchStore(dir, 1024 * 1024, _ => [staleTmp]);
+
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+
+            Assert.False(File.Exists(staleTmp));
+            Assert.True(store.IsCatalogReady);
+            Assert.Equal(0, store.EntryCount);
+        }
+        finally
+        {
+            DeleteDir(dir);
+        }
+    }
+
     private static void AssertUnpublished(RepairPatchStore store)
     {
         Assert.False(store.IsCatalogReady);
@@ -362,12 +416,20 @@ public sealed class RepairPatchStoreTests
         string file,
         TaskCompletionSource scanEntered,
         ManualResetEventSlim releaseScan,
+        TaskCompletionSource scanExited,
         CancellationToken ct)
     {
-        ct.ThrowIfCancellationRequested();
-        yield return file;
-        scanEntered.TrySetResult();
-        releaseScan.Wait(ct);
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            yield return file;
+            scanEntered.TrySetResult();
+            releaseScan.Wait(ct);
+        }
+        finally
+        {
+            scanExited.TrySetResult();
+        }
     }
 
     private static IEnumerable<string> YieldThenWait(
