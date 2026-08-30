@@ -572,6 +572,8 @@ public sealed partial class Program
         {
             await host.StartAsync(cancellationToken).ConfigureAwait(false);
 
+            // Only BackgroundService, matching HostOptions.BackgroundServiceExceptionBehavior —
+            // raw IHostedService implementations are not monitored for ExecuteTask faults.
             var backgroundServices = host.Services
                 .GetRequiredService<IEnumerable<IHostedService>>()
                 .OfType<BackgroundService>()

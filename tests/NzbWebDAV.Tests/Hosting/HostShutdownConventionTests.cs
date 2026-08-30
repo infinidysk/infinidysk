@@ -49,7 +49,7 @@ public sealed class HostShutdownConventionTests(NzbDavWebApplicationFactory fact
             builder.Services.AddHostedService(sp =>
                 sp.GetRequiredService<ControlledBackgroundService>());
 
-            var host = builder.Build();
+            using var host = builder.Build();
             var service = host.Services.GetRequiredService<ControlledBackgroundService>();
             lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
 
@@ -357,7 +357,10 @@ public sealed class HostShutdownConventionTests(NzbDavWebApplicationFactory fact
         {
             await runTask.WaitAsync(GateTimeout);
         }
-        catch (Exception)
+        catch (Exception exception) when (
+            exception is TimeoutException
+            or exception is OperationCanceledException
+            or exception is InvalidOperationException)
         {
             // Tear-down only: the test body already observed success or failure.
         }
