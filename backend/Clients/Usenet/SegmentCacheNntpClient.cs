@@ -78,7 +78,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         if (TryServeFromCache(id, out var cached))
         {
             RecordCacheHit();
-            onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.Retrieved);
             return cached!;
         }
 
@@ -119,7 +119,8 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         if (TryServeFromCache(id, out var cached))
         {
             RecordCacheHit();
-            exclusiveConnection.OnConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            ArticleBodyCompletion.InvokeContained(
+                exclusiveConnection.OnConnectionReadyAgain, ArticleBodyResult.Retrieved);
             return cached!;
         }
 

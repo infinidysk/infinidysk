@@ -7,6 +7,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Streams;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
@@ -235,6 +236,369 @@ public class DownloadingNntpClientStatGateTests
             $"Expected pipelined wait to record semaphore contention, got {waitingCtx.SemaphoreWaitMilliseconds}ms");
     }
 
+    public enum CompletionApi { Body, Batch, Article }
+
+    [Theory]
+    [InlineData(CompletionApi.Body)]
+    [InlineData(CompletionApi.Batch)]
+    [InlineData(CompletionApi.Article)]
+    public async Task DuplicateInnerCompletion_ReleasesPermitAndForwardsOnlyOnce(CompletionApi api)
+    {
+        var inner = new ManualCompletionNntpClient();
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+        var outerA = new CompletionRecorder();
+
+        var aTask = StartApi(client, api, "a", outerA.Invoke, CancellationToken.None);
+        var aOp = await WaitForOpAsync(inner, 1);
+        await DrainAsync(api, aTask);
+
+        var bTask = StartApi(client, api, "b", null, CancellationToken.None);
+        var cTask = StartApi(client, api, "c", null, CancellationToken.None);
+        await WaitUntilAsync(() => !bTask.IsCompleted && !cTask.IsCompleted && inner.Ops.Count == 1, TimeSpan.FromSeconds(5));
+
+        aOp.Callback!(ArticleBodyResult.Retrieved, null);
+        aOp.Callback!(ArticleBodyResult.NotRetrieved, "SocketException");
+
+        var bOp = await WaitForOpAsync(inner, 2);
+        Assert.Equal(2, inner.Ops.Count);
+        Assert.False(cTask.IsCompleted);
+        Assert.Equal(1, outerA.Count);
+        Assert.Equal(ArticleBodyResult.Retrieved, outerA.Result);
+        Assert.Null(outerA.FailureReason);
+        Assert.Equal(1, inner.MaxEntries);
+
+        bOp.Callback!(ArticleBodyResult.Retrieved, null);
+        var cOp = await WaitForOpAsync(inner, 3);
+        cOp.Callback!(ArticleBodyResult.Retrieved, null);
+
+        await DrainAsync(api, bTask);
+        await DrainAsync(api, cTask);
+
+        var dTask = StartApi(client, api, "d", null, CancellationToken.None);
+        var dOp = await WaitForOpAsync(inner, 4);
+        dOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(api, dTask);
+        Assert.Equal(1, inner.MaxEntries);
+    }
+
+    [Theory]
+    [InlineData(CompletionApi.Body)]
+    [InlineData(CompletionApi.Batch)]
+    [InlineData(CompletionApi.Article)]
+    public async Task DuplicateInnerCompletion_ConcurrentFire_ForwardsOneCompletePair(CompletionApi api)
+    {
+        var inner = new ManualCompletionNntpClient();
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+        var outerA = new CompletionRecorder();
+
+        var aTask = StartApi(client, api, "a", outerA.Invoke, CancellationToken.None);
+        var aOp = await WaitForOpAsync(inner, 1);
+        await DrainAsync(api, aTask);
+
+        var bTask = StartApi(client, api, "b", null, CancellationToken.None);
+        await WaitUntilAsync(() => !bTask.IsCompleted && inner.Ops.Count == 1, TimeSpan.FromSeconds(5));
+
+        var first = (Result: ArticleBodyResult.Retrieved, Reason: (string?)null);
+        var second = (Result: ArticleBodyResult.NotRetrieved, Reason: "SocketException");
+        var barrier = new Barrier(2);
+        var fire1 = Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            aOp.Callback!(first.Result, first.Reason);
+        });
+        var fire2 = Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            aOp.Callback!(second.Result, second.Reason);
+        });
+        await Task.WhenAll(fire1, fire2);
+
+        Assert.Equal(1, outerA.Count);
+        Assert.True(
+            (outerA.Result == first.Result && outerA.FailureReason == first.Reason)
+            || (outerA.Result == second.Result && outerA.FailureReason == second.Reason),
+            $"Mixed completion pair: {outerA.Result}, {outerA.FailureReason}");
+
+        var bOp = await WaitForOpAsync(inner, 2);
+        bOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(api, bTask);
+        Assert.Equal(1, inner.MaxEntries);
+    }
+
+    [Theory]
+    [InlineData(CompletionApi.Body)]
+    [InlineData(CompletionApi.Batch)]
+    [InlineData(CompletionApi.Article)]
+    public async Task ThrowingOuterCallback_DoesNotFaultSuccessfulTransport_AndPermitRecovers(CompletionApi api)
+    {
+        var inner = new ManualCompletionNntpClient();
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+        var outerA = new CompletionRecorder { ThrowOnInvoke = true };
+
+        var aTask = StartApi(client, api, "a", outerA.Invoke, CancellationToken.None);
+        var aOp = await WaitForOpAsync(inner, 1);
+        var bTask = StartApi(client, api, "b", null, CancellationToken.None);
+        await WaitUntilAsync(() => !bTask.IsCompleted && inner.Ops.Count == 1, TimeSpan.FromSeconds(5));
+
+        aOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(api, aTask);
+        Assert.Equal(1, outerA.Count);
+        Assert.Equal(ArticleBodyResult.Retrieved, outerA.Result);
+
+        var bOp = await WaitForOpAsync(inner, 2);
+        bOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(api, bTask);
+    }
+
+    [Theory]
+    [InlineData(CompletionApi.Body, ArticleBodyResult.Retrieved, null)]
+    [InlineData(CompletionApi.Body, ArticleBodyResult.Cancelled, null)]
+    [InlineData(CompletionApi.Body, ArticleBodyResult.NotFound, null)]
+    [InlineData(CompletionApi.Body, ArticleBodyResult.NotRetrieved, "SocketException")]
+    [InlineData(CompletionApi.Batch, ArticleBodyResult.Retrieved, null)]
+    [InlineData(CompletionApi.Batch, ArticleBodyResult.Cancelled, null)]
+    [InlineData(CompletionApi.Batch, ArticleBodyResult.NotFound, null)]
+    [InlineData(CompletionApi.Batch, ArticleBodyResult.NotRetrieved, "SocketException")]
+    [InlineData(CompletionApi.Article, ArticleBodyResult.Retrieved, null)]
+    [InlineData(CompletionApi.Article, ArticleBodyResult.Cancelled, null)]
+    [InlineData(CompletionApi.Article, ArticleBodyResult.NotFound, null)]
+    [InlineData(CompletionApi.Article, ArticleBodyResult.NotRetrieved, "SocketException")]
+    public async Task TerminalStatus_IsForwardedOnceAndReleasesPermit(
+        CompletionApi api, ArticleBodyResult result, string? failureReason)
+    {
+        var inner = new ManualCompletionNntpClient();
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+        var outer = new CompletionRecorder();
+
+        var aTask = StartApi(client, api, "a", outer.Invoke, CancellationToken.None);
+        var aOp = await WaitForOpAsync(inner, 1);
+        aOp.Callback!(result, failureReason);
+        await DrainAsync(api, aTask);
+
+        Assert.Equal(1, outer.Count);
+        Assert.Equal(result, outer.Result);
+        Assert.Equal(failureReason, outer.FailureReason);
+
+        var bTask = StartApi(client, api, "b", null, CancellationToken.None);
+        var bOp = await WaitForOpAsync(inner, 2);
+        bOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(api, bTask);
+    }
+
+    [Fact]
+    public async Task CancellationWhileWaiting_ThrowingCallbackPreservesOperationCanceledException()
+    {
+        var inner = new ManualCompletionNntpClient();
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+
+        var aTask = client.DecodedBodyAsync(new SegmentId("a"), null, CancellationToken.None);
+        var aOp = await WaitForOpAsync(inner, 1);
+
+        using var cts = new CancellationTokenSource();
+        var outerB = new CompletionRecorder { ThrowOnInvoke = true };
+        var bTask = client.DecodedBodyAsync(new SegmentId("b"), outerB.Invoke, cts.Token);
+        await WaitUntilAsync(() => !bTask.IsCompleted && inner.Ops.Count == 1, TimeSpan.FromSeconds(5));
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => bTask);
+        Assert.Equal(1, outerB.Count);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, outerB.Result);
+        Assert.Single(inner.Ops);
+
+        aOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(CompletionApi.Body, aTask);
+
+        var cTask = client.DecodedBodyAsync(new SegmentId("c"), null, CancellationToken.None);
+        var cOp = await WaitForOpAsync(inner, 2);
+        cOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(CompletionApi.Body, cTask);
+    }
+
+    [Fact]
+    public async Task CleanMiss_ForwardsNotFoundOnceAndPermitRecovers()
+    {
+        var inner = new ManualCompletionNntpClient
+        {
+            AutoComplete = true,
+            AutoResult = ArticleBodyResult.NotFound,
+            AutoReason = null,
+            Success = false,
+        };
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+        var outer = new CompletionRecorder();
+
+        var miss = await client.DecodedBodyAsync(new SegmentId("missing"), outer.Invoke, CancellationToken.None);
+        Assert.Equal((int)UsenetResponseType.NoArticleWithThatMessageId, miss.ResponseCode);
+        Assert.Equal(1, outer.Count);
+        Assert.Equal(ArticleBodyResult.NotFound, outer.Result);
+        Assert.Null(outer.FailureReason);
+        Assert.Single(inner.Ops);
+
+        inner.AutoComplete = false;
+        inner.Success = true;
+        var recovered = client.DecodedBodyAsync(new SegmentId("recovered"), null, CancellationToken.None);
+        var recoveredOp = await WaitForOpAsync(inner, 2);
+        recoveredOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(CompletionApi.Body, recovered);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcquireExclusiveConnectionAsync_DuplicateInvoke_ReleasesPermitOnce(bool useListOverload)
+    {
+        var inner = new ManualCompletionNntpClient();
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+
+        var exclusive = useListOverload
+            ? await client.AcquireExclusiveConnectionAsync(
+                (IReadOnlyList<SegmentId>)[new SegmentId("held")], CancellationToken.None)
+            : await client.AcquireExclusiveConnectionAsync("held", CancellationToken.None);
+
+        var bTask = client.DecodedBodyAsync(new SegmentId("b"), null, CancellationToken.None);
+        var cTask = client.DecodedBodyAsync(new SegmentId("c"), null, CancellationToken.None);
+        await WaitUntilAsync(() => !bTask.IsCompleted && !cTask.IsCompleted && inner.Ops.Count == 0, TimeSpan.FromSeconds(5));
+
+        exclusive.OnConnectionReadyAgain!(ArticleBodyResult.Retrieved, null);
+        exclusive.OnConnectionReadyAgain!(ArticleBodyResult.NotRetrieved, "SocketException");
+
+        var bOp = await WaitForOpAsync(inner, 1);
+        Assert.Single(inner.Ops);
+        Assert.False(cTask.IsCompleted);
+
+        bOp.Callback!(ArticleBodyResult.Retrieved, null);
+        var cOp = await WaitForOpAsync(inner, 2);
+        cOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(CompletionApi.Body, bTask);
+        await DrainAsync(CompletionApi.Body, cTask);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcquireExclusiveConnectionAsync_ConcurrentInvoke_ReleasesPermitOnce(bool useListOverload)
+    {
+        var inner = new ManualCompletionNntpClient();
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+
+        var exclusive = useListOverload
+            ? await client.AcquireExclusiveConnectionAsync(
+                (IReadOnlyList<SegmentId>)[new SegmentId("held")], CancellationToken.None)
+            : await client.AcquireExclusiveConnectionAsync("held", CancellationToken.None);
+
+        var bTask = client.DecodedBodyAsync(new SegmentId("b"), null, CancellationToken.None);
+        await WaitUntilAsync(() => !bTask.IsCompleted && inner.Ops.Count == 0, TimeSpan.FromSeconds(5));
+
+        var barrier = new Barrier(2);
+        await Task.WhenAll(
+            Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                exclusive.OnConnectionReadyAgain!(ArticleBodyResult.Retrieved, null);
+            }),
+            Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                exclusive.OnConnectionReadyAgain!(ArticleBodyResult.NotRetrieved, "SocketException");
+            }));
+
+        var bOp = await WaitForOpAsync(inner, 1);
+        Assert.Single(inner.Ops);
+        bOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(CompletionApi.Body, bTask);
+    }
+
+    [Fact]
+    public async Task DuplicateInnerCompletion_NullOuterCallback_StillReleasesPermitOnce()
+    {
+        var inner = new ManualCompletionNntpClient();
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+
+        var aTask = client.DecodedBodyAsync(new SegmentId("a"), null, CancellationToken.None);
+        var aOp = await WaitForOpAsync(inner, 1);
+        var bTask = client.DecodedBodyAsync(new SegmentId("b"), null, CancellationToken.None);
+        await WaitUntilAsync(() => !bTask.IsCompleted && inner.Ops.Count == 1, TimeSpan.FromSeconds(5));
+
+        aOp.Callback!(ArticleBodyResult.Retrieved, null);
+        aOp.Callback!(ArticleBodyResult.NotRetrieved, "SocketException");
+        await DrainAsync(CompletionApi.Body, aTask);
+
+        var bOp = await WaitForOpAsync(inner, 2);
+        Assert.Equal(2, inner.Ops.Count);
+        bOp.Callback!(ArticleBodyResult.Retrieved, null);
+        await DrainAsync(CompletionApi.Body, bTask);
+    }
+
+    private static Task StartApi(
+        DownloadingNntpClient client,
+        CompletionApi api,
+        string segmentId,
+        ArticleBodyCompletionHandler? callback,
+        CancellationToken cancellationToken) => api switch
+    {
+        CompletionApi.Body => client.DecodedBodyAsync(new SegmentId(segmentId), callback, cancellationToken),
+        CompletionApi.Batch => client.DecodedBodiesAsync([new SegmentId(segmentId)], callback, cancellationToken),
+        CompletionApi.Article => client.DecodedArticleAsync(new SegmentId(segmentId), callback, cancellationToken),
+        _ => throw new ArgumentOutOfRangeException(nameof(api)),
+    };
+
+    private static async Task DrainAsync(CompletionApi api, Task task)
+    {
+        switch (api)
+        {
+            case CompletionApi.Body:
+            {
+                var body = await (Task<UsenetDecodedBodyResponse>)task;
+                if (body.Stream != null)
+                {
+                    await using (body.Stream)
+                        await body.Stream.CopyToAsync(Stream.Null);
+                }
+
+                break;
+            }
+            case CompletionApi.Batch:
+            {
+                var batch = await (Task<UsenetDecodedBodyBatch>)task;
+                foreach (var responseTask in batch.Responses)
+                {
+                    var response = await responseTask;
+                    if (response.Stream != null)
+                    {
+                        await using (response.Stream)
+                            await response.Stream.CopyToAsync(Stream.Null);
+                    }
+                }
+
+                break;
+            }
+            case CompletionApi.Article:
+            {
+                var article = await (Task<UsenetDecodedArticleResponse>)task;
+                await using (article.Stream)
+                    await article.Stream.CopyToAsync(Stream.Null);
+                break;
+            }
+        }
+    }
+
+    private static async Task<PendingOp> WaitForOpAsync(ManualCompletionNntpClient inner, int count)
+    {
+        await WaitUntilAsync(() => inner.Ops.Count >= count, TimeSpan.FromSeconds(5));
+        var op = inner.Ops[count - 1];
+        await op.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        return op;
+    }
+
     private static async Task<List<PipelinedBodyResult>> CollectPipelinedBodiesAsync(
         DownloadingNntpClient client,
         IReadOnlyList<string> segmentIds,
@@ -312,6 +676,191 @@ public class DownloadingNntpClientStatGateTests
             new ConfigItem { ConfigName = ConfigKeys.UsenetMaxDownloadConnections, ConfigValue = "10" },
         ]);
         return config;
+    }
+
+    private sealed class CompletionRecorder
+    {
+        public int Count;
+        public ArticleBodyResult? Result;
+        public string? FailureReason;
+        public bool ThrowOnInvoke;
+
+        public void Invoke(ArticleBodyResult result, string? failureReason)
+        {
+            Interlocked.Increment(ref Count);
+            Result = result;
+            FailureReason = failureReason;
+            if (ThrowOnInvoke)
+                throw new InvalidOperationException("callback failure");
+        }
+    }
+
+    private sealed class PendingOp
+    {
+        public required ArticleBodyCompletionHandler? Callback { get; init; }
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed class ManualCompletionNntpClient : MinimalNntpClient
+    {
+        private readonly List<PendingOp> _ops = [];
+        private int _currentEntries;
+        private int _maxEntries;
+
+        public bool AutoComplete { get; set; }
+        public ArticleBodyResult AutoResult { get; set; } = ArticleBodyResult.Retrieved;
+        public string? AutoReason { get; set; }
+        public bool Success { get; set; } = true;
+
+        public IReadOnlyList<PendingOp> Ops
+        {
+            get
+            {
+                lock (_ops) return _ops.ToArray();
+            }
+        }
+
+        public int MaxEntries => Volatile.Read(ref _maxEntries);
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            var op = Enter(onConnectionReadyAgain);
+            try
+            {
+                MaybeComplete(op);
+                return Task.FromResult(CreateBody(segmentId));
+            }
+            finally
+            {
+                Exit();
+            }
+        }
+
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            var op = Enter(onConnectionReadyAgain);
+            try
+            {
+                MaybeComplete(op);
+                var responses = segmentIds
+                    .Select(id => Task.FromResult(CreateBody(id)))
+                    .ToArray();
+                return Task.FromResult(new UsenetDecodedBodyBatch { Responses = responses });
+            }
+            finally
+            {
+                Exit();
+            }
+        }
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            var op = Enter(onConnectionReadyAgain);
+            try
+            {
+                MaybeComplete(op);
+                return Task.FromResult(CreateArticle(segmentId));
+            }
+            finally
+            {
+                Exit();
+            }
+        }
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            UsenetExclusiveConnection exclusiveConnection,
+            CancellationToken cancellationToken) =>
+            DecodedBodyAsync(segmentId, exclusiveConnection.OnConnectionReadyAgain, cancellationToken);
+
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            UsenetExclusiveConnection exclusiveConnection,
+            CancellationToken cancellationToken) =>
+            DecodedBodiesAsync(segmentIds, exclusiveConnection.OnConnectionReadyAgain, cancellationToken);
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            UsenetExclusiveConnection exclusiveConnection,
+            CancellationToken cancellationToken) =>
+            DecodedArticleAsync(segmentId, exclusiveConnection.OnConnectionReadyAgain, cancellationToken);
+
+        private PendingOp Enter(ArticleBodyCompletionHandler? callback)
+        {
+            var current = Interlocked.Increment(ref _currentEntries);
+            int snapshot;
+            while (current > (snapshot = Volatile.Read(ref _maxEntries)))
+            {
+                if (Interlocked.CompareExchange(ref _maxEntries, current, snapshot) == snapshot)
+                    break;
+            }
+
+            var op = new PendingOp { Callback = callback };
+            lock (_ops) _ops.Add(op);
+            op.Entered.TrySetResult();
+            return op;
+        }
+
+        private void Exit() => Interlocked.Decrement(ref _currentEntries);
+
+        private void MaybeComplete(PendingOp op)
+        {
+            if (AutoComplete)
+                op.Callback?.Invoke(AutoResult, AutoReason);
+        }
+
+        private UsenetDecodedBodyResponse CreateBody(SegmentId segmentId)
+        {
+            var bytes = "body"u8.ToArray();
+            return new UsenetDecodedBodyResponse
+            {
+                SegmentId = segmentId.ToString(),
+                ResponseCode = Success
+                    ? (int)UsenetResponseType.ArticleRetrievedBodyFollows
+                    : (int)UsenetResponseType.NoArticleWithThatMessageId,
+                ResponseMessage = Success ? "222" : "430",
+                Stream = Success ? CreateStream(bytes) : null,
+            };
+        }
+
+        private static UsenetDecodedArticleResponse CreateArticle(SegmentId segmentId)
+        {
+            var bytes = "article"u8.ToArray();
+            return new UsenetDecodedArticleResponse
+            {
+                SegmentId = segmentId.ToString(),
+                ResponseCode = (int)UsenetResponseType.ArticleRetrievedHeadAndBodyFollow,
+                ResponseMessage = "220",
+                ArticleHeaders = new UsenetArticleHeader
+                {
+                    Headers = new Dictionary<string, string> { ["Subject"] = "test" },
+                },
+                Stream = CreateStream(bytes),
+            };
+        }
+
+        private static CachedYencStream CreateStream(byte[] bytes) =>
+            new(
+                new UsenetYencHeader
+                {
+                    FileName = "fake.bin",
+                    FileSize = bytes.Length,
+                    LineLength = 128,
+                    PartNumber = 1,
+                    TotalParts = 1,
+                    PartOffset = 0,
+                    PartSize = bytes.Length,
+                },
+                new MemoryStream(bytes, writable: false));
     }
 
     private abstract class MinimalNntpClient : NntpClient

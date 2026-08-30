@@ -74,7 +74,7 @@ public class ArticleCachingNntpClient(
         }
         catch
         {
-            onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved);
+            ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
             throw;
         }
 
@@ -83,7 +83,7 @@ public class ArticleCachingNntpClient(
             // Check if already cached
             if (_cachedSegments.TryGetValue(segmentId, out var existingEntry))
             {
-                onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.Retrieved);
                 return ReadCachedBodyAsync(segmentId, existingEntry.YencHeaders);
             }
 
@@ -123,7 +123,7 @@ public class ArticleCachingNntpClient(
         var partition = PartitionBatch(segmentIds);
         if (partition.Missing.Count == 0)
         {
-            InvokeCompletionCallback(
+            ArticleBodyCompletion.InvokeContained(
                 onConnectionReadyAgain, ArticleBodyResult.Retrieved);
             return MergeBatchForCaching(
                 segmentIds.Count, partition, null, cancellationToken);
@@ -147,7 +147,7 @@ public class ArticleCachingNntpClient(
         }
         catch
         {
-            onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved);
+            ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
             throw;
         }
 
@@ -159,7 +159,7 @@ public class ArticleCachingNntpClient(
                 if (cacheEntry.HasArticleHeaders)
                 {
                     // Full article is cached, read from cache
-                    onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                    ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.Retrieved);
                     return ReadCachedArticleAsync(segmentId, cacheEntry.YencHeaders, cacheEntry.ArticleHeaders!);
                 }
                 else
@@ -172,7 +172,7 @@ public class ArticleCachingNntpClient(
                     }
                     finally
                     {
-                        onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                        ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.Retrieved);
                     }
 
                     // Update cache entry to include article headers
@@ -276,7 +276,7 @@ public class ArticleCachingNntpClient(
         var partition = PartitionBatch(segmentIds);
         if (partition.Missing.Count == 0)
         {
-            InvokeCompletionCallback(
+            ArticleBodyCompletion.InvokeContained(
                 exclusiveConnection.OnConnectionReadyAgain, ArticleBodyResult.Retrieved);
             return MergeBatchForCaching(
                 segmentIds.Count, partition, null, cancellationToken);
@@ -393,21 +393,6 @@ public class ArticleCachingNntpClient(
         }
 
         return new BatchCachePartition(cached, missing);
-    }
-
-    private static void InvokeCompletionCallback(
-        ArticleBodyCompletionHandler? callback,
-        ArticleBodyResult result,
-        string? failureReason = null)
-    {
-        try
-        {
-            callback?.Invoke(result, failureReason);
-        }
-        catch
-        {
-            // Callback exceptions must not fault transport tasks (streaming lifecycle invariant).
-        }
     }
 
     private async Task<UsenetDecodedBodyResponse> CacheBatchResponseAsync(

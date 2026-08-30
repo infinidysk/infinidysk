@@ -103,13 +103,8 @@ public class DownloadingNntpClient : WrappingNntpClient
         ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
         var semaphore = await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
-        return await base.DecodedBodyAsync(segmentId, OnConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
-
-        void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult, string? failureReason)
-        {
-            semaphore.Release();
-            onConnectionReadyAgain?.Invoke(articleBodyResult, failureReason);
-        }
+        return await base.DecodedBodyAsync(
+            segmentId, CreatePermitCompletion(semaphore, onConnectionReadyAgain), cancellationToken).ConfigureAwait(false);
     }
 
     public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
@@ -119,27 +114,16 @@ public class DownloadingNntpClient : WrappingNntpClient
     {
         var semaphore = await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
         return await base.DecodedBodiesAsync(
-            segmentIds, OnConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
-
-        void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult, string? failureReason)
-        {
-            semaphore.Release();
-            onConnectionReadyAgain?.Invoke(articleBodyResult, failureReason);
-        }
+            segmentIds, CreatePermitCompletion(semaphore, onConnectionReadyAgain), cancellationToken).ConfigureAwait(false);
     }
 
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync(SegmentId segmentId,
         ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
         var semaphore = await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
-        return await base.DecodedArticleAsync(segmentId, OnConnectionReadyAgain, cancellationToken)
+        return await base.DecodedArticleAsync(
+            segmentId, CreatePermitCompletion(semaphore, onConnectionReadyAgain), cancellationToken)
             .ConfigureAwait(false);
-
-        void OnConnectionReadyAgain(ArticleBodyResult articleBodyResult, string? failureReason)
-        {
-            semaphore.Release();
-            onConnectionReadyAgain?.Invoke(articleBodyResult, failureReason);
-        }
     }
 
     private async Task<PrioritizedSemaphore> AcquireExclusiveConnectionAsync(ArticleBodyCompletionHandler? onConnectionReadyAgain,
@@ -151,9 +135,27 @@ public class DownloadingNntpClient : WrappingNntpClient
         }
         catch
         {
-            onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved);
+            ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
             throw;
         }
+    }
+
+    // First terminal event wins: a duplicate inner completion must not release the
+    // queue/streaming permit twice (see #1239; adjacent to #1185 callback hardening).
+    private static ArticleBodyCompletionHandler CreatePermitCompletion(
+        PrioritizedSemaphore semaphore,
+        ArticleBodyCompletionHandler? next)
+    {
+        var completionState = 0;
+
+        return (result, failureReason) =>
+        {
+            if (Interlocked.CompareExchange(ref completionState, 1, 0) != 0)
+                return;
+
+            semaphore.Release();
+            ArticleBodyCompletion.InvokeContained(next, result, failureReason);
+        };
     }
 
     // Picks the semaphore (and its priority) a download should acquire from.
@@ -217,7 +219,7 @@ public class DownloadingNntpClient : WrappingNntpClient
     )
     {
         var semaphore = await AcquireExclusiveConnectionAsync(cancellationToken).ConfigureAwait(false);
-        return new UsenetExclusiveConnection((_, _) => semaphore.Release());
+        return new UsenetExclusiveConnection(CreatePermitCompletion(semaphore, next: null));
     }
 
     public override async Task<UsenetExclusiveConnection> AcquireExclusiveConnectionAsync
@@ -233,7 +235,7 @@ public class DownloadingNntpClient : WrappingNntpClient
         }
 
         var semaphore = await AcquireExclusiveConnectionAsync(cancellationToken).ConfigureAwait(false);
-        return new UsenetExclusiveConnection((_, _) => semaphore.Release());
+        return new UsenetExclusiveConnection(CreatePermitCompletion(semaphore, next: null));
     }
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,

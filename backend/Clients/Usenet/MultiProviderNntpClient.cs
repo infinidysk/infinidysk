@@ -328,7 +328,7 @@ public class MultiProviderNntpClient(
                 {
                     try
                     {
-                        InvokeCompletionCallback(onConnectionReadyAgain, result, failureReason);
+                        ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, result, failureReason);
                     }
                     finally
                     {
@@ -360,7 +360,7 @@ public class MultiProviderNntpClient(
         {
             try
             {
-                InvokeCompletionCallback(onConnectionReadyAgain, result, failureReason);
+                ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, result, failureReason);
             }
             finally
             {
@@ -432,7 +432,7 @@ public class MultiProviderNntpClient(
                     // Every provider in this client belongs to the same retired generation.
                     // Do not walk the remaining disposed pools or record network failures.
                     deferredCallback.Discard();
-                    InvokeCompletionCallback(
+                    ArticleBodyCompletion.InvokeContained(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
                 }
@@ -440,7 +440,7 @@ public class MultiProviderNntpClient(
                 {
                     // Invalid / permanently missing segment ids are invalid on every provider.
                     deferredCallback.Discard();
-                    InvokeCompletionCallback(
+                    ArticleBodyCompletion.InvokeContained(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
                 }
@@ -452,13 +452,13 @@ public class MultiProviderNntpClient(
                 catch
                 {
                     deferredCallback.Discard();
-                    InvokeCompletionCallback(
+                    ArticleBodyCompletion.InvokeContained(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
                 }
             }
 
-            InvokeCompletionCallback(CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
+            ArticleBodyCompletion.InvokeContained(CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
             lastException?.Throw();
             throw new InvalidOperationException("There are no usenet providers configured.");
         }
@@ -786,7 +786,7 @@ public class MultiProviderNntpClient(
 
             var failed = Volatile.Read(ref _transportFailed) != 0 ||
                          Volatile.Read(ref _resolutionFailed) != 0;
-            InvokeCompletionCallback(
+            ArticleBodyCompletion.InvokeContained(
                 callback,
                 failed ? ArticleBodyResult.NotRetrieved : ArticleBodyResult.Retrieved,
                 failed ? Volatile.Read(ref _firstFailureReason) : null);
@@ -895,7 +895,7 @@ public class MultiProviderNntpClient(
                 walk.UnexpectedResponses++;
                 RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
                     stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
-                InvokeCompletionCallback(
+                ArticleBodyCompletion.InvokeContained(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 return result;
             }
@@ -903,7 +903,7 @@ public class MultiProviderNntpClient(
             {
                 walk.Retired = true;
                 deferredCallback.Discard();
-                InvokeCompletionCallback(
+                ArticleBodyCompletion.InvokeContained(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 throw;
             }
@@ -925,14 +925,14 @@ public class MultiProviderNntpClient(
             {
                 walk.Cancelled = cancellationToken.IsCancellationRequested;
                 deferredCallback.Discard();
-                InvokeCompletionCallback(
+                ArticleBodyCompletion.InvokeContained(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 throw;
             }
         }
 
         // Terminal 430 after skips/exhaustion must fire the completion callback exactly once.
-        InvokeCompletionCallback(onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
+        ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
         walk.LastOutcomeWasException = lastOutcomeWasException;
         LogProviderWalkOutcome(
             walk, segmentId, operation, lastAttemptedProvider?.Host, lastException?.SourceException);
@@ -1665,21 +1665,6 @@ public class MultiProviderNntpClient(
                            segmentIds, effectiveDepth, cancellationToken)
                            .WithCancellation(cancellationToken).ConfigureAwait(false))
             yield return result;
-    }
-
-    private static void InvokeCompletionCallback(
-        ArticleBodyCompletionHandler? callback,
-        ArticleBodyResult result,
-        string? failureReason = null)
-    {
-        try
-        {
-            callback?.Invoke(result, failureReason);
-        }
-        catch (Exception e) when (e is not OutOfMemoryException)
-        {
-            Log.Warning(e, "NNTP completion callback failed");
-        }
     }
 
     public override void Dispose()
