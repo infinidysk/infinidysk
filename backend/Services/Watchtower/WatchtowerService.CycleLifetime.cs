@@ -472,26 +472,24 @@ public partial class WatchtowerService
 
     private static OutOfMemoryException? SelectOutOfMemory(params ExceptionDispatchInfo?[] sources)
     {
-        foreach (var source in sources)
-        {
-            if (source?.SourceException.TryGetCausingException<OutOfMemoryException>(out var oom) == true)
-                return oom;
-        }
-
-        return null;
+        return sources
+            .Select(TryGetOutOfMemory)
+            .FirstOrDefault(oom => oom is not null);
     }
+
+    private static OutOfMemoryException? TryGetOutOfMemory(ExceptionDispatchInfo? source) =>
+        source?.SourceException.TryGetCausingException<OutOfMemoryException>(out var oom) == true
+            ? oom
+            : null;
 
     private static ExceptionDispatchInfo? CombineNonfatalFailures(params ExceptionDispatchInfo?[] sources)
     {
         List<Exception>? leaves = null;
-        foreach (var source in sources)
+        foreach (var source in sources.Where(source =>
+                     source is not null
+                     && !source.SourceException.TryGetCausingException<OutOfMemoryException>(out _)))
         {
-            if (source is null)
-                continue;
-            if (source.SourceException.TryGetCausingException<OutOfMemoryException>(out _))
-                continue;
-
-            foreach (var leaf in EnumerateLeaves(source.SourceException))
+            foreach (var leaf in EnumerateLeaves(source!.SourceException))
             {
                 leaves ??= [];
                 if (!leaves.Exists(existing => ReferenceEquals(existing, leaf)))

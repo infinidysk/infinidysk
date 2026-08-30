@@ -775,16 +775,8 @@ public sealed class WatchtowerServiceTests
         logEvent.Level == LogEventLevel.Warning
         && logEvent.MessageTemplate.Text.Contains("cancellation requested, waiting for completion");
 
-    private static bool HasException(Exception haystack, Exception needle)
-    {
-        foreach (var current in Flatten(haystack))
-        {
-            if (ReferenceEquals(current, needle))
-                return true;
-        }
-
-        return false;
-    }
+    private static bool HasException(Exception haystack, Exception needle) =>
+        Flatten(haystack).Any(current => ReferenceEquals(current, needle));
 
     private static int IndexOf(IReadOnlyList<Exception> exceptions, Exception needle)
     {

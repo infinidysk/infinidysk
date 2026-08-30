@@ -60,13 +60,7 @@ internal sealed class ControllableTimeProvider : TimeProvider
         {
             lock (_gate)
             {
-                foreach (var timer in _timers)
-                {
-                    if (timer.NextDue is not null)
-                        return true;
-                }
-
-                return false;
+                return _timers.Any(timer => timer.NextDue is not null);
             }
         }
     }
