@@ -24,7 +24,7 @@ function render(data: ArrHealthResponse, window: "24h" | "all" = "24h") {
 }
 
 describe("ArrHealth", () => {
-  it("renders healthy, degraded, offline, and pending badges with summary chips", () => {
+  it("colors instance names as status badges and keeps metric icon headers", () => {
     const markup = render({
       configured: true,
       summary: {
@@ -114,11 +114,20 @@ describe("ArrHealth", () => {
     expect(markup).toContain("badge-warning");
     expect(markup).toContain("badge-error");
     expect(markup).toContain("badge-ghost");
-    expect(markup).toContain("healthy");
-    expect(markup).toContain("degraded");
-    expect(markup).toContain("offline");
-    expect(markup).toContain("pending");
+    expect(markup).toContain("Sonarr Main, healthy");
+    expect(markup).toContain("Sonarr 4K, degraded");
+    expect(markup).toContain("Radarr, offline");
+    expect(markup).toContain("Radarr New, pending");
+    expect(markup).not.toMatch(/>healthy</);
     expect(markup).toContain("Unreachable");
+    expect(markup).toContain("max-sm:w-[42%]");
+    expect(markup).toContain("max-sm:w-[11%]");
+    expect(markup).toContain("max-sm:w-[25%]");
+    expect(markup).toMatch(/max-sm:!inline-block[^>]*>download</);
+    expect(markup).toMatch(/max-sm:!inline-block[^>]*>queue</);
+    expect(markup).toMatch(/max-sm:!inline-block[^>]*>pending</);
+    expect(markup).toMatch(/max-sm:!inline-block[^>]*>schedule</);
+    expect(markup).toContain("max-sm:sr-only");
   });
 
   it("shows the empty state when no instances have imported yet", () => {

@@ -5,7 +5,7 @@ import type {
 } from "~/clients/backend-client.server";
 import { formatDurationMs, formatNumber, formatTimeAgo } from "../../utils/format";
 import { settingsPath } from "~/navigation/settings-tabs";
-import { Tooltip } from "~/components/ui";
+import { Badge, Icon, Tooltip } from "~/components/ui";
 import { WidgetLink } from "../widget-link/widget-link";
 
 export type ArrHealthProps = {
@@ -72,51 +72,70 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
             <table className="table table-sm w-full max-sm:table-fixed sm:min-w-[640px]">
               <thead>
                 <tr>
-                  <th className="max-sm:w-[32%]">Instance</th>
-                  <th>Imports</th>
+                  <th className="max-sm:w-[42%]">Instance</th>
+                  <MetricHeader
+                    label="Imports"
+                    icon="download"
+                    tooltip="Completed imports in this window."
+                    className="max-sm:w-[11%] max-sm:px-1"
+                  />
                   <th className="max-sm:hidden">Median</th>
                   <th className="max-sm:hidden">P95</th>
-                  <th>
-                    <Tooltip content="All items currently in this Arr instance's queue.">
-                      <span className="cursor-help">Queue</span>
-                    </Tooltip>
-                  </th>
-                  <th>
-                    <Tooltip content="Completed downloads that Arr is still importing or has marked import pending.">
-                      <span className="cursor-help">Awaiting</span>
-                    </Tooltip>
-                  </th>
-                  <th>Last import</th>
+                  <MetricHeader
+                    label="Queue"
+                    icon="queue"
+                    tooltip="All items currently in this Arr instance's queue."
+                    className="max-sm:w-[11%] max-sm:px-1"
+                  />
+                  <MetricHeader
+                    label="Awaiting"
+                    icon="pending"
+                    tooltip="Completed downloads that Arr is still importing or has marked import pending."
+                    className="max-sm:w-[11%] max-sm:px-1"
+                  />
+                  <MetricHeader
+                    label="Last import"
+                    icon="schedule"
+                    tooltip="When this instance last completed an import."
+                    className="max-sm:w-[25%] max-sm:px-1"
+                  />
                 </tr>
               </thead>
               <tbody>
                 {instances.map((instance) => (
                   <tr key={instance.key}>
-                    <td className="min-w-0 max-w-[220px] font-medium">
-                      <Tooltip content={instance.host}>
-                        <span className="inline-block max-w-full truncate align-middle">
-                          {instance.name}
-                        </span>
+                    <td className="min-w-0 overflow-hidden sm:max-w-[220px]">
+                      <Tooltip
+                        content={`${instance.host} (${instance.status})`}
+                        className="block max-w-full min-w-0"
+                      >
+                        <Badge
+                          className={`badge-xs sm:badge-sm ${STATUS_BADGE[instance.status]} max-w-full min-w-0 overflow-hidden font-mono`}
+                          aria-label={`${instance.name}, ${instance.status}`}
+                        >
+                          <span className="truncate">{instance.name}</span>
+                        </Badge>
                       </Tooltip>
-                      <span className="mt-0.5 flex items-center gap-1.5 text-[11px] font-normal text-base-content/45">
-                        <span className="capitalize">{instance.appType}</span>
-                        <span className={`badge badge-xs ${STATUS_BADGE[instance.status]}`}>
-                          {instance.status}
-                        </span>
+                      <span className="mt-0.5 block truncate text-[11px] font-normal capitalize text-base-content/45">
+                        {instance.appType}
                       </span>
                     </td>
-                    <td className="font-mono tabular-nums">{formatNumber(instance.imports)}</td>
+                    <td className="font-mono tabular-nums max-sm:px-1">
+                      {formatNumber(instance.imports)}
+                    </td>
                     <td className="hidden font-mono tabular-nums sm:table-cell">
                       {formatDurationMs(instance.medianHandoffMs)}
                     </td>
                     <td className="hidden font-mono tabular-nums sm:table-cell">
                       {formatDurationMs(instance.p95HandoffMs)}
                     </td>
-                    <td className="font-mono tabular-nums">{formatNumber(instance.queueCount)}</td>
-                    <td className="font-mono tabular-nums">
+                    <td className="font-mono tabular-nums max-sm:px-1">
+                      {formatNumber(instance.queueCount)}
+                    </td>
+                    <td className="font-mono tabular-nums max-sm:px-1">
                       {formatNumber(instance.awaitingCount)}
                     </td>
-                    <td className="min-w-0 font-mono tabular-nums text-base-content/80 max-sm:whitespace-normal max-sm:break-words">
+                    <td className="min-w-0 font-mono tabular-nums text-base-content/80 max-sm:px-1 max-sm:whitespace-nowrap">
                       {instance.status === "offline" && !instance.lastImportAtMs
                         ? (instance.lastError ?? "Unreachable")
                         : formatTimeAgo(instance.lastImportAtMs)}
@@ -163,6 +182,32 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
         )}
       </div>
     </section>
+  );
+}
+
+function MetricHeader({
+  label,
+  icon,
+  tooltip,
+  className = "",
+}: {
+  label: string;
+  icon: string;
+  tooltip: string;
+  className?: string;
+}) {
+  return (
+    <th className={className}>
+      <Tooltip content={tooltip}>
+        <span className="inline-flex cursor-help items-center">
+          <Icon
+            name={icon}
+            className="!hidden !text-[16px] text-base-content/70 max-sm:!inline-block"
+          />
+          <span className="max-sm:sr-only">{label}</span>
+        </span>
+      </Tooltip>
+    </th>
   );
 }
 

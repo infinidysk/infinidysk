@@ -40,6 +40,7 @@ import { LifetimeBlock } from "./components/lifetime-block/lifetime-block";
 import { RecordsBlock } from "./components/records-block/records-block";
 import { FailoverSaves } from "./components/failover-saves/failover-saves";
 import { ArrHealth } from "./components/arr-health/arr-health";
+import { mockArrHealthData, mockArrHealthRequested } from "./components/arr-health/arr-health.mock";
 import { SortableRow } from "./components/sortable-row/sortable-row";
 import { SectionLoadError } from "./components/section-load-error/section-load-error";
 import { Icon, Tooltip } from "~/components/ui";
@@ -131,6 +132,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   const [staticLoaded, setStaticLoaded] = useState(false);
   const [arrHealth, setArrHealth] = useState<ArrHealthResponse | null>(null);
   const [arrHealthLoaded, setArrHealthLoaded] = useState(false);
+  const [mockArrHealth, setMockArrHealth] = useState<ArrHealthResponse | null>(null);
   const [windowError, setWindowError] = useState(false);
   const [detailError, setDetailError] = useState(false);
   const [staticError, setStaticError] = useState(false);
@@ -151,6 +153,11 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   detailLoadedRef.current = detailLoaded;
   staticLoadedRef.current = staticLoaded;
   arrHealthLoadedRef.current = arrHealthLoaded;
+
+  useEffect(() => {
+    if (!mockArrHealthRequested()) return;
+    setMockArrHealth(mockArrHealthData());
+  }, []);
 
   const liveTiles = stats.tiles;
   const isLongWindow = window === "7d" || window === "30d" || window === "all";
@@ -231,6 +238,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
 
   // Arr Health: poll on the same 30s cadence, only when Arr instances are configured.
   useEffect(() => {
+    if (mockArrHealth != null) return;
     if (!loaderData.hasConfiguredArrs) return;
     let cancelled = false;
     arrHealthLoadedRef.current = false;
@@ -271,7 +279,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [window, loaderData.hasConfiguredArrs, arrHealthRetry]);
+  }, [window, loaderData.hasConfiguredArrs, arrHealthRetry, mockArrHealth]);
 
   // Detail (latency + errors): once per 24h window selection — not on the 30s poll.
   useEffect(() => {
@@ -480,7 +488,9 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         ) : (
           <Skeleton height={180} />
         ),
-      arrHealth: loaderData.hasConfiguredArrs ? (
+      arrHealth: mockArrHealth ? (
+        <ArrHealth data={mockArrHealth} window={window} />
+      ) : loaderData.hasConfiguredArrs ? (
         arrHealthError && !arrHealthLoaded ? (
           <SectionLoadError label="Arr health" onRetry={() => setArrHealthRetry((n) => n + 1)} />
         ) : arrHealthLoaded && arrHealth ? (
@@ -547,6 +557,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
       arrHealth,
       arrHealthLoaded,
       arrHealthError,
+      mockArrHealth,
       selectedProvider,
     ],
   );
@@ -559,7 +570,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
     const filtered = order.filter((id) => {
       if (!loaderData.hasConfiguredIndexers && (id === "indexers" || id === "indexerApiUsage"))
         return false;
-      if (!loaderData.hasConfiguredArrs && id === "arrHealth") return false;
+      if (!loaderData.hasConfiguredArrs && !mockArrHealth && id === "arrHealth") return false;
       return true;
     });
     if (!mobileStack || editMode) return filtered;
@@ -569,6 +580,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
   }, [
     loaderData.hasConfiguredIndexers,
     loaderData.hasConfiguredArrs,
+    mockArrHealth,
     order,
     mobileStack,
     editMode,
