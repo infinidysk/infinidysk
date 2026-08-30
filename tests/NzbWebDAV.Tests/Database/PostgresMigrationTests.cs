@@ -402,11 +402,11 @@ public sealed class PostgresMigrationTests
             SELECT data_type
             FROM information_schema.columns
             WHERE table_schema = current_schema()
-              AND table_name = $table
-              AND column_name = $column;
+              AND table_name = @table
+              AND column_name = @column;
             """;
-        AddParameter(command, "$table", table);
-        AddParameter(command, "$column", column);
+        AddParameter(command, "@table", table);
+        AddParameter(command, "@column", column);
         return Assert.IsType<string>(await command.ExecuteScalarAsync());
     }
 
@@ -421,11 +421,11 @@ public sealed class PostgresMigrationTests
             SELECT is_nullable
             FROM information_schema.columns
             WHERE table_schema = current_schema()
-              AND table_name = $table
-              AND column_name = $column;
+              AND table_name = @table
+              AND column_name = @column;
             """;
-        AddParameter(command, "$table", table);
-        AddParameter(command, "$column", column);
+        AddParameter(command, "@table", table);
+        AddParameter(command, "@column", column);
         return Assert.IsType<string>(await command.ExecuteScalarAsync());
     }
 
