@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Database;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
-using Serilog;
 
 namespace NzbWebDAV.Services;
 
@@ -17,6 +17,9 @@ public class SqliteMaintenanceService(IDbContextFactory<DavDatabaseContext> dbCo
     private static readonly TimeSpan InitialDelay = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan TickInterval = TimeSpan.FromHours(6);
 
+    internal const int MaxTransientRetries = 3;
+    internal static readonly TimeSpan TransientRetryBaseDelay = TimeSpan.FromMilliseconds(250);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
@@ -30,7 +33,15 @@ public class SqliteMaintenanceService(IDbContextFactory<DavDatabaseContext> dbCo
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await SafeSweepAsync().ConfigureAwait(false);
+            try
+            {
+                await SafeSweepAsync(stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                SigtermUtil.IsSigtermTriggered() || stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
 
             try
             {
@@ -43,17 +54,68 @@ public class SqliteMaintenanceService(IDbContextFactory<DavDatabaseContext> dbCo
         }
     }
 
-    private async Task SafeSweepAsync()
+    private Task SafeSweepAsync(CancellationToken stoppingToken) =>
+        RunWithSqliteContentionRetryAsync(
+            async cancellationToken =>
+            {
+                await using var db = dbContextFactory.CreateDbContext();
+                await using var metrics = new MetricsDbContext();
+                await SweepAsync(db, metrics, cancellationToken).ConfigureAwait(false);
+            },
+            stoppingToken);
+
+    internal static async Task RunWithSqliteContentionRetryAsync(
+        Func<CancellationToken, Task> sweep,
+        CancellationToken cancellationToken,
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
     {
-        try
+        ArgumentNullException.ThrowIfNull(sweep);
+        delayAsync ??= static (delay, token) => Task.Delay(delay, token);
+
+        var maxAttempts = MaxTransientRetries + 1;
+        for (var attempt = 1; ; attempt++)
         {
-            await using var db = dbContextFactory.CreateDbContext();
-            await using var metrics = new MetricsDbContext();
-            await SweepAsync(db, metrics).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
-        {
-            Log.Warning(ex, "SqliteMaintenanceService sweep failed");
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                await sweep(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex) when (
+                ex is not OutOfMemoryException &&
+                ex.IsSqliteBusyOrLockedException())
+            {
+                // If shutdown raced the SQLite failure, convert it to normal
+                // cancellation instead of retrying or treating contention as success.
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (attempt >= maxAttempts)
+                {
+                    ex.LogWarningKnownOrStack(
+                        "SQLite maintenance sweep skipped after {AttemptCount} attempts; " +
+                        "the next scheduled sweep will try again",
+                        attempt);
+                    return;
+                }
+
+                var delay = TimeSpan.FromMilliseconds(
+                    TransientRetryBaseDelay.TotalMilliseconds * attempt);
+
+                // Warn on first observation only. The terminal branch above warns
+                // separately if all attempts are exhausted.
+                if (attempt == 1)
+                {
+                    ex.LogWarningKnownOrStack(
+                        "SQLite maintenance sweep deferred by database contention " +
+                        "(attempt {Attempt}/{MaxAttempts}); retrying in {RetryDelayMs} ms",
+                        attempt,
+                        maxAttempts,
+                        (long)delay.TotalMilliseconds);
+                }
+
+                await delayAsync(delay, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 

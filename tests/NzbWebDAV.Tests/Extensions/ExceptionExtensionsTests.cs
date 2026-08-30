@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 
@@ -205,6 +206,47 @@ public class ExceptionExtensionsTests
 
         Assert.True(ex.IsTransientDatabaseException());
         Assert.False(ex.IsKnownSqliteDiskException());
+    }
+
+    [Theory]
+    [InlineData(5, 261)] // SQLITE_BUSY_RECOVERY
+    [InlineData(5, 517)] // SQLITE_BUSY_SNAPSHOT
+    [InlineData(6, 262)] // SQLITE_LOCKED_SHAREDCACHE
+    [InlineData(6, 518)] // SQLITE_LOCKED_VTAB
+    public void IsSqliteBusyOrLockedException_UsesPrimaryCode(
+        int primaryCode,
+        int extendedCode)
+    {
+        var exception = new SqliteException("sqlite contention", primaryCode, extendedCode);
+
+        Assert.Equal(primaryCode, exception.SqliteErrorCode);
+        Assert.Equal(extendedCode, exception.SqliteExtendedErrorCode);
+        Assert.True(exception.IsSqliteBusyOrLockedException());
+        Assert.True(exception.IsTransientDatabaseException());
+    }
+
+    [Fact]
+    public void IsSqliteBusyOrLockedException_RecognizesWrappedBusy()
+    {
+        var inner = new SqliteException("sqlite contention", 5, 261);
+        var outer = new DbUpdateException("wrapper", inner);
+
+        Assert.True(outer.IsSqliteBusyOrLockedException());
+        Assert.True(outer.IsTransientDatabaseException());
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(8)]
+    [InlineData(11)]
+    [InlineData(13)]
+    [InlineData(19)]
+    [InlineData(26)]
+    public void IsSqliteBusyOrLockedException_RejectsNonContentionCodes(int primaryCode)
+    {
+        var exception = new SqliteException("other sqlite error", primaryCode);
+
+        Assert.False(exception.IsSqliteBusyOrLockedException());
     }
 
     [Theory]

@@ -75,6 +75,21 @@ public static class ExceptionExtensions
     }
 
     /// <summary>
+    /// True only for SQLite BUSY/LOCKED contention. SqliteErrorCode is the
+    /// primary result code, so extended BUSY/LOCKED variants are included.
+    /// </summary>
+    internal static bool IsSqliteBusyOrLockedException(this Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is SqliteException { SqliteErrorCode: 5 or 6 })
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// True for write contention that can be retried by the caller's next sweep
     /// (SQLITE_BUSY / SQLITE_LOCKED). SQLITE_READONLY (8) and SQLITE_FULL (13) are
     /// operator-facing disk errors that do not heal on retry — see
@@ -83,12 +98,11 @@ public static class ExceptionExtensions
     /// </summary>
     public static bool IsTransientDatabaseException(this Exception exception)
     {
+        if (exception.IsSqliteBusyOrLockedException())
+            return true;
+
         for (var current = exception; current != null; current = current.InnerException)
         {
-            if (current is SqliteException sqlite
-                && sqlite.SqliteErrorCode is 5 or 6)
-                return true;
-
             if (current is PostgresException postgres
                 && postgres.SqlState is PostgresErrorCodes.SerializationFailure
                     or PostgresErrorCodes.DeadlockDetected
