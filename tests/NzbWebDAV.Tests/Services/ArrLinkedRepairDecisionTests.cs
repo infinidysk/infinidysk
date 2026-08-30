@@ -539,6 +539,107 @@ public class ArrLinkedRepairDecisionTests
     }
 
     [Fact]
+    public async Task UniqueRecoveryThenAmbiguousInstance_DoesNotReturnRecoveredId()
+    {
+        var recovered = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        var other = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr-unique",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, id) =>
+                {
+                    Assert.Equal(recovered, id);
+                    return Task.FromResult(ArrRepairOutcome.DownloadHistoryNotFound);
+                },
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory
+                {
+                    TotalRecords = 1,
+                    Records =
+                    [
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = recovered.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                    ],
+                })),
+            new ScriptedArrClient(
+                host: "http://radarr-ambiguous",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("must not mutate"),
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory
+                {
+                    TotalRecords = 2,
+                    Records =
+                    [
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = recovered.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = other.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                    ],
+                })),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, null, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferAmbiguousDownloadIdentity, result.Decision);
+        Assert.Null(result.RecoveredDownloadId);
+    }
+
+    [Fact]
+    public async Task TruncatedImportHistoryPage_DoesNotTreatUniqueMatchAsProven()
+    {
+        var recovered = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("must not mutate"),
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory
+                {
+                    TotalRecords = 100,
+                    Records =
+                    [
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = recovered.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                    ],
+                })),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, null, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferMissingDownloadIdentity, result.Decision);
+        Assert.Null(result.RecoveredDownloadId);
+    }
+
+    [Fact]
     public async Task FirstInstanceMissingHistory_DoesNotPreventLaterInstanceSuccess()
     {
         var downloadId = DownloadId;

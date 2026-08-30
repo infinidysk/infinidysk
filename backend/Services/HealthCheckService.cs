@@ -2513,7 +2513,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             }
         }
 
-        var recovered = recoveredConflict ? null : recoveredDownloadId;
+        var recovered = recoveredConflict || sawAmbiguousIdentity
+            ? null
+            : recoveredDownloadId;
         if (anInstanceFailed)
         {
             return new ArrLinkedRepairResult(
