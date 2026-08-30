@@ -68,8 +68,8 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
         {instances.length === 0 ? (
           <p className="py-6 text-center text-xs text-base-content/50">No imports recorded yet.</p>
         ) : (
-          <div className="overflow-x-auto max-sm:overflow-visible">
-            <table className="table table-sm w-full max-sm:table-fixed sm:min-w-[640px]">
+          <div className="min-w-0">
+            <table className="table table-sm w-full min-w-0 max-sm:table-fixed">
               <thead>
                 <tr>
                   <th className="max-sm:w-[42%]">Instance</th>

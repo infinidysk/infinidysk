@@ -128,6 +128,8 @@ describe("ArrHealth", () => {
     expect(markup).toMatch(/max-sm:!inline-block[^>]*>pending</);
     expect(markup).toMatch(/max-sm:!inline-block[^>]*>schedule</);
     expect(markup).toContain("max-sm:sr-only");
+    expect(markup).not.toContain("overflow-x-auto");
+    expect(markup).not.toContain("min-w-[640px]");
   });
 
   it("shows the empty state when no instances have imported yet", () => {
