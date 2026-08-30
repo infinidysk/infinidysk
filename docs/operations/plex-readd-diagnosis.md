@@ -18,7 +18,7 @@ If the mtime is recent or the path changed (new release name, or a `(2)` suffix)
 
 ## 2. Is background repair enabled?
 
-Settings → Health → **Enable Background Repairs**. Default is **off**. If off, health-repair deletion is ruled out.
+Settings → Repairs → **Enable Background Repairs**. Default is **on**. If off, health-repair deletion is ruled out.
 
 ## 3. Look for a server-side deletion
 

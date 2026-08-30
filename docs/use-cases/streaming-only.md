@@ -18,10 +18,10 @@ Use InfiniDysk without building a traditional *Arr library.
 
 ## Repairs without *Arr [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since }
 
-Enable **Background Repairs** to run health checks, reconstruct recoverable gaps from PAR2 parity,
-and keep slightly damaged video files playable. A Library Directory and *Arr are only needed to
+**Background Repairs** is on by default: health checks, PAR2 reconstruction of recoverable gaps,
+and limited damage tolerance run without a Library Directory or *Arr. Those are only needed to
 replace linked library items. To automatically remove broken unlinked items after playback failures,
 set **Repair After Streaming Failures** above `0`; its default (`0`) keeps the item and marks it
-**Action needed**.
+**Action needed**. Turn the toggle off if you do not want idle STAT or PAR2 work.
 
 Secure the UI and WebDAV the same way as any other deploy — TLS, strong passwords, no open port `3000` on the internet.

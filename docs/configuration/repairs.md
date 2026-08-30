@@ -11,7 +11,7 @@ Background health monitoring, PAR2 reconstruction, and replacement of unhealthy 
 
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
-| Enable Background Repairs [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since } | `repair.enable` | off | Enables health checks, PAR2, and damage tolerance; Library Directory + *Arr are only needed for linked-item replacement |
+| Enable Background Repairs [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since } | `repair.enable` | on [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | Enables health checks, PAR2, and damage tolerance; Library Directory + *Arr are only needed for linked-item replacement. An explicit `false` still disables them. Existing installs that already saved `false` stay off. |
 | Health Check Concurrency [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `repair.healthcheck-concurrency` | `50` | Aggregate NNTP verification-connection limit shared by background checks and queue article validation (1–200, capped by pooled provider capacity) |
 | Health Check Workers [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `repair.healthcheck-workers` | `1` | Library files checked at once (1–8). All workers share Health Check Concurrency; this setting never multiplies it |
 | Health Check Depth | `repair.healthcheck-depth` | `standard` | standard / enhanced / deep / complete |

@@ -9,8 +9,15 @@ public sealed class DegradedToleranceConfigTests
     public void ToleranceEnabled_DefaultsToOffWhenRepairsAreOff()
     {
         var config = new ConfigManager();
+        config.UpdateValues([Item(ConfigKeys.RepairEnable, "false")]);
 
         Assert.False(config.IsDegradedToleranceEnabled());
+    }
+
+    [Fact]
+    public void ToleranceEnabled_DefaultsToOnWhenRepairsAreUnset()
+    {
+        Assert.True(new ConfigManager().IsDegradedToleranceEnabled());
     }
 
     [Fact]
@@ -37,7 +44,16 @@ public sealed class DegradedToleranceConfigTests
     [Fact]
     public void CorruptionTracking_DefaultsToOffWhenRepairsAreOff()
     {
-        Assert.False(new ConfigManager().IsCorruptionTrackingEnabled());
+        var config = new ConfigManager();
+        config.UpdateValues([Item(ConfigKeys.RepairEnable, "false")]);
+
+        Assert.False(config.IsCorruptionTrackingEnabled());
+    }
+
+    [Fact]
+    public void CorruptionTracking_DefaultsToOnWhenRepairsAreUnset()
+    {
+        Assert.True(new ConfigManager().IsCorruptionTrackingEnabled());
     }
 
     [Fact]

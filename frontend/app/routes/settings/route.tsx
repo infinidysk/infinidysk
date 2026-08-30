@@ -164,7 +164,7 @@ const defaultConfig = {
   "preflight.max-attempts": "20",
   "preflight.ttl-seconds": "120",
   "preflight.indexer-max-wait-seconds": "5",
-  "repair.enable": "false",
+  "repair.enable": "true",
   "repair.healthcheck-concurrency": "50",
   "repair.healthcheck-workers": "1",
   "repair.healthcheck-depth": "standard",

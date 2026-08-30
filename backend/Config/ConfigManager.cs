@@ -1383,24 +1383,21 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
     public bool IsPar2RepairEnabled()
     {
-        var repairValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
-        if (repairValue == null || !bool.Parse(repairValue)) return false;
+        if (!IsBackgroundRepairsMasterEnabled()) return false;
         var par2Value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2Enabled));
         return par2Value == null || bool.Parse(par2Value);
     }
 
     public bool IsDegradedToleranceEnabled()
     {
-        var repairValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
-        if (repairValue == null || !bool.Parse(repairValue)) return false;
+        if (!IsBackgroundRepairsMasterEnabled()) return false;
         var toleranceValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairDegradedToleranceEnabled));
         return toleranceValue == null || bool.Parse(toleranceValue);
     }
 
     public bool IsCorruptionTrackingEnabled()
     {
-        var repairValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
-        if (repairValue == null || !bool.Parse(repairValue)) return false;
+        if (!IsBackgroundRepairsMasterEnabled()) return false;
         var trackingValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairCorruptionTrackingEnabled));
         return trackingValue == null || bool.Parse(trackingValue);
     }
@@ -2149,9 +2146,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     /// </summary>
     public string? GetRepairDisabledReason()
     {
-        var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
-        var isRepairJobEnabled = configValue != null && bool.Parse(configValue);
-        return GetRepairDisabledReason(isRepairJobEnabled);
+        return GetRepairDisabledReason(IsBackgroundRepairsMasterEnabled());
     }
 
     internal static string? GetRepairDisabledReason(bool isRepairEnabled)
@@ -2160,6 +2155,16 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             return "Enable Background Repairs is off";
 
         return null;
+    }
+
+    /// <summary>
+    /// Unset <see cref="ConfigKeys.RepairEnable"/> is on. Only an explicit false disables
+    /// background health checks, PAR2, and damage tolerance.
+    /// </summary>
+    private bool IsBackgroundRepairsMasterEnabled()
+    {
+        var repairValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
+        return repairValue is null || bool.Parse(repairValue);
     }
 
     /// <summary>

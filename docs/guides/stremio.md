@@ -46,11 +46,11 @@ Then in **Addons → Marketplace → Usenet → Newznab**, add each indexer (URL
 
 ## Repairs without *Arr [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since }
 
-Enable **Background Repairs** to run health checks, reconstruct recoverable gaps from PAR2 parity,
-and retain playable files with limited damage. A Library Directory and *Arr are only necessary to
+**Background Repairs** is on by default: health checks, PAR2 reconstruction of recoverable gaps,
+and limited damage tolerance run without a Library Directory or *Arr. Those are only necessary to
 replace linked library items. To auto-remove a broken unlinked item after repeated playback failures,
 set **Repair After Streaming Failures** above `0`; the default (`0`) keeps the item and marks it
-**Action needed**.
+**Action needed**. Turn the toggle off if you do not want idle STAT or PAR2 work.
 
 ## Security and reachability
 

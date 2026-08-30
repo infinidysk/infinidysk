@@ -55,10 +55,19 @@ function parsePageSize(value: string | null): number {
 function parseHistoryFilter(value: string | null): HealthHistoryFilter {
   return value === "deleted" ||
     value === "repaired" ||
-    value === "degraded" ||
-    value === "action-needed"
+    value === "action-needed" ||
+    value === "degraded"
     ? value
     : "all";
+}
+
+function isBackgroundRepairsEnabled(
+  config: Array<{ configName: string; configValue: string }>,
+  enabledKey: string,
+): boolean {
+  const item = config.find((entry) => entry.configName === enabledKey);
+  if (!item || item.configValue.trim() === "") return true;
+  return item.configValue.toLowerCase() === "true";
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -96,10 +105,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     historyPage,
     historyPageSize,
     historyFilter,
-    isEnabled:
-      config
-        .filter((x) => x.configName === enabledKey)
-        .filter((x) => x.configValue.toLowerCase() === "true").length > 0,
+    isEnabled: isBackgroundRepairsEnabled(config, enabledKey),
     schedule: queueData.schedule ?? null,
   };
 }

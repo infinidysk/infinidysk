@@ -86,7 +86,7 @@ describe("health route loader", () => {
     expect(getConfigMock).toHaveBeenCalledWith(["repair.enable"]);
   });
 
-  it("reports health checks disabled when the setting is absent or false", async () => {
+  it("reports health checks enabled when the setting is absent", async () => {
     getHealthCheckQueueMock.mockResolvedValue({
       uncheckedCount: 0,
       items: [],
@@ -96,11 +96,23 @@ describe("health route loader", () => {
       items: [],
       totalCount: 0,
     });
-    getConfigMock
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ configName: "repair.enable", configValue: "false" }]);
+    getConfigMock.mockResolvedValueOnce([]);
 
-    await expect(loader(loaderArgs())).resolves.toMatchObject({ isEnabled: false });
+    await expect(loader(loaderArgs())).resolves.toMatchObject({ isEnabled: true });
+  });
+
+  it("reports health checks disabled when the setting is false", async () => {
+    getHealthCheckQueueMock.mockResolvedValue({
+      uncheckedCount: 0,
+      items: [],
+    });
+    getHealthCheckHistoryMock.mockResolvedValue({
+      stats: [],
+      items: [],
+      totalCount: 0,
+    });
+    getConfigMock.mockResolvedValueOnce([{ configName: "repair.enable", configValue: "false" }]);
+
     await expect(loader(loaderArgs())).resolves.toMatchObject({ isEnabled: false });
   });
 
