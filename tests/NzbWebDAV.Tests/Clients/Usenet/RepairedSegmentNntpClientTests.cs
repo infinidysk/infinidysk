@@ -3,6 +3,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
@@ -102,7 +103,7 @@ public sealed class RepairedSegmentNntpClientTests
             var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
             using var client = new RepairedSegmentNntpClient(inner, store);
 
-            var recorder = new CompletionRecorder { ThrowOnInvoke = true };
+            var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
             var response = await client.DecodedBodyAsync(segmentId, recorder.Invoke, CancellationToken.None);
             Assert.NotNull(response.Stream);
             await using var output = new MemoryStream();
@@ -136,7 +137,7 @@ public sealed class RepairedSegmentNntpClientTests
             var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
             using var client = new RepairedSegmentNntpClient(inner, store);
 
-            var recorder = new CompletionRecorder { ThrowOnInvoke = true };
+            var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
             var exclusive = new UsenetExclusiveConnection(recorder.Invoke);
             var response = await client.DecodedBodyAsync(segmentId, exclusive, CancellationToken.None);
             Assert.NotNull(response.Stream);
@@ -174,7 +175,7 @@ public sealed class RepairedSegmentNntpClientTests
             var inner = new ScriptedStatusNntpClient(result, failureReason, content);
             using var client = new RepairedSegmentNntpClient(inner, store);
 
-            var recorder = new CompletionRecorder();
+            var recorder = new ArticleBodyCompletionRecorder();
             var response = await client.DecodedBodyAsync(segmentId, recorder.Invoke, CancellationToken.None);
             if (response.Stream != null)
             {
@@ -192,23 +193,6 @@ public sealed class RepairedSegmentNntpClientTests
         {
             if (Directory.Exists(dir))
                 Directory.Delete(dir, recursive: true);
-        }
-    }
-
-    private sealed class CompletionRecorder
-    {
-        public int Count;
-        public ArticleBodyResult? Result;
-        public string? FailureReason;
-        public bool ThrowOnInvoke;
-
-        public void Invoke(ArticleBodyResult result, string? failureReason)
-        {
-            Count++;
-            Result = result;
-            FailureReason = failureReason;
-            if (ThrowOnInvoke)
-                throw new InvalidOperationException("callback failure");
         }
     }
 

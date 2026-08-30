@@ -76,7 +76,7 @@ public class ArticleCachingNntpClientTests
         var primed = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
         await ReadAllAsync(primed.Stream!);
 
-        var recorder = new ThrowingRecorder();
+        var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
         var response = await client.DecodedBodyAsync(segmentId, recorder.Invoke, CancellationToken.None);
         var bytes = await ReadAllAsync(response.Stream!);
 
@@ -101,7 +101,7 @@ public class ArticleCachingNntpClientTests
         await ReadAllAsync((await client.DecodedBodyAsync("one", CancellationToken.None)).Stream!);
         await ReadAllAsync((await client.DecodedBodyAsync("two", CancellationToken.None)).Stream!);
 
-        var recorder = new ThrowingRecorder();
+        var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
         var batch = await client.DecodedBodiesAsync(
             ["one", "two"], recorder.Invoke, CancellationToken.None);
         var responses = await Task.WhenAll(batch.Responses);
@@ -128,7 +128,7 @@ public class ArticleCachingNntpClientTests
         var primedBytes = await ReadAllAsync(primed.Stream);
         Assert.Equal(FixedArticleHeaders.Headers, primed.ArticleHeaders.Headers);
 
-        var recorder = new ThrowingRecorder();
+        var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
         var response = await client.DecodedArticleAsync(segmentId, recorder.Invoke, CancellationToken.None);
         var bytes = await ReadAllAsync(response.Stream);
 
@@ -156,9 +156,8 @@ public class ArticleCachingNntpClientTests
         await inner.BodyEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         using var cts = new CancellationTokenSource();
-        var recorder = new ThrowingRecorder();
+        var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
         var waiting = client.DecodedBodyAsync(segmentId, recorder.Invoke, cts.Token);
-        await WaitUntilAsync(() => !waiting.IsCompleted, TimeSpan.FromSeconds(5));
         await cts.CancelAsync();
 
         var cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
@@ -187,7 +186,7 @@ public class ArticleCachingNntpClientTests
         var sentinel = new InvalidOperationException("sentinel-head");
         inner.HeadException = sentinel;
 
-        var recorder = new ThrowingRecorder();
+        var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             client.DecodedArticleAsync(segmentId, recorder.Invoke, CancellationToken.None));
 
@@ -197,18 +196,6 @@ public class ArticleCachingNntpClientTests
         Assert.Equal(0, inner.ArticleRequestCount);
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (condition()) return;
-            await Task.Delay(10);
-        }
-
-        Assert.Fail($"Condition not met within {timeout.TotalSeconds:0.#}s");
-    }
-
     private static async Task<byte[]> ReadAllAsync(Stream stream)
     {
         await using (stream)
@@ -216,21 +203,6 @@ public class ArticleCachingNntpClientTests
             using var destination = new MemoryStream();
             await stream.CopyToAsync(destination);
             return destination.ToArray();
-        }
-    }
-
-    private sealed class ThrowingRecorder
-    {
-        public int Count;
-        public ArticleBodyResult? Result;
-        public string? FailureReason;
-
-        public void Invoke(ArticleBodyResult result, string? failureReason)
-        {
-            Count++;
-            Result = result;
-            FailureReason = failureReason;
-            throw new InvalidOperationException("callback failure");
         }
     }
 

@@ -5,6 +5,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
@@ -136,7 +137,7 @@ public sealed class SegmentCacheNntpClientTests
             using var client = new SegmentCacheNntpClient(inner, cacheDir, maxBytes: 1024 * 1024);
             await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
 
-            var recorder = new CompletionRecorder { ThrowOnInvoke = true };
+            var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
             var response = await client.DecodedBodyAsync(segmentId, recorder.Invoke, CancellationToken.None);
             Assert.NotNull(response.Stream);
             await using var output = new MemoryStream();
@@ -169,7 +170,7 @@ public sealed class SegmentCacheNntpClientTests
             using var client = new SegmentCacheNntpClient(inner, cacheDir, maxBytes: 1024 * 1024);
             await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
 
-            var recorder = new CompletionRecorder { ThrowOnInvoke = true };
+            var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
             var exclusive = new UsenetExclusiveConnection(recorder.Invoke);
             var response = await client.DecodedBodyAsync(segmentId, exclusive, CancellationToken.None);
             Assert.NotNull(response.Stream);
@@ -208,7 +209,7 @@ public sealed class SegmentCacheNntpClientTests
             using var client = new SegmentCacheNntpClient(inner, cacheDir, maxBytes: 1024 * 1024);
             await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
 
-            var recorder = new CompletionRecorder();
+            var recorder = new ArticleBodyCompletionRecorder();
             var response = await client.DecodedBodyAsync(segmentId, recorder.Invoke, CancellationToken.None);
             if (response.Stream != null)
                 await ReadAndDisposeAsync(response.Stream);
@@ -252,23 +253,6 @@ public sealed class SegmentCacheNntpClientTests
         File.WriteAllText(
             Path.Join(directory, hash) + ".h",
             JsonSerializer.Serialize(header, new JsonSerializerOptions { IncludeFields = true }));
-    }
-
-    private sealed class CompletionRecorder
-    {
-        public int Count;
-        public ArticleBodyResult? Result;
-        public string? FailureReason;
-        public bool ThrowOnInvoke;
-
-        public void Invoke(ArticleBodyResult result, string? failureReason)
-        {
-            Count++;
-            Result = result;
-            FailureReason = failureReason;
-            if (ThrowOnInvoke)
-                throw new InvalidOperationException("callback failure");
-        }
     }
 
     private sealed class ScriptedStatusNntpClient(

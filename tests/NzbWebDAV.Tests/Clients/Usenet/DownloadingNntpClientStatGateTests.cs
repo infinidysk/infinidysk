@@ -8,6 +8,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.TestUtils;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
@@ -247,7 +248,7 @@ public class DownloadingNntpClientStatGateTests
         var inner = new ManualCompletionNntpClient();
         var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
         using var client = new DownloadingNntpClient(inner, config);
-        var outerA = new CompletionRecorder();
+        var outerA = new ArticleBodyCompletionRecorder();
 
         var aTask = StartApi(client, api, "a", outerA.Invoke, CancellationToken.None);
         var aOp = await WaitForOpAsync(inner, 1);
@@ -291,7 +292,7 @@ public class DownloadingNntpClientStatGateTests
         var inner = new ManualCompletionNntpClient();
         var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
         using var client = new DownloadingNntpClient(inner, config);
-        var outerA = new CompletionRecorder();
+        var outerA = new ArticleBodyCompletionRecorder();
 
         var aTask = StartApi(client, api, "a", outerA.Invoke, CancellationToken.None);
         var aOp = await WaitForOpAsync(inner, 1);
@@ -302,7 +303,7 @@ public class DownloadingNntpClientStatGateTests
 
         var first = (Result: ArticleBodyResult.Retrieved, Reason: (string?)null);
         var second = (Result: ArticleBodyResult.NotRetrieved, Reason: "SocketException");
-        var barrier = new Barrier(2);
+        using var barrier = new Barrier(2);
         var fire1 = Task.Run(() =>
         {
             barrier.SignalAndWait();
@@ -336,7 +337,7 @@ public class DownloadingNntpClientStatGateTests
         var inner = new ManualCompletionNntpClient();
         var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
         using var client = new DownloadingNntpClient(inner, config);
-        var outerA = new CompletionRecorder { ThrowOnInvoke = true };
+        var outerA = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
 
         var aTask = StartApi(client, api, "a", outerA.Invoke, CancellationToken.None);
         var aOp = await WaitForOpAsync(inner, 1);
@@ -372,7 +373,7 @@ public class DownloadingNntpClientStatGateTests
         var inner = new ManualCompletionNntpClient();
         var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
         using var client = new DownloadingNntpClient(inner, config);
-        var outer = new CompletionRecorder();
+        var outer = new ArticleBodyCompletionRecorder();
 
         var aTask = StartApi(client, api, "a", outer.Invoke, CancellationToken.None);
         var aOp = await WaitForOpAsync(inner, 1);
@@ -400,7 +401,7 @@ public class DownloadingNntpClientStatGateTests
         var aOp = await WaitForOpAsync(inner, 1);
 
         using var cts = new CancellationTokenSource();
-        var outerB = new CompletionRecorder { ThrowOnInvoke = true };
+        var outerB = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
         var bTask = client.DecodedBodyAsync(new SegmentId("b"), outerB.Invoke, cts.Token);
         await WaitUntilAsync(() => !bTask.IsCompleted && inner.Ops.Count == 1, TimeSpan.FromSeconds(5));
         await cts.CancelAsync();
@@ -431,7 +432,7 @@ public class DownloadingNntpClientStatGateTests
         };
         var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
         using var client = new DownloadingNntpClient(inner, config);
-        var outer = new CompletionRecorder();
+        var outer = new ArticleBodyCompletionRecorder();
 
         var miss = await client.DecodedBodyAsync(new SegmentId("missing"), outer.Invoke, CancellationToken.None);
         Assert.Equal((int)UsenetResponseType.NoArticleWithThatMessageId, miss.ResponseCode);
@@ -497,7 +498,7 @@ public class DownloadingNntpClientStatGateTests
         var bTask = client.DecodedBodyAsync(new SegmentId("b"), null, CancellationToken.None);
         await WaitUntilAsync(() => !bTask.IsCompleted && inner.Ops.Count == 0, TimeSpan.FromSeconds(5));
 
-        var barrier = new Barrier(2);
+        using var barrier = new Barrier(2);
         await Task.WhenAll(
             Task.Run(() =>
             {
@@ -676,23 +677,6 @@ public class DownloadingNntpClientStatGateTests
             new ConfigItem { ConfigName = ConfigKeys.UsenetMaxDownloadConnections, ConfigValue = "10" },
         ]);
         return config;
-    }
-
-    private sealed class CompletionRecorder
-    {
-        public int Count;
-        public ArticleBodyResult? Result;
-        public string? FailureReason;
-        public bool ThrowOnInvoke;
-
-        public void Invoke(ArticleBodyResult result, string? failureReason)
-        {
-            Interlocked.Increment(ref Count);
-            Result = result;
-            FailureReason = failureReason;
-            if (ThrowOnInvoke)
-                throw new InvalidOperationException("callback failure");
-        }
     }
 
     private sealed class PendingOp
