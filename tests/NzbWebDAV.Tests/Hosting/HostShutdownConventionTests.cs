@@ -348,6 +348,8 @@ public sealed class HostShutdownConventionTests(NzbDavWebApplicationFactory fact
         await started.Task.WaitAsync(GateTimeout);
     }
 
+    // TimeoutException is not swallowed: RunHostAndSetExitCodeAsync has not
+    // reached its dispose finally while shutdown is still in flight.
     private static async Task StopIfRunningAsync(Task runTask, IHostApplicationLifetime lifetime)
     {
         if (!runTask.IsCompleted)
@@ -356,9 +358,6 @@ public sealed class HostShutdownConventionTests(NzbDavWebApplicationFactory fact
         try
         {
             await runTask.WaitAsync(GateTimeout);
-        }
-        catch (TimeoutException)
-        {
         }
         catch (OperationCanceledException)
         {
