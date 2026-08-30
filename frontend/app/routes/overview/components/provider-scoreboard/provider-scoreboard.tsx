@@ -147,8 +147,8 @@ export function ProviderScoreboard({
                         <td className="min-w-0 px-1">
                           <Tooltip content={speedHelp}>
                             <div className="flex flex-col gap-0.5">
-                              <Sparkline values={p.speedSpark ?? []} tone="success" />
-                              <div className="font-mono text-[11px] tabular-nums text-base-content/60">
+                              <Sparkline values={p.speedSpark ?? []} tone="secondary" />
+                              <div className="font-mono text-[11px] tabular-nums text-secondary">
                                 {formatSpeed(p.speedMbPerSec)}
                               </div>
                             </div>
@@ -339,7 +339,7 @@ export function OutageBuckets({ values }: { values: number[] }) {
   );
 }
 
-type SparklineTone = "success" | "error" | "warning";
+type SparklineTone = "success" | "secondary" | "error" | "warning";
 
 function buildEventPath(values: number[], step: number, y: (value: number) => number) {
   const parts: string[] = [];
@@ -425,5 +425,6 @@ export function Sparkline({
 function sparklineColor(tone: SparklineTone) {
   if (tone === "error") return "var(--color-error)";
   if (tone === "warning") return "var(--color-warning)";
+  if (tone === "secondary") return "var(--color-secondary)";
   return "var(--color-success)";
 }

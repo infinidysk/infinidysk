@@ -122,4 +122,11 @@ describe("Sparkline event mode", () => {
     expect(markup).toContain("var(--color-base-content)");
     expect(markup).toContain("var(--color-error)");
   });
+
+  it("uses the secondary token for throughput sparklines", () => {
+    const markup = renderToStaticMarkup(<Sparkline values={[1, 2, 3]} tone="secondary" />);
+
+    expect(markup).toContain("var(--color-secondary)");
+    expect(markup).not.toContain("var(--color-success)");
+  });
 });

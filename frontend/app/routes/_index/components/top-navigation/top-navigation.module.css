@@ -1,0 +1,31 @@
+.updateAvailable {
+  background-image: linear-gradient(
+    110deg,
+    var(--color-primary) 0%,
+    var(--color-info) 35%,
+    var(--color-success) 65%,
+    var(--color-info) 85%,
+    var(--color-primary) 100%
+  );
+  background-size: 300% 100%;
+  background-position: 0% 50%;
+  background-clip: padding-box;
+  animation: updateAvailableShift 6s ease-in-out infinite;
+  box-shadow: none;
+}
+
+@keyframes updateAvailableShift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .updateAvailable {
+    animation: none;
+  }
+}

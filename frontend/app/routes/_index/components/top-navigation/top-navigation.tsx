@@ -5,6 +5,7 @@ import { LiveUsenetConnections } from "../live-usenet-connections/live-usenet-co
 import { Icon } from "~/components/ui";
 import { isComparableVersion, type UpdateAvailable } from "~/utils/update-check";
 import { withUrlBase } from "~/utils/url-base";
+import styles from "./top-navigation.module.css";
 
 export type TopNavigationProps = RequiredTopNavProps & {
   version?: string;
@@ -93,18 +94,18 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
           <summary
             className={
               hasUpdate
-                ? "btn btn-primary h-10 min-h-10 shrink-0 list-none gap-2 rounded-box px-4 whitespace-nowrap"
-                : "list-none rounded-box bg-gradient-to-br from-primary via-info to-success p-px"
+                ? `btn btn-primary h-10 min-h-10 max-sm:btn-square shrink-0 list-none gap-2 rounded-box border border-base-content/10 bg-clip-padding px-4 max-sm:px-0 whitespace-nowrap ${styles.updateAvailable}`
+                : "btn h-10 min-h-10 shrink-0 list-none gap-2 rounded-box border border-base-content/10 bg-base-200 px-4 whitespace-nowrap hover:bg-base-200"
             }
             aria-label={hasUpdate ? "Update available" : "App menu"}
           >
             {hasUpdate ? (
               <>
                 <Icon name="arrow_circle_up" className="!text-[20px]" />
-                <span className="text-sm font-semibold">Update available</span>
+                <span className="hidden text-sm font-semibold sm:inline">Update available</span>
               </>
             ) : (
-              <span className="btn btn-ghost h-10 min-h-10 shrink-0 gap-2 rounded-[calc(var(--radius-box)-1px)] border-0 bg-base-200 px-4 whitespace-nowrap hover:bg-base-200 pointer-events-none">
+              <>
                 <span className="inline-flex items-center gap-2 whitespace-nowrap">
                   <span className="hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-base-content/40 sm:inline">
                     {channelLabel}
@@ -113,12 +114,12 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
                     className="hidden h-3 w-px bg-base-content/15 sm:block"
                     aria-hidden="true"
                   />
-                  <span className="font-mono text-sm tracking-tight text-base-content/80">
+                  <span className="font-mono text-xs tracking-tight text-base-content/80 sm:text-sm">
                     {displayVersion}
                   </span>
                 </span>
                 <Icon name="expand_more" className="!text-[18px] text-base-content/50" />
-              </span>
+              </>
             )}
           </summary>
           <ul className="dropdown-content menu z-50 mt-2 w-64 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg">
@@ -182,10 +183,13 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
               <input name="confirm" value="true" type="hidden" />
             </Form>
             <details className="dropdown dropdown-end" name="top-nav">
-              <summary className="btn btn-ghost btn-circle btn-sm list-none" aria-label="User menu">
+              <summary
+                className="btn btn-ghost btn-circle h-10 min-h-10 w-10 p-0 list-none"
+                aria-label="User menu"
+              >
                 <div className="avatar avatar-placeholder">
-                  <div className="w-8 rounded-full bg-neutral text-neutral-content">
-                    <span className="text-xs">{initial}</span>
+                  <div className="w-10 rounded-full bg-neutral text-neutral-content">
+                    <span className="text-sm">{initial}</span>
                   </div>
                 </div>
               </summary>
