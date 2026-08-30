@@ -1,7 +1,6 @@
 import { useRevalidator, useSearchParams } from "react-router";
 import type { Route } from "./+types/route";
-import { backendClient, type HistorySlot, type QueueSlot } from "~/clients/backend-client.server";
-import { HistoryTable } from "./components/history-table/history-table";
+import { backendClient } from "~/clients/backend-client.server";
 import { QueueTable } from "./components/queue-table/queue-table";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useHistoryEvents, useQueueEvents } from "./controllers/events-controller";
@@ -11,7 +10,18 @@ import { useQueueDropzone } from "./controllers/dropzone-controller";
 import { Alert, Button, PageHeader } from "~/components/ui";
 import { SimpleDropdown } from "~/components/simple-dropdown/simple-dropdown";
 import { useIsReadOnly } from "~/auth/authorization";
-import { isDefaultList, parseHistoryListParams, parseQueueListParams } from "./list-params";
+import {
+  isDefaultList,
+  isQueueSortField,
+  parseJobsListParams,
+  type JobsListParams,
+} from "./list-params";
+import {
+  combinedListWindow,
+  statusAppliesToHistory,
+  statusAppliesToQueue,
+} from "./combined-window";
+import { PREVIEW_HISTORY_SLOTS, PREVIEW_QUEUE_SLOTS } from "./queue-preview";
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 250] as const;
 const DEFAULT_PAGE_SIZE = 100;
@@ -28,32 +38,52 @@ function parsePageSize(value: string | null): number {
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
-  const queuePage = parsePage(url.searchParams.get("qp"));
-  const historyPage = parsePage(url.searchParams.get("hp"));
-  const queuePageSize = parsePageSize(url.searchParams.get("qps"));
-  const historyPageSize = parsePageSize(url.searchParams.get("hps"));
-  const queueParams = parseQueueListParams(url.searchParams);
-  const historyParams = parseHistoryListParams(url.searchParams);
-  const queueStart = (queuePage - 1) * queuePageSize;
-  const queueFetchStart = Math.max(0, queueStart - 1);
-  const queueFetchLimit = queuePageSize + (queuePage > 1 ? 2 : 1);
-  const [queue, history, config] = await Promise.all([
-    backendClient.getQueue(queueFetchLimit, queueFetchStart, {
-      search: queueParams.query,
-      category: queueParams.category,
-      status: queueParams.status,
-      sort: queueParams.sort ?? undefined,
-      direction: queueParams.direction ?? undefined,
-    }),
-    backendClient.getHistory(historyPageSize, (historyPage - 1) * historyPageSize, {
-      search: historyParams.query,
-      category: historyParams.category,
-      status: historyParams.status,
-      sort: historyParams.sort ?? undefined,
-      direction: historyParams.direction ?? undefined,
+  if (import.meta.env.DEV && url.searchParams.get("preview") === "1") {
+    return previewLoaderData();
+  }
+
+  const page = parsePage(url.searchParams.get("qp"));
+  const pageSize = parsePageSize(url.searchParams.get("qps"));
+  const listParams = parseJobsListParams(url.searchParams);
+  const includeQueue = statusAppliesToQueue(listParams.status);
+  const includeHistory = statusAppliesToHistory(listParams.status);
+  const combinedStart = (page - 1) * pageSize;
+  const queueFetchStart = Math.max(0, combinedStart - (combinedStart > 0 ? 1 : 0));
+  const queueFetchLimit = pageSize + (combinedStart > 0 ? 2 : 1);
+  const queueSort = isQueueSortField(listParams.sort) ? listParams.sort : undefined;
+  const queueOptions = {
+    search: listParams.query,
+    category: listParams.category,
+    status: includeQueue ? listParams.status : "",
+    sort: queueSort,
+    direction: queueSort ? (listParams.direction ?? undefined) : undefined,
+  };
+
+  const [queue, config] = await Promise.all([
+    backendClient.getQueue(includeQueue ? queueFetchLimit : 1, includeQueue ? queueFetchStart : 0, {
+      ...queueOptions,
+      status: includeQueue ? listParams.status : "",
     }),
     backendClient.getConfig(["api.categories", "api.manual-category"]),
   ]);
+
+  const totalQueueCount = includeQueue ? queue?.noofslots || 0 : 0;
+  const listWindow = combinedListWindow(totalQueueCount, page, pageSize);
+  const historyOptions = {
+    search: listParams.query,
+    category: listParams.category,
+    status: includeHistory ? listParams.status : "",
+    sort: listParams.sort ?? undefined,
+    direction: listParams.direction ?? undefined,
+  };
+  const history = includeHistory
+    ? await backendClient.getHistory(
+        listWindow.historyLimit > 0 ? listWindow.historyLimit : 1,
+        listWindow.historyLimit > 0 ? listWindow.historyStart : 0,
+        historyOptions,
+      )
+    : undefined;
+
   const categoriesValue =
     config.find((x) => x.configName === "api.categories")?.configValue ??
     "uncategorized,audio,software,tv,movies";
@@ -68,33 +98,56 @@ export async function loader({ request }: Route.LoaderArgs) {
     categories = [manualCategory, ...categories];
   }
 
+  const queueOffset = includeQueue && combinedStart > 0 ? 1 : 0;
+  const fetchedQueueSlots = includeQueue ? queue?.slots || [] : [];
+
   return {
-    queueSlots: (queue?.slots || []).slice(
-      queuePage > 1 ? 1 : 0,
-      (queuePage > 1 ? 1 : 0) + queuePageSize,
-    ),
-    previousQueueSlot: queuePage > 1 ? queue?.slots?.[0] : undefined,
-    nextQueueSlot: queue?.slots?.[(queuePage > 1 ? 1 : 0) + queuePageSize],
-    historySlots: history?.slots || [],
-    totalQueueCount: queue?.noofslots || 0,
-    totalHistoryCount: history?.noofslots || 0,
+    queueSlots: fetchedQueueSlots.slice(queueOffset, queueOffset + listWindow.queueLimit),
+    previousQueueSlot: includeQueue && combinedStart > 0 ? fetchedQueueSlots[0] : undefined,
+    nextQueueSlot: includeQueue
+      ? fetchedQueueSlots[queueOffset + listWindow.queueLimit]
+      : undefined,
+    historySlots: listWindow.historyLimit > 0 ? history?.slots || [] : [],
+    totalQueueCount,
+    totalHistoryCount: includeHistory ? history?.noofslots || 0 : 0,
     categories: categories,
     manualCategory: manualCategory,
-    queuePage: queuePage,
-    historyPage: historyPage,
-    queuePageSize,
-    historyPageSize,
-    queueParams,
-    historyParams,
+    page,
+    pageSize,
+    listParams,
     paused: queue?.paused ?? false,
     pauseInt: queue?.pause_int ?? "0",
   };
 }
 
+function previewLoaderData() {
+  const listParams: JobsListParams = {
+    query: "",
+    category: "",
+    status: "",
+    sort: null,
+    direction: null,
+  };
+  return {
+    queueSlots: PREVIEW_QUEUE_SLOTS,
+    previousQueueSlot: undefined,
+    nextQueueSlot: undefined,
+    historySlots: PREVIEW_HISTORY_SLOTS,
+    totalQueueCount: PREVIEW_QUEUE_SLOTS.length,
+    totalHistoryCount: PREVIEW_HISTORY_SLOTS.length,
+    categories: ["uncategorized", "tv", "movies", "anime"],
+    manualCategory: "uncategorized",
+    page: 1,
+    pageSize: DEFAULT_PAGE_SIZE,
+    listParams,
+    paused: false,
+    pauseInt: "0",
+  };
+}
+
 export default function Queue(props: Route.ComponentProps) {
   const isReadOnly = useIsReadOnly();
-  const { queuePageSize, historyPageSize, queuePage, historyPage, queueParams, historyParams } =
-    props.loaderData;
+  const { pageSize, page, listParams } = props.loaderData;
   const [queueSlots, setQueueSlots] = useState<PresentationQueueSlot[]>(
     props.loaderData.queueSlots,
   );
@@ -107,10 +160,9 @@ export default function Queue(props: Route.ComponentProps) {
   const uploadQueueRef = useRef<UploadingFile[]>([]);
   const manualCategoryRef = useRef<string>(props.loaderData.manualCategory);
   const isUploadingRef = useRef(false);
-  const [, setSearchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const revalidator = useRevalidator();
-  const [queueQueryDraft, setQueueQueryDraft] = useState(queueParams.query);
-  const [historyQueryDraft, setHistoryQueryDraft] = useState(historyParams.query);
+  const [queryDraft, setQueryDraft] = useState(listParams.query);
 
   useEffect(() => {
     setQueueSlots((previous) => mergePresentationSlots(props.loaderData.queueSlots, previous));
@@ -137,25 +189,20 @@ export default function Queue(props: Route.ComponentProps) {
     setTotalHistoryCount(props.loaderData.totalHistoryCount);
   }, [props.loaderData.totalHistoryCount]);
 
-  const queueTotalPages = Math.max(1, Math.ceil(totalQueueCount / queuePageSize));
-  const historyTotalPages = Math.max(1, Math.ceil(totalHistoryCount / historyPageSize));
+  const combinedTotal = totalQueueCount + totalHistoryCount;
+  const totalPages = Math.max(1, Math.ceil(combinedTotal / pageSize));
   useEffect(() => {
-    setQueueQueryDraft(queueParams.query);
-  }, [queueParams.query]);
-  useEffect(() => {
-    setHistoryQueryDraft(historyParams.query);
-  }, [historyParams.query]);
-  const isQueueLive = queuePage === 1 && isDefaultList(queueParams);
-  const isHistoryLive = historyPage === 1 && isDefaultList(historyParams);
+    setQueryDraft(listParams.query);
+  }, [listParams.query]);
+  const isLive = page === 1 && isDefaultList(listParams);
 
   const updateListParams = useCallback(
-    (kind: "queue" | "history", mutator: (params: URLSearchParams) => void) => {
-      const pageKey = kind === "queue" ? "qp" : "hp";
+    (mutator: (params: URLSearchParams) => void) => {
       setSearchParams(
         (previous) => {
           const next = new URLSearchParams(previous);
           mutator(next);
-          next.set(pageKey, "1");
+          next.set("qp", "1");
           return next;
         },
         { preventScrollReset: true },
@@ -164,17 +211,9 @@ export default function Queue(props: Route.ComponentProps) {
     [setSearchParams],
   );
 
-  const setQueueParam = useCallback(
+  const setListParam = useCallback(
     (key: string, value: string) =>
-      updateListParams("queue", (params) => {
-        if (value) params.set(key, value);
-        else params.delete(key);
-      }),
-    [updateListParams],
-  );
-  const setHistoryParam = useCallback(
-    (key: string, value: string) =>
-      updateListParams("history", (params) => {
+      updateListParams((params) => {
         if (value) params.set(key, value);
         else params.delete(key);
       }),
@@ -182,22 +221,17 @@ export default function Queue(props: Route.ComponentProps) {
   );
 
   useEffect(() => {
-    if (queueQueryDraft.trim() === queueParams.query) return;
-    const timer = window.setTimeout(() => setQueueParam("qq", queueQueryDraft.trim()), 300);
+    if (queryDraft.trim() === listParams.query) return;
+    const timer = window.setTimeout(() => setListParam("qq", queryDraft.trim()), 300);
     return () => window.clearTimeout(timer);
-  }, [queueQueryDraft, queueParams.query, setQueueParam]);
-  useEffect(() => {
-    if (historyQueryDraft.trim() === historyParams.query) return;
-    const timer = window.setTimeout(() => setHistoryParam("hq", historyQueryDraft.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [historyQueryDraft, historyParams.query, setHistoryParam]);
+  }, [queryDraft, listParams.query, setListParam]);
 
   const setPageParam = useCallback(
-    (key: string, page: number) => {
+    (nextPage: number) => {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          next.set(key, String(page));
+          next.set("qp", String(nextPage));
           return next;
         },
         { preventScrollReset: true },
@@ -205,56 +239,38 @@ export default function Queue(props: Route.ComponentProps) {
     },
     [setSearchParams],
   );
-  const onQueuePageSelected = useCallback(
-    (page: number) => setPageParam("qp", page),
-    [setPageParam],
-  );
-  const onHistoryPageSelected = useCallback(
-    (page: number) => setPageParam("hp", page),
-    [setPageParam],
-  );
 
   useEffect(() => {
-    if (queuePage > queueTotalPages) onQueuePageSelected(queueTotalPages);
-  }, [queuePage, queueTotalPages, onQueuePageSelected]);
-  useEffect(() => {
-    if (historyPage > historyTotalPages) onHistoryPageSelected(historyTotalPages);
-  }, [historyPage, historyTotalPages, onHistoryPageSelected]);
+    if (page > totalPages) setPageParam(totalPages);
+  }, [page, totalPages, setPageParam]);
 
-  const setPageSizeParam = useCallback(
-    (sizeKey: string, pageKey: string, size: number) => {
+  const onPageSizeSelected = useCallback(
+    (size: number) => {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          next.set(sizeKey, String(size));
-          next.set(pageKey, "1");
+          next.set("qps", String(size));
+          next.set("qp", "1");
           return next;
         },
         { preventScrollReset: true },
       );
     },
     [setSearchParams],
-  );
-  const onQueuePageSizeSelected = useCallback(
-    (size: number) => setPageSizeParam("qps", "qp", size),
-    [setPageSizeParam],
-  );
-  const onHistoryPageSizeSelected = useCallback(
-    (size: number) => setPageSizeParam("hps", "hp", size),
-    [setPageSizeParam],
   );
 
   const combinedQueueSlots = [...uploadingFiles.map((file) => file.queueSlot), ...queueSlots];
+  const visibleHistoryLimit = combinedListWindow(totalQueueCount, page, pageSize).historyLimit;
 
   // queue/history events
   const queueEvents = useQueueEvents(
     setUploadingFiles,
     setQueueSlots,
     uploadQueueRef,
-    queuePageSize,
-    isQueueLive,
+    pageSize,
+    isLive,
   );
-  const historyEvents = useHistoryEvents(setHistorySlots, historyPageSize);
+  const historyEvents = useHistoryEvents(setHistorySlots, Math.max(visibleHistoryLimit, 1));
 
   // websocket
   const revalidate = useCallback((): void => {
@@ -263,8 +279,8 @@ export default function Queue(props: Route.ComponentProps) {
   useQueueHistoryWebsocket(
     queueEvents,
     historyEvents,
-    isQueueLive,
-    isHistoryLive,
+    isLive,
+    isLive,
     setTotalQueueCount,
     setTotalHistoryCount,
     revalidate,
@@ -279,8 +295,13 @@ export default function Queue(props: Route.ComponentProps) {
     <div className="flex min-h-full min-w-full flex-col gap-8 px-4 py-4 text-sm text-base-content/70 md:px-8">
       <PageHeader
         title="Queue"
-        subtitle="Jobs from Sonarr, Radarr, or a manual NZB upload. Completed items move to History."
+        subtitle="Jobs from Sonarr, Radarr, or a manual NZB upload. Active items stay at the top; finished jobs remain in this list as history."
       />
+      {searchParams.get("preview") === "1" && (
+        <Alert className="alert-soft" variant="info">
+          Preview with sample jobs — this is not your real queue.
+        </Alert>
+      )}
       {dropzone.rejectMessage && <Alert variant="warning">{dropzone.rejectMessage}</Alert>}
       {props.loaderData.paused && (
         <Alert className="alert-soft" variant="info">
@@ -290,7 +311,6 @@ export default function Queue(props: Route.ComponentProps) {
         </Alert>
       )}
 
-      {/* queue */}
       <div className="min-h-[413.9px] min-[450px]:min-h-[382.9px]">
         {!isReadOnly && (
           <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
@@ -315,63 +335,39 @@ export default function Queue(props: Route.ComponentProps) {
           {!isReadOnly && <input {...dropzone.getInputProps()} />}
           <QueueTable
             queueSlots={combinedQueueSlots}
+            historySlots={historySlots}
             totalQueueCount={totalQueueCount + uploadingFiles.length}
-            pageNumber={queuePage}
-            pageSize={queuePageSize}
+            totalHistoryCount={totalHistoryCount}
+            pageNumber={page}
+            pageSize={pageSize}
             pageSizeOptions={PAGE_SIZE_OPTIONS}
-            totalPages={queueTotalPages}
-            isLive={isQueueLive}
-            listParams={queueParams}
-            searchDraft={queueQueryDraft}
-            onSearchDraftChange={setQueueQueryDraft}
-            onFilterChange={(key, value) => setQueueParam(key, value)}
+            totalPages={totalPages}
+            isLive={isLive}
+            listParams={listParams}
+            searchDraft={queryDraft}
+            onSearchDraftChange={setQueryDraft}
+            onFilterChange={(key, value) => setListParam(key, value)}
             onClearFilters={() =>
-              updateListParams("queue", (params) =>
+              updateListParams((params) =>
                 ["qq", "qcat", "qstatus", "qsort"].forEach((key) => params.delete(key)),
               )
             }
-            onSort={(field) => setQueueParam("qsort", nextSortValue(queueParams, field))}
-            onPageSelected={onQueuePageSelected}
-            onPageSizeSelected={onQueuePageSizeSelected}
+            onSort={(field) => setListParam("qsort", nextSortValue(listParams, field))}
+            onPageSelected={setPageParam}
+            onPageSizeSelected={onPageSizeSelected}
             categories={props.loaderData.categories}
             onIsSelectedChanged={queueEvents.onSelectQueueSlots}
             onIsRemovingChanged={queueEvents.onRemovingQueueSlots}
             onRemoved={queueEvents.onRemoveQueueSlots}
             onMovedToTop={queueEvents.onMoveQueueSlotsToTop}
+            onHistoryIsSelectedChanged={historyEvents.onSelectHistorySlots}
+            onHistoryIsRemovingChanged={historyEvents.onRemovingHistorySlots}
+            onHistoryRemoved={historyEvents.onRemoveHistorySlots}
             previousQueueSlot={props.loaderData.previousQueueSlot}
             nextQueueSlot={props.loaderData.nextQueueSlot}
           />
         </div>
       </div>
-
-      {/* history */}
-      {(totalHistoryCount > 0 || historySlots.length > 0 || !isDefaultList(historyParams)) && (
-        <HistoryTable
-          historySlots={historySlots}
-          totalHistoryCount={totalHistoryCount}
-          pageNumber={historyPage}
-          pageSize={historyPageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
-          totalPages={historyTotalPages}
-          isLive={isHistoryLive}
-          categories={props.loaderData.categories}
-          listParams={historyParams}
-          searchDraft={historyQueryDraft}
-          onSearchDraftChange={setHistoryQueryDraft}
-          onFilterChange={(key, value) => setHistoryParam(key, value)}
-          onClearFilters={() =>
-            updateListParams("history", (params) =>
-              ["hq", "hcat", "hstatus", "hsort"].forEach((key) => params.delete(key)),
-            )
-          }
-          onSort={(field) => setHistoryParam("hsort", nextSortValue(historyParams, field))}
-          onPageSelected={onHistoryPageSelected}
-          onPageSizeSelected={onHistoryPageSizeSelected}
-          onIsSelectedChanged={historyEvents.onSelectHistorySlots}
-          onIsRemovingChanged={historyEvents.onRemovingHistorySlots}
-          onRemoved={historyEvents.onRemoveHistorySlots}
-        />
-      )}
     </div>
   );
 }

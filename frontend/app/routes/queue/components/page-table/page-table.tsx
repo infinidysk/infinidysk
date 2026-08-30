@@ -115,6 +115,28 @@ export function PageTable({
   );
 }
 
+export function PageGroupRow({
+  label,
+  count,
+  showCompleted,
+}: {
+  label: string;
+  count?: number;
+  showCompleted?: boolean;
+}) {
+  return (
+    <tr>
+      <td
+        colSpan={showCompleted ? 8 : 7}
+        className="bg-base-200 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/50"
+      >
+        {label}
+        {count != null && <span className="ml-2 font-mono font-normal tabular-nums">{count}</span>}
+      </td>
+    </tr>
+  );
+}
+
 export type PageRowProps = {
   isUploading?: boolean;
   isSelected: boolean;

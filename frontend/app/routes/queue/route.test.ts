@@ -15,10 +15,6 @@ vi.mock("~/clients/backend-client.server", () => ({
   },
 }));
 
-vi.mock("./components/history-table/history-table", () => ({
-  HistoryTable: vi.fn(),
-}));
-
 vi.mock("./components/queue-table/queue-table", () => ({
   QueueTable: vi.fn(),
 }));
@@ -76,7 +72,7 @@ describe("queue route loader", () => {
       { configName: "api.manual-category", configValue: "anime" },
     ]);
 
-    const result = await loader(loaderRequest("?qp=2&hp=3&qps=25&hps=250"));
+    const result = await loader(loaderRequest("?qp=2&qps=25"));
 
     expect(getQueueMock).toHaveBeenCalledWith(27, 24, {
       search: "",
@@ -85,7 +81,7 @@ describe("queue route loader", () => {
       sort: undefined,
       direction: undefined,
     });
-    expect(getHistoryMock).toHaveBeenCalledWith(250, 500, {
+    expect(getHistoryMock).toHaveBeenCalledWith(20, 0, {
       search: "",
       category: "",
       status: "",
@@ -94,7 +90,7 @@ describe("queue route loader", () => {
     });
     expect(getConfigMock).toHaveBeenCalledWith(["api.categories", "api.manual-category"]);
     expect(result).toEqual({
-      queueSlots: fetchedQueueSlots.slice(1),
+      queueSlots: fetchedQueueSlots.slice(1, 6),
       previousQueueSlot: fetchedQueueSlots[0],
       nextQueueSlot: undefined,
       historySlots,
@@ -102,12 +98,9 @@ describe("queue route loader", () => {
       totalHistoryCount: 700,
       categories: ["anime", "tv", "movies"],
       manualCategory: "anime",
-      queuePage: 2,
-      historyPage: 3,
-      queuePageSize: 25,
-      historyPageSize: 250,
-      queueParams: { query: "", category: "", status: "", sort: null, direction: null },
-      historyParams: { query: "", category: "", status: "", sort: null, direction: null },
+      page: 2,
+      pageSize: 25,
+      listParams: { query: "", category: "", status: "", sort: null, direction: null },
       paused: false,
       pauseInt: "0",
     });
@@ -141,23 +134,17 @@ describe("queue route loader", () => {
       totalHistoryCount: 0,
       categories: ["uncategorized", "audio", "software", "tv", "movies"],
       manualCategory: "uncategorized",
-      queuePage: 1,
-      historyPage: 1,
-      queuePageSize: 100,
-      historyPageSize: 100,
+      page: 1,
+      pageSize: 100,
     });
   });
 
-  it("passes independent queue and history filters to the server", async () => {
+  it("passes unified list filters to queue and history", async () => {
     getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
     getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
     getConfigMock.mockResolvedValueOnce([]);
 
-    await loader(
-      loaderRequest(
-        "?qq=show&qcat=tv&qstatus=Paused&qsort=size:desc&hq=film&hcat=movies&hstatus=Failed&hsort=completed:asc",
-      ),
-    );
+    await loader(loaderRequest("?qq=show&qcat=tv&qstatus=Paused&qsort=size:desc"));
 
     expect(getQueueMock).toHaveBeenCalledWith(101, 0, {
       search: "show",
@@ -166,13 +153,34 @@ describe("queue route loader", () => {
       sort: "size",
       direction: "desc",
     });
-    expect(getHistoryMock).toHaveBeenCalledWith(100, 0, {
-      search: "film",
-      category: "movies",
-      status: "Failed",
-      sort: "completed",
-      direction: "asc",
+    expect(getHistoryMock).not.toHaveBeenCalled();
+  });
+
+  it("skips queue slots when filtering to completed history", async () => {
+    getQueueMock.mockResolvedValueOnce({ slots: [{ nzo_id: "should-not-show" }], noofslots: 4 });
+    getHistoryMock.mockResolvedValueOnce({ slots: [{ nzo_id: "history-1" }], noofslots: 12 });
+    getConfigMock.mockResolvedValueOnce([]);
+
+    const result = await loader(loaderRequest("?qstatus=Completed"));
+
+    expect(getQueueMock).toHaveBeenCalledWith(1, 0, {
+      search: "",
+      category: "",
+      status: "",
+      sort: undefined,
+      direction: undefined,
     });
+    expect(getHistoryMock).toHaveBeenCalledWith(100, 0, {
+      search: "",
+      category: "",
+      status: "Completed",
+      sort: undefined,
+      direction: undefined,
+    });
+    expect(result.queueSlots).toEqual([]);
+    expect(result.totalQueueCount).toBe(0);
+    expect(result.historySlots).toEqual([{ nzo_id: "history-1" }]);
+    expect(result.totalHistoryCount).toBe(12);
   });
 
   it("falls back to a non-empty manual category and filters empty category segments", async () => {

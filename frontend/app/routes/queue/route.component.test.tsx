@@ -16,10 +16,6 @@ vi.mock("react-router", () => ({
   useSearchParams: () => [new URLSearchParams(), vi.fn()],
 }));
 
-vi.mock("./components/history-table/history-table", () => ({
-  HistoryTable: () => <div data-testid="history-table" />,
-}));
-
 vi.mock("./components/queue-table/queue-table", () => ({
   QueueTable: () => <div data-testid="queue-table" />,
 }));
@@ -93,12 +89,9 @@ function renderQueue(queueSlots: Array<{ nzo_id: string }> = []) {
           totalHistoryCount: 0,
           categories: ["tv", "movies", "anime"],
           manualCategory: "anime",
-          queuePage: 1,
-          historyPage: 1,
-          queuePageSize: 100,
-          historyPageSize: 100,
-          queueParams: { query: "", category: "", status: "", sort: null, direction: null },
-          historyParams: { query: "", category: "", status: "", sort: null, direction: null },
+          page: 1,
+          pageSize: 100,
+          listParams: { query: "", category: "", status: "", sort: null, direction: null },
         },
       } as unknown as Parameters<typeof Queue>[0])}
     />,

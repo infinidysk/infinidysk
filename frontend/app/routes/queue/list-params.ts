@@ -49,6 +49,21 @@ export function parseQueueListParams(searchParams: URLSearchParams): QueueListPa
   );
 }
 
+/** Unified queue+history list params (queue query keys; completed sort is allowed). */
+export type JobsListParams = ListParams<HistorySortField>;
+
+export function parseJobsListParams(searchParams: URLSearchParams): JobsListParams {
+  return parseList(
+    searchParams,
+    { query: "qq", category: "qcat", status: "qstatus", sort: "qsort" },
+    historySorts,
+  );
+}
+
+export function isQueueSortField(field: string | null): field is QueueSortField {
+  return field != null && queueSorts.has(field as QueueSortField);
+}
+
 export function parseHistoryListParams(searchParams: URLSearchParams): HistoryListParams {
   return parseList(
     searchParams,

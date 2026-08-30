@@ -1,16 +1,16 @@
 import { ActionButton } from "../action-button/action-button";
 import { memo, useCallback, useMemo, useState } from "react";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
-import type { PresentationQueueSlot } from "../../route";
+import type { PresentationHistorySlot, PresentationQueueSlot } from "../../route";
 import type { TriCheckboxState } from "../tri-checkbox/tri-checkbox";
-import { PageRow, PageTable } from "../page-table/page-table";
+import { PageGroupRow, PageRow, PageTable } from "../page-table/page-table";
 import { PageSection } from "../page-section/page-section";
 import { Pagination } from "~/components/pagination/pagination";
 import { EmptyQueue } from "../empty-queue/empty-queue";
 import { SimpleDropdown } from "~/components/simple-dropdown/simple-dropdown";
-import { Button, Tooltip } from "~/components/ui";
+import { Badge, Button, Tooltip } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
-import type { QueueListParams } from "../../list-params";
+import type { JobsListParams } from "../../list-params";
 import { sortValue } from "../../list-params";
 import { ListToolbar } from "../list-toolbar/list-toolbar";
 import {
@@ -22,10 +22,14 @@ import {
   postQueuePriority,
   postQueueResume,
 } from "./queue-bulk-actions";
+import { HistoryRow } from "../history-table/history-table";
+import { canRetryHistorySlot, retryHistoryItems } from "../history-table/history-retry";
 
 export type QueueTableProps = {
   queueSlots: PresentationQueueSlot[];
+  historySlots: PresentationHistorySlot[];
   totalQueueCount: number;
+  totalHistoryCount: number;
   pageNumber: number;
   pageSize: number;
   pageSizeOptions: readonly number[];
@@ -38,9 +42,12 @@ export type QueueTableProps = {
   onIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void;
   onRemoved: (nzo_ids: Set<string>) => void;
   onMovedToTop: (nzo_ids: Set<string>) => void;
+  onHistoryIsSelectedChanged: (nzo_ids: Set<string>, isSelected: boolean) => void;
+  onHistoryIsRemovingChanged: (nzo_ids: Set<string>, isRemoving: boolean) => void;
+  onHistoryRemoved: (nzo_ids: Set<string>) => void;
   previousQueueSlot?: PresentationQueueSlot | undefined;
   nextQueueSlot?: PresentationQueueSlot | undefined;
-  listParams: QueueListParams;
+  listParams: JobsListParams;
   searchDraft: string;
   onSearchDraftChange: (value: string) => void;
   onFilterChange: (key: string, value: string) => void;
@@ -84,7 +91,9 @@ async function switchQueueItem(sourceId: string, targetId: string): Promise<bool
 
 export function QueueTable({
   queueSlots,
+  historySlots,
   totalQueueCount,
+  totalHistoryCount,
   pageNumber,
   pageSize,
   pageSizeOptions,
@@ -97,6 +106,9 @@ export function QueueTable({
   onIsRemovingChanged,
   onRemoved,
   onMovedToTop,
+  onHistoryIsSelectedChanged,
+  onHistoryIsRemovingChanged,
+  onHistoryRemoved,
   previousQueueSlot,
   nextQueueSlot,
   listParams,
@@ -110,12 +122,22 @@ export function QueueTable({
   const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
   const [isConfirmingClearAll, setIsConfirmingClearAll] = useState(false);
   const [isConfirmingClearCategory, setIsConfirmingClearCategory] = useState(false);
+  const [isConfirmingClearFailed, setIsConfirmingClearFailed] = useState(false);
+  const [isConfirmingClearAllHistory, setIsConfirmingClearAllHistory] = useState(false);
   const [clearCategory, setClearCategory] = useState(categories[0] ?? "");
   const [bulkSetCategory, setBulkSetCategory] = useState(categories[0] ?? "");
   const [bulkPriority, setBulkPriority] = useState("0");
-  const selectedCount = queueSlots.filter((x) => !!x.isSelected).length;
+  const [bulkRetryError, setBulkRetryError] = useState<string | null>(null);
+  const selectedQueueCount = queueSlots.filter((x) => !!x.isSelected).length;
+  const selectedHistoryCount = historySlots.filter((x) => !!x.isSelected).length;
+  const selectedCount = selectedQueueCount + selectedHistoryCount;
+  const visibleCount = queueSlots.length + historySlots.length;
   const headerCheckboxState: TriCheckboxState =
-    selectedCount === 0 ? "none" : selectedCount === queueSlots.length ? "all" : "some";
+    selectedCount === 0
+      ? "none"
+      : selectedCount === visibleCount && visibleCount > 0
+        ? "all"
+        : "some";
   const selectedMovableIds = useMemo(
     () => queueSlots.filter((x) => !!x.isSelected && !x.isUploading).map((x) => x.nzo_id),
     [queueSlots],
@@ -127,6 +149,10 @@ export function QueueTable({
   const selectedResumableIds = useMemo(
     () => queueSlots.filter((x) => !!x.isSelected && canResumeQueueSlot(x)).map((x) => x.nzo_id),
     [queueSlots],
+  );
+  const selectedRetryableIds = useMemo(
+    () => historySlots.filter((x) => !!x.isSelected && canRetryHistorySlot(x)).map((x) => x.nzo_id),
+    [historySlots],
   );
 
   // row events
@@ -162,9 +188,14 @@ export function QueueTable({
   // table events
   const onSelectAll = useCallback(
     (isSelected: boolean) => {
-      onIsSelectedChanged(new Set<string>(queueSlots.map((x) => x.nzo_id)), isSelected);
+      if (queueSlots.length > 0) {
+        onIsSelectedChanged(new Set<string>(queueSlots.map((x) => x.nzo_id)), isSelected);
+      }
+      if (historySlots.length > 0) {
+        onHistoryIsSelectedChanged(new Set<string>(historySlots.map((x) => x.nzo_id)), isSelected);
+      }
     },
-    [queueSlots, onIsSelectedChanged],
+    [queueSlots, historySlots, onIsSelectedChanged, onHistoryIsSelectedChanged],
   );
 
   const onRemove = useCallback(() => {
@@ -175,41 +206,82 @@ export function QueueTable({
     setIsConfirmingRemoval(false);
   }, [setIsConfirmingRemoval]);
 
-  const onConfirmRemoval = useCallback(async () => {
-    // immediately remove uploading items
-    const uploading_nzo_ids = new Set<string>(
-      queueSlots.filter((x) => x.isUploading && !!x.isSelected).map((x) => x.nzo_id),
-    );
-    onRemoved(uploading_nzo_ids);
+  const onConfirmRemoval = useCallback(
+    async (deleteCompletedFiles?: boolean) => {
+      const uploading_nzo_ids = new Set<string>(
+        queueSlots.filter((x) => x.isUploading && !!x.isSelected).map((x) => x.nzo_id),
+      );
+      onRemoved(uploading_nzo_ids);
 
-    // call backend to remove queued items
-    const queued_nzo_ids = new Set<string>(
-      queueSlots.filter((x) => !x.isUploading && !!x.isSelected).map((x) => x.nzo_id),
-    );
-    setIsConfirmingRemoval(false);
-    onIsRemovingChanged(queued_nzo_ids, true);
-    try {
-      const url = `/api?mode=queue&name=delete`;
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json;charset=UTF-8",
-        },
-        body: JSON.stringify({ nzo_ids: Array.from(queued_nzo_ids) }),
-      });
-      if (response.ok) {
-        // SABnzbd API (`/api?mode=queue&name=delete`) response shape
-        const data = (await response.json()) as { status?: boolean };
-        if (data.status === true) {
-          onRemoved(queued_nzo_ids);
-          return;
+      const queued_nzo_ids = new Set<string>(
+        queueSlots.filter((x) => !x.isUploading && !!x.isSelected).map((x) => x.nzo_id),
+      );
+      const history_nzo_ids = new Set<string>(
+        historySlots.filter((x) => !!x.isSelected).map((x) => x.nzo_id),
+      );
+      setIsConfirmingRemoval(false);
+
+      if (queued_nzo_ids.size > 0) {
+        onIsRemovingChanged(queued_nzo_ids, true);
+        try {
+          const url = `/api?mode=queue&name=delete`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json;charset=UTF-8",
+            },
+            body: JSON.stringify({ nzo_ids: Array.from(queued_nzo_ids) }),
+          });
+          if (response.ok) {
+            const data = (await response.json()) as { status?: boolean };
+            if (data.status === true) {
+              onRemoved(queued_nzo_ids);
+            } else {
+              onIsRemovingChanged(queued_nzo_ids, false);
+            }
+          } else {
+            onIsRemovingChanged(queued_nzo_ids, false);
+          }
+        } catch {
+          onIsRemovingChanged(queued_nzo_ids, false);
         }
       }
-    } catch {
-      // network/API failure: queue unchanged; removing state resets below
-    }
-    onIsRemovingChanged(queued_nzo_ids, false);
-  }, [queueSlots, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
+
+      if (history_nzo_ids.size > 0) {
+        onHistoryIsRemovingChanged(history_nzo_ids, true);
+        try {
+          const url = `/api?mode=history&name=delete&del_completed_files=${deleteCompletedFiles ? 1 : 0}`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json;charset=UTF-8",
+            },
+            body: JSON.stringify({ nzo_ids: Array.from(history_nzo_ids) }),
+          });
+          if (response.ok) {
+            const data = (await response.json()) as { status?: boolean };
+            if (data.status === true) {
+              onHistoryRemoved(history_nzo_ids);
+            } else {
+              onHistoryIsRemovingChanged(history_nzo_ids, false);
+            }
+          } else {
+            onHistoryIsRemovingChanged(history_nzo_ids, false);
+          }
+        } catch {
+          onHistoryIsRemovingChanged(history_nzo_ids, false);
+        }
+      }
+    },
+    [
+      queueSlots,
+      historySlots,
+      onIsRemovingChanged,
+      onRemoved,
+      onHistoryIsRemovingChanged,
+      onHistoryRemoved,
+    ],
+  );
 
   const onPauseSelected = useCallback(async () => {
     if (selectedPausableIds.length === 0) return;
@@ -245,6 +317,35 @@ export function QueueTable({
     await postClearQueue(clearCategory);
   }, [clearCategory]);
 
+  const onBulkRetry = useCallback(async () => {
+    if (selectedRetryableIds.length === 0) return;
+    setBulkRetryError(null);
+    const result = await retryHistoryItems(selectedRetryableIds);
+    if (!result.ok) {
+      setBulkRetryError(result.failed[0]?.error ?? "Failed to retry history items.");
+    }
+  }, [selectedRetryableIds]);
+
+  const onConfirmClearFailed = useCallback(async (deleteCompletedFiles?: boolean) => {
+    setIsConfirmingClearFailed(false);
+    try {
+      const url = `/api?mode=history&name=delete&value=failed&del_completed_files=${deleteCompletedFiles ? 1 : 0}`;
+      await fetch(url, { method: "POST" });
+    } catch {
+      /* best effort */
+    }
+  }, []);
+
+  const onConfirmClearAllHistory = useCallback(async (deleteCompletedFiles?: boolean) => {
+    setIsConfirmingClearAllHistory(false);
+    try {
+      const url = `/api?mode=history&name=delete&value=all&del_completed_files=${deleteCompletedFiles ? 1 : 0}`;
+      await fetch(url, { method: "POST" });
+    } catch {
+      /* best effort */
+    }
+  }, []);
+
   const onMoveSelectedToTop = useCallback(async () => {
     if (selectedMovableIds.length === 0) return;
     const ok = await moveQueueItemsToTop(selectedMovableIds);
@@ -257,10 +358,20 @@ export function QueueTable({
   const sectionTitle = (
     <div className="flex flex-wrap items-center gap-2.5">
       <h2 className="text-xl font-semibold text-base-content">Queue</h2>
+      {totalQueueCount > 0 && (
+        <Badge className="badge-ghost badge-sm font-mono tabular-nums">
+          {totalQueueCount} active
+        </Badge>
+      )}
+      {totalHistoryCount > 0 && (
+        <Badge className="badge-ghost badge-sm font-mono tabular-nums">
+          {totalHistoryCount} history
+        </Badge>
+      )}
       {!isReadOnly && totalQueueCount > 0 && (
         <>
           <Button variant="secondary" size="xsmall" onClick={() => setIsConfirmingClearAll(true)}>
-            Clear all
+            Clear queue
           </Button>
           {categories.length > 0 && (
             <>
@@ -280,6 +391,24 @@ export function QueueTable({
           )}
         </>
       )}
+      {!isReadOnly && totalHistoryCount > 0 && (
+        <>
+          <Button
+            variant="secondary"
+            size="xsmall"
+            onClick={() => setIsConfirmingClearFailed(true)}
+          >
+            Clear failed
+          </Button>
+          <Button
+            variant="secondary"
+            size="xsmall"
+            onClick={() => setIsConfirmingClearAllHistory(true)}
+          >
+            Clear history
+          </Button>
+        </>
+      )}
       {!isReadOnly && headerCheckboxState !== "none" && (
         <>
           {selectedPausableIds.length > 0 && (
@@ -295,6 +424,11 @@ export function QueueTable({
           {selectedMovableIds.length > 0 && (
             <Tooltip content="Move selected to top of queue">
               <ActionButton type="move-top" onClick={() => void onMoveSelectedToTop()} />
+            </Tooltip>
+          )}
+          {selectedRetryableIds.length > 0 && (
+            <Tooltip content="Retry selected failed items">
+              <ActionButton type="retry" onClick={() => void onBulkRetry()} />
             </Tooltip>
           )}
           {selectedMovableIds.length > 0 && categories.length > 0 && (
@@ -334,17 +468,19 @@ export function QueueTable({
           <ActionButton type="delete" onClick={onRemove} />
         </>
       )}
+      {bulkRetryError && <span className="text-xs text-error">{bulkRetryError}</span>}
     </div>
   );
 
+  const combinedTotal = totalQueueCount + totalHistoryCount;
   const footer =
-    totalQueueCount > 0 ? (
+    combinedTotal > 0 ? (
       <div className="flex flex-col items-center gap-2 text-xs text-base-content/60">
         {!isLive && <span>Live updates pause on older pages. Go to page 1 for live.</span>}
         <Pagination
           pageNumber={pageNumber}
           totalPages={totalPages}
-          totalCount={totalQueueCount}
+          totalCount={combinedTotal}
           pageSize={pageSize}
           pageSizeOptions={pageSizeOptions}
           onPageSelected={onPageSelected}
@@ -353,13 +489,12 @@ export function QueueTable({
       </div>
     ) : undefined;
 
+  const isEmpty = queueSlots.length === 0 && historySlots.length === 0;
+
   return (
-    <PageSection
-      title={sectionTitle}
-      {...(totalQueueCount > 0 ? { badgeText: String(totalQueueCount) } : {})}
-    >
+    <PageSection title={sectionTitle}>
       <ListToolbar
-        label="Queue"
+        label="queue"
         query={searchDraft}
         category={listParams.category}
         status={listParams.status}
@@ -369,6 +504,8 @@ export function QueueTable({
           { value: "Downloading", label: "Downloading" },
           { value: "Queued", label: "Queued" },
           { value: "Paused", label: "Paused" },
+          { value: "Completed", label: "Completed" },
+          { value: "Failed", label: "Failed" },
         ]}
         sorts={[
           { value: "name:asc", label: "Name A–Z" },
@@ -377,6 +514,8 @@ export function QueueTable({
           { value: "size:asc", label: "Size smallest" },
           { value: "status:asc", label: "Status" },
           { value: "category:asc", label: "Category" },
+          { value: "completed:desc", label: "Newest first" },
+          { value: "completed:asc", label: "Oldest first" },
         ]}
         isFiltered={
           !!(listParams.query || listParams.category || listParams.status || listParams.sort)
@@ -387,13 +526,14 @@ export function QueueTable({
         onSortChange={(value) => onFilterChange("qsort", value)}
         onClear={onClearFilters}
       />
-      {queueSlots?.length == 0 ? (
+      {isEmpty ? (
         <EmptyQueue />
       ) : (
         <PageTable
           headerCheckboxState={headerCheckboxState}
           onHeaderCheckboxChange={onSelectAll}
           footer={footer}
+          showCompleted
           selectable={!isReadOnly}
           sort={listParams.sort ?? undefined}
           direction={listParams.direction}
@@ -411,14 +551,31 @@ export function QueueTable({
               onMovedToTop={onRowMovedToTop}
             />
           ))}
+          {queueSlots.length > 0 && historySlots.length > 0 && (
+            <PageGroupRow label="History" count={totalHistoryCount} showCompleted />
+          )}
+          {historySlots.map((slot) => (
+            <HistoryRow
+              key={slot.nzo_id}
+              slot={slot}
+              onIsSelectedChanged={(id, isSelected) =>
+                onHistoryIsSelectedChanged(new Set<string>([id]), isSelected)
+              }
+              onIsRemovingChanged={(id, isRemoving) =>
+                onHistoryIsRemovingChanged(new Set<string>([id]), isRemoving)
+              }
+              onRemoved={(id) => onHistoryRemoved(new Set([id]))}
+            />
+          ))}
         </PageTable>
       )}
 
       <ConfirmModal
         show={isConfirmingRemoval}
-        title="Remove From Queue?"
-        message={`${selectedCount} item(s) will be removed`}
-        onConfirm={() => void onConfirmRemoval()}
+        title="Remove items?"
+        message={removalMessage(selectedQueueCount, selectedHistoryCount)}
+        {...(selectedHistoryCount > 0 ? { checkboxMessage: "Delete mounted files" } : {})}
+        onConfirm={(isChecked) => void onConfirmRemoval(isChecked)}
         onCancel={onCancelRemoval}
       />
       <ConfirmModal
@@ -435,8 +592,32 @@ export function QueueTable({
         onConfirm={() => void onConfirmClearCategory()}
         onCancel={() => setIsConfirmingClearCategory(false)}
       />
+      <ConfirmModal
+        show={isConfirmingClearFailed}
+        title="Clear failed history?"
+        message="All failed history items will be removed."
+        checkboxMessage="Delete mounted files"
+        onConfirm={(isChecked) => void onConfirmClearFailed(isChecked)}
+        onCancel={() => setIsConfirmingClearFailed(false)}
+      />
+      <ConfirmModal
+        show={isConfirmingClearAllHistory}
+        title="Clear all history?"
+        message="All history items will be removed."
+        checkboxMessage="Delete mounted files"
+        onConfirm={(isChecked) => void onConfirmClearAllHistory(isChecked)}
+        onCancel={() => setIsConfirmingClearAllHistory(false)}
+      />
     </PageSection>
   );
+}
+
+function removalMessage(queueCount: number, historyCount: number) {
+  const parts: string[] = [];
+  if (queueCount > 0) parts.push(`${queueCount} queued item(s)`);
+  if (historyCount > 0) parts.push(`${historyCount} history item(s)`);
+  if (parts.length === 0) return "Selected items will be removed.";
+  return `${parts.join(" and ")} will be removed.`;
 }
 
 type QueueRowProps = {
@@ -599,6 +780,7 @@ export const QueueRow = memo(
           error={slot.error}
           indexer={slot.indexer}
           providers={slot.providers}
+          showCompleted
         />
         <ConfirmModal
           show={isConfirmingRemoval}
