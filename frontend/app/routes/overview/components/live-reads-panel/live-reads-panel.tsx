@@ -230,7 +230,10 @@ function ReadRow({
           <span className="block max-w-full truncate">
             {clientLabelFromUserAgent(r.clientUserAgent)}
             {r.clientIp ? (
-              <span className="hidden font-mono text-base-content/40 sm:inline"> · {r.clientIp}</span>
+              <span className="hidden font-mono text-base-content/40 sm:inline">
+                {" "}
+                · {r.clientIp}
+              </span>
             ) : null}
           </span>
         </Tooltip>
