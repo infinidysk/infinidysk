@@ -385,7 +385,7 @@ export function initializeWebsocketClient(
       const socket = currentSocket;
       currentSocket = null;
       if (socket && socket.readyState !== WebSocket.CLOSED) {
-        socket.close();
+        socket.terminate();
       }
     },
   };

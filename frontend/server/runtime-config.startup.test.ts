@@ -116,7 +116,7 @@ function collectOutput(child: ReturnType<typeof spawn>): Promise<{
       clearTimeout(timer);
       reject(error);
     });
-    child.once("exit", (exitCode, signal) => {
+    child.once("close", (exitCode, signal) => {
       clearTimeout(timer);
       resolve({ stdout, stderr, exitCode, signal });
     });
