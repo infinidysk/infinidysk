@@ -563,7 +563,7 @@ public class ProgressHeartbeatTests
     {
         var sink = new CollectingSink();
         var previous = Log.Logger;
-        var logger = new LoggerConfiguration()
+        using var logger = new LoggerConfiguration()
             .MinimumLevel.Verbose()
             .WriteTo.Sink(sink)
             .CreateLogger();
@@ -575,7 +575,6 @@ public class ProgressHeartbeatTests
         finally
         {
             Log.Logger = previous;
-            logger.Dispose();
         }
 
         return sink.Events;
