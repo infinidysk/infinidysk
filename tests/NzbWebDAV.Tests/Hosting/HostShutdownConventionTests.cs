@@ -357,10 +357,13 @@ public sealed class HostShutdownConventionTests(NzbDavWebApplicationFactory fact
         {
             await runTask.WaitAsync(GateTimeout);
         }
-        catch (Exception exception) when (
-            exception is TimeoutException
-            or exception is OperationCanceledException
-            or exception is InvalidOperationException)
+        catch (TimeoutException)
+        {
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (InvalidOperationException)
         {
             // Tear-down only: the test body already observed success or failure.
         }
