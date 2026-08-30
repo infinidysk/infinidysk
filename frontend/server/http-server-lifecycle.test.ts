@@ -36,9 +36,7 @@ type LifecycleTestOptions = {
   markFatal: ReturnType<typeof vi.fn<(exitCode: number, phase: FatalPhase) => void>>;
 };
 
-function lifecycleOptions(
-  overrides: Partial<LifecycleTestOptions> = {},
-): LifecycleTestOptions {
+function lifecycleOptions(overrides: Partial<LifecycleTestOptions> = {}): LifecycleTestOptions {
   return {
     configuredPort: 3000,
     logError: vi.fn<(message: string, detail?: Error) => void>(),
