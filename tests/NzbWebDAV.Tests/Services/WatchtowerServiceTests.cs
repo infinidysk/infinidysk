@@ -93,14 +93,14 @@ public sealed class WatchtowerServiceTests
         var secondStarted = NewSignal();
         var starts = 0;
         var callbackCount = 0;
-        var storedReg = default(CancellationTokenRegistration);
+        using var storedReg = new StoredRegistration();
 
         await using var run = Start(clock, async (_, ct) =>
         {
             var ordinal = Interlocked.Increment(ref starts);
             if (ordinal == 1)
             {
-                storedReg = ct.Register(() =>
+                storedReg.Registration = ct.Register(() =>
                 {
                     Interlocked.Increment(ref callbackCount);
                     callbackStarted.TrySetResult();
@@ -149,7 +149,6 @@ public sealed class WatchtowerServiceTests
         finally
         {
             releaseCallback.TrySetResult();
-            storedReg.Dispose();
         }
     }
 
@@ -221,7 +220,7 @@ public sealed class WatchtowerServiceTests
     {
         var clock = new ControllableTimeProvider();
         var error = new InvalidOperationException("watchtower-callback-failure");
-        var storedReg = default(CancellationTokenRegistration);
+        using var storedReg = new StoredRegistration();
         var firstReturned = NewSignal();
         var secondStarted = NewSignal();
         var starts = 0;
@@ -233,7 +232,7 @@ public sealed class WatchtowerServiceTests
             var ordinal = Interlocked.Increment(ref starts);
             if (ordinal == 1)
             {
-                storedReg = ct.Register(() => throw error);
+                storedReg.Registration = ct.Register(() => throw error);
                 firstReturned.TrySetResult();
                 return;
             }
@@ -242,30 +241,23 @@ public sealed class WatchtowerServiceTests
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
         });
 
-        try
-        {
-            await firstReturned.Task.WaitAsync(TestTimeout);
-            var cycle1 = await WaitClearedAsync(run.Service);
-            Assert.True(cycle1.BothTasksObserved);
-            await WaitForPostCycleDelayAsync(clock);
+        await firstReturned.Task.WaitAsync(TestTimeout);
+        var cycle1 = await WaitClearedAsync(run.Service);
+        Assert.True(cycle1.BothTasksObserved);
+        await WaitForPostCycleDelayAsync(clock);
 
-            var failure = Assert.Single(
-                sink.Events,
-                e => e.Exception is not null && HasException(e.Exception, error));
-            Assert.Equal(LogEventLevel.Error, failure.Level);
-            Assert.Contains("unexpected cycle cancellation failure", failure.MessageTemplate.Text);
-            Assert.Equal(1, sink.Events.Count(e => e.Exception is not null && HasException(e.Exception, error)));
-            Assert.DoesNotContain(sink.Events, IsWatchdogWarning);
-            Assert.False(secondStarted.Task.IsCompleted);
+        var failure = Assert.Single(
+            sink.Events,
+            e => e.Exception is not null && HasException(e.Exception, error));
+        Assert.Equal(LogEventLevel.Error, failure.Level);
+        Assert.Contains("unexpected cycle cancellation failure", failure.MessageTemplate.Text);
+        Assert.Equal(1, sink.Events.Count(e => e.Exception is not null && HasException(e.Exception, error)));
+        Assert.DoesNotContain(sink.Events, IsWatchdogWarning);
+        Assert.False(secondStarted.Task.IsCompleted);
 
-            await AdvanceScheduledAsync(clock, WatchtowerService.LoopErrorDelay);
-            await secondStarted.Task.WaitAsync(TestTimeout);
-            Assert.Equal(2, Volatile.Read(ref starts));
-        }
-        finally
-        {
-            storedReg.Dispose();
-        }
+        await AdvanceScheduledAsync(clock, WatchtowerService.LoopErrorDelay);
+        await secondStarted.Task.WaitAsync(TestTimeout);
+        Assert.Equal(2, Volatile.Read(ref starts));
     }
 
     [Fact]
@@ -273,7 +265,7 @@ public sealed class WatchtowerServiceTests
     {
         var clock = new ControllableTimeProvider();
         var oom = new OutOfMemoryException("watchtower-callback-oom");
-        var storedReg = default(CancellationTokenRegistration);
+        using var storedReg = new StoredRegistration();
         var firstReturned = NewSignal();
         var starts = 0;
         var sink = new CollectingSink();
@@ -282,29 +274,22 @@ public sealed class WatchtowerServiceTests
         await using var run = Start(clock, (_, ct) =>
         {
             Interlocked.Increment(ref starts);
-            storedReg = ct.Register(() => throw oom);
+            storedReg.Registration = ct.Register(() => throw oom);
             firstReturned.TrySetResult();
             return Task.CompletedTask;
         });
 
-        try
-        {
-            await firstReturned.Task.WaitAsync(TestTimeout);
-            var thrown = await Assert.ThrowsAsync<OutOfMemoryException>(
-                () => run.ExecuteTask.WaitAsync(TestTimeout));
-            Assert.Same(oom, thrown);
-            var cycle1 = await WaitClearedAsync(run.Service);
-            Assert.True(cycle1.BothTasksObserved);
-            Assert.Equal(1, Volatile.Read(ref starts));
-            Assert.DoesNotContain(sink.Events, e => e.MessageTemplate.Text.Contains("Watchtower loop error"));
-            Assert.DoesNotContain(sink.Events, e => e.MessageTemplate.Text.Contains("cancellation failure"));
-            Assert.DoesNotContain(sink.Events, IsWatchdogWarning);
-            Assert.Null(run.Service.ActiveCycleForTests);
-        }
-        finally
-        {
-            storedReg.Dispose();
-        }
+        await firstReturned.Task.WaitAsync(TestTimeout);
+        var thrown = await Assert.ThrowsAsync<OutOfMemoryException>(
+            () => run.ExecuteTask.WaitAsync(TestTimeout));
+        Assert.Same(oom, thrown);
+        var cycle1 = await WaitClearedAsync(run.Service);
+        Assert.True(cycle1.BothTasksObserved);
+        Assert.Equal(1, Volatile.Read(ref starts));
+        Assert.DoesNotContain(sink.Events, e => e.MessageTemplate.Text.Contains("Watchtower loop error"));
+        Assert.DoesNotContain(sink.Events, e => e.MessageTemplate.Text.Contains("cancellation failure"));
+        Assert.DoesNotContain(sink.Events, IsWatchdogWarning);
+        Assert.Null(run.Service.ActiveCycleForTests);
     }
 
     [Fact]
@@ -313,7 +298,7 @@ public sealed class WatchtowerServiceTests
         var clock = new ControllableTimeProvider();
         var cancellationOom = new OutOfMemoryException("watchtower-callback-oom");
         var cycleOom = new OutOfMemoryException("watchtower-cycle-oom");
-        var storedReg = default(CancellationTokenRegistration);
+        using var storedReg = new StoredRegistration();
         var firstReturned = NewSignal();
         var starts = 0;
         var sink = new CollectingSink();
@@ -322,25 +307,18 @@ public sealed class WatchtowerServiceTests
         await using var run = Start(clock, (_, ct) =>
         {
             Interlocked.Increment(ref starts);
-            storedReg = ct.Register(() => throw cancellationOom);
+            storedReg.Registration = ct.Register(() => throw cancellationOom);
             firstReturned.TrySetResult();
             throw cycleOom;
         });
 
-        try
-        {
-            await firstReturned.Task.WaitAsync(TestTimeout);
-            var thrown = await Assert.ThrowsAsync<OutOfMemoryException>(
-                () => run.ExecuteTask.WaitAsync(TestTimeout));
-            Assert.Same(cancellationOom, thrown);
-            Assert.True((await WaitClearedAsync(run.Service)).BothTasksObserved);
-            Assert.Equal(1, Volatile.Read(ref starts));
-            Assert.DoesNotContain(sink.Events, e => e.Level is LogEventLevel.Warning or LogEventLevel.Error);
-        }
-        finally
-        {
-            storedReg.Dispose();
-        }
+        await firstReturned.Task.WaitAsync(TestTimeout);
+        var thrown = await Assert.ThrowsAsync<OutOfMemoryException>(
+            () => run.ExecuteTask.WaitAsync(TestTimeout));
+        Assert.Same(cancellationOom, thrown);
+        Assert.True((await WaitClearedAsync(run.Service)).BothTasksObserved);
+        Assert.Equal(1, Volatile.Read(ref starts));
+        Assert.DoesNotContain(sink.Events, e => e.Level is LogEventLevel.Warning or LogEventLevel.Error);
     }
 
     [Fact]
@@ -685,40 +663,33 @@ public sealed class WatchtowerServiceTests
         var clock = new ControllableTimeProvider();
         var callbackError = new InvalidOperationException("watchtower-callback-aggregate");
         var cycleError = new InvalidOperationException("watchtower-cycle-aggregate");
-        var storedReg = default(CancellationTokenRegistration);
+        using var storedReg = new StoredRegistration();
         var firstReturned = NewSignal();
         var sink = new CollectingSink();
         using var logs = CaptureLogs(sink);
 
         await using var run = Start(clock, (_, ct) =>
         {
-            storedReg = ct.Register(() => throw callbackError);
+            storedReg.Registration = ct.Register(() => throw callbackError);
             firstReturned.TrySetResult();
             throw cycleError;
         });
 
-        try
-        {
-            await firstReturned.Task.WaitAsync(TestTimeout);
-            await WaitClearedAsync(run.Service);
-            await WaitForPostCycleDelayAsync(clock);
+        await firstReturned.Task.WaitAsync(TestTimeout);
+        await WaitClearedAsync(run.Service);
+        await WaitForPostCycleDelayAsync(clock);
 
-            var failure = Assert.Single(
-                sink.Events,
-                e => e.Exception is not null && HasException(e.Exception, callbackError));
-            Assert.True(HasException(failure.Exception!, cycleError));
-            var aggregate = Assert.IsType<AggregateException>(failure.Exception);
-            var leaves = aggregate.Flatten().InnerExceptions;
-            Assert.Same(callbackError, leaves.First(ex => ReferenceEquals(ex, callbackError)));
-            Assert.Same(cycleError, leaves.First(ex => ReferenceEquals(ex, cycleError)));
-            Assert.True(
-                IndexOf(leaves, callbackError) < IndexOf(leaves, cycleError),
-                aggregate.ToString());
-        }
-        finally
-        {
-            storedReg.Dispose();
-        }
+        var failure = Assert.Single(
+            sink.Events,
+            e => e.Exception is not null && HasException(e.Exception, callbackError));
+        Assert.True(HasException(failure.Exception!, cycleError));
+        var aggregate = Assert.IsType<AggregateException>(failure.Exception);
+        var leaves = aggregate.Flatten().InnerExceptions;
+        Assert.Same(callbackError, leaves.First(ex => ReferenceEquals(ex, callbackError)));
+        Assert.Same(cycleError, leaves.First(ex => ReferenceEquals(ex, cycleError)));
+        Assert.True(
+            IndexOf(leaves, callbackError) < IndexOf(leaves, cycleError),
+            aggregate.ToString());
     }
 
     private static HostedRun Start(
@@ -864,6 +835,13 @@ public sealed class WatchtowerServiceTests
         public void Dispose() => Log.Logger = previous;
     }
 
+    private sealed class StoredRegistration : IDisposable
+    {
+        public CancellationTokenRegistration Registration { get; set; }
+
+        public void Dispose() => Registration.Dispose();
+    }
+
     private sealed class HostedRun(
         WatchtowerService service,
         ConfigManager config,
@@ -886,11 +864,18 @@ public sealed class WatchtowerServiceTests
             {
                 if (!HostCts.IsCancellationRequested)
                     await HostCts.CancelAsync();
+
+                if (ExecuteTask.IsCompleted)
+                {
+                    _ = ExecuteTask.Exception;
+                    return;
+                }
+
                 try
                 {
                     await ExecuteTask.WaitAsync(TestTimeout);
                 }
-                catch (Exception)
+                catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
                     // Faulted hosted execution is asserted by the test body.
                 }

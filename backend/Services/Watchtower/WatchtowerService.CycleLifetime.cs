@@ -297,7 +297,11 @@ public partial class WatchtowerService
                 ? RunCycleAsync(cycleWatch, active.Token)
                 : RunCycleOverride(cycleWatch, active.Token);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException ex)
+        {
+            cycleTask = Task.FromException(ex);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             cycleTask = Task.FromException(ex);
         }
@@ -375,7 +379,7 @@ public partial class WatchtowerService
         {
             // Owner cancellation cancelled the watchdog delay.
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             watchdogFailure = ExceptionDispatchInfo.Capture(ex);
         }
@@ -385,7 +389,11 @@ public partial class WatchtowerService
         {
             await hostRegistration.DisposeAsync().ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException ex)
+        {
+            registrationFailure = ExceptionDispatchInfo.Capture(ex);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             registrationFailure = ExceptionDispatchInfo.Capture(ex);
         }
@@ -440,7 +448,7 @@ public partial class WatchtowerService
         {
             return new TaskObservation(TaskObservationStatus.Canceled, ExceptionDispatchInfo.Capture(ex));
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new TaskObservation(TaskObservationStatus.Faulted, ExceptionDispatchInfo.Capture(ex));
         }
