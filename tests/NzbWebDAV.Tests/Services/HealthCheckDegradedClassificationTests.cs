@@ -84,7 +84,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         _failureTracker = new StreamingFailureTracker();
         _healthCheckConnectionGate = new HealthCheckConnectionGate(_configManager);
         _patchStore = new RepairPatchStore(Path.Join(_configRoot, "patches"), 1024 * 1024);
-        await _patchStore.CatalogLoadTask;
+        await _patchStore.EnsureCatalogLoadedAsync(CancellationToken.None);
 
         var websocketManager = new WebsocketManager();
         _usenet = new UsenetStreamingClient(

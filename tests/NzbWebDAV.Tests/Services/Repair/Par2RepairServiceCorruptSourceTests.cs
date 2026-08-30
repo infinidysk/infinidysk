@@ -53,7 +53,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
     {
         var patchDir = Path.Join(_configRoot, "reconcile-patches");
         var store = new RepairPatchStore(patchDir, 1024 * 1024);
-        await store.CatalogLoadTask;
+        await store.EnsureCatalogLoadedAsync(CancellationToken.None);
         var service = new Par2RepairService(_config, null!, store);
         var runningId = Guid.NewGuid();
         var queuedId = Guid.NewGuid();
@@ -582,7 +582,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
 
         var patchDir = Path.Join(_configRoot, "patches", token);
         var store = new RepairPatchStore(patchDir, 32 * 1024 * 1024);
-        await store.CatalogLoadTask;
+        await store.EnsureCatalogLoadedAsync(CancellationToken.None);
         var usenet = new UsenetStreamingClient(fake, store);
         var service = new Par2RepairService(_config, usenet, store);
         return new SeededRelease(item, contentIds, fake, store, service, usenet);

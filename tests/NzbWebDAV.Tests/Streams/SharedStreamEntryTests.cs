@@ -1,4 +1,5 @@
 using System.Text;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
@@ -8,8 +9,14 @@ using NzbWebDAV.WebDav.Base;
 namespace NzbWebDAV.Tests.Streams;
 
 [Collection(nameof(GlobalLoggerCollection))]
-public class SharedStreamEntryTests
+public class SharedStreamEntryTests : IDisposable
 {
+    public SharedStreamEntryTests()
+        => SynchronousObserverInvoker.ResetFailureLogThrottleForTests();
+
+    public void Dispose()
+        => SynchronousObserverInvoker.ResetFailureLogThrottleForTests();
+
     [Fact]
     public async Task TwoReaders_AreByteExact_AndFetchEachSegmentOnce()
     {
@@ -306,6 +313,86 @@ public class SharedStreamEntryTests
     }
 
     [Fact]
+    public async Task RetainedBytes_ThrowingFirstSubscriber_DoesNotFailPumpOrSkipLaterSubscriber()
+    {
+        var payload = Encoding.ASCII.GetBytes("hello shared stream payload!!!!");
+        var upstream = new MemoryStream(payload, writable: false);
+        var firstCount = 0;
+        var secondCount = 0;
+        var retained = new List<long>();
+        await using var entry = StartEntry(upstream, payload.Length, configure: e =>
+        {
+            Action<long> first = _ =>
+            {
+                Interlocked.Increment(ref firstCount);
+                throw new InvalidOperationException("retained-bytes observer");
+            };
+            Action<long> second = value =>
+            {
+                Interlocked.Increment(ref secondCount);
+                lock (retained) retained.Add(value);
+            };
+            e.OnRingRetainedBytes = first + second;
+        });
+        await using var reader = Attach(entry, 0);
+
+        Assert.Equal(payload, await ReadAllAsync(reader));
+        Assert.True(firstCount > 0);
+        Assert.Equal(firstCount, secondCount);
+        lock (retained)
+            Assert.All(retained, value => Assert.True(value >= 0));
+        Assert.True(entry.Ring.IsComplete);
+        Assert.NotEqual(SharedStreamReapReason.Failure, entry.ReapReason);
+    }
+
+    [Fact]
+    public async Task ForceEvictions_ThrowingFirstSubscriber_DoesNotFailPumpOrSkipLaterSubscriber()
+    {
+        var (upstream, _, payload) = CreateUpstream(segmentCount: 8, segmentSize: 16);
+        var firstCount = 0;
+        var secondCount = 0;
+        var evictionCounts = new List<int>();
+        await using var entry = StartEntry(
+            upstream, payload.Length, ringSize: 16, chunkSize: 8, leadBytes: 8, configure: e =>
+            {
+                Action<int> first = _ =>
+                {
+                    Interlocked.Increment(ref firstCount);
+                    throw new InvalidOperationException("force-eviction observer");
+                };
+                Action<int> second = count =>
+                {
+                    Interlocked.Increment(ref secondCount);
+                    lock (evictionCounts) evictionCounts.Add(count);
+                };
+                e.OnForceEvictions = first + second;
+            });
+        await using var slow = Attach(entry, 0, (offset, _) =>
+        {
+            var (privateStream, _, _) = CreateUpstream(segmentCount: 8, segmentSize: 16);
+            privateStream.Seek(offset, SeekOrigin.Begin);
+            return Task.FromResult<Stream>(privateStream);
+        });
+        await using var fast = Attach(entry, 0);
+
+        var head = new byte[4];
+        Assert.Equal(4, await ReadExactAsync(slow, head));
+        Assert.Equal(payload.AsSpan(0, 4).ToArray(), head);
+
+        var fastBytes = await ReadAllAsync(fast);
+        Assert.Equal(payload, fastBytes);
+        await WaitUntil(() => slow.IsDetached || entry.Ring.TailStart > 4, TimeSpan.FromSeconds(5));
+
+        var remainder = await ReadAllAsync(slow);
+        Assert.Equal(payload[4..], remainder);
+        Assert.True(firstCount > 0);
+        Assert.Equal(firstCount, secondCount);
+        lock (evictionCounts)
+            Assert.All(evictionCounts, count => Assert.True(count > 0));
+        Assert.NotEqual(SharedStreamReapReason.Failure, entry.ReapReason);
+    }
+
+    [Fact]
     public void OpeningEntry_IsNotAttachable()
     {
         var entry = new SharedStreamEntry(
@@ -336,7 +423,8 @@ public class SharedStreamEntryTests
         TimeProvider? clock = null,
         int chunkSize = 8,
         int leadBytes = 16,
-        long anchor = 0)
+        long anchor = 0,
+        Action<SharedStreamEntry>? configure = null)
     {
         var entry = new SharedStreamEntry(
             "/content/movie.mkv",
@@ -348,6 +436,7 @@ public class SharedStreamEntryTests
             clock,
             chunkSize,
             leadBytes);
+        configure?.Invoke(entry);
         entry.BindAndStart(new DetachedStreamLease
         {
             Stream = upstream,

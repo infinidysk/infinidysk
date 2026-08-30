@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Extensions;
@@ -34,6 +35,24 @@ public static class HttpContextExtensions
     {
         return httpContext.Request.Headers["x-api-key"].FirstOrDefault()
             ?? httpContext.GetRequestParam("apikey");
+    }
+
+    // Header, query, and already-buffered form only. Does not touch Request.Form,
+    // which parses lazily and can throw InvalidDataException. Warden source import
+    // uses this so unauthenticated malformed multipart stays 401.
+    public static string? GetRequestApiKeyWithoutFormParse(this HttpContext httpContext)
+    {
+        return httpContext.Request.Headers["x-api-key"].FirstOrDefault()
+            ?? httpContext.GetQueryParam("apikey")
+            ?? GetBufferedFormParam(httpContext, "apikey");
+    }
+
+    private static string? GetBufferedFormParam(HttpContext httpContext, string name)
+    {
+        var form = httpContext.Features.Get<IFormFeature>()?.Form;
+        if (form is null)
+            return null;
+        return StringUtil.EmptyToNull(form[name].FirstOrDefault());
     }
 
     public static string GetPublicBaseUrl(this HttpContext httpContext, string configuredBaseUrl)

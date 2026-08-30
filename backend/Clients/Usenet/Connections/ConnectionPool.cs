@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Logging;
 using Serilog;
 
 namespace NzbWebDAV.Clients.Usenet.Connections;
@@ -59,6 +60,11 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     public int AvailableConnections => Math.Max(0, EffectiveMaxConnections - ActiveConnections);
     internal bool IsDisposed => Volatile.Read(ref _disposed) == 1;
 
+    /// <summary>
+    /// Raised after live/idle/effective-max counts change. This is post-state telemetry:
+    /// handlers cannot vote on admission or replacement. Subscriber failures are isolated
+    /// and logged. Dispatch snapshots the invocation list at the start of each notification.
+    /// </summary>
     public event EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs>? OnConnectionPoolChanged;
 
     private readonly Func<CancellationToken, ValueTask<T>> _factory;
@@ -194,6 +200,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         // it is active and disposal leaves it for the borrower to return or destroy.
         T? reused = default;
         var reusedConnection = false;
+        var staleEvicted = false;
         lock (_lifecycleLock)
         {
             if (_disposed == 1)
@@ -201,16 +208,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
             if (preferIdle)
             {
-                reusedConnection = TryTakeIdleConnection(out reused!);
+                reusedConnection = TryTakeIdleConnection(out reused!, out staleEvicted);
                 if (reusedConnection)
                     Interlocked.Increment(ref _connectionsReused);
             }
         }
-        if (reusedConnection)
-        {
+        if (reusedConnection || staleEvicted)
             TriggerConnectionPoolChangedEvent();
+        if (reusedConnection)
             return BuildLock(reused!, wasReused: true);
-        }
 
         // Need a fresh connection. Pace handshakes so a cold burst of borrowers
         // does not open dozens of TLS sessions in parallel. While waiting, other
@@ -231,6 +237,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             reused = default;
             reusedConnection = false;
+            staleEvicted = false;
             lock (_lifecycleLock)
             {
                 if (_disposed == 1)
@@ -238,16 +245,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
                 if (preferIdle)
                 {
-                    reusedConnection = TryTakeIdleConnection(out reused!);
+                    reusedConnection = TryTakeIdleConnection(out reused!, out staleEvicted);
                     if (reusedConnection)
                         Interlocked.Increment(ref _connectionsReused);
                 }
             }
-            if (reusedConnection)
-            {
+            if (reusedConnection || staleEvicted)
                 TriggerConnectionPoolChangedEvent();
+            if (reusedConnection)
                 return BuildLock(reused!, wasReused: true);
-            }
 
             T conn;
             ReplacementPacingReservation? pacingReservation = null;
@@ -354,21 +360,25 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             T? reused = default;
             var reusedConnection = false;
+            var staleEvicted = false;
             lock (_lifecycleLock)
             {
                 ObjectDisposedException.ThrowIf(_disposed == 1, this);
                 reusedConnection = TryTakeIdleConnection(
                     out reused!,
+                    out staleEvicted,
                     excludedConnections);
                 if (reusedConnection)
                     Interlocked.Increment(ref _connectionsReused);
             }
 
+            if (reusedConnection || staleEvicted)
+                TriggerConnectionPoolChangedEvent();
+
             if (!reusedConnection)
                 return null;
 
             releaseGate = false;
-            TriggerConnectionPoolChangedEvent();
             return new ConnectionLock<T>(
                 reused!,
                 Return,
@@ -393,8 +403,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     private bool TryTakeIdleConnection(
         out T connection,
+        out bool staleEvicted,
         ISet<object>? excludedConnections = null)
     {
+        staleEvicted = false;
         List<Pooled>? excluded = null;
         try
         {
@@ -402,11 +414,12 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 if (item.IsExpired(IdleTimeout))
                 {
-                    // Stale – destroy and continue looking.
+                    // Stale – destroy and continue looking. Notify after the caller
+                    // leaves _lifecycleLock so observer code never runs under it.
                     DisposeConnection(item.Connection);
                     Interlocked.Decrement(ref _live);
                     Interlocked.Increment(ref _staleEvictions);
-                    TriggerConnectionPoolChangedEvent();
+                    staleEvicted = true;
                     continue;
                 }
 
@@ -645,14 +658,26 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     private void TriggerConnectionPoolChangedEvent()
     {
-        if (Volatile.Read(ref _disposed) == 1)
-            return;
+        EventHandler<ConnectionPoolStats.ConnectionPoolChangedEventArgs>? subscribers;
+        int live;
+        int idle;
+        int max;
+        lock (_lifecycleLock)
+        {
+            if (_disposed == 1)
+                return;
 
-        OnConnectionPoolChanged?.Invoke(this, new ConnectionPoolStats.ConnectionPoolChangedEventArgs(
-            _live,
-            _idleConnections.Count,
-            EffectiveMaxConnections
-        ));
+            subscribers = OnConnectionPoolChanged;
+            live = _live;
+            idle = _idleConnections.Count;
+            max = EffectiveMaxConnections;
+        }
+
+        SynchronousObserverInvoker.Invoke(
+            subscribers,
+            this,
+            new ConnectionPoolStats.ConnectionPoolChangedEventArgs(live, idle, max),
+            SynchronousObserverSource.ConnectionPoolChanged);
     }
 
     /// <summary>
@@ -688,7 +713,11 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
         _gate.UpdateMaxAllowed(newEffective);
         TriggerConnectionPoolChangedEvent();
-        _onConnectionLimitLearned?.Invoke(learned, newEffective);
+        SynchronousObserverInvoker.Invoke(
+            _onConnectionLimitLearned,
+            learned,
+            newEffective,
+            SynchronousObserverSource.ConnectionLimitLearned);
     }
 
     /* =================== idle sweeper (background) ================================= */

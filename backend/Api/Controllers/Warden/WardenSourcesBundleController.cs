@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Auth;
+using NzbWebDAV.Config;
 using NzbWebDAV.Services;
 using Serilog;
 
@@ -14,14 +16,28 @@ public class WardenSourcesImportController(WardenStore warden, WardenRemoteSourc
 {
     private const int MaxItems = 1000;
     private const long MaxUploadBytes = 5L * 1024 * 1024;
+    private const string InvalidFormDetail = "Invalid form data.";
+
+    protected override void AuthenticateRequest(ConfigManager configManager)
+        => ApiKeyValidator.ValidateWithoutFormParse(HttpContext, configManager);
 
     protected override async Task<IActionResult> HandleRequest()
     {
-        if (!HttpContext.Request.HasFormContentType)
+        var request = HttpContext.Request;
+        if (!request.HasFormContentType)
             throw new BadHttpRequestException("Missing form body.");
 
         var ct = HttpContext.RequestAborted;
-        var form = HttpContext.Request.Form;
+        IFormCollection form;
+        try
+        {
+            form = await request.ReadFormAsync(ct).ConfigureAwait(false);
+        }
+        catch (InvalidDataException e)
+        {
+            throw new BadHttpRequestException(InvalidFormDetail, e);
+        }
+
         var defaultTrust = form["trust"].ToString();
         if (string.IsNullOrWhiteSpace(defaultTrust)) defaultTrust = WardenStore.TrustCorroborate;
         var defaultRefresh = int.TryParse(form["refreshHours"].ToString(), out var drh) ? drh : 24;
@@ -42,7 +58,7 @@ public class WardenSourcesImportController(WardenStore warden, WardenRemoteSourc
 
         if (string.IsNullOrWhiteSpace(content))
             throw new BadHttpRequestException("Paste some entries or choose a file.");
-        if (content.Length > MaxUploadBytes)
+        if (Encoding.UTF8.GetByteCount(content) > MaxUploadBytes)
             throw new BadHttpRequestException("Input is too large.");
 
         var specs = Parse(content, defaultTrust, defaultRefresh, out var invalid);

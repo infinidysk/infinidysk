@@ -75,7 +75,7 @@ public class KnownCorruptFastPathTests
         try
         {
             var store = new RepairPatchStore(dir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             store.CommitPatch(segmentId, patched, new UsenetYencHeader
             {
                 FileName = "movie.mkv",
@@ -212,7 +212,7 @@ public class KnownCorruptFastPathTests
                 new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
             ]);
             var store = new RepairPatchStore(dir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             var service = new Par2RepairService(config, null!, store);
             Par2RepairTriggerSink.Current = new Par2RepairTriggerSink(service);
 

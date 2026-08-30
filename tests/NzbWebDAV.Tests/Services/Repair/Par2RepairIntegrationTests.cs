@@ -216,7 +216,7 @@ public sealed class Par2RepairIntegrationTests
         try
         {
             var store = new RepairPatchStore(dir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             store.CommitPatch(segmentId, result.ReconstructedSlices[corruptIndex], new UsenetYencHeader
             {
                 FileName = "corrupt-target.bin",
@@ -353,7 +353,7 @@ public sealed class Par2RepairIntegrationTests
         {
             var config = new ConfigManager();
             var store = new RepairPatchStore(dir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             var service = new Par2RepairService(config, null!, store);
 
             service.ReportZeroFill("/view/test.mkv", "seg1@test");
@@ -378,7 +378,7 @@ public sealed class Par2RepairIntegrationTests
                 new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
             ]);
             var store = new RepairPatchStore(dir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             var service = new Par2RepairService(config, null!, store);
 
             // Repeated zero-fills for the same path collapse to one pending event.
@@ -418,7 +418,7 @@ public sealed class Par2RepairIntegrationTests
                 new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
             ]);
             var store = new RepairPatchStore(patchDir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             var service = new Par2RepairService(config, null!, store);
 
             await service.StartAsync(CancellationToken.None);
@@ -483,7 +483,7 @@ public sealed class Par2RepairIntegrationTests
         try
         {
             var store = new RepairPatchStore(dir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
 
             var segmentIds = new[] { "seg0@test", "seg1@test", "seg2@test" };
             var ranges = new[]
@@ -546,7 +546,7 @@ public sealed class Par2RepairIntegrationTests
         try
         {
             var store = new RepairPatchStore(dir, 1024 * 1024);
-            await store.CatalogLoadTask;
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
 
             Assert.False(store.Contains(segmentId));
             store.CommitPatch(segmentId, content, header);
@@ -563,7 +563,7 @@ public sealed class Par2RepairIntegrationTests
             Assert.Equal(content, ms.ToArray());
 
             var reloaded = new RepairPatchStore(dir, 1024 * 1024);
-            await reloaded.CatalogLoadTask;
+            await reloaded.EnsureCatalogLoadedAsync(CancellationToken.None);
             Assert.True(reloaded.Contains(segmentId));
         }
         finally

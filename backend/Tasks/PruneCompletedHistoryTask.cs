@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -44,7 +43,10 @@ public class PruneCompletedHistoryTask : BaseTask
 
     protected override async Task ExecuteInternal()
     {
-        await using var progressHeartbeat = new ProgressHeartbeat(Report, _progressHeartbeatInterval);
+        await using var progressHeartbeat = new ProgressHeartbeat(
+            Report,
+            _progressHeartbeatInterval,
+            ProgressHeartbeatOperation.PruneCompletedHistory);
         _progressHeartbeat = progressHeartbeat;
         try { await PruneCompletedHistory().ConfigureAwait(false); }
         catch (Exception e) when (e is not OutOfMemoryException)
@@ -152,19 +154,4 @@ public class PruneCompletedHistoryTask : BaseTask
     private void UpdatePhase(string message) => _progressHeartbeat?.UpdatePhase(message);
     private void Complete(string message) { if (_progressHeartbeat is not null) _progressHeartbeat.Complete(message); else Report(message); }
     private void Report(string message) { var progress = $"{(_isDryRun ? "Dry Run - " : string.Empty)}{message}"; _progressObserver?.Invoke(progress); _ = _websocketManager.SendMessage(WebsocketTopic.PruneCompletedHistoryTaskProgress, progress); }
-
-    internal sealed class ProgressHeartbeat : IAsyncDisposable
-    {
-        private readonly object _sync = new(); private readonly Action<string> _report; private readonly TimeSpan _interval; private readonly Timer _timer;
-        private string? _message; private long _runStartedAt; private bool _completed; private bool _disposed;
-        public ProgressHeartbeat(Action<string> report, TimeSpan interval)
-        { _report = report; _interval = interval; _timer = new Timer(static s => ((ProgressHeartbeat)s!).ReportHeartbeat(), this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); }
-        public void StartPhase(string message) { lock (_sync) { if (_disposed || _completed) return; if (_runStartedAt == 0) _runStartedAt = Stopwatch.GetTimestamp(); _message = message; ReportWithElapsed(); _timer.Change(_interval, _interval); } }
-        public void UpdatePhase(string message) { lock (_sync) { if (_disposed || _completed) return; _message = message; ReportWithElapsed(); } }
-        public void Complete(string message) { lock (_sync) { if (_disposed || _completed) return; _completed = true; _message = null; _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); _report(message); } }
-        private void ReportHeartbeat() { lock (_sync) { if (_disposed || _message is null) return; ReportWithElapsed(); } }
-        private void ReportWithElapsed() { if (_message is null) return; if (_runStartedAt == 0) _runStartedAt = Stopwatch.GetTimestamp(); _report($"{_message}\nElapsed: {FormatElapsed(Stopwatch.GetElapsedTime(_runStartedAt))}"); }
-        private static string FormatElapsed(TimeSpan elapsed) => elapsed.TotalMinutes >= 1 ? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s" : $"{Math.Max(1, (int)elapsed.TotalSeconds)}s";
-        public async ValueTask DisposeAsync() { lock (_sync) { if (_disposed) return; _disposed = true; _message = null; _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); } await _timer.DisposeAsync().ConfigureAwait(false); }
-    }
 }

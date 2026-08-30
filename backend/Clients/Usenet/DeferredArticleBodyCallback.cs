@@ -25,7 +25,7 @@ internal sealed class DeferredArticleBodyCallback
             }
         }
 
-        InvokeSafely(target, result, failureReason);
+        ArticleBodyCompletion.InvokeContained(target, result, failureReason);
     }
 
     public void Activate(ArticleBodyCompletionHandler target)
@@ -41,7 +41,7 @@ internal sealed class DeferredArticleBodyCallback
 
         if (deferred.HasValue)
         {
-            InvokeSafely(target, deferred.Value.Result, deferred.Value.FailureReason);
+            ArticleBodyCompletion.InvokeContained(target, deferred.Value.Result, deferred.Value.FailureReason);
         }
     }
 
@@ -52,21 +52,6 @@ internal sealed class DeferredArticleBodyCallback
             _discarded = true;
             _target = null;
             _deferred = null;
-        }
-    }
-
-    private static void InvokeSafely(
-        ArticleBodyCompletionHandler target,
-        ArticleBodyResult result,
-        string? failureReason)
-    {
-        try
-        {
-            target(result, failureReason);
-        }
-        catch
-        {
-            // Completion callbacks must not fault NNTP transfer tasks.
         }
     }
 }

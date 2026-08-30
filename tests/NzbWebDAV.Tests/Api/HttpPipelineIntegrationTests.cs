@@ -28,6 +28,23 @@ public sealed class HttpPipelineIntegrationTests(NzbDavWebApplicationFactory fac
     }
 
     [Fact]
+    public async Task AdminApi_AcceptsFormFieldApiKey()
+    {
+        using var client = factory.CreateClient();
+        using var form = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["apikey"] = NzbDavWebApplicationFactory.ApiKey,
+        });
+
+        using var response = await client.PostAsync("/api/is-onboarding", form);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        Assert.True(json.RootElement.GetProperty("status").GetBoolean());
+        Assert.True(json.RootElement.GetProperty("isOnboarding").GetBoolean());
+    }
+
+    [Fact]
     public async Task ProwlarrSyncStatus_RequiresApiKey()
     {
         using var client = factory.CreateClient();

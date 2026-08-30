@@ -27,7 +27,7 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
 
         if (TryGetPatchedResponse(segmentId, out var patched))
         {
-            onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.Retrieved);
             PrometheusMetrics.Current?.RecordPar2PatchHit();
             return patched!;
         }
@@ -67,7 +67,8 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
 
         if (TryGetPatchedResponse(segmentId, out var patched))
         {
-            exclusiveConnection.OnConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            ArticleBodyCompletion.InvokeContained(
+                exclusiveConnection.OnConnectionReadyAgain, ArticleBodyResult.Retrieved);
             PrometheusMetrics.Current?.RecordPar2PatchHit();
             return patched!;
         }

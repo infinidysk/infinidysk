@@ -83,7 +83,7 @@ public sealed class HealthCheckWorkerAdmissionTests
                 new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
             ]);
             var patchStore = new RepairPatchStore(patchDirectory, 1024 * 1024);
-            await patchStore.CatalogLoadTask;
+            await patchStore.EnsureCatalogLoadedAsync(CancellationToken.None);
             var time = new ControllableTimeProvider();
             var healthCheckConnectionGate = new HealthCheckConnectionGate(config);
             var service = new HealthCheckService(

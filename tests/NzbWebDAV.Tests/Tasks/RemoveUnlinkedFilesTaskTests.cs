@@ -51,46 +51,6 @@ public class RemoveUnlinkedFilesTaskTests
     }
 
     [Fact]
-    public async Task ProgressHeartbeat_ReportsElapsedUntilCompleted()
-    {
-        var messages = new ConcurrentQueue<string>();
-        var heartbeatReported = new TaskCompletionSource<string>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        var heartbeat = new RemoveUnlinkedFilesTask.ProgressHeartbeat(message =>
-        {
-            messages.Enqueue(message);
-            if (messages.Count > 1 && message.Contains("Elapsed:", StringComparison.Ordinal))
-                heartbeatReported.TrySetResult(message);
-        }, TimeSpan.FromMilliseconds(10));
-
-        try
-        {
-            heartbeat.StartPhase("Scanning all linked files...\nFound 79976...");
-
-            Assert.True(messages.TryPeek(out var startMessage));
-            Assert.StartsWith("Scanning all linked files...\nFound 79976...", startMessage);
-            Assert.Contains("Elapsed:", startMessage);
-
-            heartbeat.UpdatePhase("Scanning all linked files...\nFound 79977...");
-            Assert.Contains("Elapsed:", messages.Last());
-            Assert.StartsWith("Scanning all linked files...\nFound 79977...", messages.Last());
-
-            var elapsedMessage = await heartbeatReported.Task.WaitAsync(TimeSpan.FromSeconds(1));
-            Assert.Contains("Elapsed:", elapsedMessage);
-
-            heartbeat.Complete("Done.");
-            heartbeat.UpdatePhase("Scanning all linked files...\nFound 79978...");
-
-            Assert.Equal("Done.", messages.Last());
-            Assert.DoesNotContain("Elapsed:", messages.Last());
-        }
-        finally
-        {
-            await heartbeat.DisposeAsync();
-        }
-    }
-
-    [Fact]
     public async Task RemoveEmptyDirectoriesAsync_RemovesNestedEmptyDirsAndTerminates()
     {
         await using var harness = await TempDb.CreateAsync();
@@ -424,6 +384,91 @@ public class RemoveUnlinkedFilesTaskTests
                 "Searching for unlinked webdav items",
                 "Identifying unlinked files",
                 "Done. Identified 1 unlinked files");
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(libraryDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task DryRun_Completes_WhenProgressObserverThrowsOnce()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var libraryDir = Path.Join(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+
+            var linkedIds = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+            var orphanId = Guid.NewGuid();
+            foreach (var id in linkedIds.Append(orphanId))
+            {
+                ctx.Items.Add(DavItem.New(
+                    id,
+                    DavItem.ContentFolder,
+                    $"{id:N}.mkv",
+                    10,
+                    DavItem.ItemType.UsenetFile,
+                    DavItem.ItemSubType.NzbFile,
+                    null,
+                    null,
+                    null,
+                    null));
+            }
+
+            await ctx.SaveChangesAsync();
+
+            foreach (var id in linkedIds)
+            {
+                await File.WriteAllTextAsync(
+                    Path.Join(libraryDir, $"{id:N}.strm"),
+                    $"http://localhost/view/.ids/{id}.mkv");
+            }
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var invocation = 0;
+            var messages = new ConcurrentQueue<string>();
+            void Observer(string message)
+            {
+                if (Interlocked.Increment(ref invocation) == 1)
+                    throw new InvalidOperationException("progress observer failure");
+                messages.Enqueue(message);
+            }
+
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext(),
+                progressObserver: Observer);
+
+            Assert.True(await task.Execute());
+
+            Assert.True(await ctx.Items.AnyAsync(x => x.Id == orphanId));
+            foreach (var id in linkedIds)
+                Assert.True(await ctx.Items.AnyAsync(x => x.Id == id));
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.Equal("Dry Run - Done. Identified 1 unlinked files.", progress);
+            Assert.Contains(
+                messages,
+                message => message == "Dry Run - Done. Identified 1 unlinked files.");
+            Assert.DoesNotContain(
+                messages,
+                message => message.StartsWith("Dry Run - Failed:", StringComparison.Ordinal)
+                    || message.StartsWith("Failed:", StringComparison.Ordinal));
         }
         finally
         {

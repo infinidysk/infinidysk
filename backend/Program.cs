@@ -46,7 +46,7 @@ using Serilog.Templates.Themes;
 
 namespace NzbWebDAV;
 
-public partial class Program
+public sealed partial class Program
 {
     static async Task Main(string[] args)
     {
@@ -226,7 +226,11 @@ public partial class Program
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
             builder.Host.UseSerilog();
             builder.Services.Configure<HostOptions>(options =>
-                options.ShutdownTimeout = TimeSpan.FromSeconds(5));
+            {
+                options.ShutdownTimeout = TimeSpan.FromSeconds(5);
+                options.BackgroundServiceExceptionBehavior =
+                    BackgroundServiceExceptionBehavior.StopHost;
+            });
             builder.Services.AddControllers(options =>
                 options.Filters.Add<ApiErrorContractFilter>());
             builder.Services.AddHttpContextAccessor();
@@ -369,6 +373,7 @@ public partial class Program
                 .AddSingleton<NzbWebDAV.UsenetMigration.UsenetMigrationStore>()
                 .AddSingleton<NzbWebDAV.UsenetMigration.Runner.UsenetMigrationRunner>()
                 .AddHostedService(sp => sp.GetRequiredService<NzbWebDAV.UsenetMigration.Runner.UsenetMigrationRunner>())
+                .AddSingleton<ProcessExitCoordinator>()
                 .AddSingleton<RestartService>()
                 .AddHostedService<DatabaseBackupSchedulerService>()
                 .AddSingleton<IndexerConfigWriteLock>()
@@ -530,7 +535,7 @@ public partial class Program
             // before the first BODY decode (which can crash on a bad native lib).
             app.Lifetime.ApplicationStarted.Register(() =>
                 app.Services.GetRequiredService<QueueManager>().StartProcessing());
-            await app.RunAsync().ConfigureAwait(false);
+            await RunHostAndSetExitCodeAsync(app).ConfigureAwait(false);
         }
         catch (ConfigPathAccessException exception)
         {
@@ -556,6 +561,50 @@ public partial class Program
         finally
         {
             await Log.CloseAndFlushAsync().ConfigureAwait(false);
+        }
+    }
+
+    internal static async Task RunHostAndSetExitCodeAsync(
+        IHost host,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await host.StartAsync(cancellationToken).ConfigureAwait(false);
+
+            // Only BackgroundService, matching HostOptions.BackgroundServiceExceptionBehavior —
+            // raw IHostedService implementations are not monitored for ExecuteTask faults.
+            var backgroundServices = host.Services
+                .GetRequiredService<IEnumerable<IHostedService>>()
+                .OfType<BackgroundService>()
+                .ToArray();
+            var exitCoordinator = host.Services
+                .GetRequiredService<ProcessExitCoordinator>();
+
+            await host.WaitForShutdownAsync(cancellationToken).ConfigureAwait(false);
+
+            var faultedServiceNames = backgroundServices
+                .Where(service => service.ExecuteTask?.IsFaulted == true)
+                .Select(service => service.GetType().FullName ?? service.GetType().Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+
+            if (faultedServiceNames.Length == 0)
+                return;
+
+            var exitCode = exitCoordinator.ReportBackgroundServiceFault();
+            Log.Fatal(
+                "Backend stopped because background services faulted: {BackgroundServices}. " +
+                "Exiting with code {ExitCode}",
+                string.Join(", ", faultedServiceNames),
+                exitCode);
+        }
+        finally
+        {
+            if (host is IAsyncDisposable asyncDisposable)
+                await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+            else
+                host.Dispose();
         }
     }
 

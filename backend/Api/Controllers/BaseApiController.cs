@@ -14,6 +14,9 @@ public abstract class BaseApiController : ControllerBase
     protected virtual bool RequiresAuthentication => true;
     protected abstract Task<IActionResult> HandleRequest();
 
+    protected virtual void AuthenticateRequest(ConfigManager configManager)
+        => ApiKeyValidator.Validate(HttpContext, configManager);
+
     [HttpGet]
     [HttpPost]
     public virtual Task<IActionResult> HandleApiRequest() => ExecuteApiRequest();
@@ -25,7 +28,7 @@ public abstract class BaseApiController : ControllerBase
             if (RequiresAuthentication)
             {
                 var configManager = HttpContext.RequestServices.GetRequiredService<ConfigManager>();
-                ApiKeyValidator.Validate(HttpContext, configManager);
+                AuthenticateRequest(configManager);
             }
 
             return await HandleRequest().ConfigureAwait(false);
