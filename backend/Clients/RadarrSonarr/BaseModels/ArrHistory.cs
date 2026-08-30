@@ -31,7 +31,7 @@ public class ArrHistoryRecord
     public string? SourceTitle { get; set; }
 
     [JsonPropertyName("data")]
-    public ArrHistoryData Data { get; set; } = new();
+    public ArrHistoryData? Data { get; set; } = new();
 }
 
 public sealed class ArrHistoryData

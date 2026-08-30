@@ -2883,7 +2883,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 return;
             }
 
-            if (arrDecision == ArrLinkedRepairDecision.DeferMissingDownloadIdentity)
+            async Task DeferMissingProvenanceAsync(string reason, string messageTail)
             {
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
@@ -2891,7 +2891,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 Log.Warning(
                     "Health-check repair deferred for {Path}: no unique Arr download provenance could be proven. Reason: {Reason}",
                     davItem.Path,
-                    "exact Arr media item found, but no unique original download ID could be proven");
+                    reason);
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Unhealthy,
@@ -2899,53 +2899,37 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     string.Join(" ", [
                         "File failed health validation.",
                         $"Corresponding {linkType} and Arr media item found,",
-                        "but no unique original Arr download ID could be proven.",
-                        "Leaving the file in place rather than searching again without blocklisting the failed release."
+                        messageTail,
                     ]), ct).ConfigureAwait(false);
+            }
+
+            if (arrDecision == ArrLinkedRepairDecision.DeferMissingDownloadIdentity)
+            {
+                await DeferMissingProvenanceAsync(
+                    "exact Arr media item found, but no unique original download ID could be proven",
+                    "but no unique original Arr download ID could be proven. " +
+                    "Leaving the file in place rather than searching again without blocklisting the failed release.")
+                    .ConfigureAwait(false);
                 return;
             }
 
             if (arrDecision == ArrLinkedRepairDecision.DeferAmbiguousDownloadIdentity)
             {
-                var utcNow = DateTimeOffset.UtcNow;
-                davItem.LastHealthCheck = utcNow;
-                davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
-                Log.Warning(
-                    "Health-check repair deferred for {Path}: no unique Arr download provenance could be proven. Reason: {Reason}",
-                    davItem.Path,
-                    "multiple import-history download IDs matched");
-                await RecordHealthResult(
-                    dbClient, davItem,
-                    HealthCheckResult.HealthResult.Unhealthy,
-                    HealthCheckResult.RepairAction.ActionNeeded,
-                    string.Join(" ", [
-                        "File failed health validation.",
-                        $"Corresponding {linkType} and Arr media item found,",
-                        "but multiple Arr import-history download IDs matched.",
-                        "Leaving the file in place rather than guessing which release to blocklist."
-                    ]), ct).ConfigureAwait(false);
+                await DeferMissingProvenanceAsync(
+                    "multiple import-history download IDs matched",
+                    "but multiple Arr import-history download IDs matched. " +
+                    "Leaving the file in place rather than guessing which release to blocklist.")
+                    .ConfigureAwait(false);
                 return;
             }
 
             if (arrDecision == ArrLinkedRepairDecision.DeferMissingDownloadHistory)
             {
-                var utcNow = DateTimeOffset.UtcNow;
-                davItem.LastHealthCheck = utcNow;
-                davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
-                Log.Warning(
-                    "Health-check repair deferred for {Path}: no unique Arr download provenance could be proven. Reason: {Reason}",
-                    davItem.Path,
-                    "exact media item and download ID found, but no grabbed history record exists to blocklist");
-                await RecordHealthResult(
-                    dbClient, davItem,
-                    HealthCheckResult.HealthResult.Unhealthy,
-                    HealthCheckResult.RepairAction.ActionNeeded,
-                    string.Join(" ", [
-                        "File failed health validation.",
-                        $"Corresponding {linkType} and Arr media item found,",
-                        "but the original Arr download history could not be identified.",
-                        "Leaving the file in place rather than searching again without blocklisting the failed release."
-                    ]), ct).ConfigureAwait(false);
+                await DeferMissingProvenanceAsync(
+                    "exact media item and download ID found, but no grabbed history record exists to blocklist",
+                    "but the original Arr download history could not be identified. " +
+                    "Leaving the file in place rather than searching again without blocklisting the failed release.")
+                    .ConfigureAwait(false);
                 return;
             }
 

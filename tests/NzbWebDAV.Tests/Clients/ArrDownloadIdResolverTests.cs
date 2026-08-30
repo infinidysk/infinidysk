@@ -1,3 +1,4 @@
+using System.Text.Json;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 
@@ -104,6 +105,29 @@ public class ArrDownloadIdResolverTests
     {
         var resolution = ArrDownloadIdResolver.Resolve(
             [Record(Guid.NewGuid().ToString(), "201", "/Library/movies/Title/Title.mkv")],
+            Movie,
+            Path);
+
+        Assert.Equal(ArrDownloadIdResolutionKind.NotFound, resolution.Kind);
+    }
+
+    [Fact]
+    public void ExplicitJsonNullData_IsIgnoredWithoutThrowing()
+    {
+        var record = JsonSerializer.Deserialize<ArrHistoryRecord>(
+            """{"downloadId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","data":null}""")!;
+
+        Assert.Null(record.Data);
+        var resolution = ArrDownloadIdResolver.Resolve([record], Movie, Path);
+
+        Assert.Equal(ArrDownloadIdResolutionKind.NotFound, resolution.Kind);
+    }
+
+    [Fact]
+    public void NullDataObject_IsIgnoredWithoutThrowing()
+    {
+        var resolution = ArrDownloadIdResolver.Resolve(
+            [new ArrHistoryRecord { DownloadId = Guid.NewGuid().ToString(), EventType = 3, Data = null }],
             Movie,
             Path);
 

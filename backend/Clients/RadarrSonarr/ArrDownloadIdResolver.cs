@@ -24,14 +24,14 @@ internal static class ArrDownloadIdResolver
         var candidates = records
             .Select(record => (
                 HasFileId: int.TryParse(
-                    record.Data.FileId,
+                    record.Data?.FileId,
                     NumberStyles.None,
                     CultureInfo.InvariantCulture,
                     out var fileId),
                 FileId: fileId,
                 HasDownloadId: Guid.TryParse(record.DownloadId, out var downloadId),
                 DownloadId: downloadId,
-                ImportedPath: record.Data.ImportedPath))
+                ImportedPath: record.Data?.ImportedPath))
             .Where(record => record.HasFileId
                 && record.FileId == mediaFile.FileId
                 && string.Equals(record.ImportedPath, organizedPath, StringComparison.Ordinal)
