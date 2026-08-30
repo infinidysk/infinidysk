@@ -15,9 +15,21 @@ namespace NzbWebDAV.Services;
 /// </summary>
 public class DatabaseBackupSchedulerService : BackgroundService
 {
+    internal static readonly TimeSpan ErrorRetryDelay = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan InitializationWarningInterval = TimeSpan.FromMinutes(5);
+
+    internal enum InitializationEvent
+    {
+        AttemptStarted,
+        Succeeded,
+        RetryScheduled,
+    }
+
     private readonly ConfigManager _configManager;
     private readonly WebsocketManager _websocketManager;
     private readonly DatabaseBackupStore _store;
+    private readonly TimeProvider _timeProvider;
+    private readonly Action<InitializationEvent>? _initializationObserver;
     private CancellationTokenSource _rescheduleCts = new();
     // NOTE: swapped-out instances are intentionally not disposed (ExecuteAsync may
     // still read .Token after the swap); the current instance is disposed in Dispose.
@@ -25,15 +37,30 @@ public class DatabaseBackupSchedulerService : BackgroundService
     private static readonly TimeSpan MaxSleepSlice = TimeSpan.FromMinutes(30);
     private DateTime? _lastLoggedNextRun;
     private DateTime? _lastRun;
+    private DateTimeOffset? _nextInitializationWarningAt;
+    private int _initializationFailureCount;
+    private int _suppressedInitializationWarnings;
 
     public DatabaseBackupSchedulerService(
         ConfigManager configManager,
         WebsocketManager websocketManager,
         DatabaseBackupStore store)
+        : this(configManager, websocketManager, store, TimeProvider.System, null)
+    {
+    }
+
+    internal DatabaseBackupSchedulerService(
+        ConfigManager configManager,
+        WebsocketManager websocketManager,
+        DatabaseBackupStore store,
+        TimeProvider timeProvider,
+        Action<InitializationEvent>? initializationObserver = null)
     {
         _configManager = configManager;
         _websocketManager = websocketManager;
         _store = store;
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        _initializationObserver = initializationObserver;
 
         _configManager.OnConfigChanged += (_, args) =>
         {
@@ -51,12 +78,21 @@ public class DatabaseBackupSchedulerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _store.EnsureInitialized();
+        var storeInitialized = false;
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                if (!storeInitialized)
+                {
+                    _initializationObserver?.Invoke(InitializationEvent.AttemptStarted);
+                    _store.EnsureInitialized();
+                    storeInitialized = true;
+                    LogInitializationRecoveryIfNeeded();
+                    _initializationObserver?.Invoke(InitializationEvent.Succeeded);
+                }
+
                 var reschedule = Volatile.Read(ref _rescheduleCts);
 
                 if (!_configManager.IsDatabaseBackupScheduleEnabled())
@@ -121,10 +157,57 @@ public class DatabaseBackupSchedulerService : BackgroundService
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
-                e.LogWarningKnownOrStack("DatabaseBackupScheduler: error running scheduled task");
-                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
+                var initializationFailed = !storeInitialized;
+                if (initializationFailed)
+                    LogInitializationFailure(e);
+                else
+                    e.LogWarningKnownOrStack(
+                        "DatabaseBackupScheduler: error running scheduled task");
+
+                var retryDelay = Task.Delay(ErrorRetryDelay, _timeProvider, stoppingToken);
+                if (initializationFailed)
+                    _initializationObserver?.Invoke(InitializationEvent.RetryScheduled);
+                await retryDelay.ConfigureAwait(false);
             }
         }
+    }
+
+    private void LogInitializationFailure(Exception exception)
+    {
+        _initializationFailureCount++;
+        var now = _timeProvider.GetUtcNow();
+        if (_nextInitializationWarningAt is { } next && now < next)
+        {
+            _suppressedInitializationWarnings++;
+            return;
+        }
+
+        var suppressed = _suppressedInitializationWarnings;
+        _suppressedInitializationWarnings = 0;
+        _nextInitializationWarningAt = now + InitializationWarningInterval;
+
+        exception.LogWarningKnownOrStack(
+            "DatabaseBackupScheduler: cannot initialize backup directory {BackupPath}; " +
+            "scheduled backups are paused and initialization will retry; " +
+            "{Suppressed} repeat(s) suppressed",
+            _store.BackupsRoot,
+            suppressed);
+    }
+
+    private void LogInitializationRecoveryIfNeeded()
+    {
+        if (_initializationFailureCount == 0)
+            return;
+
+        Log.Information(
+            "DatabaseBackupScheduler: backup directory {BackupPath} initialized after " +
+            "{FailureCount} failed attempt(s)",
+            _store.BackupsRoot,
+            _initializationFailureCount);
+
+        _nextInitializationWarningAt = null;
+        _initializationFailureCount = 0;
+        _suppressedInitializationWarnings = 0;
     }
 
     public override void Dispose()
