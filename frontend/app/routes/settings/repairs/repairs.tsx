@@ -66,53 +66,90 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
         <SettingsCard
           icon="build"
           title="Background repairs"
-          description="Monitor mounted media and recover or classify missing segments."
-          contentClassName="grid grid-cols-1 gap-4 lg:grid-cols-2"
+          description="Monitor mounted media and recover or classify missing segments. Optionally limit when new health checks or repairs may start."
         >
-          <ManagedSetting configKey="repair.enable">
-            <Tooltip placement="bottom" className="tooltip-start" content={helpText}>
-              <Toggle
-                id="enable-repairs-checkbox"
-                className="cursor-pointer gap-2 p-0"
-                checked={isRepairEnabled}
-                onChange={(e) =>
-                  setNewConfig({ ...config, "repair.enable": "" + e.target.checked })
-                }
-                label={<span className="text-sm text-base-content">Enable Background Repairs</span>}
-              />
-            </Tooltip>
-          </ManagedSetting>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <ManagedSetting configKey="repair.enable">
+              <Tooltip placement="bottom" className="tooltip-start" content={helpText}>
+                <Toggle
+                  id="enable-repairs-checkbox"
+                  className="cursor-pointer gap-2 p-0"
+                  checked={isRepairEnabled}
+                  onChange={(e) =>
+                    setNewConfig({ ...config, "repair.enable": "" + e.target.checked })
+                  }
+                  label={
+                    <span className="text-sm text-base-content">Enable Background Repairs</span>
+                  }
+                />
+              </Tooltip>
+            </ManagedSetting>
 
-          {(!libraryDirConfig || !hasEnabledArrInstance) && (
-            <p className="text-[11px] leading-relaxed text-base-content/45 lg:col-span-2">
-              Health checks, PAR2 repair, degraded damage tolerance, and unlinked-file handling work
-              without a library. Configure a Library Directory and an enabled Radarr or Sonarr
-              instance to replace linked library items automatically.
-            </p>
-          )}
-
-          <ManagedSetting configKey="media.library-dir">
-            <div className="space-y-2">
-              <label
-                className="block text-sm font-medium text-base-content"
-                htmlFor="library-dir-input"
-              >
-                Library Directory
-              </label>
-              <Input
-                className={"w-full"}
-                type="text"
-                id="library-dir-input"
-                aria-describedby="library-dir-help"
-                value={config["media.library-dir"]}
-                onChange={(e) => setNewConfig({ ...config, "media.library-dir": e.target.value })}
-              />
-              <p className="text-[11px] leading-relaxed text-base-content/45" id="library-dir-help">
-                The path to your organized media library that contains all your imported symlinks or
-                *.strm files. Make sure this path is visible to your InfiniDysk container.
+            {(!libraryDirConfig || !hasEnabledArrInstance) && (
+              <p className="text-[11px] leading-relaxed text-base-content/45 lg:col-span-2">
+                Health checks, PAR2 repair, degraded damage tolerance, and unlinked-file handling
+                work without a library. Configure a Library Directory and an enabled Radarr or
+                Sonarr instance to replace linked library items automatically.
               </p>
+            )}
+
+            <ManagedSetting configKey="media.library-dir">
+              <div className="space-y-2">
+                <label
+                  className="block text-sm font-medium text-base-content"
+                  htmlFor="library-dir-input"
+                >
+                  Library Directory
+                </label>
+                <Input
+                  className={"w-full"}
+                  type="text"
+                  id="library-dir-input"
+                  aria-describedby="library-dir-help"
+                  value={config["media.library-dir"]}
+                  onChange={(e) => setNewConfig({ ...config, "media.library-dir": e.target.value })}
+                />
+                <p
+                  className="text-[11px] leading-relaxed text-base-content/45"
+                  id="library-dir-help"
+                >
+                  The path to your organized media library that contains all your imported symlinks
+                  or *.strm files. Make sure this path is visible to your InfiniDysk container.
+                </p>
+              </div>
+            </ManagedSetting>
+          </div>
+
+          <fieldset className="fieldset w-full border-t border-base-content/10 pt-2">
+            <legend className="fieldset-legend">Health-check and repair windows</legend>
+            <p className="label">In-flight work finishes if a window closes.</p>
+            <div className="flex w-full flex-col gap-4">
+              <ManagedSetting configKey="repair.healthcheck-schedule">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-base-content">Health-check schedule</p>
+                  <WeeklyWindowEditor
+                    id="repair-healthcheck-schedule"
+                    value={config["repair.healthcheck-schedule"] ?? ""}
+                    onChange={(next) =>
+                      setNewConfig({ ...config, "repair.healthcheck-schedule": next })
+                    }
+                    description="When closed, InfiniDysk still admits urgent and already-deferred repairs. Use Run all checks now on the Health page to scan outside the window."
+                  />
+                </div>
+              </ManagedSetting>
+              <ManagedSetting configKey="repair.action-schedule">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-base-content">Repair quiet hours</p>
+                  <WeeklyWindowEditor
+                    id="repair-action-schedule"
+                    value={config["repair.action-schedule"] ?? ""}
+                    onChange={(next) => setNewConfig({ ...config, "repair.action-schedule": next })}
+                    description="When closed, confirmed damage is deferred until the next repair window instead of replacing or reconstructing immediately."
+                  />
+                </div>
+              </ManagedSetting>
             </div>
-          </ManagedSetting>
+          </fieldset>
         </SettingsCard>
 
         <SettingsCard
@@ -634,37 +671,6 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
               <p className="text-[11px] leading-relaxed text-base-content/45">
                 Holes totaling more than this share of the file's bytes fail the file (0.01–50).
               </p>
-            </div>
-          </ManagedSetting>
-        </SettingsCard>
-
-        <SettingsCard
-          icon="schedule"
-          title="Health-check and repair windows"
-          description="Optionally limit when new health checks or repairs may start. In-flight work finishes if a window closes."
-        >
-          <ManagedSetting configKey="repair.healthcheck-schedule">
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-base-content">Health-check schedule</p>
-              <WeeklyWindowEditor
-                id="repair-healthcheck-schedule"
-                value={config["repair.healthcheck-schedule"] ?? ""}
-                onChange={(next) =>
-                  setNewConfig({ ...config, "repair.healthcheck-schedule": next })
-                }
-                description="When closed, InfiniDysk still admits urgent and already-deferred repairs. Use Run all checks now on the Health page to scan outside the window."
-              />
-            </div>
-          </ManagedSetting>
-          <ManagedSetting configKey="repair.action-schedule">
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-base-content">Repair quiet hours</p>
-              <WeeklyWindowEditor
-                id="repair-action-schedule"
-                value={config["repair.action-schedule"] ?? ""}
-                onChange={(next) => setNewConfig({ ...config, "repair.action-schedule": next })}
-                description="When closed, confirmed damage is deferred until the next repair window instead of replacing or reconstructing immediately."
-              />
             </div>
           </ManagedSetting>
         </SettingsCard>
