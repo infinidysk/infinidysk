@@ -187,7 +187,7 @@ public sealed class SqliteMaintenanceServiceTests
     {
         var calls = 0;
         var (delays, delayAsync) = CreateRecordingDelay();
-        var thrown = new OutOfMemoryException("oom");
+        var thrown = new OutOfMemoryException("oom", new SqliteException("sqlite contention", 5, 261));
 
         var actual = await Assert.ThrowsAsync<OutOfMemoryException>(() =>
             SqliteMaintenanceService.RunWithSqliteContentionRetryAsync(
