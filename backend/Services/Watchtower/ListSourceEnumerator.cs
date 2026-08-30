@@ -60,7 +60,7 @@ public class ListSourceEnumerator
             if (body is null)
             {
                 if (page == 0)
-                    throw new InvalidOperationException("Catalog request failed or returned an empty response.");
+                    throw new ListSourceGuidanceException("Catalog request failed or returned an empty response.");
                 break;
             }
 
@@ -73,10 +73,10 @@ public class ListSourceEnumerator
                 if (page > 0) break;
                 if (root.ValueKind == JsonValueKind.Object &&
                     (root.TryGetProperty("catalogs", out _) || root.TryGetProperty("resources", out _)))
-                    throw new InvalidOperationException(
+                    throw new ListSourceGuidanceException(
                         "This URL is an addon manifest, not a catalog. Use \"Discover catalogs\" to pick which " +
                         "catalogs to add, or point this list at a catalog endpoint such as .../catalog/movie/<id>.json.");
-                throw new InvalidOperationException("Catalog response did not contain a \"metas\" array.");
+                throw new ListSourceGuidanceException("Catalog response did not contain a \"metas\" array.");
             }
 
             int pageCount = 0, newCount = 0;
@@ -108,12 +108,12 @@ public class ListSourceEnumerator
     public async Task<DiscoverResult> DiscoverCatalogsAsync(string url, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(url))
-            throw new InvalidOperationException("A manifest URL is required.");
+            throw new ListSourceGuidanceException("A manifest URL is required.");
 
         var manifestUrl = NormalizeManifestUrl(url.Trim());
         var body = await HttpGetBodyAsync(manifestUrl, ct).ConfigureAwait(false);
         if (body is null)
-            throw new InvalidOperationException("Could not fetch the addon manifest.");
+            throw new ListSourceGuidanceException("Could not fetch the addon manifest.");
 
         using var doc = ParseJsonOrThrow(body.Bytes);
         var root = doc.RootElement;
@@ -122,9 +122,9 @@ public class ListSourceEnumerator
             !root.TryGetProperty("catalogs", out var catalogs) || catalogs.ValueKind != JsonValueKind.Array)
         {
             if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("metas", out _))
-                throw new InvalidOperationException(
+                throw new ListSourceGuidanceException(
                     "That looks like a catalog endpoint, not a manifest. Add it directly as a Stremio catalog list.");
-            throw new InvalidOperationException("No catalogs were found in this addon manifest.");
+            throw new ListSourceGuidanceException("No catalogs were found in this addon manifest.");
         }
 
         var addonName = GetStr(root, "name");
@@ -148,7 +148,7 @@ public class ListSourceEnumerator
         }
 
         if (choices.Count == 0)
-            throw new InvalidOperationException("This addon manifest lists no usable catalogs.");
+            throw new ListSourceGuidanceException("This addon manifest lists no usable catalogs.");
 
         return new DiscoverResult { AddonName = addonName, Catalogs = choices };
     }
@@ -263,7 +263,7 @@ public class ListSourceEnumerator
         if (string.IsNullOrWhiteSpace(url)) return Array.Empty<WtContentRef>();
         var fetched = await HttpGetBodyAsync(url!, ct).ConfigureAwait(false);
         if (fetched is null)
-            throw new InvalidOperationException("List request failed or returned an empty response.");
+            throw new ListSourceGuidanceException("List request failed or returned an empty response.");
 
         if (LooksLikeJson(fetched.Bytes))
             return ParseJsonListOrThrow(fetched.Bytes);
@@ -410,7 +410,9 @@ public class ListSourceEnumerator
         {
             throw;
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        catch (Exception e) when (
+            e is HttpRequestException or InvalidOperationException
+            || (e is OperationCanceledException && !ct.IsCancellationRequested))
         {
             Log.Debug("Watchtower: remote list fetch failed ({FailureType})", e.GetType().Name);
             return null;

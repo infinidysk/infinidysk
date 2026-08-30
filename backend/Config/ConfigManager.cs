@@ -634,6 +634,8 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
             if (cfg is null) return;
             RequireOptionalMaxResponseBytes("indexers.instances MaxResponseBytes", cfg.MaxResponseBytes);
+            if (cfg.Indexers is null)
+                throw new ArgumentException("Config value for 'indexers.instances Indexers' must be an array.");
             foreach (var indexer in cfg.Indexers)
             {
                 var label = string.IsNullOrWhiteSpace(indexer.Name)

@@ -594,10 +594,15 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Max list-source response (bytes)</Form.Label>
             <Form.Control
-              className="w-full max-w-48"
-              type="number"
-              min={1}
-              max={16 * 1024 * 1024}
+              className={`w-full max-w-48 ${
+                isWatchtowerListSourceMaxResponseBytesValid(
+                  config["watchtower.list-source-max-response-bytes"] ?? "8388608",
+                )
+                  ? ""
+                  : "input-error"
+              }`}
+              type="text"
+              inputMode="numeric"
               disabled={!enabled}
               value={config["watchtower.list-source-max-response-bytes"] ?? "8388608"}
               onChange={(e) => set("watchtower.list-source-max-response-bytes", e.target.value)}
@@ -666,4 +671,22 @@ export function isWatchtowerSettingsUpdated(
     "watchtower.list-source-max-response-bytes",
     "watchtower.verbose-logging",
   ].some((k) => config[k] !== newConfig[k]);
+}
+
+const LIST_SOURCE_MAX_RESPONSE_BYTES_HARD_CLAMP = 16 * 1024 * 1024;
+
+export function isWatchtowerListSourceMaxResponseBytesValid(raw: string): boolean {
+  const n = Number(raw);
+  return (
+    Number.isInteger(n) &&
+    n >= 1 &&
+    n <= LIST_SOURCE_MAX_RESPONSE_BYTES_HARD_CLAMP &&
+    raw.trim() === n.toString()
+  );
+}
+
+export function isWatchtowerSettingsValid(newConfig: Record<string, string>): boolean {
+  return isWatchtowerListSourceMaxResponseBytesValid(
+    newConfig["watchtower.list-source-max-response-bytes"] ?? "8388608",
+  );
 }

@@ -244,7 +244,7 @@ public partial class WatchtowerService(
             }
             catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
-                source.LastSyncError = e is RemoteResponseException
+                source.LastSyncError = e is RemoteResponseException or ListSourceGuidanceException
                     ? e.Message
                     : "Source synchronization failed unexpectedly.";
                 e.LogWarningKnownOrStack(

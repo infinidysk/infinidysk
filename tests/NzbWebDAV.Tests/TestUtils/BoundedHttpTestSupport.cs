@@ -93,7 +93,7 @@ internal sealed class PrefixThenBlockStream(byte[] prefix) : Stream
     }
 
     public override int Read(byte[] buffer, int offset, int count) =>
-        ReadCore(buffer.AsSpan(offset, count), CancellationToken.None);
+        throw new NotSupportedException();
 
     public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
@@ -162,12 +162,8 @@ internal sealed class BlockingReadStream : Stream
         set => throw new NotSupportedException();
     }
 
-    public override int Read(byte[] buffer, int offset, int count)
-    {
-        Started.TrySetResult();
-        CancellationToken.None.WaitHandle.WaitOne();
-        return 0;
-    }
+    public override int Read(byte[] buffer, int offset, int count) =>
+        throw new NotSupportedException();
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {

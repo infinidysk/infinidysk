@@ -5,7 +5,6 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestUtils;
 using Serilog;
-using Serilog.Core;
 using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Services.Watchtower;
@@ -119,7 +118,7 @@ public class ListSourceEnumeratorTests
         using var handler = new ScriptedHandler((_, _) => throw new HttpRequestException($"fail {UserInfo} {QueryToken}"));
         using var http = new HttpClient(handler);
         var enumerator = new ListSourceEnumerator(http, () => 4096);
-        var sink = new CollectingSink();
+        var sink = new CollectingLogEventSink();
         var previous = Log.Logger;
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
@@ -416,23 +415,5 @@ public class ListSourceEnumeratorTests
         Buffer.BlockCopy(body, 0, padded, 0, body.Length);
         Array.Fill(padded, (byte)' ', body.Length, targetLength - body.Length);
         return padded;
-    }
-
-    private sealed class CollectingSink : ILogEventSink
-    {
-        private readonly List<LogEvent> _events = [];
-
-        public IReadOnlyList<LogEvent> Events
-        {
-            get
-            {
-                lock (_events) return _events.ToArray();
-            }
-        }
-
-        public void Emit(LogEvent logEvent)
-        {
-            lock (_events) _events.Add(logEvent);
-        }
     }
 }

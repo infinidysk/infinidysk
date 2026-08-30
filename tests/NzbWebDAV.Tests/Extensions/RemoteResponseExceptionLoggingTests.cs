@@ -3,7 +3,6 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Tests.TestUtils;
 using Serilog;
-using Serilog.Core;
 using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Extensions;
@@ -62,7 +61,7 @@ public class RemoteResponseExceptionLoggingTests
 
     private static IReadOnlyList<LogEvent> Capture(Action action)
     {
-        var sink = new CollectingSink();
+        var sink = new CollectingLogEventSink();
         var previous = Log.Logger;
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
@@ -78,23 +77,5 @@ public class RemoteResponseExceptionLoggingTests
         }
 
         return sink.Events;
-    }
-
-    private sealed class CollectingSink : ILogEventSink
-    {
-        private readonly List<LogEvent> _events = [];
-
-        public IReadOnlyList<LogEvent> Events
-        {
-            get
-            {
-                lock (_events) return _events.ToArray();
-            }
-        }
-
-        public void Emit(LogEvent logEvent)
-        {
-            lock (_events) _events.Add(logEvent);
-        }
     }
 }
