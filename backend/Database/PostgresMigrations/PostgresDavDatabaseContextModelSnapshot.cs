@@ -103,6 +103,9 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ArrDownloadId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp without time zone");
 
@@ -320,6 +323,9 @@ namespace NzbWebDAV.Database.PostgresMigrations
             modelBuilder.Entity("NzbWebDAV.Database.Models.HistoryItem", b =>
                 {
                     b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ArrDownloadId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Category")
@@ -561,6 +567,9 @@ namespace NzbWebDAV.Database.PostgresMigrations
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueueItem", b =>
                 {
                     b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ArrDownloadId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Category")

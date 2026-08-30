@@ -55,7 +55,8 @@ public abstract class BaseAggregator
             releaseDate: null,
             lastHealthCheck: null,
             historyItemId: MountDirectory.HistoryItemId,
-            fileBlobId: null
+            fileBlobId: null,
+            arrDownloadId: MountDirectory.ArrDownloadId
         );
         _directoryCache.Add(pathKey, directory);
         DBClient.Ctx.Items.Add(directory);

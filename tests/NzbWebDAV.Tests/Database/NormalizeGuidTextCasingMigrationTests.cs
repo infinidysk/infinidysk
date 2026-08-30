@@ -16,7 +16,7 @@ public sealed class NormalizeGuidTextCasingMigrationTests
     private const string PriorMigration = "20260818220000_Add-Par2-Repair-Jobs";
 
     [Fact]
-    public void Inventory_CoversTwentySevenGuidColumnsAcrossEighteenTables()
+    public void Inventory_CoversGuidColumnsPresentAtNormalizationMigration()
     {
         Assert.Equal(18, GuidTextCasingSql.GuidColumns.Length);
         Assert.Equal(27, GuidTextCasingSql.GuidColumns.Sum(entry => entry.Columns.Length));
@@ -82,32 +82,36 @@ public sealed class NormalizeGuidTextCasingMigrationTests
         ctx.NzbFiles.Add(new DavNzbFile { Id = nzbId, SegmentIds = ["seg"] });
         ctx.RarFiles.Add(new DavRarFile { Id = rarId, RarParts = [] });
         ctx.MultipartFiles.Add(new DavMultipartFile { Id = multiId, Metadata = new DavMultipartFile.Meta() });
-        ctx.HistoryItems.Add(new HistoryItem
-        {
-            Id = historyId,
-            CreatedAt = DateTime.UtcNow,
-            FileName = "hist.nzb",
-            JobName = "hist",
-            Category = "tv",
-            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
-            TotalSegmentBytes = 20,
-            DownloadTimeSeconds = 1,
-            DownloadDirId = dirId,
-            NzbBlobId = nzbBlobId,
-        });
-        ctx.QueueItems.Add(new QueueItem
-        {
-            Id = queueId,
-            CreatedAt = DateTime.UtcNow,
-            SortOrder = QueueItem.SortOrderStride,
-            FileName = "queue.nzb",
-            JobName = "queue",
-            NzbFileSize = 10,
-            TotalSegmentBytes = 20,
-            Category = "tv",
-            Priority = QueueItem.PriorityOption.Normal,
-            PostProcessing = QueueItem.PostProcessingOption.None,
-        });
+        await HistoricalDavItemSeeder.SeedHistoryItemsAsync(ctx, [
+            new HistoryItem
+            {
+                Id = historyId,
+                CreatedAt = DateTime.UtcNow,
+                FileName = "hist.nzb",
+                JobName = "hist",
+                Category = "tv",
+                DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+                TotalSegmentBytes = 20,
+                DownloadTimeSeconds = 1,
+                DownloadDirId = dirId,
+                NzbBlobId = nzbBlobId,
+            },
+        ]);
+        await HistoricalDavItemSeeder.SeedQueueItemsAsync(ctx, [
+            new QueueItem
+            {
+                Id = queueId,
+                CreatedAt = DateTime.UtcNow,
+                SortOrder = QueueItem.SortOrderStride,
+                FileName = "queue.nzb",
+                JobName = "queue",
+                NzbFileSize = 10,
+                TotalSegmentBytes = 20,
+                Category = "tv",
+                Priority = QueueItem.PriorityOption.Normal,
+                PostProcessing = QueueItem.PostProcessingOption.None,
+            },
+        ]);
         ctx.QueueNzbContents.Add(new QueueNzbContents { Id = queueId, NzbContents = "<nzb />" });
         ctx.HealthCheckResults.Add(new HealthCheckResult
         {

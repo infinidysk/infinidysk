@@ -4,6 +4,7 @@ using NzbWebDAV.Api.SabControllers.AddFile;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using System.Net;
@@ -110,6 +111,7 @@ public class AddUrlRequest() : AddFileRequest
             PostProcessing = MapPostProcessingOption(context.GetRequestParam("pp")),
             CancellationToken = fetchDeadline.Token,
             FetchDeadlineSource = fetchDeadline,
+            Origin = NzbSubmissionOrigin.ExternalSabAdd,
         };
     }
 

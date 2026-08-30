@@ -83,6 +83,9 @@ namespace NzbWebDAV.Database.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("ArrDownloadId")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -300,6 +303,9 @@ namespace NzbWebDAV.Database.Migrations
             modelBuilder.Entity("NzbWebDAV.Database.Models.HistoryItem", b =>
                 {
                     b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ArrDownloadId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Category")
@@ -554,6 +560,9 @@ namespace NzbWebDAV.Database.Migrations
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueueItem", b =>
                 {
                     b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ArrDownloadId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Category")

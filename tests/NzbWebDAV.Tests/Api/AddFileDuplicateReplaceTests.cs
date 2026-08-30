@@ -225,6 +225,18 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
 
         Assert.Equal(assignedId.ToString(), Assert.Single(response.NzoIds));
         Assert.True(await _context.QueueItems.AsNoTracking().AnyAsync(q => q.Id == assignedId));
+        Assert.Null((await _context.QueueItems.AsNoTracking().SingleAsync(q => q.Id == assignedId)).ArrDownloadId);
+    }
+
+    [Fact]
+    public async Task AddFileAsync_ExternalSabAdd_PersistsReturnedNzoIdAsArrDownloadId()
+    {
+        var response = await CreateController().AddFileAsync(
+            CreateRequest("Arr.Grab.nzb", "tv", origin: NzbSubmissionOrigin.ExternalSabAdd));
+
+        var nzoId = Guid.Parse(Assert.Single(response.NzoIds));
+        var queued = await _context.QueueItems.AsNoTracking().SingleAsync(q => q.Id == nzoId);
+        Assert.Equal(nzoId, queued.ArrDownloadId);
     }
 
     [Fact]
@@ -356,7 +368,8 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
         string fileName,
         string category,
         Guid? nzoId = null,
-        bool replaceExisting = true)
+        bool replaceExisting = true,
+        NzbSubmissionOrigin origin = NzbSubmissionOrigin.Internal)
     {
         var nzb = """
             <?xml version="1.0" encoding="utf-8"?>
@@ -380,6 +393,7 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.None,
             CancellationToken = CancellationToken.None,
+            Origin = origin,
         };
     }
 }

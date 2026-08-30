@@ -910,7 +910,8 @@ public class QueueItemProcessor(
             releaseDate: null,
             lastHealthCheck: null,
             historyItemId: queueItem.Id,
-            fileBlobId: null
+            fileBlobId: null,
+            arrDownloadId: queueItem.ArrDownloadId
         );
         dbClient.Ctx.Items.Add(mountFolder);
         return Task.FromResult(mountFolder);
@@ -935,7 +936,8 @@ public class QueueItemProcessor(
                 releaseDate: null,
                 lastHealthCheck: null,
                 historyItemId: queueItem.Id,
-                fileBlobId: null
+                fileBlobId: null,
+                arrDownloadId: queueItem.ArrDownloadId
             );
             dbClient.Ctx.Items.Add(mountFolder);
             return mountFolder;
@@ -963,6 +965,7 @@ public class QueueItemProcessor(
             NzbBlobId = queueItem.Id,
             IndexerName = queueItem.IndexerName,
             ContentGroupKey = queueItem.ContentGroupKey,
+            ArrDownloadId = queueItem.ArrDownloadId,
         };
     }
 

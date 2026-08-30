@@ -108,33 +108,47 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
         CancellationToken ct = default)
     {
-        var movieIds = await GetMovieFileIds(symlinkOrStrmPath, ct).ConfigureAwait(false);
-        if (movieIds == null) return ArrRepairOutcome.MediaItemNotFound;
+        var match = await FindMediaFileAsync(symlinkOrStrmPath, ct).ConfigureAwait(false);
+        if (match is null) return ArrRepairOutcome.MediaItemNotFound;
+        return await RemoveAndBlocklist(match, downloadId, shouldRequestSearch, ct)
+            .ConfigureAwait(false);
+    }
+
+    public override async Task<ArrRepairOutcome> RemoveAndBlocklist(
+        ArrMediaFileMatch mediaFile,
+        Guid downloadId,
+        Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+        CancellationToken ct = default)
+    {
+        if (mediaFile.Kind != ArrMediaKind.Movie || mediaFile.MediaIds.Count != 1)
+            throw new ArgumentException("Radarr repair requires one movie match.", nameof(mediaFile));
 
         var historyId = await GetHistoryRecordId(downloadId, ct).ConfigureAwait(false);
         if (historyId == null) return ArrRepairOutcome.DownloadHistoryNotFound;
 
-        if (!Is2xx(await DeleteMovieFile(movieIds.MovieFileId, ct).ConfigureAwait(false)))
-            throw new InvalidOperationException($"Failed to delete movie file `{symlinkOrStrmPath}` from radarr instance `{Host}`.");
+        var movieId = mediaFile.MediaIds[0];
+        if (!Is2xx(await DeleteMovieFile(mediaFile.FileId, ct).ConfigureAwait(false)))
+            throw new InvalidOperationException(
+                $"Failed to delete movie file {mediaFile.FileId} from radarr instance `{Host}`.");
 
         await MarkHistoryFailed(historyId.Value, ct).ConfigureAwait(false);
 
-        if (shouldRequestSearch is not null && !shouldRequestSearch([$"movie:{movieIds.MovieId}"]))
+        if (shouldRequestSearch is not null && !shouldRequestSearch([$"movie:{movieId}"]))
         {
             Log.Warning(
                 "Radarr repair on {Host}: automatic replacement-search limit reached for movie {MovieId}; " +
                 "the file was removed and its download blocklisted without starting another search.",
                 Host,
-                movieIds.MovieId);
+                movieId);
             return ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld;
         }
 
         try
         {
             await ExecuteWithTransientRetryAsync(
-                ct => CommandAsync(
-                    new { name = "MoviesSearch", movieIds = new[] { movieIds.MovieId } },
-                    ct),
+                token => CommandAsync(
+                    new { name = "MoviesSearch", movieIds = new[] { movieId } },
+                    token),
                 ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
@@ -144,10 +158,25 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
                 ex,
                 "Radarr repair on {Host}: failed to request MoviesSearch for movie {MovieId}",
                 Host,
-                movieIds.MovieId);
+                movieId);
         }
 
         return ArrRepairOutcome.RemoveAndBlocklistSucceeded;
+    }
+
+    public override Task<ArrHistory> GetMediaImportHistoryAsync(
+        ArrMediaFileMatch mediaFile,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        if (mediaFile.Kind != ArrMediaKind.Movie || mediaFile.MediaIds.Count == 0)
+            return Task.FromResult(new ArrHistory());
+
+        var movieId = mediaFile.MediaIds[0];
+        return Get<ArrHistory>(
+            $"/history?movieId={movieId}&eventType=3&page={page}&pageSize={pageSize}&sortKey=date&sortDirection=descending",
+            ct);
     }
 
     private sealed record MovieFileIds(int MovieFileId, int MovieId);

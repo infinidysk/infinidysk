@@ -131,6 +131,7 @@ public class RadarrSonarrClientTests
             ("GET /api/v3/series", JsonResponse($"[{{\"id\":102,\"path\":\"{seriesPath}\"}}]")),
             ("GET /api/v3/episodefile?seriesId=102",
                 JsonResponse($"[{{\"id\":202,\"seriesId\":102,\"path\":\"{filePath}\"}}]")),
+            ("GET /api/v3/episode?episodeFileId=202", JsonResponse("""[{"id":302,"seriesId":102}]""")),
             ($"GET /api/v3/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
                 JsonResponse("""{"records":[]}"""))));
         var client = new TestSonarrClient(httpClient);
@@ -522,6 +523,80 @@ public class RadarrSonarrClientTests
         var record = Assert.Single((await client.GetQueueAsync()).Records);
 
         Assert.Equal("episode:99", record.GetMediaIdentity());
+    }
+
+    [Fact]
+    public async Task SonarrImportHistory_IsScopedToEpisodeAndImportEventType()
+    {
+        var match = new ArrMediaFileMatch(ArrMediaKind.Episode, FileId: 201, MediaIds: [301]);
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/history?episodeId=301&eventType=3&page=1&pageSize=50&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[],"totalRecords":0}"""))));
+        var client = new TestSonarrClient(httpClient);
+
+        var history = await client.GetMediaImportHistoryAsync(match, page: 1, pageSize: 50);
+
+        Assert.Empty(history.Records);
+    }
+
+    [Fact]
+    public async Task RadarrImportHistory_IsScopedToMovieAndImportEventType()
+    {
+        var match = new ArrMediaFileMatch(ArrMediaKind.Movie, FileId: 201, MediaIds: [101]);
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/history?movieId=101&eventType=3&page=1&pageSize=50&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[],"totalRecords":0}"""))));
+        var client = new TestRadarrClient(httpClient);
+
+        var history = await client.GetMediaImportHistoryAsync(match, page: 1, pageSize: 50);
+
+        Assert.Empty(history.Records);
+    }
+
+    [Fact]
+    public async Task CollectMediaImportHistoryAsync_HonorsCancellationToken()
+    {
+        using var httpClient = new HttpClient(new HangUntilCancelledHandler());
+        var client = new TestRadarrClient(httpClient);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var match = new ArrMediaFileMatch(ArrMediaKind.Movie, FileId: 1, MediaIds: [1]);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => client.CollectMediaImportHistoryAsync(match, cts.Token));
+    }
+
+    [Fact]
+    public async Task SonarrRepair_LooksUpMediaBeforeGrabbedHistory()
+    {
+        const string seriesPath = "/library/tv/Order Show";
+        const string filePath = seriesPath + "/Order Show S01E01.mkv";
+        var downloadId = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        var handler = CreateHandler(
+            ("GET /api/v3/series", JsonResponse($"[{{\"id\":109,\"path\":\"{seriesPath}\"}}]")),
+            ("GET /api/v3/episodefile?seriesId=109",
+                JsonResponse($"[{{\"id\":209,\"seriesId\":109,\"path\":\"{filePath}\"}}]")),
+            ("GET /api/v3/episode?episodeFileId=209", JsonResponse("""[{"id":309,"seriesId":109}]""")),
+            ($"GET /api/v3/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[{"id":409}]}""")),
+            ("DELETE /api/v3/episodefile/209", Status(HttpStatusCode.OK)),
+            ("POST /api/v3/history/failed/409", JsonResponse("{}")),
+            ("POST /api/v3/command", JsonResponse("{}")));
+        using var httpClient = new HttpClient(handler);
+        var client = new TestSonarrClient(httpClient);
+
+        Assert.Equal(
+            ArrRepairOutcome.RemoveAndBlocklistSucceeded,
+            await client.RemoveAndBlocklist(filePath, downloadId));
+
+        var mediaIndex = handler.Requests.FindIndex(request =>
+            request.StartsWith("GET /api/v3/episode?episodeFileId=209", StringComparison.Ordinal));
+        var historyIndex = handler.Requests.FindIndex(request =>
+            request.Contains("eventType=1", StringComparison.Ordinal));
+        var deleteIndex = handler.Requests.FindIndex(request =>
+            request.StartsWith("DELETE ", StringComparison.Ordinal));
+        Assert.InRange(mediaIndex, 0, historyIndex - 1);
+        Assert.InRange(historyIndex, mediaIndex + 1, deleteIndex - 1);
     }
 
     [Fact]

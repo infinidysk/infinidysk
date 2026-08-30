@@ -20,10 +20,10 @@ public class ArrLinkedRepairDecisionTests
                 removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.MediaItemNotFound)),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, result.Decision);
     }
 
     [Fact]
@@ -40,10 +40,10 @@ public class ArrLinkedRepairDecisionTests
                 removeAndBlocklist: (_, _) => throw new HttpRequestException("timeout")),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, result.Decision);
     }
 
     [Fact]
@@ -60,10 +60,10 @@ public class ArrLinkedRepairDecisionTests
                 removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.MediaItemNotFound)),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, result.Decision);
     }
 
     [Fact]
@@ -84,10 +84,10 @@ public class ArrLinkedRepairDecisionTests
                 removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.MediaItemNotFound)),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, result.Decision);
     }
 
     [Fact]
@@ -105,10 +105,10 @@ public class ArrLinkedRepairDecisionTests
                     Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded)),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
     }
 
     [Fact]
@@ -126,12 +126,12 @@ public class ArrLinkedRepairDecisionTests
                     Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld)),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
         Assert.Equal(
             HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld,
-            decision);
+            result.Decision);
     }
 
     [Fact]
@@ -148,10 +148,10 @@ public class ArrLinkedRepairDecisionTests
                 removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, null, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferMissingDownloadHistory, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferMissingDownloadIdentity, result.Decision);
     }
 
     [Fact]
@@ -169,10 +169,10 @@ public class ArrLinkedRepairDecisionTests
                     Task.FromResult(ArrRepairOutcome.DownloadHistoryNotFound)),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferMissingDownloadHistory, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferMissingDownloadHistory, result.Decision);
     }
 
     [Fact]
@@ -190,10 +190,10 @@ public class ArrLinkedRepairDecisionTests
                 removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, localPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferRootPathMismatch, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferRootPathMismatch, result.Decision);
     }
 
     [Fact]
@@ -218,10 +218,10 @@ public class ArrLinkedRepairDecisionTests
                 removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, localPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferRootPathMismatch, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferRootPathMismatch, result.Decision);
     }
 
     [Fact]
@@ -243,11 +243,11 @@ public class ArrLinkedRepairDecisionTests
                 }),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
         Assert.Equal(1, removeCalls);
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, result.Decision);
     }
 
     [Fact]
@@ -276,11 +276,11 @@ public class ArrLinkedRepairDecisionTests
                 }),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
         Assert.Equal(1, movieRemoveCalls);
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, result.Decision);
     }
 
     [Fact]
@@ -301,10 +301,10 @@ public class ArrLinkedRepairDecisionTests
                 removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, result.Decision);
     }
 
     [Fact]
@@ -322,10 +322,10 @@ public class ArrLinkedRepairDecisionTests
                 removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, result.Decision);
     }
 
     [Fact]
@@ -368,19 +368,19 @@ public class ArrLinkedRepairDecisionTests
                     Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded)),
         };
 
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
     }
 
     [Fact]
     public async Task NoArrInstances_DefersWithoutDelete()
     {
-        var decision = await HealthCheckService.DecideArrLinkedRepairAsync(
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             [], LibraryPath, DownloadId, CancellationToken.None);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, result.Decision);
     }
 
     [Theory]
@@ -400,18 +400,271 @@ public class ArrLinkedRepairDecisionTests
         Assert.Equal(expected, HealthCheckService.IsPathWithinRoot(candidate, root));
     }
 
+    [Fact]
+    public async Task StoredArrDownloadId_IsPassedInsteadOfLocalBlobId()
+    {
+        var observed = new List<Guid>();
+        var arrDownloadId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, downloadId) =>
+                {
+                    observed.Add(downloadId);
+                    return Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded);
+                }),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, arrDownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
+        Assert.Equal([arrDownloadId], observed);
+        Assert.Null(result.RecoveredDownloadId);
+    }
+
+    [Fact]
+    public async Task NullProvenance_NeverFallsBackToLocalIds()
+    {
+        var nzbBlobId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("must not use NzbBlobId"),
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory())),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, null, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferMissingDownloadIdentity, result.Decision);
+        Assert.Null(result.RecoveredDownloadId);
+        _ = nzbBlobId;
+    }
+
+    [Fact]
+    public async Task UniqueExactLegacyRecovery_IsUsedAndReturned()
+    {
+        var recovered = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr.test",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, downloadId) =>
+                {
+                    Assert.Equal(recovered, downloadId);
+                    return Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded);
+                },
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory
+                {
+                    TotalRecords = 1,
+                    Records =
+                    [
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = recovered.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData
+                            {
+                                FileId = "1",
+                                ImportedPath = LibraryPath,
+                            },
+                        },
+                    ],
+                })),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, null, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
+        Assert.Equal(recovered, result.RecoveredDownloadId);
+        Assert.Equal("http://radarr.test", result.RecoveryHost);
+    }
+
+    [Fact]
+    public async Task AmbiguousLegacyEvidence_DefersWithoutMutation()
+    {
+        var first = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var second = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("must not mutate"),
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory
+                {
+                    TotalRecords = 2,
+                    Records =
+                    [
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = first.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = second.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                    ],
+                })),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, null, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferAmbiguousDownloadIdentity, result.Decision);
+        Assert.Null(result.RecoveredDownloadId);
+    }
+
+    [Fact]
+    public async Task FirstInstanceMissingHistory_DoesNotPreventLaterInstanceSuccess()
+    {
+        var downloadId = DownloadId;
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://first-radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.DownloadHistoryNotFound)),
+            new ScriptedArrClient(
+                host: "http://second-radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, id) =>
+                {
+                    Assert.Equal(downloadId, id);
+                    return Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded);
+                }),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, downloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
+    }
+
+    [Fact]
+    public async Task UnreachableOwnerPlusHistoryMiss_ReturnsDeferUnreachable()
+    {
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://unreachable",
+                rootFolders: () => throw new HttpRequestException("down"),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.DownloadHistoryNotFound)),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, result.Decision);
+    }
+
+    [Fact]
+    public async Task RootMatchWithoutExactMedia_DoesNotClaimMediaOwnership()
+    {
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not mutate"),
+                findMediaFile: _ => Task.FromResult<ArrMediaFileMatch?>(null)),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients, LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferNoMatchingMediaItem, result.Decision);
+    }
+
+    private static readonly ArrMediaFileMatch DummyMediaFile =
+        new(ArrMediaKind.Movie, FileId: 1, MediaIds: [1]);
+
     private sealed class ScriptedArrClient(
         string host,
         Func<Task<List<ArrRootFolder>>> rootFolders,
-        Func<string, Guid, Task<ArrRepairOutcome>> removeAndBlocklist) : ArrClient(host, "test-key")
+        Func<string, Guid, Task<ArrRepairOutcome>> removeAndBlocklist,
+        Func<string, Task<ArrMediaFileMatch?>>? findMediaFile = null,
+        Func<ArrMediaFileMatch, int, int, Task<ArrHistory>>? importHistory = null,
+        Func<ArrMediaFileMatch, Guid, Task<ArrRepairOutcome>>? removeAndBlocklistMatch = null)
+        : ArrClient(host, "test-key")
     {
+        public List<Guid> BlocklistDownloadIds { get; } = [];
+
         public override Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct) => rootFolders();
+
+        public override Task<ArrMediaFileMatch?> FindMediaFileAsync(
+            string symlinkOrStrmPath,
+            CancellationToken ct = default) =>
+            findMediaFile?.Invoke(symlinkOrStrmPath)
+            ?? Task.FromResult<ArrMediaFileMatch?>(DummyMediaFile);
+
+        public override Task<ArrHistory> GetMediaImportHistoryAsync(
+            ArrMediaFileMatch mediaFile,
+            int page,
+            int pageSize,
+            CancellationToken ct = default) =>
+            importHistory?.Invoke(mediaFile, page, pageSize)
+            ?? Task.FromResult(new ArrHistory());
 
         public override Task<ArrRepairOutcome> RemoveAndBlocklist(
             string symlinkOrStrmPath,
             Guid downloadId,
             Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
-            CancellationToken ct = default) =>
-            removeAndBlocklist(symlinkOrStrmPath, downloadId);
+            CancellationToken ct = default)
+        {
+            BlocklistDownloadIds.Add(downloadId);
+            return removeAndBlocklist(symlinkOrStrmPath, downloadId);
+        }
+
+        public override Task<ArrRepairOutcome> RemoveAndBlocklist(
+            ArrMediaFileMatch mediaFile,
+            Guid downloadId,
+            Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+            CancellationToken ct = default)
+        {
+            BlocklistDownloadIds.Add(downloadId);
+            return removeAndBlocklistMatch is not null
+                ? removeAndBlocklistMatch(mediaFile, downloadId)
+                : removeAndBlocklist(LibraryPath, downloadId);
+        }
     }
 }

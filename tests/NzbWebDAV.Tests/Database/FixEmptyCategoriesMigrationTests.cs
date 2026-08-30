@@ -48,29 +48,32 @@ public sealed class FixEmptyCategoriesMigrationTests
             ctx,
             [uncategorizedFolder, emptyFolder, mount, collisionMount, existingMount]);
 
-        ctx.HistoryItems.AddRange(
-            new HistoryItem
-            {
-                Id = emptyHistoryId,
-                CreatedAt = DateTime.UtcNow,
-                FileName = "hist-empty.nzb",
-                JobName = "hist-empty",
-                Category = "",
-                DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
-                TotalSegmentBytes = 20,
-                DownloadTimeSeconds = 1,
-            },
-            new HistoryItem
-            {
-                Id = whitespaceHistoryId,
-                CreatedAt = DateTime.UtcNow,
-                FileName = "hist-ws.nzb",
-                JobName = "hist-ws",
-                Category = "   ",
-                DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
-                TotalSegmentBytes = 20,
-                DownloadTimeSeconds = 1,
-            });
+        await HistoricalDavItemSeeder.SeedHistoryItemsAsync(
+            ctx,
+            [
+                new HistoryItem
+                {
+                    Id = emptyHistoryId,
+                    CreatedAt = DateTime.UtcNow,
+                    FileName = "hist-empty.nzb",
+                    JobName = "hist-empty",
+                    Category = "",
+                    DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+                    TotalSegmentBytes = 20,
+                    DownloadTimeSeconds = 1,
+                },
+                new HistoryItem
+                {
+                    Id = whitespaceHistoryId,
+                    CreatedAt = DateTime.UtcNow,
+                    FileName = "hist-ws.nzb",
+                    JobName = "hist-ws",
+                    Category = "   ",
+                    DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+                    TotalSegmentBytes = 20,
+                    DownloadTimeSeconds = 1,
+                },
+            ]);
 
         await ctx.SaveChangesAsync();
         var createdAt = DateTime.UtcNow;
@@ -148,17 +151,19 @@ public sealed class FixEmptyCategoriesMigrationTests
         mount.Path = "/content//Orphan Release";
 
         await HistoricalDavItemSeeder.SeedAsync(ctx, [emptyFolder, mount]);
-        ctx.HistoryItems.Add(new HistoryItem
-        {
-            Id = Guid.NewGuid(),
-            CreatedAt = DateTime.UtcNow,
-            FileName = "orphan.nzb",
-            JobName = "orphan",
-            Category = "",
-            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
-            TotalSegmentBytes = 20,
-            DownloadTimeSeconds = 1,
-        });
+        await HistoricalDavItemSeeder.SeedHistoryItemsAsync(ctx, [
+            new HistoryItem
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = DateTime.UtcNow,
+                FileName = "orphan.nzb",
+                JobName = "orphan",
+                Category = "",
+                DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+                TotalSegmentBytes = 20,
+                DownloadTimeSeconds = 1,
+            },
+        ]);
         await ctx.SaveChangesAsync();
         ctx.ChangeTracker.Clear();
 

@@ -34,6 +34,7 @@ public class MultipartMkvAggregatorTests : IDisposable
     public void UpdateDatabase_CreatesOneDavItemPerProcessorResult()
     {
         var historyItemId = Guid.NewGuid();
+        var arrDownloadId = Guid.NewGuid();
         var mount = DavItem.New(
             Guid.NewGuid(),
             DavItem.ContentFolder,
@@ -44,7 +45,9 @@ public class MultipartMkvAggregatorTests : IDisposable
             null,
             null,
             historyItemId,
-            null);
+            null,
+            nzbBlobId: null,
+            arrDownloadId: arrDownloadId);
         _context.Items.Add(mount);
 
         new MultipartMkvAggregator(_dbClient, mount, checkedFullHealth: false).UpdateDatabase(
@@ -61,6 +64,9 @@ public class MultipartMkvAggregatorTests : IDisposable
         Assert.All(items, i => Assert.Equal(DavItem.ItemSubType.MultipartFile, i.SubType));
         Assert.Equal([10L, 20L], items.Select(i => i.FileSize).ToArray());
         Assert.Equal(2, _context.BlobMultipartFiles.Count);
+        Assert.All(items, i => Assert.Equal(arrDownloadId, i.ArrDownloadId));
+        Assert.All(items, i => Assert.Equal(historyItemId, i.NzbBlobId));
+        Assert.Equal(arrDownloadId, mount.ArrDownloadId);
     }
 
     private static MultipartMkvProcessor.Result Result(string filename, long size) => new()

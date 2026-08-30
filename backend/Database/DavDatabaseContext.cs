@@ -359,6 +359,10 @@ public class DavDatabaseContext : DbContext
                 .ValueGeneratedNever()
                 .IsRequired(false);
 
+            e.Property(i => i.ArrDownloadId)
+                .ValueGeneratedNever()
+                .IsRequired(false);
+
             e.HasIndex(i => new { i.ParentId, i.Name })
                 .IsUnique();
 
@@ -518,6 +522,10 @@ public class DavDatabaseContext : DbContext
 
             e.HasIndex(i => i.ContentGroupKey)
                 .IsUnique(false);
+
+            e.Property(i => i.ArrDownloadId)
+                .ValueGeneratedNever()
+                .IsRequired(false);
         });
 
         // HistoryItem
@@ -559,6 +567,9 @@ public class DavDatabaseContext : DbContext
                 .IsRequired(false);
 
             e.Property(i => i.NzbBlobId)
+                .IsRequired(false);
+
+            e.Property(i => i.ArrDownloadId)
                 .IsRequired(false);
 
             e.Property(i => i.IndexerName)

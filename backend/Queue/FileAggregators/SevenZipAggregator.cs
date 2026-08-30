@@ -55,7 +55,8 @@ public class SevenZipAggregator(
                 lastHealthCheck: checkedFullHealth ? DateTimeOffset.UtcNow : null,
                 historyItemId: MountDirectory.HistoryItemId,
                 fileBlobId: davMultipartFile.Id,
-                nzbBlobId: MountDirectory.HistoryItemId
+                nzbBlobId: MountDirectory.HistoryItemId,
+                arrDownloadId: MountDirectory.ArrDownloadId
             );
 
             dbClient.Ctx.Items.Add(davItem);

@@ -130,32 +130,29 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
         CancellationToken ct = default)
     {
-        var episodeFileId = await GetEpisodeFileId(symlinkOrStrmPath, ct).ConfigureAwait(false);
-        if (episodeFileId == null) return ArrRepairOutcome.MediaItemNotFound;
+        var match = await FindMediaFileAsync(symlinkOrStrmPath, ct).ConfigureAwait(false);
+        if (match is null) return ArrRepairOutcome.MediaItemNotFound;
+        return await RemoveAndBlocklist(match, downloadId, shouldRequestSearch, ct)
+            .ConfigureAwait(false);
+    }
+
+    public override async Task<ArrRepairOutcome> RemoveAndBlocklist(
+        ArrMediaFileMatch mediaFile,
+        Guid downloadId,
+        Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+        CancellationToken ct = default)
+    {
+        if (mediaFile.Kind != ArrMediaKind.Episode)
+            throw new ArgumentException("Sonarr repair requires an episode match.", nameof(mediaFile));
 
         var historyId = await GetHistoryRecordId(downloadId, ct).ConfigureAwait(false);
         if (historyId == null) return ArrRepairOutcome.DownloadHistoryNotFound;
 
-        List<int> episodeIds;
-        try
-        {
-            episodeIds = (await GetEpisodesFromEpisodeFileId(episodeFileId.Value, ct).ConfigureAwait(false))
-                .Select(episode => episode.Id)
-                .ToList();
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            Log.Warning(
-                ex,
-                "Sonarr repair on {Host}: could not resolve episodes for episode file {EpisodeFileId}; repair will continue without explicit search",
-                Host,
-                episodeFileId.Value);
-            episodeIds = [];
-        }
+        var episodeIds = mediaFile.MediaIds.ToList();
 
-        if (!Is2xx(await DeleteEpisodeFile(episodeFileId.Value, ct).ConfigureAwait(false)))
-            throw new InvalidOperationException($"Failed to delete episode file `{symlinkOrStrmPath}` from sonarr instance `{Host}`.");
+        if (!Is2xx(await DeleteEpisodeFile(mediaFile.FileId, ct).ConfigureAwait(false)))
+            throw new InvalidOperationException(
+                $"Failed to delete episode file {mediaFile.FileId} from sonarr instance `{Host}`.");
 
         await MarkHistoryFailed(historyId.Value, ct).ConfigureAwait(false);
 
@@ -166,7 +163,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
                 Log.Warning(
                     "Sonarr repair on {Host}: no episodes linked to episode file {EpisodeFileId}; skipping EpisodeSearch",
                     Host,
-                    episodeFileId.Value);
+                    mediaFile.FileId);
             }
             else if (shouldRequestSearch is not null &&
                      !shouldRequestSearch(episodeIds.Select(id => $"episode:{id}").ToArray()))
@@ -175,13 +172,13 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
                     "Sonarr repair on {Host}: automatic replacement-search limit reached for episode file {EpisodeFileId}; " +
                     "the file was removed and its download blocklisted without starting another search.",
                     Host,
-                    episodeFileId.Value);
+                    mediaFile.FileId);
                 return ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld;
             }
             else
             {
                 await ExecuteWithTransientRetryAsync(
-                    ct => CommandAsync(new { name = "EpisodeSearch", episodeIds }, ct),
+                    token => CommandAsync(new { name = "EpisodeSearch", episodeIds }, token),
                     ct).ConfigureAwait(false);
             }
         }
@@ -192,10 +189,25 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
                 ex,
                 "Sonarr repair on {Host}: failed to request EpisodeSearch for episode file {EpisodeFileId}",
                 Host,
-                episodeFileId.Value);
+                mediaFile.FileId);
         }
 
         return ArrRepairOutcome.RemoveAndBlocklistSucceeded;
+    }
+
+    public override Task<ArrHistory> GetMediaImportHistoryAsync(
+        ArrMediaFileMatch mediaFile,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        if (mediaFile.Kind != ArrMediaKind.Episode || mediaFile.MediaIds.Count == 0)
+            return Task.FromResult(new ArrHistory());
+
+        var episodeId = mediaFile.MediaIds[0];
+        return Get<ArrHistory>(
+            $"/history?episodeId={episodeId}&eventType=3&page={page}&pageSize={pageSize}&sortKey=date&sortDirection=descending",
+            ct);
     }
 
     private async Task<int?> GetEpisodeFileId(string symlinkOrStrmPath, CancellationToken ct)

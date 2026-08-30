@@ -7,6 +7,9 @@ public class ArrHistory
 {
     [JsonPropertyName("records")]
     public List<ArrHistoryRecord> Records { get; set; } = [];
+
+    [JsonPropertyName("totalRecords")]
+    public int TotalRecords { get; set; }
 }
 
 public class ArrHistoryRecord
@@ -26,6 +29,18 @@ public class ArrHistoryRecord
 
     [JsonPropertyName("sourceTitle")]
     public string? SourceTitle { get; set; }
+
+    [JsonPropertyName("data")]
+    public ArrHistoryData Data { get; set; } = new();
+}
+
+public sealed class ArrHistoryData
+{
+    [JsonPropertyName("fileId")]
+    public string? FileId { get; set; }
+
+    [JsonPropertyName("importedPath")]
+    public string? ImportedPath { get; set; }
 }
 
 public sealed class ArrEventTypeJsonConverter : JsonConverter<int>

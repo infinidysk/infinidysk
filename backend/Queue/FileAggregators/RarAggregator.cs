@@ -66,7 +66,8 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
             lastHealthCheck: null,
             historyItemId: MountDirectory.HistoryItemId,
             fileBlobId: davMultipartFile.Id,
-            nzbBlobId: MountDirectory.HistoryItemId
+            nzbBlobId: MountDirectory.HistoryItemId,
+            arrDownloadId: MountDirectory.ArrDownloadId
         );
 
         dbClient.Ctx.Items.Add(davItem);
@@ -131,7 +132,8 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
                 lastHealthCheck: checkedFullHealth ? DateTimeOffset.UtcNow : null,
                 historyItemId: MountDirectory.HistoryItemId,
                 fileBlobId: davMultipartFile.Id,
-                nzbBlobId: MountDirectory.HistoryItemId
+                nzbBlobId: MountDirectory.HistoryItemId,
+                arrDownloadId: MountDirectory.ArrDownloadId
             );
 
             dbClient.Ctx.Items.Add(davItem);

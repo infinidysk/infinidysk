@@ -17,6 +17,14 @@ public class HistoryItem
     public string? ContentGroupKey { get; set; }
     public DateTimeOffset? LastPlayedAt { get; set; }
 
+    /// <summary>
+    /// The SAB <c>nzo_id</c> known to represent this release in an external Arr instance.
+    /// This is provenance used for validated Arr history lookup. It is not a blob key,
+    /// a foreign key to InfiniDysk history, or proof by itself that an Arr instance
+    /// still owns the media.
+    /// </summary>
+    public Guid? ArrDownloadId { get; set; }
+
     public enum DownloadStatusOption
     {
         Completed = 1,

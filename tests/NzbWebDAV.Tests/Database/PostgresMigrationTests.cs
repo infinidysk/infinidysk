@@ -1,3 +1,4 @@
+using System.Data;
 using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -56,6 +57,34 @@ public sealed class PostgresMigrationTests
             Assert.Empty(await context.Database.GetPendingMigrationsAsync());
             Assert.True(await DatabaseStartupGuards.ConfigItemsTableExistsAsync(context));
             Assert.Equal(5, await context.Items.CountAsync());
+
+            Assert.Equal("uuid", await GetColumnTypeAsync(context, "DavItems", "ArrDownloadId"));
+            Assert.Equal("YES", await GetIsNullableAsync(context, "DavItems", "ArrDownloadId"));
+            Assert.Equal("uuid", await GetColumnTypeAsync(context, "HistoryItems", "ArrDownloadId"));
+            Assert.Equal("YES", await GetIsNullableAsync(context, "HistoryItems", "ArrDownloadId"));
+            Assert.Equal("uuid", await GetColumnTypeAsync(context, "QueueItems", "ArrDownloadId"));
+            Assert.Equal("YES", await GetIsNullableAsync(context, "QueueItems", "ArrDownloadId"));
+
+            var id = Guid.Parse("AbCdEf01-2345-4aBc-8DeF-0123456789Ab");
+            context.QueueItems.Add(new QueueItem
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = DateTime.UtcNow,
+                FileName = "pg-provenance.nzb",
+                JobName = "pg-provenance",
+                NzbFileSize = 1,
+                TotalSegmentBytes = 1,
+                Category = "tv",
+                Priority = QueueItem.PriorityOption.Normal,
+                PostProcessing = QueueItem.PostProcessingOption.None,
+                ArrDownloadId = id,
+            });
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
+            Assert.Equal(
+                id,
+                (await context.QueueItems.AsNoTracking().SingleAsync(x => x.FileName == "pg-provenance.nzb"))
+                    .ArrDownloadId);
         }
         finally
         {
@@ -361,6 +390,52 @@ public sealed class PostgresMigrationTests
             IndexerName = indexerName,
             DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
         };
+
+    private static async Task<string> GetColumnTypeAsync(
+        PostgresDavDatabaseContext context, string table, string column)
+    {
+        await using var command = context.Database.GetDbConnection().CreateCommand();
+        if (command.Connection!.State != ConnectionState.Open)
+            await command.Connection.OpenAsync();
+        command.CommandText =
+            """
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = $table
+              AND column_name = $column;
+            """;
+        AddParameter(command, "$table", table);
+        AddParameter(command, "$column", column);
+        return Assert.IsType<string>(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<string> GetIsNullableAsync(
+        PostgresDavDatabaseContext context, string table, string column)
+    {
+        await using var command = context.Database.GetDbConnection().CreateCommand();
+        if (command.Connection!.State != ConnectionState.Open)
+            await command.Connection.OpenAsync();
+        command.CommandText =
+            """
+            SELECT is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = $table
+              AND column_name = $column;
+            """;
+        AddParameter(command, "$table", table);
+        AddParameter(command, "$column", column);
+        return Assert.IsType<string>(await command.ExecuteScalarAsync());
+    }
+
+    private static void AddParameter(DbCommand command, string name, string value)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value;
+        command.Parameters.Add(parameter);
+    }
 
     private static async Task ExecuteAsync(NpgsqlConnection connection, string commandText)
     {

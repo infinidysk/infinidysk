@@ -86,6 +86,8 @@ public class RetryHistoryController(
             IndexerName = historyItem.IndexerName,
             ContentGroupKey = historyItem.ContentGroupKey,
             CancellationToken = ct,
+            Origin = NzbSubmissionOrigin.HistoryRetry,
+            ArrDownloadId = historyItem.ArrDownloadId,
         };
 
         var addFileController = new AddFileController(

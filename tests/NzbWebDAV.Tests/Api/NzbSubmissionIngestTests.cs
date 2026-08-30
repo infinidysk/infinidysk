@@ -177,6 +177,7 @@ public sealed class NzbSubmissionIngestTests : IAsyncLifetime
             new MemoryStream(Encoding.UTF8.GetBytes(ValidNzb))));
 
         Assert.True(response.Status);
+        Assert.Null((await _context.QueueItems.AsNoTracking().SingleAsync()).ArrDownloadId);
         var backupFile = Assert.Single(
             Directory.EnumerateFiles(backupRoot, "*.nzb", SearchOption.AllDirectories));
         Assert.Equal(ValidNzb, await File.ReadAllTextAsync(backupFile));

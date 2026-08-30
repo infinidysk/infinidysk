@@ -37,6 +37,13 @@ public class ArrClient(string host, string apiKey)
         CancellationToken ct = default) =>
         throw new InvalidOperationException();
 
+    public virtual Task<ArrRepairOutcome> RemoveAndBlocklist(
+        ArrMediaFileMatch mediaFile,
+        Guid downloadId,
+        Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+        CancellationToken ct = default) =>
+        throw new InvalidOperationException();
+
     public virtual Task<ArrMediaFileMatch?> FindMediaFileAsync(
         string symlinkOrStrmPath,
         CancellationToken ct = default) =>
@@ -65,6 +72,41 @@ public class ArrClient(string host, string apiKey)
 
     public virtual Task<ArrHistory> GetImportHistoryAsync(int page, int pageSize, CancellationToken ct = default) =>
         Get<ArrHistory>($"/history?eventType=3&page={page}&pageSize={pageSize}&sortKey=date&sortDirection=descending", ct);
+
+    public virtual Task<ArrHistory> GetMediaImportHistoryAsync(
+        ArrMediaFileMatch mediaFile,
+        int page,
+        int pageSize,
+        CancellationToken ct = default) =>
+        throw new InvalidOperationException();
+
+    internal const int MediaImportHistoryPageSize = 50;
+    internal const int MediaImportHistoryMaxPages = 10;
+
+    internal sealed record ArrImportHistoryCollection(
+        IReadOnlyList<ArrHistoryRecord> Records,
+        bool Exhausted);
+
+    internal async Task<ArrImportHistoryCollection> CollectMediaImportHistoryAsync(
+        ArrMediaFileMatch mediaFile,
+        CancellationToken ct = default)
+    {
+        var records = new List<ArrHistoryRecord>();
+        for (var page = 1; page <= MediaImportHistoryMaxPages; page++)
+        {
+            var history = await GetMediaImportHistoryAsync(
+                    mediaFile, page, MediaImportHistoryPageSize, ct)
+                .ConfigureAwait(false);
+            var batch = history.Records;
+            records.AddRange(batch);
+            if (batch.Count < MediaImportHistoryPageSize)
+                return new ArrImportHistoryCollection(records, Exhausted: true);
+            if (history.TotalRecords > 0 && records.Count >= history.TotalRecords)
+                return new ArrImportHistoryCollection(records, Exhausted: true);
+        }
+
+        return new ArrImportHistoryCollection(records, Exhausted: false);
+    }
 
     public async Task<int> GetQueueCountAsync(CancellationToken ct = default) =>
         (await Get<ArrQueue<ArrQueueRecord>>($"/queue?pageSize=1", ct).ConfigureAwait(false)).TotalRecords;

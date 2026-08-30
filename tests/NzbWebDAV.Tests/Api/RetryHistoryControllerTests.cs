@@ -114,6 +114,74 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RetryHistoryAsync_PreservesOriginalArrDownloadIdOnNewQueueItem()
+    {
+        var originalArrDownloadId = Guid.NewGuid();
+        await SeedFailedHistoryAsync(
+            originalArrDownloadId, "Show.S01E01.nzb", "tv", writeBlob: true, originalArrDownloadId);
+
+        var response = await CreateController().RetryHistoryAsync(await CreateRequest(originalArrDownloadId));
+        var retryId = Guid.Parse(response.NzoId!);
+        var queued = await _context.QueueItems.AsNoTracking().SingleAsync(x => x.Id == retryId);
+
+        Assert.NotEqual(originalArrDownloadId, retryId);
+        Assert.Equal(originalArrDownloadId, queued.ArrDownloadId);
+        var original = await _context.HistoryItems.AsNoTracking().SingleAsync(x => x.Id == originalArrDownloadId);
+        Assert.Equal(originalArrDownloadId, original.ArrDownloadId);
+    }
+
+    [Fact]
+    public async Task RetryHistoryAsync_RetryChainPreservesOriginalArrDownloadId()
+    {
+        var originalArrDownloadId = Guid.NewGuid();
+        await SeedFailedHistoryAsync(
+            originalArrDownloadId, "Show.S01E01.nzb", "tv", writeBlob: true, originalArrDownloadId);
+
+        var first = await CreateController().RetryHistoryAsync(await CreateRequest(originalArrDownloadId));
+        var firstId = Guid.Parse(first.NzoId!);
+        _context.QueueItems.Remove(await _context.QueueItems.SingleAsync(x => x.Id == firstId));
+        _context.HistoryItems.Add(new HistoryItem
+        {
+            Id = firstId,
+            CreatedAt = DateTime.UtcNow,
+            FileName = "Show.S01E01.nzb",
+            JobName = "Show.S01E01",
+            Category = "tv",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Failed,
+            TotalSegmentBytes = 100,
+            DownloadTimeSeconds = 1,
+            FailMessage = "failed again",
+            NzbBlobId = firstId,
+            ArrDownloadId = originalArrDownloadId,
+            IndexerName = "test-indexer",
+            ContentGroupKey = "group-key",
+        });
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var second = await CreateController().RetryHistoryAsync(await CreateRequest(firstId));
+        var secondId = Guid.Parse(second.NzoId!);
+        var queued = await _context.QueueItems.AsNoTracking().SingleAsync(x => x.Id == secondId);
+
+        Assert.NotEqual(originalArrDownloadId, secondId);
+        Assert.NotEqual(firstId, secondId);
+        Assert.Equal(originalArrDownloadId, queued.ArrDownloadId);
+    }
+
+    [Fact]
+    public async Task RetryHistoryAsync_LegacyNullProvenance_StaysNull()
+    {
+        var historyId = Guid.NewGuid();
+        await SeedFailedHistoryAsync(historyId, "Legacy.nzb", "tv", writeBlob: true, arrDownloadId: null);
+
+        var response = await CreateController().RetryHistoryAsync(await CreateRequest(historyId));
+        var retryId = Guid.Parse(response.NzoId!);
+        var queued = await _context.QueueItems.AsNoTracking().SingleAsync(x => x.Id == retryId);
+
+        Assert.Null(queued.ArrDownloadId);
+    }
+
+    [Fact]
     public async Task RetryHistoryAsync_MissingBlob_ThrowsBadRequest()
     {
         var historyId = Guid.NewGuid();
@@ -180,9 +248,11 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         const string fileName = "Already.Queued.nzb";
         const string category = "tv";
         var historyId = Guid.NewGuid();
-        await SeedFailedHistoryAsync(historyId, fileName, category, writeBlob: true);
+        var originalArrDownloadId = Guid.NewGuid();
+        await SeedFailedHistoryAsync(historyId, fileName, category, writeBlob: true, originalArrDownloadId);
 
         var existingQueueId = Guid.NewGuid();
+        var unrelatedProvenance = Guid.NewGuid();
         _context.QueueItems.Add(new QueueItem
         {
             Id = existingQueueId,
@@ -194,6 +264,7 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
             Category = category,
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.None,
+            ArrDownloadId = unrelatedProvenance,
         });
         _context.NzbNames.Add(new NzbName { Id = existingQueueId, FileName = fileName });
         await _context.SaveChangesAsync();
@@ -210,6 +281,10 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
             .SingleAsync(q => q.Category == category && q.FileName == fileName)).Id);
         Assert.NotNull(await _context.HistoryItems.AsNoTracking()
             .SingleOrDefaultAsync(h => h.Id == historyId));
+        Assert.Equal(
+            originalArrDownloadId,
+            (await _context.QueueItems.AsNoTracking().SingleAsync(q => q.Id == newId)).ArrDownloadId);
+        Assert.NotEqual(unrelatedProvenance, originalArrDownloadId);
     }
 
 
@@ -218,7 +293,7 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
     {
         var okId = Guid.NewGuid();
         var badId = Guid.NewGuid();
-        await SeedFailedHistoryAsync(okId, "Ok.nzb", "tv", writeBlob: true);
+        await SeedFailedHistoryAsync(okId, "Ok.nzb", "tv", writeBlob: true, okId);
 
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString($"?value={okId}&value={badId}");
@@ -231,6 +306,7 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         Assert.Single(response.NzoIds!);
         Assert.NotNull(response.Failed);
         Assert.Single(response.Failed!);
+        Assert.Equal(okId, (await _context.QueueItems.AsNoTracking().SingleAsync()).ArrDownloadId);
     }
 
     private RetryHistoryController CreateController() =>
@@ -249,15 +325,21 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         return await RetryHistoryRequest.New(context);
     }
 
-    private Task SeedFailedHistoryAsync(Guid id, string fileName, string category, bool writeBlob) =>
-        SeedHistoryAsync(id, fileName, category, HistoryItem.DownloadStatusOption.Failed, writeBlob);
+    private Task SeedFailedHistoryAsync(
+        Guid id,
+        string fileName,
+        string category,
+        bool writeBlob,
+        Guid? arrDownloadId = null) =>
+        SeedHistoryAsync(id, fileName, category, HistoryItem.DownloadStatusOption.Failed, writeBlob, arrDownloadId);
 
     private async Task SeedHistoryAsync(
         Guid id,
         string fileName,
         string category,
         HistoryItem.DownloadStatusOption status,
-        bool writeBlob)
+        bool writeBlob,
+        Guid? arrDownloadId = null)
     {
         if (writeBlob)
         {
@@ -290,6 +372,7 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
                 ? "Timeout reading from NNTP stream."
                 : null,
             NzbBlobId = id,
+            ArrDownloadId = arrDownloadId,
             IndexerName = "test-indexer",
             ContentGroupKey = "group-key",
         });

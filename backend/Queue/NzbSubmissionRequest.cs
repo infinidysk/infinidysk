@@ -3,6 +3,17 @@ using NzbWebDAV.Database.Models;
 namespace NzbWebDAV.Queue;
 
 /// <summary>
+/// Distinguishes how an NZB entered the queue so Arr download provenance is
+/// captured only for external SAB adds, never inferred from optional fields.
+/// </summary>
+internal enum NzbSubmissionOrigin
+{
+    Internal,
+    ExternalSabAdd,
+    HistoryRetry,
+}
+
+/// <summary>
 /// Transport-neutral NZB enqueue request. SAB and WebDAV adapters map into this
 /// before calling <see cref="NzbSubmissionService"/>.
 /// </summary>
@@ -19,6 +30,8 @@ public sealed class NzbSubmissionRequest
     public string? IndexerName { get; init; }
     public string? ContentGroupKey { get; init; }
     public CancellationToken CancellationToken { get; init; }
+    internal NzbSubmissionOrigin Origin { get; init; }
+    internal Guid? ArrDownloadId { get; init; }
 }
 
 public sealed class NzbSubmissionResult

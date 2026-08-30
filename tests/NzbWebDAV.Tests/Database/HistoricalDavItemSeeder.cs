@@ -50,6 +50,89 @@ internal static class HistoricalDavItemSeeder
         await transaction.CommitAsync();
     }
 
+    public static async Task SeedHistoryItemsAsync(DavDatabaseContext context, IEnumerable<HistoryItem> items)
+    {
+        var connection = (SqliteConnection)context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+            await connection.OpenAsync();
+
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = """
+            INSERT INTO HistoryItems (
+                Id, CreatedAt, FileName, JobName, Category, DownloadStatus, TotalSegmentBytes,
+                DownloadTimeSeconds, FailMessage, DownloadDirId, NzbBlobId, IndexerName,
+                ContentGroupKey, LastPlayedAt)
+            VALUES (
+                $id, $createdAt, $fileName, $jobName, $category, $downloadStatus, $totalSegmentBytes,
+                $downloadTimeSeconds, $failMessage, $downloadDirId, $nzbBlobId, $indexerName,
+                $contentGroupKey, $lastPlayedAt);
+            """;
+
+        foreach (var item in items)
+        {
+            command.Parameters.Clear();
+            Add(command, "$id", GuidText(item.Id));
+            Add(command, "$createdAt", item.CreatedAt);
+            Add(command, "$fileName", item.FileName);
+            Add(command, "$jobName", item.JobName);
+            Add(command, "$category", item.Category);
+            Add(command, "$downloadStatus", (int)item.DownloadStatus);
+            Add(command, "$totalSegmentBytes", item.TotalSegmentBytes);
+            Add(command, "$downloadTimeSeconds", item.DownloadTimeSeconds);
+            Add(command, "$failMessage", item.FailMessage);
+            Add(command, "$downloadDirId", item.DownloadDirId is { } downloadDirId ? GuidText(downloadDirId) : null);
+            Add(command, "$nzbBlobId", item.NzbBlobId is { } nzbBlobId ? GuidText(nzbBlobId) : null);
+            Add(command, "$indexerName", item.IndexerName);
+            Add(command, "$contentGroupKey", item.ContentGroupKey);
+            Add(command, "$lastPlayedAt", item.LastPlayedAt?.ToUnixTimeSeconds());
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await transaction.CommitAsync();
+    }
+
+    public static async Task SeedQueueItemsAsync(DavDatabaseContext context, IEnumerable<QueueItem> items)
+    {
+        var connection = (SqliteConnection)context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+            await connection.OpenAsync();
+
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = """
+            INSERT INTO QueueItems (
+                Id, CreatedAt, SortOrder, FileName, JobName, NzbFileSize, TotalSegmentBytes,
+                Category, Priority, PostProcessing, PauseUntil, IndexerName, ContentGroupKey)
+            VALUES (
+                $id, $createdAt, $sortOrder, $fileName, $jobName, $nzbFileSize, $totalSegmentBytes,
+                $category, $priority, $postProcessing, $pauseUntil, $indexerName, $contentGroupKey);
+            """;
+
+        foreach (var item in items)
+        {
+            command.Parameters.Clear();
+            Add(command, "$id", GuidText(item.Id));
+            Add(command, "$createdAt", item.CreatedAt);
+            Add(command, "$sortOrder", item.SortOrder);
+            Add(command, "$fileName", item.FileName);
+            Add(command, "$jobName", item.JobName);
+            Add(command, "$nzbFileSize", item.NzbFileSize);
+            Add(command, "$totalSegmentBytes", item.TotalSegmentBytes);
+            Add(command, "$category", item.Category);
+            Add(command, "$priority", (int)item.Priority);
+            Add(command, "$postProcessing", (int)item.PostProcessing);
+            Add(command, "$pauseUntil", item.PauseUntil);
+            Add(command, "$indexerName", item.IndexerName);
+            Add(command, "$contentGroupKey", item.ContentGroupKey);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await transaction.CommitAsync();
+    }
+
     private static void Add(SqliteCommand command, string name, object? value) =>
         command.Parameters.AddWithValue(name, value ?? DBNull.Value);
 

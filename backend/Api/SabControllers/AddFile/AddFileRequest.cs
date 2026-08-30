@@ -34,6 +34,8 @@ public class AddFileRequest()
     public string? IndexerName { get; init; }
     public string? ContentGroupKey { get; init; }
     public CancellationToken CancellationToken { get; init; }
+    internal NzbSubmissionOrigin Origin { get; init; }
+    internal Guid? ArrDownloadId { get; init; }
 
     public static Task<AddFileRequest> New(HttpContext context, ConfigManager configManager)
     {
@@ -66,7 +68,8 @@ public class AddFileRequest()
                        ?? configManager.GetManualUploadCategory(),
             Priority = priority,
             PostProcessing = postProcessing,
-            CancellationToken = context.RequestAborted
+            CancellationToken = context.RequestAborted,
+            Origin = NzbSubmissionOrigin.ExternalSabAdd,
         });
     }
 
@@ -83,6 +86,8 @@ public class AddFileRequest()
         IndexerName = IndexerName,
         ContentGroupKey = ContentGroupKey,
         CancellationToken = CancellationToken,
+        Origin = Origin,
+        ArrDownloadId = ArrDownloadId,
     };
 
     /// <summary>

@@ -38,6 +38,12 @@ public class NzbSubmissionService(
     {
         await using var sourceStream = request.NzbFileStream;
         var id = request.NzoId ?? Guid.NewGuid();
+        var arrDownloadId = request.Origin switch
+        {
+            NzbSubmissionOrigin.ExternalSabAdd => id,
+            NzbSubmissionOrigin.HistoryRetry => request.ArrDownloadId,
+            _ => null,
+        };
         var category = StringUtil.EmptyToNull(request.Category)
                        ?? configManager.GetManualUploadCategory();
 
@@ -160,6 +166,7 @@ public class NzbSubmissionService(
                 PauseUntil = request.PauseUntil,
                 IndexerName = request.IndexerName,
                 ContentGroupKey = request.ContentGroupKey,
+                ArrDownloadId = arrDownloadId,
             };
 
             // record the original NZB filename so it can be served at download time

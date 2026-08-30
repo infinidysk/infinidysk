@@ -95,6 +95,37 @@ public sealed class HistoryCleanupServiceTests : IDisposable
         Assert.False(await _context.HistoryCleanupItems.AsNoTracking().AnyAsync(x => x.Id == historyItemId));
     }
 
+    [Fact]
+    public async Task ProcessNextItemAsync_KeepMountedFilesPreservesArrDownloadId()
+    {
+        var arrDownloadId = Guid.NewGuid();
+        var currentJobId = Guid.NewGuid();
+        var video = NewVideo(currentJobId, "movies/Movie/movie.mkv");
+        video.NzbBlobId = currentJobId;
+        video.ArrDownloadId = arrDownloadId;
+        _context.Items.Add(video);
+        _context.HistoryCleanupItems.Add(new HistoryCleanupItem
+        {
+            Id = currentJobId,
+            DeleteMountedFiles = false,
+        });
+        await _context.SaveChangesAsync();
+
+        await CreateStrmFilesPostProcessor.WriteStrmFileAsync(_config, video, forceRewrite: false);
+        await _context.SaveChangesAsync();
+        var strmPath = CreateStrmFilesPostProcessor.GetStrmFilePath(_config, video);
+
+        var processed = await HistoryCleanupService.ProcessNextItemAsync(_context);
+
+        Assert.True(processed);
+        Assert.True(File.Exists(strmPath));
+        var retained = await _context.Items.AsNoTracking().SingleAsync(x => x.Id == video.Id);
+        Assert.Null(retained.HistoryItemId);
+        Assert.Equal(currentJobId, retained.NzbBlobId);
+        Assert.Equal(arrDownloadId, retained.ArrDownloadId);
+        Assert.False(await _context.HistoryCleanupItems.AsNoTracking().AnyAsync(x => x.Id == currentJobId));
+    }
+
     private static DavItem NewVideo(Guid historyItemId, string relativePath)
     {
         var id = Guid.NewGuid();

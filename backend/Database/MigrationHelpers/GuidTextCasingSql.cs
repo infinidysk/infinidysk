@@ -15,8 +15,10 @@ internal static class GuidTextCasingSql
     internal const string MigrationId = "20260820160000_Normalize-Guid-Text-Casing";
 
     /// <summary>
-    /// Every Guid-typed TEXT column on the SQLite <c>DavDatabaseContext</c> snapshot.
-    /// 18 tables / 27 columns. PostgreSQL uses native uuid and must not run this rewrite.
+    /// Guid-typed TEXT columns present on the SQLite <c>DavDatabaseContext</c> snapshot
+    /// at the <c>Normalize-Guid-Text-Casing</c> migration, not the current schema.
+    /// 18 tables / 27 columns. Do not append later columns: that historical migration
+    /// runs before they exist. PostgreSQL uses native uuid and must not run this rewrite.
     /// </summary>
     internal static readonly (string Table, string[] Columns)[] GuidColumns =
     [

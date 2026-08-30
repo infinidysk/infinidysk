@@ -2261,8 +2261,16 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         /// </summary>
         DeferUnreachable,
         /// <summary>
-        /// The Arr media item exists, but its original download history cannot be identified.
-        /// Leave it in place rather than searching again without blocklisting the failed release.
+        /// An exact Arr media item was found, but no unique original download ID could be proven.
+        /// </summary>
+        DeferMissingDownloadIdentity,
+        /// <summary>
+        /// Multiple import-history download IDs matched the exact media file and path.
+        /// </summary>
+        DeferAmbiguousDownloadIdentity,
+        /// <summary>
+        /// The Arr media item exists and a specific download ID is known, but Arr has no grabbed
+        /// history for that ID. Leave it in place rather than searching again without blocklisting.
         /// </summary>
         DeferMissingDownloadHistory,
         /// <summary>
@@ -2276,6 +2284,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         /// </summary>
         DeferRootPathMismatch,
     }
+
+    internal sealed record ArrLinkedRepairResult(
+        ArrLinkedRepairDecision Decision,
+        Guid? RecoveredDownloadId = null,
+        string? RecoveryHost = null);
 
     /// <summary>
     /// True when <paramref name="candidatePath"/> is the same as <paramref name="rootPath"/> or a
@@ -2314,7 +2327,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     /// remove-and-blocklist or be deferred when ownership cannot be confirmed safely.
     /// Extracted so the unreachable-instance fail-safe can be unit-tested without a full Repair harness.
     /// </summary>
-    internal static async Task<ArrLinkedRepairDecision> DecideArrLinkedRepairAsync(
+    internal static async Task<ArrLinkedRepairResult> DecideArrLinkedRepairAsync(
         IEnumerable<ArrClient> arrClients,
         string symlinkOrStrmPath,
         Guid? downloadId,
@@ -2325,6 +2338,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         var anInstanceFailed = false;
         var sawConfiguredClient = false;
         var matchedArrRootFolder = false;
+        var sawAmbiguousIdentity = false;
+        var sawMissingIdentity = false;
+        var sawMissingDownloadHistory = false;
+        Guid? recoveredDownloadId = null;
+        string? recoveryHost = null;
+        var recoveredConflict = false;
 
         foreach (var arrClient in arrClients)
         {
@@ -2377,15 +2396,86 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
             matchedArrRootFolder = true;
 
-            if (downloadId == null)
-                return ArrLinkedRepairDecision.DeferMissingDownloadHistory;
+            ArrMediaFileMatch? mediaFile;
+            try
+            {
+                mediaFile = await arrClient.FindMediaFileAsync(symlinkOrStrmPath, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
+            {
+                anInstanceFailed = true;
+                LogArrRepairFailure(
+                    e,
+                    "Health-check repair: could not look up the Arr media file on {Host}",
+                    arrClient.Host);
+                continue;
+            }
+
+            if (mediaFile is null)
+                continue;
+
+            var effectiveId = downloadId;
+            if (effectiveId is null)
+            {
+                ArrClient.ArrImportHistoryCollection collected;
+                try
+                {
+                    collected = await arrClient.CollectMediaImportHistoryAsync(mediaFile, ct)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
+                {
+                    anInstanceFailed = true;
+                    LogArrRepairFailure(
+                        e,
+                        "Health-check repair: could not query Arr import history on {Host}",
+                        arrClient.Host);
+                    continue;
+                }
+
+                var resolution = ArrDownloadIdResolver.Resolve(
+                    collected.Records, mediaFile, symlinkOrStrmPath);
+                if (resolution.Kind == ArrDownloadIdResolutionKind.Unique && !collected.Exhausted)
+                    resolution = new ArrDownloadIdResolution(ArrDownloadIdResolutionKind.NotFound);
+
+                if (resolution.Kind == ArrDownloadIdResolutionKind.Unique)
+                {
+                    effectiveId = resolution.DownloadId;
+                    if (recoveredDownloadId is null)
+                    {
+                        recoveredDownloadId = effectiveId;
+                        recoveryHost = arrClient.Host;
+                    }
+                    else if (recoveredDownloadId != effectiveId)
+                    {
+                        recoveredConflict = true;
+                    }
+                }
+                else if (resolution.Kind == ArrDownloadIdResolutionKind.Ambiguous)
+                {
+                    sawAmbiguousIdentity = true;
+                    continue;
+                }
+                else
+                {
+                    sawMissingIdentity = true;
+                    continue;
+                }
+            }
+
+            if (effectiveId is null)
+            {
+                sawMissingIdentity = true;
+                continue;
+            }
 
             ArrRepairOutcome repairOutcome;
             try
             {
                 repairOutcome = await arrClient.RemoveAndBlocklist(
-                    symlinkOrStrmPath,
-                    downloadId.Value,
+                    mediaFile,
+                    effectiveId.Value,
                     shouldRequestSearch is null ? null : identity => shouldRequestSearch(arrClient, identity),
                     ct).ConfigureAwait(false);
             }
@@ -2399,27 +2489,59 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 continue;
             }
 
+            var persistedRecovery = recoveredConflict ? null : recoveredDownloadId;
             if (repairOutcome == ArrRepairOutcome.RemoveAndBlocklistSucceeded)
-                return ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded;
+            {
+                return new ArrLinkedRepairResult(
+                    ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded,
+                    persistedRecovery,
+                    recoveryHost);
+            }
 
             if (repairOutcome == ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld)
-                return ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld;
+            {
+                return new ArrLinkedRepairResult(
+                    ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld,
+                    persistedRecovery,
+                    recoveryHost);
+            }
 
             if (repairOutcome == ArrRepairOutcome.DownloadHistoryNotFound)
-                return ArrLinkedRepairDecision.DeferMissingDownloadHistory;
-
-            // A root-folder match with no exact media-item match may be caused by path
-            // normalization, stale Arr data, or a transient partial response. Keep checking
-            // other configured instances, but never use this miss to authorize deletion.
+            {
+                sawMissingDownloadHistory = true;
+                continue;
+            }
         }
 
+        var recovered = recoveredConflict ? null : recoveredDownloadId;
         if (anInstanceFailed)
-            return ArrLinkedRepairDecision.DeferUnreachable;
+        {
+            return new ArrLinkedRepairResult(
+                ArrLinkedRepairDecision.DeferUnreachable, recovered, recoveryHost);
+        }
+
+        if (sawAmbiguousIdentity)
+        {
+            return new ArrLinkedRepairResult(
+                ArrLinkedRepairDecision.DeferAmbiguousDownloadIdentity, recovered, recoveryHost);
+        }
+
+        if (sawMissingIdentity)
+        {
+            return new ArrLinkedRepairResult(
+                ArrLinkedRepairDecision.DeferMissingDownloadIdentity, recovered, recoveryHost);
+        }
+
+        if (sawMissingDownloadHistory)
+        {
+            return new ArrLinkedRepairResult(
+                ArrLinkedRepairDecision.DeferMissingDownloadHistory, recovered, recoveryHost);
+        }
 
         if (sawConfiguredClient && !matchedArrRootFolder)
-            return ArrLinkedRepairDecision.DeferRootPathMismatch;
+            return new ArrLinkedRepairResult(ArrLinkedRepairDecision.DeferRootPathMismatch);
 
-        return ArrLinkedRepairDecision.DeferNoMatchingMediaItem;
+        return new ArrLinkedRepairResult(ArrLinkedRepairDecision.DeferNoMatchingMediaItem);
     }
 
     private static void LogArrRepairFailure(Exception exception, string messageTemplate, string host)
@@ -2710,10 +2832,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     ]), ct).ConfigureAwait(false);
                 return;
             }
-            var arrDecision = await DecideArrLinkedRepairAsync(
+            var arrResult = await DecideArrLinkedRepairAsync(
                 arrClients,
                 linkedPath,
-                davItem.HistoryItemId ?? davItem.NzbBlobId,
+                davItem.ArrDownloadId,
                 ct,
                 (arrClient, mediaIdentities) => _replacementSearchBudget.TryReserveAll(
                     mediaIdentities
@@ -2722,6 +2844,17 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     arrConfig.EffectiveQueueReplacementSearchLimit(),
                     arrConfig.EffectiveQueueReplacementSearchWindow()),
                 _arrBackoff).ConfigureAwait(false);
+
+            if (davItem.ArrDownloadId is null && arrResult.RecoveredDownloadId is { } recovered)
+            {
+                davItem.ArrDownloadId = recovered;
+                Log.Information(
+                    "Recovered Arr download provenance for {Path} from exact import history on {Host}.",
+                    davItem.Path,
+                    arrResult.RecoveryHost);
+            }
+
+            var arrDecision = arrResult.Decision;
 
             if (arrDecision is ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded
                 or ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld)
@@ -2750,11 +2883,59 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 return;
             }
 
+            if (arrDecision == ArrLinkedRepairDecision.DeferMissingDownloadIdentity)
+            {
+                var utcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = utcNow;
+                davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
+                Log.Warning(
+                    "Health-check repair deferred for {Path}: no unique Arr download provenance could be proven. Reason: {Reason}",
+                    davItem.Path,
+                    "exact Arr media item found, but no unique original download ID could be proven");
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    string.Join(" ", [
+                        "File failed health validation.",
+                        $"Corresponding {linkType} and Arr media item found,",
+                        "but no unique original Arr download ID could be proven.",
+                        "Leaving the file in place rather than searching again without blocklisting the failed release."
+                    ]), ct).ConfigureAwait(false);
+                return;
+            }
+
+            if (arrDecision == ArrLinkedRepairDecision.DeferAmbiguousDownloadIdentity)
+            {
+                var utcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = utcNow;
+                davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
+                Log.Warning(
+                    "Health-check repair deferred for {Path}: no unique Arr download provenance could be proven. Reason: {Reason}",
+                    davItem.Path,
+                    "multiple import-history download IDs matched");
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    string.Join(" ", [
+                        "File failed health validation.",
+                        $"Corresponding {linkType} and Arr media item found,",
+                        "but multiple Arr import-history download IDs matched.",
+                        "Leaving the file in place rather than guessing which release to blocklist."
+                    ]), ct).ConfigureAwait(false);
+                return;
+            }
+
             if (arrDecision == ArrLinkedRepairDecision.DeferMissingDownloadHistory)
             {
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
                 davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
+                Log.Warning(
+                    "Health-check repair deferred for {Path}: no unique Arr download provenance could be proven. Reason: {Reason}",
+                    davItem.Path,
+                    "exact media item and download ID found, but no grabbed history record exists to blocklist");
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Unhealthy,

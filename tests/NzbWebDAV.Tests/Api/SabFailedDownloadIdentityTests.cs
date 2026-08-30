@@ -104,6 +104,9 @@ public sealed class SabFailedDownloadIdentityTests : IAsyncLifetime
         var addResponse = await CreateAddFileController().AddFileAsync(CreateRequest(fileName, category));
         Assert.True(addResponse.Status);
         var nzoId = Assert.Single(addResponse.NzoIds);
+        var queued = await _context.QueueItems.AsNoTracking().SingleAsync();
+        Assert.Equal(Guid.Parse(nzoId), queued.Id);
+        Assert.Equal(Guid.Parse(nzoId), queued.ArrDownloadId);
 
         // 2. Processing fails non-retryably: the important file's first segment is
         //    missing on every provider (empty fake = DMCA'd/expired content).
@@ -118,6 +121,8 @@ public sealed class SabFailedDownloadIdentityTests : IAsyncLifetime
         Assert.Equal(category, slot.Category);
         Assert.Equal(HistoryItem.DownloadStatusOption.Failed, slot.Status);
         Assert.False(string.IsNullOrWhiteSpace(slot.FailMessage));
+        var history = await _context.HistoryItems.AsNoTracking().SingleAsync();
+        Assert.Equal(Guid.Parse(nzoId), history.ArrDownloadId);
     }
 
     [Fact]
@@ -200,6 +205,7 @@ public sealed class SabFailedDownloadIdentityTests : IAsyncLifetime
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.None,
             CancellationToken = CancellationToken.None,
+            Origin = NzbSubmissionOrigin.ExternalSabAdd,
         };
     }
 }

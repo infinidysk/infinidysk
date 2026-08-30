@@ -69,7 +69,7 @@ public sealed class HistoryRetentionServiceTests : IAsyncLifetime
         var davItem = DavItem.New(
             davItemId, DavItem.Root, "old.mkv", 100,
             DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
-            null, null, oldHistoryId, null);
+            null, null, oldHistoryId, null, nzbBlobId: oldHistoryId, arrDownloadId: oldHistoryId);
         _context.Items.Add(davItem);
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
@@ -96,6 +96,8 @@ public sealed class HistoryRetentionServiceTests : IAsyncLifetime
         var preserved = await _context.Items.AsNoTracking().SingleAsync(x => x.Id == davItemId);
         Assert.Null(preserved.HistoryItemId);
         Assert.Equal("old.mkv", preserved.Name);
+        Assert.Equal(oldHistoryId, preserved.ArrDownloadId);
+        Assert.Equal(oldHistoryId, preserved.NzbBlobId);
     }
 
     [Fact]
