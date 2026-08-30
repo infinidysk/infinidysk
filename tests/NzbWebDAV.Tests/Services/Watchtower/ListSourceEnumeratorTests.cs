@@ -105,7 +105,7 @@ public class ListSourceEnumeratorTests
         using var http = new HttpClient(handler);
         var enumerator = new ListSourceEnumerator(http, () => 4096);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<ListSourceGuidanceException>(
             () => enumerator.DiscoverCatalogsAsync(SecretUrl, CancellationToken.None));
         Assert.Equal("Could not fetch the addon manifest.", ex.Message);
         Assert.DoesNotContain(UserInfo, ex.Message);
@@ -126,7 +126,7 @@ public class ListSourceEnumeratorTests
             .CreateLogger();
         try
         {
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            var ex = await Assert.ThrowsAsync<ListSourceGuidanceException>(
                 () => enumerator.EnumerateAsync(UrlListSource(), CancellationToken.None));
             Assert.Equal("List request failed or returned an empty response.", ex.Message);
         }
@@ -262,7 +262,7 @@ public class ListSourceEnumeratorTests
         using var http = new HttpClient(handler);
         var enumerator = new ListSourceEnumerator(http, () => body.Length);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<ListSourceGuidanceException>(
             () => enumerator.EnumerateAsync(CatalogSource(), CancellationToken.None));
         Assert.Contains("addon manifest", ex.Message);
     }
@@ -275,7 +275,7 @@ public class ListSourceEnumeratorTests
         using var http = new HttpClient(handler);
         var enumerator = new ListSourceEnumerator(http, () => body.Length);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<ListSourceGuidanceException>(
             () => enumerator.DiscoverCatalogsAsync("https://addon.example/manifest.json", CancellationToken.None));
         Assert.Equal("No catalogs were found in this addon manifest.", ex.Message);
     }
@@ -372,7 +372,7 @@ public class ListSourceEnumeratorTests
         using var http = new HttpClient(handler);
         var enumerator = new ListSourceEnumerator(http, () => 4096);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<ListSourceGuidanceException>(
             () => enumerator.EnumerateAsync(CatalogSource(), CancellationToken.None));
         Assert.Equal("Catalog request failed or returned an empty response.", ex.Message);
     }

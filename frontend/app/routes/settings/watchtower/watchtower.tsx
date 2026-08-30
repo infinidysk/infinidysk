@@ -678,6 +678,7 @@ const LIST_SOURCE_MAX_RESPONSE_BYTES_HARD_CLAMP = 16 * 1024 * 1024;
 export function isWatchtowerListSourceMaxResponseBytesValid(raw: string): boolean {
   const n = Number(raw);
   return (
+    raw === raw.trim() &&
     Number.isInteger(n) &&
     n >= 1 &&
     n <= LIST_SOURCE_MAX_RESPONSE_BYTES_HARD_CLAMP &&
