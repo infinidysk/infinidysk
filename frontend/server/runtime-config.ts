@@ -5,8 +5,8 @@ export type FrontendRuntimeConfig = Readonly<{
 export const FRONTEND_BACKEND_API_KEY_ERROR =
   "Invalid frontend configuration: FRONTEND_BACKEND_API_KEY must be a non-empty value shared with the backend.";
 
-const ALREADY_INITIALIZED_ERROR = "Frontend runtime configuration is already initialized.";
-const NOT_INITIALIZED_ERROR = "Frontend runtime configuration has not been initialized.";
+export const ALREADY_INITIALIZED_ERROR = "Frontend runtime configuration is already initialized.";
+export const NOT_INITIALIZED_ERROR = "Frontend runtime configuration has not been initialized.";
 
 export function readFrontendRuntimeConfig(environment: NodeJS.ProcessEnv): FrontendRuntimeConfig {
   const frontendBackendApiKey = environment["FRONTEND_BACKEND_API_KEY"];

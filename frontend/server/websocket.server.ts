@@ -134,7 +134,12 @@ function initializeWebsocketServer(wss: WebSocketServer, runtime: WebsocketRunti
   // aggregate changes upstream to the backend so it can skip serialization
   // for topics with zero listeners.
   const upstreamSubscriptions = new UpstreamSubscriptionForwarder(subscriptions);
-  initializeWebsocketClient(subscriptions, lastMessage, upstreamSubscriptions, runtime);
+  const backendRelay = initializeWebsocketClient(
+    subscriptions,
+    lastMessage,
+    upstreamSubscriptions,
+    runtime,
+  );
 
   const heartbeat = setInterval(() => {
     for (const client of wss.clients) {
@@ -148,7 +153,10 @@ function initializeWebsocketServer(wss: WebSocketServer, runtime: WebsocketRunti
     }
   }, WEBSOCKET_HEARTBEAT_INTERVAL_MS);
   heartbeat.unref?.();
-  wss.on("close", () => clearInterval(heartbeat));
+  wss.on("close", () => {
+    clearInterval(heartbeat);
+    backendRelay.stop();
+  });
 
   // authenticate new websocket sessions
   wss.on("connection", (ws: TrackedSocket, request: IncomingMessage) => {

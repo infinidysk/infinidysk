@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FRONTEND_BACKEND_API_KEY_ERROR, readFrontendRuntimeConfig } from "./runtime-config";
+import {
+  ALREADY_INITIALIZED_ERROR,
+  FRONTEND_BACKEND_API_KEY_ERROR,
+  NOT_INITIALIZED_ERROR,
+  readFrontendRuntimeConfig,
+} from "./runtime-config";
 
 describe("readFrontendRuntimeConfig", () => {
   it.each([
@@ -44,9 +49,11 @@ describe("installFrontendRuntimeConfig", () => {
     const config = Object.freeze({ frontendBackendApiKey: "installer-key" });
 
     install(config);
-    expect(getConfig()).toEqual(config);
+    const first = getConfig();
+    expect(first).toEqual(config);
+    expect(Object.isFrozen(first)).toBe(true);
     install(config);
-    expect(getConfig()).toBe(getConfig());
+    expect(getConfig()).toBe(first);
   });
 
   it("treats reinstalling the same key as a no-op", async () => {
@@ -61,9 +68,7 @@ describe("installFrontendRuntimeConfig", () => {
   it("throws before install without including a credential", async () => {
     const { getFrontendRuntimeConfig: getConfig } = await import("./runtime-config");
 
-    expect(() => getConfig()).toThrowError(
-      "Frontend runtime configuration has not been initialized.",
-    );
+    expect(() => getConfig()).toThrowError(NOT_INITIALIZED_ERROR);
   });
 
   it("rejects a different installed value without including either key", async () => {
@@ -71,7 +76,7 @@ describe("installFrontendRuntimeConfig", () => {
 
     install({ frontendBackendApiKey: "first-key" });
     expect(() => install({ frontendBackendApiKey: "second-key" })).toThrowError(
-      "Frontend runtime configuration is already initialized.",
+      ALREADY_INITIALIZED_ERROR,
     );
   });
 });
