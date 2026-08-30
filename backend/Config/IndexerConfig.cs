@@ -9,6 +9,10 @@ public class IndexerConfig
     // hard-coded value, so behavior is unchanged by default. Values above 100 page the indexer.
     public const int DefaultSearchResultLimit = 100;
 
+    // Default parser-visible byte ceiling for Newznab caps/search XML. See
+    // ExternalMetadataResponseLimits for the sizing rationale.
+    public const long DefaultMaxResponseBytes = ExternalMetadataResponseLimits.NewznabDefaultMaxResponseBytes;
+
     // Global HTTP(S) proxy URL applied to every indexer that doesn't set its own ProxyUrl.
     // Empty/null = no proxy. Accepts http://host:port or http://user:pass@host:port.
     public string? ProxyUrl { get; set; }
@@ -20,6 +24,10 @@ public class IndexerConfig
     // Global max number of results to gather from each indexer per search. Individual indexers may
     // override this. Above 100 the indexer is paged. null or <= 0 = fall back to DefaultSearchResultLimit.
     public int? SearchResultLimit { get; set; }
+
+    // Global parser-visible byte ceiling for Newznab XML. null or <= 0 = DefaultMaxResponseBytes.
+    // Values above ExternalMetadataResponseLimits.HardMaxResponseBytes are clamped when read.
+    public long? MaxResponseBytes { get; set; }
 
     public List<ConnectionDetails> Indexers { get; set; } = [];
 
@@ -35,6 +43,16 @@ public class IndexerConfig
         if (indexer.SearchResultLimit is int per && per > 0) return per;
         if (SearchResultLimit is int global && global > 0) return global;
         return DefaultSearchResultLimit;
+    }
+
+    public long GetEffectiveMaxResponseBytes(ConnectionDetails indexer)
+    {
+        var raw = indexer.MaxResponseBytes is long per && per > 0
+            ? per
+            : MaxResponseBytes is long global && global > 0
+                ? global
+                : DefaultMaxResponseBytes;
+        return Math.Clamp(raw, 1, ExternalMetadataResponseLimits.HardMaxResponseBytes);
     }
 
     public bool ShouldSkipTlsVerification(string indexerName)
@@ -73,6 +91,9 @@ public class IndexerConfig
         // Per-indexer max results to gather per search. Overrides the global SearchResultLimit.
         // null or <= 0 = inherit global.
         public int? SearchResultLimit { get; set; }
+        // Per-indexer parser-visible byte ceiling for Newznab XML. Overrides the global
+        // MaxResponseBytes. null or <= 0 = inherit global.
+        public long? MaxResponseBytes { get; set; }
         // Max API search hits per reset window. null or <= 0 = unlimited.
         public int? HitLimit { get; set; }
         // Max NZB download hits per reset window. null or <= 0 = unlimited.

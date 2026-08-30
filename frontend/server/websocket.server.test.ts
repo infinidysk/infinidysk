@@ -1,9 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
-import WebSocket from "ws";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import WebSocket, { WebSocketServer } from "ws";
 import {
   BACKEND_RECONNECT_INITIAL_MS,
   BACKEND_RECONNECT_MAX_MS,
   cacheStateMessage,
+  initializeWebsocketClient,
   MAX_CLIENT_BUFFERED_AMOUNT,
   MAX_TOPICS_PER_SOCKET,
   nextBackendReconnectDelayMs,
@@ -234,5 +237,74 @@ describe("relay reconnect preserves browser clients", () => {
     expect(close).not.toHaveBeenCalled();
     expect(lastMessage.get("ls")).toBe(rawMessage);
     expect(send).toHaveBeenCalledWith(rawMessage);
+  });
+});
+
+describe("initializeWebsocketClient relay authentication", () => {
+  const resources: Array<() => Promise<void>> = [];
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    const closers = resources.splice(0);
+    await Promise.all(closers.map((close) => close()));
+  });
+
+  it("sends the runtime backend API key instead of reading process.env", async () => {
+    vi.stubEnv("FRONTEND_BACKEND_API_KEY", "poisoned-env-key");
+
+    const messages: string[] = [];
+    const server = http.createServer();
+    server.on("error", () => undefined);
+    const wss = new WebSocketServer({ server, path: "/ws" });
+    const firstMessage = new Promise<string>((resolve, reject) => {
+      wss.on("connection", (socket) => {
+        socket.on("message", (data) => {
+          const text = Buffer.isBuffer(data)
+            ? data.toString("utf8")
+            : Array.isArray(data)
+              ? Buffer.concat(data).toString("utf8")
+              : Buffer.from(data).toString("utf8");
+          messages.push(text);
+          if (messages.length === 1) resolve(text);
+        });
+        socket.on("error", reject);
+      });
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+      server.once("error", reject);
+    });
+    const address = server.address() as AddressInfo;
+    vi.stubEnv("BACKEND_URL", `http://127.0.0.1:${address.port}`);
+
+    const relay = initializeWebsocketClient(new Map(), new Map(), undefined, {
+      backendApiKey: "relay-test-key",
+    });
+    resources.push(() => {
+      relay.stop();
+      return Promise.resolve();
+    });
+    resources.push(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          wss.close((error) => {
+            if (error) reject(error);
+            else resolve();
+          });
+        }),
+    );
+    resources.push(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => {
+            if (error) reject(error);
+            else resolve();
+          });
+        }),
+    );
+
+    await expect(firstMessage).resolves.toBe("relay-test-key");
+    expect(messages).toHaveLength(1);
   });
 });

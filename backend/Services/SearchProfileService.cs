@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Indexers;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Utils;
 using Serilog;
@@ -634,6 +635,7 @@ public class SearchProfileService(
                 var client = new NewznabClient(
                     x.Url,
                     x.ApiKey,
+                    indexerConfig.GetEffectiveMaxResponseBytes(x),
                     searchUa,
                     proxy,
                     timeout,
@@ -675,7 +677,9 @@ public class SearchProfileService(
                 var filtered = IndexerResultFilter.Apply(limited, x.Filter, now);
                 return filtered.Select(i => new IndexerHit(x.Name, retrieveUa, proxy, i));
             }
-            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException or OperationCanceledException)
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException
+                                           or InvalidOperationException or OperationCanceledException
+                                           or RemoteResponseException)
             {
                 if (!e.IsCancellationException())
                     Log.Warning("Indexer {Indexer} search failed: {Message}", x.Name, e.Message);

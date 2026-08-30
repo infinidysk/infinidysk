@@ -17,6 +17,21 @@ import {
   isWithinBackendStartupGrace,
   shouldEmitThrottledBackendUnavailableLog,
 } from "./server/startup-grace.js";
+import { readFrontendRuntimeConfig, type FrontendRuntimeConfig } from "./server/runtime-config.js";
+
+function readRuntimeConfigOrExit(): FrontendRuntimeConfig {
+  try {
+    return readFrontendRuntimeConfig(process.env);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid frontend configuration.";
+    logger.error(message);
+    process.exit(1);
+  }
+}
+
+// Required frontend/backend shared credential. Validate before Vite, HTTP, or
+// WebSocket work so a missing key cannot crash later as a raw TypeError.
+const RUNTIME_CONFIG = readRuntimeConfigOrExit();
 
 // Short-circuit the type-checking of the built output.
 const BUILD_PATH = "../build/server/index.js";
@@ -126,6 +141,7 @@ router.all("/ws", websocketUpgradeGuard);
 interface ServerBuildModule {
   app: express.Express;
   bakedUrlBase?: string;
+  configureRuntime(config: FrontendRuntimeConfig): void;
   initializeWebsocketServer(websocketServer: WebSocketServer): void;
 }
 
@@ -141,6 +157,11 @@ const setServerModule = (serverModule: ServerBuildModule) => {
   if (_websocketServer != null) serverModule.initializeWebsocketServer(_websocketServer);
   _serverModule = serverModule;
 };
+function prepareServerModule(serverModule: ServerBuildModule): void {
+  assertUrlBaseMatchesBuild(serverModule.bakedUrlBase);
+  serverModule.configureRuntime(RUNTIME_CONFIG);
+  setServerModule(serverModule);
+}
 
 // Handle development vs production
 let closeDevelopmentServer: (() => Promise<void>) | null = null;
@@ -161,8 +182,7 @@ if (DEVELOPMENT) {
       const serverModule = (await viteDevServer.ssrLoadModule(
         "./server/app.ts",
       )) as ServerBuildModule;
-      assertUrlBaseMatchesBuild(serverModule.bakedUrlBase);
-      setServerModule(serverModule);
+      prepareServerModule(serverModule);
       return await serverModule["app"](req, res, next);
     } catch (error) {
       if (typeof error === "object" && error instanceof Error) {
@@ -176,9 +196,8 @@ if (DEVELOPMENT) {
   router.use("/assets", express.static("build/client/assets", { immutable: true, maxAge: "1y" }));
   router.use(express.static("build/client", { maxAge: "1h" }));
   const serverModule = await import(BUILD_PATH);
-  assertUrlBaseMatchesBuild(serverModule.bakedUrlBase);
+  prepareServerModule(serverModule);
   router.use(serverModule.app);
-  setServerModule(serverModule);
 }
 
 // Mount the router. When URL_BASE is empty we mount at root (no prefix).

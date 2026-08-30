@@ -10,6 +10,7 @@
     "server/startup-grace.ts",
     "server/websocket-policy.ts",
     "server/websocket-upgrade-guard.ts",
+    "server/runtime-config.ts",
     "server/security-headers.ts",
     "app/utils/url-base.ts",
     "vite.config.ts",

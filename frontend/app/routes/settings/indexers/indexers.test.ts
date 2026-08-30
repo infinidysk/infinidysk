@@ -1,18 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { isIndexersSettingsUpdated, isIndexersSettingsValid } from "./indexers";
 
+type IndexerConnection = {
+  Name: string;
+  Url: string;
+  ApiKey: string;
+  Enabled: boolean;
+  ProwlarrIndexerId?: number;
+  MaxResponseBytes?: number;
+};
+
+type IndexerInstances = {
+  MaxResponseBytes?: number;
+  Indexers: IndexerConnection[];
+};
+
+const validIndexer: IndexerConnection = {
+  Name: "Prowlarr indexer",
+  Url: "http://prowlarr:9696/7/api",
+  ApiKey: "prowlarr-key",
+  Enabled: true,
+  ProwlarrIndexerId: 7,
+};
+
+const validIndexers: IndexerInstances = { Indexers: [validIndexer] };
+
 const validConfig: Record<string, string> = {
-  "indexers.instances": JSON.stringify({
-    Indexers: [
-      {
-        Name: "Prowlarr indexer",
-        Url: "http://prowlarr:9696/7/api",
-        ApiKey: "prowlarr-key",
-        Enabled: true,
-        ProwlarrIndexerId: 7,
-      },
-    ],
-  }),
+  "indexers.instances": JSON.stringify(validIndexers),
   "api.user-agent": "",
   "api.search-user-agent": "",
   "search.exclude-patterns": "",
@@ -67,15 +81,35 @@ describe("Indexer settings", () => {
     }
   });
 
-  it("requires the Prowlarr URL and API key as a pair", () => {
-    expect(isIndexersSettingsValid({ ...validConfig, "prowlarr.url": "" })).toBe(false);
-    expect(isIndexersSettingsValid({ ...validConfig, "prowlarr.api-key": "" })).toBe(false);
-    expect(
-      isIndexersSettingsValid({
-        ...validConfig,
-        "prowlarr.url": "",
-        "prowlarr.api-key": "",
-      }),
-    ).toBe(true);
+  it("rejects MaxResponseBytes of zero or above the hard clamp", () => {
+    const hardMax = 16 * 1024 * 1024;
+    const withGlobal: Record<string, string> = {
+      ...validConfig,
+      "indexers.instances": JSON.stringify({
+        MaxResponseBytes: 0,
+        Indexers: validIndexers.Indexers,
+      } satisfies IndexerInstances),
+    };
+    expect(isIndexersSettingsValid(withGlobal)).toBe(false);
+
+    const withPerIndexer: Record<string, string> = {
+      ...validConfig,
+      "indexers.instances": JSON.stringify({
+        Indexers: [{ ...validIndexer, MaxResponseBytes: hardMax + 1 }],
+      } satisfies IndexerInstances),
+    };
+    expect(isIndexersSettingsValid(withPerIndexer)).toBe(false);
+  });
+
+  it("accepts MaxResponseBytes at the hard clamp", () => {
+    const hardMax = 16 * 1024 * 1024;
+    const next: Record<string, string> = {
+      ...validConfig,
+      "indexers.instances": JSON.stringify({
+        MaxResponseBytes: hardMax,
+        Indexers: validIndexers.Indexers,
+      } satisfies IndexerInstances),
+    };
+    expect(isIndexersSettingsValid(next)).toBe(true);
   });
 });

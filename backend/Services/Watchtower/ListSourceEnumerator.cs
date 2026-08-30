@@ -1,6 +1,8 @@
+using System.Text;
 using System.Text.Json;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
-using NzbWebDAV.Extensions;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Utils;
 using Serilog;
 
@@ -12,18 +14,36 @@ public class ListSourceEnumerator
 
     private const int MaxCatalogPages = 100;
 
+    private readonly HttpClient _http;
+    private readonly Func<long> _getMaxResponseBytes;
+
+    public ListSourceEnumerator(ConfigManager configManager)
+        : this(
+            ProxyHttpClientPool.GetClient(null),
+            configManager.GetWatchtowerListSourceMaxResponseBytes)
+    {
+    }
+
+    internal ListSourceEnumerator(HttpClient http, Func<long> getMaxResponseBytes)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(getMaxResponseBytes);
+        _http = http;
+        _getMaxResponseBytes = getMaxResponseBytes;
+    }
+
     public async Task<IReadOnlyList<WtContentRef>> EnumerateAsync(ListSource source, CancellationToken ct)
     {
         return source.Kind switch
         {
-            ListSource.KindStremioCatalog => await FetchStremioCatalogAsync(source.Url, source.Cap, ct).ConfigureAwait(false),
+            ListSource.KindStremioCatalog => await FetchStremioCatalogAsync(source.Name, source.Url, source.Cap, ct).ConfigureAwait(false),
             ListSource.KindUrlList => await FetchUrlListAsync(source.Url, ct).ConfigureAwait(false),
             _ => Array.Empty<WtContentRef>(),
         };
     }
 
-    private static async Task<IReadOnlyList<WtContentRef>> FetchStremioCatalogAsync(
-        string? url, int cap, CancellationToken ct)
+    private async Task<IReadOnlyList<WtContentRef>> FetchStremioCatalogAsync(
+        string sourceName, string? url, int cap, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(url)) return Array.Empty<WtContentRef>();
 
@@ -36,15 +56,15 @@ public class ListSourceEnumerator
         for (; page < MaxCatalogPages; page++)
         {
             var skip = pageSize > 0 ? page * pageSize : 0;
-            var json = await HttpGetStringAsync(BuildPagedUrl(url!, skip), ct).ConfigureAwait(false);
-            if (json is null)
+            var body = await HttpGetBodyAsync(BuildPagedUrl(url!, skip), ct).ConfigureAwait(false);
+            if (body is null)
             {
                 if (page == 0)
-                    throw new InvalidOperationException("Catalog request failed or returned an empty response.");
+                    throw new ListSourceGuidanceException("Catalog request failed or returned an empty response.");
                 break;
             }
 
-            using var doc = ParseOrThrow(json);
+            using var doc = ParseJsonOrThrow(body.Bytes);
             var root = doc.RootElement;
 
             if (root.ValueKind != JsonValueKind.Object ||
@@ -53,10 +73,10 @@ public class ListSourceEnumerator
                 if (page > 0) break;
                 if (root.ValueKind == JsonValueKind.Object &&
                     (root.TryGetProperty("catalogs", out _) || root.TryGetProperty("resources", out _)))
-                    throw new InvalidOperationException(
+                    throw new ListSourceGuidanceException(
                         "This URL is an addon manifest, not a catalog. Use \"Discover catalogs\" to pick which " +
                         "catalogs to add, or point this list at a catalog endpoint such as .../catalog/movie/<id>.json.");
-                throw new InvalidOperationException("Catalog response did not contain a \"metas\" array.");
+                throw new ListSourceGuidanceException("Catalog response did not contain a \"metas\" array.");
             }
 
             int pageCount = 0, newCount = 0;
@@ -79,8 +99,8 @@ public class ListSourceEnumerator
 
         if (page >= MaxCatalogPages)
             Log.Information(
-                "Watchtower: catalog {Url} reached the {Max}-page ceiling ({Count} titles); later titles were not pulled",
-                url, MaxCatalogPages, refs.Count);
+                "Watchtower: source {Source} reached the {Max}-page ceiling ({Count} titles); later titles were not pulled",
+                sourceName, MaxCatalogPages, refs.Count);
 
         return refs;
     }
@@ -88,23 +108,23 @@ public class ListSourceEnumerator
     public async Task<DiscoverResult> DiscoverCatalogsAsync(string url, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(url))
-            throw new InvalidOperationException("A manifest URL is required.");
+            throw new ListSourceGuidanceException("A manifest URL is required.");
 
         var manifestUrl = NormalizeManifestUrl(url.Trim());
-        var json = await HttpGetStringAsync(manifestUrl, ct).ConfigureAwait(false);
-        if (json is null)
-            throw new InvalidOperationException($"Could not fetch the addon manifest at {manifestUrl}.");
+        var body = await HttpGetBodyAsync(manifestUrl, ct).ConfigureAwait(false);
+        if (body is null)
+            throw new ListSourceGuidanceException("Could not fetch the addon manifest.");
 
-        using var doc = ParseOrThrow(json);
+        using var doc = ParseJsonOrThrow(body.Bytes);
         var root = doc.RootElement;
 
         if (root.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("catalogs", out var catalogs) || catalogs.ValueKind != JsonValueKind.Array)
         {
             if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("metas", out _))
-                throw new InvalidOperationException(
+                throw new ListSourceGuidanceException(
                     "That looks like a catalog endpoint, not a manifest. Add it directly as a Stremio catalog list.");
-            throw new InvalidOperationException("No catalogs were found in this addon manifest.");
+            throw new ListSourceGuidanceException("No catalogs were found in this addon manifest.");
         }
 
         var addonName = GetStr(root, "name");
@@ -128,7 +148,7 @@ public class ListSourceEnumerator
         }
 
         if (choices.Count == 0)
-            throw new InvalidOperationException("This addon manifest lists no usable catalogs.");
+            throw new ListSourceGuidanceException("This addon manifest lists no usable catalogs.");
 
         return new DiscoverResult { AddonName = addonName, Catalogs = choices };
     }
@@ -209,10 +229,18 @@ public class ListSourceEnumerator
         return names.Count > 0 ? string.Join(", ", names) : null;
     }
 
-    private static JsonDocument ParseOrThrow(string json)
+    private static JsonDocument ParseJsonOrThrow(ReadOnlyMemory<byte> body)
     {
-        try { return JsonDocument.Parse(json); }
-        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException) { throw new InvalidOperationException("The addon response was not valid JSON.", e); }
+        try
+        {
+            return JsonDocument.Parse(body);
+        }
+        catch (JsonException e)
+        {
+            throw new RemoteResponseFormatException(
+                "The addon response was not valid JSON.",
+                e);
+        }
     }
 
     public sealed class CatalogChoice
@@ -230,38 +258,45 @@ public class ListSourceEnumerator
         public required IReadOnlyList<CatalogChoice> Catalogs { get; init; }
     }
 
-    private static async Task<IReadOnlyList<WtContentRef>> FetchUrlListAsync(string? url, CancellationToken ct)
+    private async Task<IReadOnlyList<WtContentRef>> FetchUrlListAsync(string? url, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(url)) return Array.Empty<WtContentRef>();
-        var body = await HttpGetStringAsync(url!, ct).ConfigureAwait(false);
-        if (body is null)
-            throw new InvalidOperationException("List request failed or returned an empty response.");
+        var fetched = await HttpGetBodyAsync(url!, ct).ConfigureAwait(false);
+        if (fetched is null)
+            throw new ListSourceGuidanceException("List request failed or returned an empty response.");
 
-        var trimmed = body.TrimStart();
-        if (trimmed.StartsWith('[') || trimmed.StartsWith('{'))
-        {
-            var fromJson = TryParseJsonList(trimmed);
-            if (fromJson.Count > 0) return fromJson;
-        }
+        if (LooksLikeJson(fetched.Bytes))
+            return ParseJsonListOrThrow(fetched.Bytes);
 
-        var refs = new List<WtContentRef>();
-        foreach (var line in body.Split('\n')
-                     .Select(raw => raw.Trim())
-                     .Where(line => line.Length > 0 && !line.StartsWith('#')))
-        {
-            var (type, id) = SplitTypeId(line);
-            if (id.Length == 0) continue;
-            refs.Add(new WtContentRef { Type = type, ContentId = id });
-        }
-        return refs;
+        return ParsePlainList(DecodePlainText(fetched));
     }
 
-    private static List<WtContentRef> TryParseJsonList(string json)
+    private static bool LooksLikeJson(ReadOnlySpan<byte> body)
     {
-        var refs = new List<WtContentRef>();
+        var i = 0;
+        if (body.Length >= 3 && body[0] == 0xEF && body[1] == 0xBB && body[2] == 0xBF)
+            i = 3;
+        while (i < body.Length)
+        {
+            var b = body[i];
+            if (b is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')
+            {
+                i++;
+                continue;
+            }
+
+            return b is (byte)'[' or (byte)'{';
+        }
+
+        return false;
+    }
+
+    private static List<WtContentRef> ParseJsonListOrThrow(ReadOnlyMemory<byte> body)
+    {
         try
         {
-            using var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(body);
+            var refs = new List<WtContentRef>();
             var arr = doc.RootElement.ValueKind == JsonValueKind.Array
                 ? doc.RootElement
                 : (doc.RootElement.TryGetProperty("items", out var items) ? items : default);
@@ -285,12 +320,36 @@ public class ListSourceEnumerator
                     });
                 }
             }
+
+            return refs;
         }
-        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+        catch (JsonException e)
         {
-            // Malformed list payload; yield whatever refs parsed before the failure.
+            throw new RemoteResponseFormatException("The list response was not valid JSON.", e);
         }
+    }
+
+    private static List<WtContentRef> ParsePlainList(string body)
+    {
+        var refs = new List<WtContentRef>();
+        using var reader = new StringReader(body);
+        string? raw;
+        while ((raw = reader.ReadLine()) is not null)
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith('#')) continue;
+            var (type, id) = SplitTypeId(line);
+            if (id.Length == 0) continue;
+            refs.Add(new WtContentRef { Type = type, ContentId = id });
+        }
+
         return refs;
+    }
+
+    private static string DecodePlainText(FetchedBody fetched)
+    {
+        var text = fetched.Encoding.GetString(fetched.Bytes);
+        return text.Length > 0 && text[0] == '\uFEFF' ? text[1..] : text;
     }
 
     private static (string Type, string Id) SplitTypeId(string line)
@@ -317,27 +376,62 @@ public class ListSourceEnumerator
     private static string? GetStr(JsonElement el, string prop)
         => el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
-    private static async Task<string?> HttpGetStringAsync(string url, CancellationToken ct)
+    private async Task<FetchedBody?> HttpGetBodyAsync(string url, CancellationToken ct)
     {
         try
         {
-            var client = ProxyHttpClientPool.GetClient(null);
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.TryAddWithoutValidation("User-Agent", "NzbDav-Watchtower");
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(FetchTimeout);
-            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return null;
-            return await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.TryAddWithoutValidation("User-Agent", "NzbDav-Watchtower");
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(FetchTimeout);
+            using var response = await _http
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token)
+                .ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var encoding = GetContentEncoding(response.Content);
+            try
+            {
+                var bytes = await HttpContentReadUtil
+                    .ReadBoundedAsync(response.Content, _getMaxResponseBytes(), timeoutCts.Token)
+                    .ConfigureAwait(false);
+                return new FetchedBody(bytes, encoding);
+            }
+            catch (NzbResponseTooLargeException e)
+            {
+                throw new RemoteResponseTooLargeException(e.MaxBytes, e.ContentLength, e);
+            }
+        }
+        catch (RemoteResponseException)
+        {
+            throw;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        catch (Exception e) when (
+            e is HttpRequestException or InvalidOperationException
+            || (e is OperationCanceledException && !ct.IsCancellationRequested))
         {
-            Log.Debug(e, "Watchtower: list fetch failed for {Url}", url);
+            Log.Debug("Watchtower: remote list fetch failed ({FailureType})", e.GetType().Name);
             return null;
         }
     }
+
+    private static Encoding GetContentEncoding(HttpContent content)
+    {
+        var charset = content.Headers.ContentType?.CharSet?.Trim().Trim('"');
+        if (string.IsNullOrWhiteSpace(charset)) return Encoding.UTF8;
+        try
+        {
+            return Encoding.GetEncoding(charset);
+        }
+        catch (ArgumentException)
+        {
+            return Encoding.UTF8;
+        }
+    }
+
+    private sealed record FetchedBody(byte[] Bytes, Encoding Encoding);
 }

@@ -8,6 +8,7 @@ import {
   parseBackendFailure,
   parseBackendSuccess,
 } from "./backend-client.server";
+import { installFrontendRuntimeConfig } from "../../server/runtime-config";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -21,7 +22,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   vi.stubEnv("BACKEND_URL", "http://backend");
-  vi.stubEnv("FRONTEND_BACKEND_API_KEY", "test-api-key");
+  vi.stubEnv("FRONTEND_BACKEND_API_KEY", "poisoned-env-key");
+  installFrontendRuntimeConfig({ frontendBackendApiKey: "test-api-key" });
 });
 
 afterEach(() => {

@@ -24,8 +24,13 @@ public static class HttpContentReadUtil
             : 0);
         var buf = new byte[BufferSize];
         int read;
-        while ((read = await input.ReadAsync(buf.AsMemory(0, buf.Length), ct).ConfigureAwait(false)) > 0)
+        while (true)
         {
+            var remaining = maxBytes - ms.Length;
+            var toRead = remaining >= buf.Length ? buf.Length : (int)(remaining + 1);
+            read = await input.ReadAsync(buf.AsMemory(0, toRead), ct).ConfigureAwait(false);
+            if (read == 0)
+                break;
             if (ms.Length + read > maxBytes)
                 throw new NzbResponseTooLargeException(maxBytes);
             await ms.WriteAsync(buf.AsMemory(0, read), ct).ConfigureAwait(false);

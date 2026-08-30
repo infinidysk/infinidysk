@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.Controllers.Watchtower;
@@ -22,6 +23,10 @@ public class WatchtowerDiscoverController(ListSourceEnumerator enumerator) : Bas
         try
         {
             result = await enumerator.DiscoverCatalogsAsync(url, ct).ConfigureAwait(false);
+        }
+        catch (RemoteResponseException e)
+        {
+            throw new BadHttpRequestException(e.Message);
         }
         catch (InvalidOperationException e)
         {

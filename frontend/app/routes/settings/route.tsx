@@ -43,7 +43,11 @@ import {
 } from "./repairs/repairs";
 import { isWatchdogSettingsUpdated, WatchdogSettings } from "./watchdog/watchdog";
 import { isPreflightSettingsUpdated, PreflightSettings } from "./preflight/preflight";
-import { isWatchtowerSettingsUpdated, WatchtowerSettings } from "./watchtower/watchtower";
+import {
+  isWatchtowerSettingsUpdated,
+  isWatchtowerSettingsValid,
+  WatchtowerSettings,
+} from "./watchtower/watchtower";
 import { isWardenSettingsUpdated, WardenSettings } from "./warden/warden";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { SupportSettings } from "./support/support";
@@ -192,6 +196,7 @@ const defaultConfig = {
   "watchtower.daily-resolve-budget": "60",
   "watchtower.auto-throughput": "false",
   "watchtower.sync-interval-seconds": "3600",
+  "watchtower.list-source-max-response-bytes": "8388608",
   "watchtower.series-scope": "latest-season",
   "watchtower.season-bundles": "true",
   "watchtower.series-max-episodes": "50",
@@ -353,7 +358,9 @@ function Body(props: BodyProps) {
                       ? "Invalid Search Profiles settings"
                       : isRepairsUpdated && !isRepairsSettingsValid(newConfig)
                         ? "Invalid Repairs settings"
-                        : "Save";
+                        : isWatchtowerUpdated && !isWatchtowerSettingsValid(newConfig)
+                          ? "Invalid Watchtower settings"
+                          : "Save";
   const saveButtonVariant =
     saveButtonLabel === "Save" ? "primary" : saveButtonLabel === "Saved" ? "success" : "secondary";
   const isSaveButtonDisabled = saveButtonLabel !== "Save";

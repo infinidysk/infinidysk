@@ -5,6 +5,8 @@ import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { websocketServer } from "./websocket.server";
+import type { WebSocketServer } from "ws";
+import { getFrontendRuntimeConfig, installFrontendRuntimeConfig } from "./runtime-config";
 import {
   isBackendApiDocsPath,
   isReadOnlyDeniedBackendMutation,
@@ -33,7 +35,14 @@ export const app = express();
 // a mismatch — the two halves of the setting cannot work independently.
 export const bakedUrlBase = URL_BASE;
 app.disable("x-powered-by");
-export const initializeWebsocketServer = websocketServer.initialize;
+export const configureRuntime = installFrontendRuntimeConfig;
+
+export function initializeWebsocketServer(websocketServerInstance: WebSocketServer): void {
+  const { frontendBackendApiKey } = getFrontendRuntimeConfig();
+  websocketServer.initialize(websocketServerInstance, {
+    backendApiKey: frontendBackendApiKey,
+  });
+}
 
 const trustProxy =
   process.env["TRUST_PROXY"] === "1" ||
@@ -138,7 +147,7 @@ app.use(async (req, res, next) => {
       return;
     }
 
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, getFrontendRuntimeConfig().frontendBackendApiKey);
 
     if (isReadOnlyDeniedBackendMutation(req.method, req.path)) {
       const user = await getSessionUser(req);
@@ -168,7 +177,7 @@ app.use(authMiddleware);
 // WebDAV and API clients.
 app.use(async (req, res, next) => {
   if (isBackendApiDocsPath(req.path)) {
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, getFrontendRuntimeConfig().frontendBackendApiKey);
     return forwardToBackend(req, res, next);
   }
   next();

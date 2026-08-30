@@ -50,13 +50,19 @@ attachWebsocketServerErrorListener(wss, {
     process.exit(1);
   },
 });
-initializeWebsocketServer(wss, {
-  authenticate: () => auth.promise,
-  startBackendClient: () => {},
-  reportBrowserSocketError: report,
-  registerBrowserSocketErrorListener:
-    mode === "oversized-pre-auth-listener-removed" ? () => {} : attachBrowserWebsocketErrorListener,
-});
+initializeWebsocketServer(
+  wss,
+  { backendApiKey: "probe-unused-backend-api-key" },
+  {
+    authenticate: () => auth.promise,
+    startBackendClient: () => ({ stop() {} }),
+    reportBrowserSocketError: report,
+    registerBrowserSocketErrorListener:
+      mode === "oversized-pre-auth-listener-removed"
+        ? () => {}
+        : attachBrowserWebsocketErrorListener,
+  },
+);
 
 const address = await listenOnLoopback(httpServer);
 const url = `ws://127.0.0.1:${address.port}/ws`;

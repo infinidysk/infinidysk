@@ -11,6 +11,7 @@ public class TestIndexerConnectionRequest
     public string? UserAgent { get; init; }
     public string? ProxyUrl { get; init; }
     public int? TimeoutSeconds { get; init; }
+    public long? MaxResponseBytes { get; init; }
     public bool SkipTlsVerification { get; init; }
 
     public TestIndexerConnectionRequest(HttpContext context, ConfigManager configManager)
@@ -29,6 +30,8 @@ public class TestIndexerConnectionRequest
         ProxyUrl = context.Request.Form["proxyUrl"].FirstOrDefault();
         var rawTimeout = context.Request.Form["timeoutSeconds"].FirstOrDefault();
         TimeoutSeconds = int.TryParse(rawTimeout, out var t) && t > 0 ? t : null;
+        var rawMaxBytes = context.Request.Form["maxResponseBytes"].FirstOrDefault();
+        MaxResponseBytes = long.TryParse(rawMaxBytes, out var maxBytes) && maxBytes > 0 ? maxBytes : null;
         SkipTlsVerification = bool.TryParse(
             context.Request.Form["skipTlsVerification"].FirstOrDefault(),
             out var skipTlsVerification)

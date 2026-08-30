@@ -163,18 +163,22 @@ async function startTestServer(
     isOwned: () => false,
     onUnexpectedError: vi.fn(),
   });
-  initializeWebsocketServer(wss, {
-    authenticate: overrides.authenticate,
-    startBackendClient: overrides.startBackendClient ?? (() => {}),
-    reportBrowserSocketError:
-      overrides.reportBrowserSocketError ??
-      ((error, context) => {
-        reports.push(error);
-        reportBrowserSocketError(error, context);
-      }),
-    registerBrowserSocketErrorListener:
-      overrides.registerBrowserSocketErrorListener ?? attachBrowserWebsocketErrorListener,
-  });
+  initializeWebsocketServer(
+    wss,
+    { backendApiKey: DUMMY_API_KEY },
+    {
+      authenticate: overrides.authenticate,
+      startBackendClient: overrides.startBackendClient ?? (() => ({ stop() {} })),
+      reportBrowserSocketError:
+        overrides.reportBrowserSocketError ??
+        ((error, context) => {
+          reports.push(error);
+          reportBrowserSocketError(error, context);
+        }),
+      registerBrowserSocketErrorListener:
+        overrides.registerBrowserSocketErrorListener ?? attachBrowserWebsocketErrorListener,
+    },
+  );
   const address = await listenOnLoopback(httpServer);
   return { httpServer, wss, port: address.port, reports };
 }
@@ -280,6 +284,7 @@ describe("accepted browser websocket error handling", () => {
             captured.push(data);
           },
         } as unknown as WebSocket);
+        return { stop() {} };
       },
     });
     servers.push(started);
@@ -313,6 +318,7 @@ describe("accepted browser websocket error handling", () => {
             captured.push(data);
           },
         } as unknown as WebSocket);
+        return { stop() {} };
       },
     });
     servers.push(started);
