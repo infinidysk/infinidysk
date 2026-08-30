@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
 using NzbWebDAV.Database;
@@ -86,6 +87,48 @@ public class PruneCompletedHistoryTaskTests
             Assert.True(await new PruneCompletedHistoryTask(new WebsocketManager(), false, "movies", 90, () => harness.CreateContext()).Execute());
             Assert.Equal(0, await ctx.HistoryItems.CountAsync());
             Assert.Equal(150, await ctx.HistoryCleanupItems.CountAsync());
+        }
+        finally { await BaseTask.ResetRunningTaskForTestsAsync(); }
+    }
+
+    [Fact]
+    public async Task Execute_PrunesAndReportsDone_WhenProgressObserverThrowsOnce()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            var id = Guid.NewGuid();
+            ctx.HistoryItems.Add(CreateHistory(id, "old-movies.nzb", "movies", DateTime.UtcNow.AddDays(-120)));
+            await ctx.SaveChangesAsync();
+            ctx.ChangeTracker.Clear();
+
+            var invocation = 0;
+            var messages = new ConcurrentQueue<string>();
+            void Observer(string message)
+            {
+                if (Interlocked.Increment(ref invocation) == 1)
+                    throw new InvalidOperationException("progress observer failure");
+                messages.Enqueue(message);
+            }
+
+            Assert.True(await new PruneCompletedHistoryTask(
+                new WebsocketManager(),
+                false,
+                "movies",
+                90,
+                () => harness.CreateContext(),
+                progressObserver: Observer).Execute());
+
+            Assert.Null(await ctx.HistoryItems.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id));
+            Assert.Equal(1, await ctx.HistoryCleanupItems.CountAsync());
+            Assert.Contains(
+                messages,
+                message => message.StartsWith("Done. Pruned 1", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                messages,
+                message => message.StartsWith("Failed:", StringComparison.Ordinal));
         }
         finally { await BaseTask.ResetRunningTaskForTestsAsync(); }
     }

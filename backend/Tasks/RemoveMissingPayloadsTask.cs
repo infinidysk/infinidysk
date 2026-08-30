@@ -37,7 +37,7 @@ public sealed class RemoveMissingPayloadsTask : BaseTask
     private readonly TimeSpan _progressHeartbeatInterval;
     private readonly Action<string>? _progressObserver;
     private readonly CleanupStats _stats = new();
-    private RemoveUnlinkedFilesTask.ProgressHeartbeat? _progressHeartbeat;
+    private ProgressHeartbeat? _progressHeartbeat;
 
     public RemoveMissingPayloadsTask(
         ConfigManager configManager,
@@ -92,8 +92,10 @@ public sealed class RemoveMissingPayloadsTask : BaseTask
 
     protected override async Task ExecuteInternal()
     {
-        await using var progressHeartbeat =
-            new RemoveUnlinkedFilesTask.ProgressHeartbeat(Report, _progressHeartbeatInterval);
+        await using var progressHeartbeat = new ProgressHeartbeat(
+            Report,
+            _progressHeartbeatInterval,
+            ProgressHeartbeatOperation.RemoveMissingPayloads);
         _progressHeartbeat = progressHeartbeat;
         try
         {
