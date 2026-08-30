@@ -8,6 +8,7 @@
     "server/compression-filter.ts",
     "server/request-log-throttle.ts",
     "server/startup-grace.ts",
+    "server/websocket-policy.ts",
     "server/websocket-upgrade-guard.ts",
     "server/security-headers.ts",
     "app/utils/url-base.ts",

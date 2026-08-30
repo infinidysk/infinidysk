@@ -8,6 +8,7 @@ import {
   attachWebsocketServerErrorListener,
 } from "./server/http-server-lifecycle.js";
 import { logger, requestLogger } from "./server/logger.js";
+import { MAX_WEBSOCKET_PAYLOAD_BYTES } from "./server/websocket-policy.js";
 import { securityHeadersMiddleware } from "./server/security-headers.js";
 import { websocketUpgradeGuard } from "./server/websocket-upgrade-guard.js";
 import {
@@ -242,16 +243,15 @@ server.headersTimeout = LONG_RUNNING_REQUEST_TIMEOUT_MS + 1000;
 websocketServer = new WebSocketServer({
   server,
   path: `${URL_BASE}/ws`,
-  maxPayload: 64 * 1024,
+  maxPayload: MAX_WEBSOCKET_PAYLOAD_BYTES,
 });
-// Issue 1234 owns general browser WebSocketServer error handling. This listener
-// only suppresses HTTP errors already owned by attachHttpServerLifecycle; `ws`
-// forwards the same Error object on bind failure. Rebase 1234 onto this listener
-// rather than adding a second one.
+// Issue 1234 owns accepted-socket and pre-auth handling. This is the one WSS
+// error listener: suppress HTTP errors already owned by attachHttpServerLifecycle
+// (`ws` forwards the same Error object on bind failure) and fatalize the rest.
 attachWebsocketServerErrorListener(websocketServer, {
   isOwned: httpLifecycle.owns,
   onUnexpectedError: (error) => {
-    logger.error("Unexpected frontend WebSocket server error", error);
+    logger.error("Unexpected browser websocket server error; frontend will exit", error);
     process.exitCode = 1;
     process.exit(1);
   },

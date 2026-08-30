@@ -402,6 +402,25 @@ describe("attachWebsocketServerErrorListener", () => {
     expect(options.logError).toHaveBeenCalledOnce();
   });
 
+  it("registers one listener and fatalizes repeated unowned errors once", () => {
+    const websocketServer = new EventEmitter();
+    const failServerOnce = vi.fn();
+    attachWebsocketServerErrorListener(websocketServer, {
+      isOwned: () => false,
+      onUnexpectedError: failServerOnce,
+    });
+
+    expect(websocketServer.listenerCount("error")).toBe(1);
+
+    const error = new Error("test server failure");
+    expect(() => websocketServer.emit("error", error)).not.toThrow();
+    expect(failServerOnce).toHaveBeenCalledOnce();
+    expect(failServerOnce).toHaveBeenCalledWith(error);
+
+    websocketServer.emit("error", new Error("second unowned failure"));
+    expect(failServerOnce).toHaveBeenCalledOnce();
+  });
+
   it("exports identity mark helpers for issue 1234", () => {
     const error = new Error("owned-elsewhere");
     expect(isHttpServerErrorOwned(error)).toBe(false);

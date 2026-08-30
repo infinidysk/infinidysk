@@ -153,8 +153,11 @@ export function attachWebsocketServerErrorListener(
   websocketServer: WebsocketServerErrorTarget,
   options: WebsocketServerErrorListenerOptions,
 ): void {
+  let unexpectedFailureClaimed = false;
   websocketServer.on("error", (error: Error) => {
     if (error instanceof Error && options.isOwned(error)) return;
+    if (unexpectedFailureClaimed) return;
+    unexpectedFailureClaimed = true;
     options.onUnexpectedError(error);
   });
 }
