@@ -1,3 +1,4 @@
+using System.Text;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Tests.TestUtils;
 using Serilog;
@@ -231,12 +232,12 @@ public sealed class SynchronousObserverInvokerTests : IDisposable
 
     private static string Render(LogEvent logEvent)
     {
-        var rendered = logEvent.RenderMessage();
+        var rendered = new StringBuilder(logEvent.RenderMessage());
         foreach (var property in logEvent.Properties)
-            rendered += $" {property.Key}={property.Value}";
+            rendered.Append(' ').Append(property.Key).Append('=').Append(property.Value);
         if (logEvent.Exception is not null)
-            rendered += logEvent.Exception.ToString();
-        return rendered;
+            rendered.Append(logEvent.Exception);
+        return rendered.ToString();
     }
 
     private static IReadOnlyList<LogEvent> CaptureLogs(Action act)

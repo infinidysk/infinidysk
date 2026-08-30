@@ -35,10 +35,9 @@ internal static class SynchronousObserverInvoker
         if (subscribers is null)
             return;
 
-        var snapshot = subscribers.GetInvocationList();
-        foreach (var candidate in snapshot)
+        var snapshot = subscribers.GetInvocationList().Cast<EventHandler<TEventArgs>>();
+        foreach (var subscriber in snapshot)
         {
-            var subscriber = (EventHandler<TEventArgs>)candidate;
             try
             {
                 subscriber(sender, args);
@@ -58,10 +57,9 @@ internal static class SynchronousObserverInvoker
         if (subscribers is null)
             return;
 
-        var snapshot = subscribers.GetInvocationList();
-        foreach (var candidate in snapshot)
+        var snapshot = subscribers.GetInvocationList().Cast<Action<T>>();
+        foreach (var subscriber in snapshot)
         {
-            var subscriber = (Action<T>)candidate;
             try
             {
                 subscriber(argument);
@@ -82,10 +80,9 @@ internal static class SynchronousObserverInvoker
         if (subscribers is null)
             return;
 
-        var snapshot = subscribers.GetInvocationList();
-        foreach (var candidate in snapshot)
+        var snapshot = subscribers.GetInvocationList().Cast<Action<T1, T2>>();
+        foreach (var subscriber in snapshot)
         {
-            var subscriber = (Action<T1, T2>)candidate;
             try
             {
                 subscriber(first, second);
