@@ -2,6 +2,7 @@ using System.Diagnostics;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Logging;
 using NzbWebDAV.WebDav.Base;
 using Serilog;
 
@@ -276,7 +277,10 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
 
                 _ring.Append(scratch.AsSpan(0, read));
                 Interlocked.Add(ref _bytesPumped, read);
-                OnRingRetainedBytes?.Invoke(_ring.RetainedBytes);
+                SynchronousObserverInvoker.Invoke(
+                    OnRingRetainedBytes,
+                    _ring.RetainedBytes,
+                    SynchronousObserverSource.SharedStreamRingRetainedBytes);
                 MaybeEvict();
             }
         }
@@ -352,7 +356,10 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         if (min is { } minCursor)
             _ring.EvictThrough(minCursor);
 
-        OnRingRetainedBytes?.Invoke(_ring.RetainedBytes);
+        SynchronousObserverInvoker.Invoke(
+            OnRingRetainedBytes,
+            _ring.RetainedBytes,
+            SynchronousObserverSource.SharedStreamRingRetainedBytes);
 
         min = _ring.GetMinCursor();
         if (min is not { } pinning)
@@ -366,9 +373,17 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
             newTail = Anchor;
         var evicted = _ring.ForceEvictBelow(newTail);
         if (evicted.Count > 0)
-            OnForceEvictions?.Invoke(evicted.Count);
+        {
+            SynchronousObserverInvoker.Invoke(
+                OnForceEvictions,
+                evicted.Count,
+                SynchronousObserverSource.SharedStreamForceEvictions);
+        }
 
-        OnRingRetainedBytes?.Invoke(_ring.RetainedBytes);
+        SynchronousObserverInvoker.Invoke(
+            OnRingRetainedBytes,
+            _ring.RetainedBytes,
+            SynchronousObserverSource.SharedStreamRingRetainedBytes);
     }
 
     private void StartGraceLocked()

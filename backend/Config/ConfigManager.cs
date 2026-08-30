@@ -8,6 +8,7 @@ using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Config.Scheduling;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
@@ -44,6 +45,13 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     private readonly object _excludeLock = new();
     private IReadOnlyList<Regex>? _compiledExcludeCache;
     private ConfigEnvironmentOverlay _environmentOverlay = ConfigEnvironmentOverlay.Empty;
+    /// <summary>
+    /// Raised after configuration values have been committed in memory. Notification is
+    /// synchronous, in registration order, and does not run while config locks are held.
+    /// Subscriber failures are isolated and logged; they cannot roll back the commit or
+    /// skip later subscribers. Dispatch snapshots the invocation list, so a handler
+    /// removed during publication may still run once for that in-flight event.
+    /// </summary>
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
 
     public IDisposable Subscribe(EventHandler<ConfigEventArgs> handler)
@@ -312,7 +320,14 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
         if (changedConfig.ContainsKey(ConfigKeys.WebdavWindowsSafePaths))
             SyncPathSanitizer();
-        OnConfigChanged?.Invoke(this, new ConfigEventArgs { ChangedConfig = changedConfig });
+
+        var args = new ConfigEventArgs { ChangedConfig = changedConfig };
+        var subscribers = OnConfigChanged;
+        SynchronousObserverInvoker.Invoke(
+            subscribers,
+            this,
+            args,
+            SynchronousObserverSource.ConfigChanged);
     }
 
     private void SyncPathSanitizer() =>

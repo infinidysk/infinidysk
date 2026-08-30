@@ -2,12 +2,21 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Logging;
+using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
-public class ConnectionPoolConnectionLimitTests
+[Collection(nameof(GlobalLoggerCollection))]
+public class ConnectionPoolConnectionLimitTests : IDisposable
 {
     private static readonly TimeSpan WaitBudget = TimeSpan.FromSeconds(10);
+
+    public ConnectionPoolConnectionLimitTests()
+        => SynchronousObserverInvoker.ResetFailureLogThrottleForTests();
+
+    public void Dispose()
+        => SynchronousObserverInvoker.ResetFailureLogThrottleForTests();
 
     private static ConnectionPool<object> CreatePool(
         int maxConnections,
@@ -232,5 +241,62 @@ public class ConnectionPoolConnectionLimitTests
             () => pool.GetConnectionLockAsync(SemaphorePriority.High, cts.Token).WaitAsync(WaitBudget));
 
         foreach (var l in locks) l.Dispose();
+    }
+
+    [Fact]
+    public async Task ConnectionLimitObservers_ThrowingFirstSubscribers_PreserveFactoryErrorAndGate()
+    {
+        var factoryError = new CouldNotLoginToUsenetException(
+            "Could not login to usenet host: 502 connection limit (2) reached",
+            responseCode: 502);
+        var factoryCalls = 0;
+        var poolOrder = new List<string>();
+        var learnedOrder = new List<string>();
+        var learnedValues = new List<(int learned, int effective)>();
+        var throwStats = true;
+        Action<int, int> onLearned = (_, _) =>
+        {
+            learnedOrder.Add("first");
+            throw new InvalidOperationException("learned observer");
+        };
+        onLearned += (learned, effective) =>
+        {
+            learnedOrder.Add("second");
+            learnedValues.Add((learned, effective));
+        };
+
+        await using var pool = CreatePool(
+            maxConnections: 2,
+            detector: Detector502(2),
+            onLearned: onLearned,
+            factory: _ =>
+            {
+                if (Interlocked.Increment(ref factoryCalls) == 1)
+                    throw factoryError;
+                return ValueTask.FromResult(new object());
+            });
+
+        pool.OnConnectionPoolChanged += (_, _) =>
+        {
+            poolOrder.Add("first");
+            if (throwStats)
+                throw new InvalidOperationException("stats observer");
+        };
+        pool.OnConnectionPoolChanged += (_, _) => poolOrder.Add("second");
+
+        var thrown = await Assert.ThrowsAsync<CouldNotLoginToUsenetException>(
+            () => pool.GetConnectionLockAsync(SemaphorePriority.High, CancellationToken.None)
+                .WaitAsync(WaitBudget));
+        Assert.Same(factoryError, thrown);
+        Assert.Equal(1, pool.EffectiveMaxConnections);
+        Assert.Equal(2, pool.LearnedConnectionLimit);
+        Assert.Equal(["first", "second"], poolOrder);
+        Assert.Equal(["first", "second"], learnedOrder);
+        Assert.Equal([(2, 1)], learnedValues);
+
+        throwStats = false;
+        var recovered = await pool.GetConnectionLockAsync(SemaphorePriority.High, CancellationToken.None)
+            .WaitAsync(WaitBudget);
+        recovered.Dispose();
     }
 }

@@ -6,6 +6,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Logging;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
@@ -422,7 +423,11 @@ public class UsenetStreamingClient : WrappingNntpClient
             keepAliveAdmission: keepAliveAdmission);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
-        onConnectionPoolChanged(connectionPool, args);
+        SynchronousObserverInvoker.Invoke(
+            onConnectionPoolChanged,
+            connectionPool,
+            args,
+            SynchronousObserverSource.ConnectionPoolChanged);
         return connectionPool;
     }
 
