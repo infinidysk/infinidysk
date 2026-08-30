@@ -309,28 +309,24 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
         </ManagedSetting>
 
         <ManagedSetting configKey="api.rename-single-video-to-release">
-          <Toggle
-            id="rename-single-video-to-release-checkbox"
-            className="cursor-pointer gap-2 p-0"
-            checked={(config["api.rename-single-video-to-release"] ?? "true") !== "false"}
-            onChange={(e) =>
-              setNewConfig({
-                ...config,
-                "api.rename-single-video-to-release": String(e.target.checked),
-              })
-            }
-            label={
-              <span>
-                <span className="block text-sm font-medium text-base-content">
+          <Tooltip content="When a job mounts exactly one video, name it after the download folder. Multi-video jobs (season packs) are never renamed.">
+            <Toggle
+              id="rename-single-video-to-release-checkbox"
+              className="cursor-pointer gap-2 p-0"
+              checked={(config["api.rename-single-video-to-release"] ?? "true") !== "false"}
+              onChange={(e) =>
+                setNewConfig({
+                  ...config,
+                  "api.rename-single-video-to-release": String(e.target.checked),
+                })
+              }
+              label={
+                <span className="text-sm text-base-content">
                   Rename a single video to the release name
                 </span>
-                <span className="block text-[11px] leading-relaxed text-base-content/45">
-                  When a job mounts exactly one video, name it after the download folder.
-                  Multi-video jobs (season packs) are never renamed.
-                </span>
-              </span>
-            }
-          />
+              }
+            />
+          </Tooltip>
         </ManagedSetting>
 
         <ManagedSetting configKey="api.duplicate-nzb-behavior">
