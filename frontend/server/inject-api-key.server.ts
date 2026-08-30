@@ -6,7 +6,10 @@ import { isBackendApiDocsPath, isBackendApiPath, isBackendMetricsPath } from "./
  * Inject the frontend→backend API key for authenticated UI sessions that proxy
  * `/api` or `/metrics` without supplying their own key.
  */
-export async function setApiKeyForAuthenticatedRequests(req: express.Request): Promise<void> {
+export async function setApiKeyForAuthenticatedRequests(
+  req: express.Request,
+  frontendBackendApiKey: string,
+): Promise<void> {
   // if the path is not a protected backend endpoint, do nothing
   if (
     !isBackendApiPath(req.path) &&
@@ -26,5 +29,5 @@ export async function setApiKeyForAuthenticatedRequests(req: express.Request): P
   if (!authenticated) return;
 
   // otherwise, set the api key header
-  req.headers["x-api-key"] = process.env["FRONTEND_BACKEND_API_KEY"] || "";
+  req.headers["x-api-key"] = frontendBackendApiKey;
 }

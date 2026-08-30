@@ -148,7 +148,7 @@ jobs:
         working-directory: frontend
         env:
           BACKEND_URL: http://localhost:9
-        run: node --input-type=module -e "const m = await import('./build/server/index.js'); if (typeof m.app !== 'function' || typeof m.initializeWebsocketServer !== 'function') { console.error('build/server/index.js is missing custom server exports (app, initializeWebsocketServer)'); process.exit(1); }"
+        run: node --input-type=module -e "const m = await import('./build/server/index.js'); if (typeof m.app !== 'function' || typeof m.initializeWebsocketServer !== 'function' || typeof m.configureRuntime !== 'function') { console.error('build/server/index.js is missing custom server exports (app, initializeWebsocketServer, configureRuntime)'); process.exit(1); }"
 
       - name: Test frontend with coverage
         working-directory: frontend

@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { lookup as getMimeType } from "mime-types";
 import { getDownloadKey } from "~/auth/downloads.server";
+import { getFrontendRuntimeConfig } from "../../../server/runtime-config";
 import { Loading } from "~/components/loading/loading";
 import { formatFileSize } from "~/utils/file-size";
 import { parseExploreWebdavPath } from "~/utils/path";
@@ -55,6 +56,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   }
   const path = parsed.path;
   try {
+    const { frontendBackendApiKey } = getFrontendRuntimeConfig();
     return {
       parentDirectories: getParentDirectories(path),
       error: null,
@@ -63,7 +65,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         return {
           ...x,
           mimeType: getMimeType(x.name) || "",
-          downloadKey: getDownloadKey(getRelativePath(path, x.name)),
+          downloadKey: getDownloadKey(getRelativePath(path, x.name), frontendBackendApiKey),
         };
       }),
     };

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getFrontendRuntimeConfig } from "../../server/runtime-config";
 import { adminApi } from "~/clients/admin-operations";
 import { toStreamTracingStatus, type StreamTracingStatus } from "~/utils/stream-tracing-status";
 
@@ -235,7 +236,7 @@ async function call<T = Record<string, unknown>>(
     response = await fetch(process.env["BACKEND_URL"] + path, {
       ...init,
       headers: {
-        "x-api-key": process.env["FRONTEND_BACKEND_API_KEY"] || "",
+        "x-api-key": getFrontendRuntimeConfig().frontendBackendApiKey,
         ...(init?.headers ?? {}),
       },
     });

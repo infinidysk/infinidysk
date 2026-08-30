@@ -12,7 +12,7 @@ vi.mock("~/auth/authentication.server", () => ({
 
 beforeEach(() => {
   isAuthenticatedMock.mockReset();
-  vi.stubEnv("FRONTEND_BACKEND_API_KEY", "injected-key");
+  vi.stubEnv("FRONTEND_BACKEND_API_KEY", "poisoned-env-key");
 });
 
 function mockReq(partial: {
@@ -30,21 +30,21 @@ function mockReq(partial: {
 describe("setApiKeyForAuthenticatedRequests", () => {
   it("ignores non-/api paths", async () => {
     const req = mockReq({ path: "/view/movie" });
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, "injected-key");
     expect(isAuthenticatedMock).not.toHaveBeenCalled();
     expect(req.headers["x-api-key"]).toBeUndefined();
   });
 
   it("ignores /apifoo bare-prefix false positives", async () => {
     const req = mockReq({ path: "/apifoo" });
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, "injected-key");
     expect(isAuthenticatedMock).not.toHaveBeenCalled();
   });
 
   it("injects for decoded /api paths", async () => {
     isAuthenticatedMock.mockResolvedValueOnce(true);
     const req = mockReq({ path: "/%61pi/get-config" });
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, "injected-key");
     expect(req.headers["x-api-key"]).toBe("injected-key");
   });
 
@@ -53,7 +53,7 @@ describe("setApiKeyForAuthenticatedRequests", () => {
       path: "/api/get-config",
       headers: { "x-api-key": "client-key" },
     });
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, "injected-key");
     expect(isAuthenticatedMock).not.toHaveBeenCalled();
     expect(req.headers["x-api-key"]).toBe("client-key");
   });
@@ -61,21 +61,21 @@ describe("setApiKeyForAuthenticatedRequests", () => {
   it("does not inject when the session is unauthenticated", async () => {
     isAuthenticatedMock.mockResolvedValueOnce(false);
     const req = mockReq({ path: "/api/get-config" });
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, "injected-key");
     expect(req.headers["x-api-key"]).toBeUndefined();
   });
 
   it("injects FRONTEND_BACKEND_API_KEY for authenticated /api requests", async () => {
     isAuthenticatedMock.mockResolvedValueOnce(true);
     const req = mockReq({ path: "/api/get-config" });
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, "injected-key");
     expect(req.headers["x-api-key"]).toBe("injected-key");
   });
 
   it("injects FRONTEND_BACKEND_API_KEY for authenticated API docs requests", async () => {
     isAuthenticatedMock.mockResolvedValueOnce(true);
     const req = mockReq({ path: "/openapi/admin.json" });
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, "injected-key");
     expect(req.headers["x-api-key"]).toBe("injected-key");
   });
 
@@ -84,7 +84,7 @@ describe("setApiKeyForAuthenticatedRequests", () => {
       path: "/api",
       query: { apikey: "query-key" },
     });
-    await setApiKeyForAuthenticatedRequests(req);
+    await setApiKeyForAuthenticatedRequests(req, "injected-key");
     expect(isAuthenticatedMock).not.toHaveBeenCalled();
   });
 });

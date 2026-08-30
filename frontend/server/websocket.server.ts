@@ -24,6 +24,10 @@ export const BACKEND_RECONNECT_MAX_MS = 30_000;
 
 export type TopicKind = "state" | "stream" | "event";
 
+export type WebsocketRuntimeOptions = Readonly<{
+  backendApiKey: string;
+}>;
+
 const TOPIC_KINDS = new Set<TopicKind>(["state", "stream", "event"]);
 export const KEYED_REPLAY_TOPICS = new Set(["cxs"]);
 export const KEYED_REPLAY_RESET_MESSAGE = "reset";
@@ -120,7 +124,7 @@ export function nextBackendReconnectDelayMs(
   return Math.floor(random() * (exp + 1));
 }
 
-function initializeWebsocketServer(wss: WebSocketServer) {
+function initializeWebsocketServer(wss: WebSocketServer, runtime: WebsocketRuntimeOptions) {
   // keep track of socket subscriptions
   const websockets = new Map<TrackedSocket, Record<string, TopicKind>>();
   const subscriptions = new Map<string, Set<TrackedSocket>>();
@@ -130,7 +134,7 @@ function initializeWebsocketServer(wss: WebSocketServer) {
   // aggregate changes upstream to the backend so it can skip serialization
   // for topics with zero listeners.
   const upstreamSubscriptions = new UpstreamSubscriptionForwarder(subscriptions);
-  initializeWebsocketClient(subscriptions, lastMessage, upstreamSubscriptions);
+  initializeWebsocketClient(subscriptions, lastMessage, upstreamSubscriptions, runtime);
 
   const heartbeat = setInterval(() => {
     for (const client of wss.clients) {
@@ -242,9 +246,12 @@ function initializeWebsocketServer(wss: WebSocketServer) {
 export function initializeWebsocketClient(
   subscriptions: Map<string, Set<WebSocket>>,
   lastMessage: Map<string, string>,
-  upstreamForwarder?: UpstreamSubscriptionForwarder,
-) {
+  upstreamForwarder: UpstreamSubscriptionForwarder | undefined,
+  runtime: WebsocketRuntimeOptions,
+): { stop(): void } {
   let reconnectTimeout: NodeJS.Timeout | null = null;
+  let currentSocket: WebSocket | null = null;
+  let stopped = false;
   let connected = false;
   let connectionFailures = 0;
   let lastFailureLogAt = 0;
@@ -276,7 +283,9 @@ export function initializeWebsocketClient(
   }
 
   function connect() {
+    if (stopped) return;
     const socket = new WebSocket(url);
+    currentSocket = socket;
 
     socket.on("error", (error: Error) => {
       // Failed-connect errors are logged from onclose to avoid double-counting.
@@ -296,7 +305,7 @@ export function initializeWebsocketClient(
         reconnectTimeout = null;
       }
 
-      socket.send(Buffer.from(process.env["FRONTEND_BACKEND_API_KEY"]!, "utf-8"), {
+      socket.send(Buffer.from(runtime.backendApiKey, "utf-8"), {
         binary: false,
       });
 
@@ -326,6 +335,8 @@ export function initializeWebsocketClient(
     };
 
     socket.onclose = (event: WebSocket.CloseEvent) => {
+      if (currentSocket === socket) currentSocket = null;
+      if (stopped) return;
       // Keep browser sockets open and preserve lastMessage. Overview uses
       // live-stats age for the soft stale banner; when the relay returns,
       // the backend replays state topics and fan-out resumes without a
@@ -347,6 +358,7 @@ export function initializeWebsocketClient(
   }
 
   function scheduleReconnect(delayMs: number) {
+    if (stopped) return;
     if (reconnectTimeout) clearTimeout(reconnectTimeout);
 
     reconnectTimeout = setTimeout(() => {
@@ -355,6 +367,20 @@ export function initializeWebsocketClient(
   }
 
   connect();
+  return {
+    stop() {
+      stopped = true;
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+      const socket = currentSocket;
+      currentSocket = null;
+      if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.close();
+      }
+    },
+  };
 }
 
 /**
