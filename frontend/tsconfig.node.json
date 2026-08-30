@@ -2,6 +2,7 @@
   "extends": "./tsconfig.json",
   "include": [
     "server.ts",
+    "server/http-server-lifecycle.ts",
     "server/logger.ts",
     "server/proxy-path.ts",
     "server/compression-filter.ts",
