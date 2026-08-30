@@ -158,4 +158,15 @@ public class ExternalMetadataResponseLimitsConfigTests
         Assert.Contains("Indexers", ex.Message, StringComparison.Ordinal);
         Assert.Contains("array", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void IndexerInstances_RejectsNullIndexerEntries()
+    {
+        const string json = """{"Indexers":[null]}""";
+        var ex = Assert.Throws<ArgumentException>(() =>
+            ConfigManager.ValidateConfigItems([
+                new ConfigItem { ConfigName = ConfigKeys.IndexersInstances, ConfigValue = json },
+            ]));
+        Assert.Contains("null", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

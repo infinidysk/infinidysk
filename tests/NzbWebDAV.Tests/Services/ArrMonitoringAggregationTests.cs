@@ -214,7 +214,8 @@ public sealed class ArrMonitoringAggregationTests
 
             var warning = Assert.Single(
                 sink.Events,
-                e => e.Level == LogEventLevel.Warning && e.Properties.ContainsKey("Reason"));
+                e => e.Level == LogEventLevel.Warning
+                     && e.MessageTemplate.Text.Contains("stuck queue item", StringComparison.Ordinal));
             Assert.Equal(
                 "Found archive file, might need to be extracted: release.part01.rar",
                 warning.Properties["Reason"].LiteralValue());
