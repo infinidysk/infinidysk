@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { formatBytes } from "../../utils/format";
+import { mockReadsRequested } from "../live-reads-panel/live-reads-panel.mock";
 
 export type LiveTilesProps = {
   tiles: {
@@ -13,6 +15,11 @@ export type LiveTilesProps = {
 };
 
 export function LiveTiles({ tiles }: LiveTilesProps) {
+  const [mockReads, setMockReads] = useState<number | null>(null);
+  useEffect(() => {
+    setMockReads(mockReadsRequested());
+  }, []);
+  const activeReads = mockReads ?? tiles.activeReads;
   const bytesPerSec = tiles.bytesServedPerMinute / 60;
   const articlesPerSec = tiles.articlesPerMinute / 60;
   const leased = tiles.inFlightArticleBytes ?? 0;
@@ -27,8 +34,8 @@ export function LiveTiles({ tiles }: LiveTilesProps) {
     >
       <Tile
         label="Active reads"
-        value={tiles.activeReads.toString()}
-        accent={tiles.activeReads > 0 ? "live" : undefined}
+        value={activeReads.toString()}
+        accent={activeReads > 0 ? "live" : undefined}
       />
       <Tile
         label="Articles / s"

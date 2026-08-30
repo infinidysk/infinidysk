@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ActiveRead, ActiveReadsMessage } from "~/clients/backend-client.server";
 import { formatBytes, formatSessionAge, formatTimeLeft } from "../../utils/format";
-import { mediaTypeFromFileName } from "../../utils/media-type";
 import { displayNameForRead } from "../../utils/display-name";
 import { clientIdentityTooltip, clientLabelFromUserAgent } from "~/utils/client-label";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
 import { Tooltip } from "~/components/ui";
 import { Sparkline } from "../provider-scoreboard/provider-scoreboard";
+import { mockLiveReadRows, mockReadsRequested } from "./live-reads-panel.mock";
 
 const TOPIC_ACTIVE_READS = "ar";
 
@@ -23,21 +23,32 @@ const HISTORY_LIMIT = 60;
 
 /**
  * Live "right now" panel — full-width rows refreshed via the ActiveReads WS
- * topic. Keeps an empty state when no reads are active so the dashboard stack
- * stays stable. When `paused`, the subscription is disabled so layout edit
- * borders stay stable.
+ * topic. Sizes to the first snapshot of reads, then freezes that height until
+ * the next page load so later sessions scroll instead of stretching the card.
+ * When `paused`, the subscription is disabled so layout edit borders stay stable.
  */
 export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
   const [rows, setRows] = useState<LiveReadRow[]>([]);
+  const [mockCount, setMockCount] = useState<number | null>(null);
+  const [snapshotReady, setSnapshotReady] = useState(false);
   // Track previous bytesRead per session for live MiB/s computation.
   const prevRef = useRef<Map<string, { bytes: number; at: number; rate: number }>>(new Map());
   // Per-session rate samples for the sparkline, keyed by session id.
   const historyRef = useRef<Map<string, number[]>>(new Map());
 
+  useEffect(() => {
+    const count = mockReadsRequested();
+    if (count == null) return;
+    setMockCount(count);
+    setRows(mockLiveReadRows(count));
+    setSnapshotReady(true);
+  }, []);
+
   useWebsocketTopic(
     TOPIC_ACTIVE_READS,
     "state",
     (message) => {
+      if (mockReadsRequested() != null) return;
       try {
         // ActiveReads websocket topic payload shape (backend contract)
         const payload = JSON.parse(message) as ActiveReadsMessage;
@@ -65,49 +76,60 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
         prevRef.current = next;
         historyRef.current = nextHistory;
         setRows(nextRows);
+        setSnapshotReady(true);
       } catch {
         /* ignore */
       }
     },
-    { enabled: !paused },
+    { enabled: !paused && mockCount == null },
   );
 
-  return <LiveReadsPanelContent rows={rows} />;
+  return <LiveReadsPanelContent rows={rows} snapshotReady={snapshotReady} />;
 }
 
-export function LiveReadsPanelContent({ rows }: { rows: LiveReadRow[] }) {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [copyNotice, setCopyNotice] = useState<{ seq: number; text: string } | null>(null);
-  const copySeqRef = useRef(0);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+export function LiveReadsPanelContent({
+  rows,
+  snapshotReady = true,
+}: {
+  rows: LiveReadRow[];
+  snapshotReady?: boolean;
+}) {
   const displayedRows = [...rows].sort((a, b) => b.read.startedAt - a.read.startedAt);
+  const cardRef = useRef<HTMLElement>(null);
+  const [lockedHeight, setLockedHeight] = useState<number | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  useLayoutEffect(() => {
+    if (!snapshotReady || lockedHeight != null) return;
+    const card = cardRef.current;
+    if (!card) return;
+
+    const lockFromCard = (): boolean => {
+      const height = card.getBoundingClientRect().height;
+      if (height < 1) return false;
+      setLockedHeight(height);
+      return true;
     };
-  }, []);
 
-  const copySessionId = async (id: string) => {
-    try {
-      await navigator.clipboard.writeText(id);
-    } catch {
-      return;
-    }
-    copySeqRef.current += 1;
-    setCopiedId(id);
-    setCopyNotice({ seq: copySeqRef.current, text: "Session id copied" });
-    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => {
-      setCopiedId((current) => (current === id ? null : current));
-      copyTimerRef.current = null;
-    }, 1500);
-  };
+    if (lockFromCard()) return;
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (lockFromCard()) observer.disconnect();
+    });
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [snapshotReady, lockedHeight]);
+
+  const heightLocked = lockedHeight != null;
 
   return (
-    <section className="card h-[30rem] w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
-      <div className="card-body flex min-h-0 flex-col gap-3 p-4">
-        <div className="flex items-center gap-2.5">
+    <section
+      ref={cardRef}
+      className={`card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm${heightLocked ? " overflow-hidden" : ""}`}
+      style={heightLocked ? { height: lockedHeight } : undefined}
+    >
+      <div className="card-body flex h-full min-h-0 flex-col gap-3 p-4">
+        <div className="flex shrink-0 items-center gap-2.5">
           <span className="status status-success animate-pulse" aria-hidden="true" />
           <h3 className="card-title m-0 text-base">Right now</h3>
           {rows.length > 0 && (
@@ -117,27 +139,20 @@ export function LiveReadsPanelContent({ rows }: { rows: LiveReadRow[] }) {
           )}
         </div>
 
-        <div key={copyNotice?.seq ?? 0} className="sr-only" aria-live="polite">
-          {copyNotice?.text ?? ""}
-        </div>
-
         {rows.length === 0 ? (
           <p className="m-0 text-sm text-base-content/50">
             No files are being read right now. Open a mounted file to see live progress here.
           </p>
         ) : (
-          <ul className="yes-scrollbar m-0 min-h-0 w-full flex-1 list-none divide-y divide-base-content/10 overflow-y-auto p-0">
+          <ul
+            className={
+              heightLocked
+                ? "yes-scrollbar m-0 min-h-0 w-full min-w-0 flex-1 list-none divide-y divide-base-content/10 overflow-x-hidden overflow-y-auto py-0 pr-4 pl-0"
+                : "m-0 w-full min-w-0 list-none divide-y divide-base-content/10 overflow-x-hidden py-0 pr-4 pl-0"
+            }
+          >
             {displayedRows.map(({ read, rate, history }) => (
-              <ReadRow
-                key={read.id}
-                read={read}
-                rate={rate}
-                history={history}
-                copied={copiedId === read.id}
-                onCopySessionId={(id) => {
-                  void copySessionId(id);
-                }}
-              />
+              <ReadRow key={read.id} read={read} rate={rate} history={history} />
             ))}
           </ul>
         )}
@@ -150,17 +165,12 @@ function ReadRow({
   read: r,
   rate,
   history,
-  copied,
-  onCopySessionId,
 }: {
   read: ActiveRead;
   rate: number;
   history: number[];
-  copied: boolean;
-  onCopySessionId: (id: string) => void;
 }) {
   const display = displayNameForRead(r.fileName, r.path);
-  const mediaType = mediaTypeFromFileName(display.name);
   // Use the latest read position (what the player is requesting right now) —
   // not cumulative bytes transferred — so the bar reflects actual playback
   // location, immune to seeks/replays.
@@ -176,66 +186,60 @@ function ReadRow({
   const scrubbing = r.bytesRead > r.currentOffset + Math.max(64_000_000, r.currentOffset * 0.2);
 
   return (
-    <li className="flex flex-col gap-1.5 py-3 first:pt-0 last:pb-0">
-      <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:gap-x-4">
-        <div className="flex min-w-0 items-center gap-2 lg:flex-1">
-          {mediaType && (
-            <span
-              className={`badge badge-sm shrink-0 ${
-                mediaType === "movie" ? "badge-primary" : "badge-secondary"
-              }`}
-            >
-              {mediaType === "movie" ? "MOVIE" : "EPISODE"}
-            </span>
-          )}
-          <Tooltip
-            className="min-w-0 flex-1"
-            content={display.isReleaseFallback ? `${r.path}\n(obfuscated file name)` : r.path}
-          >
-            <span className="block truncate text-sm font-medium text-base-content">
-              {display.name}
-            </span>
-          </Tooltip>
-        </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs tabular-nums">
+    <li className="flex min-w-0 flex-col gap-1 overflow-x-hidden py-2 first:pt-0 last:pb-0">
+      <div className="flex min-w-0 flex-col gap-1 lg:flex-row lg:items-center lg:gap-x-4">
+        <Tooltip
+          className="min-w-0 overflow-hidden lg:flex-1"
+          content={display.isReleaseFallback ? `${r.path}\n(obfuscated file name)` : r.path}
+        >
+          <span className="block truncate text-xs font-bold text-base-content">{display.name}</span>
+        </Tooltip>
+
+        <div className="flex w-full min-w-0 items-center gap-x-2.5 font-mono text-xs tabular-nums lg:w-auto lg:shrink-0 lg:gap-x-3">
           {history.length >= 2 && (
-            <span className="hidden sm:block">
-              <Sparkline values={history} tone="success" />
+            <span className="hidden shrink-0 sm:block">
+              <Sparkline values={history} tone="secondary" />
             </span>
           )}
-          <span className="font-medium text-success">{formatBytes(rate)}/s</span>
-          <span className="font-medium text-base-content">
+          <span className="w-[4.5rem] shrink-0 font-medium text-secondary lg:w-[5.5rem]">
+            {formatBytes(rate)}/s
+          </span>
+          <span className="min-w-0 flex-1 truncate font-medium text-base-content lg:w-[8.5rem] lg:flex-none">
             {formatBytes(r.currentOffset)}
             {r.fileSize ? (
               <span className="font-normal text-base-content/50"> / {formatBytes(r.fileSize)}</span>
             ) : null}
           </span>
-          <span className="text-base-content/50">{timeLeft ?? "—"}</span>
+          <div className="flex w-20 shrink-0 flex-col gap-1 lg:w-28">
+            <progress
+              className="progress progress-success h-1 w-full"
+              value={pct ?? 0}
+              max={100}
+              aria-label={pct === null ? "Loading progress" : undefined}
+            />
+            <span className="text-end leading-none text-base-content/50">{timeLeft ?? "—"}</span>
+          </div>
         </div>
       </div>
 
-      {pct !== null ? (
-        <progress className="progress progress-success h-1 w-full" value={pct} max={100} />
-      ) : (
-        <span
-          className="loading loading-bars loading-sm text-success"
-          role="status"
-          aria-label="Loading progress"
-        />
-      )}
-
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/50">
-        <Tooltip content={clientIdentityTooltip(r.clientUserAgent, r.clientIp) ?? ""}>
-          <span className="truncate">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 overflow-hidden text-xs text-base-content/50">
+        <Tooltip
+          className="min-w-0 max-w-full overflow-hidden"
+          content={clientIdentityTooltip(r.clientUserAgent, r.clientIp) ?? ""}
+        >
+          <span className="block max-w-full truncate">
             {clientLabelFromUserAgent(r.clientUserAgent)}
             {r.clientIp ? (
-              <span className="font-mono text-base-content/40"> · {r.clientIp}</span>
+              <span className="hidden font-mono text-base-content/40 sm:inline"> · {r.clientIp}</span>
             ) : null}
           </span>
         </Tooltip>
-        {sessionAge && <span>{sessionAge}</span>}
+        {sessionAge && <span className="shrink-0">{sessionAge}</span>}
         {bytesFetched > 0 && (
-          <Tooltip content="Bytes pulled from Usenet for this session, including readahead">
+          <Tooltip
+            className="max-sm:hidden"
+            content="Bytes pulled from Usenet for this session, including readahead"
+          >
             <span className="font-mono tabular-nums">fetched {formatBytes(bytesFetched)}</span>
           </Tooltip>
         )}
@@ -244,39 +248,22 @@ function ReadRow({
             <span className="font-mono tabular-nums">{formatBytes(r.bytesRead)} served</span>
           </Tooltip>
         )}
-        {r.providers.length > 0 && (
-          <span className="flex min-w-0 flex-wrap gap-1">
-            {r.providers.slice(0, 6).map((p, i) => {
-              const label = p.nickname?.trim() || p.host;
-              return (
-                <Tooltip
-                  key={`${p.host}-${i}`}
-                  content={`${label} (${p.host}): ${p.segments} segments`}
-                >
-                  <span className="badge badge-ghost badge-sm gap-1.5 font-mono tabular-nums">
-                    <span className="max-w-[8rem] truncate">{label}</span>
-                    <span className="font-medium">{p.segments}</span>
-                  </span>
-                </Tooltip>
-              );
-            })}
-          </span>
-        )}
-        <Tooltip content={`Copy session id: ${r.id}`}>
-          <button
-            type="button"
-            className="btn btn-link btn-xs h-auto min-h-0 px-0 font-mono"
-            aria-label={`Copy session id: ${r.id}${copied ? " (copied)" : ""}`}
-            onClick={() => onCopySessionId(r.id)}
-          >
-            {copied ? "Copied" : shortSessionId(r.id)}
-          </button>
-        </Tooltip>
+        {r.providers.length > 0 &&
+          r.providers.slice(0, 6).map((p, i) => {
+            const label = p.nickname?.trim() || p.host;
+            return (
+              <Tooltip
+                key={`${p.host}-${i}`}
+                content={`${label} (${p.host}): ${p.segments} segments`}
+              >
+                <span className="badge badge-ghost badge-xs max-w-full gap-1 font-mono tabular-nums">
+                  <span className="max-w-[7rem] truncate">{label}</span>
+                  <span className="font-medium">{p.segments}</span>
+                </span>
+              </Tooltip>
+            );
+          })}
       </div>
     </li>
   );
-}
-
-function shortSessionId(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) : id;
 }

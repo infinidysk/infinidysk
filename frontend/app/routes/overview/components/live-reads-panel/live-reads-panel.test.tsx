@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
+import { cleanup, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActiveRead } from "~/clients/backend-client.server";
 import { LiveReadsPanel, LiveReadsPanelContent, type LiveReadRow } from "./live-reads-panel";
 
@@ -122,6 +124,11 @@ const fixtureRows: LiveReadRow[] = [
 ];
 
 describe("LiveReadsPanel", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
   it("renders the empty state when there are no active reads", () => {
     const markup = renderToStaticMarkup(<LiveReadsPanel />);
 
@@ -133,21 +140,26 @@ describe("LiveReadsPanel", () => {
     const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
 
     expect(markup).toContain("5 active");
-    expect(markup).toContain("h-[30rem]");
-    expect(markup).toContain("overflow-y-auto");
+    expect(markup).not.toContain("h-[21rem]");
+    expect(markup).not.toContain("sm:h-[30rem]");
+    expect(markup).toContain("overflow-x-hidden");
+    expect(markup).toContain("pr-4");
     expect(markup).toContain("The.Prestige.2006.1080p.BluRay.x264-GRP.mkv");
     expect(markup).toContain("Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-GRP.mkv");
     // Speed, progress, and computed time left
     expect(markup).toContain("7.2 MB/s");
+    expect(markup).toContain("text-secondary");
     expect(markup).toContain("3.2 GB");
     expect(markup).toContain("/ 8.4 GB");
     expect(markup).toContain("12m left");
     expect(markup).toContain("6m left");
-    // Meta line: client, provider badges, session id
+    // Meta line: client and provider badges
     expect(markup).toContain("Plex");
     expect(markup).toContain("192.168.1.20");
+    expect(markup).toContain("hidden font-mono text-base-content/40 sm:inline");
     expect(markup).toContain("Eweka");
-    expect(markup).toContain("a1b2c3d4");
+    expect(markup).not.toContain("Copy session id");
+    expect(markup).not.toContain("a1b2c3d4");
   });
 
   it("places the newest read first", () => {
@@ -158,11 +170,14 @@ describe("LiveReadsPanel", () => {
     );
   });
 
-  it("labels media rows with MOVIE / EPISODE badges", () => {
+  it("does not label rows as MOVIE or EPISODE", () => {
     const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
 
-    expect(markup.match(/MOVIE/g)).toHaveLength(3);
-    expect(markup.match(/EPISODE/g)).toHaveLength(2);
+    expect(markup).not.toContain("MOVIE");
+    expect(markup).not.toContain("EPISODE");
+    expect(markup).toContain("font-bold");
+    expect(markup).toContain("w-20 shrink-0");
+    expect(markup).toContain("lg:w-28");
   });
 
   it("renders a speed sparkline per row", () => {
@@ -177,6 +192,7 @@ describe("LiveReadsPanel", () => {
     expect(markup).toContain("1h 24m in");
     expect(markup).toContain("5m in");
     expect(markup).toContain("fetched 3.8 GB");
+    expect(markup).toContain("max-sm:hidden");
   });
 
   it("notes total bytes served when the player is scrubbing", () => {
@@ -202,4 +218,43 @@ describe("LiveReadsPanel", () => {
     expect(markup).toContain("—");
     expect(markup).not.toContain("left</span>");
   });
+
+  it("does not lock height until the first snapshot is ready", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(rectWithHeight(240));
+
+    const { container } = render(
+      <LiveReadsPanelContent rows={fixtureRows.slice(0, 2)} snapshotReady={false} />,
+    );
+    const section = container.querySelector("section");
+    expect(section?.style.height).toBe("");
+  });
+
+  it("locks the first snapshot height when more reads arrive", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(rectWithHeight(240));
+
+    const { container, rerender } = render(
+      <LiveReadsPanelContent rows={fixtureRows.slice(0, 2)} snapshotReady />,
+    );
+    const section = container.querySelector("section");
+    expect(section?.style.height).toBe("240px");
+    expect(section?.className).toContain("overflow-hidden");
+
+    rerender(<LiveReadsPanelContent rows={fixtureRows} snapshotReady />);
+    expect(section?.style.height).toBe("240px");
+    expect(container.querySelector("ul")?.className).toContain("overflow-y-auto");
+  });
 });
+
+function rectWithHeight(height: number): DOMRect {
+  return {
+    x: 0,
+    y: 0,
+    width: 400,
+    height,
+    top: 0,
+    left: 0,
+    right: 400,
+    bottom: height,
+    toJSON: () => ({}),
+  };
+}
