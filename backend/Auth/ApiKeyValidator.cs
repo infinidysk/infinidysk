@@ -15,8 +15,13 @@ namespace NzbWebDAV.Auth;
 public static class ApiKeyValidator
 {
     public static void Validate(HttpContext httpContext, ConfigManager configManager)
+        => ValidateKey(httpContext.GetRequestApiKey(), configManager);
+
+    public static void ValidateWithoutFormParse(HttpContext httpContext, ConfigManager configManager)
+        => ValidateKey(httpContext.GetRequestApiKeyWithoutFormParse(), configManager);
+
+    private static void ValidateKey(string? apiKey, ConfigManager configManager)
     {
-        var apiKey = httpContext.GetRequestApiKey();
         if (apiKey == null)
             throw new UnauthorizedAccessException("API Key Required");
 

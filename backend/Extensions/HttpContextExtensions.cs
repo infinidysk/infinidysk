@@ -34,13 +34,19 @@ public static class HttpContextExtensions
     public static string? GetRequestApiKey(this HttpContext httpContext)
     {
         return httpContext.Request.Headers["x-api-key"].FirstOrDefault()
+            ?? httpContext.GetRequestParam("apikey");
+    }
+
+    // Header, query, and already-buffered form only. Does not touch Request.Form,
+    // which parses lazily and can throw InvalidDataException. Warden source import
+    // uses this so unauthenticated malformed multipart stays 401.
+    public static string? GetRequestApiKeyWithoutFormParse(this HttpContext httpContext)
+    {
+        return httpContext.Request.Headers["x-api-key"].FirstOrDefault()
             ?? httpContext.GetQueryParam("apikey")
             ?? GetBufferedFormParam(httpContext, "apikey");
     }
 
-    // Request.Form parses lazily and can throw InvalidDataException. API-key lookup
-    // must not trigger that parse, or unauthenticated malformed bodies become HTTP 500
-    // before ApiKeyValidator can return 401.
     private static string? GetBufferedFormParam(HttpContext httpContext, string name)
     {
         var form = httpContext.Features.Get<IFormFeature>()?.Form;

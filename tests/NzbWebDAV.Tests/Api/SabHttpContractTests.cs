@@ -123,6 +123,15 @@ public sealed class SabHttpContractTests
             $"/api?mode=queue&output=json&apikey={NzbDavWebApplicationFactory.ApiKey}");
         await SabContractAssertions.AssertSuccessAsync(queryKey);
 
+        using var formKey = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["mode"] = "queue",
+            ["output"] = "json",
+            ["apikey"] = NzbDavWebApplicationFactory.ApiKey,
+        });
+        using var formKeyResponse = await anonymous.PostAsync("/api", formKey);
+        await SabContractAssertions.AssertSuccessAsync(formKeyResponse);
+
         using var invalidMode = await client.GetAsync("/api?mode=not-a-mode&output=json");
         await SabContractAssertions.AssertFailureAsync(
             invalidMode, HttpStatusCode.BadRequest, "Invalid mode");

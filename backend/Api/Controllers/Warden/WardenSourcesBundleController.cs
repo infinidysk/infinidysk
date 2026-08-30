@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Auth;
+using NzbWebDAV.Config;
 using NzbWebDAV.Services;
 using Serilog;
 
@@ -15,6 +17,9 @@ public class WardenSourcesImportController(WardenStore warden, WardenRemoteSourc
     private const int MaxItems = 1000;
     private const long MaxUploadBytes = 5L * 1024 * 1024;
     private const string InvalidFormDetail = "Invalid form data.";
+
+    protected override void AuthenticateRequest(ConfigManager configManager)
+        => ApiKeyValidator.ValidateWithoutFormParse(HttpContext, configManager);
 
     protected override async Task<IActionResult> HandleRequest()
     {
