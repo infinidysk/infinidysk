@@ -1666,7 +1666,15 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
 
   useEffect(() => {
     setTestState("idle");
-  }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, maxResponseBytes, skipTlsVerification]);
+  }, [
+    url,
+    apiKey,
+    searchUserAgent,
+    proxyUrl,
+    timeoutSeconds,
+    maxResponseBytes,
+    skipTlsVerification,
+  ]);
 
   const handleTest = useCallback(async () => {
     if (!url.trim() || !apiKey.trim()) return;
@@ -1690,7 +1698,15 @@ function IndexerModal({ show, indexer, onClose, onSave }: IndexerModalProps) {
     } catch {
       setTestState("error");
     }
-  }, [url, apiKey, searchUserAgent, proxyUrl, timeoutSeconds, maxResponseBytes, skipTlsVerification]);
+  }, [
+    url,
+    apiKey,
+    searchUserAgent,
+    proxyUrl,
+    timeoutSeconds,
+    maxResponseBytes,
+    skipTlsVerification,
+  ]);
 
   const handleSave = useCallback(() => {
     const rpm = parseInt(maxRpm || "0", 10);
