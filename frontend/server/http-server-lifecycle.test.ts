@@ -14,7 +14,7 @@ import {
   formatStartupListenError,
   isHttpServerErrorOwned,
   markHttpServerErrorOwned,
-  type HttpServerLifecycleOptions,
+  type FatalPhase,
 } from "./http-server-lifecycle";
 
 const FRONTEND_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -28,20 +28,21 @@ function systemError(
   return Object.assign(new Error(message), fields);
 }
 
-function lifecycleOptions(
-  overrides: Partial<HttpServerLifecycleOptions> = {},
-): HttpServerLifecycleOptions & {
-  logError: ReturnType<typeof vi.fn>;
-  onListening: ReturnType<typeof vi.fn>;
-  disposeStartupResources: ReturnType<typeof vi.fn>;
-  markFatal: ReturnType<typeof vi.fn>;
-} {
+type LifecycleTestOptions = {
+  configuredPort: number;
+  logError: ReturnType<typeof vi.fn<(message: string, detail?: Error) => void>>;
+  onListening: ReturnType<typeof vi.fn<() => void>>;
+  disposeStartupResources: ReturnType<typeof vi.fn<() => Promise<void>>>;
+  markFatal: ReturnType<typeof vi.fn<(exitCode: number, phase: FatalPhase) => void>>;
+};
+
+function lifecycleOptions(overrides: Partial<LifecycleTestOptions> = {}): LifecycleTestOptions {
   return {
     configuredPort: 3000,
-    logError: vi.fn(),
-    onListening: vi.fn(),
-    disposeStartupResources: vi.fn(() => Promise.resolve()),
-    markFatal: vi.fn(),
+    logError: vi.fn<(message: string, detail?: Error) => void>(),
+    onListening: vi.fn<() => void>(),
+    disposeStartupResources: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    markFatal: vi.fn<(exitCode: number, phase: FatalPhase) => void>(),
     ...overrides,
   };
 }
@@ -140,7 +141,7 @@ describe("formatStartupListenError", () => {
     expect(message).toContain("Frontend server could not start");
     expect(message).toContain("EACCES");
     expect(message).toContain("0.0.0.0");
-    expect(message).toContain("80");
+    expect(message).toContain("port 80");
     expect(message).toContain(
       "Use an unprivileged PORT or grant the runtime permission to bind it",
     );
@@ -402,7 +403,7 @@ describe("attachWebsocketServerErrorListener", () => {
     expect(options.logError).toHaveBeenCalledOnce();
   });
 
-  it("exports identity mark helpers for issue 1234", () => {
+  it("marks and detects HTTP-owned errors by identity", () => {
     const error = new Error("owned-elsewhere");
     expect(isHttpServerErrorOwned(error)).toBe(false);
     markHttpServerErrorOwned(error);
