@@ -356,10 +356,22 @@ public sealed class SegmentCacheNntpClientTests
             await using (response.Stream)
                 await response.Stream!.CopyToAsync(Stream.Null);
 
+            var afterCommit = statistics.GetSnapshot();
+            Assert.Equal(1, afterCommit.ReadFailures);
+            Assert.Equal(0, afterCommit.Hits);
+            Assert.Equal(1, afterCommit.WriteCommits);
+            Assert.Equal(0, afterCommit.WriteFailures);
+            Assert.Equal(1, afterCommit.Entries);
+            Assert.Equal(1, inner.BodyRequestCount);
+
+            var reread = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            await using (reread.Stream)
+                await reread.Stream!.CopyToAsync(Stream.Null);
+
             var snapshot = statistics.GetSnapshot();
-            Assert.Equal(1, snapshot.ReadFailures);
-            Assert.Equal(0, snapshot.Hits);
-            Assert.Equal(0, snapshot.Entries);
+            Assert.Equal(1, snapshot.Hits);
+            Assert.Equal(1, snapshot.WriteCommits);
+            Assert.Equal(1, inner.BodyRequestCount);
         }
         finally
         {

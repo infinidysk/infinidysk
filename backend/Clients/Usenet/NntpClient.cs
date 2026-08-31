@@ -339,9 +339,15 @@ public abstract class NntpClient : INntpClient
                     }
 
                     await ReleaseRemainingBodiesAsync(batch.Responses, position).ConfigureAwait(false);
+                    await ObserveBatchCompletionAsync(batch.Completion).ConfigureAwait(false);
                 }
-
-                await ObserveBatchCompletionAsync(batch.Completion).ConfigureAwait(false);
+                else
+                {
+                    // Fully enumerated responses still belong to the consumer. Transport
+                    // Completion waits for the last stream's EOF/dispose, so joining here
+                    // would hang the final MoveNextAsync until that stream is released.
+                    _ = ObserveBatchCompletionAsync(batch.Completion);
+                }
             }
         }
     }

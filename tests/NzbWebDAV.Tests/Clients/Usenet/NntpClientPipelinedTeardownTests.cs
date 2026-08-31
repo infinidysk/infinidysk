@@ -174,7 +174,7 @@ public class NntpClientPipelinedTeardownTests
     }
 
     [Fact]
-    public async Task DecodedBodiesPipelinedAsync_FullyEnumerated_AwaitsBatchCompletion()
+    public async Task DecodedBodiesPipelinedAsync_FullyEnumerated_DoesNotJoinBatchCompletion()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var client = new ScriptedBatchClient(gate.Task);
@@ -189,10 +189,10 @@ public class NntpClientPipelinedTeardownTests
             }
         });
 
-        await Task.Delay(50);
-        Assert.False(enumeration.IsCompleted);
-        gate.SetResult();
+        await client.BatchIssued.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await enumeration.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(gate.Task.IsCompleted);
+        gate.SetResult();
     }
 
     [Fact]
@@ -210,11 +210,15 @@ public class NntpClientPipelinedTeardownTests
             }
         });
 
-        await Task.Delay(50);
+        await client.BatchIssued.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && !client.Streams.TrueForAll(stream => stream.Disposed))
+            await Task.Delay(10);
+
+        Assert.True(client.Streams.TrueForAll(stream => stream.Disposed));
         Assert.False(enumeration.IsCompleted);
         gate.SetResult();
         await enumeration.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.True(client.Streams.All(stream => stream.Disposed));
     }
 
     [Fact]
@@ -243,13 +247,15 @@ public class NntpClientPipelinedTeardownTests
         {
         }
 
-        public int DisposeCount { get; private set; }
+        private int _disposeCount;
+
+        public int DisposeCount => Volatile.Read(ref _disposeCount);
 
         public bool Disposed => DisposeCount > 0;
 
         protected override void Dispose(bool disposing)
         {
-            DisposeCount++;
+            Interlocked.Increment(ref _disposeCount);
             base.Dispose(disposing);
         }
     }
@@ -436,6 +442,8 @@ public class NntpClientPipelinedTeardownTests
 
         public SemaphorePriority? BatchPriority { get; private set; }
 
+        public TaskCompletionSource BatchIssued { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
             ArticleBodyCompletionHandler? onConnectionReadyAgain,
@@ -456,6 +464,7 @@ public class NntpClientPipelinedTeardownTests
                 }));
             }
 
+            BatchIssued.TrySetResult();
             return Task.FromResult(new UsenetDecodedBodyBatch
             {
                 Responses = responses,

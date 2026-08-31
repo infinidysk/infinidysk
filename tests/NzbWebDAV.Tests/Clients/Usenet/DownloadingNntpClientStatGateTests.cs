@@ -553,13 +553,15 @@ public class DownloadingNntpClientStatGateTests
         var batch = await (Task<UsenetDecodedBodyBatch>)aTask;
         Assert.Equal(1, outer.Count);
         Assert.False(batch.Completion.IsCompleted);
-        inner.BatchLifecycle.TrySetResult();
+        Assert.NotNull(inner.LastBatchLifecycle);
+        inner.LastBatchLifecycle.TrySetResult();
         await DrainAsync(CompletionApi.Batch, aTask);
 
         var bTask = StartApi(client, CompletionApi.Batch, "b", null, CancellationToken.None);
         var bOp = await WaitForOpAsync(inner, 2);
         bOp.Callback!(ArticleBodyResult.Retrieved, null);
-        inner.BatchLifecycle.TrySetResult();
+        Assert.NotNull(inner.LastBatchLifecycle);
+        inner.LastBatchLifecycle.TrySetResult();
         await DrainAsync(CompletionApi.Batch, bTask);
     }
 
@@ -740,7 +742,7 @@ public class DownloadingNntpClientStatGateTests
         public string? AutoReason { get; set; }
         public bool Success { get; set; } = true;
         public bool DeferBatchLifecycle { get; set; }
-        public TaskCompletionSource BatchLifecycle { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource? LastBatchLifecycle { get; private set; }
 
         public IReadOnlyList<PendingOp> Ops
         {
@@ -781,10 +783,12 @@ public class DownloadingNntpClientStatGateTests
                 var responses = segmentIds
                     .Select(id => Task.FromResult(CreateBody(id)))
                     .ToArray();
+                var lifecycle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                LastBatchLifecycle = lifecycle;
                 return Task.FromResult(new UsenetDecodedBodyBatch
                 {
                     Responses = responses,
-                    Completion = DeferBatchLifecycle ? BatchLifecycle.Task : Task.CompletedTask,
+                    Completion = DeferBatchLifecycle ? lifecycle.Task : Task.CompletedTask,
                 });
             }
             finally

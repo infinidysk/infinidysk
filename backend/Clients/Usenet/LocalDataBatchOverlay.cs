@@ -365,13 +365,11 @@ internal sealed class BatchCompletionState
     private readonly ArticleBodyCompletionHandler? _outer;
     private readonly CancellationToken _callerToken;
     private readonly bool _hasInnerBatch;
-    private int _innerCallbackSeen;
     private int _outerCallbackFired;
     private int _notFound;
     private int _cancelled;
     private ExceptionDispatchInfo? _firstFailure;
-    private ArticleBodyResult _innerResult = ArticleBodyResult.Retrieved;
-    private string? _innerReason;
+    private InnerCallback? _inner;
 
     public BatchCompletionState(
         ArticleBodyCompletionHandler? outer,
@@ -385,10 +383,8 @@ internal sealed class BatchCompletionState
 
     public void RecordInner(ArticleBodyResult result, string? reason)
     {
-        if (Interlocked.Exchange(ref _innerCallbackSeen, 1) != 0)
-            return;
-        _innerResult = result;
-        _innerReason = reason;
+        var payload = new InnerCallback(result, reason);
+        Interlocked.CompareExchange(ref _inner, payload, null);
     }
 
     public void ObserveResponse(UsenetDecodedBodyResponse response)
@@ -429,7 +425,7 @@ internal sealed class BatchCompletionState
         if (innerFailure is not null)
             ObserveFailure(innerFailure);
 
-        if (Volatile.Read(ref _innerCallbackSeen) == 0 && _hasInnerBatch)
+        if (Volatile.Read(ref _inner) is null && _hasInnerBatch)
             RecordInner(ArticleBodyResult.NotRetrieved, "inner-callback-missing");
 
         FireOuterOnce(SelectResult(), SelectReason());
@@ -448,16 +444,17 @@ internal sealed class BatchCompletionState
 
     private ArticleBodyResult SelectResult()
     {
+        var inner = Volatile.Read(ref _inner);
         if (Volatile.Read(ref _firstFailure) is not null)
             return ArticleBodyResult.NotRetrieved;
         if (Volatile.Read(ref _cancelled) != 0)
             return ArticleBodyResult.Cancelled;
-        if (_hasInnerBatch && _innerResult == ArticleBodyResult.NotRetrieved)
+        if (_hasInnerBatch && inner?.Result == ArticleBodyResult.NotRetrieved)
             return ArticleBodyResult.NotRetrieved;
-        if (_hasInnerBatch && _innerResult == ArticleBodyResult.Cancelled)
+        if (_hasInnerBatch && inner?.Result == ArticleBodyResult.Cancelled)
             return ArticleBodyResult.Cancelled;
         if (Volatile.Read(ref _notFound) != 0 ||
-            (_hasInnerBatch && _innerResult == ArticleBodyResult.NotFound))
+            (_hasInnerBatch && inner?.Result == ArticleBodyResult.NotFound))
         {
             return ArticleBodyResult.NotFound;
         }
@@ -467,14 +464,15 @@ internal sealed class BatchCompletionState
 
     private string? SelectReason()
     {
+        var inner = Volatile.Read(ref _inner);
         var result = SelectResult();
         return result switch
         {
             ArticleBodyResult.NotRetrieved when Volatile.Read(ref _firstFailure) is not null
                 => "overlay-lifecycle-failure",
-            ArticleBodyResult.NotRetrieved => _innerReason,
-            ArticleBodyResult.Cancelled => _innerReason,
-            ArticleBodyResult.NotFound => _innerReason,
+            ArticleBodyResult.NotRetrieved => inner?.Reason,
+            ArticleBodyResult.Cancelled => inner?.Reason,
+            ArticleBodyResult.NotFound => inner?.Reason,
             _ => null,
         };
     }
@@ -498,6 +496,8 @@ internal sealed class BatchCompletionState
             return exception;
         }
     }
+
+    private sealed record InnerCallback(ArticleBodyResult Result, string? Reason);
 }
 
 internal sealed class OrderedBatchYencStream : YencStream

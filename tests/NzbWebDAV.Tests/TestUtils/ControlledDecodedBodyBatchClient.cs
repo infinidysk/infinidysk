@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Streams;
@@ -54,7 +55,7 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
     private readonly Func<SegmentId, UsenetDecodedBodyResponse> _createResponse;
     private readonly int? _responseCountOverride;
     private readonly Exception? _setupException;
-    private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ConcurrentQueue<TaskCompletionSource> _completions = new();
 
     public ControlledDecodedBodyBatchClient(
         Func<SegmentId, UsenetDecodedBodyResponse>? createResponse = null,
@@ -74,11 +75,19 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
     public List<string> RequestedIds { get; } = [];
     public List<IReadOnlyList<string>> BatchIdLists { get; } = [];
     public ArticleBodyCompletionHandler? CapturedCallback { get; private set; }
-    public Task ProducerCompletion => _completion.Task;
+    public Task ProducerCompletion => _completions.LastOrDefault()?.Task ?? Task.CompletedTask;
 
-    public void CompleteProducer() => _completion.TrySetResult();
+    public void CompleteProducer()
+    {
+        foreach (var completion in _completions)
+            completion.TrySetResult();
+    }
 
-    public void FaultProducer(Exception exception) => _completion.TrySetException(exception);
+    public void FaultProducer(Exception exception)
+    {
+        foreach (var completion in _completions)
+            completion.TrySetException(exception);
+    }
 
     public void FireCapturedCallback(ArticleBodyResult result = ArticleBodyResult.Retrieved, string? reason = null) =>
         CapturedCallback?.Invoke(result, reason);
@@ -115,6 +124,9 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
         if (_setupException is not null)
             throw _setupException;
 
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _completions.Enqueue(completion);
+
         var count = _responseCountOverride ?? segmentIds.Count;
         var responses = new Task<UsenetDecodedBodyResponse>[Math.Max(0, count)];
         for (var index = 0; index < responses.Length; index++)
@@ -129,12 +141,12 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved, "duplicate");
 
         if (Timing != CallbackTiming.Never && Timing != CallbackTiming.AfterReturn)
-            _completion.TrySetResult();
+            completion.TrySetResult();
 
         return Task.FromResult(new UsenetDecodedBodyBatch
         {
             Responses = responses,
-            Completion = _completion.Task,
+            Completion = completion.Task,
         });
     }
 

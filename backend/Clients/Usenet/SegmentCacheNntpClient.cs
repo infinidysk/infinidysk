@@ -358,6 +358,11 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                 return SegmentCacheCommitResult.AlreadyPresent;
             }
 
+            // Catalog leaves recent malformed pairs on disk without indexing them.
+            // Remove that residue while we hold the stripe so this commit can publish.
+            TryDelete(blobPath);
+            TryDelete(headerPath);
+
             var blobPublished = false;
             try
             {

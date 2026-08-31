@@ -425,7 +425,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     var fetched = await FetchAttributedBatchResponsesAsync(liveIds, cancellationToken)
                         .ConfigureAwait(false);
                     liveResponses = fetched.Responses;
-                    _batchCompletionObservers.Enqueue(ObserveBatchCompletionAsync(fetched.Completion));
+                    EnqueueBatchCompletionObserver(fetched.Completion);
                 }
 
                 streamTasks = new Task<SegmentDownloadResult>[batchCount];
@@ -577,6 +577,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
 
         return new FetchedBodyBatch(batch.Responses.ToArray(), batch.Completion);
+    }
+
+    private void EnqueueBatchCompletionObserver(Task completion)
+    {
+        while (_batchCompletionObservers.TryPeek(out var head) && head.IsCompleted)
+            _batchCompletionObservers.TryDequeue(out _);
+
+        _batchCompletionObservers.Enqueue(ObserveBatchCompletionAsync(completion));
     }
 
     private static async Task ObserveBatchCompletionAsync(Task completion)

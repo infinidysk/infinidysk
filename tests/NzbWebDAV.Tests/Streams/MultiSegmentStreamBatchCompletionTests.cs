@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
@@ -43,7 +44,8 @@ public sealed class MultiSegmentStreamBatchCompletionTests
             }
 
             Assert.True(delayed.Completions.Count >= 2, "A second batch should issue while the first completion is still pending.");
-            Assert.False(delayed.Completions[0].Task.IsCompleted);
+            Assert.True(delayed.Completions.TryPeek(out var firstCompletion));
+            Assert.False(firstCompletion.Task.IsCompleted);
         }
         finally
         {
@@ -127,7 +129,7 @@ public sealed class MultiSegmentStreamBatchCompletionTests
 
     private sealed class DelayedBatchCompletionClient(INntpClient inner) : WrappingNntpClient(inner)
     {
-        public List<TaskCompletionSource> Completions { get; } = [];
+        public ConcurrentQueue<TaskCompletionSource> Completions { get; } = new();
 
         public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
@@ -137,7 +139,7 @@ public sealed class MultiSegmentStreamBatchCompletionTests
             var batch = await base.DecodedBodiesAsync(segmentIds, onConnectionReadyAgain, cancellationToken)
                 .ConfigureAwait(false);
             var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            Completions.Add(gate);
+            Completions.Enqueue(gate);
             return batch with { Completion = gate.Task };
         }
     }
