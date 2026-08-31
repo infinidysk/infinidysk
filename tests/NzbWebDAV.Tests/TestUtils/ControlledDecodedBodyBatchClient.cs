@@ -55,17 +55,20 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
     private readonly Func<SegmentId, UsenetDecodedBodyResponse> _createResponse;
     private readonly int? _responseCountOverride;
     private readonly Exception? _setupException;
+    private readonly Exception? _completionException;
     private readonly ConcurrentQueue<TaskCompletionSource> _completions = new();
 
     public ControlledDecodedBodyBatchClient(
         Func<SegmentId, UsenetDecodedBodyResponse>? createResponse = null,
         int? responseCountOverride = null,
         Exception? setupException = null,
-        CallbackTiming callbackTiming = CallbackTiming.BeforeReturn)
+        CallbackTiming callbackTiming = CallbackTiming.BeforeReturn,
+        Exception? completionException = null)
     {
         _createResponse = createResponse ?? (id => CreateSuccess(id, "body"u8.ToArray()));
         _responseCountOverride = responseCountOverride;
         _setupException = setupException;
+        _completionException = completionException;
         Timing = callbackTiming;
     }
 
@@ -75,6 +78,7 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
     public List<string> RequestedIds { get; } = [];
     public List<IReadOnlyList<string>> BatchIdLists { get; } = [];
     public ArticleBodyCompletionHandler? CapturedCallback { get; private set; }
+    public CancellationToken LastCancellationToken { get; private set; }
     public Task ProducerCompletion => _completions.LastOrDefault()?.Task ?? Task.CompletedTask;
 
     public void CompleteProducer()
@@ -116,6 +120,7 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        LastCancellationToken = cancellationToken;
         var ids = segmentIds.Select(id => id.ToString()).ToArray();
         RequestedIds.AddRange(ids);
         BatchIdLists.Add(ids);
@@ -140,7 +145,9 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
         if (Timing == CallbackTiming.Twice)
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotRetrieved, "duplicate");
 
-        if (Timing != CallbackTiming.Never && Timing != CallbackTiming.AfterReturn)
+        if (_completionException is not null)
+            completion.TrySetException(_completionException);
+        else if (Timing != CallbackTiming.Never && Timing != CallbackTiming.AfterReturn)
             completion.TrySetResult();
 
         return Task.FromResult(new UsenetDecodedBodyBatch

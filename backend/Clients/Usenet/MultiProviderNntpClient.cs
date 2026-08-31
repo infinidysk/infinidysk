@@ -743,27 +743,7 @@ public class MultiProviderNntpClient(
 
     private static async Task ComposeBatchCompletionAsync(Task transportCompletion, Task coordinatorCompletion)
     {
-        Exception? first = null;
-        try
-        {
-            await transportCompletion.ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            first = exception;
-        }
-
-        try
-        {
-            await coordinatorCompletion.ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            first ??= exception;
-        }
-
-        if (first is not null)
-            ExceptionDispatchInfo.Capture(first).Throw();
+        await BatchLifecycle.ObserveAllAsync(transportCompletion, coordinatorCompletion).ConfigureAwait(false);
     }
 
     private static void ObserveAbandonedBatch(UsenetDecodedBodyBatch? batch)

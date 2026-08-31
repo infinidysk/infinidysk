@@ -1,5 +1,10 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Config;
+using NzbWebDAV.Extensions;
+using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.TestUtils;
 using UsenetSharp.Models;
@@ -513,6 +518,180 @@ public sealed class LocalDataBatchOverlayTests
         Assert.Equal(0, recorder.Count);
     }
 
+    [Fact]
+    public async Task AllMiss_PreservesEveryTokenContextOnFetch()
+    {
+        using var harness = TokenContextHarness.Create();
+        var inner = new ControlledDecodedBodyBatchClient();
+        var batch = await LocalDataBatchOverlay.ExecuteAsync(
+            Ids("a", "b"),
+            outerCallback: null,
+            _ => LocalLookupResult.Miss,
+            (misses, callback, token) => inner.DecodedBodiesAsync(misses, callback, token),
+            LocalDataBatchOverlay.PassThroughRemote,
+            harness.Token);
+
+        harness.AssertCopiedOnto(inner.LastCancellationToken);
+        await batch.DrainAsync();
+    }
+
+    [Fact]
+    public async Task MixedLocalRemote_PreservesEveryTokenContextOnFetch()
+    {
+        using var harness = TokenContextHarness.Create();
+        var inner = new ControlledDecodedBodyBatchClient();
+        var batch = await LocalDataBatchOverlay.ExecuteAsync(
+            Ids("a", "b"),
+            outerCallback: null,
+            id => id.ToString() == "a" ? LocalLookupResult.Hit(Local(id)) : LocalLookupResult.Miss,
+            (misses, callback, token) => inner.DecodedBodiesAsync(misses, callback, token),
+            LocalDataBatchOverlay.PassThroughRemote,
+            harness.Token);
+
+        harness.AssertCopiedOnto(inner.LastCancellationToken);
+        await batch.DrainAsync();
+    }
+
+    [Fact]
+    public async Task MismatchCancellation_DoesNotCancelCallerSource()
+    {
+        using var harness = TokenContextHarness.Create();
+        var inner = new ControlledDecodedBodyBatchClient(responseCountOverride: 0);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            LocalDataBatchOverlay.ExecuteAsync(
+                Ids("a", "b"),
+                outerCallback: null,
+                _ => LocalLookupResult.Miss,
+                (misses, callback, token) => inner.DecodedBodiesAsync(misses, callback, token),
+                LocalDataBatchOverlay.PassThroughRemote,
+                harness.Token));
+
+        Assert.False(harness.Caller.IsCancellationRequested);
+        Assert.True(inner.LastCancellationToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task InnerNotRetrieved_OutranksConcurrentCallerCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        var inner = new ControlledDecodedBodyBatchClient(
+            callbackTiming: ControlledDecodedBodyBatchClient.CallbackTiming.AfterReturn);
+        var recorder = new ArticleBodyCompletionRecorder();
+        var batch = await LocalDataBatchOverlay.ExecuteAsync(
+            Ids("a"),
+            recorder.Invoke,
+            _ => LocalLookupResult.Miss,
+            (misses, callback, token) => inner.DecodedBodiesAsync(misses, callback, token),
+            LocalDataBatchOverlay.PassThroughRemote,
+            cts.Token);
+
+        await cts.CancelAsync();
+        inner.FireCapturedCallback(ArticleBodyResult.NotRetrieved, "drain-failed");
+        inner.CompleteProducer();
+        var response = await batch.Responses[0];
+        if (response.Stream is not null)
+            await response.Stream.DisposeAsync();
+        await batch.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+        Assert.Equal("drain-failed", recorder.FailureReason);
+    }
+
+    [Fact]
+    public async Task InnerCancelled_RemainsCancelledWhenCallerCancelsAfterCleanDrain()
+    {
+        using var cts = new CancellationTokenSource();
+        var inner = new ControlledDecodedBodyBatchClient(
+            callbackTiming: ControlledDecodedBodyBatchClient.CallbackTiming.AfterReturn);
+        var recorder = new ArticleBodyCompletionRecorder();
+        var batch = await LocalDataBatchOverlay.ExecuteAsync(
+            Ids("a"),
+            recorder.Invoke,
+            _ => LocalLookupResult.Miss,
+            (misses, callback, token) => inner.DecodedBodiesAsync(misses, callback, token),
+            LocalDataBatchOverlay.PassThroughRemote,
+            cts.Token);
+
+        inner.FireCapturedCallback(ArticleBodyResult.Cancelled);
+        inner.CompleteProducer();
+        var response = await batch.Responses[0];
+        if (response.Stream is not null)
+            await response.Stream.DisposeAsync();
+        await cts.CancelAsync();
+        await batch.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.Cancelled, recorder.Result);
+    }
+
+    [Fact]
+    public async Task InnerCompletionOom_StillObservesPublisherAndFiresNotRetrieved()
+    {
+        var oom = new OutOfMemoryException("inner-completion");
+        var innerHeld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recorder = new ArticleBodyCompletionRecorder();
+        var batch = await LocalDataBatchOverlay.ExecuteAsync(
+            Ids("a"),
+            recorder.Invoke,
+            _ => LocalLookupResult.Miss,
+            (misses, callback, _) =>
+            {
+                callback(ArticleBodyResult.NotRetrieved, "out-of-memory");
+                return Task.FromResult(new UsenetDecodedBodyBatch
+                {
+                    Responses = [Task.FromResult(ControlledDecodedBodyBatchClient.CreateSuccess(misses[0], "ok"u8.ToArray()))],
+                    Completion = innerHeld.Task,
+                });
+            },
+            LocalDataBatchOverlay.PassThroughRemote,
+            CancellationToken.None);
+
+        var response = await batch.Responses[0].WaitAsync(TimeSpan.FromSeconds(5));
+        await response.Stream!.DisposeAsync();
+        Assert.False(batch.Completion.IsCompleted);
+        innerHeld.SetException(oom);
+        var thrown = await Assert.ThrowsAsync<OutOfMemoryException>(
+            () => batch.Completion.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Same(oom, thrown);
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+    }
+
+    [Fact]
+    public async Task StreamReadOom_ReleasesNextReadinessGate()
+    {
+        var oom = new OutOfMemoryException("read-oom");
+        var recorder = new ArticleBodyCompletionRecorder();
+        var batch = await LocalDataBatchOverlay.ExecuteAsync(
+            Ids("a", "b"),
+            recorder.Invoke,
+            id => LocalLookupResult.Hit(new UsenetDecodedBodyResponse
+            {
+                SegmentId = id.ToString(),
+                ResponseCode = 222,
+                ResponseMessage = "222",
+                Stream = id.ToString() == "a"
+                    ? new ThrowingOomYencStream(oom)
+                    : new CachedYencStream(
+                        ControlledDecodedBodyBatchClient.HeaderFor("b"u8.ToArray()),
+                        new MemoryStream("b"u8.ToArray(), writable: false)),
+            }),
+            FetchShouldNotRun,
+            LocalDataBatchOverlay.PassThroughRemote,
+            CancellationToken.None);
+
+        var first = await batch.Responses[0];
+        var thrown = await Assert.ThrowsAsync<OutOfMemoryException>(
+            async () => await first.Stream!.ReadAsync(new byte[8]));
+        Assert.Same(oom, thrown);
+        var second = await batch.Responses[1].WaitAsync(TimeSpan.FromSeconds(5));
+        await second.Stream!.DisposeAsync();
+        await first.Stream!.DisposeAsync();
+        var completionThrown = await Assert.ThrowsAsync<OutOfMemoryException>(
+            () => batch.Completion.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Same(oom, completionThrown);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+    }
+
     private static SegmentId[] Ids(params string[] ids) => ids.Select(id => new SegmentId(id)).ToArray();
 
     private static UsenetDecodedBodyResponse Local(SegmentId id, byte[]? content = null) =>
@@ -566,6 +745,81 @@ public sealed class LocalDataBatchOverlayTests
             if (disposing)
                 throw new IOException("dispose-fail");
             base.Dispose(disposing);
+        }
+    }
+
+    private sealed class ThrowingOomYencStream : YencStream
+    {
+        private readonly OutOfMemoryException _exception;
+
+        public ThrowingOomYencStream(OutOfMemoryException exception) : base(Null)
+        {
+            _exception = exception;
+        }
+
+        public override ValueTask<UsenetYencHeader?> GetYencHeadersAsync(
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<UsenetYencHeader?>(ControlledDecodedBodyBatchClient.HeaderFor("x"u8.ToArray()));
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            throw _exception;
+    }
+
+    private sealed class TokenContextHarness : IDisposable
+    {
+        private readonly List<IDisposable> _scopes = [];
+        private readonly ConfigManager _config = new();
+        private readonly HealthCheckConnectionGate _gate;
+
+        private TokenContextHarness()
+        {
+            Caller = new CancellationTokenSource();
+            _gate = new HealthCheckConnectionGate(_config);
+            Priority = new DownloadPriorityContext { Priority = SemaphorePriority.High };
+            Timeout = new StreamingTimeoutContext
+            {
+                PerSegmentTimeout = TimeSpan.FromSeconds(9),
+                MaxRetries = 2,
+            };
+            Queue = new QueueDownloadContext
+            {
+                IsPrimary = true,
+                GetFanOutConcurrency = static () => 3,
+            };
+            Health = new HealthCheckAdmissionContext(_gate, HealthCheckAdmissionPriority.Queue);
+            _scopes.Add(Caller.Token.SetContext(Priority));
+            _scopes.Add(Caller.Token.SetContext(Timeout));
+            _scopes.Add(Caller.Token.SetContext(Queue));
+            _scopes.Add(Caller.Token.SetContext(MaintenanceDownloadContext.Instance));
+            _scopes.Add(Caller.Token.SetContext(Health));
+        }
+
+        public static TokenContextHarness Create() => new();
+
+        public CancellationTokenSource Caller { get; }
+        public CancellationToken Token => Caller.Token;
+        public DownloadPriorityContext Priority { get; }
+        public StreamingTimeoutContext Timeout { get; }
+        public QueueDownloadContext Queue { get; }
+        public HealthCheckAdmissionContext Health { get; }
+
+        public void AssertCopiedOnto(CancellationToken token)
+        {
+            Assert.Same(Priority, token.GetContext<DownloadPriorityContext>());
+            Assert.Same(Timeout, token.GetContext<StreamingTimeoutContext>());
+            Assert.Same(Queue, token.GetContext<QueueDownloadContext>());
+            Assert.Same(MaintenanceDownloadContext.Instance, token.GetContext<MaintenanceDownloadContext>());
+            Assert.Same(Health, token.GetContext<HealthCheckAdmissionContext>());
+        }
+
+        public void Dispose()
+        {
+            foreach (var scope in _scopes)
+                scope.Dispose();
+            Caller.Dispose();
+            _gate.Dispose();
         }
     }
 }

@@ -1200,27 +1200,7 @@ public class MultiConnectionNntpClient(
 
     private static async Task CompleteBatchLifecycleAsync(Task transportCompletion, Task callbackCompletion)
     {
-        Exception? first = null;
-        try
-        {
-            await transportCompletion.ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            first = exception;
-        }
-
-        try
-        {
-            await callbackCompletion.ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            first ??= exception;
-        }
-
-        if (first is not null)
-            ExceptionDispatchInfo.Capture(first).Throw();
+        await BatchLifecycle.ObserveAllAsync(transportCompletion, callbackCompletion).ConfigureAwait(false);
     }
 
     private async Task<UsenetDecodedBodyResponse> RecordSuccessfulResponseAsync(

@@ -1,7 +1,11 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
+using NzbWebDAV.Services;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
@@ -141,6 +145,62 @@ public sealed class BatchLocalDataChainTests
             Assert.Equal(1, recorder.Count);
             Assert.Equal(ArticleBodyResult.Retrieved, recorder.Result);
             Assert.Equal(0, inner.BatchRequestCount);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task NestedRepairAndCacheOverlays_PreserveStreamingContextsOnRemoteMiss()
+    {
+        var root = Path.Join(Path.GetTempPath(), "nzbdav-chain-ctx-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = Path.Join(root, "cache");
+        var patchDir = Path.Join(root, "patch");
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            Directory.CreateDirectory(patchDir);
+            var store = new RepairPatchStore(patchDir, 1024 * 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>
+            {
+                ["miss@test"] = "miss"u8.ToArray(),
+            }, useCachedYencStreams: true);
+            using var cache = new SegmentCacheNntpClient(inner, cacheDir, 1024 * 1024);
+            await cache.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            using var repair = new RepairedSegmentNntpClient(cache, store);
+            using var cts = new CancellationTokenSource();
+            var priority = new DownloadPriorityContext { Priority = SemaphorePriority.High };
+            var timeout = new StreamingTimeoutContext
+            {
+                PerSegmentTimeout = TimeSpan.FromSeconds(7),
+                MaxRetries = 1,
+            };
+            var queue = new QueueDownloadContext
+            {
+                IsPrimary = true,
+                GetFanOutConcurrency = static () => 1,
+            };
+            var config = new ConfigManager();
+            using var gate = new HealthCheckConnectionGate(config);
+            var health = new HealthCheckAdmissionContext(gate, HealthCheckAdmissionPriority.Background);
+            using var priorityScope = cts.Token.SetContext(priority);
+            using var timeoutScope = cts.Token.SetContext(timeout);
+            using var queueScope = cts.Token.SetContext(queue);
+            using var maintenanceScope = cts.Token.SetContext(MaintenanceDownloadContext.Instance);
+            using var healthScope = cts.Token.SetContext(health);
+
+            var batch = await repair.DecodedBodiesAsync(["miss@test"], onConnectionReadyAgain: null, cts.Token);
+            Assert.Equal(1, inner.BatchRequestCount);
+            Assert.Same(priority, inner.LastBatchToken.GetContext<DownloadPriorityContext>());
+            Assert.Same(timeout, inner.LastBatchToken.GetContext<StreamingTimeoutContext>());
+            Assert.Same(queue, inner.LastBatchToken.GetContext<QueueDownloadContext>());
+            Assert.Same(MaintenanceDownloadContext.Instance, inner.LastBatchToken.GetContext<MaintenanceDownloadContext>());
+            Assert.Same(health, inner.LastBatchToken.GetContext<HealthCheckAdmissionContext>());
+            await batch.DrainAsync();
         }
         finally
         {
