@@ -581,8 +581,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
     private void EnqueueBatchCompletionObserver(Task completion)
     {
-        while (_batchCompletionObservers.TryPeek(out var head) && head.IsCompleted)
+        while (_batchCompletionObservers.TryPeek(out var head) &&
+               head.Status == TaskStatus.RanToCompletion)
+        {
             _batchCompletionObservers.TryDequeue(out _);
+        }
 
         _batchCompletionObservers.Enqueue(ObserveBatchCompletionAsync(completion));
     }
