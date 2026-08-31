@@ -68,8 +68,8 @@ public class FirstSegmentHandoffStreamTests
 
         release.TrySetResult();
         Assert.Equal(1, await readTask.WaitAsync(Timeout));
-        await WaitUntil(() => stream.RemainderStartedForTests);
-        Assert.Equal(1, factoryCalls);
+        await WaitUntil(() => Volatile.Read(ref factoryCalls) == 1);
+        Assert.True(stream.RemainderStartedForTests);
     }
 
     [Fact]
