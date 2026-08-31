@@ -32,6 +32,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     private readonly object _evictLock = new();
     private readonly object[] _commitStripes = CreateCommitStripes();
     private readonly Func<IEnumerable<string>> _enumerateCacheFiles;
+    private readonly Func<string, SegmentCacheDeleteResult?>? _tryDelete;
     private long _currentBytes;
     private int _catalogReady;
     private int _catalogDegraded;
@@ -56,7 +57,8 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         ProviderUsageTracker? usageTracker,
         MetricsWriter? metricsWriter,
         Func<IEnumerable<string>>? enumerateCacheFiles,
-        SegmentCacheStatistics? statistics = null) : base(inner)
+        SegmentCacheStatistics? statistics = null,
+        Func<string, SegmentCacheDeleteResult?>? tryDelete = null) : base(inner)
     {
         _dir = cacheDir;
         _maxBytes = maxBytes;
@@ -67,6 +69,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         Directory.CreateDirectory(_dir);
         _enumerateCacheFiles = enumerateCacheFiles
                                ?? (() => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
+        _tryDelete = tryDelete;
         CatalogLoadTask = Task.Run(LoadIndex);
     }
 
@@ -269,6 +272,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         if (!_index.TryGetValue(hash, out var entry)) return CacheLookupResult.Miss;
 
         var blobPath = BlobPath(hash);
+        FileStream? fileStream = null;
         try
         {
             var header = JsonSerializer.Deserialize<UsenetYencHeader>(
@@ -279,8 +283,16 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                 return CacheLookupResult.ReadFailure;
             }
 
-            var fileStream = new FileStream(blobPath, FileMode.Open, FileAccess.Read,
+            fileStream = new FileStream(blobPath, FileMode.Open, FileAccess.Read,
                 FileShare.Read | FileShare.Delete, bufferSize: 81920, useAsync: true);
+            if (fileStream.Length != header.PartSize)
+            {
+                fileStream.Dispose();
+                fileStream = null;
+                RecordReadFailureAndDrop(hash);
+                return CacheLookupResult.ReadFailure;
+            }
+
             entry.LastAccessTicks = DateTime.UtcNow.Ticks;
             servedBytes = header.PartSize;
             response = new UsenetDecodedBodyResponse
@@ -290,10 +302,13 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                 ResponseMessage = "222 - Article retrieved from segment cache",
                 Stream = new CachedYencStream(header, fileStream),
             };
+            fileStream = null;
             return CacheLookupResult.Hit;
         }
-        catch
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or JsonException)
         {
+            fileStream?.Dispose();
             RecordReadFailureAndDrop(hash);
             return CacheLookupResult.ReadFailure;
         }
@@ -351,46 +366,50 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         var result = SegmentCacheCommitResult.Failed;
         lock (commitLock)
         {
-            if (TryValidatePublishedEntry(hash, out _))
+            if (TryValidatePublishedEntry(hash, out var existingSize))
             {
                 TryDelete(blobTempPath);
                 TryDelete(headerTempPath);
-                return SegmentCacheCommitResult.AlreadyPresent;
+                PublishIndexEntry(hash, existingSize);
+                result = SegmentCacheCommitResult.AlreadyPresent;
             }
+            else
+            {
+                // Catalog leaves recent malformed pairs on disk without indexing them.
+                // Remove that residue while we hold the stripe so this commit can publish.
+                TryDelete(blobPath);
+                TryDelete(headerPath);
 
-            // Catalog leaves recent malformed pairs on disk without indexing them.
-            // Remove that residue while we hold the stripe so this commit can publish.
-            TryDelete(blobPath);
-            TryDelete(headerPath);
-
-            var blobPublished = false;
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
-                File.Move(blobTempPath, blobPath, overwrite: false);
-                blobPublished = true;
-                File.Move(headerTempPath, headerPath, overwrite: false);
-                PublishIndexEntry(hash, decodedBytes);
-                result = SegmentCacheCommitResult.Committed;
-            }
-            catch (IOException) when (TryValidatePublishedEntry(hash, out _))
-            {
-                return SegmentCacheCommitResult.AlreadyPresent;
-            }
-            catch
-            {
-                if (blobPublished && !_index.ContainsKey(hash))
-                    TryDelete(blobPath);
-                throw;
-            }
-            finally
-            {
-                TryDelete(blobTempPath);
-                TryDelete(headerTempPath);
+                var blobPublished = false;
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
+                    File.Move(blobTempPath, blobPath, overwrite: false);
+                    blobPublished = true;
+                    File.Move(headerTempPath, headerPath, overwrite: false);
+                    PublishIndexEntry(hash, decodedBytes);
+                    result = SegmentCacheCommitResult.Committed;
+                }
+                catch (IOException) when (TryValidatePublishedEntry(hash, out var racedSize))
+                {
+                    PublishIndexEntry(hash, racedSize);
+                    result = SegmentCacheCommitResult.AlreadyPresent;
+                }
+                catch
+                {
+                    if (blobPublished && !_index.ContainsKey(hash))
+                        TryDelete(blobPath);
+                    throw;
+                }
+                finally
+                {
+                    TryDelete(blobTempPath);
+                    TryDelete(headerTempPath);
+                }
             }
         }
 
-        if (result == SegmentCacheCommitResult.Committed)
+        if (result is SegmentCacheCommitResult.Committed or SegmentCacheCommitResult.AlreadyPresent)
         {
             EvictIfNeeded();
             PublishIndexGauges();
@@ -477,17 +496,32 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         foreach (var kv in _index.OrderBy(x => x.Value.LastAccessTicks).ToList())
         {
             if (_currentBytes <= _maxBytes) break;
-            if (!_index.TryRemove(kv.Key, out var entry)) continue;
+            var blobResult = TryDelete(BlobPath(kv.Key));
+            if (blobResult == SegmentCacheDeleteResult.Failed)
+                continue;
+
+            TryDelete(BlobPath(kv.Key) + ".h");
+            if (!_index.TryRemove(kv.Key, out var entry))
+                continue;
+
             _currentBytes -= entry.Size;
             evictedEntries++;
             evictedBytes += entry.Size;
-            TryDelete(BlobPath(kv.Key));
-            TryDelete(BlobPath(kv.Key) + ".h");
         }
     }
 
-    private void PublishIndexGauges() =>
-        _generation.SetIndex(_index.Count, Interlocked.Read(ref _currentBytes));
+    private void PublishIndexGauges()
+    {
+        long entries;
+        long bytes;
+        lock (_evictLock)
+        {
+            entries = _index.Count;
+            bytes = _currentBytes;
+        }
+
+        _generation.SetIndex(entries, bytes);
+    }
 
     private void LoadIndex()
     {
@@ -501,7 +535,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                 {
                     if (file.EndsWith(".tmp", StringComparison.Ordinal))
                     {
-                        if (IsStale(file) && TryDelete(file))
+                        if (IsStale(file) && TryDelete(file) == SegmentCacheDeleteResult.Deleted)
                         {
                             cleaned++;
                             _statistics.RecordTemporaryFileCleaned();
@@ -587,10 +621,16 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
             }
             finally
             {
-                Volatile.Write(ref _catalogReady, 1);
+                long entries;
+                long bytes;
+                lock (_evictLock)
+                {
+                    Volatile.Write(ref _catalogReady, 1);
+                    entries = _index.Count;
+                    bytes = _currentBytes;
+                }
+
                 stopwatch.Stop();
-                var entries = _index.Count;
-                var bytes = Interlocked.Read(ref _currentBytes);
                 _generation.SetCatalogReady(stopwatch.ElapsedMilliseconds, entries, bytes);
                 Log.Information(
                     "Segment cache catalog ready. Enabled: {Enabled}. Path: {PathClass}. MaxBytes: {MaxBytes}. " +
@@ -648,17 +688,32 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         Log.Warning("Segment cache write failed. Reason: {Reason}", "storage-unavailable");
     }
 
-    private static bool TryDelete(string path)
+    private SegmentCacheDeleteResult TryDelete(string path)
+    {
+        var overrideResult = _tryDelete?.Invoke(path);
+        if (overrideResult is not null)
+            return overrideResult.Value;
+
+        return DeleteCacheFile(path);
+    }
+
+    private static SegmentCacheDeleteResult DeleteCacheFile(string path)
     {
         try
         {
-            if (!File.Exists(path)) return false;
+            if (!File.Exists(path))
+                return SegmentCacheDeleteResult.Absent;
+
             File.Delete(path);
-            return true;
+            return SegmentCacheDeleteResult.Deleted;
         }
-        catch
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {
-            return false;
+            return SegmentCacheDeleteResult.Absent;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return SegmentCacheDeleteResult.Failed;
         }
     }
 
@@ -778,8 +833,8 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
             }
 
             _temp = null;
-            TryDelete(_blobTempPath);
-            TryDelete(_headerTempPath);
+            DeleteCacheFile(_blobTempPath);
+            DeleteCacheFile(_headerTempPath);
         }
 
         protected override void Dispose(bool disposing)
@@ -876,16 +931,16 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                     return;
                 }
 
-                TryDelete(_blobTempPath);
-                TryDelete(_headerTempPath);
+                DeleteCacheFile(_blobTempPath);
+                DeleteCacheFile(_headerTempPath);
                 _attempt.Complete(
                     _writeFailed ? SegmentCacheWriteOutcome.Failed : SegmentCacheWriteOutcome.Skipped,
                     _written);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
-                TryDelete(_blobTempPath);
-                TryDelete(_headerTempPath);
+                DeleteCacheFile(_blobTempPath);
+                DeleteCacheFile(_headerTempPath);
                 _attempt.Complete(SegmentCacheWriteOutcome.Failed, _written);
                 if (IsBestEffortCacheIoFailure(exception))
                     _warnWriteFailure();
@@ -895,6 +950,13 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         private static bool IsBestEffortCacheIoFailure(Exception exception) =>
             exception is IOException or UnauthorizedAccessException or DirectoryNotFoundException;
     }
+}
+
+internal enum SegmentCacheDeleteResult
+{
+    Absent,
+    Deleted,
+    Failed,
 }
 
 internal enum SegmentCacheCommitResult

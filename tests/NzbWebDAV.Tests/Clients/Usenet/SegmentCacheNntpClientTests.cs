@@ -897,6 +897,194 @@ public sealed class SegmentCacheNntpClientTests
         }
     }
 
+    [Fact]
+    public async Task TruncatedBlobAfterHydration_DropsEntryAndRefetchesOnce()
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "truncated-blob";
+        byte[] content = "cached-then-truncated"u8.ToArray();
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            WriteCacheEntry(cacheDir, segmentId, content);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = content },
+                useCachedYencStreams: true);
+            using var client = CreateClient(inner, cacheDir, statistics);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var blobPath = CacheBlobPath(cacheDir, segmentId);
+            using (var stream = new FileStream(blobPath, FileMode.Open, FileAccess.Write, FileShare.None))
+                stream.SetLength(Math.Max(1, content.Length / 2));
+
+            await ReadFullyAsync(client, segmentId);
+            var afterRepair = statistics.GetSnapshot();
+            Assert.Equal(1, afterRepair.ReadFailures);
+            Assert.Equal(1, inner.BodyRequestCount);
+
+            await ReadFullyAsync(client, segmentId);
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(1, inner.BodyRequestCount);
+            Assert.Equal(1, snapshot.ReadFailures);
+            Assert.Equal(1, snapshot.Hits);
+            Assert.Equal(content.Length, snapshot.BytesServed);
+            Assert.Equal(content.Length, client.CurrentBytes);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task DegradedCatalog_ReindexesExistingPairOnCommit()
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "preexisting-pair";
+        byte[] content = "already-on-disk"u8.ToArray();
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            WriteCacheEntry(cacheDir, segmentId, content);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = content },
+                useCachedYencStreams: true);
+            using var client = new SegmentCacheNntpClient(
+                inner,
+                cacheDir,
+                maxBytes: 1024 * 1024,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: () => throw new IOException("catalog scan failed"),
+                statistics);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(client.IsCatalogReady);
+            Assert.Equal(0, client.CurrentBytes);
+
+            await ReadFullyAsync(client, segmentId);
+            Assert.Equal(1, inner.BodyRequestCount);
+            Assert.Equal(content.Length, client.CurrentBytes);
+
+            await ReadFullyAsync(client, segmentId);
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(1, inner.BodyRequestCount);
+            Assert.Equal(1, snapshot.Hits);
+            Assert.Equal(1, snapshot.Entries);
+            Assert.Equal(content.Length, snapshot.CurrentBytes);
+            Assert.Equal(1, snapshot.WriteSkipped);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task CapacityEviction_FailedBodyDelete_KeepsIndexAndDoesNotCountEviction()
+    {
+        var cacheDir = NewCacheDir();
+        byte[] first = "first-cache-entry"u8.ToArray();
+        byte[] second = "second-cache-entry!!"u8.ToArray();
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]>
+                {
+                    ["first"] = first,
+                    ["second"] = second,
+                },
+                useCachedYencStreams: true);
+            using var client = new SegmentCacheNntpClient(
+                inner,
+                cacheDir,
+                maxBytes: second.Length,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: null,
+                statistics,
+                tryDelete: path =>
+                {
+                    var name = Path.GetFileName(path);
+                    return name is { Length: 64 } && name.IndexOf('.') < 0
+                        ? SegmentCacheDeleteResult.Failed
+                        : null;
+                });
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            await ReadFullyAsync(client, "first");
+            await ReadFullyAsync(client, "second");
+
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(0, snapshot.Evictions);
+            Assert.Equal(0, snapshot.BytesEvicted);
+            Assert.Equal(first.Length + second.Length, client.CurrentBytes);
+            Assert.Equal(2, snapshot.Entries);
+            Assert.True(File.Exists(CacheBlobPath(cacheDir, "first")));
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task CatalogReadyGauges_MatchIndexAfterCommitDuringLoad()
+    {
+        var cacheDir = NewCacheDir();
+        var loadStarted = new ManualResetEventSlim();
+        var allowLoad = new ManualResetEventSlim();
+        const string segmentId = "written-during-catalog";
+        byte[] content = "gauge-race-content"u8.ToArray();
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = content },
+                useCachedYencStreams: true);
+            using var client = new SegmentCacheNntpClient(
+                inner,
+                cacheDir,
+                maxBytes: 1024 * 1024,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: () =>
+                {
+                    loadStarted.Set();
+                    allowLoad.Wait();
+                    return Directory.EnumerateFiles(cacheDir, "*", SearchOption.AllDirectories);
+                },
+                statistics);
+
+            Assert.True(loadStarted.Wait(TimeSpan.FromSeconds(5)));
+            await ReadFullyAsync(client, segmentId);
+            Assert.Equal(content.Length, client.CurrentBytes);
+
+            allowLoad.Set();
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var snapshot = statistics.GetSnapshot();
+            Assert.True(snapshot.CatalogReady);
+            Assert.Equal(1, snapshot.Entries);
+            Assert.Equal(content.Length, snapshot.CurrentBytes);
+            Assert.Equal(client.CurrentBytes, snapshot.CurrentBytes);
+        }
+        finally
+        {
+            allowLoad.Set();
+            DeleteCacheDir(cacheDir);
+            loadStarted.Dispose();
+            allowLoad.Dispose();
+        }
+    }
+
     private static SegmentCacheNntpClient CreateClient(
         INntpClient inner,
         string cacheDir,
@@ -963,9 +1151,18 @@ public sealed class SegmentCacheNntpClientTests
             await stream.CopyToAsync(Stream.Null);
     }
 
+    private static string SegmentHash(string segmentId) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(segmentId)));
+
+    private static string CacheBlobPath(string cacheDir, string segmentId)
+    {
+        var hash = SegmentHash(segmentId);
+        return Path.Join(cacheDir, hash[..2], hash);
+    }
+
     private static void WriteCacheEntry(string cacheDir, string segmentId, byte[] content)
     {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(segmentId)));
+        var hash = SegmentHash(segmentId);
         var directory = Path.Join(cacheDir, hash[..2]);
         Directory.CreateDirectory(directory);
         File.WriteAllBytes(Path.Join(directory, hash), content);
