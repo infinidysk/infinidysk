@@ -1713,54 +1713,59 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         try
         {
+            try
+            {
 #pragma warning disable CA1849 // synchronous Cancel is required -- teardown callbacks must run before _streamTasks.Writer completes; CancelAsync would race TryComplete
-            _cts.Cancel();
+                _cts.Cancel();
 #pragma warning restore CA1849
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already torn down.
+            }
+
+            _streamTasks.Writer.TryComplete();
+
+            if (_stream is not null)
+            {
+                await _stream.DisposeAsync().ConfigureAwait(false);
+                _stream = null;
+            }
+
+            // Drain queued segments concurrently so a task blocked on LeaseAsync can
+            // wake when another queued BudgetedStream releases its lease.
+            var pending = new List<Task>();
+            while (_streamTasks.Reader.TryRead(out var streamTask))
+                pending.Add(DisposeStreamAsync(streamTask, releaseInFlight: true));
+
+            try
+            {
+                await _downloadTask.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Producer failures are surfaced on ReadAsync; teardown only needs cleanup.
+            }
+
+            while (_streamTasks.Reader.TryRead(out var streamTask))
+                pending.Add(DisposeStreamAsync(streamTask, releaseInFlight: true));
+
+            // Join the producer's out-of-band disposals so leases they hold are released
+            // before DisposeAsync completes. The producer has exited by now (awaited above),
+            // so no new orphans can be enqueued; drain is safe without a lock.
+            while (_orphanedDisposals.TryDequeue(out var orphaned))
+                pending.Add(orphaned);
+
+            while (_batchCompletionObservers.TryDequeue(out var observer))
+                pending.Add(observer);
+
+            if (pending.Count > 0)
+                await Task.WhenAll(pending).ConfigureAwait(false);
         }
-        catch (ObjectDisposedException)
+        finally
         {
-            // Already torn down.
+            _cts.Dispose();
         }
-
-        _streamTasks.Writer.TryComplete();
-
-        if (_stream is not null)
-        {
-            await _stream.DisposeAsync().ConfigureAwait(false);
-            _stream = null;
-        }
-
-        // Drain queued segments concurrently so a task blocked on LeaseAsync can
-        // wake when another queued BudgetedStream releases its lease.
-        var pending = new List<Task>();
-        while (_streamTasks.Reader.TryRead(out var streamTask))
-            pending.Add(DisposeStreamAsync(streamTask, releaseInFlight: true));
-
-        try
-        {
-            await _downloadTask.ConfigureAwait(false);
-        }
-        catch
-        {
-            // Producer failures are surfaced on ReadAsync; teardown only needs cleanup.
-        }
-
-        while (_streamTasks.Reader.TryRead(out var streamTask))
-            pending.Add(DisposeStreamAsync(streamTask, releaseInFlight: true));
-
-        // Join the producer's out-of-band disposals so leases they hold are released
-        // before DisposeAsync completes. The producer has exited by now (awaited above),
-        // so no new orphans can be enqueued; drain is safe without a lock.
-        while (_orphanedDisposals.TryDequeue(out var orphaned))
-            pending.Add(orphaned);
-
-        while (_batchCompletionObservers.TryDequeue(out var observer))
-            pending.Add(observer);
-
-        if (pending.Count > 0)
-            await Task.WhenAll(pending).ConfigureAwait(false);
-
-        _cts.Dispose();
     }
 
     private readonly record struct DrainedSegment(Stream Stream, bool ShortPadded);
