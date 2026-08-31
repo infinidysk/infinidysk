@@ -1,7 +1,9 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
@@ -49,6 +51,73 @@ public class DavMultipartFileStreamTests
 
         Assert.Equal(buffer.Length, bytesRead);
         Assert.Equal(volumeBytes[4..], buffer);
+    }
+
+    [Fact]
+    public async Task ReadAsync_FiniteRangeEndingBeforeMultipartLengthReturnsEof()
+    {
+        using var client = new FakeNntpClient(new Dictionary<string, byte[]>
+        {
+            ["one"] = [0, 1, 2, 3, 4, 5, 6, 7],
+            ["two"] = [8, 9, 10, 11, 12, 13, 14, 15],
+        }, useCachedYencStreams: true);
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["one"],
+                        SegmentIdByteRange = new LongRange(0, 8),
+                        FilePartByteRange = new LongRange(0, 8),
+                    },
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["two"],
+                        SegmentIdByteRange = new LongRange(0, 8),
+                        FilePartByteRange = new LongRange(8, 16),
+                    },
+                ],
+            },
+        };
+        using var requestCts = new CancellationTokenSource();
+        using var schedulingScope = requestCts.Token.SetContext(new StreamingSchedulingContext
+        {
+            Snapshot = new StreamingCapacitySnapshot(
+                IsPerStreamMode: false,
+                ConfiguredDownloadBudget: 20,
+                ConfiguredPerStreamBudget: 15,
+                ActiveReaderShareCount: 1,
+                EffectivePrimaryTransferCapacity: 20,
+                EffectiveStreamConnectionTarget: 20,
+                ArticleBufferSize: 4,
+                InFlightArticleBudgetBytes: 1024,
+                Reason: StreamingCapacityReason.Ok),
+        });
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(5);
+        try
+        {
+            await using var stream = new DavMultipartFileStream(
+                multipart,
+                client,
+                articleBufferSize: 4,
+                resolver: null,
+                usePipelinedBodyRequests: true,
+                fileName: "movie.mkv");
+            var buffer = new byte[5];
+
+            Assert.Equal(5, await stream.ReadAsync(buffer, requestCts.Token));
+            Assert.Equal([0, 1, 2, 3, 4], buffer);
+            Assert.Equal(0, await stream.ReadAsync(new byte[1], requestCts.Token));
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
     }
 
     [Fact]

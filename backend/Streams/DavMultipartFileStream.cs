@@ -26,6 +26,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
 
     private long _position;
     private CombinedStream? _innerStream;
+    private long? _expectedReadEndExclusive;
     private bool _disposed;
     // Teardown of the inner stream a Seek replaced is started non-blocking (Seek is
     // synchronous); the next ReadAsync joins it before opening a new inner stream so
@@ -113,7 +114,9 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
         _innerStream ??= await GetFileStreamAsync(_position, cancellationToken).ConfigureAwait(false);
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-        if (read == 0 && _position < _length)
+        if (read == 0 &&
+            _position < _length &&
+            (_expectedReadEndExclusive is null || _position < _expectedReadEndExclusive))
         {
             throw new IncompleteFileContentException(
                 _fileName ?? "unknown", _length, _position);
@@ -146,6 +149,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
 
         if (_position == absoluteOffset) return _position;
         _position = absoluteOffset;
+        _expectedReadEndExclusive = null;
         if (_innerStream is { } replaced)
         {
             _pendingInnerDispose = replaced.DisposeAsync().AsTask();
@@ -225,6 +229,9 @@ public class DavMultipartFileStream : FastReadOnlyStream
             ? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget()
             : null;
         var budget = finiteBudget is > 0 ? new FiniteMultipartBudget(finiteBudget.Value) : null;
+        _expectedReadEndExclusive = budget is null
+            ? null
+            : rangeStart + Math.Min(finiteBudget!.Value, _length - rangeStart);
 
         if (rangeStart == 0)
             return new CombinedStream(EnumerateFromPart(0, 0, budget, ct));
