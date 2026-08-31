@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
@@ -82,6 +83,19 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         var scopedStreamingTimeoutContext = token.SetContext(streamingTimeoutContext);
 #pragma warning restore CA2000
 
+        IDisposable? scopedSchedulingContext = null;
+        if (configManager.IsFiniteRangeSchedulerEnabled())
+        {
+            var capacityProvider = Context.RequestServices
+                .GetRequiredService<StreamingCapacitySnapshotProvider>();
+#pragma warning disable CA2000 // ownership handle is disposed by StreamingScope
+            scopedSchedulingContext = token.SetContext(new StreamingSchedulingContext
+            {
+                Snapshot = capacityProvider.Capture(),
+            });
+#pragma warning restore CA2000
+        }
+
         // Keep this stream's per-stream budget in sync with live config changes,
         // mirroring how DownloadingNntpClient resizes the shared streaming semaphore.
         // The per-stream count depends on the total connection setting, the preset,
@@ -110,6 +124,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             onConfigChanged,
             scopedDownloadPriorityContext,
             scopedStreamingTimeoutContext,
+            scopedSchedulingContext,
             streamSemaphore);
     }
 
@@ -129,6 +144,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         EventHandler<ConfigManager.ConfigEventArgs>? onConfigChanged,
         IDisposable downloadPriorityContext,
         IDisposable streamingTimeoutContext,
+        IDisposable? schedulingContext,
         PrioritizedSemaphore? streamSemaphore) : IAsyncDisposable
     {
         private int _disposed;
@@ -142,6 +158,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
                 configManager.OnConfigChanged -= onConfigChanged;
             downloadPriorityContext.Dispose();
             streamingTimeoutContext.Dispose();
+            schedulingContext?.Dispose();
             streamSemaphore?.Dispose();
             return ValueTask.CompletedTask;
         }

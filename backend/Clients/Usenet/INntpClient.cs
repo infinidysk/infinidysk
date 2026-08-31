@@ -118,7 +118,8 @@ public interface INntpClient : IDisposable
         int streamingBodyBatchWidth = 4,
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
-        bool segmentByteRangesTrusted = true);
+        bool segmentByteRangesTrusted = true,
+        long? readBudgetOverride = null);
 
     Task CheckAllSegmentsAsync(
         IEnumerable<string> segmentIds, int concurrency, IProgress<int>? progress, CancellationToken cancellationToken);

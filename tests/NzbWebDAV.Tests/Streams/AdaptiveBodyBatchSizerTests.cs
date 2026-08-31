@@ -203,6 +203,31 @@ public class AdaptiveBodyBatchSizerTests
         Assert.Equal(4, sizer.Current);
     }
 
+    [Fact]
+    public void InitialWidthSeedsCurrentUntilObservedStarvationNarrowsIt()
+    {
+        var sizer = new AdaptiveBodyBatchSizer(4, 3, wideningObservationFloor: 64);
+
+        Assert.Equal(3, sizer.Current);
+        ObservePattern(sizer, "SRRRSRRR");
+        Assert.Equal(2, sizer.Current);
+    }
+
+    [Fact]
+    public void ReadyBoundariesCannotWidenBeforeObservationFloor()
+    {
+        var clock = new ManualTimeProvider();
+        var sizer = new AdaptiveBodyBatchSizer(
+            4, 1, wideningObservationFloor: 20, timeProvider: clock);
+
+        ObservePattern(sizer, new string('R', 16));
+        Assert.Equal(1, sizer.Current);
+
+        AdvancePastHold(clock);
+        ObservePattern(sizer, "RRRR");
+        Assert.Equal(2, sizer.Current);
+    }
+
     private static void AdvancePastHold(ManualTimeProvider clock) =>
         clock.Advance(TimeSpan.FromMilliseconds(AdaptiveBodyBatchSizer.RewidenHoldMilliseconds + 50));
 

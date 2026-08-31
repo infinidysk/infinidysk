@@ -100,6 +100,26 @@ public sealed class ConcurrentReadTracker(
     }
 
     /// <summary>
+    /// Returns live logical read scopes for construction-time scheduling. This deliberately
+    /// differs from ActiveReadRegistry.Count, whose activity-window entries are not shares.
+    /// </summary>
+    internal int GetActiveReaderCount()
+    {
+        lock (_gate)
+        {
+            var count = 0;
+            foreach (var state in _paths.Values)
+            {
+                count = count > int.MaxValue - state.Readers.Count
+                    ? int.MaxValue
+                    : count + state.Readers.Count;
+            }
+
+            return count;
+        }
+    }
+
+    /// <summary>
     /// Marks one logical segment transfer as in flight. A duplicate is counted only
     /// when another reader for the same path is simultaneously fetching that segment.
     /// </summary>

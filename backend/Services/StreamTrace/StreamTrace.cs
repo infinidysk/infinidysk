@@ -25,6 +25,23 @@ public static class StreamTrace
     public static void TryPrefetchWidth(Guid sessionId, int previousBatchSize, int batchSize)
         => _buffer?.PrefetchWidth(sessionId, previousBatchSize, batchSize);
 
+    internal static void TryBatchPlan(
+        Guid sessionId,
+        bool eligible,
+        string reason,
+        int? plannedSegments = null,
+        long? plannedBytes = null,
+        int? initialBatchWidth = null,
+        int? configuredMaximumBatchWidth = null,
+        int? effectiveConnectionTarget = null,
+        int? activeReaderShareCount = null,
+        int? effectivePrimaryTransferCapacity = null,
+        int? wideningObservationFloor = null)
+        => _buffer?.BatchPlan(
+            sessionId, eligible, reason, plannedSegments, plannedBytes, initialBatchWidth,
+            configuredMaximumBatchWidth, effectiveConnectionTarget, activeReaderShareCount,
+            effectivePrimaryTransferCapacity, wideningObservationFloor);
+
     internal static void TryStreamStartup(
         Guid sessionId,
         long? rangeGeneration,

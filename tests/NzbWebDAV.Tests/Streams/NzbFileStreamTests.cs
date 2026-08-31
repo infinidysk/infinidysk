@@ -2,9 +2,11 @@ using System.Collections.Concurrent;
 using System.Text;
 using MemoryPack;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
@@ -109,6 +111,48 @@ public class NzbFileStreamTests
             Assert.Equal("abcde", Encoding.ASCII.GetString(buffer));
             await Task.Delay(50);
             Assert.Equal(0, client.BatchRequestCount);
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
+    }
+
+    [Fact]
+    public async Task ExactFiniteRange_PassesOnlyOverlappingSegmentSlice()
+    {
+        var client = new FakeNntpClient(
+            SegmentIds.Zip(SegmentBytes).ToDictionary(pair => pair.First, pair => pair.Second),
+            useCachedYencStreams: true,
+            segmentRanges: SegmentIds.Zip(SegmentRanges).ToDictionary(pair => pair.First, pair => pair.Second));
+        using var requestCts = new CancellationTokenSource();
+        using var schedulingScope = requestCts.Token.SetContext(new StreamingSchedulingContext
+        {
+            Snapshot = new StreamingCapacitySnapshot(
+                IsPerStreamMode: false,
+                ConfiguredDownloadBudget: 20,
+                ConfiguredPerStreamBudget: 15,
+                ActiveReaderShareCount: 1,
+                EffectivePrimaryTransferCapacity: 20,
+                EffectiveStreamConnectionTarget: 20,
+                ArticleBufferSize: 4,
+                InFlightArticleBudgetBytes: 1024,
+                Reason: StreamingCapacityReason.Ok),
+        });
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(10);
+        try
+        {
+            await using var stream = new NzbFileStream(
+                SegmentIds, 15, client, articleBufferSize: 4, segmentByteRanges: SegmentRanges);
+            var buffer = new byte[10];
+            Assert.Equal(5, await stream.ReadAsync(buffer, requestCts.Token));
+            Assert.Equal(5, await stream.ReadAsync(buffer.AsMemory(5), requestCts.Token));
+
+            Assert.Equal("abcdefghij", Encoding.ASCII.GetString(buffer));
+            Assert.Contains("one", client.RequestedSegmentIds);
+            Assert.Contains("two", client.RequestedSegmentIds);
+            Assert.DoesNotContain("three", client.RequestedSegmentIds);
         }
         finally
         {

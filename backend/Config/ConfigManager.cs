@@ -541,6 +541,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.UsenetWarmConnectionsEnabled:
                 case ConfigKeys.UsenetContainerAwareFill:
                 case ConfigKeys.UsenetPipelinedBodyRequests:
+                case ConfigKeys.UsenetFiniteRangeSchedulerEnabled:
                 case ConfigKeys.UsenetSegmentCacheEnabled:
                 case ConfigKeys.UsenetSharedStreamsEnabled:
                 case ConfigKeys.PlayWatchdogEnabled:
@@ -1176,6 +1177,17 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingBodyBatchWidth));
         if (configured is null || !int.TryParse(configured, out var value)) return 4;
         return Math.Clamp(value, 1, 8);
+    }
+
+    /// <summary>
+    /// Temporary canary control for exact finite-range scheduling. This intentionally
+    /// defaults off until the configuration-only width experiment validates the policy.
+    /// It has no settings UI and must be removed after the rollout observation window.
+    /// </summary>
+    public bool IsFiniteRangeSchedulerEnabled()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetFiniteRangeSchedulerEnabled));
+        return value is not null && bool.TryParse(value, out var enabled) && enabled;
     }
 
     public bool IsSharedStreamsEnabled()

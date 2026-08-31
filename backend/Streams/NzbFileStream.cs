@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
@@ -29,7 +30,8 @@ public class NzbFileStream(
     int streamingBodyBatchWidth = 4,
     HashSet<string>? knownCorruptSegmentIds = null,
     IReadOnlySet<int>? knownMissingSegmentIndices = null,
-    bool segmentByteRangesTrusted = true
+    bool segmentByteRangesTrusted = true,
+    long? readBudgetOverride = null
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
@@ -346,7 +348,7 @@ public class NzbFileStream(
     private async Task<Stream> GetFileStream(long rangeStart, CancellationToken cancellationToken)
     {
         ThrowIfPlaybackFailFast();
-        var readBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        var readBudget = readBudgetOverride ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
 
         if (rangeStart == 0)
         {
@@ -354,7 +356,8 @@ public class NzbFileStream(
                 firstSegmentIndex: 0,
                 failFastOnFirstSegment: true,
                 readBudget,
-                cancellationToken);
+                cancellationToken,
+                rangeStart);
         }
 
         if (CanUseExactIndexedDirectHead())
@@ -435,7 +438,11 @@ public class NzbFileStream(
         long rangeStart,
         CancellationToken cancellationToken)
     {
-        var sliced = SliceFrom(firstSegmentIndex);
+        var initialBatchPlan = TryCreateInitialBatchPlan(
+            firstSegmentIndex, rangeStart, readBudget, cancellationToken, out var finitePlan);
+        var sliced = finitePlan is { } plan
+            ? SliceFrom(firstSegmentIndex, plan.SegmentCount)
+            : SliceFrom(firstSegmentIndex);
         try
         {
             return await MultiSegmentStream.CreatePositionedFirstSegmentHybridAsync(
@@ -456,7 +463,10 @@ public class NzbFileStream(
                         streamingBodyBatchWidth,
                         knownCorruptSegmentIds,
                         sliced.KnownMissing,
-                        cancellationToken),
+                        cancellationToken)
+                    {
+                        InitialBatchPlan = initialBatchPlan,
+                    },
                     prefixBytes)
                 .ConfigureAwait(false);
         }
@@ -676,26 +686,137 @@ public class NzbFileStream(
         long? FirstSegmentFileOffset,
         HashSet<int>? KnownMissing);
 
-    private SlicedSegments SliceFrom(int firstSegmentIndex)
+    private InitialBodyBatchPlan? TryCreateInitialBatchPlan(
+        int firstSegmentIndex,
+        long rangeStart,
+        long? readBudget,
+        CancellationToken cancellationToken,
+        out FiniteRangeSegmentPlan? finitePlan)
     {
-        var segmentIds = fileSegmentIds.AsMemory()[firstSegmentIndex..];
+        finitePlan = null;
+        var scheduling = cancellationToken.GetContext<StreamingSchedulingContext>();
+        if (scheduling is null)
+            return null;
+
+        if (!usePipelinedBodyRequests || articleBufferSize <= 0)
+        {
+            RecordBatchPlan(
+                scheduling.Snapshot,
+                eligible: false,
+                FiniteRangePlanUnavailableReason.UnbufferedOrNonPipelined.ToString());
+            return null;
+        }
+
+        if (readBudget is not > 0)
+        {
+            RecordBatchPlan(
+                scheduling.Snapshot,
+                eligible: false,
+                FiniteRangePlanUnavailableReason.NoFiniteReadBudget.ToString());
+            return null;
+        }
+
+        if (_segmentByteRanges is null)
+        {
+            RecordBatchPlan(
+                scheduling.Snapshot,
+                eligible: false,
+                FiniteRangePlanUnavailableReason.MissingExactMetadata.ToString());
+            return null;
+        }
+
+        if (!FiniteRangeSegmentPlan.TryCreate(
+                _segmentByteRanges,
+                firstSegmentIndex,
+                rangeStart,
+                readBudget.Value,
+                fileSize,
+                out var plan,
+                out var unavailableReason))
+        {
+            RecordBatchPlan(
+                scheduling.Snapshot,
+                eligible: false,
+                unavailableReason.ToString());
+            return null;
+        }
+
+        finitePlan = plan;
+        if (!plan.HasBufferedRemainder)
+        {
+            RecordBatchPlan(
+                scheduling.Snapshot,
+                eligible: true,
+                InitialBodyBatchPlanReason.ExactFiniteRange.ToString(),
+                plan);
+            return null;
+        }
+
+        var reason = scheduling.Snapshot.Reason == StreamingCapacityReason.Ok
+            ? InitialBodyBatchPlanReason.ExactFiniteRange
+            : InitialBodyBatchPlanReason.DegradedNoHealthyPrimaryCapacity;
+        var initialPlan = InitialBodyBatchPlan.Create(
+            plan.RemainderSegmentCount,
+            plan.ExactPlannedRemainderBytes,
+            scheduling.Snapshot.EffectiveStreamConnectionTarget,
+            streamingBodyBatchWidth,
+            articleBufferSize,
+            reason);
+        RecordBatchPlan(scheduling.Snapshot, eligible: true, reason.ToString(), plan, initialPlan);
+        return initialPlan;
+    }
+
+    private static void RecordBatchPlan(
+        StreamingCapacitySnapshot snapshot,
+        bool eligible,
+        string reason,
+        FiniteRangeSegmentPlan? finitePlan = null,
+        InitialBodyBatchPlan? initialPlan = null)
+    {
+        if (MultiProviderNntpClient.CurrentReadSessionId is not { } sessionId)
+            return;
+
+        StreamTrace.TryBatchPlan(
+            sessionId,
+            eligible,
+            reason,
+            finitePlan?.RemainderSegmentCount,
+            finitePlan?.ExactPlannedRemainderBytes,
+            initialPlan?.InitialBatchWidth,
+            initialPlan?.ConfiguredMaximumBatchWidth,
+            snapshot.EffectiveStreamConnectionTarget,
+            snapshot.ActiveReaderShareCount,
+            snapshot.EffectivePrimaryTransferCapacity,
+            initialPlan?.WideningNotBeforeDeliveredSegment);
+    }
+
+    private SlicedSegments SliceFrom(int firstSegmentIndex, int? segmentCount = null)
+    {
+        var availableCount = fileSegmentIds.Length - firstSegmentIndex;
+        var count = segmentCount ?? availableCount;
+        if (firstSegmentIndex < 0 || firstSegmentIndex > fileSegmentIds.Length ||
+            count < 0 || count > availableCount)
+            throw new ArgumentOutOfRangeException(nameof(firstSegmentIndex));
+
+        var segmentIds = fileSegmentIds.AsMemory(firstSegmentIndex, count);
         string[][]? fallbacks = null;
         if (segmentFallbacks is { Length: > 0 } && firstSegmentIndex < segmentFallbacks.Length)
-            fallbacks = segmentFallbacks[firstSegmentIndex..];
+            fallbacks = segmentFallbacks.AsMemory(firstSegmentIndex,
+                Math.Min(count, segmentFallbacks.Length - firstSegmentIndex)).ToArray();
 
         var exactSizes = ExactSegmentSizes is { } sizes
-            ? sizes.AsMemory(firstSegmentIndex)
+            ? sizes.AsMemory(firstSegmentIndex, count)
             : default;
         var firstSegmentFileOffset = _segmentByteRanges?[firstSegmentIndex].StartInclusive;
         var knownMissing = _knownMissingSegmentIndices?
-            .Where(index => index >= firstSegmentIndex)
+            .Where(index => index >= firstSegmentIndex && index < firstSegmentIndex + count)
             .Select(index => index - firstSegmentIndex)
             .ToHashSet();
         var trackerIds = PlaybackHoleTracker.SnapshotMissingSegmentIds(fileName ?? "");
         if (trackerIds is { Count: > 0 })
         {
             knownMissing ??= [];
-            for (var i = firstSegmentIndex; i < fileSegmentIds.Length; i++)
+            for (var i = firstSegmentIndex; i < firstSegmentIndex + count; i++)
             {
                 if (trackerIds.Contains(fileSegmentIds[i]))
                     knownMissing.Add(i - firstSegmentIndex);
@@ -710,9 +831,14 @@ public class NzbFileStream(
         int firstSegmentIndex,
         bool failFastOnFirstSegment,
         long? readBudget,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long rangeStart = 0)
     {
-        var sliced = SliceFrom(firstSegmentIndex);
+        var initialBatchPlan = TryCreateInitialBatchPlan(
+            firstSegmentIndex, rangeStart, readBudget, cancellationToken, out var finitePlan);
+        var sliced = finitePlan is { } plan
+            ? SliceFrom(firstSegmentIndex, plan.SegmentCount)
+            : SliceFrom(firstSegmentIndex);
         return MultiSegmentStream.CreateFirstSegmentHybrid(
             sliced.SegmentIds,
             usenetClient,
@@ -730,7 +856,8 @@ public class NzbFileStream(
             sliced.FirstSegmentFileOffset,
             streamingBodyBatchWidth,
             knownCorruptSegmentIds,
-            sliced.KnownMissing);
+            sliced.KnownMissing,
+            initialBatchPlan);
     }
 
     protected override void Dispose(bool disposing)

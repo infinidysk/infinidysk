@@ -6,7 +6,7 @@ namespace NzbWebDAV.Streams;
 /// Adapts BODY pipeline batch width from consumer readiness at segment boundaries.
 /// Narrows 4→2→1 when prefetch starves; recovers gradually after sustained readiness.
 /// </summary>
-internal sealed class AdaptiveBodyBatchSizer(int maximumBatchSize, TimeProvider? timeProvider = null)
+internal sealed class AdaptiveBodyBatchSizer
 {
     private const int ObservationWindow = 8;
     private const int StarvedBoundariesToNarrow = 2;
@@ -15,13 +15,37 @@ internal sealed class AdaptiveBodyBatchSizer(int maximumBatchSize, TimeProvider?
     internal const int RewidenHoldMilliseconds = 250;
     private static readonly TimeSpan RewidenHold = TimeSpan.FromMilliseconds(RewidenHoldMilliseconds);
 
-    private readonly int _maximum = Math.Max(1, maximumBatchSize);
-    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
-    private int _current = Math.Max(1, maximumBatchSize);
+    private readonly int _maximum;
+    private readonly int _wideningObservationFloor;
+    private readonly TimeProvider _timeProvider;
+    private int _current;
     private byte _starvationWindow;
     private int _observations;
+    private int _totalObservations;
     private int _ready;
     private DateTimeOffset _lastTransition;
+
+    internal AdaptiveBodyBatchSizer(int maximumBatchSize, TimeProvider? timeProvider = null)
+        : this(maximumBatchSize, maximumBatchSize, wideningObservationFloor: 0, timeProvider)
+    {
+    }
+
+    internal AdaptiveBodyBatchSizer(
+        int maximumBatchSize,
+        int initialBatchSize,
+        int wideningObservationFloor,
+        TimeProvider? timeProvider = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximumBatchSize, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(initialBatchSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(initialBatchSize, maximumBatchSize);
+        ArgumentOutOfRangeException.ThrowIfNegative(wideningObservationFloor);
+
+        _maximum = maximumBatchSize;
+        _current = initialBatchSize;
+        _wideningObservationFloor = wideningObservationFloor;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
 
     public int Current => Volatile.Read(ref _current);
 
@@ -30,6 +54,8 @@ internal sealed class AdaptiveBodyBatchSizer(int maximumBatchSize, TimeProvider?
         var current = Current;
         _starvationWindow = (byte)((_starvationWindow << 1) | (readyWhenNeeded ? 0 : 1));
         _observations = Math.Min(ObservationWindow, _observations + 1);
+        if (_totalObservations < int.MaxValue)
+            _totalObservations++;
 
         if (readyWhenNeeded)
             _ready++;
@@ -43,7 +69,8 @@ internal sealed class AdaptiveBodyBatchSizer(int maximumBatchSize, TimeProvider?
         {
             next = Math.Max(1, (current + 1) / 2);
         }
-        else if (_ready >= ReadyBoundariesToRecover)
+        else if (_totalObservations >= _wideningObservationFloor &&
+                 _ready >= ReadyBoundariesToRecover)
         {
             next = Math.Min(_maximum, current * 2);
             isWiden = true;

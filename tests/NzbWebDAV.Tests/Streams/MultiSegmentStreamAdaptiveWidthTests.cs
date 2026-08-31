@@ -100,6 +100,33 @@ public class MultiSegmentStreamAdaptiveWidthTests
         Assert.Equal(articleBufferSize, stream.PrefetchBatchWidth);
     }
 
+    [Theory]
+    [InlineData(16, 1, 16)]
+    [InlineData(40, 2, 20)]
+    [InlineData(64, 3, 22)]
+    [InlineData(80, 4, 20)]
+    public async Task FiniteRange_SeedsExactInitialBatchGeometry(
+        int segmentCount,
+        int expectedWidth,
+        int expectedBatchCount)
+    {
+        const int segmentSize = 8;
+        var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
+        var plan = InitialBodyBatchPlan.Create(
+            segmentCount, segmentCount * segmentSize, 20, configuredMaximumBatchWidth: 4, articleBufferSize: 40);
+        await using var stream = CreatePipelinedStream(
+            client, segmentCount, articleBufferSize: 40, segmentSize: segmentSize, initialBatchPlan: plan);
+
+        await client.WaitUntilAsync(
+            () => client.BatchIssueCount == expectedBatchCount,
+            TimeSpan.FromSeconds(5));
+
+        Assert.All(client.ObservedBatchSizes, size => Assert.Equal(expectedWidth, size));
+        client.ReleaseAllUpTo(segmentCount - 1);
+        var buffer = new byte[segmentSize];
+        while (await stream.ReadAsync(buffer) > 0) { }
+    }
+
     [Fact]
     public async Task CreateFirstSegmentHybrid_ForwardsConfiguredBatchWidth()
     {
@@ -655,7 +682,8 @@ public class MultiSegmentStreamAdaptiveWidthTests
         int articleBufferSize,
         int segmentSize,
         InFlightArticleBudget? budget = null,
-        int batchWidth = BodyPipelineBatchSize)
+        int batchWidth = BodyPipelineBatchSize,
+        InitialBodyBatchPlan? initialBatchPlan = null)
     {
         var exactSizes = Enumerable.Repeat((long)segmentSize, segmentCount).ToArray();
         return (MultiSegmentStream)MultiSegmentStream.Create(
@@ -669,7 +697,8 @@ public class MultiSegmentStreamAdaptiveWidthTests
             fileName: "adaptive.bin",
             exactSegmentSizes: exactSizes,
             inFlightArticleBudget: budget,
-            bodyPipelineBatchWidth: batchWidth);
+            bodyPipelineBatchWidth: batchWidth,
+            initialBatchPlan: initialBatchPlan);
     }
 
     /// <summary>

@@ -35,6 +35,15 @@ public sealed record StreamTraceEvent
     [JsonPropertyName("message")] public string? Message { get; init; }
     [JsonPropertyName("previousBatchSize")] public int? PreviousBatchSize { get; init; }
     [JsonPropertyName("batchSize")] public int? BatchSize { get; init; }
+    [JsonPropertyName("finiteRangeEligible")] public bool? FiniteRangeEligible { get; init; }
+    [JsonPropertyName("planReason")] public string? PlanReason { get; init; }
+    [JsonPropertyName("plannedSegments")] public int? PlannedSegments { get; init; }
+    [JsonPropertyName("plannedBytes")] public long? PlannedBytes { get; init; }
+    [JsonPropertyName("configuredMaximumBatchWidth")] public int? ConfiguredMaximumBatchWidth { get; init; }
+    [JsonPropertyName("effectiveConnectionTarget")] public int? EffectiveConnectionTarget { get; init; }
+    [JsonPropertyName("activeReaderShareCount")] public int? ActiveReaderShareCount { get; init; }
+    [JsonPropertyName("effectivePrimaryTransferCapacity")] public int? EffectivePrimaryTransferCapacity { get; init; }
+    [JsonPropertyName("wideningObservationFloor")] public int? WideningObservationFloor { get; init; }
 
     [JsonPropertyName("rangeGeneration")] public long? RangeGeneration { get; init; }
 

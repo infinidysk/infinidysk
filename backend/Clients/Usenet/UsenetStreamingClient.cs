@@ -189,6 +189,24 @@ public class UsenetStreamingClient : WrappingNntpClient
             : Array.Empty<ProviderConnectionSnapshot>();
     }
 
+    internal IReadOnlyList<StreamingProviderCapacitySnapshot> GetSchedulingProviderSnapshots()
+    {
+        if (WrappingNntpClient.Unwrap(InnerClient) is not MultiProviderNntpClient multi)
+            return [];
+
+        return multi.Providers
+            .Select(provider =>
+            {
+                var admission = provider.GetConnectionAdmissionSnapshot();
+                return new StreamingProviderCapacitySnapshot(
+                    provider.ProviderType,
+                    provider.GetCircuitBreakerSnapshot().State,
+                    provider.EffectiveMaxConnections,
+                    admission?.EffectiveTransferLimit);
+            })
+            .ToArray();
+    }
+
     public Task ProbeLatchedProvidersAsync(CancellationToken cancellationToken)
     {
         return WrappingNntpClient.Unwrap(InnerClient) is MultiProviderNntpClient multi

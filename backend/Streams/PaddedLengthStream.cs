@@ -31,7 +31,8 @@ public sealed class PaddedLengthStream(
     long length,
     string partId,
     string? fileName = null,
-    MultipartPartContext? context = null) : FastReadOnlyNonSeekableStream
+    MultipartPartContext? context = null,
+    Action<int>? onBytesRead = null) : FastReadOnlyNonSeekableStream
 {
     private readonly string _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
     private long _position;
@@ -70,6 +71,7 @@ public sealed class PaddedLengthStream(
             if (bytesRead > 0)
             {
                 _position += bytesRead;
+                onBytesRead?.Invoke(bytesRead);
                 return bytesRead;
             }
 
@@ -79,6 +81,7 @@ public sealed class PaddedLengthStream(
 
         buffer.Span[..bytesToRead].Clear();
         _position += bytesToRead;
+        onBytesRead?.Invoke(bytesToRead);
         return bytesToRead;
     }
 

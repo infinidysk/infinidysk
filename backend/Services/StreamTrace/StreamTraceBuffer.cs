@@ -433,6 +433,38 @@ public sealed class StreamTraceBuffer
         });
     }
 
+    internal void BatchPlan(
+        Guid sessionId,
+        bool eligible,
+        string reason,
+        int? plannedSegments,
+        long? plannedBytes,
+        int? initialBatchWidth,
+        int? configuredMaximumBatchWidth,
+        int? effectiveConnectionTarget,
+        int? activeReaderShareCount,
+        int? effectivePrimaryTransferCapacity,
+        int? wideningObservationFloor)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.BatchPlan.ToString(),
+            FiniteRangeEligible = eligible,
+            PlanReason = reason,
+            PlannedSegments = plannedSegments,
+            PlannedBytes = plannedBytes,
+            BatchSize = initialBatchWidth,
+            ConfiguredMaximumBatchWidth = configuredMaximumBatchWidth,
+            EffectiveConnectionTarget = effectiveConnectionTarget,
+            ActiveReaderShareCount = activeReaderShareCount,
+            EffectivePrimaryTransferCapacity = effectivePrimaryTransferCapacity,
+            WideningObservationFloor = wideningObservationFloor,
+        });
+    }
+
     /// <summary>
     /// Bounded, range-attributed startup/handoff evidence. <paramref name="phase"/>
     /// is produced only by the typed mapping in

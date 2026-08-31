@@ -330,6 +330,7 @@ public sealed partial class Program
                 .AddSingleton<HealthCheckConnectionGate>()
                 .AddSingleton<SegmentCacheStatistics>()
                 .AddSingleton<UsenetStreamingClient>()
+                .AddSingleton<StreamingCapacitySnapshotProvider>()
                 .AddHostedService<ProviderRecoveryProbeService>()
                 // LazyRarResolver takes INntpClient (for testability) but must
                 // use the shared streaming client; wire it explicitly instead

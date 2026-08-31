@@ -214,7 +214,8 @@ public abstract class NntpClient : INntpClient
         int streamingBodyBatchWidth = 4,
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
-        bool segmentByteRangesTrusted = true)
+        bool segmentByteRangesTrusted = true,
+        long? readBudgetOverride = null)
     {
         return new NzbFileStream(
             segmentIds,
@@ -230,7 +231,8 @@ public abstract class NntpClient : INntpClient
             streamingBodyBatchWidth,
             knownCorruptSegmentIds,
             knownMissingSegmentIndices,
-            segmentByteRangesTrusted);
+            segmentByteRangesTrusted,
+            readBudgetOverride);
     }
 
     private static string? ResolveFileName(string? fileName, NzbFile nzbFile)
