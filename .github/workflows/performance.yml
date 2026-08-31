@@ -42,6 +42,9 @@ jobs:
       - name: Restore benchmarks
         run: dotnet restore backend.Benchmarks/NzbWebDAV.Benchmarks.csproj
 
+      - name: Build rapidyenc (linux-x64)
+        run: scripts/build-rapidyenc.sh linux-x64
+
       - name: Build benchmarks
         run: dotnet build backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-restore
 
@@ -54,11 +57,11 @@ jobs:
 
           run_report() {
             local name="$1"
-            local flag="$2"
+            shift
             local i
             for i in 1 2 3; do
               dotnet run --project backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-build -- \
-                "${flag}" --json "performance-out/${name}-${i}.json"
+                "$@" --json "performance-out/${name}-${i}.json"
             done
           }
 
@@ -76,8 +79,8 @@ jobs:
 
           run_with_retry() {
             local name="$1"
-            local flag="$2"
-            run_report "${name}" "${flag}"
+            shift
+            run_report "${name}" "$@"
             set +e
             set -o pipefail
             compare_report "${name}"
@@ -91,12 +94,14 @@ jobs:
               return 2
             fi
             echo "Envelope failure for ${name}; retrying once..."
-            run_report "${name}" "${flag}"
+            run_report "${name}" "$@"
             compare_report "${name}"
           }
 
           streaming_status=0
           sab_status=0
+          nntp_quick_status=0
+          nntp_sustained_status=0
           set +e
           run_with_retry streaming --streaming-report
           streaming_status=$?
@@ -111,7 +116,22 @@ jobs:
           if [ "${sab_status}" -eq 2 ]; then
             exit 2
           fi
-          if [ "${streaming_status}" -ne 0 ] || [ "${sab_status}" -ne 0 ]; then
+          set +e
+          run_with_retry nntp-whole-path --nntp-whole-path-report --set quick
+          nntp_quick_status=$?
+          set -e
+          if [ "${nntp_quick_status}" -eq 2 ]; then
+            exit 2
+          fi
+          set +e
+          run_with_retry nntp-whole-path-sustained --nntp-whole-path-report --set sustained
+          nntp_sustained_status=$?
+          set -e
+          if [ "${nntp_sustained_status}" -eq 2 ]; then
+            exit 2
+          fi
+          if [ "${streaming_status}" -ne 0 ] || [ "${sab_status}" -ne 0 ] || \
+             [ "${nntp_quick_status}" -ne 0 ] || [ "${nntp_sustained_status}" -ne 0 ]; then
             exit 1
           fi
 
@@ -189,6 +209,18 @@ jobs:
               performance-out/sab-api-2.json \
               performance-out/sab-api-3.json \
             --write-baseline backend.Benchmarks/Baselines/sab-api-baseline.json
+          python3 scripts/check-performance-baseline.py \
+            --candidates \
+              performance-out/nntp-whole-path-1.json \
+              performance-out/nntp-whole-path-2.json \
+              performance-out/nntp-whole-path-3.json \
+            --write-baseline backend.Benchmarks/Baselines/nntp-whole-path-baseline.json
+          python3 scripts/check-performance-baseline.py \
+            --candidates \
+              performance-out/nntp-whole-path-sustained-1.json \
+              performance-out/nntp-whole-path-sustained-2.json \
+              performance-out/nntp-whole-path-sustained-3.json \
+            --write-baseline backend.Benchmarks/Baselines/nntp-whole-path-sustained-baseline.json
 
           BODY_FILE="$(mktemp)"
           python3 - "${BODY_FILE}" "${RUN_URL}" <<'PY'
@@ -202,6 +234,8 @@ jobs:
           files = [
               ("streaming", "backend.Benchmarks/Baselines/streaming-baseline.json"),
               ("sab-api", "backend.Benchmarks/Baselines/sab-api-baseline.json"),
+              ("nntp-whole-path", "backend.Benchmarks/Baselines/nntp-whole-path-baseline.json"),
+              ("nntp-whole-path-sustained", "backend.Benchmarks/Baselines/nntp-whole-path-sustained-baseline.json"),
           ]
           lines = [
               "## Summary",
@@ -246,7 +280,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "chore/performance-rebaseline-${RUN_ID}"
           git add backend.Benchmarks/Baselines/streaming-baseline.json \
-            backend.Benchmarks/Baselines/sab-api-baseline.json
+            backend.Benchmarks/Baselines/sab-api-baseline.json \
+            backend.Benchmarks/Baselines/nntp-whole-path-baseline.json \
+            backend.Benchmarks/Baselines/nntp-whole-path-sustained-baseline.json
           if git diff --cached --quiet; then
             echo "Baselines are unchanged; no PR opened."
             exit 0

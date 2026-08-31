@@ -7,6 +7,11 @@
 #   scripts/build-rapidyenc.sh              # host RID (linux-x64, osx-arm64, …)
 #   scripts/build-rapidyenc.sh linux-x64
 #   TARGET_RIDS="linux-x64 osx-arm64" scripts/build-rapidyenc.sh
+#   scripts/build-rapidyenc.sh --symbols linux-x64
+#
+# --symbols is a Linux diagnostic mode. It keeps Release optimization, adds GNU
+# debug information/build IDs, and writes split symbols plus a build manifest to
+# libs/RapidYencSharp/symbols/<rid>. Ordinary runtime output is unchanged.
 
 set -euo pipefail
 
@@ -15,6 +20,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RAPIDYENC_DIR="$ROOT_DIR/libs/rapidyenc"
 BUILD_ROOT="$ROOT_DIR/libs/rapidyenc/build"
 OUTPUT_DIR="$ROOT_DIR/libs/RapidYencSharp/runtimes"
+SYMBOLS_DIR="$ROOT_DIR/libs/RapidYencSharp/symbols"
+BUILD_SYMBOLS="${RAPIDYENC_SYMBOLS:-0}"
 
 detect_host_rid() {
   local os arch
@@ -38,8 +45,17 @@ detect_host_rid() {
   echo "${os}-${arch}"
 }
 
-if [[ $# -gt 0 ]]; then
-  TARGET_RIDS=("$@")
+TARGET_ARGS=()
+for arg in "$@"; do
+  if [[ "$arg" == "--symbols" ]]; then
+    BUILD_SYMBOLS=1
+  else
+    TARGET_ARGS+=("$arg")
+  fi
+done
+
+if [[ ${#TARGET_ARGS[@]} -gt 0 ]]; then
+  TARGET_RIDS=("${TARGET_ARGS[@]}")
 elif [[ -n "${TARGET_RIDS:-}" ]]; then
   # shellcheck disable=SC2206
   TARGET_RIDS=($TARGET_RIDS)
@@ -120,6 +136,27 @@ build_target() {
       ;;
   esac
 
+  if [[ "$BUILD_SYMBOLS" == "1" ]]; then
+    case "$rid" in
+      linux-x64|linux-arm64|linux-musl-x64|linux-musl-arm64)
+        for tool in objcopy readelf nm sha256sum; do
+          if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "Error: $tool is required for --symbols." >&2
+            return 1
+          fi
+        done
+        cmake_args+=(
+          "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -g"
+          "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--build-id=sha1"
+        )
+        ;;
+      *)
+        echo "Error: --symbols currently supports Linux runtime identifiers only." >&2
+        return 1
+        ;;
+    esac
+  fi
+
   local build_dir="$BUILD_ROOT/$rid"
   rm -rf "$build_dir"
   mkdir -p "$build_dir"
@@ -153,6 +190,31 @@ build_target() {
   fi
   cp "$lib_path" "$output_path/$dest_name"
   echo "Copied $dest_name to $output_path"
+
+  if [[ "$BUILD_SYMBOLS" == "1" ]]; then
+    local symbol_output="$SYMBOLS_DIR/$rid"
+    local debug_path="$symbol_output/$dest_name.debug"
+    local exports
+    mkdir -p "$symbol_output"
+    objcopy --only-keep-debug "$lib_path" "$debug_path"
+    objcopy --add-gnu-debuglink="$(basename "$debug_path")" "$output_path/$dest_name"
+    exports="$(nm -D --defined-only "$output_path/$dest_name")"
+    [[ "$exports" == *rapidyenc_decode_ex* && "$exports" == *rapidyenc_crc* ]] || {
+        echo "Error: expected rapidyenc decoder/CRC exports were not found." >&2
+        return 1
+      }
+    {
+      printf '{\n'
+      printf '  "rid": "%s",\n' "$rid"
+      printf '  "runtimeLibrarySha256": "%s",\n' "$(sha256sum "$output_path/$dest_name" | awk '{print $1}')"
+      printf '  "debugLibrarySha256": "%s",\n' "$(sha256sum "$debug_path" | awk '{print $1}')"
+      printf '  "compiler": "%s",\n' "$(c++ --version | awk 'NR==1 {print}' | sed 's/"/\\"/g')"
+      printf '  "cmakeCacheSha256": "%s",\n' "$(sha256sum "$build_dir/CMakeCache.txt" | awk '{print $1}')"
+      printf '  "buildId": "%s"\n' "$(readelf -n "$output_path/$dest_name" | awk '/Build ID:/ {print $3; exit}')"
+      printf '}\n'
+    } > "$symbol_output/manifest.json"
+    echo "Wrote split symbols and manifest to $symbol_output"
+  fi
 }
 
 for rid in "${TARGET_RIDS[@]}"; do

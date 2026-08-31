@@ -39,6 +39,47 @@ machine and runtime. Timing stays manual and is not a PR gate.
 On macOS, set `RAPIDYENC_LIBRARY_PATH` to the host `librapidyenc.dylib` (see
 `scripts/run-backend.sh`).
 
+## Whole-path loopback NNTP report
+
+```bash
+dotnet run --project backend.Benchmarks -c Release -- \
+  --nntp-whole-path-report --set quick --json /tmp/nntp-whole-path.json
+```
+
+This report fills the gap between the decoded-BODY microbenchmark and a
+provider-backed run. It starts a separate loopback NNTP server process whose
+precomputed yEnc corpus has realistic line wrapping, escaping, dot stuffing,
+multipart headers, CRC trailers, and NNTP terminators. Server CPU is recorded
+separately; client CPU covers socket framing, UsenetSharp decode/CRC and pipe
+handling, the connection/provider wrappers, `MultiSegmentStream`, pooled
+article buffers, and optionally an HTTP-like 64 KiB response copy.
+
+`--set quick` is the small deterministic PR gate. `--set sustained` uses
+256 × 4 MiB articles, 20 connections, and widths 1/2/4/8; it runs only in the
+scheduled/manual performance workflow. Use `--scenario <name>` to investigate
+one named scenario. Timing and allocation observations are diagnostic, while
+bytes, hashes, BODY counts, callbacks, budget cleanup, and connection cleanup
+are deterministic gates.
+
+The committed sustained baseline begins with conservative bootstrap timing
+envelopes because its 20 GiB local run is intentionally deferred to the
+dedicated benchmark phase. Before treating its timing envelope as a regression
+signal, dispatch **Performance** with `rebaseline: true` on the intended
+runner; that action replaces only the observed timing envelopes while retaining
+the deterministic contract.
+
+The initial loopback scenarios are plaintext. Validated-TLS loopback is
+deliberately deferred: UsenetSharp accepts only platform-default trust or a
+skip-all switch, and the benchmark must not add a permissive certificate
+callback. Its test coverage therefore includes only the negative untrusted TLS
+path until an explicit test-CA trust mechanism is designed.
+
+For Linux provider-backed CPU investigation, use
+`scripts/run-nntp-cpu-profile.sh`. It writes `0700`/`0600` restricted artifacts,
+requires credentials via a private `CURL_CONFIG`, and separates
+uninstrumented results from EventPipe and `perf` diagnostics. Profiles and
+response bodies can contain sensitive information; do not upload raw artifacts.
+
 ## Tool decision
 
 Issue [#854](https://github.com/infinidysk/infinidysk/issues/854) asked to
@@ -80,7 +121,7 @@ database (same setup as the SAB limit-zero tests) with a fixed 50-queue /
 
 ## Regression layers
 
-1. **PR-blocking (no clocks):** xUnit exact-count coverage plus both reports
+1. **PR-blocking (no clocks):** xUnit exact-count coverage plus every report
    compared with `scripts/check-performance-baseline.py --deterministic-only`
    against `backend.Benchmarks/Baselines/*.json`. An intentional
    transport-contract or query-shape change must update the baseline JSON in

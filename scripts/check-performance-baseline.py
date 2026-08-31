@@ -67,7 +67,7 @@ def classify_timing_field(name: str) -> str:
     lowered = name.lower()
     if "throughput" in lowered:
         return "throughput"
-    if lowered == "cpuseconds":
+    if "cpu" in lowered:
         return "cpu"
     return "latency"
 

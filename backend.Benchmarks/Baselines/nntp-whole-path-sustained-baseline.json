@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "report": "nntp-whole-path",
+  "meta": {
+    "commit": "bootstrap",
+    "generatedAt": "2026-08-31T00:00:00+00:00",
+    "runner": "local"
+  },
+  "scenarios": {
+    "plain-buffered-w1": {
+      "deterministic": {
+        "expectedBytes": 1073741824,
+        "actualBytes": 1073741824,
+        "sha256Match": 1,
+        "bodyCommands": 256,
+        "responses": 256,
+        "retrievedCallbacks": 0,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0,
+        "finalPipeBufferedBytes": 0,
+        "outstandingPermits": 0
+      },
+      "timing": {
+        "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
+        "clientCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "serverCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "clientCpuSecondsPerGb": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" }
+      }
+    },
+    "plain-buffered-w2": {
+      "deterministic": {
+        "expectedBytes": 1073741824,
+        "actualBytes": 1073741824,
+        "sha256Match": 1,
+        "bodyCommands": 256,
+        "responses": 256,
+        "retrievedCallbacks": 0,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0,
+        "finalPipeBufferedBytes": 0,
+        "outstandingPermits": 0
+      },
+      "timing": {
+        "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
+        "clientCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "serverCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "clientCpuSecondsPerGb": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" }
+      }
+    },
+    "plain-buffered-w4": {
+      "deterministic": {
+        "expectedBytes": 1073741824,
+        "actualBytes": 1073741824,
+        "sha256Match": 1,
+        "bodyCommands": 256,
+        "responses": 256,
+        "retrievedCallbacks": 0,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0,
+        "finalPipeBufferedBytes": 0,
+        "outstandingPermits": 0
+      },
+      "timing": {
+        "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
+        "clientCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "serverCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "clientCpuSecondsPerGb": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" }
+      }
+    },
+    "plain-buffered-w8": {
+      "deterministic": {
+        "expectedBytes": 1073741824,
+        "actualBytes": 1073741824,
+        "sha256Match": 1,
+        "bodyCommands": 256,
+        "responses": 256,
+        "retrievedCallbacks": 0,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0,
+        "finalPipeBufferedBytes": 0,
+        "outstandingPermits": 0
+      },
+      "timing": {
+        "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
+        "clientCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "serverCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "clientCpuSecondsPerGb": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" }
+      }
+    }
+  }
+}

@@ -236,6 +236,8 @@ jobs:
             --streaming-report --json /tmp/nzbdav-perf/streaming.json
           dotnet run --project backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-build -- \
             --sab-api-report --json /tmp/nzbdav-perf/sab-api.json
+          dotnet run --project backend.Benchmarks/NzbWebDAV.Benchmarks.csproj -c Release --no-build -- \
+            --nntp-whole-path-report --set quick --json /tmp/nzbdav-perf/nntp-whole-path.json
           python3 scripts/check-performance-baseline.py \
             --baseline backend.Benchmarks/Baselines/streaming-baseline.json \
             --candidates /tmp/nzbdav-perf/streaming.json \
@@ -244,6 +246,11 @@ jobs:
           python3 scripts/check-performance-baseline.py \
             --baseline backend.Benchmarks/Baselines/sab-api-baseline.json \
             --candidates /tmp/nzbdav-perf/sab-api.json \
+            --deterministic-only \
+            --summary "${GITHUB_STEP_SUMMARY}"
+          python3 scripts/check-performance-baseline.py \
+            --baseline backend.Benchmarks/Baselines/nntp-whole-path-baseline.json \
+            --candidates /tmp/nzbdav-perf/nntp-whole-path.json \
             --deterministic-only \
             --summary "${GITHUB_STEP_SUMMARY}"
 

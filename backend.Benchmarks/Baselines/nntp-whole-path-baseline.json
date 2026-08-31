@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "report": "nntp-whole-path",
+  "meta": {
+    "commit": "unknown",
+    "generatedAt": "2026-08-31T19:42:21.649771+00:00",
+    "runner": "local"
+  },
+  "scenarios": {
+    "plain-transport-w4": {
+      "deterministic": {
+        "expectedBytes": 2097152,
+        "actualBytes": 2097152,
+        "sha256Match": 1,
+        "bodyCommands": 8,
+        "responses": 8,
+        "retrievedCallbacks": 2,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0,
+        "finalPipeBufferedBytes": 0,
+        "outstandingPermits": 0
+      },
+      "timing": {
+        "wallSeconds": {
+          "baseline": 0.007,
+          "envelope": 15.007,
+          "policy": "fail"
+        },
+        "clientCpuSeconds": {
+          "baseline": 0.007,
+          "envelope": 0.257,
+          "policy": "warn"
+        },
+        "serverCpuSeconds": {
+          "baseline": 0.009,
+          "envelope": 0.259,
+          "policy": "warn"
+        },
+        "clientCpuSecondsPerGb": {
+          "baseline": 3.426,
+          "envelope": 10.278,
+          "policy": "warn"
+        },
+        "throughputMbps": {
+          "baseline": 293.125,
+          "floor": 97.708,
+          "policy": "fail"
+        }
+      }
+    },
+    "plain-provider-w4": {
+      "deterministic": {
+        "expectedBytes": 2097152,
+        "actualBytes": 2097152,
+        "sha256Match": 1,
+        "bodyCommands": 8,
+        "responses": 8,
+        "retrievedCallbacks": 2,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0,
+        "finalPipeBufferedBytes": 0,
+        "outstandingPermits": 0
+      },
+      "timing": {
+        "wallSeconds": {
+          "baseline": 0.007,
+          "envelope": 15.007,
+          "policy": "fail"
+        },
+        "clientCpuSeconds": {
+          "baseline": 0.019,
+          "envelope": 0.269,
+          "policy": "warn"
+        },
+        "serverCpuSeconds": {
+          "baseline": 0.009,
+          "envelope": 0.259,
+          "policy": "warn"
+        },
+        "clientCpuSecondsPerGb": {
+          "baseline": 8.98,
+          "envelope": 26.94,
+          "policy": "warn"
+        },
+        "throughputMbps": {
+          "baseline": 301.268,
+          "floor": 100.423,
+          "policy": "fail"
+        }
+      }
+    },
+    "plain-buffered-w1": {
+      "deterministic": {
+        "expectedBytes": 2097152,
+        "actualBytes": 2097152,
+        "sha256Match": 1,
+        "bodyCommands": 8,
+        "responses": 8,
+        "retrievedCallbacks": 0,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0,
+        "finalPipeBufferedBytes": 0,
+        "outstandingPermits": 0
+      },
+      "timing": {
+        "wallSeconds": {
+          "baseline": 0.007,
+          "envelope": 15.007,
+          "policy": "fail"
+        },
+        "clientCpuSeconds": {
+          "baseline": 0.023,
+          "envelope": 0.273,
+          "policy": "warn"
+        },
+        "serverCpuSeconds": {
+          "baseline": 0.012,
+          "envelope": 0.262,
+          "policy": "warn"
+        },
+        "clientCpuSecondsPerGb": {
+          "baseline": 10.757,
+          "envelope": 32.271,
+          "policy": "warn"
+        },
+        "throughputMbps": {
+          "baseline": 317.028,
+          "floor": 105.676,
+          "policy": "fail"
+        }
+      }
+    },
+    "plain-buffered-w4": {
+      "deterministic": {
+        "expectedBytes": 2097152,
+        "actualBytes": 2097152,
+        "sha256Match": 1,
+        "bodyCommands": 8,
+        "responses": 8,
+        "retrievedCallbacks": 0,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0,
+        "finalPipeBufferedBytes": 0,
+        "outstandingPermits": 0
+      },
+      "timing": {
+        "wallSeconds": {
+          "baseline": 0.006,
+          "envelope": 15.006,
+          "policy": "fail"
+        },
+        "clientCpuSeconds": {
+          "baseline": 0.012,
+          "envelope": 0.262,
+          "policy": "warn"
+        },
+        "serverCpuSeconds": {
+          "baseline": 0.011,
+          "envelope": 0.261,
+          "policy": "warn"
+        },
+        "clientCpuSecondsPerGb": {
+          "baseline": 5.699,
+          "envelope": 17.097,
+          "policy": "warn"
+        },
+        "throughputMbps": {
+          "baseline": 346.305,
+          "floor": 115.435,
+          "policy": "fail"
+        }
+      }
+    },
+    "plain-http-like-w4": {
+      "deterministic": {
+        "expectedBytes": 2097152,
+        "actualBytes": 2097152,
+        "sha256Match": 1,
+        "bodyCommands": 8,
+        "responses": 8,
+        "retrievedCallbacks": 0,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0,
+        "finalPipeBufferedBytes": 0,
+        "outstandingPermits": 0
+      },
+      "timing": {
+        "wallSeconds": {
+          "baseline": 0.006,
+          "envelope": 15.006,
+          "policy": "fail"
+        },
+        "clientCpuSeconds": {
+          "baseline": 0.017,
+          "envelope": 0.267,
+          "policy": "warn"
+        },
+        "serverCpuSeconds": {
+          "baseline": 0.01,
+          "envelope": 0.26,
+          "policy": "warn"
+        },
+        "clientCpuSecondsPerGb": {
+          "baseline": 8.121,
+          "envelope": 24.363,
+          "policy": "warn"
+        },
+        "throughputMbps": {
+          "baseline": 353.693,
+          "floor": 117.898,
+          "policy": "fail"
+        }
+      }
+    }
+  }
+}
