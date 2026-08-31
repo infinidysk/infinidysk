@@ -121,7 +121,13 @@ public class MultiSegmentStreamAdaptiveWidthTests
             () => client.BatchIssueCount == expectedBatchCount,
             TimeSpan.FromSeconds(5));
 
-        Assert.All(client.ObservedBatchSizes, size => Assert.Equal(expectedWidth, size));
+        Assert.Equal(expectedBatchCount, client.ObservedBatchSizes.Count);
+        Assert.All(
+            client.ObservedBatchSizes.Take(expectedBatchCount - 1),
+            size => Assert.Equal(expectedWidth, size));
+        Assert.Equal(
+            segmentCount - expectedWidth * (expectedBatchCount - 1),
+            client.ObservedBatchSizes[^1]);
         client.ReleaseAllUpTo(segmentCount - 1);
         var buffer = new byte[segmentSize];
         while (await stream.ReadAsync(buffer) > 0) { }
@@ -686,7 +692,7 @@ public class MultiSegmentStreamAdaptiveWidthTests
         InitialBodyBatchPlan? initialBatchPlan = null)
     {
         var exactSizes = Enumerable.Repeat((long)segmentSize, segmentCount).ToArray();
-        return (MultiSegmentStream)MultiSegmentStream.Create(
+        return (MultiSegmentStream)MultiSegmentStream.CreateWithInitialBatchPlan(
             client.SegmentIds.AsMemory(),
             client,
             articleBufferSize,

@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet;

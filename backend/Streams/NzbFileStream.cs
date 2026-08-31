@@ -839,7 +839,7 @@ public class NzbFileStream(
         var sliced = finitePlan is { } plan
             ? SliceFrom(firstSegmentIndex, plan.SegmentCount)
             : SliceFrom(firstSegmentIndex);
-        return MultiSegmentStream.CreateFirstSegmentHybrid(
+        return MultiSegmentStream.CreateFirstSegmentHybridWithInitialBatchPlan(
             sliced.SegmentIds,
             usenetClient,
             articleBufferSize,

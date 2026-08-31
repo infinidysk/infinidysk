@@ -4,7 +4,7 @@ namespace NzbWebDAV.Clients.Usenet.Contexts;
 /// Token-scoped immutable scheduling input captured when a private producer is created.
 /// Stream algorithms consume this value but never query mutable configuration or pools.
 /// </summary>
-public sealed record StreamingSchedulingContext
+internal sealed record StreamingSchedulingContext
 {
     internal required StreamingCapacitySnapshot Snapshot { get; init; }
 }

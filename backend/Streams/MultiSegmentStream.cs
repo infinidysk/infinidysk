@@ -107,8 +107,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         long? firstSegmentFileOffset = null,
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
         HashSet<string>? knownCorruptSegmentIds = null,
-        IReadOnlySet<int>? knownMissingSegmentIndices = null,
-        InitialBodyBatchPlan? initialBatchPlan = null)
+        IReadOnlySet<int>? knownMissingSegmentIndices = null)
     {
         return Create(
             segmentIds,
@@ -126,8 +125,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             firstSegmentFileOffset: firstSegmentFileOffset,
             bodyPipelineBatchWidth: bodyPipelineBatchWidth,
             knownCorruptSegmentIds: knownCorruptSegmentIds,
-            knownMissingSegmentIndices: knownMissingSegmentIndices,
-            initialBatchPlan: initialBatchPlan);
+            knownMissingSegmentIndices: knownMissingSegmentIndices);
     }
 
     /// <param name="estimatedSegmentSize">
@@ -140,7 +138,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// order. Supplied when the import recorded per-segment byte ranges, and required
     /// before a failed segment may be replaced with same-length gap bytes.
     /// </param>
-    public static Stream Create
+    internal static Stream CreateWithInitialBatchPlan
     (
         Memory<string> segmentIds,
         INntpClient usenetClient,
@@ -188,6 +186,48 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 cancellationToken);
     }
 
+    public static Stream Create
+    (
+        Memory<string> segmentIds,
+        INntpClient usenetClient,
+        int articleBufferSize,
+        long estimatedSegmentSize,
+        bool failFastOnFirstSegment,
+        bool usePipelinedBodyRequests,
+        CancellationToken cancellationToken,
+        string? fileName = null,
+        long? readBudget = null,
+        string[][]? segmentFallbacks = null,
+        ReadOnlyMemory<long> exactSegmentSizes = default,
+        InFlightArticleBudget? inFlightArticleBudget = null,
+        bool useContainerAwareFill = false,
+        long? firstSegmentFileOffset = null,
+        int bodyPipelineBatchWidth = BodyPipelineBatchSize,
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null
+    )
+    {
+        return CreateWithInitialBatchPlan(
+            segmentIds,
+            usenetClient,
+            articleBufferSize,
+            estimatedSegmentSize,
+            failFastOnFirstSegment,
+            usePipelinedBodyRequests,
+            cancellationToken,
+            fileName,
+            readBudget,
+            segmentFallbacks,
+            exactSegmentSizes,
+            inFlightArticleBudget,
+            useContainerAwareFill,
+            firstSegmentFileOffset,
+            bodyPipelineBatchWidth,
+            knownCorruptSegmentIds,
+            knownMissingSegmentIndices,
+            initialBatchPlan: null);
+    }
+
     internal sealed record FirstSegmentHybridOptions(
         Memory<string> SegmentIds,
         INntpClient UsenetClient,
@@ -216,7 +256,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// known to be required. This lets a player receive its first bytes without waiting
     /// for a whole decoded segment to drain or for later articles to be admitted.
     /// </summary>
-    public static Stream CreateFirstSegmentHybrid(
+    internal static Stream CreateFirstSegmentHybridWithInitialBatchPlan(
         Memory<string> segmentIds,
         INntpClient usenetClient,
         int articleBufferSize,
@@ -259,6 +299,46 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 InitialBatchPlan = initialBatchPlan,
             },
             firstSegmentPrefixBytes: 0);
+    }
+
+    public static Stream CreateFirstSegmentHybrid(
+        Memory<string> segmentIds,
+        INntpClient usenetClient,
+        int articleBufferSize,
+        long estimatedSegmentSize,
+        bool failFastOnFirstSegment,
+        bool usePipelinedBodyRequests,
+        CancellationToken cancellationToken,
+        string? fileName = null,
+        long? readBudget = null,
+        string[][]? segmentFallbacks = null,
+        ReadOnlyMemory<long> exactSegmentSizes = default,
+        InFlightArticleBudget? inFlightArticleBudget = null,
+        bool useContainerAwareFill = false,
+        long? firstSegmentFileOffset = null,
+        int bodyPipelineBatchWidth = BodyPipelineBatchSize,
+        HashSet<string>? knownCorruptSegmentIds = null,
+        IReadOnlySet<int>? knownMissingSegmentIndices = null)
+    {
+        return CreateFirstSegmentHybridWithInitialBatchPlan(
+            segmentIds,
+            usenetClient,
+            articleBufferSize,
+            estimatedSegmentSize,
+            failFastOnFirstSegment,
+            usePipelinedBodyRequests,
+            cancellationToken,
+            fileName,
+            readBudget,
+            segmentFallbacks,
+            exactSegmentSizes,
+            inFlightArticleBudget,
+            useContainerAwareFill,
+            firstSegmentFileOffset,
+            bodyPipelineBatchWidth,
+            knownCorruptSegmentIds,
+            knownMissingSegmentIndices,
+            initialBatchPlan: null);
     }
 
     /// <summary>
@@ -500,7 +580,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
         // Capture every remainder input in this closure. Do not re-read AsyncLocal
         // RangeContext after the handoff scheduling boundary.
-        Func<CancellationToken, Stream> createRemainder = lifetimeToken => Create(
+        Func<CancellationToken, Stream> createRemainder = lifetimeToken => CreateWithInitialBatchPlan(
             options.SegmentIds[1..],
             options.UsenetClient,
             options.ArticleBufferSize,

@@ -1,3 +1,5 @@
+using NzbWebDAV.Streams;
+
 namespace NzbWebDAV.Tests.Streams;
 
 public class InitialBodyBatchPlanTests

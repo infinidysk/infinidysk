@@ -227,11 +227,11 @@ public class DavMultipartFileStream : FastReadOnlyStream
         var budget = finiteBudget is > 0 ? new FiniteMultipartBudget(finiteBudget.Value) : null;
 
         if (rangeStart == 0)
-            return new CombinedStream(EnumerateFromPart(0, 0, ct, budget));
+            return new CombinedStream(EnumerateFromPart(0, 0, budget, ct));
 
         var (filePartIndex, filePartOffset) = SeekFilePart(meta, rangeStart);
         return new CombinedStream(EnumerateFromPart(
-            filePartIndex, rangeStart - filePartOffset, ct, budget));
+            filePartIndex, rangeStart - filePartOffset, budget, ct));
     }
 
     // Resolve trailing volumes up to (and including) the one that contains
@@ -251,8 +251,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
     private IEnumerable<Task<Stream>> EnumerateFromPart(
         int firstFilePartIndex,
         long firstOffset,
-        CancellationToken ct,
-        FiniteMultipartBudget? budget)
+        FiniteMultipartBudget? budget,
+        CancellationToken ct)
     {
         var i = firstFilePartIndex;
         while (true)
@@ -279,7 +279,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 if (budget?.IsSatisfied == true)
                     yield break;
 
-                yield return ResolveAndOpenAsync(i, ct, budget);
+                yield return ResolveAndOpenAsync(i, budget, ct);
                 i++;
                 continue;
             }
@@ -350,7 +350,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 DeclaredVolumeLength = effectivePartLength,
                 IsEncrypted = _mpf.Metadata.AesParams is not null,
             },
-            finiteBudget is null ? null : finiteBudget.Consume);
+            finiteBudget is null ? null : bytes => finiteBudget.Consume(bytes));
     }
 
     internal static long GetEffectivePartLength(DavMultipartFile.FilePart part) =>
@@ -358,8 +358,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
 
     private async Task<Stream> ResolveAndOpenAsync(
         int targetIndex,
-        CancellationToken ct,
-        FiniteMultipartBudget? budget)
+        FiniteMultipartBudget? budget,
+        CancellationToken ct)
     {
         await _resolver!.ResolveNextAsync(_mpf, ct).ConfigureAwait(false);
         var meta = _mpf.Metadata;

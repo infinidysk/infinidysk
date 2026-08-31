@@ -1,4 +1,5 @@
 using NzbWebDAV.Models;
+using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.Tests.Streams;
 
@@ -68,12 +69,12 @@ public class FiniteRangeSegmentPlanTests
     }
 
     [Theory]
-    [InlineData(0, FiniteRangePlanUnavailableReason.ZeroBudget)]
-    [InlineData(-1, FiniteRangePlanUnavailableReason.ZeroBudget)]
-    public void NonPositiveBudgetIsIneligible(long budget, FiniteRangePlanUnavailableReason expected)
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NonPositiveBudgetIsIneligible(long budget)
     {
         Assert.False(FiniteRangeSegmentPlan.TryCreate(Ranges, 0, 0, budget, 25, out _, out var reason));
-        Assert.Equal(expected, reason);
+        Assert.Equal(FiniteRangePlanUnavailableReason.ZeroBudget, reason);
     }
 
     [Fact]
