@@ -2,6 +2,7 @@ using System.Text;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Streams;
 
@@ -92,5 +93,47 @@ public sealed class UnbufferedShortDecodeHoleTests : IDisposable
         await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
             async () => await stream2.CopyToAsync(Stream.Null));
         Assert.Equal(0, second.BodyRequestCount);
+    }
+
+    [Fact]
+    public async Task CorruptionAfterRetryProbeUsesPreEmissionRecovery()
+    {
+        var path = $"/view/probe-return-{Guid.NewGuid():N}.mkv";
+        const string id = "probe@test";
+        var bodies = 0;
+        var crc = new UsenetCorruptArticleException(
+            id, "provider-a", new InvalidDataException("CRC mismatch"));
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]> { [id] = "abcde"u8.ToArray() },
+            useCachedYencStreams: true,
+            decodedStreamFactory: (_, bytes) =>
+            {
+                var n = Interlocked.Increment(ref bodies);
+                if (n == 1)
+                {
+                    return new StagedBodyStream(
+                        "a"u8.ToArray(),
+                        [],
+                        [],
+                        readFailure: _ => crc);
+                }
+
+                return new StagedBodyStream(
+                    [],
+                    "b"u8.ToArray(),
+                    "cde"u8.ToArray(),
+                    readFailure: phase => phase == "tail" ? crc : null);
+            });
+        await using var stream = new UnbufferedMultiSegmentStream(
+            new[] { id }.AsMemory(),
+            client,
+            estimatedSegmentSize: 5,
+            fileName: path,
+            exactSegmentSizes: new long[] { 5 });
+
+        var buffer = new byte[16];
+        var read = await stream.ReadAsync(buffer);
+        Assert.True(read > 0);
+        Assert.True(client.BodyRequestCounts[id] > 1);
     }
 }
