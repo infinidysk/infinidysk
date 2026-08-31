@@ -93,8 +93,7 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             _queueManagerUsageTracker,
             new WatchdogLog(),
             new QueueItemSourceTracker(),
-            new BenchmarkGate(),
-            startLoop: false);
+            new BenchmarkGate());
         _queueManager.CreateDbContextOverride = () => new DavDatabaseContext(_options);
         _queueManager.StuckItemCheckInterval = TimeSpan.FromMilliseconds(50);
         _queueManager.StuckItemThreshold = TimeSpan.FromMilliseconds(250);

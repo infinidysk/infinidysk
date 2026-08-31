@@ -239,7 +239,8 @@ public sealed partial class Program
             builder.Services.AddHealthChecks()
                 .AddCheck<StreamingReadinessCheck>(
                     "streaming_readiness",
-                    tags: ["ready"]);
+                    tags: ["ready"])
+                .AddCheck<QueueCoordinatorHealthCheck>("queue_coordinator");
             builder.Services.Configure<ForwardedHeadersOptions>(options =>
             {
                 options.ForwardedHeaders = ForwardedHeaders.XForwardedFor
@@ -337,6 +338,12 @@ public sealed partial class Program
                     sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<QueueManager>()
                 .AddSingleton<IQueueCoordinator>(sp => sp.GetRequiredService<QueueManager>())
+                .AddSingleton<QueueCoordinatorHostedService>()
+                .AddSingleton<IQueueCoordinatorLiveness>(sp =>
+                    sp.GetRequiredService<QueueCoordinatorHostedService>())
+                .AddHostedService(sp =>
+                    sp.GetRequiredService<QueueCoordinatorHostedService>())
+                .AddSingleton<QueueCoordinatorHealthCheck>()
                 .AddSingleton(sp => new NzbResolutionCache(
                     () => sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext()))
                 .AddSingleton<PreferredOrderStore>()
@@ -531,10 +538,6 @@ public sealed partial class Program
                 UsenetProviderIdentity.RemapHostKeyedMetricsAsync(
                     configManager.GetUsenetProviderConfig(),
                     SigtermUtil.GetCancellationToken())));
-            // Start the queue only after Kestrel is serving so /health can answer
-            // before the first BODY decode (which can crash on a bad native lib).
-            app.Lifetime.ApplicationStarted.Register(() =>
-                app.Services.GetRequiredService<QueueManager>().StartProcessing());
             await RunHostAndSetExitCodeAsync(app).ConfigureAwait(false);
         }
         catch (ConfigPathAccessException exception)

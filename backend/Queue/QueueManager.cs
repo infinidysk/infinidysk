@@ -27,7 +27,8 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
     private readonly ConcurrentDictionary<Guid, int> _stallAttempts = new();
 
     private readonly UsenetStreamingClient _usenetClient;
-    private readonly CancellationTokenSource? _cancellationTokenSource;
+    private CancellationTokenSource? _cancellationTokenSource;
+    private readonly Lock _startLock = new();
     private readonly SemaphoreSlim _stateLock = new(1, 1);
     private readonly SemaphoreSlim _finalizeLock = new(1, 1);
     private readonly Lock _admissionLock = new();
@@ -43,7 +44,6 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
 
     private CancellationTokenSource _sleepingQueueToken = new();
     private readonly Lock _sleepingQueueLock = new();
-    private int _loopStarted;
     private Task? _coordinatorTask;
     private Guid? _primaryId;
     private int _pendingAdmissions;
@@ -93,7 +93,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         IDbContextFactory<DavDatabaseContext> dbContextFactory
     ) : this(
         usenetClient, configManager, websocketManager, providerUsageTracker,
-        watchdogLog, sourceTracker, benchmarkGate, startLoop: false,
+        watchdogLog, sourceTracker, benchmarkGate,
         healthCheckConnectionGate, ownsHealthCheckConnectionGate: false,
         dbContextFactory: dbContextFactory)
     {
@@ -106,8 +106,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         ProviderUsageTracker providerUsageTracker,
         WatchdogLog watchdogLog,
         QueueItemSourceTracker sourceTracker,
-        BenchmarkGate benchmarkGate,
-        bool startLoop
+        BenchmarkGate benchmarkGate
     ) : this(
         usenetClient,
         configManager,
@@ -116,7 +115,6 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         watchdogLog,
         sourceTracker,
         benchmarkGate,
-        startLoop,
         new HealthCheckConnectionGate(configManager),
         ownsHealthCheckConnectionGate: true,
         dbContextFactory: null)
@@ -131,7 +129,6 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         WatchdogLog watchdogLog,
         QueueItemSourceTracker sourceTracker,
         BenchmarkGate benchmarkGate,
-        bool startLoop,
         HealthCheckConnectionGate? healthCheckConnectionGate = null,
         IDbContextFactory<DavDatabaseContext>? dbContextFactory = null
     )
@@ -145,7 +142,6 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
             watchdogLog,
             sourceTracker,
             benchmarkGate,
-            startLoop,
             gate,
             ownsHealthCheckConnectionGate: healthCheckConnectionGate is null,
             dbContextFactory: dbContextFactory);
@@ -159,7 +155,6 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         WatchdogLog watchdogLog,
         QueueItemSourceTracker sourceTracker,
         BenchmarkGate benchmarkGate,
-        bool startLoop,
         HealthCheckConnectionGate healthCheckConnectionGate,
         bool ownsHealthCheckConnectionGate,
         IDbContextFactory<DavDatabaseContext>? dbContextFactory)
@@ -174,11 +169,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         _dbContextFactory = dbContextFactory;
         _healthCheckConnectionGate = healthCheckConnectionGate;
         _ownsHealthCheckConnectionGate = ownsHealthCheckConnectionGate;
-        _cancellationTokenSource = CancellationTokenSource
-            .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
         _configChangeSubscription = _configManager.Subscribe(OnConfigChanged);
-        if (startLoop)
-            StartProcessing();
     }
 
     private void OnConfigChanged(object? sender, ConfigManager.ConfigEventArgs args)
@@ -192,14 +183,24 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         _benchmarkGate.IsPaused || _configManager.IsQueueEffectivelyPaused();
 
     /// <summary>
-    /// Starts the background queue loop. Safe to call more than once; only the
-    /// first call starts processing. DI construction leaves the loop stopped so
-    /// Kestrel can bind before the first BODY decode.
+    /// Starts the queue loop once and returns the task that the hosted service
+    /// must observe. Repeated calls return the same task.
     /// </summary>
-    public void StartProcessing()
+    internal Task StartProcessing(CancellationToken stoppingToken)
     {
-        if (Interlocked.Exchange(ref _loopStarted, 1) == 1) return;
-        _coordinatorTask = ProcessQueueAsync(_cancellationTokenSource!.Token);
+        lock (_startLock)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+            if (_coordinatorTask is not null)
+                return _coordinatorTask;
+
+            _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken,
+                SigtermUtil.GetCancellationToken());
+            _coordinatorTask = ProcessQueueAsync(_cancellationTokenSource.Token);
+            return _coordinatorTask;
+        }
     }
 
     /// <summary>True while any NZB queue item is actively processing.</summary>
@@ -1421,13 +1422,24 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
-        _cancellationTokenSource?.Cancel();
+        Task? coordinatorTask;
+        CancellationTokenSource? cancellationTokenSource;
+        lock (_startLock)
+        {
+            coordinatorTask = _coordinatorTask;
+            cancellationTokenSource = _cancellationTokenSource;
+        }
+
+        cancellationTokenSource?.Cancel();
         try
         {
-            _coordinatorTask?.GetAwaiter().GetResult();
+            coordinatorTask?.GetAwaiter().GetResult();
         }
-        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+        catch (Exception e)
         {
+            // StartProcessing is internal and its exact task is directly awaited
+            // by QueueCoordinatorHostedService. Disposal only performs the second,
+            // teardown-time observation.
             Log.Debug(e, "Queue coordinator exited with error during dispose");
         }
 

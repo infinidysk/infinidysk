@@ -800,7 +800,6 @@ public sealed class HealthCheckCoordinatorTests
                 new WatchdogLog(),
                 new QueueItemSourceTracker(),
                 BenchmarkGate,
-                startLoop: false,
                 healthCheckConnectionGate: _gate);
             Service = new HealthCheckService(
                 Config,

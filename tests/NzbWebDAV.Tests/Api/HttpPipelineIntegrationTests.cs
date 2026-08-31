@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Api;
@@ -64,6 +66,19 @@ public sealed class HttpPipelineIntegrationTests(NzbDavWebApplicationFactory fac
     [Fact]
     public async Task HealthEndpoint_IsAvailableWithoutAuthentication()
     {
+        var coordinator = factory.Services.GetRequiredService<QueueCoordinatorHostedService>();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (coordinator.GetState() != QueueCoordinatorState.Running)
+        {
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new TimeoutException(
+                    $"Queue coordinator state was {coordinator.GetState()}, expected Running.");
+            }
+
+            await Task.Delay(10);
+        }
+
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync("/health");

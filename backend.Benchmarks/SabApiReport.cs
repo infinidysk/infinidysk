@@ -84,8 +84,7 @@ internal static class SabApiReport
                 new ProviderUsageTracker(),
                 new WatchdogLog(),
                 new QueueItemSourceTracker(),
-                new BenchmarkGate(),
-                startLoop: false);
+                new BenchmarkGate());
 
             SeedCorpus(dbContext);
             await dbContext.SaveChangesAsync().ConfigureAwait(false);

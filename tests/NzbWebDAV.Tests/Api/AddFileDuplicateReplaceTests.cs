@@ -75,8 +75,7 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
             new ProviderUsageTracker(),
             new WatchdogLog(),
             new QueueItemSourceTracker(),
-            new BenchmarkGate(),
-            startLoop: false);
+            new BenchmarkGate());
     }
 
     public async Task DisposeAsync()

@@ -103,7 +103,6 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             new WatchdogLog(),
             new QueueItemSourceTracker(),
             new BenchmarkGate(),
-            startLoop: false,
             healthCheckConnectionGate: _healthCheckConnectionGate);
     }
 

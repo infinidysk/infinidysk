@@ -538,7 +538,7 @@ public sealed class PostgresMigrationTests
                         configManager, websocketManager, new ProviderUsageTracker(), new MetricsWriter(),
                         new ProviderBytesTracker(), new StreamTraceBuffer(100), new ActiveReadRegistry()),
                     configManager, websocketManager, new ProviderUsageTracker(), new WatchdogLog(),
-                    new QueueItemSourceTracker(), new BenchmarkGate(), startLoop: false);
+                    new QueueItemSourceTracker(), new BenchmarkGate());
                 return new SabControllerFixture(schema, adminConnection, context, queueManager,
                     configManager, new DavDatabaseClient(context), interceptor);
             }

@@ -503,7 +503,6 @@ public sealed class SubmissionWorkerPoolTests
             new ProviderUsageTracker(),
             new WatchdogLog(),
             new QueueItemSourceTracker(),
-            new BenchmarkGate(),
-            startLoop: false);
+            new BenchmarkGate());
     }
 }

@@ -237,6 +237,50 @@ public class QueueManagerLoopTests
         Assert.True(Volatile.Read(ref polls) >= 1, "Expected dequeue attempt after resume + awaken");
     }
 
+    [Fact]
+    public async Task StartProcessing_ReturnsSameObservedTask()
+    {
+        using var manager = CreateManager();
+        manager.IdleDelay = TimeSpan.FromMilliseconds(50);
+        manager.GetTopQueueItemOverride = (_, _) =>
+            Task.FromResult<(QueueItem? queueItem, Stream? queueNzbStream)>((null, null));
+
+        using var cts = new CancellationTokenSource();
+        var first = manager.StartProcessing(cts.Token);
+        var second = manager.StartProcessing(cts.Token);
+        Assert.Same(first, second);
+
+        await cts.CancelAsync();
+        await first.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Dispose_AfterObservedCoordinatorFault_DoesNotRethrow()
+    {
+        using var manager = CreateManager();
+        manager.GetTopQueueItemOverride = (_, _) =>
+            throw new OutOfMemoryException("deterministic coordinator OOM");
+
+        using var cts = new CancellationTokenSource();
+        var coordinator = manager.StartProcessing(cts.Token);
+        var observed = await Record.ExceptionAsync(() => coordinator.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.IsType<OutOfMemoryException>(observed);
+        Assert.Null(Record.Exception(manager.Dispose));
+    }
+
+    [Fact]
+    public void StartProcessing_AfterDispose_ThrowsObjectDisposedException()
+    {
+        var manager = CreateManager();
+        manager.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() =>
+        {
+            _ = manager.StartProcessing(CancellationToken.None);
+        });
+    }
+
     private static QueueManager CreateManager(ConfigManager? config = null)
     {
         config ??= CreateDefaultConfig();
@@ -257,8 +301,7 @@ public class QueueManagerLoopTests
             new ProviderUsageTracker(),
             new WatchdogLog(),
             new QueueItemSourceTracker(),
-            new BenchmarkGate(),
-            startLoop: false);
+            new BenchmarkGate());
     }
 
     private static ConfigManager CreateDefaultConfig()

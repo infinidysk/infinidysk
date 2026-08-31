@@ -94,8 +94,7 @@ public sealed class SabApiResponseShapeTests : IAsyncLifetime
                 new ProviderUsageTracker(),
                 new WatchdogLog(),
                 new QueueItemSourceTracker(),
-                new BenchmarkGate(),
-                startLoop: false);
+                new BenchmarkGate());
 
             SeedCorpus(HistoryCount, QueueCount);
             await _context.SaveChangesAsync();
