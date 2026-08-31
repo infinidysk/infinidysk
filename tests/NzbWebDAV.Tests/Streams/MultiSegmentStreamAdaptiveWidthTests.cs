@@ -109,7 +109,7 @@ public class MultiSegmentStreamAdaptiveWidthTests
 
         var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
         client.ReleaseAllUpTo(segmentCount - 1);
-        await using var combined = (CombinedStream)MultiSegmentStream.CreateFirstSegmentHybrid(
+        await using var combined = MultiSegmentStream.CreateFirstSegmentHybrid(
             client.SegmentIds.AsMemory(),
             client,
             articleBufferSize,
@@ -127,6 +127,188 @@ public class MultiSegmentStreamAdaptiveWidthTests
         }
 
         Assert.Contains(configuredWidth, client.ObservedBatchSizes);
+    }
+
+    [Fact]
+    public async Task CreateFirstSegmentHybrid_DoesNotIssueRemainderBeforeFirstPositiveRead()
+    {
+        const int segmentSize = 8;
+        var client = new ControlledBatchNntpClient(segmentCount: 8, segmentSize);
+        client.ReleaseAllUpTo(7);
+        await using var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "hybrid.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, 8).ToArray(),
+            bodyPipelineBatchWidth: 4);
+
+        Assert.Equal(0, client.BatchIssueCount);
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        await client.WaitUntilAsync(() => client.BatchIssueCount > 0, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task CreateFirstSegmentHybrid_IssuesRemainderAfterFirstReadBeforeHeadEof()
+    {
+        const int segmentSize = 8;
+        var client = new ControlledBatchNntpClient(segmentCount: 8, segmentSize);
+        client.ReleaseAllUpTo(7);
+        await using var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "hybrid.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, 8).ToArray(),
+            bodyPipelineBatchWidth: 4);
+
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        await client.WaitUntilAsync(() => client.BatchIssueCount > 0, TimeSpan.FromSeconds(5));
+        Assert.Equal(segmentSize - 1, await stream.ReadAsync(new byte[segmentSize]));
+    }
+
+    [Fact]
+    public async Task CreateFirstSegmentHybrid_FiniteHeadOnlyBudgetIssuesNoBatch()
+    {
+        const int segmentSize = 8;
+        var client = new ControlledBatchNntpClient(segmentCount: 8, segmentSize);
+        client.ReleaseAllUpTo(7);
+        await using var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "hybrid.bin",
+            readBudget: segmentSize,
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, 8).ToArray(),
+            bodyPipelineBatchWidth: 4);
+
+        var buffer = new byte[segmentSize];
+        Assert.Equal(segmentSize, await stream.ReadAsync(buffer));
+        await Task.Delay(50);
+        Assert.Equal(0, client.BatchIssueCount);
+    }
+
+    [Fact]
+    public async Task CreateFirstSegmentHybrid_OnePermitCannotStarveFirstByte()
+    {
+        const int segmentSize = 8;
+        using var permit = new SemaphoreSlim(1, 1);
+        var client = new ControlledBatchNntpClient(segmentCount: 8, segmentSize)
+        {
+            SharedPermit = permit,
+        };
+        client.ReleaseAllUpTo(7);
+        await using var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "hybrid.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, 8).ToArray(),
+            bodyPipelineBatchWidth: 4);
+
+        var first = stream.ReadAsync(new byte[1]).AsTask();
+        Assert.Equal(1, await first.WaitAsync(TimeSpan.FromSeconds(5)));
+        await client.WaitUntilAsync(
+            () => client.RemainderAdmissionAttempts > 0, TimeSpan.FromSeconds(5));
+        Assert.Equal(0, client.BatchAdmittedCount);
+        Assert.Equal(0, client.BatchIssueCount);
+    }
+
+    [Fact]
+    public async Task CreateFirstSegmentHybrid_DisposalReleasesEveryCallbackPermitAndLeaseExactlyOnce()
+    {
+        const int segmentSize = 8;
+        var budget = new InFlightArticleBudget(segmentSize * 64);
+        var client = new ControlledBatchNntpClient(segmentCount: 8, segmentSize);
+        client.ReleaseAllUpTo(7);
+        var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "hybrid.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, 8).ToArray(),
+            inFlightArticleBudget: budget,
+            bodyPipelineBatchWidth: 4);
+
+        var buffer = new byte[segmentSize];
+        Assert.Equal(segmentSize, await stream.ReadAsync(buffer));
+        await client.WaitUntilAsync(() => client.BatchIssueCount > 0, TimeSpan.FromSeconds(5));
+
+        await stream.DisposeAsync();
+        await client.WaitUntilAsync(
+            () => client.ActiveBodyStreams == 0 && client.ActiveBatches == 0,
+            TimeSpan.FromSeconds(5));
+        Assert.Equal(0, budget.LeasedBytes);
+        Assert.Equal(client.BatchIssueCount, client.CallbackCount);
+    }
+
+    [Fact]
+    public async Task CreateFirstSegmentHybrid_RemainderBudgetExcludesOnlyVisibleHeadBytes()
+    {
+        var (headAvailable, remainderBudget, needsRemainder, eager) =
+            MultiSegmentStream.PlanHybridRemainder(
+                segmentCount: 4,
+                firstExactSizes: new long[] { 100 }.AsMemory(),
+                firstSegmentPrefixBytes: 90,
+                readBudget: 25);
+
+        Assert.Equal(10, headAvailable);
+        Assert.Equal(15, remainderBudget);
+        Assert.True(needsRemainder);
+        Assert.True(eager);
+    }
+
+    public static TheoryData<int, long, long, long?, long, long?, bool, bool> HybridRemainderCases() =>
+        new()
+        {
+            { 1, 100L, 0L, null, 100L, null, false, false },
+            { 4, 100L, 0L, null, 100L, null, true, true },
+            { 4, 100L, 0L, 50L, 100L, 0L, false, false },
+            { 4, 100L, 40L, 50L, 60L, 0L, false, false },
+            { 4, 100L, 90L, 25L, 10L, 15L, true, true },
+        };
+
+    [Theory]
+    [MemberData(nameof(HybridRemainderCases))]
+    public void PlanHybridRemainder_Table(
+        int segmentCount,
+        long firstSize,
+        long prefix,
+        long? budget,
+        long expectedHead,
+        long? expectedRemainder,
+        bool needsRemainder,
+        bool eager)
+    {
+        var plan = MultiSegmentStream.PlanHybridRemainder(
+            segmentCount,
+            new long[] { firstSize }.AsMemory(),
+            prefix,
+            budget);
+        Assert.Equal(expectedHead, plan.HeadAvailableBytes);
+        Assert.Equal(expectedRemainder, plan.RemainderBudget);
+        Assert.Equal(needsRemainder, plan.NeedsRemainder);
+        Assert.Equal(eager, plan.Eager);
     }
 
     [Fact]
@@ -549,6 +731,18 @@ internal sealed class ControlledBatchNntpClient : NntpClient
     {
         get { lock (_statsGate) return _maxUnpublishedInBatch; }
     }
+    public int RemainderAdmissionAttempts
+    {
+        get { lock (_statsGate) return _remainderAdmissionAttempts; }
+    }
+    public int BatchAdmittedCount
+    {
+        get { lock (_statsGate) return _batchAdmittedCount; }
+    }
+    public SemaphoreSlim? SharedPermit { get; set; }
+
+    private int _remainderAdmissionAttempts;
+    private int _batchAdmittedCount;
 
     public void ReleaseSegment(int index)
     {
@@ -600,7 +794,7 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         SegmentId segmentId, CancellationToken cancellationToken) =>
         DecodedBodyAsync(segmentId, null, cancellationToken);
 
-    public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+    public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
@@ -608,57 +802,101 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         cancellationToken.ThrowIfCancellationRequested();
         var index = IndexOf(segmentId);
         var payload = _payloads[index];
-        // Individual / rescue path completes immediately.
-        var response = CreateResponse(segmentId.ToString(), payload, () =>
-            onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved));
-        return Task.FromResult(response);
+        var permit = SharedPermit;
+        if (permit is not null)
+            await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            var response = CreateResponse(segmentId.ToString(), payload, () =>
+            {
+                try
+                {
+                    onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                }
+                finally
+                {
+                    permit?.Release();
+                }
+            });
+            return response;
+        }
+        catch
+        {
+            permit?.Release();
+            throw;
+        }
     }
 
-    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+    public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var batchSize = segmentIds.Count;
-        var remaining = batchSize;
-        void OnBodyDisposed()
+        lock (_statsGate)
+            _remainderAdmissionAttempts++;
+
+        var permit = SharedPermit;
+        if (permit is not null)
+            await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
         {
-            if (Interlocked.Decrement(ref remaining) == 0)
+            lock (_statsGate)
+                _batchAdmittedCount++;
+
+            var batchSize = segmentIds.Count;
+            var remaining = batchSize;
+            void OnBodyDisposed()
             {
-                onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-                lock (_statsGate)
+                if (Interlocked.Decrement(ref remaining) == 0)
                 {
-                    _callbackCount++;
-                    _activeBatches--;
+                    try
+                    {
+                        onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                    }
+                    finally
+                    {
+                        permit?.Release();
+                    }
+
+                    lock (_statsGate)
+                    {
+                        _callbackCount++;
+                        _activeBatches--;
+                    }
                 }
             }
-        }
 
-        lock (_statsGate)
+            lock (_statsGate)
+            {
+                _batchIssueCount++;
+                ObservedBatchSizes.Add(batchSize);
+                _activeBatches++;
+                _maxActiveBatches = Math.Max(_maxActiveBatches, _activeBatches);
+                _startedSegments += batchSize;
+                _maxUnpublishedInBatch = Math.Max(_maxUnpublishedInBatch, batchSize);
+                UpdateStartedMinusReleasedUnlocked();
+            }
+
+            var responses = new Task<UsenetDecodedBodyResponse>[batchSize];
+            for (var i = 0; i < batchSize; i++)
+            {
+                var index = IndexOf(segmentIds[i]);
+                var key = segmentIds[i].ToString();
+                var payload = _payloads[index];
+                var gate = _gates[index];
+                responses[i] = AwaitGateAsync(gate, key, payload, OnBodyDisposed, cancellationToken);
+            }
+
+            return new UsenetDecodedBodyBatch { Responses = responses };
+        }
+        catch
         {
-            _batchIssueCount++;
-            ObservedBatchSizes.Add(batchSize);
-            _activeBatches++;
-            _maxActiveBatches = Math.Max(_maxActiveBatches, _activeBatches);
-            _startedSegments += batchSize;
-            // Producer materializes the whole batch before the first channel write.
-            _maxUnpublishedInBatch = Math.Max(_maxUnpublishedInBatch, batchSize);
-            UpdateStartedMinusReleasedUnlocked();
+            permit?.Release();
+            throw;
         }
-
-        var responses = new Task<UsenetDecodedBodyResponse>[batchSize];
-        for (var i = 0; i < batchSize; i++)
-        {
-            var index = IndexOf(segmentIds[i]);
-            var key = segmentIds[i].ToString();
-            var payload = _payloads[index];
-            var gate = _gates[index];
-            responses[i] = AwaitGateAsync(gate, key, payload, OnBodyDisposed, cancellationToken);
-        }
-
-        // Return immediately so the producer can issue further batches while bodies are gated.
-        return Task.FromResult(new UsenetDecodedBodyBatch { Responses = responses });
     }
 
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(

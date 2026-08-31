@@ -320,66 +320,137 @@ public class NzbFileStream(
     private async Task<Stream> GetFileStream(long rangeStart, CancellationToken cancellationToken)
     {
         ThrowIfPlaybackFailFast();
-        if (rangeStart == 0) return GetMultiSegmentStream(0, failFastOnFirstSegment: true, cancellationToken);
-        if (!IsKnownMissingSegment(foundSegment: null, rangeStart) && !ShouldUseDirectRangePath())
+        var readBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+
+        if (rangeStart == 0)
         {
-            var fast = await TryGetSeekStreamFast(rangeStart, cancellationToken).ConfigureAwait(false);
-            if (fast != null) return fast;
+            return GetMultiSegmentStream(
+                firstSegmentIndex: 0,
+                failFastOnFirstSegment: true,
+                readBudget,
+                cancellationToken);
         }
 
-        var foundSegment = await SeekSegment(rangeStart, cancellationToken).ConfigureAwait(false);
-        var stream = GetMultiSegmentStream(foundSegment.FoundIndex, failFastOnFirstSegment: false, cancellationToken);
-        var prefix = rangeStart - foundSegment.FoundByteRange.StartInclusive;
-        try
+        if (CanUseExactIndexedDirectHead())
         {
-            await stream.DiscardExactBytesAsync(prefix, cancellationToken).ConfigureAwait(false);
-        }
-        catch (EndOfStreamException e)
-        {
-            // The segment that should contain this offset delivered fewer bytes than the
-            // index says it holds. Returning the exhausted stream would answer the range
-            // request with placeholder bytes or nothing at all, so report the seek as impossible.
-            await stream.DisposeAsync().ConfigureAwait(false);
-            throw new SeekPositionNotFoundException(
-                $"Byte position {rangeStart} of \"{fileName ?? "unknown"}\" is past the data " +
-                $"available in segment {foundSegment.FoundIndex + 1}. {e.Message}",
-                e);
-        }
-        catch
-        {
-            // Any other failure (corrupt article, cancel, transport) must release the
-            // prefetched BudgetedStream leases before the exception escapes.
-            await stream.DisposeAsync().ConfigureAwait(false);
-            throw;
+            FirstByteTrace.TryRecord(FirstByteTrace.ExactIndexDirect);
+            var exact = await SeekSegment(rangeStart, cancellationToken).ConfigureAwait(false);
+            return await GetExactIndexedStreamAsync(
+                    exact, rangeStart, readBudget, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        return stream;
+        if (!ShouldUseLegacyUnbufferedRangePath())
+        {
+            var buffered = await TryGetSeekStreamFast(rangeStart, cancellationToken, readBudget)
+                .ConfigureAwait(false);
+            if (buffered is not null)
+            {
+                FirstByteTrace.TryRecord(FirstByteTrace.LegacyBuffered);
+                return buffered;
+            }
+        }
+
+        FirstByteTrace.TryRecord(FirstByteTrace.LegacyProbedUnbuffered);
+        var probed = await SeekSegment(rangeStart, cancellationToken).ConfigureAwait(false);
+        return await GetLegacyProbedStreamAsync(probed, rangeStart, readBudget, cancellationToken)
+            .ConfigureAwait(false);
     }
 
-    private static bool ShouldUseDirectRangePath()
+    private bool CanUseExactIndexedDirectHead() => _segmentByteRanges is not null;
+
+    private static bool ShouldUseLegacyUnbufferedRangePath()
     {
         var budget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
         return budget is > 0 and <= MaximumDirectRangeBytes;
     }
 
-    private bool IsKnownMissingSegment(InterpolationSearch.Result? foundSegment, long rangeStart)
+    private Task<Stream> GetExactIndexedStreamAsync(
+        InterpolationSearch.Result foundSegment,
+        long rangeStart,
+        long? readBudget,
+        CancellationToken cancellationToken)
     {
-        if (_segmentByteRanges is null) return false;
-        var segment = foundSegment ?? InterpolationSearch.Find(
+        var prefixBytes = checked(rangeStart - foundSegment.FoundByteRange.StartInclusive);
+        if (prefixBytes < 0 || prefixBytes >= foundSegment.FoundByteRange.Count)
+        {
+            throw new InvalidOperationException(
+                $"Exact-index mapping produced prefix {prefixBytes} for range start {rangeStart} " +
+                $"in segment {foundSegment.FoundIndex}.");
+        }
+
+        return GetPositionedMultiSegmentStreamAsync(
+            foundSegment.FoundIndex,
+            failFastOnFirstSegment: false,
+            readBudget,
+            prefixBytes,
             rangeStart,
-            new LongRange(0, _segmentByteRanges.Length),
-            new LongRange(0, fileSize),
-            guess => _segmentByteRanges[guess]);
-        if (_knownMissingSegmentIndices?.Contains(segment.FoundIndex) == true)
-            return true;
-        if ((uint)segment.FoundIndex >= (uint)fileSegmentIds.Length)
-            return false;
-        return PlaybackHoleTracker.IsKnownMissingSegment(fileName ?? "", fileSegmentIds[segment.FoundIndex]);
+            cancellationToken);
+    }
+
+    private Task<Stream> GetLegacyProbedStreamAsync(
+        InterpolationSearch.Result foundSegment,
+        long rangeStart,
+        long? readBudget,
+        CancellationToken cancellationToken)
+    {
+        var prefixBytes = rangeStart - foundSegment.FoundByteRange.StartInclusive;
+        return GetPositionedMultiSegmentStreamAsync(
+            foundSegment.FoundIndex,
+            failFastOnFirstSegment: false,
+            readBudget,
+            prefixBytes,
+            rangeStart,
+            cancellationToken);
+    }
+
+    private async Task<Stream> GetPositionedMultiSegmentStreamAsync(
+        int firstSegmentIndex,
+        bool failFastOnFirstSegment,
+        long? readBudget,
+        long prefixBytes,
+        long rangeStart,
+        CancellationToken cancellationToken)
+    {
+        var sliced = SliceFrom(firstSegmentIndex);
+        try
+        {
+            return await MultiSegmentStream.CreatePositionedFirstSegmentHybridAsync(
+                    sliced.SegmentIds,
+                    usenetClient,
+                    articleBufferSize,
+                    EstimatedSegmentSize,
+                    failFastOnFirstSegment,
+                    usePipelinedBodyRequests,
+                    cancellationToken,
+                    fileName,
+                    readBudget,
+                    sliced.Fallbacks,
+                    sliced.ExactSizes,
+                    inFlightArticleBudget,
+                    useContainerAwareFill,
+                    sliced.FirstSegmentFileOffset,
+                    streamingBodyBatchWidth,
+                    knownCorruptSegmentIds,
+                    sliced.KnownMissing,
+                    prefixBytes)
+                .ConfigureAwait(false);
+        }
+        catch (EndOfStreamException e)
+        {
+            throw new SeekPositionNotFoundException(
+                $"Byte position {rangeStart} of \"{fileName ?? "unknown"}\" is past the data " +
+                $"available in segment {firstSegmentIndex + 1}. {e.Message}",
+                e);
+        }
     }
 
     private const int MaxSeekGuessCorrection = 3;
 
-    internal async Task<Stream?> TryGetSeekStreamFast(long rangeStart, CancellationToken ct)
+    internal async Task<Stream?> TryGetSeekStreamFast(
+        long rangeStart,
+        CancellationToken ct,
+        long? readBudget = null)
     {
         var avg = EstimatedSegmentSize;
         if (avg <= 0 || fileSegmentIds.Length == 0) return null;
@@ -509,7 +580,7 @@ public class NzbFileStream(
                         : new BudgetedStream(head, seekLease);
 #pragma warning restore CA2000
                     seekLease = null;
-                    var spliced = new CombinedStream(SpliceHeadThenRest(owned, index + 1, ct))
+                    var spliced = new CombinedStream(SpliceHeadThenRest(owned, index + 1, readBudget, ct))
                         .OnDispose(() => owned.Dispose());
                     head = null;
                     return spliced;
@@ -563,14 +634,25 @@ public class NzbFileStream(
         return await budget.LeaseAsync(estimate, ct).ConfigureAwait(false);
     }
 
-    private IEnumerable<Task<Stream>> SpliceHeadThenRest(Stream head, int restFirstIndex, CancellationToken ct)
+    private IEnumerable<Task<Stream>> SpliceHeadThenRest(
+        Stream head,
+        int restFirstIndex,
+        long? readBudget,
+        CancellationToken ct)
     {
         yield return Task.FromResult(head);
-        yield return Task.FromResult(GetMultiSegmentStream(restFirstIndex, failFastOnFirstSegment: false, ct));
+        yield return Task.FromResult(
+            GetMultiSegmentStream(restFirstIndex, failFastOnFirstSegment: false, readBudget, ct));
     }
 
-    private Stream GetMultiSegmentStream(int firstSegmentIndex, bool failFastOnFirstSegment,
-        CancellationToken cancellationToken)
+    private readonly record struct SlicedSegments(
+        Memory<string> SegmentIds,
+        string[][]? Fallbacks,
+        ReadOnlyMemory<long> ExactSizes,
+        long? FirstSegmentFileOffset,
+        HashSet<int>? KnownMissing);
+
+    private SlicedSegments SliceFrom(int firstSegmentIndex)
     {
         var segmentIds = fileSegmentIds.AsMemory()[firstSegmentIndex..];
         string[][]? fallbacks = null;
@@ -596,8 +678,19 @@ public class NzbFileStream(
             }
         }
 
+        return new SlicedSegments(
+            segmentIds, fallbacks, exactSizes, firstSegmentFileOffset, knownMissing);
+    }
+
+    private Stream GetMultiSegmentStream(
+        int firstSegmentIndex,
+        bool failFastOnFirstSegment,
+        long? readBudget,
+        CancellationToken cancellationToken)
+    {
+        var sliced = SliceFrom(firstSegmentIndex);
         return MultiSegmentStream.CreateFirstSegmentHybrid(
-            segmentIds,
+            sliced.SegmentIds,
             usenetClient,
             articleBufferSize,
             EstimatedSegmentSize,
@@ -605,14 +698,15 @@ public class NzbFileStream(
             usePipelinedBodyRequests,
             cancellationToken,
             fileName,
-            segmentFallbacks: fallbacks,
-            exactSegmentSizes: exactSizes,
-            inFlightArticleBudget: inFlightArticleBudget,
-            useContainerAwareFill: useContainerAwareFill,
-            firstSegmentFileOffset: firstSegmentFileOffset,
-            bodyPipelineBatchWidth: streamingBodyBatchWidth,
-            knownCorruptSegmentIds: knownCorruptSegmentIds,
-            knownMissingSegmentIndices: knownMissing);
+            readBudget,
+            sliced.Fallbacks,
+            sliced.ExactSizes,
+            inFlightArticleBudget,
+            useContainerAwareFill,
+            sliced.FirstSegmentFileOffset,
+            streamingBodyBatchWidth,
+            knownCorruptSegmentIds,
+            sliced.KnownMissing);
     }
 
     protected override void Dispose(bool disposing)

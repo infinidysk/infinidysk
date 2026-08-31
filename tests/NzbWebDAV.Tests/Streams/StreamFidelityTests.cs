@@ -79,6 +79,59 @@ public class StreamFidelityTests
         }
     }
 
+    [Fact]
+    public async Task ExactIndexLargeBudget_MatchesSourceAtIrregularBoundaries()
+    {
+        var fixture = CreateFixture();
+        var previous = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(2L * 1024 * 1024);
+        try
+        {
+            var offsets = new List<int>();
+            foreach (var range in fixture.Ranges)
+            {
+                var boundary = checked((int)range.StartInclusive);
+                if (boundary > 0) offsets.Add(boundary - 1);
+                offsets.Add(boundary);
+                if (boundary + 1 < fixture.Source.Length) offsets.Add(boundary + 1);
+                var end = checked((int)range.EndExclusive);
+                if (end > 0) offsets.Add(end - 1);
+            }
+
+            foreach (var offset in offsets.Distinct().Order())
+            {
+                var client = fixture.CreateClient();
+                await using var stream = new NzbFileStream(
+                    fixture.SegmentIds,
+                    fixture.Source.Length,
+                    client,
+                    articleBufferSize: 4,
+                    fixture.Ranges,
+                    usePipelinedBodyRequests: true,
+                    fileName: $"exact-budget-seed-{Seed}.bin");
+                stream.Seek(offset, SeekOrigin.Begin);
+                var count = Math.Min(4096, fixture.Source.Length - offset);
+                var buffer = new byte[count];
+                var read = 0;
+                while (read < count)
+                {
+                    var n = await stream.ReadAsync(buffer.AsMemory(read));
+                    if (n == 0) break;
+                    read += n;
+                }
+
+                Assert.True(
+                    fixture.Source.AsSpan(offset, read).SequenceEqual(buffer.AsSpan(0, read)),
+                    $"Exact-index mismatch at offset {offset}.");
+                Assert.Equal(offset + read, stream.Position);
+            }
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previous);
+        }
+    }
+
     private static int[] BuildSeekOffsets(IReadOnlyList<LongRange> ranges, int fileSize)
     {
         var offsets = new HashSet<int> { 0, 1, fileSize - 1 };

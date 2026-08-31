@@ -10,4 +10,5 @@ public enum StreamTraceKind
     RangeEnd = 5,
     Retry = 6,
     PrefetchWidth = 7,
+    FirstByte = 8,
 }

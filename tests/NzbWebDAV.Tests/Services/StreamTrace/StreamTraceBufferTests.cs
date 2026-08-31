@@ -34,6 +34,27 @@ public class StreamTraceBufferTests
     }
 
     [Fact]
+    public void FirstByte_RecordsBoundedStatusBytesAndDuration()
+    {
+        var buffer = new StreamTraceBuffer(capacity: 100, maxSessions: 50);
+        var session = Guid.NewGuid();
+        buffer.RangeOpen(session, "/view/a.mkv", "GET", 1024, 2047, 10_000, null, null);
+        buffer.FirstByte(session, "exact-index-direct", bytes: 512, elapsed: TimeSpan.FromMilliseconds(7));
+        buffer.FirstByte(session, "handoff-started", bytes: null, elapsed: null);
+
+        var events = buffer.GetSessionEvents(session)
+            .Where(e => e.Kind == StreamTraceKind.FirstByte.ToString())
+            .ToList();
+        Assert.Equal(2, events.Count);
+        Assert.Equal("exact-index-direct", events[0].Status);
+        Assert.Equal(512, events[0].Bytes);
+        Assert.Equal(7, events[0].DurationMs);
+        Assert.Equal("handoff-started", events[1].Status);
+        Assert.Null(events[1].Bytes);
+        Assert.Null(events[1].DurationMs);
+    }
+
+    [Fact]
     public void RangeEnd_IsolatesStallAttributionPerGeneration()
     {
         var buffer = new StreamTraceBuffer(capacity: 100, maxSessions: 50);

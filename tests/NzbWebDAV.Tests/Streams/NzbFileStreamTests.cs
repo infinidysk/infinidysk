@@ -54,7 +54,21 @@ public class NzbFileStreamTests
     }
 
     [Fact]
-    public async Task PlaybackStart_DeliversFirstSegmentBeforeStartingBufferedPrefetch()
+    public async Task PlaybackStart_DoesNotStartBufferedRemainderBeforeFirstByte()
+    {
+        var client = new FakeNntpClient(
+            SegmentIds.Zip(SegmentBytes).ToDictionary(pair => pair.First, pair => pair.Second),
+            useCachedYencStreams: true,
+            segmentRanges: SegmentIds.Zip(SegmentRanges).ToDictionary(pair => pair.First, pair => pair.Second));
+        await using var stream = new NzbFileStream(
+            SegmentIds, 15, client, articleBufferSize: 4, segmentByteRanges: SegmentRanges);
+
+        Assert.Equal(0, client.BatchRequestCount);
+        Assert.Equal(0, client.BodyRequestCount);
+    }
+
+    [Fact]
+    public async Task PlaybackStart_StartsBufferedRemainderAfterFirstByteBeforeFirstSegmentEof()
     {
         var client = new FakeNntpClient(
             SegmentIds.Zip(SegmentBytes).ToDictionary(pair => pair.First, pair => pair.Second),
@@ -65,18 +79,41 @@ public class NzbFileStreamTests
 
         var firstByte = new byte[1];
         Assert.Equal(1, await stream.ReadAsync(firstByte));
-
         Assert.Equal("a", Encoding.ASCII.GetString(firstByte));
-        Assert.Equal(0, client.BatchRequestCount);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (client.BatchRequestCount == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(client.BatchRequestCount > 0);
 
         var restOfFirstSegment = new byte[4];
         Assert.Equal(4, await stream.ReadAsync(restOfFirstSegment));
         Assert.Equal("bcde", Encoding.ASCII.GetString(restOfFirstSegment));
-        Assert.Equal(0, client.BatchRequestCount);
+    }
 
-        Assert.Equal(1, await stream.ReadAsync(firstByte));
-        Assert.True(client.BatchRequestCount > 0);
-        Assert.Equal("f", Encoding.ASCII.GetString(firstByte));
+    [Fact]
+    public async Task PlaybackStart_OneSegmentBudgetDoesNotStartBufferedRemainder()
+    {
+        var client = new FakeNntpClient(
+            SegmentIds.Zip(SegmentBytes).ToDictionary(pair => pair.First, pair => pair.Second),
+            useCachedYencStreams: true,
+            segmentRanges: SegmentIds.Zip(SegmentRanges).ToDictionary(pair => pair.First, pair => pair.Second));
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(5);
+        try
+        {
+            await using var stream = new NzbFileStream(
+                SegmentIds, 15, client, articleBufferSize: 4, segmentByteRanges: SegmentRanges);
+            var buffer = new byte[5];
+            Assert.Equal(5, await stream.ReadAsync(buffer));
+            Assert.Equal("abcde", Encoding.ASCII.GetString(buffer));
+            await Task.Delay(50);
+            Assert.Equal(0, client.BatchRequestCount);
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
     }
 
     [Fact]
@@ -449,18 +486,14 @@ public class NzbFileStreamTests
 
     // These fast-seek tests use CachedYencStream (pre-parsed headers over decoded
     // bytes), so they run even where the rapidyenc native library is unavailable.
-    [Theory]
-    [InlineData(true, 0)]
-    [InlineData(false, 1)]
-    public async Task ColdStartSeek_UsesPersistedRangesInsteadOfHeaderProbesAfterFastPathFallback(
-        bool persistRanges,
-        int expectedHeaderProbes)
+    [Fact]
+    public async Task LegacySeek_LargeRangeFallsBackToHeaderProbeAfterFastPathFailure()
     {
         var stored = new DavNzbFile
         {
             Id = Guid.NewGuid(),
             SegmentIds = SegmentIds,
-            SegmentByteRanges = persistRanges ? SegmentRanges : null,
+            SegmentByteRanges = null,
         };
         var blob = MemoryPackSerializer.Serialize(stored);
         var restored = MemoryPackSerializer.Deserialize<DavNzbFile>(blob)!;
@@ -482,7 +515,7 @@ public class NzbFileStreamTests
 
         Assert.Equal("hij", Encoding.ASCII.GetString(buffer, 0, read));
         Assert.True(client.BodyRequestCounts["two"] >= 2);
-        Assert.Equal(expectedHeaderProbes, client.HeaderProbeCount);
+        Assert.Equal(1, client.HeaderProbeCount);
     }
 
     [Fact]
@@ -492,7 +525,7 @@ public class NzbFileStreamTests
             () => new ThrowingReadStream(
                 () => new TimeoutException("Timeout reading from NNTP stream.")));
         await using var stream = new NzbFileStream(
-            SegmentIds, 15, client, 2, SegmentRanges, usePipelinedBodyRequests: false);
+            SegmentIds, 15, client, 2, segmentByteRanges: null, usePipelinedBodyRequests: false);
         stream.Seek(7, SeekOrigin.Begin);
         var buffer = new byte[3];
 
@@ -513,7 +546,7 @@ public class NzbFileStreamTests
             return new OperationCanceledException(cts.Token);
         }));
         await using var stream = new NzbFileStream(
-            SegmentIds, 15, client, 2, SegmentRanges, usePipelinedBodyRequests: false);
+            SegmentIds, 15, client, 2, segmentByteRanges: null, usePipelinedBodyRequests: false);
         stream.Seek(7, SeekOrigin.Begin);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -529,7 +562,7 @@ public class NzbFileStreamTests
         var client = CreateFlakyClient(
             () => new ThrowingDisposeMemoryStream(SegmentBytes[1]));
         await using var stream = new NzbFileStream(
-            SegmentIds, 15, client, 2, SegmentRanges, usePipelinedBodyRequests: false);
+            SegmentIds, 15, client, 2, segmentByteRanges: null, usePipelinedBodyRequests: false);
         stream.Seek(7, SeekOrigin.Begin);
         var buffer = new byte[3];
 
@@ -823,7 +856,7 @@ public class NzbFileStreamTests
             fileSize: segmentSize * segmentCount,
             client,
             articleBufferSize: 0,
-            segmentByteRanges: ranges,
+            segmentByteRanges: null,
             usePipelinedBodyRequests: false,
             fileName: "seek-head.bin",
             inFlightArticleBudget: budget);

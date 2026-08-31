@@ -4,9 +4,11 @@ using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.WebDav.Base;
 
@@ -99,6 +101,47 @@ public class SharedStreamHandlerTests
         Assert.Equal(0, item.PrivateOpenCount);
         Assert.Equal(payload.Length - 4, GetAndHeadHandlerPatch.ResolveAttachRange(
             GetAndHeadHandlerPatch.TryResolveRange(false, "bytes=-4"), payload.Length).Start);
+    }
+
+    [Fact]
+    public async Task DetachedExactRange_UsesEntryReadAheadInsteadOfReaderRangeBudget()
+    {
+        const int segmentSize = 8;
+        const int segmentCount = 8;
+        var previous = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(segmentSize);
+        try
+        {
+            var source = new ExactNzbFileSource(segmentCount, segmentSize);
+            var (_, registry, _) = Handler(source);
+            var created = await registry.TryAttachAsync(
+                "/movie.mkv", 0, null, source.FileSize, source, NoFallback, CancellationToken.None);
+            Assert.NotNull(created);
+            await using var first = created!.Stream;
+            var firstBuf = new byte[segmentSize];
+            Assert.Equal(segmentSize, await first.ReadAsync(firstBuf));
+
+            var overlapping = await registry.TryAttachAsync(
+                "/movie.mkv", segmentSize, (segmentSize * 4) - 1, source.FileSize, source, NoFallback,
+                CancellationToken.None);
+            Assert.NotNull(overlapping);
+            await using var second = overlapping!.Stream;
+            var secondBuf = new byte[segmentSize * 3];
+            var read = 0;
+            while (read < secondBuf.Length)
+            {
+                var n = await second.ReadAsync(secondBuf.AsMemory(read));
+                if (n == 0) break;
+                read += n;
+            }
+
+            Assert.Equal(segmentSize * 3, read);
+            Assert.Equal(source.Payload.AsSpan(segmentSize, read).ToArray(), secondBuf);
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previous);
+        }
     }
 
     [Fact]
@@ -227,6 +270,58 @@ public class SharedStreamHandlerTests
         {
             Interlocked.Increment(ref PrivateOpenCount);
             return Task.FromResult(TestStreams.Create([7, 8, 9]));
+        }
+    }
+
+    private sealed class ExactNzbFileSource(int segmentCount, int segmentSize)
+        : BaseStoreReadonlyItem, IDetachedStreamSource
+    {
+        public byte[] Payload { get; } = CreatePayload(segmentCount, segmentSize);
+        public override string Name => "movie.mkv";
+        public override string UniqueKey => "exact-nzb";
+        public override long FileSize => Payload.Length;
+        public override DateTime CreatedAt => DateTime.UnixEpoch;
+
+        public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(CreateStream());
+
+        public Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new DetachedStreamLease
+            {
+                Stream = CreateStream(),
+                Ownership = NullAsyncDisposable.Instance,
+            });
+
+        private Stream CreateStream()
+        {
+            var ids = Enumerable.Range(0, segmentCount).Select(i => $"seg-{i}").ToArray();
+            var segments = new Dictionary<string, byte[]>();
+            var rangesById = new Dictionary<string, LongRange>();
+            var ranges = new LongRange[segmentCount];
+            for (var i = 0; i < segmentCount; i++)
+            {
+                var start = i * segmentSize;
+                var slice = Payload.AsSpan(start, segmentSize).ToArray();
+                segments[ids[i]] = slice;
+                ranges[i] = new LongRange(start, start + segmentSize);
+                rangesById[ids[i]] = ranges[i];
+            }
+
+            var client = new FakeNntpClient(segments, useCachedYencStreams: true, rangesById);
+            return new NzbFileStream(
+                ids,
+                Payload.Length,
+                client,
+                articleBufferSize: 4,
+                segmentByteRanges: ranges);
+        }
+
+        private static byte[] CreatePayload(int count, int size)
+        {
+            var data = new byte[count * size];
+            for (var i = 0; i < data.Length; i++)
+                data[i] = (byte)(i % 251);
+            return data;
         }
     }
 

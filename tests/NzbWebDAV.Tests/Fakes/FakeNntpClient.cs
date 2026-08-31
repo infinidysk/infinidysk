@@ -24,6 +24,7 @@ internal sealed class FakeNntpClient(
 
     public int BatchRequestCount { get; private set; }
     public int BodyRequestCount { get; private set; }
+    public int HeaderProbeCount { get; private set; }
     public int CompletionCallbackCount { get; private set; }
     public CancellationToken LastBatchToken { get; private set; }
     public Dictionary<string, int> BodyRequestCounts { get; } = new(StringComparer.Ordinal);
@@ -72,6 +73,12 @@ internal sealed class FakeNntpClient(
     public override Task<UsenetHeadResponse> HeadAsync(
         SegmentId segmentId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public override Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken ct)
+    {
+        HeaderProbeCount++;
+        return base.GetYencHeadersAsync(segmentId, ct);
+    }
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId, CancellationToken cancellationToken) =>

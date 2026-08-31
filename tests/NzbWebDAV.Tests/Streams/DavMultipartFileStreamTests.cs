@@ -7,6 +7,7 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Streams;
 
@@ -79,6 +80,72 @@ public class DavMultipartFileStreamTests
             var buffer = new byte[1];
             Assert.Equal(1, await stream.ReadAsync(buffer));
             Assert.Equal(11, buffer[0]);
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
+    }
+
+    [Fact]
+    public async Task ReadAsync_ExactIndexedOffsetDelegatesFirstByteBeforeContainingBodyEof()
+    {
+        var volumeOne = Enumerable.Range(0, 8).Select(x => (byte)x).ToArray();
+        var volumeTwo = Enumerable.Range(8, 8).Select(x => (byte)x).ToArray();
+        var staged = new StagedBodyStream(
+            prefix: volumeTwo[..2],
+            requested: volumeTwo[2..3],
+            tail: volumeTwo[3..]);
+        using var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["one"] = volumeOne,
+                ["two"] = volumeTwo,
+            },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange>
+            {
+                ["one"] = new(0, 8),
+                ["two"] = new(8, 16),
+            },
+            decodedStreamFactory: (id, bytes) =>
+                id == "two" ? staged : new MemoryStream(bytes, writable: false));
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["one", "two"],
+                        SegmentIdByteRange = new LongRange(0, 16),
+                        FilePartByteRange = new LongRange(0, 16),
+                        SegmentByteRanges = [new LongRange(0, 8), new LongRange(8, 16)],
+                    }
+                ],
+            },
+        };
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(2L * 1024 * 1024);
+        try
+        {
+            await using var stream = new DavMultipartFileStream(
+                multipart,
+                client,
+                articleBufferSize: 4,
+                resolver: null,
+                usePipelinedBodyRequests: false,
+                fileName: "movie.mkv");
+            stream.Seek(10, SeekOrigin.Begin);
+
+            var buffer = new byte[1];
+            Assert.Equal(1, await stream.ReadAsync(buffer));
+            Assert.Equal(10, buffer[0]);
+            Assert.True(staged.TailGateClosed);
+            Assert.False(client.BodyRequestCounts.ContainsKey("one"));
+            Assert.Equal(1, client.BodyRequestCounts["two"]);
         }
         finally
         {

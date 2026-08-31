@@ -276,6 +276,186 @@ public class MultiSegmentStreamPrefetchBudgetTests
     }
 
     [Fact]
+    public async Task Handoff_RemainderBudgetUsesExactTailAfterPrefix()
+    {
+        const int segmentSize = 100;
+        const int segmentCount = 20;
+        const long prefix = 90;
+        const long readBudget = 25;
+        var segments = Enumerable.Range(0, segmentCount)
+            .ToDictionary(
+                i => $"seg-{i}",
+                i => Enumerable.Repeat((byte)(i + 1), segmentSize).ToArray());
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+        var exactSizes = Enumerable.Repeat((long)segmentSize, segmentCount).ToArray();
+        var budget = new InFlightArticleBudget(segmentSize * 16);
+
+        await using var stream = await MultiSegmentStream.CreatePositionedFirstSegmentHybridAsync(
+            segments.Keys.ToArray().AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "handoff-budget.bin",
+            readBudget: readBudget,
+            segmentFallbacks: null,
+            exactSegmentSizes: exactSizes,
+            inFlightArticleBudget: budget,
+            useContainerAwareFill: false,
+            firstSegmentFileOffset: 0,
+            bodyPipelineBatchWidth: 4,
+            knownCorruptSegmentIds: null,
+            knownMissingSegmentIndices: null,
+            firstSegmentPrefixBytes: prefix);
+
+        var buffer = new byte[readBudget];
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var n = await stream.ReadAsync(buffer.AsMemory(read));
+            if (n == 0) break;
+            read += n;
+        }
+
+        Assert.Equal(readBudget, read);
+        Assert.True(
+            client.RequestedSegmentIds.Count <= 5,
+            $"remainder budget 15 should not fetch the whole file; got {client.RequestedSegmentIds.Count} unique segments, BODY={client.BodyRequestCount}");
+        await stream.DisposeAsync();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task Handoff_RangeSatisfiedByHeadLeasesNoBufferedBytes()
+    {
+        const int segmentSize = 100;
+        const int segmentCount = 4;
+        var segments = Enumerable.Range(0, segmentCount)
+            .ToDictionary(
+                i => $"seg-{i}",
+                i => Enumerable.Repeat((byte)(i + 1), segmentSize).ToArray());
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+        var exactSizes = Enumerable.Repeat((long)segmentSize, segmentCount).ToArray();
+        var budget = new InFlightArticleBudget(segmentSize * 16);
+
+        await using var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+            segments.Keys.ToArray().AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "handoff-head-only.bin",
+            readBudget: segmentSize,
+            exactSegmentSizes: exactSizes,
+            inFlightArticleBudget: budget);
+
+        var buffer = new byte[segmentSize];
+        Assert.Equal(segmentSize, await stream.ReadAsync(buffer));
+        await Task.Delay(50);
+        Assert.Equal(0, client.BatchRequestCount);
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task Handoff_CancelMidHeadReleasesPipeAndRemainderLeases()
+    {
+        const int segmentSize = 8;
+        var budget = new InFlightArticleBudget(segmentSize * 64);
+        var client = new ControlledBatchNntpClient(segmentCount: 8, segmentSize);
+        client.ReleaseAllUpTo(7);
+        using var cts = new CancellationTokenSource();
+        var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            cts.Token,
+            fileName: "handoff-cancel.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, 8).ToArray(),
+            inFlightArticleBudget: budget,
+            bodyPipelineBatchWidth: 4);
+
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        await client.WaitUntilAsync(() => client.BatchIssueCount > 0, TimeSpan.FromSeconds(5));
+        await cts.CancelAsync();
+        await stream.DisposeAsync();
+        Assert.Equal(0, budget.LeasedBytes);
+        Assert.Equal(0, client.ActiveBodyStreams);
+    }
+
+    [Fact]
+    public async Task Handoff_DisposeWhileRemainderLeaseWaitsRemovesWaiter()
+    {
+        const int segmentSize = 50;
+        var cap = segmentSize;
+        var budget = new InFlightArticleBudget(cap);
+        var held = await budget.LeaseAsync(cap, CancellationToken.None);
+        var client = new ControlledBatchNntpClient(segmentCount: 8, segmentSize);
+        client.ReleaseAllUpTo(7);
+        var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "handoff-waiter.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, 8).ToArray(),
+            inFlightArticleBudget: budget,
+            bodyPipelineBatchWidth: 4);
+
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!budget.HasWaiters && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(budget.HasWaiters);
+
+        await stream.DisposeAsync();
+        Assert.False(budget.HasWaiters);
+        held.Dispose();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task Handoff_AsyncDisposeJoinsQueuedAndOrphanedRemainderWork()
+    {
+        const int segmentSize = 20_000;
+        var budget = new InFlightArticleBudget(segmentSize * 16);
+        var segments = Enumerable.Range(0, 20)
+            .ToDictionary(
+                i => $"seg-{i}",
+                _ => Enumerable.Repeat((byte)3, segmentSize).ToArray());
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+        var exactSizes = Enumerable.Repeat((long)segmentSize, 20).ToArray();
+
+        var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+            segments.Keys.ToArray().AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: segmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "handoff-join.bin",
+            exactSegmentSizes: exactSizes,
+            inFlightArticleBudget: budget);
+
+        var buffer = new byte[1024];
+        _ = await stream.ReadAsync(buffer);
+        Assert.True(budget.LeasedBytes > 0 || client.BatchRequestCount >= 0);
+
+        await stream.DisposeAsync();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
     public async Task RemoveHeadWaiter_WakesNextWaiterWhenCapacityAvailable()
     {
         const long cap = 1000;

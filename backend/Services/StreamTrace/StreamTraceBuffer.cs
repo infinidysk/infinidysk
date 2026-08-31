@@ -434,6 +434,26 @@ public sealed class StreamTraceBuffer
     }
 
     /// <summary>
+    /// Bounded first-byte path/handoff evidence. <paramref name="status"/> must be one of
+    /// the fixed labels in <see cref="NzbWebDAV.Streams.FirstByteTrace"/>.
+    /// </summary>
+    public void FirstByte(Guid sessionId, string status, long? bytes, TimeSpan? elapsed)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.FirstByte.ToString(),
+            Status = status,
+            Bytes = bytes,
+            DurationMs = elapsed is { } value
+                ? (int)Math.Clamp(value.TotalMilliseconds, 0, int.MaxValue)
+                : null,
+        });
+    }
+
+    /// <summary>
     /// Adds time spent blocked on <paramref name="kind"/> to the range identified by
     /// <paramref name="range"/>. Ticks are accumulated rather than milliseconds so
     /// the many sub-millisecond client writes in a range still add up. No-ops when

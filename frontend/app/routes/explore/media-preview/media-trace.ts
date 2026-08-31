@@ -129,6 +129,8 @@ export function describeTraceEvent(e: StreamTraceEvent): string {
       return `attempt ${e.attempt ?? "?"}${e.message ? ` · ${e.message}` : ""}`;
     case "PrefetchWidth":
       return `${e.previousBatchSize ?? "?"} → ${e.batchSize ?? "?"}`;
+    case "FirstByte":
+      return `${e.status ?? "first-byte"}${e.bytes != null ? ` · ${e.bytes} B` : ""}${e.durationMs != null ? ` · ${e.durationMs} ms` : ""}`;
     default:
       return e.message ?? e.kind;
   }
