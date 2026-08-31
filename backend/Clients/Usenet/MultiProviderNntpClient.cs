@@ -391,13 +391,21 @@ public class MultiProviderNntpClient(
                 var provider = orderedProviders[providerIndex];
                 var deferredCallback = new DeferredArticleBodyCallback();
                 UsenetDecodedBodyBatch? primaryBatch = null;
+                ContextualCancellationTokenSource? attemptCts = null;
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    attemptCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     primaryBatch = await provider.DecodedBodiesAsync(
-                        segmentIds, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
+                        segmentIds, deferredCallback.Invoke, attemptCts.Token).ConfigureAwait(false);
+                    if (primaryBatch.Responses.Count != segmentIds.Count)
+                    {
+                        throw new InvalidOperationException(
+                            $"Pipelined BODY returned {primaryBatch.Responses.Count} responses for {segmentIds.Count} requests.");
+                    }
+
                     var coordinator = new BatchCallbackCoordinator(
-                    primaryBatch.Responses.Count, CompleteBatchFetches);
+                        primaryBatch.Responses.Count, CompleteBatchFetches);
                     deferredCallback.Activate(coordinator.CompleteTransfer);
                     var fallbackProviders = orderedProviders
                         .Skip(providerIndex + 1)
@@ -426,42 +434,49 @@ public class MultiProviderNntpClient(
 #pragma warning restore CA2025
                         previousFallbackAdmission = fallbackAdmission.Task;
                     }
+
+                    var ownedCts = attemptCts;
+                    attemptCts = null;
+#pragma warning disable CA2025 // Completion owns the attempt token until transport and coordinator finish
                     return new UsenetDecodedBodyBatch
                     {
                         Responses = responses,
-                        Completion = ComposeBatchCompletionAsync(
-                            primaryBatch.Completion, coordinator.Completion),
+                        Completion = CompleteOwnedBatchAsync(
+                            primaryBatch.Completion,
+                            coordinator.Completion,
+                            ownedCts),
                     };
+#pragma warning restore CA2025
                 }
                 catch (NntpClientRetiredException)
                 {
-                    ObserveAbandonedBatch(primaryBatch);
+                    deferredCallback.Discard();
+                    await AbandonProviderAttemptAsync(primaryBatch, attemptCts).ConfigureAwait(false);
                     // Every provider in this client belongs to the same retired generation.
                     // Do not walk the remaining disposed pools or record network failures.
-                    deferredCallback.Discard();
                     ArticleBodyCompletion.InvokeContained(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
                 }
                 catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _) && e is not OutOfMemoryException)
                 {
-                    ObserveAbandonedBatch(primaryBatch);
-                    // Invalid / permanently missing segment ids are invalid on every provider.
                     deferredCallback.Discard();
+                    await AbandonProviderAttemptAsync(primaryBatch, attemptCts).ConfigureAwait(false);
+                    // Invalid / permanently missing segment ids are invalid on every provider.
                     ArticleBodyCompletion.InvokeContained(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
                 }
                 catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
                 {
-                    ObserveAbandonedBatch(primaryBatch);
                     deferredCallback.Discard();
+                    await AbandonProviderAttemptAsync(primaryBatch, attemptCts).ConfigureAwait(false);
                     lastException = ExceptionDispatchInfo.Capture(e);
                 }
                 catch
                 {
-                    ObserveAbandonedBatch(primaryBatch);
                     deferredCallback.Discard();
+                    await AbandonProviderAttemptAsync(primaryBatch, attemptCts).ConfigureAwait(false);
                     ArticleBodyCompletion.InvokeContained(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
@@ -741,27 +756,33 @@ public class MultiProviderNntpClient(
         }
     }
 
-    private static async Task ComposeBatchCompletionAsync(Task transportCompletion, Task coordinatorCompletion)
-    {
-        await BatchLifecycle.ObserveAllAsync(transportCompletion, coordinatorCompletion).ConfigureAwait(false);
-    }
-
-    private static void ObserveAbandonedBatch(UsenetDecodedBodyBatch? batch)
-    {
-        if (batch is null) return;
-        _ = ObserveAbandonedBatchCompletionAsync(batch.Completion);
-    }
-
-    private static async Task ObserveAbandonedBatchCompletionAsync(Task completion)
+    private static async Task CompleteOwnedBatchAsync(
+        Task transportCompletion,
+        Task coordinatorCompletion,
+        ContextualCancellationTokenSource owner)
     {
         try
         {
-            await completion.ConfigureAwait(false);
+            await BatchLifecycle.ObserveAllAsync(transportCompletion, coordinatorCompletion)
+                .ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
+        finally
         {
-            Log.Debug(exception, "Abandoned pipelined BODY batch completion failed");
+            owner.Dispose();
         }
+    }
+
+    private static async Task AbandonProviderAttemptAsync(
+        UsenetDecodedBodyBatch? batch,
+        ContextualCancellationTokenSource? owner)
+    {
+        if (batch is not null && owner is not null)
+        {
+            await DecodedBodyBatchCleanup.AbandonAsync(batch, owner).ConfigureAwait(false);
+            return;
+        }
+
+        owner?.Dispose();
     }
 
     private sealed class BatchCallbackCoordinator(

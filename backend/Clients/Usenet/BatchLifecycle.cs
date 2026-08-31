@@ -45,11 +45,15 @@ internal static class BatchLifecycle
         }
     }
 
-    public static async Task ObserveAllAsync(Task first, Task second)
+    public static async Task ObserveAllAsync(params Task[] tasks)
     {
-        var failure = Combine(
-            await ObserveAsync(first).ConfigureAwait(false),
-            await ObserveAsync(second).ConfigureAwait(false));
+        ArgumentNullException.ThrowIfNull(tasks);
+        ExceptionDispatchInfo? failure = null;
+        foreach (var task in tasks)
+        {
+            failure = Combine(failure, await ObserveAsync(task).ConfigureAwait(false));
+        }
+
         failure?.Throw();
     }
 }

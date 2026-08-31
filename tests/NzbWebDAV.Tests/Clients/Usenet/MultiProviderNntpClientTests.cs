@@ -2012,6 +2012,66 @@ public class MultiProviderNntpClientTests
         }
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    public async Task MalformedBatch_IsAbandonedBeforeRetryingNextProvider(int responseCount)
+    {
+        var first = new ControlledDecodedBodyBatchClient(
+            responseCountOverride: responseCount,
+            blockCompletionUntilStreamsDisposed: true);
+        var firstProvider = CreateProvider(first, host: "malformed.example", maxConnections: 1);
+        var secondStartedAvailable = -1;
+        var second = new ControlledDecodedBodyBatchClient
+        {
+            OnBatchStart = () => secondStartedAvailable = firstProvider.AvailableConnections,
+        };
+        var secondProvider = CreateProvider(second, host: "healthy.example", maxConnections: 1);
+        using var client = new MultiProviderNntpClient([firstProvider, secondProvider]);
+        using var caller = new CancellationTokenSource();
+        var recorder = new ArticleBodyCompletionRecorder();
+
+        var batch = await client.DecodedBodiesAsync(["a", "b"], recorder.Invoke, caller.Token);
+        await batch.DrainAsync();
+
+        Assert.Equal(1, first.OrdinaryBatchCount);
+        Assert.Equal(1, second.OrdinaryBatchCount);
+        Assert.Equal(1, secondStartedAvailable);
+        Assert.Equal(1, firstProvider.AvailableConnections);
+        Assert.True(first.LastCancellationToken.IsCancellationRequested);
+        Assert.False(caller.IsCancellationRequested);
+        Assert.Equal(responseCount, first.DisposedStreamCount);
+        Assert.True(first.ProducerCompletion.IsCompleted);
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.Retrieved, recorder.Result);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    public async Task MalformedBatch_WithNoFallback_ReportsNotRetrievedOnce(int responseCount)
+    {
+        var inner = new ControlledDecodedBodyBatchClient(
+            responseCountOverride: responseCount,
+            blockCompletionUntilStreamsDisposed: true);
+        var provider = CreateProvider(inner, host: "solo.example", maxConnections: 1);
+        using var client = new MultiProviderNntpClient([provider]);
+        using var caller = new CancellationTokenSource();
+        var recorder = new ArticleBodyCompletionRecorder();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.DecodedBodiesAsync(["a", "b"], recorder.Invoke, caller.Token));
+
+        Assert.Equal(1, inner.OrdinaryBatchCount);
+        Assert.Equal(1, provider.AvailableConnections);
+        Assert.True(inner.LastCancellationToken.IsCancellationRequested);
+        Assert.False(caller.IsCancellationRequested);
+        Assert.Equal(responseCount, inner.DisposedStreamCount);
+        Assert.True(inner.ProducerCompletion.IsCompleted);
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+    }
+
     [Fact]
     public async Task DecodedBodiesAsync_CompletionWaitsForPrimaryAndFallbackTransfers()
     {

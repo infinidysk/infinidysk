@@ -116,6 +116,32 @@ public class ArticleCachingNntpClientTests
         Assert.Equal(0, inner.BatchRequestCount);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    public async Task DecodedBodiesAsync_MalformedInnerBatch_AbandonsAndReportsNotRetrieved(int responseCount)
+    {
+        var inner = new ControlledDecodedBodyBatchClient(
+            responseCountOverride: responseCount,
+            blockCompletionUntilStreamsDisposed: true);
+        using var client = new ArticleCachingNntpClient(inner);
+        using var caller = new CancellationTokenSource();
+        var recorder = new ArticleBodyCompletionRecorder();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.DecodedBodiesAsync(["a", "b"], recorder.Invoke, caller.Token));
+
+        Assert.Equal("The NNTP batch response count did not match the request count.", error.Message);
+        Assert.Equal(1, inner.OrdinaryBatchCount);
+        Assert.True(inner.LastCancellationToken.IsCancellationRequested);
+        Assert.False(caller.IsCancellationRequested);
+        Assert.Equal(responseCount, inner.DisposedStreamCount);
+        Assert.True(inner.ProducerCompletion.IsCompleted);
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+        Assert.Equal("batch-response-count-mismatch", recorder.FailureReason);
+    }
+
     [Fact]
     public async Task DecodedArticleAsync_FullCacheHit_ThrowingCallbackReturnsCachedArticle()
     {

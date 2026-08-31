@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Streams;
 using UsenetSharp.Models;
+using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.TestUtils;
 
@@ -56,19 +58,23 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
     private readonly int? _responseCountOverride;
     private readonly Exception? _setupException;
     private readonly Exception? _completionException;
+    private readonly bool _blockCompletionUntilStreamsDisposed;
     private readonly ConcurrentQueue<TaskCompletionSource> _completions = new();
+    private int _disposedStreams;
 
     public ControlledDecodedBodyBatchClient(
         Func<SegmentId, UsenetDecodedBodyResponse>? createResponse = null,
         int? responseCountOverride = null,
         Exception? setupException = null,
         CallbackTiming callbackTiming = CallbackTiming.BeforeReturn,
-        Exception? completionException = null)
+        Exception? completionException = null,
+        bool blockCompletionUntilStreamsDisposed = false)
     {
         _createResponse = createResponse ?? (id => CreateSuccess(id, "body"u8.ToArray()));
         _responseCountOverride = responseCountOverride;
         _setupException = setupException;
         _completionException = completionException;
+        _blockCompletionUntilStreamsDisposed = blockCompletionUntilStreamsDisposed;
         Timing = callbackTiming;
     }
 
@@ -79,6 +85,8 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
     public List<IReadOnlyList<string>> BatchIdLists { get; } = [];
     public ArticleBodyCompletionHandler? CapturedCallback { get; private set; }
     public CancellationToken LastCancellationToken { get; private set; }
+    public Action? OnBatchStart { get; set; }
+    public int DisposedStreamCount => Volatile.Read(ref _disposedStreams);
     public Task ProducerCompletion => _completions.LastOrDefault()?.Task ?? Task.CompletedTask;
 
     public void CompleteProducer()
@@ -120,6 +128,7 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        OnBatchStart?.Invoke();
         LastCancellationToken = cancellationToken;
         var ids = segmentIds.Select(id => id.ToString()).ToArray();
         RequestedIds.AddRange(ids);
@@ -132,12 +141,30 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _completions.Enqueue(completion);
 
+        var remainingHolder = new StrongBox<int>(0);
+        void OnStreamDisposed()
+        {
+            Interlocked.Increment(ref _disposedStreams);
+            if (Interlocked.Decrement(ref remainingHolder.Value) == 0)
+                completion.TrySetResult();
+        }
+
         var count = _responseCountOverride ?? segmentIds.Count;
         var responses = new Task<UsenetDecodedBodyResponse>[Math.Max(0, count)];
         for (var index = 0; index < responses.Length; index++)
         {
             var id = index < segmentIds.Count ? segmentIds[index] : new SegmentId($"extra-{index}");
-            responses[index] = Task.FromResult(_createResponse(id));
+            var response = _createResponse(id);
+            if (_blockCompletionUntilStreamsDisposed && response.Stream is not null)
+            {
+                remainingHolder.Value++;
+                response = response with
+                {
+                    Stream = new DisposeTrackingYencStream(response.Stream, OnStreamDisposed),
+                };
+            }
+
+            responses[index] = Task.FromResult(response);
         }
 
         if (Timing is CallbackTiming.BeforeReturn or CallbackTiming.Twice)
@@ -147,6 +174,15 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
 
         if (_completionException is not null)
             completion.TrySetException(_completionException);
+        else if (_blockCompletionUntilStreamsDisposed)
+        {
+            if (remainingHolder.Value == 0)
+            {
+                cancellationToken.Register(() => completion.TrySetResult());
+                if (cancellationToken.IsCancellationRequested)
+                    completion.TrySetResult();
+            }
+        }
         else if (Timing != CallbackTiming.Never && Timing != CallbackTiming.AfterReturn)
             completion.TrySetResult();
 
@@ -231,5 +267,52 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
 
     public override void Dispose()
     {
+    }
+
+    private sealed class DisposeTrackingYencStream : YencStream
+    {
+        private readonly YencStream _inner;
+        private readonly Action _onDisposed;
+        private int _disposed;
+
+        public DisposeTrackingYencStream(YencStream inner, Action onDisposed) : base(Null)
+        {
+            _inner = inner;
+            _onDisposed = onDisposed;
+        }
+
+        public override ValueTask<UsenetYencHeader?> GetYencHeadersAsync(
+            CancellationToken cancellationToken = default) =>
+            _inner.GetYencHeadersAsync(cancellationToken);
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            _inner.ReadAsync(buffer, cancellationToken);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _inner.Dispose();
+                SignalDisposed();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await _inner.DisposeAsync().ConfigureAwait(false);
+            SignalDisposed();
+            await base.DisposeAsync().ConfigureAwait(false);
+        }
+
+        private void SignalDisposed()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+            _onDisposed();
+        }
     }
 }

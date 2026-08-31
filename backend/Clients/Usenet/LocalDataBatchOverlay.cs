@@ -126,7 +126,7 @@ internal static class LocalDataBatchOverlay
                 mismatchHandled = true;
                 try
                 {
-                    await DrainMismatchedBatchAsync(inner, abandonCts).ConfigureAwait(false);
+                    await DecodedBodyBatchCleanup.AbandonAsync(inner, abandonCts).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -296,49 +296,6 @@ internal static class LocalDataBatchOverlay
         {
             // Predecessor already recorded and surfaced on its own response/stream path.
         }
-    }
-
-    private static async Task DrainMismatchedBatchAsync(
-        UsenetDecodedBodyBatch inner,
-        ContextualCancellationTokenSource abandonCts)
-    {
-        ExceptionDispatchInfo? fatal = null;
-        try
-        {
-            await abandonCts.CancelAsync().ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            if (exception is OutOfMemoryException)
-                fatal = ExceptionDispatchInfo.Capture(exception);
-        }
-
-        foreach (var responseTask in inner.Responses)
-        {
-            try
-            {
-                var response = await responseTask.ConfigureAwait(false);
-                if (response.Stream is not null)
-                    await response.Stream.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                if (exception is OutOfMemoryException)
-                    fatal = BatchLifecycle.PreferFailure(fatal, exception);
-            }
-        }
-
-        try
-        {
-            await inner.Completion.ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            if (exception is OutOfMemoryException)
-                fatal = BatchLifecycle.PreferFailure(fatal, exception);
-        }
-
-        fatal?.Throw();
     }
 
     private static async Task ObserveCompletionAsync(Task completion)

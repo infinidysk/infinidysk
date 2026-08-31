@@ -1,7 +1,9 @@
 ﻿using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Streams;
@@ -130,8 +132,11 @@ public class ArticleCachingNntpClient(
         }
 
         var missingSegmentIds = partition.Missing.Select(item => item.SegmentId).ToArray();
-        var batch = await base.DecodedBodiesAsync(
-            missingSegmentIds, onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
+        var batch = await FetchUncachedBatchAsync(
+            missingSegmentIds,
+            (ids, callback, token) => base.DecodedBodiesAsync(ids, callback, token),
+            onConnectionReadyAgain,
+            cancellationToken).ConfigureAwait(false);
         return MergeBatchForCaching(
             segmentIds.Count, partition, batch, cancellationToken);
     }
@@ -283,8 +288,12 @@ public class ArticleCachingNntpClient(
         }
 
         var missingSegmentIds = partition.Missing.Select(item => item.SegmentId).ToArray();
-        var batch = await base.DecodedBodiesAsync(
-            missingSegmentIds, exclusiveConnection, cancellationToken).ConfigureAwait(false);
+        var batch = await FetchUncachedBatchAsync(
+            missingSegmentIds,
+            (ids, callback, token) =>
+                base.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(callback), token),
+            exclusiveConnection.OnConnectionReadyAgain,
+            cancellationToken).ConfigureAwait(false);
         return MergeBatchForCaching(
             segmentIds.Count, partition, batch, cancellationToken);
     }
@@ -315,6 +324,88 @@ public class ArticleCachingNntpClient(
         var byteRange = GetByteRange(cacheEntry.YencHeaders);
         foreach (var segment in trackedSegments)
             segment.ByteRange = byteRange;
+    }
+
+    private static async Task<UsenetDecodedBodyBatch> FetchUncachedBatchAsync(
+        SegmentId[] missingSegmentIds,
+        Func<IReadOnlyList<SegmentId>, ArticleBodyCompletionHandler, CancellationToken,
+            Task<UsenetDecodedBodyBatch>> fetch,
+        ArticleBodyCompletionHandler? outerCallback,
+        CancellationToken cancellationToken)
+    {
+        var deferred = new DeferredArticleBodyCallback();
+        var attemptCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        UsenetDecodedBodyBatch? batch = null;
+        var mismatchHandled = false;
+        try
+        {
+            batch = await fetch(missingSegmentIds, deferred.Invoke, attemptCts.Token)
+                .ConfigureAwait(false);
+            if (batch.Responses.Count != missingSegmentIds.Length)
+            {
+                mismatchHandled = true;
+                deferred.Discard();
+                try
+                {
+                    await DecodedBodyBatchCleanup.AbandonAsync(batch, attemptCts).ConfigureAwait(false);
+                }
+                finally
+                {
+                    ArticleBodyCompletion.InvokeContained(
+                        outerCallback,
+                        ArticleBodyResult.NotRetrieved,
+                        "batch-response-count-mismatch");
+                }
+
+                throw new InvalidOperationException(
+                    "The NNTP batch response count did not match the request count.");
+            }
+        }
+        catch (Exception exception)
+        {
+            if (!mismatchHandled)
+            {
+                deferred.Discard();
+                if (batch is not null)
+                    await DecodedBodyBatchCleanup.AbandonAsync(batch, attemptCts).ConfigureAwait(false);
+                else
+                    attemptCts.Dispose();
+                var cancelled = exception.IsCancellationException(cancellationToken);
+                ArticleBodyCompletion.InvokeContained(
+                    outerCallback,
+                    cancelled ? ArticleBodyResult.Cancelled : ArticleBodyResult.NotRetrieved,
+                    cancelled ? null : "cache-batch-setup");
+            }
+
+            throw;
+        }
+
+        deferred.Activate(outerCallback ?? IgnoreCallback);
+        var ownedCts = attemptCts;
+#pragma warning disable CA2025 // Completion owns attemptCts and disposes it after inner lifecycle finishes
+        return batch with
+        {
+            Completion = CompleteThenDisposeAsync(batch.Completion, ownedCts),
+        };
+#pragma warning restore CA2025
+    }
+
+    private static void IgnoreCallback(ArticleBodyResult _, string? __)
+    {
+    }
+
+    private static async Task CompleteThenDisposeAsync(
+        Task completion,
+        ContextualCancellationTokenSource owner)
+    {
+        try
+        {
+            await completion.ConfigureAwait(false);
+        }
+        finally
+        {
+            owner.Dispose();
+        }
     }
 
     private UsenetDecodedBodyBatch MergeBatchForCaching(
