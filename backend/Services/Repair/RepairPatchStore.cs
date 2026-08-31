@@ -248,7 +248,11 @@ public sealed class RepairPatchStore
         {
             lock (_catalogLoadSync)
             {
-                if (ReferenceEquals(_catalogLoadInFlight, load) && load.IsCompleted)
+                // Drop the shared slot when this waiter cancelled, even if the
+                // scan is still unwinding. Otherwise a retry joins a load bound
+                // to the cancelled token and fails immediately.
+                if (ReferenceEquals(_catalogLoadInFlight, load)
+                    && (load.IsCompleted || ct.IsCancellationRequested))
                     _catalogLoadInFlight = null;
             }
 
