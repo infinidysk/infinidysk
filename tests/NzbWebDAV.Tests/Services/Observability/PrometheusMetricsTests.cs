@@ -172,10 +172,11 @@ public sealed class PrometheusMetricsTests
         Assert.DoesNotContain("message_id=", exposition);
         Assert.DoesNotContain("provider_host=", exposition);
         Assert.DoesNotContain("nzbdav_segment_cache_queued", exposition);
-        foreach (var line in exposition.Split('\n'))
+        foreach (var line in exposition.Split('\n')
+                     .Where(static line =>
+                         line.StartsWith("nzbdav_segment_cache_", StringComparison.Ordinal)
+                         && !line.StartsWith('#')))
         {
-            if (!line.StartsWith("nzbdav_segment_cache_", StringComparison.Ordinal) || line.StartsWith('#'))
-                continue;
             Assert.DoesNotContain("NaN", line);
             Assert.DoesNotContain("+Inf", line);
             Assert.DoesNotContain("-Inf", line);

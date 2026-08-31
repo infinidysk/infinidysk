@@ -161,7 +161,7 @@ public sealed class SupportPackService(
                 cancellationToken).ConfigureAwait(false);
             sectionStatus["configurationEffectiveStreaming"] = "included";
         }
-        catch
+        catch (Exception e) when (e is not OutOfMemoryException and not OperationCanceledException)
         {
             sectionStatus["configurationEffectiveStreaming"] = "unavailable";
         }
@@ -177,7 +177,7 @@ public sealed class SupportPackService(
                 cancellationToken).ConfigureAwait(false);
             sectionStatus["segmentCache"] = "included";
         }
-        catch
+        catch (Exception e) when (e is not OutOfMemoryException and not OperationCanceledException)
         {
             sectionStatus["segmentCache"] = "unavailable";
         }

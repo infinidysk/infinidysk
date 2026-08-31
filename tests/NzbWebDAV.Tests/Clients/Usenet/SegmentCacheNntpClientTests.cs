@@ -291,8 +291,8 @@ public sealed class SegmentCacheNntpClientTests
     public async Task LookupDuringBlockedCatalog_IncrementsUnavailableNotMiss()
     {
         var cacheDir = NewCacheDir();
-        var loadStarted = new ManualResetEventSlim();
-        var allowLoad = new ManualResetEventSlim();
+        using var loadStarted = new ManualResetEventSlim();
+        using var allowLoad = new ManualResetEventSlim();
         const string segmentId = "blocked-catalog";
         byte[] content = "blocked-catalog-bytes"u8.ToArray();
         var statistics = new SegmentCacheStatistics();
@@ -329,8 +329,6 @@ public sealed class SegmentCacheNntpClientTests
         {
             allowLoad.Set();
             DeleteCacheDir(cacheDir);
-            loadStarted.Dispose();
-            allowLoad.Dispose();
         }
     }
 
@@ -416,6 +414,9 @@ public sealed class SegmentCacheNntpClientTests
             using var client = CreateClient(inner, cacheDir, statistics);
             await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
             SetUnixMode(cacheDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            Skip.IfNot(
+                DirectoryWriteEnforced(cacheDir),
+                "Test is running as root; file modes are not enforced.");
 
             var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
             await using var output = new MemoryStream();
@@ -509,6 +510,9 @@ public sealed class SegmentCacheNntpClientTests
             var tmpPath = Path.Join(lockedDir, "stale.tmp");
             File.WriteAllText(tmpPath, "tmp");
             SetUnixMode(lockedDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            Skip.IfNot(
+                FileDeleteEnforced(tmpPath),
+                "Test is running as root; file modes are not enforced.");
             var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
             using var client = new SegmentCacheNntpClient(
                 inner,
@@ -530,9 +534,13 @@ public sealed class SegmentCacheNntpClientTests
             {
                 SetUnixMode(lockedDir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
-            catch
+            catch (IOException)
             {
-                // ignore
+                // Best-effort restore before recursive delete.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Best-effort restore before recursive delete.
             }
 
             DeleteCacheDir(cacheDir);
@@ -633,6 +641,38 @@ public sealed class SegmentCacheNntpClientTests
     {
         if (OperatingSystem.IsWindows()) return;
         File.SetUnixFileMode(path, mode);
+    }
+
+    private static bool DirectoryWriteEnforced(string directory)
+    {
+        var probe = Path.Join(directory, $".probe-{Guid.NewGuid():N}");
+        try
+        {
+            File.WriteAllBytes(probe, []);
+            File.Delete(probe);
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    private static bool FileDeleteEnforced(string path)
+    {
+        try
+        {
+            File.Delete(path);
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+        catch (IOException)
+        {
+            return true;
+        }
     }
 
     private static async Task ReadFullyAsync(SegmentCacheNntpClient client, string segmentId)

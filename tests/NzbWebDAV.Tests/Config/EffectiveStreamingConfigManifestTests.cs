@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Reflection;
 using System.Text.Json;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
@@ -150,25 +149,139 @@ public sealed class EffectiveStreamingConfigManifestTests
     }
 
     [Fact]
-    public void ReflectionAllowlist_RejectsUnknownDocumentProperties()
+    public void SerializedPropertyPaths_MatchExplicitPublicAllowlist()
     {
-        var names = CollectPropertyNames(typeof(EffectiveStreamingConfigDocument));
-        foreach (var name in names)
-        {
-            Assert.True(
-                char.IsUpper(name[0]) && name.All(char.IsLetterOrDigit),
-                $"document property {name} is not a stable identifier");
-        }
+        var config = new ConfigManager();
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetProviders,
+                ConfigValue = JsonSerializer.Serialize(new UsenetProviderConfig
+                {
+                    Providers =
+                    [
+                        new UsenetProviderConfig.ConnectionDetails
+                        {
+                            Type = ProviderType.Pooled,
+                            Host = "news.secret.example",
+                            Port = 563,
+                            UseSsl = true,
+                            User = "sentinel-user",
+                            Pass = "sentinel-pass",
+                            MaxConnections = 8,
+                        },
+                    ],
+                }),
+            },
+        ]);
 
-        Assert.DoesNotContain("Path", names);
-        Assert.DoesNotContain("Host", names);
-        Assert.DoesNotContain("User", names);
-        Assert.DoesNotContain("Pass", names);
-        Assert.DoesNotContain("Password", names);
-        Assert.DoesNotContain("ProviderId", names);
-        Assert.DoesNotContain("StorageGroup", names);
-        Assert.DoesNotContain("ApiKey", names);
+        var json = JsonSerializer.Serialize(
+            EffectiveStreamingConfigManifest.Create(config),
+            EffectiveStreamingConfigManifest.SerializerOptions);
+        using var parsed = JsonDocument.Parse(json);
+        var actual = CollectJsonPaths(parsed.RootElement);
+
+        var unexpected = actual.Except(AllowedJsonPaths, StringComparer.Ordinal).Order().ToArray();
+        var missing = AllowedJsonPaths.Except(actual, StringComparer.Ordinal).Order().ToArray();
+        Assert.True(
+            unexpected.Length == 0 && missing.Length == 0,
+            "unexpected: " + string.Join(", ", unexpected) + "; missing: " + string.Join(", ", missing));
+        Assert.DoesNotContain(
+            actual,
+            static path => ForbiddenJsonPathSegments.Contains(path.Split('.')[^1]));
     }
+
+    private static readonly HashSet<string> AllowedJsonPaths =
+    [
+        "schemaVersion",
+        "streaming",
+        "streaming.articleBufferSize",
+        "streaming.pipelinedBodyRequests",
+        "streaming.bodyBatchWidth",
+        "streaming.containerAwareFill",
+        "streaming.bandwidthLimitBytesPerSecond",
+        "streaming.streamingPriority",
+        "streaming.segmentRetryCount",
+        "streaming.readTimeoutSeconds",
+        "streaming.writeTimeoutSeconds",
+        "streaming.segmentTimeoutSeconds",
+        "connections",
+        "connections.effectiveTotalDownloadLimit",
+        "connections.perStreamModeEnabled",
+        "connections.effectivePerStreamCount",
+        "connections.warmConnectionsEnabled",
+        "connections.pooledProviderCount",
+        "connections.totalPooledConnectionCount",
+        "memory",
+        "memory.inFlightArticleBudgetBytes",
+        "memory.sharedStreamsEnabled",
+        "memory.sharedStreamRingBytes",
+        "memory.sharedStreamMaxEntries",
+        "memory.maxEntriesPerFile",
+        "memory.graceSeconds",
+        "memory.smallRangeMaximumBytes",
+        "segmentCache",
+        "segmentCache.enabled",
+        "segmentCache.maxBytes",
+        "repair",
+        "repair.backgroundEnabled",
+        "repair.par2Enabled",
+        "repair.degradedToleranceEnabled",
+        "repair.corruptionTrackingEnabled",
+        "providers",
+        "providers.alias",
+        "providers.type",
+        "providers.maxConnections",
+        "providers.tlsEnabled",
+        "providers.tlsVerification",
+        "providers.warmConnectionFloor",
+        "source",
+        "source.streaming",
+        "source.streaming.articleBufferSize",
+        "source.streaming.pipelinedBodyRequests",
+        "source.streaming.bodyBatchWidth",
+        "source.streaming.containerAwareFill",
+        "source.streaming.bandwidthLimitBytesPerSecond",
+        "source.streaming.streamingPriority",
+        "source.streaming.segmentRetryCount",
+        "source.streaming.readTimeoutSeconds",
+        "source.streaming.writeTimeoutSeconds",
+        "source.streaming.segmentTimeoutSeconds",
+        "source.connections",
+        "source.connections.effectiveTotalDownloadLimit",
+        "source.connections.perStreamModeEnabled",
+        "source.connections.warmConnectionsEnabled",
+        "source.memory",
+        "source.memory.inFlightArticleBudgetBytes",
+        "source.memory.sharedStreamsEnabled",
+        "source.memory.sharedStreamRingBytes",
+        "source.memory.sharedStreamMaxEntries",
+        "source.memory.maxEntriesPerFile",
+        "source.memory.graceSeconds",
+        "source.memory.smallRangeMaximumBytes",
+        "source.segmentCache",
+        "source.segmentCache.enabled",
+        "source.segmentCache.maxBytes",
+        "source.repair",
+        "source.repair.backgroundEnabled",
+        "source.repair.par2Enabled",
+        "source.repair.degradedToleranceEnabled",
+        "source.repair.corruptionTrackingEnabled",
+        "source.providers",
+    ];
+
+    private static readonly HashSet<string> ForbiddenJsonPathSegments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "path",
+        "host",
+        "user",
+        "pass",
+        "password",
+        "providerId",
+        "storageGroup",
+        "apiKey",
+    };
 
     private static void CollectJsonNames(JsonElement element, string path, List<string> offenders)
     {
@@ -187,25 +300,28 @@ public sealed class EffectiveStreamingConfigManifestTests
         }
     }
 
-    private static IEnumerable<string> CollectPropertyNames(Type type)
+    private static HashSet<string> CollectJsonPaths(JsonElement element)
     {
-        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        CollectJsonPaths(element, prefix: "", paths);
+        return paths;
+    }
+
+    private static void CollectJsonPaths(JsonElement element, string prefix, HashSet<string> paths)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
         {
-            yield return property.Name;
-            var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
-            if (propertyType.IsGenericType
-                && propertyType.GetGenericTypeDefinition() == typeof(IReadOnlyList<>))
+            foreach (var property in element.EnumerateObject())
             {
-                foreach (var nested in CollectPropertyNames(propertyType.GetGenericArguments()[0]))
-                    yield return nested;
+                var path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
+                paths.Add(path);
+                CollectJsonPaths(property.Value, path, paths);
             }
-            else if (propertyType.Namespace == typeof(EffectiveStreamingConfigDocument).Namespace
-                     && propertyType.IsClass
-                     && propertyType != typeof(string))
-            {
-                foreach (var nested in CollectPropertyNames(propertyType))
-                    yield return nested;
-            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                CollectJsonPaths(item, prefix, paths);
         }
     }
 }
