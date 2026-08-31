@@ -449,7 +449,10 @@ public class MultiSegmentStreamPrefetchBudgetTests
 
         var buffer = new byte[1024];
         _ = await stream.ReadAsync(buffer);
-        Assert.True(budget.LeasedBytes > 0 || client.BatchRequestCount >= 0);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (budget.LeasedBytes == 0 && client.BatchRequestCount == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(budget.LeasedBytes > 0 || client.BatchRequestCount > 0);
 
         await stream.DisposeAsync();
         Assert.Equal(0, budget.LeasedBytes);

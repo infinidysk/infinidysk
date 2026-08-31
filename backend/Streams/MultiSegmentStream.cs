@@ -330,7 +330,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         try
         {
             var discardStarted = Stopwatch.GetTimestamp();
-            await stream.DiscardExactBytesAsync(prefixBytes, cancellationToken).ConfigureAwait(false);
+            if (stream is UnbufferedMultiSegmentStream unbuffered)
+            {
+                await unbuffered.DiscardPrefixBytesAsync(prefixBytes, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                await stream.DiscardExactBytesAsync(prefixBytes, cancellationToken)
+                    .ConfigureAwait(false);
+            }
             FirstByteTrace.TryRecord(
                 FirstByteTrace.PrefixDiscard,
                 prefixBytes,

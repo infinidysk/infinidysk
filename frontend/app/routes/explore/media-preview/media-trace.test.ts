@@ -87,12 +87,14 @@ describe("describeTraceEvent", () => {
       describeTraceEvent(event({ kind: "PrefetchWidth", previousBatchSize: 4, batchSize: 2 })),
     ).toBe("4 → 2");
     expect(
-      describeTraceEvent(event({
-        kind: "FirstByte",
-        status: "exact-index-direct",
-        bytes: 512,
-        durationMs: 7,
-      })),
+      describeTraceEvent(
+        event({
+          kind: "FirstByte",
+          status: "exact-index-direct",
+          bytes: 512,
+          durationMs: 7,
+        }),
+      ),
     ).toBe("exact-index-direct · 512 B · 7 ms");
     expect(
       describeTraceEvent(event({ kind: "RangeEnd", endReason: "Aborted", bytesServed: 512 })),

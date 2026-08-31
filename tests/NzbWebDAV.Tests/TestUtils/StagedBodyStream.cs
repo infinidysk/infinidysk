@@ -3,6 +3,8 @@ namespace NzbWebDAV.Tests.TestUtils;
 /// <summary>
 /// Phase-bounded readable stream: prefix, then immediately available requested
 /// bytes, then a gated tail/EOF. A large caller buffer cannot collapse phases.
+/// An empty tail produces ungated EOF; tests that need the tail gate must
+/// supply a non-empty tail.
 /// </summary>
 internal sealed class StagedBodyStream : Stream
 {
@@ -75,15 +77,10 @@ internal sealed class StagedBodyStream : Stream
             var source = CurrentPhaseBytes();
             if (source.Length == 0)
             {
+                // Empty tail (phase 2 with no bytes) is ungated EOF. Do not wait
+                // on ReleaseTail; empty-tail handoff tests rely on that.
                 if (_phase >= 2)
                     return 0;
-                if (_phase == 2)
-                {
-                    _tailStarted.TrySetResult();
-                    await _tailRelease.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-                    _phase = 3;
-                    return 0;
-                }
 
                 _phase++;
                 _offsetInPhase = 0;

@@ -184,7 +184,7 @@
     "dead-article": {
       "deterministic": {
         "bytes": 262144,
-        "transportRequests": 2,
+        "transportRequests": 1,
         "transportBytes": 0
       },
       "timing": {

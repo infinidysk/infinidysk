@@ -333,14 +333,36 @@ public class NzbFileStreamFirstByteTests
         await using var stream = CreateStream(client, articleBufferSize: 4);
         stream.Seek(6, SeekOrigin.Begin);
 
-        var thrown = await Record.ExceptionAsync(async () => await stream.ReadAsync(new byte[1]));
+        var buffer = new byte[1];
+        Assert.Equal(1, await stream.ReadAsync(buffer));
+        Assert.Equal(0, buffer[0]);
         Assert.True(client.BodyRequestCounts["two"] > 1);
-        Assert.True(
-            thrown is null
-            || thrown is UsenetCorruptArticleException
-            || thrown is PersistentUsenetCorruptionException
-            || thrown.InnerException is UsenetCorruptArticleException,
-            thrown?.GetType().FullName);
+    }
+
+    [Fact]
+    public async Task ExactIndexedSeek_CorruptionDuringPrefixDiscardPreservesRetryPolicy()
+    {
+        var client = CreateClient(decodedStreamFactory: (id, bytes) =>
+            id == "two"
+                ? new StagedBodyStream(
+                    "f"u8.ToArray(),
+                    "g"u8.ToArray(),
+                    "hij"u8.ToArray(),
+                    readFailure: phase => phase == "tail"
+                        ? new UsenetCorruptArticleException(
+                            "two", "provider-a", new InvalidDataException("CRC mismatch"))
+                        : null)
+                : new MemoryStream(bytes, writable: false));
+        using var _ = SetBudget(LargeBudget);
+        await using var stream = CreateStream(client, articleBufferSize: 4);
+        // Segment two is bytes [5,10); offset 8 discards "fgh" across multiple
+        // staged reads, then hits CRC before any requested byte is returned.
+        stream.Seek(8, SeekOrigin.Begin);
+
+        var buffer = new byte[1];
+        Assert.Equal(1, await stream.ReadAsync(buffer));
+        Assert.Equal(0, buffer[0]);
+        Assert.True(client.BodyRequestCounts["two"] > 1);
     }
 
     [Fact]
@@ -373,6 +395,7 @@ public class NzbFileStreamFirstByteTests
             var buffer = new byte[8];
             while (await stream.ReadAsync(buffer) > 0)
             {
+                // Drain until the tail CRC aborts; remainder disposal is the assertion.
             }
         });
 
@@ -563,17 +586,6 @@ public class NzbFileStreamFirstByteTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-    }
-
-    private sealed class TrackingMemoryStream(byte[] bytes) : MemoryStream(bytes, writable: false)
-    {
-        public bool Disposed { get; private set; }
-
-        protected override void Dispose(bool disposing)
-        {
-            Disposed = true;
-            base.Dispose(disposing);
-        }
     }
 
     private sealed class ThrowingPhaseStream(Exception exception) : Stream

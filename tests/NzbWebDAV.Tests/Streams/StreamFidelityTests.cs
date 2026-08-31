@@ -120,6 +120,7 @@ public class StreamFidelityTests
                     read += n;
                 }
 
+                Assert.Equal(count, read);
                 Assert.True(
                     fixture.Source.AsSpan(offset, read).SequenceEqual(buffer.AsSpan(0, read)),
                     $"Exact-index mismatch at offset {offset}.");

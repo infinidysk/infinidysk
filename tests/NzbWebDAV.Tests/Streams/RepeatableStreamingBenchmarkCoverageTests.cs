@@ -19,7 +19,7 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
     private const int TailProbeTransportBytes = 0;
     private const int SeekTransportRequests = 0;
     private const int SeekTransportBytes = 0;
-    private const int DeadArticleTransportRequests = 2;
+    private const int DeadArticleTransportRequests = 1;
     private const int DeadArticleTransportBytes = 0;
     private const string TransportContractMessage =
         "Intentional transport-contract change ⇒ update this constant and the committed baseline.";

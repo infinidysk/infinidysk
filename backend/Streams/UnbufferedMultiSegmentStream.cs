@@ -37,6 +37,9 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private bool _openSegmentHole;
     private bool _hasProbedByte;
     private byte _probedByte;
+    private bool _inPrefixDiscard;
+    private bool _prefixDiscardUsedPreEmissionRetry;
+    private Action? _onArticleRestart;
     private bool _disposed;
 
 
@@ -63,6 +66,45 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _failFastOnFirstSegment = failFastOnFirstSegment;
         _knownCorruptSegmentIds = knownCorruptSegmentIds;
         _knownMissingSegmentIndices = knownMissingSegmentIndices;
+    }
+
+    // Prefix discard is still pre-emission: no requested byte has reached the
+    // caller. A mid-discard retry must restart the whole prefix because earlier
+    // successful reads cannot be rewound by DiscardExactBytesAsync.
+    internal async Task DiscardPrefixBytesAsync(long prefixBytes, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(prefixBytes);
+        if (prefixBytes == 0)
+            return;
+
+        var discarded = 0L;
+        _inPrefixDiscard = true;
+        _prefixDiscardUsedPreEmissionRetry = false;
+        _onArticleRestart = () => discarded = 0;
+        var throwaway = ArrayPool<byte>.Shared.Rent((int)Math.Min(prefixBytes, 64 * 1024));
+        try
+        {
+            while (discarded < prefixBytes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var toRead = (int)Math.Min(prefixBytes - discarded, throwaway.Length);
+                var read = await ReadAsync(throwaway.AsMemory(0, toRead), cancellationToken)
+                    .ConfigureAwait(false);
+                if (read == 0)
+                {
+                    throw new EndOfStreamException(
+                        $"Stream ended {prefixBytes - discarded} bytes before {prefixBytes} bytes could be skipped.");
+                }
+
+                discarded += read;
+            }
+        }
+        finally
+        {
+            _inPrefixDiscard = false;
+            _onArticleRestart = null;
+            ArrayPool<byte>.Shared.Return(throwaway);
+        }
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
@@ -161,11 +203,10 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 }
                 catch (UsenetCorruptArticleException e) when (
                     !cancellationToken.IsCancellationRequested
-                    && _openSegmentBytes == 0
-                    && _pendingPadBytes == 0)
+                    && (ShouldTreatCorruptionAsPreEmission() || _inPrefixDiscard))
                 {
                     await DisposeBodyStreamAsync(fetched).ConfigureAwait(false);
-                    await HandlePreEmissionCorruptionAsync(segmentIndex, segmentId, e, cancellationToken)
+                    await HandleCorruptionAsync(segmentIndex, segmentId, e, cancellationToken)
                         .ConfigureAwait(false);
                 }
 
@@ -185,9 +226,10 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 }
                 catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
                 {
-                    await HandlePostEmissionCorruptionAsync(
+                    await HandleCorruptionAsync(
                             _openSegmentIndex, _segmentIds.Span[_openSegmentIndex], e, cancellationToken)
                         .ConfigureAwait(false);
+                    continue;
                 }
 
                 await FinishOpenSegmentAsync().ConfigureAwait(false);
@@ -205,18 +247,10 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch (UsenetCorruptArticleException e) when (!cancellationToken.IsCancellationRequested)
             {
-                var openIndex = _openSegmentIndex;
-                var openId = _segmentIds.Span[openIndex];
-                if (_openSegmentBytes == 0 && _pendingPadBytes == 0)
-                {
-                    await HandlePreEmissionCorruptionAsync(openIndex, openId, e, cancellationToken)
-                        .ConfigureAwait(false);
-                    continue;
-                }
-
-                await HandlePostEmissionCorruptionAsync(openIndex, openId, e, cancellationToken)
+                await HandleCorruptionAsync(
+                        _openSegmentIndex, _segmentIds.Span[_openSegmentIndex], e, cancellationToken)
                     .ConfigureAwait(false);
-                throw;
+                continue;
             }
 
             if (read > 0)
@@ -393,6 +427,43 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             : new RetryableDownloadException(message, failure);
     }
 
+    private async Task HandleCorruptionAsync(
+        int segmentIndex,
+        string segmentId,
+        UsenetCorruptArticleException exception,
+        CancellationToken cancellationToken)
+    {
+        if (ShouldTreatCorruptionAsPreEmission())
+        {
+            if (_inPrefixDiscard)
+                _prefixDiscardUsedPreEmissionRetry = true;
+            await HandlePreEmissionCorruptionAsync(segmentIndex, segmentId, exception, cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (_inPrefixDiscard)
+        {
+            // Probe-on-retry can accept an article that still fails later in the
+            // prefix. Do not loop; gap-fill so positioning can finish.
+            await DisposeOpenBodyAsync().ConfigureAwait(false);
+            _hasProbedByte = false;
+            _openSegmentBytes = 0;
+            _pendingPadBytes = 0;
+            if (!_segmentSizes.TryGetFillLength(segmentIndex, out var fill, out _))
+            {
+                Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
+                throw CreateUnknownLengthFailure(segmentIndex, exception);
+            }
+
+            ApplyZeroFill(segmentIndex, segmentId, fill, exception, isCorruption: true);
+            return;
+        }
+
+        await HandlePostEmissionCorruptionAsync(segmentIndex, segmentId, exception, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     private async Task HandlePreEmissionCorruptionAsync(
         int segmentIndex,
         string segmentId,
@@ -403,6 +474,9 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         // completion callback exactly once before we issue another BODY.
         await DisposeOpenBodyAsync().ConfigureAwait(false);
         _hasProbedByte = false;
+        _openSegmentBytes = 0;
+        _pendingPadBytes = 0;
+        NotifyArticleRestarted();
 
         var failure = initialFailure;
         var persistent = new PersistentCorruptionTracker();
@@ -601,7 +675,14 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _openSegmentFromLiveFetch = false;
         _openSegmentBytes = 0;
         _hasProbedByte = false;
+        NotifyArticleRestarted();
     }
+
+    private bool ShouldTreatCorruptionAsPreEmission() =>
+        (_inPrefixDiscard && !_prefixDiscardUsedPreEmissionRetry)
+        || (!_inPrefixDiscard && _openSegmentBytes == 0 && _pendingPadBytes == 0);
+
+    private void NotifyArticleRestarted() => _onArticleRestart?.Invoke();
 
     private async Task<Stream?> TryFallbackSegmentsAsync(
         int segmentIndex,

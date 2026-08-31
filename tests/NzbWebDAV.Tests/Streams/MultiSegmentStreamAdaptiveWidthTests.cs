@@ -841,6 +841,7 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         if (permit is not null)
             await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
 
+        var activeBatchIncremented = false;
         try
         {
             lock (_statsGate)
@@ -874,6 +875,7 @@ internal sealed class ControlledBatchNntpClient : NntpClient
                 _batchIssueCount++;
                 ObservedBatchSizes.Add(batchSize);
                 _activeBatches++;
+                activeBatchIncremented = true;
                 _maxActiveBatches = Math.Max(_maxActiveBatches, _activeBatches);
                 _startedSegments += batchSize;
                 _maxUnpublishedInBatch = Math.Max(_maxUnpublishedInBatch, batchSize);
@@ -894,6 +896,12 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         }
         catch
         {
+            if (activeBatchIncremented)
+            {
+                lock (_statsGate)
+                    _activeBatches--;
+            }
+
             permit?.Release();
             throw;
         }

@@ -340,7 +340,7 @@ public class NzbFileStream(
                 .ConfigureAwait(false);
         }
 
-        if (!ShouldUseLegacyUnbufferedRangePath())
+        if (!ShouldUseLegacyUnbufferedRangePath(readBudget))
         {
             var buffered = await TryGetSeekStreamFast(rangeStart, cancellationToken, readBudget)
                 .ConfigureAwait(false);
@@ -359,11 +359,8 @@ public class NzbFileStream(
 
     private bool CanUseExactIndexedDirectHead() => _segmentByteRanges is not null;
 
-    private static bool ShouldUseLegacyUnbufferedRangePath()
-    {
-        var budget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
-        return budget is > 0 and <= MaximumDirectRangeBytes;
-    }
+    private static bool ShouldUseLegacyUnbufferedRangePath(long? readBudget) =>
+        readBudget is > 0 and <= MaximumDirectRangeBytes;
 
     private Task<Stream> GetExactIndexedStreamAsync(
         InterpolationSearch.Result foundSegment,
