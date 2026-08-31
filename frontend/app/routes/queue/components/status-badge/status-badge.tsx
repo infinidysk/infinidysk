@@ -12,7 +12,7 @@ export function StatusBadge({ className, status, percentage, error }: StatusBadg
   const statusLower = status?.toLowerCase();
 
   if (statusLower === "completed") {
-    return <StatusShell className="badge-success">{statusLower}</StatusShell>;
+    return <StatusShell className="badge-success badge-xs">{statusLower}</StatusShell>;
   }
 
   if (statusLower === "failed" || statusLower == "upload failed") {
@@ -20,7 +20,7 @@ export function StatusBadge({ className, status, percentage, error }: StatusBadg
 
     return (
       <Tooltip content={error || "Upload failed"} className="z-50">
-        <StatusShell className="badge-error cursor-help">
+        <StatusShell className="badge-error badge-xs cursor-help">
           {statusLower === "upload failed" && <Icon name="upload" className="!text-[12px]" />}
           failed
         </StatusShell>

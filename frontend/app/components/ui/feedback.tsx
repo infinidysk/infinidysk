@@ -98,7 +98,7 @@ export function Tooltip({
         role="tooltip"
         aria-hidden={!open}
         className={[
-          "tooltip-content z-50 w-72 max-w-[calc(100vw-2rem)] whitespace-normal text-left text-xs leading-relaxed",
+          "tooltip-content z-50 w-max max-w-[min(18rem,calc(100vw-2rem))] whitespace-normal text-left text-xs leading-relaxed",
           contentClassName,
         ]
           .filter(Boolean)

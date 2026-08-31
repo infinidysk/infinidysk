@@ -110,7 +110,7 @@ export function PageTable({
         </thead>
         <tbody>{children}</tbody>
       </table>
-      {footer && <div className="py-3 text-center">{footer}</div>}
+      {footer && <div className="px-4 py-3 sm:px-6">{footer}</div>}
     </div>
   );
 }
