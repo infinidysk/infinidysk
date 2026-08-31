@@ -4,7 +4,9 @@ using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Observability;
+using NzbWebDAV.Streams;
 using Prometheus;
 
 namespace NzbWebDAV.Tests.Services.Observability;
@@ -76,6 +78,42 @@ public sealed class PrometheusMetricsTests
         Assert.Contains("nzbdav_shared_stream_lagging_readers", exposition);
         Assert.Contains("nzbdav_shared_stream_pressure_detaches_total", exposition);
         Assert.Contains("nzbdav_shared_stream_pressure_reaps_total", exposition);
+    }
+
+    [Fact]
+    public async Task MemoryComponentMetrics_ProjectAggregateOwnersWithoutLabels()
+    {
+        var registry = new CollectorRegistry();
+        var metrics = new PrometheusMetrics(registry);
+        metrics.SetMemoryComponents(MemoryComponents(
+            segmentBuffers: new SegmentBufferMemorySnapshot(
+                "bounded-legacy", 100, 200, 300, 4, 3, 0, 100, 128, 28)));
+
+        var exposition = await ExportAsync(registry);
+
+        Assert.Contains("nzbdav_inflight_article_destination_bytes 100", exposition);
+        Assert.Contains("nzbdav_decoded_body_pipe_bytes 20", exposition);
+        Assert.Contains("nzbdav_inflight_article_waiters 2", exposition);
+        Assert.Contains("nzbdav_segment_buffer_checked_out_bytes 100", exposition);
+        Assert.Contains("nzbdav_segment_buffer_idle_bytes 200", exposition);
+        Assert.Contains("nzbdav_segment_buffer_max_idle_bytes 300", exposition);
+        Assert.DoesNotContain("nzbdav_inflight_article_destination_bytes{", exposition);
+        Assert.DoesNotContain("nzbdav_segment_buffer_checked_out_bytes{", exposition);
+    }
+
+    [Fact]
+    public async Task MemoryComponentMetrics_UnpublishCustomPoolGaugesWhenUnsupported()
+    {
+        var registry = new CollectorRegistry();
+        var metrics = new PrometheusMetrics(registry);
+        metrics.SetMemoryComponents(MemoryComponents(segmentBuffers: null));
+
+        var exposition = await ExportAsync(registry);
+
+        Assert.Contains("nzbdav_inflight_article_destination_bytes", exposition);
+        Assert.DoesNotContain("nzbdav_segment_buffer_checked_out_bytes", exposition);
+        Assert.DoesNotContain("nzbdav_segment_buffer_idle_bytes", exposition);
+        Assert.DoesNotContain("nzbdav_segment_buffer_max_idle_bytes", exposition);
     }
 
     [Fact]
@@ -264,6 +302,28 @@ public sealed class PrometheusMetricsTests
             TemporaryFilesCleaned: 0,
             QueuedWriteBytes: null,
             PeakQueuedWriteBytes: null);
+
+    private static MemoryComponentSnapshot MemoryComponents(
+        SegmentBufferMemorySnapshot? segmentBuffers) =>
+        new(
+            SchemaVersion: 1,
+            CapturedAtUtc: DateTimeOffset.UtcNow,
+            MonotonicTimestamp: 1,
+            CaptureDurationMicroseconds: 0,
+            BackendWorkingSetBytes: 1000,
+            Gc: new GcSnapshot([], 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            InFlightArticles: new InFlightArticleMemorySnapshot(
+                TotalAccountedBytes: 120,
+                ArticleDestinationLogicalBytes: 100,
+                DecodedPipeBytes: 20,
+                CapBytes: 1000,
+                WaiterCount: 2,
+                ThrottleEvents: 3,
+                IsConsistent: true),
+            SegmentBuffers: segmentBuffers,
+            SharedStreams: new SharedStreamMemorySnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0),
+            CacheWriter: new SegmentCacheWriterMemorySnapshot(false, null, null, null, null, null, null),
+            Activity: new MemoryActivitySnapshot(0, 0));
 
     private static SegmentCacheSnapshot ReadySnapshot() =>
         new(

@@ -39,6 +39,31 @@ public class InFlightArticleBudgetTests
     }
 
     [Fact]
+    public async Task Snapshot_SeparatesArticleDestinationPipeAndWaiterBytesAtQuiescence()
+    {
+        var budget = new InFlightArticleBudget(1_000);
+        using var lease = await budget.LeaseAsync(400, CancellationToken.None);
+        budget.AccountBufferedPipeBytes(300);
+
+        var snapshot = budget.SnapshotMemory();
+
+        Assert.True(snapshot.IsConsistent);
+        Assert.Equal(700, snapshot.TotalAccountedBytes);
+        Assert.Equal(400, snapshot.ArticleDestinationLogicalBytes);
+        Assert.Equal(300, snapshot.DecodedPipeBytes);
+        Assert.Equal(0, snapshot.WaiterCount);
+
+        budget.AccountBufferedPipeBytes(-300);
+        lease.Dispose();
+
+        snapshot = budget.SnapshotMemory();
+        Assert.True(snapshot.IsConsistent);
+        Assert.Equal(0, snapshot.TotalAccountedBytes);
+        Assert.Equal(0, snapshot.ArticleDestinationLogicalBytes);
+        Assert.Equal(0, snapshot.DecodedPipeBytes);
+    }
+
+    [Fact]
     public async Task AccountBufferedPipeBytes_PipeChargeSaturation_WakesFifoWaiterOnNegativeDelta()
     {
         const long cap = 1_000;
@@ -125,6 +150,73 @@ public class InFlightArticleBudgetTests
         newcomerLease.Dispose();
         held.Dispose();
         Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task LeaseAsync_CancelledHead_WakesNextFifoWaiter()
+    {
+        var budget = new InFlightArticleBudget(100);
+        using var held = await budget.LeaseAsync(100, CancellationToken.None);
+        using var cancelled = new CancellationTokenSource();
+        var head = budget.LeaseAsync(100, cancelled.Token).AsTask();
+        await WaitUntil(() => budget.WaiterCount == 1);
+        var next = budget.LeaseAsync(50, CancellationToken.None).AsTask();
+        await WaitUntil(() => budget.WaiterCount == 2);
+
+        cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => head);
+        held.Dispose();
+
+        using var nextLease = await next.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(50, budget.LeasedBytes);
+        Assert.Equal(0, budget.WaiterCount);
+    }
+
+    [Fact]
+    public async Task SetCapBytes_GrowthWakesHeadWithoutBarging()
+    {
+        var budget = new InFlightArticleBudget(100);
+        using var held = await budget.LeaseAsync(100, CancellationToken.None);
+        var head = budget.LeaseAsync(200, CancellationToken.None).AsTask();
+        await WaitUntil(() => budget.WaiterCount == 1);
+
+        budget.SetCapBytes(300);
+        using var lease = await head.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(300, budget.LeasedBytes);
+        Assert.Equal(0, budget.WaiterCount);
+    }
+
+    [Fact]
+    public async Task SetCapBytes_ShrinkBelowCurrentBlocksUntilReleased()
+    {
+        var budget = new InFlightArticleBudget(200);
+        using var held = await budget.LeaseAsync(200, CancellationToken.None);
+        budget.SetCapBytes(100);
+        var waiter = budget.LeaseAsync(50, CancellationToken.None).AsTask();
+        await WaitUntil(() => budget.WaiterCount == 1);
+
+        held.Adjust(-150);
+        await Task.Delay(25);
+        Assert.False(waiter.IsCompleted);
+
+        held.Dispose();
+        using var lease = await waiter.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(50, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task ArticleByteLease_AdjustAndDoubleDispose_CannotOverRelease()
+    {
+        var budget = new InFlightArticleBudget(500);
+        var lease = await budget.LeaseAsync(400, CancellationToken.None);
+
+        lease.Adjust(-100);
+        lease.Dispose();
+        lease.Dispose();
+
+        Assert.Equal(0, budget.LeasedBytes);
+        Assert.Equal(0, budget.SnapshotMemory().ArticleDestinationLogicalBytes);
     }
 
     [Fact]

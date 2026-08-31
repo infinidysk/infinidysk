@@ -86,14 +86,14 @@ public static class MemoryBudget
     };
 
     /// <summary>One startup line saying what unset defaults the box affords.</summary>
-    public static void LogInFlightBudget(int effectiveBudgetMb)
+    public static void LogInFlightBudget(int effectiveBudgetMb, bool isExplicit)
     {
         var addressSpace = AddressSpaceDiagnostics.Capture();
         Log.Information(
             "[MemoryBudget] Heap limit {HeapMB}MB, GC hard limit {GcHardLimitMB}MB, region range {RegionRangeMB}MB, " +
             "region size {RegionSizeMB}MB, committed heap {CommittedMB}MB, virtual memory {VirtualMemoryMB}MB, " +
             "RLIMIT_AS {AddressSpaceLimitMB}MB -> in-flight article budget {BudgetMB}MB " +
-            "(derived when unset; explicit usenet.in-flight-article-budget-mb still wins).",
+            "from {BudgetSource}.",
             HeapLimitBytes / Mb,
             ToMegabytes(addressSpace.GcHeapHardLimitBytes),
             ToMegabytes(addressSpace.GcRegionRangeBytes),
@@ -101,7 +101,8 @@ public static class MemoryBudget
             ToMegabytes(addressSpace.GcCommittedBytes),
             ToMegabytes(addressSpace.VirtualMemoryBytes),
             ToMegabytes(addressSpace.AddressSpaceLimitBytes),
-            effectiveBudgetMb);
+            effectiveBudgetMb,
+            isExplicit ? "explicit configuration" : "derived heap limit");
     }
 
     private static long? ToMegabytes(long? bytes) => bytes / Mb;

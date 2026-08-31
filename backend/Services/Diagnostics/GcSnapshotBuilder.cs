@@ -36,6 +36,7 @@ internal static class GcSnapshotBuilder
             MemoryLoadBytes = info.MemoryLoadBytes,
             HighMemoryLoadThresholdBytes = info.HighMemoryLoadThresholdBytes,
             WorkingSetBytes = TryGetWorkingSetBytes(),
+            TotalPauseDuration = GC.GetTotalPauseDuration(),
         };
     }
 

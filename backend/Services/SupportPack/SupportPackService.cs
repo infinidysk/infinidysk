@@ -39,7 +39,8 @@ public sealed class SupportPackService(
     HealthCheckConnectionGate healthCheckConnectionGate,
     ConcurrentReadTracker? concurrentReadTracker = null,
     IQueueCoordinator? queueCoordinator = null,
-    SegmentCacheStatistics? segmentCacheStatistics = null)
+    SegmentCacheStatistics? segmentCacheStatistics = null,
+    MemoryComponentSnapshotBuilder? memoryComponentSnapshotBuilder = null)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -405,6 +406,7 @@ public sealed class SupportPackService(
         var bufferPool = BufferPoolDiagnostics.Shared.Snapshot();
         var segmentPool = (PooledBufferStream.DefaultPool as SegmentBufferPool)?.Snapshot();
         var addressSpace = AddressSpaceDiagnostics.Capture();
+        var memoryComponents = memoryComponentSnapshotBuilder?.Capture();
         var cpu = await BuildCpuDiagnosticsAsync(usage, uptime, cancellationToken).ConfigureAwait(false);
 
         return new
@@ -489,6 +491,7 @@ public sealed class SupportPackService(
                 segmentBufferRequestedBytes = bufferPool.RequestedBytes,
                 segmentBufferRentedBytes = bufferPool.RentedBytes,
                 segmentBufferBucketWasteBytes = bufferPool.BucketWasteBytes,
+                memoryComponents,
                 timeZone = TimeZoneInfo.Local.Id,
             },
             segmentBufferPool = segmentPool is null ? null : new

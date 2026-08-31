@@ -301,6 +301,28 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_ProjectsVersionedMemoryComponentsWithoutSensitiveIdentifiers()
+    {
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)));
+
+        using var environment = JsonDocument.Parse(entries["environment.json"]);
+        var memory = environment.RootElement
+            .GetProperty("runtime")
+            .GetProperty("memoryComponents");
+
+        Assert.Equal(1, memory.GetProperty("schemaVersion").GetInt32());
+        Assert.True(memory.TryGetProperty("capturedAtUtc", out _));
+        Assert.True(memory.TryGetProperty("inFlightArticles", out _));
+        Assert.True(memory.TryGetProperty("sharedStreams", out _));
+        Assert.True(memory.TryGetProperty("cacheWriter", out _));
+        Assert.DoesNotContain("path", memory.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("message", memory.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("provider", memory.GetRawText(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Pack_ReportsNullSegmentBufferPoolWhenOverrideUsesSharedPool()
     {
         var previous = PooledBufferStream.DefaultPool;
@@ -953,6 +975,7 @@ public sealed class SupportPackContentsTests : IDisposable
     {
         configManager ??= new ConfigManager();
         var websocketManager = new WebsocketManager();
+        var activeReads = new ActiveReadRegistry();
         var usenet = new UsenetStreamingClient(
             configManager,
             websocketManager,
@@ -960,7 +983,7 @@ public sealed class SupportPackContentsTests : IDisposable
             new MetricsWriter(),
             new ProviderBytesTracker(),
             streamTraceBuffer,
-            new ActiveReadRegistry());
+            activeReads);
 
         using var gcDiagnosticsStore = new GcDiagnosticsStore();
         var repairDir = Path.Join(Path.GetTempPath(), "nzbdav-support-test-" + Guid.NewGuid().ToString("N"));
@@ -968,6 +991,14 @@ public sealed class SupportPackContentsTests : IDisposable
         await repairPatchStore.EnsureCatalogLoadedAsync(CancellationToken.None);
         var par2RepairService = new Par2RepairService(configManager, usenet, repairPatchStore);
         using var healthCheckConnectionGate = new HealthCheckConnectionGate(configManager);
+        var budget = new InFlightArticleBudget(64 * 1024 * 1024);
+        var cacheStatistics = segmentCacheStatistics ?? new SegmentCacheStatistics();
+        var snapshotBuilder = new MemoryComponentSnapshotBuilder(
+            budget,
+            configManager,
+            concurrentReadTracker ?? new ConcurrentReadTracker(configManager: configManager),
+            activeReads,
+            cacheStatistics);
         var service = new SupportPackService(
             logBuffer,
             warningBuffer,
@@ -977,7 +1008,7 @@ public sealed class SupportPackContentsTests : IDisposable
             new ProviderLatencyTracker(),
             usenet,
             new ArticleMissNegativeCache(configManager),
-            new InFlightArticleBudget(64 * 1024 * 1024),
+            budget,
             streamTraceBuffer,
             runtimeUsage ?? new RuntimeUsageTracker(),
             gcDiagnosticsStore,
@@ -986,7 +1017,8 @@ public sealed class SupportPackContentsTests : IDisposable
             healthCheckConnectionGate,
             concurrentReadTracker,
             queueCoordinator: null,
-            segmentCacheStatistics);
+            cacheStatistics,
+            snapshotBuilder);
 
         using var memory = new MemoryStream();
         await service.WriteAsync(memory, CancellationToken.None);

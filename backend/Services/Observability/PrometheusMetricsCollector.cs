@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
@@ -15,7 +16,8 @@ public sealed class PrometheusMetricsCollector(
     UsenetStreamingClient usenetClient,
     RepairPatchStore repairPatchStore,
     HealthCheckConnectionGate healthCheckConnectionGate,
-    SegmentCacheStatistics segmentCacheStatistics) : BackgroundService
+    SegmentCacheStatistics segmentCacheStatistics,
+    MemoryComponentSnapshotBuilder memorySnapshotBuilder) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
 
@@ -29,7 +31,12 @@ public sealed class PrometheusMetricsCollector(
                 {
                     if (InFlightArticleBudget.Current is { } budget)
                     {
-                        metrics.Refresh(activeReads, concurrentReads, budget, metricsWriter, usenetClient);
+                        metrics.Refresh(
+                            memorySnapshotBuilder.Capture(),
+                            activeReads,
+                            concurrentReads,
+                            metricsWriter,
+                            usenetClient);
                         metrics.SetPar2PatchStoreBytes(repairPatchStore.CurrentBytes);
                     }
                     metrics.SetHealthCheckGate(healthCheckConnectionGate.GetSnapshot());

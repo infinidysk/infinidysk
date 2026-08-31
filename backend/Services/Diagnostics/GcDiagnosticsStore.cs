@@ -162,6 +162,7 @@ public sealed record GcSnapshot(
     public long MemoryLoadBytes { get; init; }
     public long HighMemoryLoadThresholdBytes { get; init; }
     public long? WorkingSetBytes { get; init; }
+    public TimeSpan TotalPauseDuration { get; init; }
 }
 
 public sealed record GcGenerationInfo(

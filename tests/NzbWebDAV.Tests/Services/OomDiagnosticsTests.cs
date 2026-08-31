@@ -32,6 +32,8 @@ public sealed class OomDiagnosticsTests
         Assert.True(entry.Properties.ContainsKey("LohHardLimit"));
         Assert.True(entry.Properties.ContainsKey("LohHardLimitPercent"));
         Assert.True(entry.Properties.ContainsKey("PoolOutstanding"));
+        Assert.True(entry.Properties.ContainsKey("DecodedPipe"));
+        Assert.True(entry.Properties.ContainsKey("ArticleWaiters"));
         Assert.Contains(events, e =>
             e.Level == LogEventLevel.Debug &&
             e.MessageTemplate.Text.Contains("OutOfMemoryException stack") &&

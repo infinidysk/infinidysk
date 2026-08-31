@@ -21,6 +21,7 @@ internal static class OomDiagnostics
             var addressSpace = AddressSpaceDiagnostics.Capture();
             var pool = PooledBufferStream.DefaultPool as SegmentBufferPool;
             var poolSnapshot = pool?.SnapshotForOom();
+            var articleBudget = InFlightArticleBudget.Current;
             long lohSize = -1;
             long lohFragmentation = -1;
             if (info.GenerationInfo.Length > 3)
@@ -42,7 +43,8 @@ internal static class OomDiagnostics
                 "PoolAllocationAttempts={PoolAllocationAttempts:N0} " +
                 "PoolAllocationFailures={PoolAllocationFailures:N0} " +
                 "PoolAllocations={PoolAllocations:N0} PoolTrimmed={PoolTrimmed:N0} " +
-                "InFlight={InFlight:N0} Cap={Cap:N0} Virtual={Virtual:N0} " +
+                "InFlight={InFlight:N0} DecodedPipe={DecodedPipe:N0} ArticleWaiters={ArticleWaiters:N0} " +
+                "Cap={Cap:N0} Virtual={Virtual:N0} " +
                 "RLIMIT_AS={AddressSpaceLimit:N0} RegionRange={RegionRange:N0} " +
                 "HeapHardLimit={HeapHardLimit:N0} LohHardLimit={LohHardLimit:N0} " +
                 "LohHardLimitPercent={LohHardLimitPercent:N0}",
@@ -66,8 +68,10 @@ internal static class OomDiagnostics
                 poolSnapshot?.AllocationFailureCount ?? -1,
                 poolSnapshot?.AllocationCount ?? -1,
                 poolSnapshot?.TrimmedBytes ?? -1,
-                InFlightArticleBudget.Current?.LeasedBytes ?? -1,
-                InFlightArticleBudget.Current?.CapBytes ?? -1,
+                articleBudget?.LeasedBytes ?? -1,
+                articleBudget?.DecodedPipeBytes ?? -1,
+                articleBudget?.WaiterCount ?? -1,
+                articleBudget?.CapBytes ?? -1,
                 addressSpace.VirtualMemoryBytes ?? -1,
                 addressSpace.AddressSpaceLimitBytes ?? -1,
                 addressSpace.GcRegionRangeBytes ?? -1,

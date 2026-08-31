@@ -111,6 +111,28 @@ public class SegmentBufferPoolTests
     }
 
     [Fact]
+    public void MemorySnapshot_MatchesFullSnapshotAtQuiescence()
+    {
+        var pool = new SegmentBufferPool(maxIdleBytes: 1024 * 1024);
+        var checkedOut = pool.Rent(300_000);
+        var returned = pool.Rent(300_000);
+        pool.Return(returned);
+
+        var memory = pool.MemorySnapshot();
+        var full = pool.Snapshot();
+
+        Assert.Equal("bounded-legacy", memory.Mode);
+        Assert.Equal(full.CheckedOutBytes, memory.CheckedOutCapacityBytes);
+        Assert.Equal(full.IdleBytes, memory.IdleCapacityBytes);
+        Assert.Equal(full.MaxIdleBytes, memory.MaxIdleBytes);
+        Assert.Equal(full.RentCount, memory.RentCount);
+        Assert.Equal(full.ReturnCount, memory.ReturnCount);
+        Assert.Equal(full.RejectedReturnCount, memory.RejectedReturnCount);
+
+        pool.Return(checkedOut);
+    }
+
+    [Fact]
     public void LeakedBuffer_IsNotRootedByThePool()
     {
         var pool = new SegmentBufferPool(maxIdleBytes: 1024 * 1024);

@@ -1245,6 +1245,12 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             : MemoryBudget.DefaultInFlightArticleBudgetMb();
     }
 
+    /// <summary>Whether the effective article budget originates from a valid persisted value.</summary>
+    public bool IsInFlightArticleBudgetExplicit() =>
+        int.TryParse(
+            StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetInFlightArticleBudgetMb)),
+            out _);
+
     public long GetInFlightArticleBudgetBytes() =>
         (long)GetInFlightArticleBudgetMb() * 1024L * 1024L;
 

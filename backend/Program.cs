@@ -285,7 +285,9 @@ public sealed partial class Program
                 {
                     var cfg = sp.GetRequiredService<ConfigManager>();
                     var budgetMb = cfg.GetInFlightArticleBudgetMb();
-                    MemoryBudget.LogInFlightBudget(budgetMb);
+                    MemoryBudget.LogInFlightBudget(
+                        budgetMb,
+                        cfg.IsInFlightArticleBudgetExplicit());
                     var budget = new InFlightArticleBudget(
                         cfg.GetInFlightArticleBudgetBytes(),
                         sp.GetRequiredService<ProviderLatencyTracker>());
@@ -329,6 +331,7 @@ public sealed partial class Program
                 .AddSingleton<StreamingFailureTracker>()
                 .AddSingleton<HealthCheckConnectionGate>()
                 .AddSingleton<SegmentCacheStatistics>()
+                .AddSingleton<MemoryComponentSnapshotBuilder>()
                 .AddSingleton<UsenetStreamingClient>()
                 .AddSingleton<StreamingCapacitySnapshotProvider>()
                 .AddHostedService<ProviderRecoveryProbeService>()
@@ -1085,7 +1088,10 @@ public sealed partial class Program
             PooledBufferStream.DefaultPool = SharedArrayPoolAdapter.Instance;
             Log.Information(
                 "Segment buffer pool override active: using ArrayPool<byte>.Shared " +
-                "(NZBDAV_SEGMENT_BUFFER_POOL=shared).");
+                "(NZBDAV_SEGMENT_BUFFER_POOL=shared); sharedRingConfiguredMaxBytes={SharedRingConfiguredMaxBytes} " +
+                "cacheWriter={CacheWriter}.",
+                (long)configManager.GetSharedStreamsMaxEntries() * configManager.GetSharedStreamsRingBytes(),
+                "unsupported");
             return;
         }
 
@@ -1098,9 +1104,12 @@ public sealed partial class Program
             : SegmentBufferRetentionPolicy.Legacy;
         PooledBufferStream.DefaultPool = new SegmentBufferPool(maxIdleBytes, retention);
         Log.Information(
-            "Segment buffer pool mode={Mode} maxIdleBytes={MaxIdleBytes}",
+            "Segment buffer pool mode={Mode} maxIdleBytes={MaxIdleBytes} " +
+            "sharedRingConfiguredMaxBytes={SharedRingConfiguredMaxBytes} cacheWriter={CacheWriter}",
             SegmentBufferPoolSelector.ToLogValue(poolMode),
-            maxIdleBytes);
+            maxIdleBytes,
+            (long)configManager.GetSharedStreamsMaxEntries() * configManager.GetSharedStreamsRingBytes(),
+            "unsupported");
     }
 
     private static async Task<bool> IsDatabaseStartupVacuumEnabledAsync()

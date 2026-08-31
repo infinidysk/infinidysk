@@ -221,6 +221,27 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
         }
     }
 
+    /// <summary>
+    /// Allocation-free aggregate ownership counters for frequent attribution
+    /// sampling. Per-size-class diagnostics remain available from <see cref="Snapshot"/>.
+    /// </summary>
+    public SegmentBufferPoolMemorySnapshot MemorySnapshot()
+    {
+        lock (_gate)
+        {
+            return new SegmentBufferPoolMemorySnapshot(
+                _retentionPolicy == SegmentBufferRetentionPolicy.Legacy
+                    ? SegmentBufferPoolSelector.BoundedLegacyValue
+                    : SegmentBufferPoolSelector.BoundedCapacityValue,
+                _checkedOutBytes,
+                _idleBytes,
+                _maxIdleBytes,
+                _rentCount,
+                _returnCount,
+                _rejectedReturnCount);
+        }
+    }
+
     internal SegmentBufferPoolOomSnapshot SnapshotForOom()
     {
         lock (_gate)
@@ -506,6 +527,18 @@ public readonly record struct SegmentBufferPoolClassSnapshot(
     int BufferSize,
     int BufferCount,
     long IdleBytes);
+
+/// <summary>
+/// Cheap aggregate ownership snapshot for memory attribution sampling.
+/// </summary>
+public readonly record struct SegmentBufferPoolMemorySnapshot(
+    string Mode,
+    long CheckedOutCapacityBytes,
+    long IdleCapacityBytes,
+    long MaxIdleBytes,
+    long RentCount,
+    long ReturnCount,
+    long RejectedReturnCount);
 
 public readonly record struct SegmentBufferPoolLifetimeClassSnapshot(
     int BufferSize,

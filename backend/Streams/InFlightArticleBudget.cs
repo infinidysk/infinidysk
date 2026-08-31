@@ -15,6 +15,7 @@ namespace NzbWebDAV.Streams;
 public sealed class InFlightArticleBudget
 {
     private long _leased;
+    private long _decodedPipeBytes;
     private long _capBytes;
     private long _throttleEvents;
     private long _lastWarningTicks;
@@ -37,16 +38,59 @@ public sealed class InFlightArticleBudget
     }
 
     public long LeasedBytes => Interlocked.Read(ref _leased);
+    /// <summary>Decoded BODY bytes currently unread in UsenetSharp pipes.</summary>
+    public long DecodedPipeBytes => Interlocked.Read(ref _decodedPipeBytes);
     public long CapBytes => Interlocked.Read(ref _capBytes);
     /// <summary>Number of leases that encountered Article RAM backpressure.</summary>
     public long ThrottleEvents => Interlocked.Read(ref _throttleEvents);
+    /// <summary>Current FIFO article-memory admission waiters.</summary>
+    public int WaiterCount => Volatile.Read(ref _waiterCount);
 
     /// <summary>
     /// True when at least one caller is blocked in <see cref="LeaseAsync"/>.
     /// Used by the streaming write watchdog to reclaim leases from a trickle
     /// reader only while other streams are waiting on the cap.
     /// </summary>
-    public bool HasWaiters => Volatile.Read(ref _waiterCount) > 0;
+    public bool HasWaiters => WaiterCount > 0;
+
+    /// <summary>
+    /// Captures the logical article and decoded-pipe portions of current admission
+    /// accounting without changing admission behavior.
+    /// </summary>
+    public InFlightArticleMemorySnapshot SnapshotMemory()
+    {
+        // Pipe observer callbacks and lease releases are concurrent. Retry a few
+        // times so regular snapshots retain their accounting identity without
+        // blocking either hot path.
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var total = LeasedBytes;
+            var pipe = DecodedPipeBytes;
+            var destination = total - pipe;
+            if (destination >= 0)
+            {
+                return new InFlightArticleMemorySnapshot(
+                    total,
+                    destination,
+                    pipe,
+                    CapBytes,
+                    WaiterCount,
+                    ThrottleEvents,
+                    IsConsistent: true);
+            }
+        }
+
+        var finalTotal = LeasedBytes;
+        var finalPipe = DecodedPipeBytes;
+        return new InFlightArticleMemorySnapshot(
+            finalTotal,
+            Math.Max(0, finalTotal - finalPipe),
+            finalPipe,
+            CapBytes,
+            WaiterCount,
+            ThrottleEvents,
+            IsConsistent: false);
+    }
 
     /// <summary>
     /// Updates the cap (e.g. after a settings change). Wakes waiters when the cap grows.
@@ -212,6 +256,7 @@ public sealed class InFlightArticleBudget
     {
         if (delta > 0)
         {
+            Interlocked.Add(ref _decodedPipeBytes, delta);
             AccountExtra(delta);
             return;
         }
@@ -222,7 +267,7 @@ public sealed class InFlightArticleBudget
         long released;
         while (true)
         {
-            var current = Interlocked.Read(ref _leased);
+            var current = Interlocked.Read(ref _decodedPipeBytes);
             if (current <= 0)
             {
                 released = 0;
@@ -230,12 +275,13 @@ public sealed class InFlightArticleBudget
             }
 
             released = Math.Min(current, requested);
-            if (Interlocked.CompareExchange(ref _leased, current - released, current) == current)
+            if (Interlocked.CompareExchange(
+                    ref _decodedPipeBytes, current - released, current) == current)
                 break;
         }
 
         if (released > 0)
-            SignalWaiters();
+            Release(released);
 
         if (released < requested)
             MaybeWarnPipeOverRelease(requested, released);
@@ -290,6 +336,19 @@ public sealed class InFlightArticleBudget
             Tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
+
+/// <summary>
+/// Point-in-time logical ownership inside <see cref="InFlightArticleBudget"/>.
+/// Destination bytes are a logical lease and overlap checked-out segment capacity.
+/// </summary>
+public readonly record struct InFlightArticleMemorySnapshot(
+    long TotalAccountedBytes,
+    long ArticleDestinationLogicalBytes,
+    long DecodedPipeBytes,
+    long CapBytes,
+    int WaiterCount,
+    long ThrottleEvents,
+    bool IsConsistent);
 
 /// <summary>
 /// Holds <see cref="InFlightArticleBudget"/> credits for one drained segment.

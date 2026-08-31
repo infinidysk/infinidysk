@@ -1,6 +1,7 @@
 using Prometheus;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Streams;
 
@@ -20,7 +21,13 @@ public sealed class PrometheusMetrics
     private readonly Gauge _inFlightSegmentFetches;
     private readonly Gauge _articleBudgetBytes;
     private readonly Gauge _articleBudgetCapBytes;
+    private readonly Gauge _articleDestinationBytes;
+    private readonly Gauge _decodedBodyPipeBytes;
+    private readonly Gauge _articleBudgetWaiters;
     private readonly Counter _articleBudgetThrottleEvents;
+    private readonly Gauge _segmentBufferCheckedOutBytes;
+    private readonly Gauge _segmentBufferIdleBytes;
+    private readonly Gauge _segmentBufferMaxIdleBytes;
     private readonly Gauge _metricsQueueLength;
     private readonly Counter _metricsDropped;
     private readonly Gauge _poolConnections;
@@ -96,9 +103,30 @@ public sealed class PrometheusMetrics
         _inFlightSegmentFetches = metrics.CreateGauge("nzbdav_concurrent_in_flight_segment_fetches", "Current in-flight segment fetches.");
         _articleBudgetBytes = metrics.CreateGauge("nzbdav_inflight_article_bytes", "Article bytes currently leased.");
         _articleBudgetCapBytes = metrics.CreateGauge("nzbdav_inflight_article_budget_bytes", "Configured in-flight article byte budget.");
+        _articleDestinationBytes = metrics.CreateGauge(
+            "nzbdav_inflight_article_destination_bytes",
+            "Logical decoded article destination bytes currently leased.");
+        _decodedBodyPipeBytes = metrics.CreateGauge(
+            "nzbdav_decoded_body_pipe_bytes",
+            "Decoded BODY bytes currently unread in NNTP pipes.");
+        _articleBudgetWaiters = metrics.CreateGauge(
+            "nzbdav_inflight_article_waiters",
+            "Current FIFO waiters for in-flight article memory.");
         _articleBudgetThrottleEvents = metrics.CreateCounter(
             "nzbdav_inflight_article_throttle_events_total",
             "Article RAM lease requests that encountered budget backpressure.");
+        _segmentBufferCheckedOutBytes = metrics.CreateGauge(
+            "nzbdav_segment_buffer_checked_out_bytes",
+            "Actual capacity of custom segment buffers currently checked out.");
+        _segmentBufferIdleBytes = metrics.CreateGauge(
+            "nzbdav_segment_buffer_idle_bytes",
+            "Actual capacity retained idle by the custom segment-buffer pool.");
+        _segmentBufferMaxIdleBytes = metrics.CreateGauge(
+            "nzbdav_segment_buffer_max_idle_bytes",
+            "Configured maximum idle capacity for the custom segment-buffer pool.");
+        _segmentBufferCheckedOutBytes.Unpublish();
+        _segmentBufferIdleBytes.Unpublish();
+        _segmentBufferMaxIdleBytes.Unpublish();
         _metricsQueueLength = metrics.CreateGauge("nzbdav_metrics_queue_length", "Queued internal metric rows.", new GaugeConfiguration { LabelNames = ["queue"] });
         _metricsDropped = metrics.CreateCounter("nzbdav_metrics_dropped_total", "Dropped internal metric rows.", new CounterConfiguration { LabelNames = ["queue"] });
         _poolConnections = metrics.CreateGauge("nzbdav_nntp_pool_connections", "NNTP pool connection and admitted-operation state.", new GaugeConfiguration { LabelNames = ["provider_key", "state"] });
@@ -321,13 +349,45 @@ public sealed class PrometheusMetrics
         _segmentCacheTemporaryFilesCleaned.IncTo(snapshot.TemporaryFilesCleaned);
     }
 
+    /// <summary>
+    /// Projects one owner-attribution snapshot without adding GC metrics that
+    /// prometheus-net's DotNetStats collector already exposes.
+    /// </summary>
+    public void SetMemoryComponents(MemoryComponentSnapshot snapshot)
+    {
+        var articles = snapshot.InFlightArticles;
+        _articleBudgetBytes.Set(articles.TotalAccountedBytes);
+        _articleBudgetCapBytes.Set(articles.CapBytes);
+        _articleDestinationBytes.Set(articles.ArticleDestinationLogicalBytes);
+        _decodedBodyPipeBytes.Set(articles.DecodedPipeBytes);
+        _articleBudgetWaiters.Set(articles.WaiterCount);
+        _articleBudgetThrottleEvents.IncTo(articles.ThrottleEvents);
+
+        if (snapshot.SegmentBuffers is { } pool)
+        {
+            _segmentBufferCheckedOutBytes.Publish();
+            _segmentBufferIdleBytes.Publish();
+            _segmentBufferMaxIdleBytes.Publish();
+            _segmentBufferCheckedOutBytes.Set(pool.CheckedOutCapacityBytes);
+            _segmentBufferIdleBytes.Set(pool.IdleCapacityBytes);
+            _segmentBufferMaxIdleBytes.Set(pool.MaxIdleBytes);
+        }
+        else
+        {
+            _segmentBufferCheckedOutBytes.Unpublish();
+            _segmentBufferIdleBytes.Unpublish();
+            _segmentBufferMaxIdleBytes.Unpublish();
+        }
+    }
+
     public void Refresh(
+        MemoryComponentSnapshot memoryComponents,
         ActiveReadRegistry activeReads,
         ConcurrentReadTracker concurrentReads,
-        InFlightArticleBudget articleBudget,
         MetricsWriter metricsWriter,
         UsenetStreamingClient usenetClient)
     {
+        SetMemoryComponents(memoryComponents);
         _activeReads.Set(activeReads.Count);
         _bytesServed.IncTo(activeReads.TotalBytesServed);
 
@@ -355,10 +415,6 @@ public sealed class PrometheusMetrics
         _sharedStreamPressureReaps.IncTo(reads.SharedStreamPressureReaps);
         _overlappingPaths.Set(reads.CurrentOverlappingPaths);
         _inFlightSegmentFetches.Set(reads.CurrentInFlightSegmentFetches);
-
-        _articleBudgetBytes.Set(articleBudget.LeasedBytes);
-        _articleBudgetCapBytes.Set(articleBudget.CapBytes);
-        _articleBudgetThrottleEvents.IncTo(articleBudget.ThrottleEvents);
 
         var writer = metricsWriter.Stats;
         _metricsQueueLength.WithLabels("fetches").Set(writer.QueuedFetches);
