@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Services.Diagnostics;
 
@@ -8,6 +9,7 @@ namespace NzbWebDAV.Api.Controllers.GetMemoryComponents;
 /// </summary>
 [ApiController]
 [Route("api/memory-components")]
+[ProducesResponseType(typeof(MemoryComponentSnapshot), StatusCodes.Status200OK)]
 public sealed class GetMemoryComponentsController(
     MemoryComponentSnapshotBuilder snapshotBuilder) : GetOnlyApiController
 {

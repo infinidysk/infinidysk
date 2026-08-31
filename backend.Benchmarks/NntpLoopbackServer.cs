@@ -158,9 +158,10 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
                 }
             }
         }
-        catch (IOException) when (_stop.IsCancellationRequested)
+        catch (Exception ex) when (_stop.IsCancellationRequested &&
+            ex is IOException or OperationCanceledException or ObjectDisposedException)
         {
-            // A peer may close while the server is stopping.
+            // Client close and shutdown cancellation both tear down the read loop.
         }
         finally
         {
@@ -217,8 +218,21 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
         {
             // Cancellation is the expected listener shutdown path.
         }
-        await Task.WhenAll(_connectionTasks.ToArray()).ConfigureAwait(false);
+
+        await Task.WhenAll(_connectionTasks.Select(ObserveShutdownAsync)).ConfigureAwait(false);
         _stop.Dispose();
+    }
+
+    private static async Task ObserveShutdownAsync(Task task)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+        {
+            // Connection tasks observe the shutdown token or a closed peer.
+        }
     }
 }
 

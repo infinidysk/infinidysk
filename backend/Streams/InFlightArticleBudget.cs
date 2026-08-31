@@ -270,8 +270,8 @@ public sealed class InFlightArticleBudget
         {
             if (delta > 0)
             {
-                Interlocked.Add(ref _decodedPipeBytes, delta);
                 AccountExtra(delta);
+                Interlocked.Add(ref _decodedPipeBytes, delta);
                 return;
             }
 
