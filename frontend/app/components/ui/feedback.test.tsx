@@ -20,6 +20,7 @@ describe("Tooltip", () => {
 
     const tooltip = screen.getByRole("tooltip", { hidden: true });
     const trigger = screen.getByRole("button", { name: "More info" });
+    expect(tooltip.className).toContain("break-words");
     expect(tooltip.getAttribute("aria-hidden")).toBe("true");
     expect(trigger.getAttribute("aria-describedby")).toBeNull();
 

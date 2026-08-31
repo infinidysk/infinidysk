@@ -3,6 +3,7 @@ import {
   buildHistoryRetryUrl,
   canRetryHistorySlot,
   retryHistoryItem,
+  retryHistoryItems,
   shouldAcceptRetryClick,
 } from "./history-retry";
 
@@ -63,5 +64,32 @@ describe("retryHistoryItem", () => {
     const result = await retryHistoryItem("old-id", fetchImpl as typeof fetch);
 
     expect(result).toEqual({ ok: false, error: "Failed to retry history item." });
+  });
+});
+
+describe("retryHistoryItems", () => {
+  it("returns succeeded and failed ids when the bulk retry is a partial success", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          status: true,
+          nzo_ids: ["ok-1"],
+          failed: [{ nzo_id: "bad-1", error: "The NZB file could not be found." }],
+        }),
+    });
+
+    const result = await retryHistoryItems(["ok-1", "bad-1"], fetchImpl as typeof fetch);
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api?mode=retry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json;charset=UTF-8" },
+      body: JSON.stringify({ nzo_ids: ["ok-1", "bad-1"] }),
+    });
+    expect(result).toEqual({
+      ok: true,
+      succeeded: ["ok-1"],
+      failed: [{ nzoId: "bad-1", error: "The NZB file could not be found." }],
+    });
   });
 });

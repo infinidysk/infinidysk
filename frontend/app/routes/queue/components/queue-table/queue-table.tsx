@@ -321,10 +321,13 @@ export function QueueTable({
     if (selectedRetryableIds.length === 0) return;
     setBulkRetryError(null);
     const result = await retryHistoryItems(selectedRetryableIds);
-    if (!result.ok) {
+    if (result.succeeded.length > 0) {
+      onHistoryRemoved(new Set(result.succeeded));
+    }
+    if (result.failed.length > 0) {
       setBulkRetryError(result.failed[0]?.error ?? "Failed to retry history items.");
     }
-  }, [selectedRetryableIds]);
+  }, [selectedRetryableIds, onHistoryRemoved]);
 
   const onConfirmClearFailed = useCallback(async (deleteCompletedFiles?: boolean) => {
     setIsConfirmingClearFailed(false);

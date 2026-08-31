@@ -67,4 +67,9 @@ describe("statusAppliesToQueue / statusAppliesToHistory", () => {
     expect(statusAppliesToQueue("Completed")).toBe(false);
     expect(statusAppliesToHistory("Failed")).toBe(true);
   });
+
+  it("excludes both sides for an unrecognized status", () => {
+    expect(statusAppliesToQueue("Unknown")).toBe(false);
+    expect(statusAppliesToHistory("Unknown")).toBe(false);
+  });
 });

@@ -1,6 +1,6 @@
 import { useRevalidator, useSearchParams } from "react-router";
 import type { Route } from "./+types/route";
-import { backendClient } from "~/clients/backend-client.server";
+import { backendClient, type HistorySlot, type QueueSlot } from "~/clients/backend-client.server";
 import { QueueTable } from "./components/queue-table/queue-table";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useHistoryEvents, useQueueEvents } from "./controllers/events-controller";
@@ -297,7 +297,7 @@ export default function Queue(props: Route.ComponentProps) {
         title="Queue"
         subtitle="Jobs from Sonarr, Radarr, or a manual NZB upload. Active items stay at the top; finished jobs remain in this list as history."
       />
-      {searchParams.get("preview") === "1" && (
+      {import.meta.env.DEV && searchParams.get("preview") === "1" && (
         <Alert className="alert-soft" variant="info">
           Preview with sample jobs — this is not your real queue.
         </Alert>

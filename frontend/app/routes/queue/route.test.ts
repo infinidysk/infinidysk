@@ -58,7 +58,13 @@ describe("queue route loader", () => {
   });
 
   it("loads the requested queue and history pages with configured categories", async () => {
-    const queueSlots = [{ nzo_id: "queue-1" }, { nzo_id: "queue-2" }];
+    const queueSlots = [
+      { nzo_id: "queue-1" },
+      { nzo_id: "queue-2" },
+      { nzo_id: "queue-3" },
+      { nzo_id: "queue-4" },
+      { nzo_id: "queue-5" },
+    ];
     const fetchedQueueSlots = [
       { nzo_id: "queue-before" },
       ...queueSlots,
@@ -90,9 +96,9 @@ describe("queue route loader", () => {
     });
     expect(getConfigMock).toHaveBeenCalledWith(["api.categories", "api.manual-category"]);
     expect(result).toEqual({
-      queueSlots: fetchedQueueSlots.slice(1, 6),
-      previousQueueSlot: fetchedQueueSlots[0],
-      nextQueueSlot: undefined,
+      queueSlots,
+      previousQueueSlot: { nzo_id: "queue-before" },
+      nextQueueSlot: { nzo_id: "queue-after" },
       historySlots,
       totalQueueCount: 30,
       totalHistoryCount: 700,
@@ -139,9 +145,8 @@ describe("queue route loader", () => {
     });
   });
 
-  it("passes unified list filters to queue and history", async () => {
+  it("routes an active status filter to the queue and skips history", async () => {
     getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
-    getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
     getConfigMock.mockResolvedValueOnce([]);
 
     await loader(loaderRequest("?qq=show&qcat=tv&qstatus=Paused&qsort=size:desc"));
