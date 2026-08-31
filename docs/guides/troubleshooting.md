@@ -63,6 +63,17 @@ healthcheck:
 Use `/ready` as a restart trigger only if restarting a streaming-wedged container is the intended
 policy. This check detects a stuck in-flight article budget; it does not test provider connectivity.
 
+## Queue coordinator liveness (`/health`) [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+
+The backend `/health` endpoint reports `503 Service Unavailable` if the queue coordinator fails or
+exits unexpectedly. The backend also exits with a nonzero code, allowing the documented Compose
+`restart: unless-stopped` policy to restart the container automatically. Previously, the SAB API and
+health endpoint could continue responding while queued items no longer progressed.
+
+`/ready` continues to report streaming admission readiness. The default frontend `/healthz` remains
+a lightweight process endpoint; queue-coordinator recovery does not depend on a healthcheck watcher
+because the backend process exits on failure.
+
 ## WebDAV or playback fails
 
 - Confirm WebDAV username/password.
