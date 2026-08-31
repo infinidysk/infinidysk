@@ -140,21 +140,32 @@ internal static class LocalDataBatchOverlay
                     $"Pipelined BODY returned {inner.Responses.Count} responses for {partition.Misses.Count} requests.");
             }
         }
-        catch (Exception)
+        catch (Exception exception)
         {
             if (!mismatchHandled)
             {
                 deferred.Discard();
+                var cancelled = exception is OperationCanceledException &&
+                                cancellationToken.IsCancellationRequested;
                 try
                 {
-                    DisposeHits(partition.Hits);
-                    if (inner is not null)
-                        await ObserveCompletionAsync(inner.Completion).ConfigureAwait(false);
+                    try
+                    {
+                        DisposeHits(partition.Hits);
+                    }
+                    finally
+                    {
+                        if (inner is not null)
+                            await DecodedBodyBatchCleanup.AbandonAsync(inner, abandonCts)
+                                .ConfigureAwait(false);
+                    }
                 }
                 finally
                 {
                     ArticleBodyCompletion.InvokeContained(
-                        outerCallback, ArticleBodyResult.NotRetrieved, "local-batch-setup");
+                        outerCallback,
+                        cancelled ? ArticleBodyResult.Cancelled : ArticleBodyResult.NotRetrieved,
+                        cancelled ? null : "local-batch-setup");
                     abandonCts.Dispose();
                 }
             }
@@ -304,19 +315,6 @@ internal static class LocalDataBatchOverlay
         catch (Exception)
         {
             // Predecessor already recorded and surfaced on its own response/stream path.
-        }
-    }
-
-    private static async Task ObserveCompletionAsync(Task completion)
-    {
-        try
-        {
-            await completion.ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            if (exception is OutOfMemoryException)
-                ExceptionDispatchInfo.Capture(exception).Throw();
         }
     }
 

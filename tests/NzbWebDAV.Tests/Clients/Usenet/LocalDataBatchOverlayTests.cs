@@ -202,6 +202,54 @@ public sealed class LocalDataBatchOverlayTests
     }
 
     [Fact]
+    public async Task InnerSetupFailure_AbandonsCreatedInnerBatch()
+    {
+        var inner = new ControlledDecodedBodyBatchClient(
+            blockCompletionUntilStreamsDisposed: true,
+            responses: new ThrowingCountResponses());
+        var recorder = new ArticleBodyCompletionRecorder();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            LocalDataBatchOverlay.ExecuteAsync(
+                Ids("a"),
+                recorder.Invoke,
+                _ => LocalLookupResult.Miss,
+                (misses, callback, token) => inner.DecodedBodiesAsync(misses, callback, token),
+                LocalDataBatchOverlay.PassThroughRemote,
+                CancellationToken.None));
+
+        Assert.True(inner.LastCancellationToken.IsCancellationRequested);
+        Assert.True(inner.ProducerCompletion.IsCompleted);
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+        Assert.Equal("local-batch-setup", recorder.FailureReason);
+    }
+
+    [Fact]
+    public async Task InnerSetupCancellation_ReportsCancelled()
+    {
+        using var cts = new CancellationTokenSource();
+        var recorder = new ArticleBodyCompletionRecorder();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            LocalDataBatchOverlay.ExecuteAsync(
+                Ids("a"),
+                recorder.Invoke,
+                _ => LocalLookupResult.Miss,
+                (_, _, _) =>
+                {
+                    cts.Cancel();
+                    throw new OperationCanceledException(cts.Token);
+                },
+                LocalDataBatchOverlay.PassThroughRemote,
+                cts.Token));
+
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.Cancelled, recorder.Result);
+        Assert.Null(recorder.FailureReason);
+    }
+
+    [Fact]
     public async Task ResponseCountTooSmall_DrainsInnerAndReportsNotRetrievedOnce()
     {
         var inner = new ControlledDecodedBodyBatchClient(responseCountOverride: 0);
@@ -765,6 +813,19 @@ public sealed class LocalDataBatchOverlayTests
             Memory<byte> buffer,
             CancellationToken cancellationToken = default) =>
             throw _exception;
+    }
+
+    private sealed class ThrowingCountResponses : IReadOnlyList<Task<UsenetDecodedBodyResponse>>
+    {
+        public int Count => throw new InvalidOperationException("response-count");
+
+        public Task<UsenetDecodedBodyResponse> this[int index] =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        public IEnumerator<Task<UsenetDecodedBodyResponse>> GetEnumerator() =>
+            Enumerable.Empty<Task<UsenetDecodedBodyResponse>>().GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     private sealed class TokenContextHarness : IDisposable
